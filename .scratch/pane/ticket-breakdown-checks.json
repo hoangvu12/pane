@@ -1,73 +1,39 @@
 {
-  "revision": 2,
-  "ticketCount": 48,
+  "revision": 3,
+  "ticketCount": 52,
+  "status": "ready-for-agent",
+  "ticketDirectory": "issues",
+  "planningPrerequisites": {
+    "P1": {
+      "source": "planning-prerequisites.md#p1",
+      "status": "unresolved",
+      "blocks": [2]
+    }
+  },
+  "parentSpecSha256": "9C76EE1CB922928E8FF10235F5CF38730FFFF3CAC2288A591A043CCC668AE4B3",
   "tickets": [
     {
+      "key": "rust",
       "n": 1,
-      "title": "Validate a maintainable WASI3 runtime candidate",
+      "title": "Run one Rust command in Pane's native window",
       "deps": [],
-      "type": "validation",
-      "stories": [
-        32,
-        34,
-        35,
-        39,
-        50
-      ],
-      "tests": [
-        "T04",
-        "T06"
-      ],
-      "gates": [
-        "G1"
-      ],
-      "deliver": "A reproducible WASI3 runtime candidate for JS, TS and Rust, with portable build inputs and correct fresh-instance initialization, ready for early native validation on all three operating systems.",
+      "deliver": "A user opens Pane, runs a bundled Rust sample command, selects a result, and sees the guest's response in the native window.",
       "criteria": [
-        "Start from the saved P3-only host and patched-JS/Rust evidence; reproduce the snapshot-random-state defect before changing it, and verify the fix across multiple fresh instances.",
-        "Run real library, async and filesystem cases with only P3 interfaces registered; retain a mixed P2/P3 guest as a rejecting control.",
-        "Pin a reproducible author toolchain and platform-neutral build entry point; declare per-OS prerequisites and runtime/SDK artifact selection without hardcoded Windows paths, PowerShell-only orchestration or changing global toolchains. Record measured artifact/initialization costs, library limitations and patch-maintenance options.",
-        "Record the candidate and unresolved risks explicitly. QuickJS is not predetermined; do not satisfy this ticket by silently falling back to Node, native entry points or WASI2.",
-        "Record initial Windows evidence separately from pending macOS/Linux evidence; the candidate cannot be called contributor-ready across platforms until the early native gates pass."
+        "Build the minimal GPUI CE window and one Rust P3-only fixture from a fresh Windows checkout using documented, portable commands and explicit prerequisites. Show an empty or unavailable-runtime state that leaves core navigation usable. Add its native build/contract check to the repository's automated checks; record GUI smoke evidence separately.",
+        "Introduce only the host/guest contract and runtime ownership needed for a list, one action and its updated result. A native click or keyboard action must execute real guest code; a JSON file replacement is insufficient.",
+        "Check the round trip through the highest public host interface plus a native UI smoke; reject a mixed P2/P3 control and show guest/runtime errors without freezing the window.",
+        "Include the runnable author example and reproduction commands in this slice. Keep common build/process/path code portable; macOS/Linux native proof follows immediately in the early platform slices."
       ],
-      "bounds": "This proves the runtime candidate, not production IPC, cancellation, the full SDK or all-platform support.",
-      "file": "01-validate-a-maintainable-wasi3-runtime-candidate.md"
-    },
-    {
-      "n": 2,
-      "title": "Open Pane's portable native core without extensions",
-      "deps": [],
-      "type": "implementation",
+      "scope": "One command, one list and one action. No full SDK, package installation, custom drawing or background services. The saved Rust probe supplies the candidate toolchain; record the exact versions actually used.",
+      "oldIds": [
+        2,
+        3
+      ],
       "stories": [
         1,
         4,
         12,
-        13
-      ],
-      "tests": [
-        "T01"
-      ],
-      "gates": [
-        "G2"
-      ],
-      "deliver": "A minimal GPUI CE shell with portable build/run entry points and OS-specific code behind explicit adapters, usable without a guest runtime.",
-      "criteria": [
-        "Create the minimal GPUI CE shell under the Pane name with a Windows native smoke; keep shared code buildable on Windows, macOS and Linux and isolate platform-specific initialization behind adapters.",
-        "Show meaningful empty/setup states with no extensions and no downloaded guest runtime; ordinary users do not need a console window.",
-        "Keep default features and AI out of the permanent feature implementation; later tickets supply extension contributions.",
-        "Document equivalent build/run commands and prerequisites for all three OS families without requiring Windows or PowerShell on Unix systems. Native macOS/Linux boot and contributor validation are required early follow-ups, not deferred release-port work."
-      ],
-      "bounds": "No application search, catalog, guest execution, installer or visual polish project.",
-      "file": "02-open-pane-s-portable-native-core-without-extensions.md"
-    },
-    {
-      "n": 3,
-      "title": "Run a Rust command through the native UI",
-      "deps": [
-        1,
-        2
-      ],
-      "type": "implementation",
-      "stories": [
+        13,
         33,
         34,
         35,
@@ -75,6 +41,7 @@
         38
       ],
       "tests": [
+        "T01",
         "T04",
         "T05"
       ],
@@ -82,24 +49,28 @@
         "G1",
         "G2"
       ],
-      "deliver": "A Rust WASI3 fixture command displays a list in Pane, receives a real user action, and returns an updated view.",
-      "criteria": [
-        "Define only the minimal versioned host/guest operations, identifiers and list/action view contract needed for this complete round trip; expose the same public behavior to integration checks and UI.",
-        "Execute the real component through the selected managed-runtime boundary, keeping the core responsive and unavailable-runtime errors visible.",
-        "A GPUI action reaches guest code and its response updates the view; a JSON-file replacement or logged click alone does not pass.",
-        "Document and test the first IPC/serialization contract and lifecycle owner without exposing raw GPUI or engine objects as the public SDK.",
-        "Keep host/guest protocols and process launching independent of Windows-only handles, path syntax or shell assumptions; preserve common behavior for the early native macOS/Linux gates."
-      ],
-      "bounds": "One list/action path; no full custom-view language or final commitment to every process-topology detail.",
-      "file": "03-run-a-rust-command-through-the-native-ui.md"
+      "file": "01-run-one-rust-command-in-pane-s-native-window.md",
+      "blockingReasons": {}
     },
     {
-      "n": 4,
-      "title": "Run JS and TS commands through the same UI contract",
+      "key": "js",
+      "n": 2,
+      "planningDeps": ["P1"],
+      "title": "Run JS and TS versions of the native sample command",
       "deps": [
-        3
+        1
       ],
-      "type": "implementation",
+      "deliver": "An author builds JS and TS samples whose actions update the same native view as the Rust sample.",
+      "criteria": [
+        "After prerequisite P1 supplies a viable initialized JS component, build the JS and TS samples with a documented toolchain and run them through the existing Pane host contract.",
+        "Use one compatible library in the sample and show a normal validation error; compare guest-visible results and event behavior with Rust without promising Node/npm compatibility.",
+        "Verify independent fresh instances, the native async path and P3-only imports using P1's regression controls. Keep engine-specific objects out of the author API.",
+        "Ship the example source, build/run instructions and public contract checks with the bindings; normal sample execution uses prebuilt components."
+      ],
+      "scope": "One existing command expressed in both JS and TS; TS transpilation shares the JS runtime. No new UI family or general library-compatibility audit.",
+      "oldIds": [
+        4
+      ],
       "stories": [
         32,
         33,
@@ -117,24 +88,33 @@
         "G1",
         "G2"
       ],
-      "deliver": "JS and TS fixture extensions drive the same native list/action interaction as Rust, using the candidate engine behind Pane's API.",
-      "criteria": [
-        "Produce separate working JS and TS author examples; both generate P3-only components and complete the same event/result round trip as Rust.",
-        "Demonstrate compatible library use and errors through the real host, retaining correct fresh-instance initialization from the runtime validation.",
-        "Expose a minimal ergonomic binding for each launch language without leaking the engine-specific ABI into author-facing operations.",
-        "Compare observable behavior across languages and document actual differences; do not claim general Node/npm compatibility.",
-        "Provide portable JS/TS/Rust example build and execution instructions with platform-specific prerequisites explicit; test tooling must not require a Windows checkout to prepare artifacts for another OS."
+      "prerequisites": [
+        "P1"
       ],
-      "bounds": "No Python/C#, universal library layer or unchanged Raycast/Pi API.",
-      "file": "04-run-js-and-ts-commands-through-the-same-ui-contract.md"
+      "file": "02-run-js-and-ts-versions-of-the-native-sample-command.md",
+      "blockingReasons": {
+        "1": "supplies the real native host/view/action contract that the JS/TS sample reuses"
+      }
     },
     {
-      "n": 5,
-      "title": "Establish the macOS contributor baseline early",
+      "key": "mac",
+      "n": 3,
+      "title": "Build and run the sample command natively on macOS",
       "deps": [
-        4
+        2
       ],
-      "type": "validation",
+      "deliver": "A macOS contributor builds Pane and the Rust/JS/TS samples locally, then completes the native action/result interaction.",
+      "criteria": [
+        "Use a fresh native macOS checkout with stated OS/architecture prerequisites; build Pane and all sample guests without a Windows machine or mandatory PowerShell.",
+        "Use the same documented task names as Windows, with native prerequisite/setup differences documented separately. Add native build/contract checks and a reproducible GUI smoke command suitable for the eventual CI runner.",
+        "Complete native rendering, keyboard/focus and guest action/result checks; record text-input/accessibility findings for the current controls. Cross-compilation and simulated OS flags do not count as native execution.",
+        "State the tested macOS version and architecture; fix the bounded native boot/process/path assumptions needed for this sample.",
+        "Record actual native results. Missing runner or GUI access leaves this slice incomplete; there is no requirement for an account or CI provider that has not been configured."
+      ],
+      "scope": "One existing sample interaction on one stated native baseline. Full OS integrations and packaging have their own slices.",
+      "oldIds": [
+        5
+      ],
       "stories": [
         2,
         3,
@@ -151,71 +131,39 @@
         "G2",
         "G7"
       ],
-      "deliver": "A macOS contributor can build the core and JS/TS/Rust guest examples, run native checks and exercise real view/event round trips before shared SDK and package work expands.",
-      "criteria": [
-        "Use a real macOS environment and a fresh source checkout to build/run GPUI CE and the runtime; document minimum OS/architecture and native prerequisites without requiring a Windows machine.",
-        "Build the guest examples on macOS and complete real P3 execution plus native UI input/result round trips; cross-compilation or mocked OS values do not pass.",
-        "Fix only bounded boot/runtime integration issues and record larger incompatibilities as explicit blockers instead of calling the platform supported.",
-        "Check initial focus/text input/IME/accessibility behavior relevant to the existing controls and carry findings into the platform adapter tickets.",
-        "Record reproducible developer commands and fix bounded build/path/process assumptions in the shared code; this gate completes before the contributor-workflow milestone and broad shared-feature development."
-      ],
-      "bounds": "Requires access to a real macOS test environment. This is not full feature or installer certification.",
-      "file": "05-establish-the-macos-contributor-baseline-early.md"
+      "file": "03-build-and-run-the-sample-command-natively-on-macos.md",
+      "blockingReasons": {
+        "2": "supplies the launch-language samples and portable build contract to exercise natively"
+      }
     },
     {
-      "n": 6,
-      "title": "Establish the Linux contributor baseline early",
+      "key": "linux",
+      "n": 4,
+      "title": "Build and run the sample command natively on Linux",
       "deps": [
-        4
+        2
       ],
-      "type": "validation",
-      "stories": [
-        2,
-        3,
-        81
-      ],
-      "tests": [
-        "T04",
-        "T05",
-        "T22",
-        "T25"
-      ],
-      "gates": [
-        "G1",
-        "G2",
-        "G7"
-      ],
-      "deliver": "A Linux contributor can build the core and JS/TS/Rust guest examples, run native checks and exercise real view/event round trips on an explicitly supported desktop baseline.",
+      "deliver": "A Linux contributor builds Pane and the Rust/JS/TS samples locally, then completes the native action/result interaction.",
       "criteria": [
-        "Use a real Linux environment and a fresh source checkout; document architecture, distribution, desktop/display protocol and native prerequisites without requiring Windows or PowerShell.",
-        "Build the guest examples on Linux and complete native rendering plus real P3 event/result round trips; cross-compilation alone is insufficient.",
-        "Establish an initial support matrix proposal for the tested desktop combinations, explicitly recording Wayland/X11 limitations instead of promising universal coverage.",
-        "Fix bounded boot/runtime integration issues; larger issues remain blockers, and input/IME/accessibility findings are retained.",
-        "Record reproducible developer commands and fix bounded shared build/path/process assumptions; this early gate is not postponed until Linux packaging or feature parity."
+        "Use a fresh native Linux checkout with stated OS/architecture prerequisites; build Pane and all sample guests without a Windows machine or mandatory PowerShell.",
+        "Use the same documented task names as Windows, with native prerequisite/setup differences documented separately. Add native build/contract checks and a reproducible GUI smoke command suitable for the eventual CI runner.",
+        "Complete native rendering, keyboard/focus and guest action/result checks; record text-input/accessibility findings for the current controls. Cross-compilation and simulated OS flags do not count as native execution.",
+        "State the tested distribution, desktop and display protocol; distinguish X11 and Wayland evidence and leave untested combinations unclaimed.",
+        "Record actual native results. Missing runner or GUI access leaves this slice incomplete; there is no requirement for an account or CI provider that has not been configured."
       ],
-      "bounds": "Requires real Linux test access. No claim that one desktop test proves all Linux desktops or packaging formats.",
-      "file": "06-establish-the-linux-contributor-baseline-early.md"
-    },
-    {
-      "n": 7,
-      "title": "Keep a working contributor workflow on all three operating systems",
-      "deps": [
-        5,
+      "scope": "One existing sample interaction on one stated native baseline. Full OS integrations and packaging have their own slices.",
+      "oldIds": [
         6
       ],
-      "type": "implementation",
       "stories": [
         2,
         3,
-        19,
-        32,
-        33,
-        38,
         81
       ],
       "tests": [
         "T04",
         "T05",
+        "T22",
         "T25"
       ],
       "gates": [
@@ -223,24 +171,31 @@
         "G2",
         "G7"
       ],
-      "deliver": "Contributors on Windows, macOS and Linux have a documented build/run/test workflow backed by native automated checks before the shared extension system grows.",
-      "criteria": [
-        "Run the same documented developer workflow on fresh native Windows/macOS/Linux environments to build Pane, build JS/TS/Rust guests, launch the sample interaction and run relevant checks; document OS-specific dependencies separately.",
-        "Provide portable task entry points and an automated native OS matrix suitable for the eventual CI provider, with equivalent local commands. CI service choice and available runners are not assumed.",
-        "Separate headless compile/contract checks from native GUI smoke results. Missing runners or failed native runs remain visible blockers to the contributor baseline; cross-compiling is not runtime proof.",
-        "Define the change policy: common SDK/runtime/UI/build changes preserve all three contributor baselines, while OS adapters stay explicit. No hardcoded developer paths or mandatory Windows shell in shared tooling.",
-        "Keep the scope to contributor build/run/testing. Full default-feature parity, native installers and independent preview releases follow in later tickets."
-      ],
-      "bounds": "Requires access to actual native test environments/runners for all three OS families. This adds no unapproved external CI account, publication, or infrastructure provisioning.",
-      "file": "07-keep-a-working-contributor-workflow-on-all-three-operating-systems.md"
+      "file": "04-build-and-run-the-sample-command-natively-on-linux.md",
+      "blockingReasons": {
+        "2": "supplies the launch-language samples and portable build contract to exercise natively"
+      }
     },
     {
-      "n": 8,
-      "title": "Install and run local extension packages",
+      "key": "local",
+      "n": 5,
+      "title": "Install and run a local extension package",
       "deps": [
-        7
+        3,
+        4
       ],
-      "type": "implementation",
+      "deliver": "A user selects a supported local package in Pane, sees its identity and compatibility, installs it and invokes its command.",
+      "criteria": [
+        "Define the minimum manifest/artifact and host/API compatibility fields needed for runnable JS/TS and Rust component packages; version the contract and explain invalid/incompatible packages in the UI.",
+        "Resolve local identity from its absolute source location, separate it from display title, and reject duplicate explicit installs while supporting tracked replacement.",
+        "Preserve user-owned source folders; manage local and later published copies independently without automatic switching or data merging.",
+        "Keep package metadata available without executing the guest and prove install/run/duplicate/incompatible outcomes through the public host interface.",
+        "Verify local identities and package paths on all supported contributor OS baselines, including spaces, Unicode and native path/case/symlink behavior as defined by the documented policy; do not apply Windows normalization blindly."
+      ],
+      "scope": "Remote acquisition and cross-extension dependency solving are separate; source-only packages do not magically become toolchain-free releases.",
+      "oldIds": [
+        8
+      ],
       "stories": [
         17,
         18,
@@ -257,24 +212,31 @@
       "gates": [
         "G4"
       ],
-      "deliver": "A user selects a supported local package in Pane, sees its identity and compatibility, installs it and invokes its command.",
-      "criteria": [
-        "Define the minimum manifest/artifact and host/API compatibility fields needed for runnable JS/TS and Rust component packages; version the contract and explain invalid/incompatible packages in the UI.",
-        "Resolve local identity from its absolute source location, separate it from display title, and reject duplicate explicit installs while supporting tracked replacement.",
-        "Preserve user-owned source folders; manage local and later published copies independently without automatic switching or data merging.",
-        "Keep package metadata available without executing the guest and prove install/run/duplicate/incompatible outcomes through the public host interface.",
-        "Verify local identities and package paths on all supported contributor OS baselines, including spaces, Unicode and native path/case/symlink behavior as defined by the documented policy; do not apply Windows normalization blindly."
-      ],
-      "bounds": "Remote acquisition and cross-extension dependency solving are separate; source-only packages do not magically become toolchain-free releases.",
-      "file": "08-install-and-run-local-extension-packages.md"
+      "file": "05-install-and-run-a-local-extension-package.md",
+      "blockingReasons": {
+        "3": "establishes the early macOS contributor build/run baseline required before shared feature expansion",
+        "4": "establishes the early Linux contributor build/run baseline required before shared feature expansion"
+      }
     },
     {
-      "n": 9,
-      "title": "Disable extensions and preserve settings across restart",
+      "key": "disable",
+      "n": 6,
+      "title": "Disable an extension and retain its settings after restart",
       "deps": [
-        8
+        5
       ],
-      "type": "implementation",
+      "deliver": "A user disables a local extension in the UI, restarts Pane, and can re-enable it with its saved settings intact.",
+      "criteria": [
+        "Introduce the smallest managed settings/durable-state contract needed by the fixture and persist user-selected enablement independently of whether an instance is running.",
+        "Disable removes the fixture's contributions and stops its currently supported host-managed work; restarting Pane does not reactivate it.",
+        "Re-enable restores settings and normal contributions without changing the source identity or silently enabling other installations.",
+        "Exercise restart and two distinct-source copies with the same title; ownership follows identity, not display name.",
+        "Verify behavior through the public management interface and a native restart smoke with a real guest."
+      ],
+      "scope": "Full async cancellation, background services, credentials, cache deletion and clipboard expiry have their own slices.",
+      "oldIds": [
+        9
+      ],
       "stories": [
         57,
         58,
@@ -288,23 +250,29 @@
         "G3",
         "G5"
       ],
-      "deliver": "A user disables a local extension in the UI, restarts Pane, and can re-enable it with its saved settings intact.",
-      "criteria": [
-        "Introduce the smallest managed settings/durable-state contract needed by the fixture and persist user-selected enablement independently of whether an instance is running.",
-        "Disable removes the fixture's contributions and stops its currently supported host-managed work; restarting Pane does not reactivate it.",
-        "Re-enable restores settings and normal contributions without changing the source identity or silently enabling other installations.",
-        "Exercise restart and two distinct-source copies with the same title; ownership follows identity, not display name."
-      ],
-      "bounds": "Full async cancellation, background services, credentials, cache deletion and clipboard expiry have their own slices.",
-      "file": "09-disable-extensions-and-preserve-settings-across-restart.md"
+      "file": "06-disable-an-extension-and-retain-its-settings-after-restart.md",
+      "blockingReasons": {
+        "5": "supplies installed package identity, compatible artifacts and a real invocable guest"
+      }
     },
     {
-      "n": 10,
-      "title": "Replace a running extension through manual reload",
+      "key": "reload",
+      "n": 7,
+      "title": "Reload one extension without restarting Pane",
       "deps": [
-        9
+        6
       ],
-      "type": "implementation",
+      "deliver": "Manual reload replaces one extension while Pane and an unrelated extension stay open, preserving saved data and reporting failed replacement startup.",
+      "criteria": [
+        "Replace actual guest code and assign generation ownership; demonstrate a changed guest result through the native UI without restarting Pane.",
+        "Clean up the old instance before starting the validated replacement and retain managed saved data; transient restoration occurs only when explicitly supported.",
+        "If replacement startup fails, report failure with Retry/diagnostics and managed cleanup, without restoring the old version automatically.",
+        "Keep build/artifact validation failure before replacement distinct from startup failure after replacement; verify an unrelated active extension remains usable in ordinary reload."
+      ],
+      "scope": "No automatic rollback or reversal of migrations/side effects; filesystem watchers/build invocation are next.",
+      "oldIds": [
+        10
+      ],
       "stories": [
         52,
         54,
@@ -319,23 +287,29 @@
         "G3",
         "G5"
       ],
-      "deliver": "Manual reload replaces one extension while Pane and an unrelated extension stay open, preserving saved data and reporting failed replacement startup.",
-      "criteria": [
-        "Replace actual guest code and assign generation ownership; demonstrate a changed guest result through the native UI without restarting Pane.",
-        "Clean up the old instance before starting the validated replacement and retain managed saved data; transient restoration occurs only when explicitly supported.",
-        "If replacement startup fails, report failure with Retry/diagnostics and managed cleanup, without restoring the old version automatically.",
-        "Keep build/artifact validation failure before replacement distinct from startup failure after replacement; verify an unrelated active extension remains usable in ordinary reload."
-      ],
-      "bounds": "No automatic rollback or reversal of migrations/side effects; filesystem watchers/build invocation are next.",
-      "file": "10-replace-a-running-extension-through-manual-reload.md"
+      "file": "07-reload-one-extension-without-restarting-pane.md",
+      "blockingReasons": {
+        "6": "supplies persistent enablement, saved-state ownership and the stop/re-enable lifecycle"
+      }
     },
     {
-      "n": 11,
-      "title": "Build and reload on save for all launch languages",
+      "key": "reload-rust",
+      "n": 8,
+      "title": "Reload a Rust extension after saving valid source",
       "deps": [
-        10
+        7
       ],
-      "type": "implementation",
+      "deliver": "A Rust author edits the sample, saves it, and sees the new behavior while Pane stays open.",
+      "criteria": [
+        "Connect the Rust sample's documented build command to a native file watcher and the existing replacement path; include source and reproduction instructions in the ticket's deliverable.",
+        "A build error shows diagnostics and keeps the working guest. A successful build replaces only that extension and changes the native result; a replacement startup error follows the existing Retry/no-rollback policy.",
+        "Save again during an in-progress build and verify an obsolete artifact cannot replace a newer successful build. Stop owned watcher/build work when development mode ends.",
+        "Demonstrate the same save/error/recovery flow on the three supported contributor baselines; local and published copies retain separate identities."
+      ],
+      "scope": "One build-on-save adapter for Rust, reusing the existing replacement behavior. No general build system or automatic development-copy swapping.",
+      "oldIds": [
+        11
+      ],
       "stories": [
         19,
         51,
@@ -349,24 +323,66 @@
         "G1",
         "G3"
       ],
-      "deliver": "Saving a JS, TS or Rust development extension rebuilds and reloads that extension, with build diagnostics shown in Pane.",
-      "criteria": [
-        "Connect a local development source to the language-appropriate build and the existing replacement path; developer tools may be prerequisites.",
-        "A failed build preserves the old working guest and reports useful diagnostics; a successful build visibly changes behavior.",
-        "Handle a newer save arriving during a build without installing an obsolete output over the latest source; document the minimal coalescing/ownership rule.",
-        "Do not swap or disable a published copy automatically, and apply the same observable lifecycle to JS, TS and Rust.",
-        "Demonstrate save/build/reload and build-error recovery on Windows, macOS and Linux, using native watchers/process invocation and the same author-facing workflow. Missing native evidence remains explicit."
-      ],
-      "bounds": "No production auto-updater or arbitrary build-system compatibility promise.",
-      "file": "11-build-and-reload-on-save-for-all-launch-languages.md"
+      "file": "08-reload-a-rust-extension-after-saving-valid-source.md",
+      "blockingReasons": {
+        "7": "supplies the actual guest replacement and build-failure/startup-failure distinction"
+      }
     },
     {
-      "n": 12,
-      "title": "Cancel in-flight work during reload and disable",
+      "key": "reload-js",
+      "n": 9,
+      "title": "Reload JS and TS extensions after saving valid source",
       "deps": [
-        10
+        7
       ],
-      "type": "implementation",
+      "deliver": "A JS/TS author edits the sample, saves it, and sees the new behavior while Pane stays open.",
+      "criteria": [
+        "Connect the JS/TS sample's documented build command to a native file watcher and the existing replacement path; include source and reproduction instructions in the ticket's deliverable.",
+        "A build error shows diagnostics and keeps the working guest. A successful build replaces only that extension and changes the native result; a replacement startup error follows the existing Retry/no-rollback policy.",
+        "Save again during an in-progress build and verify an obsolete artifact cannot replace a newer successful build. Stop owned watcher/build work when development mode ends.",
+        "Demonstrate the same save/error/recovery flow on the three supported contributor baselines; local and published copies retain separate identities."
+      ],
+      "scope": "One build-on-save adapter for JS/TS, reusing the existing replacement behavior. No general build system or automatic development-copy swapping.",
+      "oldIds": [
+        11
+      ],
+      "stories": [
+        19,
+        51,
+        53
+      ],
+      "tests": [
+        "T07",
+        "T08"
+      ],
+      "gates": [
+        "G1",
+        "G3"
+      ],
+      "file": "09-reload-js-and-ts-extensions-after-saving-valid-source.md",
+      "blockingReasons": {
+        "7": "supplies the actual guest replacement and build-failure/startup-failure distinction"
+      }
+    },
+    {
+      "key": "cancel",
+      "n": 10,
+      "title": "Discard late guest results after reload or disable",
+      "deps": [
+        7
+      ],
+      "deliver": "Reloading or disabling an extension with pending async work stops managed resources and prevents old replies from changing the current UI.",
+      "criteria": [
+        "Define and exercise cancellation and completion ownership for pending guest calls, streams and futures across guest generations.",
+        "Delay a result until after replacement/disable and prove it cannot mutate the current view or start new host operations under the stopped generation.",
+        "Exercise overlapping calls, cancellation/error completion and repeated cycles from both language families, checking observable resource release.",
+        "Document bounded cleanup behavior and unresolved runtime limits rather than treating the prior 20 sequential calls as concurrency proof.",
+        "Run shared lifecycle regression checks on the native contributor OS matrix; platform-specific cleanup adapters must not leak Windows assumptions into the common lifecycle contract."
+      ],
+      "scope": "Native process helpers and fatal shared-runtime termination are separate follow-ups.",
+      "oldIds": [
+        12
+      ],
       "stories": [
         35,
         54,
@@ -381,24 +397,30 @@
         "G2",
         "G3"
       ],
-      "deliver": "Reloading or disabling an extension with pending async work stops managed resources and prevents old replies from changing the current UI.",
-      "criteria": [
-        "Define and exercise cancellation and completion ownership for pending guest calls, streams and futures across guest generations.",
-        "Delay a result until after replacement/disable and prove it cannot mutate the current view or start new host operations under the stopped generation.",
-        "Exercise overlapping calls, cancellation/error completion and repeated cycles from both language families, checking observable resource release.",
-        "Document bounded cleanup behavior and unresolved runtime limits rather than treating the prior 20 sequential calls as concurrency proof.",
-        "Run shared lifecycle regression checks on the native contributor OS matrix; platform-specific cleanup adapters must not leak Windows assumptions into the common lifecycle contract."
-      ],
-      "bounds": "Native process helpers and fatal shared-runtime termination are separate follow-ups.",
-      "file": "12-cancel-in-flight-work-during-reload-and-disable.md"
+      "file": "10-discard-late-guest-results-after-reload-or-disable.md",
+      "blockingReasons": {
+        "7": "supplies the actual guest replacement and build-failure/startup-failure distinction"
+      }
     },
     {
-      "n": 13,
-      "title": "Invoke and clean up a prebuilt native helper",
+      "key": "helper",
+      "n": 11,
+      "title": "Run and stop a packaged native helper",
       "deps": [
-        12
+        10
       ],
-      "type": "implementation",
+      "deliver": "A component command invokes an OS-matched prebuilt helper, shows its result, and stops the managed process on cancel, disable or reload.",
+      "criteria": [
+        "Add the narrow host API and package declaration needed to select and launch a prebuilt helper with managed input/output, completion and errors.",
+        "Provide and run a prebuilt helper fixture for each supported contributor OS/architecture baseline; no compilation occurs on the end-user path, and absent/wrong-target artifacts are explained.",
+        "Cancel/disable/reload while the helper runs and verify cleanup of supported managed processes/handles, keeping saved data intact.",
+        "Keep the extension entry point WASI3 and document detached-descendant limits; do not promise arbitrary process containment.",
+        "Include one helper-backed command and its author/package instructions; check the host's public result/error and cleanup behavior, with real helper processes on each supported baseline."
+      ],
+      "scope": "One echo or bounded file-processing helper. Supported OS/architecture artifacts are explicit; no arbitrary library compatibility claim.",
+      "oldIds": [
+        13
+      ],
       "stories": [
         40,
         41,
@@ -413,23 +435,29 @@
         "G2",
         "G3"
       ],
-      "deliver": "A component command invokes an OS-matched prebuilt helper, shows its result, and stops the managed process on cancel, disable or reload.",
-      "criteria": [
-        "Add the narrow host API and package declaration needed to select and launch a prebuilt helper with managed input/output, completion and errors.",
-        "Provide and run a prebuilt helper fixture for each supported contributor OS/architecture baseline; no compilation occurs on the end-user path, and absent/wrong-target artifacts are explained.",
-        "Cancel/disable/reload while the helper runs and verify cleanup of supported managed processes/handles, keeping saved data intact.",
-        "Keep the extension entry point WASI3 and document detached-descendant limits; do not promise arbitrary process containment."
-      ],
-      "bounds": "One representative native-library/OS integration path, not every external program or platform artifact.",
-      "file": "13-invoke-and-clean-up-a-prebuilt-native-helper.md"
+      "file": "11-run-and-stop-a-packaged-native-helper.md",
+      "blockingReasons": {
+        "10": "supplies pending-work cancellation and ownership of late generation results"
+      }
     },
     {
-      "n": 14,
-      "title": "Pause an identified broken extension through the UI",
+      "key": "pause",
+      "n": 12,
+      "title": "Pause an attributable broken extension and offer Retry",
       "deps": [
-        12
+        10
       ],
-      "type": "implementation",
+      "deliver": "Pane skips an identified failing extension, shows a toast and persistent status, and allows Retry without requiring a CLI.",
+      "criteria": [
+        "Distinguish expected operation errors from attributable fatal startup/repeated execution failures; healthy operations do not indiscriminately disable the extension.",
+        "Define a small failure-paused state separate from user-disabled state, with recorded generation/version, bounded repeated activation and persistence across restart.",
+        "Show a useful toast plus persistent Retry/Details controls; preserve saved data and keep core settings/management usable.",
+        "Test attributable failure, normal operation error, restart and retry/reload recovery; document thresholds and reset behavior as explicit choices."
+      ],
+      "scope": "This does not identify the culprit in an unattributed shared-process crash; no dependency-uninstall cascade on automatic failure.",
+      "oldIds": [
+        14
+      ],
       "stories": [
         77,
         78,
@@ -442,24 +470,30 @@
       "gates": [
         "G3"
       ],
-      "deliver": "Pane skips an identified failing extension, shows a toast and persistent status, and allows Retry without requiring a CLI.",
-      "criteria": [
-        "Distinguish expected operation errors from attributable fatal startup/repeated execution failures; healthy operations do not indiscriminately disable the extension.",
-        "Define a small failure-paused state separate from user-disabled state, with recorded generation/version, bounded repeated activation and persistence across restart.",
-        "Show a useful toast plus persistent Retry/Details controls; preserve saved data and keep core settings/management usable.",
-        "Test attributable failure, normal operation error, restart and retry/reload recovery; document thresholds and reset behavior as explicit choices."
-      ],
-      "bounds": "This does not identify the culprit in an unattributed shared-process crash; no dependency-uninstall cascade on automatic failure.",
-      "file": "14-pause-an-identified-broken-extension-through-the-ui.md"
+      "file": "12-pause-an-attributable-broken-extension-and-offer-retry.md",
+      "blockingReasons": {
+        "10": "supplies pending-work cancellation and ownership of late generation results"
+      }
     },
     {
-      "n": 15,
-      "title": "Recover when the shared runtime crashes or hangs",
+      "key": "crash",
+      "n": 13,
+      "title": "Keep recovery controls usable after a runtime crash",
       "deps": [
-        13,
-        14
+        11,
+        12
       ],
-      "type": "implementation",
+      "deliver": "A user sees that the extension runtime stopped, can open management and explicitly retry without replaying an action.",
+      "criteria": [
+        "Kill the selected runtime process while two fixture extensions are active; keep core navigation/settings and a recovery explanation usable.",
+        "When attribution is unavailable, report runtime failure without naming the last-active extension as its cause. Suppress repeated automatic restarts and retain saved data.",
+        "Simulate losing a response after a completed side effect; restarting execution must not automatically run the action again.",
+        "Verify managed helper cleanup, explicit retry and diagnostics through the public host boundary and a native UI smoke."
+      ],
+      "scope": "A terminated runtime and response-loss recovery. Non-cooperating guest hangs are the next separate slice.",
+      "oldIds": [
+        15
+      ],
       "stories": [
         77,
         78,
@@ -472,23 +506,66 @@
       "gates": [
         "G3"
       ],
-      "deliver": "The native core stays recoverable after the runtime stops responding, with honest runtime-level diagnostics and no blind replay of user actions.",
-      "criteria": [
-        "Validate or revise the runtime supervision/process boundary using a killed process and a non-cooperating guest while several extensions are active.",
-        "Keep core UI recovery accessible, suppress restart loops, and expose a bounded recovery action when the culprit cannot be attributed.",
-        "Do not blame the last-active extension solely from a startup marker or activity record; distinguish interrupted startup from proven extension failure.",
-        "Simulate response loss after a side effect and prove recovery does not replay it automatically; verify managed helper cleanup at this boundary."
-      ],
-      "bounds": "No security guarantee against arbitrary trusted external code, and no claim that recovery fixes a crash in Pane's own core.",
-      "file": "15-recover-when-the-shared-runtime-crashes-or-hangs.md"
+      "file": "13-keep-recovery-controls-usable-after-a-runtime-crash.md",
+      "blockingReasons": {
+        "11": "supplies real managed helper artifacts and cleanup behavior used by this flow",
+        "12": "supplies attributable failure status and Retry/repeated-failure policy"
+      }
     },
     {
-      "n": 16,
-      "title": "Explain platform-limited extensions and actions",
+      "key": "hang",
+      "n": 14,
+      "title": "Recover through the UI when a guest stops responding",
       "deps": [
-        8
+        13
       ],
-      "type": "implementation",
+      "deliver": "A user can recover from a non-cooperating guest without closing Pane or losing saved data.",
+      "criteria": [
+        "Run a bounded fixture that intentionally fails to cooperate with cancellation while another extension is active; observe UI responsiveness.",
+        "Apply a documented timeout/interruption policy, release supported managed work, and present the existing recovery controls. State effects on other active guests honestly.",
+        "Keep expected slow-operation errors separate from known fatal failure; do not invent culprit attribution when only a shared-runtime hang is known.",
+        "Verify that recovery neither replays external side effects nor restores an obsolete generation; retain native diagnostics and resource-release evidence."
+      ],
+      "scope": "One hang/interruption path using the existing supervision contract. Any runtime inability to support it is a concrete blocker, not an unbounded backend rewrite.",
+      "oldIds": [
+        15
+      ],
+      "stories": [
+        77,
+        78,
+        80
+      ],
+      "tests": [
+        "T18",
+        "T19"
+      ],
+      "gates": [
+        "G3"
+      ],
+      "file": "14-recover-through-the-ui-when-a-guest-stops-responding.md",
+      "blockingReasons": {
+        "13": "supplies the recoverable execution boundary and no-replay behavior used for hangs"
+      }
+    },
+    {
+      "key": "availability",
+      "n": 15,
+      "title": "Explain an unavailable extension action without hiding working actions",
+      "deps": [
+        5
+      ],
+      "deliver": "Pane displays supported-OS information and explains unavailable actions while leaving supported actions usable.",
+      "criteria": [
+        "Add simple supported-OS/artifact metadata and an action availability result with a user-facing reason, without a general rule language.",
+        "Demonstrate an extension with working and unavailable actions and a package with no compatible artifact.",
+        "Keep installation/execution compatibility behavior consistent with the manifest and avoid silently successful no-op actions.",
+        "Check actual platform results on the declared contributor baselines; package target declarations are not evidence of native support.",
+        "Check the supported and unavailable action paths through the public host interface and a native UI smoke."
+      ],
+      "scope": "No automatic porting, platform spoofing as proof, or full release support matrix yet.",
+      "oldIds": [
+        16
+      ],
       "stories": [
         3,
         18,
@@ -503,23 +580,31 @@
         "G4",
         "G7"
       ],
-      "deliver": "Pane displays supported-OS information and explains unavailable actions while leaving supported actions usable.",
-      "criteria": [
-        "Add simple supported-OS/artifact metadata and an action availability result with a user-facing reason, without a general rule language.",
-        "Demonstrate an extension with working and unavailable actions and a package with no compatible artifact.",
-        "Keep installation/execution compatibility behavior consistent with the manifest and avoid silently successful no-op actions.",
-        "Record Windows as the tested platform and keep macOS/Linux target declarations distinct from verified support."
-      ],
-      "bounds": "No automatic porting, platform spoofing as proof, or full release support matrix yet.",
-      "file": "16-explain-platform-limited-extensions-and-actions.md"
+      "file": "15-explain-an-unavailable-extension-action-without-hiding-working-actions.md",
+      "blockingReasons": {
+        "5": "supplies installed package identity, compatible artifacts and a real invocable guest"
+      }
     },
     {
-      "n": 17,
-      "title": "Submit a native form from JS/TS and Rust",
+      "key": "form",
+      "n": 16,
+      "title": "Submit and validate a native form from an extension",
       "deps": [
-        7
+        3,
+        4
       ],
-      "type": "implementation",
+      "deliver": "A native extension form accepts input, validates it, and returns a visible guest result through the same contract in JS/TS and Rust.",
+      "criteria": [
+        "Add only the standard controls, focus and event semantics needed for a representative form and validation/error flow.",
+        "Verify keyboard traversal, text editing and IME on the supported Windows/macOS/Linux contributor baselines through native interaction, with equivalent guest behavior from both language families.",
+        "Establish and check concrete accessible labeling/focus behavior for the controls used; record unsupported accessibility behavior instead of claiming parity.",
+        "Document the extension contract and meaningful observable checks, avoiding tests coupled to private GPUI node layouts.",
+        "Include the runnable form example and author instructions with this feature, rather than deferring them to an onboarding ticket."
+      ],
+      "scope": "One text field, one selection and one submit/error flow through JS/TS and Rust. Include the runnable author example; no complete widget library.",
+      "oldIds": [
+        17
+      ],
       "stories": [
         36,
         38
@@ -530,23 +615,30 @@
       "gates": [
         "G2"
       ],
-      "deliver": "A native extension form accepts input, validates it, and returns a visible guest result through the same contract in JS/TS and Rust.",
-      "criteria": [
-        "Add only the standard controls, focus and event semantics needed for a representative form and validation/error flow.",
-        "Verify keyboard traversal, text editing and IME on the supported Windows/macOS/Linux contributor baselines through native interaction, with equivalent guest behavior from both language families.",
-        "Establish and check concrete accessible labeling/focus behavior for the controls used; record unsupported accessibility behavior instead of claiming parity.",
-        "Document the extension contract and meaningful observable checks, avoiding tests coupled to private GPUI node layouts."
-      ],
-      "bounds": "A representative standard form, not an exhaustive widget toolkit.",
-      "file": "17-submit-a-native-form-from-js-ts-and-rust.md"
+      "file": "16-submit-and-validate-a-native-form-from-an-extension.md",
+      "blockingReasons": {
+        "3": "establishes the early macOS contributor build/run baseline required before shared feature expansion",
+        "4": "establishes the early Linux contributor build/run baseline required before shared feature expansion"
+      }
     },
     {
-      "n": 18,
-      "title": "Drive a custom interactive view from an extension",
+      "key": "custom",
+      "n": 17,
+      "title": "Choose a color in an extension-owned interactive view",
       "deps": [
-        17
+        16
       ],
-      "type": "implementation",
+      "deliver": "A user adjusts a small color picker, the guest receives the change, and the native view displays the selected value.",
+      "criteria": [
+        "Implement the minimal shared drawing/layout and pointer/keyboard event contract needed for this color picker; keep raw renderer/engine objects out of the SDK.",
+        "Provide equivalent guest examples and public behavior checks for JS/TS and Rust; show focus and an accessible representation of the chosen value.",
+        "Close or replace the view during interaction and verify that resources and events belong only to the current view.",
+        "Demonstrate native interaction on the supported contributor baselines and document the example's supported contract."
+      ],
+      "scope": "One custom control, with its author example. No graphing framework or general-purpose drawing editor.",
+      "oldIds": [
+        18
+      ],
       "stories": [
         37,
         38
@@ -557,24 +649,30 @@
       "gates": [
         "G2"
       ],
-      "deliver": "A JS/TS and Rust extension each drive one custom interactive visualization or control with real input and guest-updated rendering.",
-      "criteria": [
-        "Choose one bounded example such as a color picker or small graph and define the minimal layout/drawing/event behavior it requires.",
-        "Complete native input-to-guest-to-view round trips with usable focus and the accessible representation appropriate to that control.",
-        "Define resource/event ownership for view replacement and closure; avoid exposing raw GPUI objects or engine internals as the SDK.",
-        "Document the supported contract and limitations without turning the probe's JSON format into the whole public UI API by accident.",
-        "Validate the example's rendering and interaction on the early supported native OS baselines; shared custom-view changes must not silently regress macOS or Linux."
-      ],
-      "bounds": "No arbitrary GPUI API parity, web browser embedding or complete drawing framework.",
-      "file": "18-drive-a-custom-interactive-view-from-an-extension.md"
+      "file": "17-choose-a-color-in-an-extension-owned-interactive-view.md",
+      "blockingReasons": {
+        "16": "supplies native input, submission, focus and guest event handling"
+      }
     },
     {
-      "n": 19,
-      "title": "Call explicit operations across extension languages",
+      "key": "call",
+      "n": 18,
+      "title": "Call an explicit operation in another extension",
       "deps": [
-        9
+        6
       ],
-      "type": "implementation",
+      "deliver": "An installed JS/TS command calls a Rust operation and a Rust command calls JS/TS, displaying structured results and meaningful target errors.",
+      "criteria": [
+        "Define explicit operation publication, source/resource addressing and the minimum input/result/error schema/version contract for the examples.",
+        "Route calls through the host and lazily activate a valid enabled target when needed; a UI-only command is not implicitly a headless API.",
+        "Exercise missing, disabled and incompatible targets without silent re-enablement; distinguish operation errors from lifecycle failure.",
+        "Define bounded behavior for recursive/cyclic calls and cancellation ownership before claiming general composition.",
+        "Include a pair of minimal cross-language author examples and assert results/errors through the public host interface."
+      ],
+      "scope": "One named operation in two fixtures. Bounded recursion/cancellation behavior is part of this contract; no general workflow engine.",
+      "oldIds": [
+        19
+      ],
       "stories": [
         46,
         47,
@@ -588,23 +686,29 @@
         "G2",
         "G4"
       ],
-      "deliver": "An installed JS/TS command calls a Rust operation and a Rust command calls JS/TS, displaying structured results and meaningful target errors.",
-      "criteria": [
-        "Define explicit operation publication, source/resource addressing and the minimum input/result/error schema/version contract for the examples.",
-        "Route calls through the host and lazily activate a valid enabled target when needed; a UI-only command is not implicitly a headless API.",
-        "Exercise missing, disabled and incompatible targets without silent re-enablement; distinguish operation errors from lifecycle failure.",
-        "Define bounded behavior for recursive/cyclic calls and cancellation ownership before claiming general composition."
-      ],
-      "bounds": "No workflow editor or unrestricted calls to arbitrary UI commands.",
-      "file": "19-call-explicit-operations-across-extension-languages.md"
+      "file": "18-call-an-explicit-operation-in-another-extension.md",
+      "blockingReasons": {
+        "6": "supplies persistent enablement, saved-state ownership and the stop/re-enable lifecycle"
+      }
     },
     {
-      "n": 20,
-      "title": "Discover and invoke commands through root search",
+      "key": "root",
+      "n": 19,
+      "title": "Find and invoke installed commands through root search",
       "deps": [
-        9
+        6
       ],
-      "type": "implementation",
+      "deliver": "Root search finds installed command metadata and activates only the selected enabled extension.",
+      "criteria": [
+        "Build command discovery, basic matching/ranking, selection and invocation through the real host/UI path using installed package metadata.",
+        "Inspect many installed fixtures without starting all guests; explicitly enabled background behavior remains distinct.",
+        "Removing or disabling a contribution updates search coherently; distinguish a missing result from a failed action.",
+        "Keep provider-specific functionality outside the core and document the minimum search-provider contract needed for default features."
+      ],
+      "scope": "No automatic global querying of online integrations or final relevance-tuning project.",
+      "oldIds": [
+        20
+      ],
       "stories": [
         9,
         14
@@ -618,27 +722,35 @@
         "G2",
         "G4"
       ],
-      "deliver": "Root search finds installed command metadata and activates only the selected enabled extension.",
-      "criteria": [
-        "Build command discovery, basic matching/ranking, selection and invocation through the real host/UI path using installed package metadata.",
-        "Inspect many installed fixtures without starting all guests; explicitly enabled background behavior remains distinct.",
-        "Removing or disabling a contribution updates search coherently; distinguish a missing result from a failed action.",
-        "Keep provider-specific functionality outside the core and document the minimum search-provider contract needed for default features."
-      ],
-      "bounds": "No automatic global querying of online integrations or final relevance-tuning project.",
-      "file": "20-discover-and-invoke-commands-through-root-search.md"
+      "file": "19-find-and-invoke-installed-commands-through-root-search.md",
+      "blockingReasons": {
+        "6": "supplies persistent enablement, saved-state ownership and the stop/re-enable lifecycle"
+      }
     },
     {
-      "n": 21,
-      "title": "Launch Windows applications from a default extension",
+      "key": "apps-win",
+      "n": 20,
+      "title": "Launch a Windows application from root search",
       "deps": [
-        16,
-        20
+        15,
+        19
       ],
-      "type": "implementation",
+      "deliver": "A user finds an installed Windows application in Pane, launches it, and can disable that default extension.",
+      "criteria": [
+        "Implement the minimum Windows discovery/launch adapter and default extension using the root provider contract; state the supported application locations and desktop baseline.",
+        "Select a real discovered application in the native UI and observe its launch; expected unavailable/permission errors remain visible.",
+        "Disable the extension and confirm its results and managed observation disappear without affecting other providers.",
+        "Use deterministic discovery fixtures plus a real native launch. Share provider contracts with the other OS adapters; this slice does not require another OS's app launcher to finish."
+      ],
+      "scope": "One platform's application discovery and launch. File search and quicklinks are separate features.",
+      "oldIds": [
+        21
+      ],
       "stories": [
+        3,
         5,
-        12
+        12,
+        44
       ],
       "tests": [
         "T01",
@@ -649,23 +761,111 @@
         "G2",
         "G7"
       ],
-      "deliver": "Pane finds installed Windows applications and launches a selected result through an independently disableable default extension.",
-      "criteria": [
-        "Choose and document a bounded initial Windows application-discovery scope, expose real results and launch the selected target.",
-        "Keep app discovery/launch functionality in the default extension plus necessary host OS integration, not a mandatory core feature.",
-        "Show useful launch/unavailable errors and verify disabling the extension removes its results and managed observation.",
-        "Test a real Windows launch and deterministic discovery fixtures; do not claim macOS/Linux support from this slice."
-      ],
-      "bounds": "No all-platform app discovery or exhaustive support for every Windows installation mechanism.",
-      "file": "21-launch-windows-applications-from-a-default-extension.md"
+      "file": "20-launch-a-windows-application-from-root-search.md",
+      "blockingReasons": {
+        "15": "supplies supported-target declarations and user-visible unavailable-action reasons",
+        "19": "supplies root provider results, command selection and invocation"
+      }
     },
     {
-      "n": 22,
-      "title": "Show calculator answers as an extension feature",
+      "key": "apps-mac",
+      "n": 21,
+      "title": "Launch a macOS application from root search",
       "deps": [
-        20
+        15,
+        19
       ],
-      "type": "implementation",
+      "deliver": "A user finds an installed macOS application in Pane, launches it, and can disable that default extension.",
+      "criteria": [
+        "Implement the minimum macOS discovery/launch adapter and default extension using the root provider contract; state the supported application locations and desktop baseline.",
+        "Select a real discovered application in the native UI and observe its launch; expected unavailable/permission errors remain visible.",
+        "Disable the extension and confirm its results and managed observation disappear without affecting other providers.",
+        "Use deterministic discovery fixtures plus a real native launch. Share provider contracts with the other OS adapters; this slice does not require another OS's app launcher to finish."
+      ],
+      "scope": "One platform's application discovery and launch. File search and quicklinks are separate features.",
+      "oldIds": [
+        40
+      ],
+      "stories": [
+        3,
+        5,
+        12,
+        44
+      ],
+      "tests": [
+        "T01",
+        "T03",
+        "T22"
+      ],
+      "gates": [
+        "G2",
+        "G7"
+      ],
+      "file": "21-launch-a-macos-application-from-root-search.md",
+      "blockingReasons": {
+        "15": "supplies supported-target declarations and user-visible unavailable-action reasons",
+        "19": "supplies root provider results, command selection and invocation"
+      }
+    },
+    {
+      "key": "apps-linux",
+      "n": 22,
+      "title": "Launch a Linux application from root search",
+      "deps": [
+        15,
+        19
+      ],
+      "deliver": "A user finds an installed Linux application in Pane, launches it, and can disable that default extension.",
+      "criteria": [
+        "Implement the minimum Linux discovery/launch adapter and default extension using the root provider contract; state the supported application locations and desktop baseline.",
+        "Select a real discovered application in the native UI and observe its launch; expected unavailable/permission errors remain visible.",
+        "Disable the extension and confirm its results and managed observation disappear without affecting other providers.",
+        "Use deterministic discovery fixtures plus a real native launch. Share provider contracts with the other OS adapters; this slice does not require another OS's app launcher to finish."
+      ],
+      "scope": "One platform's application discovery and launch. File search and quicklinks are separate features.",
+      "oldIds": [
+        42
+      ],
+      "stories": [
+        3,
+        5,
+        12,
+        44
+      ],
+      "tests": [
+        "T01",
+        "T03",
+        "T22"
+      ],
+      "gates": [
+        "G2",
+        "G7"
+      ],
+      "file": "22-launch-a-linux-application-from-root-search.md",
+      "blockingReasons": {
+        "15": "supplies supported-target declarations and user-visible unavailable-action reasons",
+        "19": "supplies root provider results, command selection and invocation"
+      }
+    },
+    {
+      "key": "calc",
+      "n": 23,
+      "title": "Show a calculator result in root search",
+      "deps": [
+        19
+      ],
+      "deliver": "Typing a supported expression into root search returns a calculator result from a disableable default extension.",
+      "criteria": [
+        "Define a small documented expression scope and calculate through the guest/provider path rather than embedding the feature in the permanent core.",
+        "Show valid, invalid and incomplete expression behavior without turning ordinary input errors into extension failure.",
+        "Support the normal selection/action flow for results and preserve responsiveness while typing.",
+        "Verify that disabling the feature stops its contributions and leaves other root-search providers working.",
+        "Check the real guest/provider path and native result action on all three supported contributor baselines."
+      ],
+      "scope": "No symbolic algebra suite or arbitrary code evaluation feature.",
+      "oldIds": [
+        22
+      ],
       "stories": [
         6,
         12
@@ -675,58 +875,85 @@
         "T03"
       ],
       "gates": [],
-      "deliver": "Typing a supported expression into root search returns a calculator result from a disableable default extension.",
-      "criteria": [
-        "Define a small documented expression scope and calculate through the guest/provider path rather than embedding the feature in the permanent core.",
-        "Show valid, invalid and incomplete expression behavior without turning ordinary input errors into extension failure.",
-        "Support the normal selection/action flow for results and preserve responsiveness while typing.",
-        "Verify that disabling the feature stops its contributions and leaves other root-search providers working."
-      ],
-      "bounds": "No symbolic algebra suite or arbitrary code evaluation feature.",
-      "file": "22-show-calculator-answers-as-an-extension-feature.md"
+      "file": "23-show-a-calculator-result-in-root-search.md",
+      "blockingReasons": {
+        "19": "supplies root provider results, command selection and invocation"
+      }
     },
     {
-      "n": 23,
-      "title": "Create and invoke persistent quicklinks",
+      "key": "links",
+      "n": 24,
+      "title": "Create and invoke a persistent URL quicklink",
       "deps": [
-        17,
-        20
+        16,
+        19
       ],
-      "type": "implementation",
+      "deliver": "A user saves a URL quicklink, finds it in root search after restarting Pane, and opens it in their default browser.",
+      "criteria": [
+        "Provide create/edit/remove for one documented URL-target format through the default extension's native form; validate invalid inputs without treating them as fatal extension errors.",
+        "Persist entries under extension ownership, retain them on disable, hide disabled contributions and restore retained entries when re-enabled.",
+        "Open the selected URL through the platform's normal handler and explain missing-handler or denied-action errors.",
+        "Test form-to-storage-to-search-to-open behavior, restart and disable on all supported contributor baselines."
+      ],
+      "scope": "A URL quicklink is the first bounded target format. Additional target types require their own slices; no separate per-OS quicklink feature bundle.",
+      "oldIds": [
+        23,
+        40,
+        42
+      ],
       "stories": [
+        3,
         7,
-        12
+        12,
+        59
       ],
       "tests": [
         "T01",
         "T03",
-        "T10"
+        "T10",
+        "T22"
       ],
       "gates": [
-        "G5"
+        "G2",
+        "G5",
+        "G7"
       ],
-      "deliver": "A user creates a quicklink in a native form, finds it in root search and invokes it after restarting Pane.",
-      "criteria": [
-        "Implement the narrow create/edit/remove and invocation flow through a default extension, documenting supported target types.",
-        "Persist quicklink data under extension ownership and report invalid/unavailable targets clearly.",
-        "Disabling hides contributions without deleting saved quicklinks; re-enabling/restoring Pane makes retained entries available.",
-        "Exercise form submission, persisted restart, search and a real supported Windows target action."
-      ],
-      "bounds": "No browser sync, cloud accounts or workflow-builder scope.",
-      "file": "23-create-and-invoke-persistent-quicklinks.md"
+      "file": "24-create-and-invoke-a-persistent-url-quicklink.md",
+      "blockingReasons": {
+        "16": "supplies native input, submission, focus and guest event handling",
+        "19": "supplies root provider results, command selection and invocation"
+      }
     },
     {
-      "n": 24,
-      "title": "Search and open files through a default extension",
+      "key": "files",
+      "n": 25,
+      "title": "Find and open a file within a selected folder",
       "deps": [
-        12,
+        10,
+        15,
         16,
-        20
+        19
       ],
-      "type": "implementation",
+      "deliver": "A user chooses a folder, searches its supported files through a default extension, and opens a result.",
+      "criteria": [
+        "Use the existing native form to configure the folder path. State and implement a bounded initial folder traversal/filtering policy. Keep file results in the independently disableable extension and expose configuration and access errors in the UI.",
+        "Cancel a pending search when the query changes, the view closes or the extension is disabled; delayed results must not replace current results.",
+        "Open a selected result through the native handler on the supported Windows/macOS/Linux baselines, including spaces and Unicode in a fixture path.",
+        "Use controlled folder fixtures for result/cancellation checks and a real native open per baseline. Preserve source/user documents."
+      ],
+      "scope": "One configured folder and a documented scan policy. No whole-disk indexer, additional search scopes or platform feature bundle.",
+      "oldIds": [
+        24,
+        40,
+        42
+      ],
       "stories": [
+        3,
         8,
-        12
+        12,
+        40,
+        44,
+        57
       ],
       "tests": [
         "T01",
@@ -738,27 +965,36 @@
         "G3",
         "G7"
       ],
-      "deliver": "Pane searches a documented local file scope and opens a selected Windows result, with cancellation as the query changes.",
-      "criteria": [
-        "Choose and document the initial searchable scope and observation/indexing policy; show real file results through the provider contract.",
-        "Query changes, view closure and disable cancel managed work so late results cannot replace a newer query.",
-        "Open a selected file through platform integration and surface access/unavailable errors honestly.",
-        "Verify disabled behavior and bounded fixtures plus a real Windows open; keep file search independently disableable."
-      ],
-      "bounds": "No whole-disk indexing guarantee, content-search engine or arbitrary network-filesystem coverage.",
-      "file": "24-search-and-open-files-through-a-default-extension.md"
+      "file": "25-find-and-open-a-file-within-a-selected-folder.md",
+      "blockingReasons": {
+        "10": "supplies pending-work cancellation and ownership of late generation results",
+        "15": "supplies supported-target declarations and user-visible unavailable-action reasons",
+        "16": "supplies the existing native form used to configure the searched folder",
+        "19": "supplies root provider results, command selection and invocation"
+      }
     },
     {
-      "n": 25,
-      "title": "Search inside an online command with quick access",
+      "key": "online",
+      "n": 26,
+      "title": "Search an online service inside its command",
       "deps": [
-        12,
-        20
-      ],
-      "type": "implementation",
-      "stories": [
         10,
+        19
+      ],
+      "deliver": "Opening an online extension command and entering a query displays service results without querying it during ordinary root search.",
+      "criteria": [
+        "Run a real guest against a controlled HTTP fixture and show its returned results in the native view; document the supported networking/library path.",
+        "Assert no service-content request is made merely by typing in root search.",
+        "Cancel an obsolete query, reject its late response and display expected offline/service errors without pausing the entire extension.",
+        "Include the sample source and public behavior checks for networking and view updates."
+      ],
+      "scope": "One fixture service and its command. Aliases, fallback selection and global hotkeys follow separately.",
+      "oldIds": [
+        25
+      ],
+      "stories": [
         11,
+        39,
         40
       ],
       "tests": [
@@ -766,26 +1002,187 @@
         "T09"
       ],
       "gates": [
-        "G2"
+        "G2",
+        "G3"
       ],
-      "deliver": "A user reaches an online-search command through an alias, hotkey or fallback, and receives cancellable results inside that command.",
-      "criteria": [
-        "Use a controlled HTTP/service fixture through the real guest host-capability path; document supported networking/library behavior rather than assuming Node APIs.",
-        "Keep service-content requests inside the selected command; root typing does not automatically query every integration.",
-        "Provide the minimal alias/hotkey/fallback configuration and Windows dispatch needed to demonstrate each access route, with conflicts/unavailability explained.",
-        "Handle pending-query cancellation and expected service/network errors without automatically pausing the whole extension."
-      ],
-      "bounds": "No commercial service account dependency, all-platform global-shortcut claim or automatic global online search.",
-      "file": "25-search-inside-an-online-command-with-quick-access.md"
+      "file": "26-search-an-online-service-inside-its-command.md",
+      "blockingReasons": {
+        "10": "supplies pending-work cancellation and ownership of late generation results",
+        "19": "supplies root provider results, command selection and invocation"
+      }
     },
     {
-      "n": 26,
-      "title": "Capture clipboard history only when enabled",
+      "key": "alias",
+      "n": 27,
+      "title": "Invoke a command through an alias or explicit fallback",
       "deps": [
-        9,
-        16
+        26
       ],
-      "type": "implementation",
+      "deliver": "A user configures an alias or fallback for an installed command and invokes it from root search.",
+      "criteria": [
+        "Persist a minimal alias and fallback setting under command/source identity; show conflicts or unavailable targets in configuration.",
+        "Demonstrate both alias matching and explicit fallback selection, forwarding the query to the command only after invocation.",
+        "Disabling the target removes usable bindings without silently re-enabling it; unrelated sources with the same title remain distinct.",
+        "Verify configuration-to-invocation and disabled/missing-target cases through the host/UI path."
+      ],
+      "scope": "Root-search routing only; global OS shortcut registration is separate.",
+      "oldIds": [
+        25
+      ],
+      "stories": [
+        10,
+        11
+      ],
+      "tests": [
+        "T03"
+      ],
+      "gates": [
+        "G2"
+      ],
+      "file": "27-invoke-a-command-through-an-alias-or-explicit-fallback.md",
+      "blockingReasons": {
+        "26": "supplies a real query-taking command for alias and fallback invocation"
+      }
+    },
+    {
+      "key": "hotkey-win",
+      "n": 28,
+      "title": "Open an extension command with a global hotkey on Windows",
+      "deps": [
+        19,
+        15
+      ],
+      "deliver": "A user assigns a supported Windows shortcut and opens the selected command while another application has focus.",
+      "criteria": [
+        "Register and dispatch one configurable shortcut through the Windows integration on the stated baseline, then open the real guest command in Pane.",
+        "Explain reserved, conflicting, denied or unavailable shortcuts in the UI; preserve other extension actions.",
+        "Disable the extension or change its shortcut and confirm the old registration is released; retain the chosen setting across restart.",
+        "Verify the focus transition and registration cleanup natively, including the platform's permission behavior."
+      ],
+      "scope": "One global command shortcut. No clipboard implementation or general keyboard remapper.",
+      "oldIds": [
+        25
+      ],
+      "stories": [
+        3,
+        10,
+        44,
+        57
+      ],
+      "tests": [
+        "T03",
+        "T09",
+        "T22"
+      ],
+      "gates": [
+        "G2",
+        "G7"
+      ],
+      "file": "28-open-an-extension-command-with-a-global-hotkey-on-windows.md",
+      "blockingReasons": {
+        "15": "supplies supported-target declarations and user-visible unavailable-action reasons",
+        "19": "supplies root provider results, command selection and invocation"
+      }
+    },
+    {
+      "key": "hotkey-mac",
+      "n": 29,
+      "title": "Open an extension command with a global hotkey on macOS",
+      "deps": [
+        19,
+        15
+      ],
+      "deliver": "A user assigns a supported macOS shortcut and opens the selected command while another application has focus.",
+      "criteria": [
+        "Register and dispatch one configurable shortcut through the macOS integration on the stated baseline, then open the real guest command in Pane.",
+        "Explain reserved, conflicting, denied or unavailable shortcuts in the UI; preserve other extension actions.",
+        "Disable the extension or change its shortcut and confirm the old registration is released; retain the chosen setting across restart.",
+        "Verify the focus transition and registration cleanup natively, including the platform's permission behavior."
+      ],
+      "scope": "One global command shortcut. No clipboard implementation or general keyboard remapper.",
+      "oldIds": [
+        41
+      ],
+      "stories": [
+        3,
+        10,
+        44,
+        57
+      ],
+      "tests": [
+        "T03",
+        "T09",
+        "T22"
+      ],
+      "gates": [
+        "G2",
+        "G7"
+      ],
+      "file": "29-open-an-extension-command-with-a-global-hotkey-on-macos.md",
+      "blockingReasons": {
+        "15": "supplies supported-target declarations and user-visible unavailable-action reasons",
+        "19": "supplies root provider results, command selection and invocation"
+      }
+    },
+    {
+      "key": "hotkey-linux",
+      "n": 30,
+      "title": "Open an extension command with a global hotkey on Linux",
+      "deps": [
+        19,
+        15
+      ],
+      "deliver": "A user assigns a supported Linux shortcut and opens the selected command while another application has focus.",
+      "criteria": [
+        "Register and dispatch one configurable shortcut through the Linux integration on the stated baseline, then open the real guest command in Pane.",
+        "Explain reserved, conflicting, denied or unavailable shortcuts in the UI; preserve other extension actions.",
+        "Disable the extension or change its shortcut and confirm the old registration is released; retain the chosen setting across restart.",
+        "Verify natively on each claimed display protocol; state unsupported compositor/portal combinations explicitly."
+      ],
+      "scope": "One global command shortcut. No clipboard implementation or general keyboard remapper.",
+      "oldIds": [
+        43
+      ],
+      "stories": [
+        3,
+        10,
+        44,
+        57
+      ],
+      "tests": [
+        "T03",
+        "T09",
+        "T22"
+      ],
+      "gates": [
+        "G2",
+        "G7"
+      ],
+      "file": "30-open-an-extension-command-with-a-global-hotkey-on-linux.md",
+      "blockingReasons": {
+        "15": "supplies supported-target declarations and user-visible unavailable-action reasons",
+        "19": "supplies root provider results, command selection and invocation"
+      }
+    },
+    {
+      "key": "clipboard-win",
+      "n": 31,
+      "title": "Capture opt-in clipboard history on Windows",
+      "deps": [
+        6,
+        15
+      ],
+      "deliver": "A Windows clipboard extension starts off, captures supported clipboard content only when enabled, and supports visible pause/disable controls.",
+      "criteria": [
+        "Define and document a bounded initial clipboard-content format scope and use a real Windows observation path.",
+        "Verify initial opt-in, active capture, pause/resume and disable stopping host-managed observation, including after restart.",
+        "Respect available sensitive markers and configured app exclusions; disclose platform detection limits and keep capture local by default.",
+        "Store captured items under managed ownership and provide a native history view without claiming this ticket establishes final retention/deletion behavior."
+      ],
+      "scope": "No automatic AI/network transmission or guaranteed secret detection; retention is the next slice.",
+      "oldIds": [
+        26
+      ],
       "stories": [
         65,
         66,
@@ -801,23 +1198,30 @@
         "G5",
         "G7"
       ],
-      "deliver": "A Windows clipboard extension starts off, captures supported clipboard content only when enabled, and supports visible pause/disable controls.",
-      "criteria": [
-        "Define and document a bounded initial clipboard-content format scope and use a real Windows observation path.",
-        "Verify initial opt-in, active capture, pause/resume and disable stopping host-managed observation, including after restart.",
-        "Respect available sensitive markers and configured app exclusions; disclose platform detection limits and keep capture local by default.",
-        "Store captured items under managed ownership and provide a native history view without claiming this ticket establishes final retention/deletion behavior."
-      ],
-      "bounds": "No automatic AI/network transmission or guaranteed secret detection; retention is the next slice.",
-      "file": "26-capture-clipboard-history-only-when-enabled.md"
+      "file": "31-capture-opt-in-clipboard-history-on-windows.md",
+      "blockingReasons": {
+        "6": "supplies persistent enablement, saved-state ownership and the stop/re-enable lifecycle",
+        "15": "supplies supported-target declarations and user-visible unavailable-action reasons"
+      }
     },
     {
-      "n": 27,
-      "title": "Expire and delete clipboard history predictably",
+      "key": "retention",
+      "n": 32,
+      "title": "Expire and delete saved clipboard history",
       "deps": [
-        26
+        31
       ],
-      "type": "implementation",
+      "deliver": "Clipboard history has configurable finite retention and deletion controls whose effects remain correct while disabled and after downtime.",
+      "criteria": [
+        "Select and document a finite default retention recommendation, obtaining a user decision if it changes unresolved product expectations; implement the configurable policy.",
+        "Expire records independently of executing the extension and enforce expiry before display after downtime; re-enable does not restart retention.",
+        "Provide per-item/bulk deletion, Clear history and Disable and delete history with their distinct future-capture effects.",
+        "Use an injectable clock for expiry scenarios plus a real capture/delete smoke; coordinate writes during deletion to avoid immediately reviving removed history."
+      ],
+      "scope": "No forensic erasure promise or deletion of the OS's current clipboard as a side effect of managed-history removal.",
+      "oldIds": [
+        27
+      ],
       "stories": [
         67,
         68,
@@ -830,26 +1234,181 @@
       "gates": [
         "G5"
       ],
-      "deliver": "Clipboard history has configurable finite retention and deletion controls whose effects remain correct while disabled and after downtime.",
-      "criteria": [
-        "Select and document a finite default retention recommendation, obtaining a user decision if it changes unresolved product expectations; implement the configurable policy.",
-        "Expire records independently of executing the extension and enforce expiry before display after downtime; re-enable does not restart retention.",
-        "Provide per-item/bulk deletion, Clear history and Disable and delete history with their distinct future-capture effects.",
-        "Use an injectable clock for expiry scenarios plus a real capture/delete smoke; coordinate writes during deletion to avoid immediately reviving removed history."
-      ],
-      "bounds": "No forensic erasure promise or deletion of the OS's current clipboard as a side effect of managed-history removal.",
-      "file": "27-expire-and-delete-clipboard-history-predictably.md"
+      "file": "32-expire-and-delete-saved-clipboard-history.md",
+      "blockingReasons": {
+        "31": "supplies the first usable capture/history view and shared storage contract; this prerequisite is about reusing that behavior"
+      }
     },
     {
-      "n": 28,
-      "title": "Manage cache, credentials and uninstall data in the UI",
+      "key": "clipboard-mac",
+      "n": 33,
+      "title": "Capture opt-in clipboard history on macOS",
       "deps": [
-        9
+        32
       ],
-      "type": "implementation",
+      "deliver": "A macOS user enables clipboard history, sees a captured item, and can pause, delete or expire it through Pane.",
+      "criteria": [
+        "Implement macOS observation for the existing history format and show real capture in the native history view; history is off initially.",
+        "Reuse the retention/storage contract and verify pause/disable, restart, downtime expiry and the distinction between Clear and Disable and delete.",
+        "Apply supported sensitive markers/app exclusions and explain platform limitations. Capture remains local by default.",
+        "Handle OS permissions/unavailable capture through the UI and check managed observation stops on disable."
+      ],
+      "scope": "Clipboard capture using the existing policy and history view. Global shortcuts are a separate slice.",
+      "oldIds": [
+        41
+      ],
+      "stories": [
+        3,
+        44,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71
+      ],
+      "tests": [
+        "T21",
+        "T22"
+      ],
+      "gates": [
+        "G5",
+        "G7"
+      ],
+      "file": "33-capture-opt-in-clipboard-history-on-macos.md",
+      "blockingReasons": {
+        "32": "supplies the shared clipboard history, expiry and deletion semantics reused by the native capture adapter"
+      }
+    },
+    {
+      "key": "clipboard-linux",
+      "n": 34,
+      "title": "Capture opt-in clipboard history on Linux",
+      "deps": [
+        32
+      ],
+      "deliver": "A Linux user enables clipboard history, sees a captured item, and can pause, delete or expire it through Pane.",
+      "criteria": [
+        "Implement Linux observation for the existing history format and show real capture in the native history view; history is off initially.",
+        "Reuse the retention/storage contract and verify pause/disable, restart, downtime expiry and the distinction between Clear and Disable and delete.",
+        "Apply supported sensitive markers/app exclusions and explain platform limitations. Capture remains local by default.",
+        "Record results separately for each claimed display/desktop combination; unsupported capture must not hide other working extension actions."
+      ],
+      "scope": "Clipboard capture using the existing policy and history view. Global shortcuts are a separate slice.",
+      "oldIds": [
+        43
+      ],
+      "stories": [
+        3,
+        44,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71
+      ],
+      "tests": [
+        "T21",
+        "T22"
+      ],
+      "gates": [
+        "G5",
+        "G7"
+      ],
+      "file": "34-capture-opt-in-clipboard-history-on-linux.md",
+      "blockingReasons": {
+        "32": "supplies the shared clipboard history, expiry and deletion semantics reused by the native capture adapter"
+      }
+    },
+    {
+      "key": "cache",
+      "n": 35,
+      "title": "Clear an extension's cache without deleting saved data",
+      "deps": [
+        6
+      ],
+      "deliver": "A user clears one extension's disposable cache while its settings, content and local credentials remain intact.",
+      "criteria": [
+        "Add only the managed cache/credential storage distinctions needed by a fixture containing settings, content, cache and a local credential; document ownership and migration responsibilities.",
+        "Expose Clear cache in management and complete it even if the guest is broken, without running that guest's cleanup code.",
+        "Check each data category before and after the action; other source identities and external files remain intact.",
+        "Use the same public storage and management contracts as extension execution; surface storage errors with an actionable outcome."
+      ],
+      "scope": "One cache-clearing action. Uninstall and deletion of retained data are separate slices.",
+      "oldIds": [
+        28
+      ],
       "stories": [
         60,
+        64
+      ],
+      "tests": [
+        "T20"
+      ],
+      "gates": [
+        "G5"
+      ],
+      "file": "35-clear-an-extension-s-cache-without-deleting-saved-data.md",
+      "blockingReasons": {
+        "6": "supplies persistent enablement, saved-state ownership and the stop/re-enable lifecycle"
+      }
+    },
+    {
+      "key": "uninstall",
+      "n": 36,
+      "title": "Uninstall an extension with an explicit saved-data choice",
+      "deps": [
+        35
+      ],
+      "deliver": "A user removes an extension and chooses whether to keep its durable data.",
+      "criteria": [
+        "Show the keep/delete durable-data choice; remove managed code, cache and locally managed credentials for either choice, using the established ownership contract.",
+        "Stop managed work and remove contributions without executing broken guest code; explain partial filesystem failures rather than reporting a successful uninstall.",
+        "Preserve developer source folders and external documents. Test two source identities with identical display titles.",
+        "Reinstall the same source after keeping data and verify ownership remains with that identity; do not merge another source's data or claim remote credential revocation."
+      ],
+      "scope": "One extension and its saved-data choice. Required dependent removal is a later slice.",
+      "oldIds": [
+        28
+      ],
+      "stories": [
         61,
+        63,
+        64
+      ],
+      "tests": [
+        "T20"
+      ],
+      "gates": [
+        "G5"
+      ],
+      "file": "36-uninstall-an-extension-with-an-explicit-saved-data-choice.md",
+      "blockingReasons": {
+        "35": "supplies the tested managed settings/content/cache/credential ownership distinctions"
+      }
+    },
+    {
+      "key": "retained",
+      "n": 37,
+      "title": "Delete retained data after its extension is uninstalled",
+      "deps": [
+        36
+      ],
+      "deliver": "A user finds retained extension data in management and deletes it while the extension code is absent.",
+      "criteria": [
+        "List retained data by canonical source identity with a readable title and clear deletion scope.",
+        "Delete only the selected managed durable data without downloading or executing the former extension.",
+        "Verify absence after restart and reinstall; other identities, credentials owned elsewhere and external files remain intact.",
+        "Surface missing/locked-data errors through the management UI and public behavior checks."
+      ],
+      "scope": "One retained-data deletion action; no automatic cross-source merging.",
+      "oldIds": [
+        28
+      ],
+      "stories": [
         62,
         63,
         64
@@ -860,23 +1419,29 @@
       "gates": [
         "G5"
       ],
-      "deliver": "Users can clear an extension's cache, uninstall it with a durable-data choice, and later remove retained data without its code installed.",
-      "criteria": [
-        "Complete managed ownership categories for settings, content, cache and locally managed credentials with a representative fixture for each; define storage/migration ownership and error behavior.",
-        "Clear cache preserves durable data/credentials; uninstall removes managed code/cache/local credentials and explicitly offers the durable-data choice.",
-        "Keep data-management UI functional when extension code is absent or broken; protect developer source folders and unrelated documents.",
-        "Test distinct source identities sharing a title and later reinstall; do not silently merge ownership or claim remote credential revocation."
-      ],
-      "bounds": "No automatic data-migration rollback, arbitrary external-data deletion or cross-source migration service.",
-      "file": "28-manage-cache-credentials-and-uninstall-data-in-the-ui.md"
+      "file": "37-delete-retained-data-after-its-extension-is-uninstalled.md",
+      "blockingReasons": {
+        "36": "supplies guest-independent removal and the durable-data choice"
+      }
     },
     {
-      "n": 29,
-      "title": "Install required extension dependencies",
+      "key": "dependencies",
+      "n": 38,
+      "title": "Install missing required dependencies with a local extension",
       "deps": [
-        19
+        18
       ],
-      "type": "implementation",
+      "deliver": "Installing a local fixture extension shows and installs its compatible missing required dependencies while preserving optional, disabled and pinned choices.",
+      "criteria": [
+        "Extend the manifest/addressing contract with required versus optional dependencies and compatible version/platform requirements.",
+        "Show the required set before installing; optional integrations remain absent unless separately requested, and deliberately disabled dependencies are not re-enabled.",
+        "Explain unavailable/pinned/conflicting dependencies; define bounded cycle and partial-install behavior with no general multi-version solver.",
+        "Verify the resulting cross-extension call works and failed resolution does not leave misleading ready-to-run state."
+      ],
+      "scope": "Controlled/local package sources first; remote acquisition integrations follow without changing these semantics.",
+      "oldIds": [
+        29
+      ],
       "stories": [
         25,
         26,
@@ -891,27 +1456,71 @@
       "gates": [
         "G4"
       ],
-      "deliver": "Installing a local fixture extension shows and installs its compatible missing required dependencies while preserving optional, disabled and pinned choices.",
-      "criteria": [
-        "Extend the manifest/addressing contract with required versus optional dependencies and compatible version/platform requirements.",
-        "Show the required set before installing; optional integrations remain absent unless separately requested, and deliberately disabled dependencies are not re-enabled.",
-        "Explain unavailable/pinned/conflicting dependencies; define bounded cycle and partial-install behavior with no general multi-version solver.",
-        "Verify the resulting cross-extension call works and failed resolution does not leave misleading ready-to-run state."
-      ],
-      "bounds": "Controlled/local package sources first; remote acquisition integrations follow without changing these semantics.",
-      "file": "29-install-required-extension-dependencies.md"
+      "file": "38-install-missing-required-dependencies-with-a-local-extension.md",
+      "blockingReasons": {
+        "18": "supplies the real cross-extension operation used to prove dependency installation"
+      }
     },
     {
-      "n": 30,
-      "title": "Disable or remove required dependents together",
+      "key": "disable-dependents",
+      "n": 39,
+      "title": "Disable required dependents together or cancel",
       "deps": [
-        28,
-        29
+        38
       ],
-      "type": "implementation",
+      "deliver": "A user disabling a required dependency sees affected extensions and chooses Disable All or Cancel.",
+      "criteria": [
+        "Compute the required dependent closure under the documented dependency-cycle policy; exclude optional integrations.",
+        "Show the affected identities and both choices before mutation. Cancel leaves enablement and running work unchanged.",
+        "Confirming disables the displayed set, stops supported managed work and retains unexpired data.",
+        "Re-enable the dependency alone and verify its dependents remain disabled; keep automatic failure-pausing distinct from this user action."
+      ],
+      "scope": "Disablement only; uninstall and its data choices are separate.",
+      "oldIds": [
+        30
+      ],
       "stories": [
         30,
-        31
+        31,
+        57,
+        59
+      ],
+      "tests": [
+        "T13"
+      ],
+      "gates": [
+        "G3",
+        "G4"
+      ],
+      "file": "39-disable-required-dependents-together-or-cancel.md",
+      "blockingReasons": {
+        "38": "supplies required-versus-optional dependency relationships and conflict/cycle policy"
+      }
+    },
+    {
+      "key": "uninstall-dependents",
+      "n": 40,
+      "title": "Uninstall required dependents together or cancel",
+      "deps": [
+        39,
+        36
+      ],
+      "deliver": "A user removing a required dependency reviews the affected set and its saved-data choices before uninstalling.",
+      "criteria": [
+        "Reuse required-dependent traversal but present Uninstall All/Cancel and the applicable durable-data choices.",
+        "Cancel before mutation preserves installations and data; confirmation removes only the displayed required set with the established uninstall semantics.",
+        "Report partial removal failures against actual package states rather than claiming an all-or-nothing result that did not occur.",
+        "Reinstall the dependency alone and verify removed dependents are not restored automatically; optional integrations remain independent."
+      ],
+      "scope": "One dependent-removal operation using existing package/data behavior.",
+      "oldIds": [
+        30
+      ],
+      "stories": [
+        30,
+        31,
+        61,
+        63
       ],
       "tests": [
         "T13",
@@ -921,23 +1530,31 @@
         "G4",
         "G5"
       ],
-      "deliver": "Disabling or uninstalling a dependency shows affected required dependents and applies the confirmed whole-set action or cancels cleanly.",
-      "criteria": [
-        "Compute the required dependent closure and show Disable All/Cancel or Uninstall All/Cancel; optional integrations do not enter the required set.",
-        "Cancel preserves state; confirmed operations apply lifecycle and data-retention choices consistently to the displayed set.",
-        "Re-enabling or reinstalling only the dependency does not re-enable/reinstall dependents automatically.",
-        "Keep runtime failure-pausing separate from user-requested removal, and test cycles/shared dependencies according to the bounded policy."
-      ],
-      "bounds": "No automatic repair, migration or silent dependent restoration.",
-      "file": "30-disable-or-remove-required-dependents-together.md"
+      "file": "40-uninstall-required-dependents-together-or-cancel.md",
+      "blockingReasons": {
+        "36": "supplies guest-independent removal and the durable-data choice",
+        "39": "supplies required-dependent traversal and the displayed affected set"
+      }
     },
     {
-      "n": 31,
-      "title": "Install npm-distributed component packages",
+      "key": "npm",
+      "n": 41,
+      "title": "Install and run an npm-distributed component package",
       "deps": [
-        29
+        38
       ],
-      "type": "implementation",
+      "deliver": "A user installs a supported npm package through Pane without manually installing npm or Node, then runs its component command.",
+      "criteria": [
+        "Acquire supported runnable artifacts from a controlled npm registry and a representative real source where appropriate; surface download/package/compatibility errors.",
+        "Canonical identity is npm package name without version; explicit version/pin inputs and duplicate-versus-update behavior remain distinct.",
+        "Resolve required/optional extension dependencies through the existing policy, respecting pins and disabled targets.",
+        "Do not assume the source distribution implies a Node runtime or universal npm compatibility; source-only build requirements are explained.",
+        "Include author packaging instructions and a controlled distributable sample; verify preparing it from the supported contributor environments without publishing it publicly."
+      ],
+      "scope": "No catalog, historical-version picker, publishing to npm or arbitrary package build support.",
+      "oldIds": [
+        31
+      ],
       "stories": [
         16,
         17,
@@ -954,23 +1571,30 @@
         "G4",
         "G6"
       ],
-      "deliver": "A user installs a supported npm package through Pane without manually installing npm or Node, then runs its component command.",
-      "criteria": [
-        "Acquire supported runnable artifacts from a controlled npm registry and a representative real source where appropriate; surface download/package/compatibility errors.",
-        "Canonical identity is npm package name without version; explicit version/pin inputs and duplicate-versus-update behavior remain distinct.",
-        "Resolve required/optional extension dependencies through the existing policy, respecting pins and disabled targets.",
-        "Do not assume the source distribution implies a Node runtime or universal npm compatibility; source-only build requirements are explained."
-      ],
-      "bounds": "No catalog, historical-version picker, publishing to npm or arbitrary package build support.",
-      "file": "31-install-npm-distributed-component-packages.md"
+      "file": "41-install-and-run-an-npm-distributed-component-package.md",
+      "blockingReasons": {
+        "38": "supplies required-versus-optional dependency relationships and conflict/cycle policy"
+      }
     },
     {
-      "n": 32,
-      "title": "Install Git-distributed component packages",
+      "key": "git",
+      "n": 42,
+      "title": "Install and run a Git-distributed component package",
       "deps": [
-        29
+        38
       ],
-      "type": "implementation",
+      "deliver": "A user installs a supported Git-sourced package or explicit revision through Pane without manual Git/compiler setup.",
+      "criteria": [
+        "Define and exercise the supported Git artifact/source layout and acquisition path; distinguish runnable releases from source-only revisions.",
+        "Canonicalize equivalent host/repository transport forms without including ref in identity; cross-source copies remain independent.",
+        "Support the selected explicit revision/ref inputs, define tracked-ref versus pin semantics, and explain unavailable artifacts or compatibility failures.",
+        "Integrate dependency handling and preserve user-owned local development copies; do not infer Pi personal/project scopes or automatic source merging.",
+        "Include a source-to-artifact author example and controlled repository fixture; a documented source-only failure must not be presented as successful normal-user installation."
+      ],
+      "scope": "No guarantee every tag is installable, no history browser, and no external repository publishing.",
+      "oldIds": [
+        32
+      ],
       "stories": [
         16,
         17,
@@ -989,23 +1613,29 @@
         "G4",
         "G6"
       ],
-      "deliver": "A user installs a supported Git-sourced package or explicit revision through Pane without manual Git/compiler setup.",
-      "criteria": [
-        "Define and exercise the supported Git artifact/source layout and acquisition path; distinguish runnable releases from source-only revisions.",
-        "Canonicalize equivalent host/repository transport forms without including ref in identity; cross-source copies remain independent.",
-        "Support the selected explicit revision/ref inputs, define tracked-ref versus pin semantics, and explain unavailable artifacts or compatibility failures.",
-        "Integrate dependency handling and preserve user-owned local development copies; do not infer Pi personal/project scopes or automatic source merging."
-      ],
-      "bounds": "No guarantee every tag is installable, no history browser, and no external repository publishing.",
-      "file": "32-install-git-distributed-component-packages.md"
+      "file": "42-install-and-run-a-git-distributed-component-package.md",
+      "blockingReasons": {
+        "38": "supplies required-versus-optional dependency relationships and conflict/cycle policy"
+      }
     },
     {
-      "n": 33,
-      "title": "Run scheduled and continuing background work",
+      "key": "schedule",
+      "n": 43,
+      "title": "Run a scheduled extension task and stop it on disable",
       "deps": [
-        14
+        12
       ],
-      "type": "implementation",
+      "deliver": "A user enables a scheduled task, sees its result/status in Pane, and disables it to stop future runs.",
+      "criteria": [
+        "Define one minimal schedule declaration and documented restart/due-work behavior; installation alone must not schedule a disabled extension.",
+        "Run a real guest task and expose its result/status without blocking the native UI or activating unrelated packages.",
+        "Disable or reload while a task is pending; cancel supported work and prevent duplicate activation or late-generation results.",
+        "Check clock-driven scheduling through public behavior, expected errors and repeated fatal failure handling; ship the small author sample."
+      ],
+      "scope": "One schedule type with a bounded policy, not a general scheduler.",
+      "oldIds": [
+        33
+      ],
       "stories": [
         14,
         45,
@@ -1020,25 +1650,68 @@
       "gates": [
         "G3"
       ],
-      "deliver": "Enabled fixture extensions can schedule work or run an explicit background service, while unused installations remain inactive and disable stops managed activity.",
-      "criteria": [
-        "Define the minimal activation declaration and lifetime behavior for one scheduled task and one continuing service, including restart behavior.",
-        "Demonstrate guest-visible results/status without blocking the UI or permanently activating unrelated installed extensions.",
-        "Disable/reload cancels supported timers/subscriptions/tasks; expected errors and repeated fatal failures follow the existing pause/retry policy.",
-        "Record schedule defaults, duplicate-activation prevention and idle-retention choices explicitly; do not infer numeric policies from prototypes."
-      ],
-      "bounds": "No general workflow scheduler or guarantee of undoing external effects.",
-      "file": "33-run-scheduled-and-continuing-background-work.md"
+      "file": "43-run-a-scheduled-extension-task-and-stop-it-on-disable.md",
+      "blockingReasons": {
+        "12": "supplies attributable failure status and Retry/repeated-failure policy"
+      }
     },
     {
-      "n": 34,
-      "title": "Update eligible extensions without interrupting commands",
+      "key": "service",
+      "n": 44,
+      "title": "Run a continuing extension service and stop it on disable",
       "deps": [
-        31,
-        32,
+        12
+      ],
+      "deliver": "A user starts an enabled background service, sees its status, and stops it through extension management.",
+      "criteria": [
+        "Define the minimal continuing-service declaration, activation and restart behavior, keeping unused extensions inactive.",
+        "Use a fixture service to emit visible status and manage one subscription/task; ordinary errors and repeated fatal failures follow the existing recovery policy.",
+        "Disable/reload and verify the service's supported tasks/subscriptions stop and old results cannot update the current UI.",
+        "Retain restart/resource-release evidence and include a runnable author sample with documented lifetime behavior."
+      ],
+      "scope": "One continuing service. It does not depend on the separate scheduled-task implementation.",
+      "oldIds": [
         33
       ],
-      "type": "implementation",
+      "stories": [
+        14,
+        45,
+        57,
+        79
+      ],
+      "tests": [
+        "T02",
+        "T09",
+        "T17"
+      ],
+      "gates": [
+        "G3"
+      ],
+      "file": "44-run-a-continuing-extension-service-and-stop-it-on-disable.md",
+      "blockingReasons": {
+        "12": "supplies attributable failure status and Retry/repeated-failure policy"
+      }
+    },
+    {
+      "key": "npm-update",
+      "n": 45,
+      "title": "Update an eligible npm extension at a safe activation boundary",
+      "deps": [
+        41,
+        43,
+        44
+      ],
+      "deliver": "A user receives a compatible npm extension update under their chosen update controls, without replacing an active command.",
+      "criteria": [
+        "Provide global/per-extension automatic-update controls and a manual update action; use controlled registry versions to demonstrate availability and selection.",
+        "Check host/API/platform/dependency compatibility and respect explicit pins, disabled targets and local-source copies.",
+        "Stage replacement until the documented safe boundary for commands, persistent views and managed background work; the running command must finish without mid-command replacement.",
+        "Exercise successful activation and replacement-startup failure with Retry/logs and no automatic rollback. Validate controls through the UI and public package/lifecycle behavior."
+      ],
+      "scope": "The shared update behavior and one npm source adapter. No Git tracking or history picker.",
+      "oldIds": [
+        34
+      ],
       "stories": [
         72,
         73,
@@ -1046,86 +1719,79 @@
         75
       ],
       "tests": [
-        "T08",
-        "T12",
-        "T15"
+        "T15",
+        "T08"
       ],
       "gates": [
         "G3",
         "G4"
       ],
-      "deliver": "Compatible published extensions update automatically under user controls, respecting pins/local copies and staging replacement until active work permits it.",
-      "criteria": [
-        "Provide global/per-extension automatic-update controls and manual update actions for supported npm/Git tracking semantics.",
-        "Check host/API/platform/dependency compatibility and leave pins/local sources untouched; report incompatible or unavailable updates.",
-        "Define explicit activation boundaries for active commands, persistent views and background services; defer rather than replace midway through a command.",
-        "Exercise successful replacement and startup failure with existing Retry/logs/no-rollback behavior; do not claim code rollback reverses migrations."
-      ],
-      "bounds": "No historical-version picker, universal version availability or Pane application auto-update.",
-      "file": "34-update-eligible-extensions-without-interrupting-commands.md"
+      "file": "45-update-an-eligible-npm-extension-at-a-safe-activation-boundary.md",
+      "blockingReasons": {
+        "41": "supplies npm identity, acquisition, pins and compatible runnable package selection",
+        "43": "supplies real scheduled work whose lifetime an update must preserve",
+        "44": "supplies real continuing work whose lifetime an update must preserve"
+      }
     },
     {
-      "n": 35,
-      "title": "Measure Windows resource usage across real lifecycle flows",
+      "key": "git-update",
+      "n": 46,
+      "title": "Update a tracked Git extension without changing its identity",
       "deps": [
-        15,
-        20,
-        33
+        42,
+        45
       ],
-      "type": "validation",
+      "deliver": "A user updates a tracked Git package through the existing controls while pinned revisions remain unchanged.",
+      "criteria": [
+        "Use a controlled repository to distinguish tracked-ref updates from explicit pinned revisions according to the acquisition contract.",
+        "Resolve a compatible runnable artifact, retain canonical repository identity, and stage it through the shared update lifecycle.",
+        "Verify pinned/local copies and deliberately disabled dependencies remain under user control, including a moved tracked ref and a missing artifact.",
+        "Demonstrate manual/automatic controls, deferred activation and startup failure through the existing management UI."
+      ],
+      "scope": "One Git update-source adapter, reusing the safe replacement/control behavior.",
+      "oldIds": [
+        34
+      ],
       "stories": [
-        4,
-        14
+        72,
+        73,
+        74,
+        75
       ],
       "tests": [
-        "T02",
-        "T24"
+        "T15",
+        "T08",
+        "T11"
       ],
       "gates": [
-        "G7"
+        "G3",
+        "G4"
       ],
-      "deliver": "A repeatable Windows measurement report shows actual process-tree costs for idle Pane, inactive/active extensions, startup and lifecycle churn.",
-      "criteria": [
-        "Use the production shell/runtime and representative installed packages, separating cold compilation/start, warm start, idle, active commands and continuing services.",
-        "Measure the entire process tree and managed-resource release over repeated calls/reload/disable rather than treating CLI peaks as additive per-extension memory.",
-        "Propose explicit resource/latency targets with evidence and scope, recording any needed user choice without inventing an earlier numeric promise.",
-        "Keep measurements reproducible with documented workload/build conditions and surface failures; do not claim all-platform performance."
-      ],
-      "bounds": "A baseline and targeted investigation of observed issues, not unlimited optimization or a broad benchmark suite.",
-      "file": "35-measure-windows-resource-usage-across-real-lifecycle-flows.md"
+      "file": "46-update-a-tracked-git-extension-without-changing-its-identity.md",
+      "blockingReasons": {
+        "42": "supplies Git identity, runnable artifact acquisition and tracked-ref/pin semantics",
+        "45": "supplies source-independent update controls and safe activation behavior"
+      }
     },
     {
-      "n": 36,
-      "title": "Resolve first-party licensing and distribution notices",
+      "key": "install-win",
+      "n": 47,
+      "title": "Install Pane and acquire its calculator on Windows",
       "deps": [
-        13
+        11,
+        23
       ],
-      "type": "decision",
-      "stories": [
-        82
-      ],
-      "tests": [],
-      "gates": [
-        "G8"
-      ],
-      "deliver": "A concrete first-party application/SDK/component license split and dependency-notice plan fit Pane's provisional Zed-style direction.",
+      "deliver": "A clean Windows machine installs Pane, acquires compatible runtime/default artifacts, and runs a calculator command without developer tools.",
       "criteria": [
-        "Audit the actual chosen runtime, renderer, SDK and helper dependencies against primary license sources, distinguishing first-party terms from third-party obligations.",
-        "Propose exact application/SDK/component terms and attribution ownership; preserve the GPL-3.0-or-later direction without claiming it forbids paid forks.",
-        "Resolve any consequential remaining license choice with the user before applying terms or marking the decision complete; do not infer that WIT/WASI determines derivative-work questions.",
-        "Record and validate the notices/source-obligation procedure for a representative artifact; future dependency changes trigger targeted review."
+        "Build one documented Windows package/bootstrap for the declared baseline, with the minimum platform installation and acquisition UI; complete the real calculator command.",
+        "Acquire runtime/default-feature payloads over the network with progress, retry and compatible cache reuse. Interrupt the initial download and recover while core setup/management remains available.",
+        "Run the supported prebuilt helper fixture without requiring Node, Rust, npm, Git or compilers on the end-user machine. Record artifact ownership and compatibility checks.",
+        "Include controlled artifact sources and a clean-machine native smoke. Record signing/package prerequisites honestly; unprovided credentials or test machines remain execution prerequisites."
       ],
-      "bounds": "No trademark clearance, universal legal opinion or automatic licensing of third-party extensions.",
-      "file": "36-resolve-first-party-licensing-and-distribution-notices.md"
-    },
-    {
-      "n": 37,
-      "title": "Install Pane and acquire a default feature on Windows",
-      "deps": [
-        13,
-        22
+      "scope": "One platform installer and one representative default feature. Other default features already have their own slices; assembled release validation is separate. Source adapters may share code without depending on another OS installer.",
+      "oldIds": [
+        37
       ],
-      "type": "implementation",
       "stories": [
         15,
         16,
@@ -1133,1310 +1799,1055 @@
         42
       ],
       "tests": [
-        "T23"
+        "T23",
+        "T22"
       ],
       "gates": [
-        "G6"
+        "G6",
+        "G7"
       ],
-      "deliver": "A clean Windows machine installs a small Pane bootstrap and automatically acquires the runtime and a runnable calculator/default-feature package.",
-      "criteria": [
-        "Build the end-to-end initial acquisition flow using controlled downloadable artifacts, with progress, cancellation/error and retry behavior documented and visible.",
-        "Do not bundle runtime/default-feature payloads as a hidden assumption; reuse cached compatible artifacts and preserve core setup/management UI when a download fails.",
-        "Run without manually installed Node, Rust, npm, Git or compilers, including a supported prebuilt helper fixture; avoid changing global developer-tool settings.",
-        "Record installed/downloaded artifact ownership and compatibility checks and validate an interrupted/resumed setup on a clean Windows environment."
-      ],
-      "bounds": "First installer slice supplies a representative default; full default-feature assembly is verified by release tickets. No public upload or signing-account provisioning.",
-      "file": "37-install-pane-and-acquire-a-default-feature-on-windows.md"
+      "file": "47-install-pane-and-acquire-its-calculator-on-windows.md",
+      "blockingReasons": {
+        "11": "supplies real managed helper artifacts and cleanup behavior used by this flow",
+        "23": "supplies the actual default calculator feature used to prove installation"
+      }
     },
     {
-      "n": 38,
-      "title": "Offer Pane updates for user-initiated installation",
+      "key": "install-mac",
+      "n": 48,
+      "title": "Install Pane and acquire its calculator on macOS",
       "deps": [
-        37
+        11,
+        23
       ],
-      "type": "implementation",
+      "deliver": "A clean macOS machine installs Pane, acquires compatible runtime/default artifacts, and runs a calculator command without developer tools.",
+      "criteria": [
+        "Build one documented macOS package/bootstrap for the declared baseline, with the minimum platform installation and acquisition UI; complete the real calculator command.",
+        "Acquire runtime/default-feature payloads over the network with progress, retry and compatible cache reuse. Interrupt the initial download and recover while core setup/management remains available.",
+        "Run the supported prebuilt helper fixture without requiring Node, Rust, npm, Git or compilers on the end-user machine. Record artifact ownership and compatibility checks.",
+        "Include controlled artifact sources and a clean-machine native smoke. Record signing/package prerequisites honestly; unprovided credentials or test machines remain execution prerequisites."
+      ],
+      "scope": "One platform installer and one representative default feature. Other default features already have their own slices; assembled release validation is separate. Source adapters may share code without depending on another OS installer.",
+      "oldIds": [
+        44
+      ],
+      "stories": [
+        15,
+        16,
+        18,
+        42
+      ],
+      "tests": [
+        "T23",
+        "T22"
+      ],
+      "gates": [
+        "G6",
+        "G7"
+      ],
+      "file": "48-install-pane-and-acquire-its-calculator-on-macos.md",
+      "blockingReasons": {
+        "11": "supplies real managed helper artifacts and cleanup behavior used by this flow",
+        "23": "supplies the actual default calculator feature used to prove installation"
+      }
+    },
+    {
+      "key": "install-linux",
+      "n": 49,
+      "title": "Install Pane and acquire its calculator on Linux",
+      "deps": [
+        11,
+        23
+      ],
+      "deliver": "A clean Linux machine installs Pane, acquires compatible runtime/default artifacts, and runs a calculator command without developer tools.",
+      "criteria": [
+        "Build one documented Linux package/bootstrap for the declared baseline, with the minimum platform installation and acquisition UI; complete the real calculator command.",
+        "Acquire runtime/default-feature payloads over the network with progress, retry and compatible cache reuse. Interrupt the initial download and recover while core setup/management remains available.",
+        "Run the supported prebuilt helper fixture without requiring Node, Rust, npm, Git or compilers on the end-user machine. Record artifact ownership and compatibility checks.",
+        "Include controlled artifact sources and a clean-machine native smoke. Record signing/package prerequisites honestly; unprovided credentials or test machines remain execution prerequisites."
+      ],
+      "scope": "One platform installer and one representative default feature. Other default features already have their own slices; assembled release validation is separate. Source adapters may share code without depending on another OS installer.",
+      "oldIds": [
+        45
+      ],
+      "stories": [
+        15,
+        16,
+        18,
+        42
+      ],
+      "tests": [
+        "T23",
+        "T22"
+      ],
+      "gates": [
+        "G6",
+        "G7"
+      ],
+      "file": "49-install-pane-and-acquire-its-calculator-on-linux.md",
+      "blockingReasons": {
+        "11": "supplies real managed helper artifacts and cleanup behavior used by this flow",
+        "23": "supplies the actual default calculator feature used to prove installation"
+      }
+    },
+    {
+      "key": "app-update-win",
+      "n": 50,
+      "title": "Install a Pane application update by user choice on Windows",
+      "deps": [
+        47
+      ],
+      "deliver": "A Windows user sees an update notification and chooses whether to install it.",
+      "criteria": [
+        "Use controlled metadata and two runnable builds to show notification, explicit installation and a successful version transition.",
+        "Taking no action must cause no automatic application download, install or restart. Keep extension auto-update controls separate.",
+        "Maintain compatible runtime artifacts, extension pins, saved data and enablement; document active-work handling and restart timing.",
+        "On the native Windows baseline, exercise acquisition/replacement failure and show a recoverable installation with useful UI diagnostics. Include native packaging/signing prerequisites in the result."
+      ],
+      "scope": "One OS application updater. Shared protocol code is reusable; completion does not depend on another OS's updater.",
+      "oldIds": [
+        38
+      ],
       "stories": [
         76
       ],
       "tests": [
-        "T16",
-        "T23"
+        "T16"
       ],
       "gates": [
-        "G6"
+        "G6",
+        "G7"
       ],
-      "deliver": "Pane announces an available application update and installs it only after the user chooses, with a clear outcome if acquisition or replacement fails.",
-      "criteria": [
-        "Use controlled update metadata/artifacts to demonstrate availability notification, the install action and version transition.",
-        "Do not automatically download/install/restart the application from the notification; distinguish this policy from automatic extension updates.",
-        "Define installed-runtime compatibility and app/runtime acquisition coordination without silently changing user extension pins or enablement.",
-        "Verify no-action behavior and a failed update path leave an explainable recoverable installation; document restart timing and active-work handling."
-      ],
-      "bounds": "No forced upgrades, public release publishing or historical-version browser.",
-      "file": "38-offer-pane-updates-for-user-initiated-installation.md"
+      "file": "50-install-a-pane-application-update-by-user-choice-on-windows.md",
+      "blockingReasons": {
+        "47": "supplies the installed Windows package and runtime acquisition flow to update"
+      }
     },
     {
-      "n": 39,
-      "title": "Validate author onboarding and distributable examples",
+      "key": "app-update-mac",
+      "n": 51,
+      "title": "Install a Pane application update by user choice on macOS",
       "deps": [
-        11,
-        13,
-        18,
-        31,
-        32,
-        33
+        48
       ],
-      "type": "validation",
-      "stories": [
-        19,
-        32,
-        33,
-        39,
-        40,
-        41,
-        42,
-        46,
-        50,
-        51
-      ],
-      "tests": [
-        "T04",
-        "T05",
-        "T07",
-        "T11",
-        "T14",
-        "T22"
-      ],
-      "gates": [
-        "G1",
-        "G2",
-        "G4"
-      ],
-      "deliver": "A contributor on Windows, macOS or Linux can independently build Pane and JS/TS/Rust examples, run checks, use hot reload and prepare supported packages from a fresh checkout.",
+      "deliver": "A macOS user sees an update notification and chooses whether to install it.",
       "criteria": [
-        "Use fresh author workspaces on each supported Windows/macOS/Linux contributor baseline with documented OS prerequisites; build Pane and JS/TS/Rust examples without relying on a Windows machine, a developer's temporary checkout or undocumented global tools.",
-        "Cover a standard view, one custom interaction, an explicit cross-extension operation and optional prebuilt helper through a small shared example set; reference implemented background behavior.",
-        "Demonstrate local development and installation from controlled npm/Git artifacts while preserving independent source identities and compatibility metadata.",
-        "Document supported library limits, API evolution responsibilities and package publication format without actually publishing packages or promising abandoned-extension maintenance.",
-        "Keep a common documented build/test/run/development workflow and native automated checks on all three OS families; report provider/runner availability honestly and retain equivalent local commands."
+        "Use controlled metadata and two runnable builds to show notification, explicit installation and a successful version transition.",
+        "Taking no action must cause no automatic application download, install or restart. Keep extension auto-update controls separate.",
+        "Maintain compatible runtime artifacts, extension pins, saved data and enablement; document active-work handling and restart timing.",
+        "On the native macOS baseline, exercise acquisition/replacement failure and show a recoverable installation with useful UI diagnostics. Include native packaging/signing prerequisites in the result."
       ],
-      "bounds": "Documentation/examples and author-path verification; missing functionality is a concrete follow-up, not an invitation to invent another SDK.",
-      "file": "39-validate-author-onboarding-and-distributable-examples.md"
-    },
-    {
-      "n": 40,
-      "title": "Use application, file and quicklink actions on macOS",
-      "deps": [
-        21,
-        23,
-        24
-      ],
-      "type": "implementation",
-      "stories": [
-        3,
-        5,
-        7,
-        8,
+      "scope": "One OS application updater. Shared protocol code is reusable; completion does not depend on another OS's updater.",
+      "oldIds": [
         44
       ],
-      "tests": [
-        "T01",
-        "T03",
-        "T09",
-        "T22"
-      ],
-      "gates": [
-        "G7"
-      ],
-      "deliver": "The existing default app/file/quicklink workflows use real macOS discovery and open actions with accurate availability reporting.",
-      "criteria": [
-        "Implement only the macOS platform adapters needed by the existing workflows; reuse their search, persistence and cancellation contracts.",
-        "Demonstrate real application discovery/launch, supported file search/open and supported quicklink targets on the recorded baseline.",
-        "Keep feature disablement and unavailable-action explanations consistent with Windows without pretending identical OS capabilities.",
-        "Verify using native macOS actions and targeted fixtures; document any unsupported discovery/location scope."
-      ],
-      "bounds": "No redesign of the providers or additional platform-specific features beyond these actions.",
-      "file": "40-use-application-file-and-quicklink-actions-on-macos.md"
-    },
-    {
-      "n": 41,
-      "title": "Use clipboard controls and quick access on macOS",
-      "deps": [
-        25,
-        27
-      ],
-      "type": "implementation",
       "stories": [
-        3,
-        10,
-        44,
-        65,
-        66,
-        67,
-        68,
-        69,
-        70,
-        71
+        76
       ],
       "tests": [
-        "T03",
-        "T10",
-        "T21",
-        "T22"
-      ],
-      "gates": [
-        "G7"
-      ],
-      "deliver": "The existing opt-in clipboard and command quick-access flows work on macOS where available and explain unavailable OS integrations.",
-      "criteria": [
-        "Implement and test the macOS clipboard observation and supported shortcut dispatch needed by the existing flows, respecting OS permission behavior.",
-        "Verify initial off, pause/disable, expiry after downtime, deletion distinctions and available sensitive-marker/exclusion behavior.",
-        "Test reserved/conflicting/unavailable shortcut and clipboard cases through the UI without requiring a CLI for recovery.",
-        "Keep capture local by default and avoid changing the product into a mandatory permission-grant framework."
-      ],
-      "bounds": "Only the chosen macOS baseline and supported content/action scope.",
-      "file": "41-use-clipboard-controls-and-quick-access-on-macos.md"
-    },
-    {
-      "n": 42,
-      "title": "Use application, file and quicklink actions on Linux",
-      "deps": [
-        21,
-        23,
-        24
-      ],
-      "type": "implementation",
-      "stories": [
-        3,
-        5,
-        7,
-        8,
-        44
-      ],
-      "tests": [
-        "T01",
-        "T03",
-        "T09",
-        "T22"
-      ],
-      "gates": [
-        "G7"
-      ],
-      "deliver": "The existing default app/file/quicklink workflows use Linux desktop discovery and open actions on the recorded support matrix.",
-      "criteria": [
-        "Implement the Linux adapters required by the established application/file/quicklink contracts, including actual desktop integration on supported targets.",
-        "Demonstrate real discovery/launch, file search/open and quicklink actions with cancellation and individually disableable features.",
-        "Report unavailable desktop functionality with simple reasons while preserving usable actions.",
-        "Keep platform scope explicit and test natively; do not broaden the support claim to untested distributions/desktops."
-      ],
-      "bounds": "Reuse provider behavior; no comprehensive desktop-integration framework.",
-      "file": "42-use-application-file-and-quicklink-actions-on-linux.md"
-    },
-    {
-      "n": 43,
-      "title": "Use clipboard controls and quick access on Linux",
-      "deps": [
-        25,
-        27
-      ],
-      "type": "implementation",
-      "stories": [
-        3,
-        10,
-        44,
-        65,
-        66,
-        67,
-        68,
-        69,
-        70,
-        71
-      ],
-      "tests": [
-        "T03",
-        "T10",
-        "T21",
-        "T22"
-      ],
-      "gates": [
-        "G7"
-      ],
-      "deliver": "Clipboard and shortcut integration works on the explicitly supported Linux desktop combinations, with honest explanations where OS restrictions prevent it.",
-      "criteria": [
-        "Implement supported clipboard observation/shortcut routes for the chosen matrix and declare action unavailability for unsupported combinations.",
-        "Exercise opt-in, pause/disable, retention, deletion and conflict/error paths natively on every claimed combination.",
-        "Preserve other extension actions when clipboard or global shortcut facilities are unavailable; do not treat a successful X11 case as proof of Wayland support.",
-        "Keep capture local and document sensitive-marker/app-exclusion limitations without promising universal secret detection."
-      ],
-      "bounds": "No attempt to support every compositor or bypass OS restrictions.",
-      "file": "43-use-clipboard-controls-and-quick-access-on-linux.md"
-    },
-    {
-      "n": 44,
-      "title": "Install and update Pane on a clean macOS machine",
-      "deps": [
-        38,
-        40,
-        41
-      ],
-      "type": "implementation",
-      "stories": [
-        2,
-        15,
-        16,
-        42,
-        76,
-        81
-      ],
-      "tests": [
-        "T16",
-        "T23",
-        "T25"
+        "T16"
       ],
       "gates": [
         "G6",
         "G7"
       ],
-      "deliver": "A macOS package acquires runtime/default artifacts without developer tools and offers app updates under the user-initiated policy.",
-      "criteria": [
-        "Adapt the proven bootstrap/acquisition/update flow to the chosen macOS packaging baseline and architecture-specific artifacts.",
-        "On a clean macOS environment, install/run defaults plus the supported helper fixture without Node/Rust/npm/Git/compilers.",
-        "Verify retry/cache behavior and an application update's no-action/install/failure cases, including core availability when runtime acquisition fails.",
-        "Record signing/distribution prerequisites honestly; lack of required credentials or artifacts is a release blocker rather than simulated completion."
-      ],
-      "bounds": "No external publication or credential/account setup without the necessary authorization; release readiness remains separate.",
-      "file": "44-install-and-update-pane-on-a-clean-macos-machine.md"
+      "file": "51-install-a-pane-application-update-by-user-choice-on-macos.md",
+      "blockingReasons": {
+        "48": "supplies the installed macOS package and runtime acquisition flow to update"
+      }
     },
     {
-      "n": 45,
-      "title": "Install and update Pane on a clean Linux machine",
+      "key": "app-update-linux",
+      "n": 52,
+      "title": "Install a Pane application update by user choice on Linux",
       "deps": [
-        38,
-        42,
-        43
+        49
       ],
-      "type": "implementation",
-      "stories": [
-        2,
-        15,
-        16,
-        42,
-        76,
-        81
-      ],
-      "tests": [
-        "T16",
-        "T23",
-        "T25"
-      ],
-      "gates": [
-        "G6",
-        "G7"
-      ],
-      "deliver": "A package for the selected Linux baseline acquires runtime/default artifacts without developer tools and offers user-controlled app updates.",
+      "deliver": "A Linux user sees an update notification and chooses whether to install it.",
       "criteria": [
-        "Choose and document a bounded initial Linux packaging target consistent with the validated desktop/runtime baseline.",
-        "On a clean target environment, install and invoke default features and the helper fixture without manual programming runtimes/package managers/compilers.",
-        "Verify acquisition retry/cache and user-initiated app-update success/failure behavior without overwriting the user's development environment.",
-        "State packaging/OS prerequisites and unsupported targets clearly; do not claim every Linux packaging ecosystem is covered."
+        "Use controlled metadata and two runnable builds to show notification, explicit installation and a successful version transition.",
+        "Taking no action must cause no automatic application download, install or restart. Keep extension auto-update controls separate.",
+        "Maintain compatible runtime artifacts, extension pins, saved data and enablement; document active-work handling and restart timing.",
+        "On the native Linux baseline, exercise acquisition/replacement failure and show a recoverable installation with useful UI diagnostics. Include native packaging/signing prerequisites in the result."
       ],
-      "bounds": "No distribution repository publishing or universal distro/desktop support.",
-      "file": "45-install-and-update-pane-on-a-clean-linux-machine.md"
-    },
-    {
-      "n": 46,
-      "title": "Verify the complete Windows preview",
-      "deps": [
-        21,
-        23,
-        24,
-        25,
-        27,
-        30,
-        34,
-        35,
-        36,
-        38,
-        39
-      ],
-      "type": "validation",
-      "stories": [
-        1,
-        4,
-        12,
-        13,
-        81
-      ],
-      "tests": [
-        "T01",
-        "T02",
-        "T03",
-        "T04",
-        "T05",
-        "T06",
-        "T07",
-        "T08",
-        "T09",
-        "T10",
-        "T11",
-        "T12",
-        "T13",
-        "T14",
-        "T15",
-        "T16",
-        "T17",
-        "T18",
-        "T19",
-        "T20",
-        "T21",
-        "T22",
-        "T23",
-        "T24",
-        "T25"
-      ],
-      "gates": [
-        "G1",
-        "G2",
-        "G3",
-        "G4",
-        "G5",
-        "G6",
-        "G7",
-        "G8"
-      ],
-      "deliver": "A Windows preview candidate has a complete acceptance record, assembled default features and explicit known limits, ready for a separate release decision.",
-      "criteria": [
-        "Run the spec's Windows acceptance matrix against a clean install of the assembled candidate, including all individually disableable defaults and clipboard initially off.",
-        "Verify lifecycle/recovery, data, dependency and update scenarios through real user/host flows; the representative early calculator-only installer is insufficient.",
-        "Check current dependency notices, artifact availability and measured resource targets; retain exact build/OS evidence and reproducible failure records.",
-        "Mark readiness only if applicable criteria pass; unresolved consequential decisions or failures remain blockers and get narrowly scoped follow-up work. Do not publish a release as part of this ticket."
-      ],
-      "bounds": "Bounded release verification, not a catch-all implementation/fix-everything ticket or macOS/Linux gate.",
-      "file": "46-verify-the-complete-windows-preview.md"
-    },
-    {
-      "n": 47,
-      "title": "Verify the complete macOS preview",
-      "deps": [
-        30,
-        34,
-        35,
-        36,
-        39,
-        44
-      ],
-      "type": "validation",
-      "stories": [
-        2,
-        3,
-        81
-      ],
-      "tests": [
-        "T01",
-        "T02",
-        "T03",
-        "T04",
-        "T05",
-        "T06",
-        "T07",
-        "T08",
-        "T09",
-        "T10",
-        "T11",
-        "T12",
-        "T13",
-        "T14",
-        "T15",
-        "T16",
-        "T17",
-        "T18",
-        "T19",
-        "T20",
-        "T21",
-        "T22",
-        "T23",
-        "T24",
-        "T25"
-      ],
-      "gates": [
-        "G1",
-        "G2",
-        "G3",
-        "G4",
-        "G5",
-        "G6",
-        "G7",
-        "G8"
-      ],
-      "deliver": "A macOS preview candidate has its own complete native acceptance/resource record and stated support limits, independently of Windows release timing.",
-      "criteria": [
-        "Execute the applicable full acceptance matrix on the claimed clean macOS baseline with all default features assembled and supported native helper artifacts.",
-        "Verify standard/custom views, input/IME/accessibility, lifecycle/recovery and package/data/update behavior natively; reuse test contracts, not Windows evidence.",
-        "Measure the macOS process tree and confirm platform-specific targets/notices/distribution prerequisites; report untested combinations explicitly.",
-        "Keep failures or missing environments/credentials as blockers and propose bounded follow-up fixes; do not publish or declare readiness from a compile-only result."
-      ],
-      "bounds": "Release verification on the selected baseline, not open-ended porting or a dependency on the Windows preview approval.",
-      "file": "47-verify-the-complete-macos-preview.md"
-    },
-    {
-      "n": 48,
-      "title": "Verify the complete Linux preview",
-      "deps": [
-        30,
-        34,
-        35,
-        36,
-        39,
+      "scope": "One OS application updater. Shared protocol code is reusable; completion does not depend on another OS's updater.",
+      "oldIds": [
         45
       ],
-      "type": "validation",
       "stories": [
-        2,
-        3,
-        81
+        76
       ],
       "tests": [
-        "T01",
-        "T02",
-        "T03",
-        "T04",
-        "T05",
-        "T06",
-        "T07",
-        "T08",
-        "T09",
-        "T10",
-        "T11",
-        "T12",
-        "T13",
-        "T14",
-        "T15",
-        "T16",
-        "T17",
-        "T18",
-        "T19",
-        "T20",
-        "T21",
-        "T22",
-        "T23",
-        "T24",
-        "T25"
+        "T16"
       ],
       "gates": [
-        "G1",
-        "G2",
-        "G3",
-        "G4",
-        "G5",
         "G6",
-        "G7",
-        "G8"
+        "G7"
       ],
-      "deliver": "A Linux preview candidate has native acceptance/resource evidence for its named desktop/package combinations, independently of other platform releases.",
-      "criteria": [
-        "Execute the applicable complete matrix on each claimed clean Linux baseline, preserving explicit availability limitations without silently dropping required core behavior.",
-        "Verify guest/UI interaction, standard/custom controls, input/accessibility, lifecycle/recovery, helpers, dependencies, data and update flows.",
-        "Measure process-tree costs and confirm packaging/dependency notices and runtime artifacts; distinguish each tested display/desktop combination.",
-        "Keep unsupported or failing combinations unclaimed and unresolved criteria blocked; prepare bounded follow-up tasks rather than expanding this into a broad implementation ticket."
-      ],
-      "bounds": "No universal Linux support claim, publication or implicit dependency on another platform's release approval.",
-      "file": "48-verify-the-complete-linux-preview.md"
+      "file": "52-install-a-pane-application-update-by-user-choice-on-linux.md",
+      "blockingReasons": {
+        "49": "supplies the installed Linux package and runtime acquisition flow to update"
+      }
     }
   ],
-  "storiesCovered": [
-    1,
-    2,
-    3,
-    4,
-    5,
-    6,
-    7,
-    8,
-    9,
-    10,
-    11,
-    12,
-    13,
-    14,
-    15,
-    16,
-    17,
-    18,
-    19,
-    20,
-    21,
-    22,
-    23,
-    24,
-    25,
-    26,
-    27,
-    28,
-    29,
-    30,
-    31,
-    32,
-    33,
-    34,
-    35,
-    36,
-    37,
-    38,
-    39,
-    40,
-    41,
-    42,
-    43,
-    44,
-    45,
-    46,
-    47,
-    48,
-    49,
-    50,
-    51,
-    52,
-    53,
-    54,
-    55,
-    56,
-    57,
-    58,
-    59,
-    60,
-    61,
-    62,
-    63,
-    64,
-    65,
-    66,
-    67,
-    68,
-    69,
-    70,
-    71,
-    72,
-    73,
-    74,
-    75,
-    76,
-    77,
-    78,
-    79,
-    80,
-    81,
-    82
-  ],
-  "scenariosCoveredBeforeFinalReleaseChecks": [
-    "T01",
-    "T02",
-    "T03",
-    "T04",
-    "T05",
-    "T06",
-    "T07",
-    "T08",
-    "T09",
-    "T10",
-    "T11",
-    "T12",
-    "T13",
-    "T14",
-    "T15",
-    "T16",
-    "T17",
-    "T18",
-    "T19",
-    "T20",
-    "T21",
-    "T22",
-    "T23",
-    "T24",
-    "T25"
-  ],
-  "missingStories": [],
-  "missingScenarios": [],
-  "acyclic": true,
-  "blockersPrecedeTickets": true,
-  "transitiveEdgesRemoved": [
-    [
-      17,
-      4
-    ],
-    [
-      40,
-      5
-    ],
-    [
-      41,
-      5
-    ],
-    [
-      42,
-      6
-    ],
-    [
-      43,
-      6
-    ]
-  ],
-  "earlyCrossPlatformContributorBaselineRequired": true,
-  "windowsPreviewRequiresEarlyPlatformBaseline": true,
-  "windowsPreviewRequiresLaterOtherPlatformReleaseWork": false,
-  "releaseReadinessIndependent": true,
-  "initialFrontier": [
-    1,
-    2
-  ],
-  "gateIds": [
-    "G1",
-    "G2",
-    "G3",
-    "G4",
-    "G5",
-    "G6",
-    "G7",
-    "G8"
-  ],
-  "storyOwners": {
+  "storyContributors": {
     "1": [
-      2,
-      46
+      "01"
     ],
     "2": [
-      5,
-      6,
-      7,
-      44,
-      45,
-      47,
-      48
+      "03",
+      "04"
     ],
     "3": [
-      5,
-      6,
-      7,
-      16,
-      40,
-      41,
-      42,
-      43,
-      47,
-      48
+      "03",
+      "04",
+      "15",
+      "20",
+      "21",
+      "22",
+      "24",
+      "25",
+      "28",
+      "29",
+      "30",
+      "33",
+      "34"
     ],
     "4": [
-      2,
-      35,
-      46
+      "01",
+      "P3"
     ],
     "5": [
-      21,
-      40,
-      42
+      "20",
+      "21",
+      "22"
     ],
     "6": [
-      22
+      "23"
     ],
     "7": [
-      23,
-      40,
-      42
+      "24"
     ],
     "8": [
-      24,
-      40,
-      42
+      "25"
     ],
     "9": [
-      20
+      "19"
     ],
     "10": [
-      25,
-      41,
-      43
+      "27",
+      "28",
+      "29",
+      "30"
     ],
     "11": [
-      25
+      "26",
+      "27"
     ],
     "12": [
-      2,
-      21,
-      22,
-      23,
-      24,
-      46
+      "01",
+      "20",
+      "21",
+      "22",
+      "23",
+      "24",
+      "25"
     ],
     "13": [
-      2,
-      46
+      "01"
     ],
     "14": [
-      20,
-      33,
-      35
+      "19",
+      "43",
+      "44",
+      "P3"
     ],
     "15": [
-      37,
-      44,
-      45
+      "47",
+      "48",
+      "49"
     ],
     "16": [
-      31,
-      32,
-      37,
-      44,
-      45
+      "41",
+      "42",
+      "47",
+      "48",
+      "49"
     ],
     "17": [
-      8,
-      31,
-      32
+      "05",
+      "41",
+      "42"
     ],
     "18": [
-      8,
-      16,
-      31,
-      32,
-      37
+      "05",
+      "15",
+      "41",
+      "42",
+      "47",
+      "48",
+      "49"
     ],
     "19": [
-      7,
-      8,
-      11,
-      39
+      "05",
+      "08",
+      "09"
     ],
     "20": [
-      8,
-      31,
-      32
+      "05",
+      "41",
+      "42"
     ],
     "21": [
-      8,
-      31,
-      32
+      "05",
+      "41",
+      "42"
     ],
     "22": [
-      8,
-      31,
-      32
+      "05",
+      "41",
+      "42"
     ],
     "23": [
-      8,
-      32
+      "05",
+      "42"
     ],
     "24": [
-      8,
-      32
+      "05",
+      "42"
     ],
     "25": [
-      29
+      "38"
     ],
     "26": [
-      29
+      "38"
     ],
     "27": [
-      29
+      "38"
     ],
     "28": [
-      29
+      "38"
     ],
     "29": [
-      29
+      "38"
     ],
     "30": [
-      30
+      "39",
+      "40"
     ],
     "31": [
-      30
+      "39",
+      "40"
     ],
     "32": [
-      1,
-      4,
-      7,
-      39
+      "02"
     ],
     "33": [
-      3,
-      4,
-      7,
-      39
+      "01",
+      "02"
     ],
     "34": [
-      1,
-      3
+      "01"
     ],
     "35": [
-      1,
-      3,
-      12
+      "01",
+      "10"
     ],
     "36": [
-      3,
-      4,
-      17
+      "01",
+      "02",
+      "16"
     ],
     "37": [
-      18
+      "17"
     ],
     "38": [
-      3,
-      4,
-      7,
-      17,
-      18
+      "01",
+      "02",
+      "16",
+      "17"
     ],
     "39": [
-      1,
-      4,
-      39
+      "02",
+      "26"
     ],
     "40": [
-      13,
-      25,
-      39
+      "11",
+      "25",
+      "26"
     ],
     "41": [
-      13,
-      39
+      "11"
     ],
     "42": [
-      13,
-      37,
-      39,
-      44,
-      45
+      "11",
+      "47",
+      "48",
+      "49"
     ],
     "43": [
-      16
+      "15"
     ],
     "44": [
-      16,
-      40,
-      41,
-      42,
-      43
+      "15",
+      "20",
+      "21",
+      "22",
+      "25",
+      "28",
+      "29",
+      "30",
+      "33",
+      "34"
     ],
     "45": [
-      33
+      "43",
+      "44"
     ],
     "46": [
-      19,
-      39
+      "18"
     ],
     "47": [
-      19
+      "18"
     ],
     "48": [
-      19
+      "18"
     ],
     "49": [
-      19
+      "18"
     ],
     "50": [
-      1,
-      4,
-      39
+      "02"
     ],
     "51": [
-      11,
-      39
+      "08",
+      "09"
     ],
     "52": [
-      10
+      "07"
     ],
     "53": [
-      11
+      "08",
+      "09"
     ],
     "54": [
-      10,
-      12
+      "07",
+      "10"
     ],
     "55": [
-      10
+      "07"
     ],
     "56": [
-      10
+      "07"
     ],
     "57": [
-      9,
-      12,
-      33
+      "06",
+      "10",
+      "25",
+      "28",
+      "29",
+      "30",
+      "39",
+      "43",
+      "44"
     ],
     "58": [
-      9
+      "06"
     ],
     "59": [
-      9
+      "06",
+      "24",
+      "39"
     ],
     "60": [
-      28
+      "35"
     ],
     "61": [
-      28
+      "36",
+      "40"
     ],
     "62": [
-      28
+      "37"
     ],
     "63": [
-      28
+      "36",
+      "37",
+      "40"
     ],
     "64": [
-      12,
-      13,
-      28
+      "10",
+      "11",
+      "35",
+      "36",
+      "37"
     ],
     "65": [
-      26,
-      41,
-      43
+      "31",
+      "33",
+      "34"
     ],
     "66": [
-      26,
-      41,
-      43
+      "31",
+      "33",
+      "34"
     ],
     "67": [
-      27,
-      41,
-      43
+      "32",
+      "33",
+      "34"
     ],
     "68": [
-      27,
-      41,
-      43
+      "32",
+      "33",
+      "34"
     ],
     "69": [
-      27,
-      41,
-      43
+      "32",
+      "33",
+      "34"
     ],
     "70": [
-      26,
-      41,
-      43
+      "31",
+      "33",
+      "34"
     ],
     "71": [
-      26,
-      41,
-      43
+      "31",
+      "33",
+      "34"
     ],
     "72": [
-      34
+      "45",
+      "46"
     ],
     "73": [
-      34
+      "45",
+      "46"
     ],
     "74": [
-      34
+      "45",
+      "46"
     ],
     "75": [
-      34
+      "45",
+      "46"
     ],
     "76": [
-      38,
-      44,
-      45
+      "50",
+      "51",
+      "52"
     ],
     "77": [
-      14,
-      15
+      "12",
+      "13",
+      "14"
     ],
     "78": [
-      14,
-      15
+      "12",
+      "13",
+      "14"
     ],
     "79": [
-      14,
-      33
+      "12",
+      "43",
+      "44"
     ],
     "80": [
-      14,
-      15
+      "12",
+      "13",
+      "14"
     ],
     "81": [
-      5,
-      6,
-      7,
-      16,
-      44,
-      45,
-      46,
-      47,
-      48
+      "03",
+      "04",
+      "15",
+      "P3"
     ],
     "82": [
-      36
+      "P2",
+      "release-validation"
     ]
   },
-  "scenarioOwners": {
+  "scenarioContributors": {
     "T01": [
-      2,
-      9,
-      20,
-      21,
-      22,
-      23,
-      24,
-      40,
-      42,
-      46,
-      47,
-      48
+      "01",
+      "06",
+      "19",
+      "20",
+      "21",
+      "22",
+      "23",
+      "24",
+      "25",
+      "release-validation"
     ],
     "T02": [
-      20,
-      33,
-      35,
-      46,
-      47,
-      48
+      "19",
+      "43",
+      "44",
+      "P3",
+      "release-validation"
     ],
     "T03": [
-      20,
-      21,
-      22,
-      23,
-      24,
-      25,
-      40,
-      41,
-      42,
-      43,
-      46,
-      47,
-      48
+      "19",
+      "20",
+      "21",
+      "22",
+      "23",
+      "24",
+      "25",
+      "26",
+      "27",
+      "28",
+      "29",
+      "30",
+      "release-validation"
     ],
     "T04": [
-      1,
-      3,
-      4,
-      5,
-      6,
-      7,
-      39,
-      46,
-      47,
-      48
+      "01",
+      "02",
+      "03",
+      "04",
+      "P1",
+      "release-validation"
     ],
     "T05": [
-      3,
-      4,
-      5,
-      6,
-      7,
-      17,
-      18,
-      39,
-      46,
-      47,
-      48
+      "01",
+      "02",
+      "03",
+      "04",
+      "16",
+      "17",
+      "release-validation"
     ],
     "T06": [
-      1,
-      4,
-      12,
-      46,
-      47,
-      48
+      "02",
+      "10",
+      "P1",
+      "release-validation"
     ],
     "T07": [
-      10,
-      11,
-      39,
-      46,
-      47,
-      48
+      "07",
+      "08",
+      "09",
+      "release-validation"
     ],
     "T08": [
-      10,
-      11,
-      34,
-      46,
-      47,
-      48
+      "07",
+      "08",
+      "09",
+      "45",
+      "46",
+      "release-validation"
     ],
     "T09": [
-      12,
-      13,
-      24,
-      25,
-      33,
-      40,
-      42,
-      46,
-      47,
-      48
+      "10",
+      "11",
+      "25",
+      "26",
+      "28",
+      "29",
+      "30",
+      "43",
+      "44",
+      "release-validation"
     ],
     "T10": [
-      9,
-      23,
-      26,
-      27,
-      41,
-      43,
-      46,
-      47,
-      48
+      "06",
+      "24",
+      "31",
+      "32",
+      "release-validation"
     ],
     "T11": [
-      8,
-      31,
-      32,
-      39,
-      46,
-      47,
-      48
+      "05",
+      "41",
+      "42",
+      "46",
+      "release-validation"
     ],
     "T12": [
-      29,
-      31,
-      32,
-      34,
-      46,
-      47,
-      48
+      "38",
+      "41",
+      "42",
+      "release-validation"
     ],
     "T13": [
-      30,
-      46,
-      47,
-      48
+      "39",
+      "40",
+      "release-validation"
     ],
     "T14": [
-      19,
-      29,
-      39,
-      46,
-      47,
-      48
+      "18",
+      "38",
+      "release-validation"
     ],
     "T15": [
-      34,
-      46,
-      47,
-      48
+      "45",
+      "46",
+      "release-validation"
     ],
     "T16": [
-      38,
-      44,
-      45,
-      46,
-      47,
-      48
+      "50",
+      "51",
+      "52",
+      "release-validation"
     ],
     "T17": [
-      14,
-      33,
-      46,
-      47,
-      48
+      "12",
+      "43",
+      "44",
+      "release-validation"
     ],
     "T18": [
-      15,
-      46,
-      47,
-      48
+      "13",
+      "14",
+      "release-validation"
     ],
     "T19": [
-      15,
-      46,
-      47,
-      48
+      "13",
+      "14",
+      "release-validation"
     ],
     "T20": [
-      28,
-      30,
-      46,
-      47,
-      48
+      "35",
+      "36",
+      "37",
+      "40",
+      "release-validation"
     ],
     "T21": [
-      26,
-      27,
-      41,
-      43,
-      46,
-      47,
-      48
+      "31",
+      "32",
+      "33",
+      "34",
+      "release-validation"
     ],
     "T22": [
-      5,
-      6,
-      13,
-      16,
-      21,
-      24,
-      26,
-      39,
-      40,
-      41,
-      42,
-      43,
-      46,
-      47,
-      48
+      "03",
+      "04",
+      "11",
+      "15",
+      "20",
+      "21",
+      "22",
+      "24",
+      "25",
+      "28",
+      "29",
+      "30",
+      "31",
+      "33",
+      "34",
+      "47",
+      "48",
+      "49",
+      "release-validation"
     ],
     "T23": [
-      37,
-      38,
-      44,
-      45,
-      46,
-      47,
-      48
+      "47",
+      "48",
+      "49",
+      "release-validation"
     ],
     "T24": [
-      35,
-      46,
-      47,
-      48
+      "P3",
+      "release-validation"
     ],
     "T25": [
-      5,
-      6,
-      7,
-      44,
-      45,
-      46,
-      47,
-      48
+      "03",
+      "04",
+      "P3",
+      "release-validation"
     ]
   },
-  "gateOwners": {
+  "gateContributors": {
     "G1": [
-      1,
-      3,
-      4,
-      5,
-      6,
-      7,
-      11,
-      39,
-      46,
-      47,
-      48
+      "01",
+      "02",
+      "03",
+      "04",
+      "08",
+      "09",
+      "P1",
+      "release-validation"
     ],
     "G2": [
+      "01",
+      "02",
+      "03",
+      "04",
+      "10",
+      "11",
+      "16",
+      "17",
+      "18",
+      "19",
+      "20",
+      "21",
+      "22",
+      "24",
+      "26",
+      "27",
+      "28",
+      "29",
+      "30",
+      "release-validation"
+    ],
+    "G3": [
+      "06",
+      "07",
+      "08",
+      "09",
+      "10",
+      "11",
+      "12",
+      "13",
+      "14",
+      "25",
+      "26",
+      "39",
+      "43",
+      "44",
+      "45",
+      "46",
+      "release-validation"
+    ],
+    "G4": [
+      "05",
+      "15",
+      "18",
+      "19",
+      "38",
+      "39",
+      "40",
+      "41",
+      "42",
+      "45",
+      "46",
+      "release-validation"
+    ],
+    "G5": [
+      "06",
+      "07",
+      "24",
+      "31",
+      "32",
+      "33",
+      "34",
+      "35",
+      "36",
+      "37",
+      "40",
+      "release-validation"
+    ],
+    "G6": [
+      "41",
+      "42",
+      "47",
+      "48",
+      "49",
+      "50",
+      "51",
+      "52",
+      "release-validation"
+    ],
+    "G7": [
+      "03",
+      "04",
+      "15",
+      "20",
+      "21",
+      "22",
+      "24",
+      "25",
+      "28",
+      "29",
+      "30",
+      "31",
+      "33",
+      "34",
+      "47",
+      "48",
+      "49",
+      "50",
+      "51",
+      "52",
+      "P3",
+      "release-validation"
+    ],
+    "G8": [
+      "P2",
+      "release-validation"
+    ]
+  },
+  "previousDraftMapping": {
+    "1": [],
+    "2": [
+      1
+    ],
+    "3": [
+      1
+    ],
+    "4": [
+      2
+    ],
+    "5": [
+      3
+    ],
+    "6": [
+      4
+    ],
+    "7": [],
+    "8": [
+      5
+    ],
+    "9": [
+      6
+    ],
+    "10": [
+      7
+    ],
+    "11": [
+      8,
+      9
+    ],
+    "12": [
+      10
+    ],
+    "13": [
+      11
+    ],
+    "14": [
+      12
+    ],
+    "15": [
+      13,
+      14
+    ],
+    "16": [
+      15
+    ],
+    "17": [
+      16
+    ],
+    "18": [
+      17
+    ],
+    "19": [
+      18
+    ],
+    "20": [
+      19
+    ],
+    "21": [
+      20
+    ],
+    "22": [
+      23
+    ],
+    "23": [
+      24
+    ],
+    "24": [
+      25
+    ],
+    "25": [
+      26,
+      27,
+      28
+    ],
+    "26": [
+      31
+    ],
+    "27": [
+      32
+    ],
+    "28": [
+      35,
+      36,
+      37
+    ],
+    "29": [
+      38
+    ],
+    "30": [
+      39,
+      40
+    ],
+    "31": [
+      41
+    ],
+    "32": [
+      42
+    ],
+    "33": [
+      43,
+      44
+    ],
+    "34": [
+      45,
+      46
+    ],
+    "35": [],
+    "36": [],
+    "37": [
+      47
+    ],
+    "38": [
+      50
+    ],
+    "39": [],
+    "40": [
+      21,
+      24,
+      25
+    ],
+    "41": [
+      29,
+      33
+    ],
+    "42": [
+      22,
+      24,
+      25
+    ],
+    "43": [
+      30,
+      34
+    ],
+    "44": [
+      48,
+      51
+    ],
+    "45": [
+      49,
+      52
+    ],
+    "46": [],
+    "47": [],
+    "48": []
+  },
+  "previousNonFeatureWorkDisposition": {
+    "1": "P1 feasibility/candidate input; Rust native integration is in 01",
+    "7": "Contributor commands and native checks are part of 01, 03 and 04; ongoing portability is a shared completion requirement",
+    "35": "P3 measured targets plus per-platform release validation",
+    "36": "P2 licensing decision and distribution evidence",
+    "39": "Author examples/docs/checks ship with language, form/custom view, helper, reload and package slices; final reproduction check is in release validation",
+    "46": "Windows release-validation checklist",
+    "47": "macOS release-validation checklist",
+    "48": "Linux release-validation checklist"
+  },
+  "releaseInputs": {
+    "Windows": [
+      1,
       2,
       3,
       4,
       5,
       6,
       7,
-      12,
-      13,
-      17,
-      18,
-      19,
-      20,
-      21,
-      25,
-      39,
-      46,
-      47,
-      48
-    ],
-    "G3": [
+      8,
       9,
       10,
       11,
@@ -2444,60 +2855,24 @@
       13,
       14,
       15,
-      24,
-      33,
-      34,
-      46,
-      47,
-      48
-    ],
-    "G4": [
-      8,
       16,
+      17,
+      18,
       19,
       20,
-      29,
-      30,
-      31,
-      32,
-      34,
-      39,
-      46,
-      47,
-      48
-    ],
-    "G5": [
-      9,
-      10,
       23,
+      24,
+      25,
       26,
       27,
       28,
-      30,
-      46,
-      47,
-      48
-    ],
-    "G6": [
       31,
       32,
+      35,
+      36,
       37,
       38,
-      44,
-      45,
-      46,
-      47,
-      48
-    ],
-    "G7": [
-      5,
-      6,
-      7,
-      16,
-      21,
-      24,
-      26,
-      35,
+      39,
       40,
       41,
       42,
@@ -2506,64 +2881,115 @@
       45,
       46,
       47,
-      48
+      50
     ],
-    "G8": [
+    "macOS": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      21,
+      23,
+      24,
+      25,
+      26,
+      27,
+      29,
+      32,
+      33,
+      35,
       36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
       46,
-      47,
-      48
+      48,
+      51
+    ],
+    "Linux": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      30,
+      32,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      49,
+      52
     ]
   },
-  "oldToNewDraftNumbers": {
-    "1": 1,
-    "2": 2,
-    "3": 3,
-    "4": 4,
-    "5": 8,
-    "6": 9,
-    "7": 10,
-    "8": 11,
-    "9": 12,
-    "10": 13,
-    "11": 14,
-    "12": 15,
-    "13": 16,
-    "14": 17,
-    "15": 18,
-    "16": 19,
-    "17": 20,
-    "18": 21,
-    "19": 22,
-    "20": 23,
-    "21": 24,
-    "22": 25,
-    "23": 26,
-    "24": 27,
-    "25": 28,
-    "26": 29,
-    "27": 30,
-    "28": 31,
-    "29": 32,
-    "30": 33,
-    "31": 34,
-    "32": 35,
-    "33": 36,
-    "34": 37,
-    "35": 38,
-    "36": 39,
-    "37": 5,
-    "38": 6,
-    "39": 40,
-    "40": 41,
-    "41": 42,
-    "42": 43,
-    "43": 44,
-    "44": 45,
-    "45": 46,
-    "46": 47,
-    "47": 48
+  "structuralChecks": {
+    "acyclic": true,
+    "blockersPrecedeTickets": true,
+    "missingStoryContributors": [],
+    "initialFrontier": [
+      1
+    ],
+    "earlyNativeContributorGates": [
+      3,
+      4
+    ],
+    "transitiveEdgesRemoved": [
+      {
+        "ticket": "npm-update",
+        "dependency": "reload"
+      }
+    ],
+    "parentPreserved": true
   },
-  "parentSpecSha256": "9C76EE1CB922928E8FF10235F5CF38730FFFF3CAC2288A591A043CCC668AE4B3",
-  "validationScope": "Planning structure only; no new product/platform runtime evidence."
+  "validationScope": "Structural and requirement-reference checks only. Human review must assess slice size and genuine prerequisites. No runtime/platform behavior has been validated by drafting this plan."
 }

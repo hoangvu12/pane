@@ -1,357 +1,384 @@
-# Pane ticket breakdown for review
+# Pane implementation ticket index
 
-Draft: awaiting user approval of granularity and blocking edges.
-Parent: [Pane specification](spec.md).
-Prepared and revised: 2026-09-28.
-Contributor requirement: [user clarification and acceptance boundary](contributor-platform-requirement.md).
+**Status:** ready-for-agent
+**Revision:** 3, 2026-09-28.
+**Parent:** [Pane specification](spec.md), unchanged.
 
-This is a complete proposed breakdown, not published ready-for-agent issues and not authorization to execute implementation. Each linked draft is a separate, self-contained slice with scope, blockers, acceptance criteria and evidence requirements. After approval, publish one file per ticket in the configured local issues directory. Preserve the parent spec unchanged.
+The earlier 48-ticket breakdown followed the format but mixed large validation/decision tasks with feature slices. This revision has **52 implementation slices**, each with a concrete outcome, acceptance checks, scope and a reason for every blocker. The count is not a quality claim: the review must still assess whether each slice fits one fresh context window.
 
-## Review summary
+## What changed
 
-- 48 slices cover all 82 user stories, all eight gates and all 25 planned acceptance scenarios.
-- The initial frontier is 01 (runtime candidate) and 02 (native shell). Existing prototype evidence is the starting point, not proof of production readiness.
-- The first integrated milestone is 04: real JS/TS and Rust commands interacting with the native UI.
-- Development reload, resource cleanup and recovery follow as separate behaviors; standard forms and custom views also have separate slices.
-- macOS (05) and Linux (06) build/run real guests immediately after 04. Contributor workflow 07 gates the broad shared extension work: all three systems must build Pane and guest examples and run native checks.
-- Windows preview readiness (46) requires that early three-platform contributor baseline. It does not wait for later macOS/Linux feature integrations, installers or release-readiness checks (40-45, 47-48). Platform work belongs in the shared project; these are dependency branches, not deferred or isolated source forks.
-- Shared build tools, SDK examples and development reload must work on Windows/macOS/Linux. Portable commands and a native automated check matrix are required; the CI provider is not predetermined.
-- macOS/Linux work requires real target environments. Those are explicit execution prerequisites, not assumed resources available in this Windows workspace.
-- Gate/validation tickets produce concrete runnable evidence or a resolved decision; an unresolved failure is not completion.
-- Source/SDK/backend licensing choices and measured budgets remain explicit decisions. QuickJS is not locked in by this draft.
-- No broad prefactoring ticket is needed: the workspace has prototypes rather than a production architecture to restructure.
-- A release-readiness ticket verifies an assembled candidate; it does not authorize external publication or absorb unbounded fixes.
-- The testing approach in the spec remains a proposal pending feedback. This review concerns ticket size/dependencies and does not silently adopt an engine, license split or numeric budget.
+- The first outcome is a real Rust command responding through native UI. JS/TS support and actual macOS/Linux contributor builds follow immediately; native contributor baselines gate broader shared features.
+- Runtime feasibility, licensing and measured-target decisions are explicit [planning prerequisites](planning-prerequisites.md), not disguised feature tickets. Only P1 blocks a numbered slice (02); P2/P3 gate corresponding distribution/readiness claims.
+- Build-on-save adapters, scheduled tasks/services, cache/uninstall/deletion, dependent disable/uninstall and OS hotkeys are separate outcomes.
+- Each OS has its own app discovery, installer and app-update slices. A macOS/Linux installer or updater does not wait for a Windows equivalent.
+- A URL quicklink and configured-folder search each have one shared end-to-end contract with native checks on the three baselines; there are no bundled app/file/quicklink platform tickets.
+- Author examples, reproduction instructions and targeted checks accompany the features that introduce them. There is no catch-all onboarding implementation ticket.
+- Release-wide evidence and per-platform resource measurements live in the [release checklist](release-validation.md). Failures create bounded corrective work; no platform waits for a different platform's benchmark or release approval.
 
-## Proposed tickets
+## Reading and execution rules
 
-Numbers are in dependency order. Blockers list direct prerequisites only; inherited prerequisites are omitted. Parallel branches do not imply separate source forks or a global serial queue. Revision 2 renumbers unpublished drafts; the previous plan is [preserved](ticket-breakdown-revision-1.json).
+Read the [contributor requirement](contributor-platform-requirement.md) and parent/current decisions. The runtime backend and testing-boundary feedback remain as documented; this revision does not silently settle them. The initial implementation frontier is **01**, with P1 feasibility work independently resolvable. The 52 slices are published as individual files under `issues/`. Work any ticket whose numbered blockers and linked planning prerequisites are complete. `ready-for-agent` describes specification readiness; it does not mean the ticket is unblocked. Ticket 02 remains blocked by both 01 and P1 until P1's exit evidence is recorded in the planning prerequisites.
 
-### Runtime and first native interaction
+Each ticket implements all layers necessary for its stated outcome. A tiny initial list/action contract is introduced inside the first working interaction; there is no separate "build the SDK", "build the UI" or "write all tests" ticket. No wide refactor or prefactoring phase is justified by this prototype-only workspace.
 
-1. **[Validate a maintainable WASI3 runtime candidate](ticket-drafts/01-validate-a-maintainable-wasi3-runtime-candidate.md)**
+## Published tickets
 
-   **Blocked by:** None.
+Numbers are dependency order, not a mandatory serial queue. A blocked-by entry names a direct prerequisite; inherited prerequisites are omitted. P1 is the external feasibility prerequisite described above.
 
-   **Delivers:** A reproducible WASI3 runtime candidate for JS, TS and Rust, with portable build inputs and correct fresh-instance initialization, ready for early native validation on all three operating systems.
+### First complete interaction and native contributors
 
-2. **[Open Pane's portable native core without extensions](ticket-drafts/02-open-pane-s-portable-native-core-without-extensions.md)**
+1. **[Run one Rust command in Pane's native window](issues/01-run-one-rust-command-in-pane-s-native-window.md)**
 
    **Blocked by:** None.
 
-   **Delivers:** A minimal GPUI CE shell with portable build/run entry points and OS-specific code behind explicit adapters, usable without a guest runtime.
+   **Delivers:** A user opens Pane, runs a bundled Rust sample command, selects a result, and sees the guest's response in the native window.
 
-3. **[Run a Rust command through the native UI](ticket-drafts/03-run-a-rust-command-through-the-native-ui.md)**
+2. **[Run JS and TS versions of the native sample command](issues/02-run-js-and-ts-versions-of-the-native-sample-command.md)**
 
-   **Blocked by:** 01, 02.
+   **Blocked by:** 01, P1.
 
-   **Delivers:** A Rust WASI3 fixture command displays a list in Pane, receives a real user action, and returns an updated view.
+   **Delivers:** An author builds JS and TS samples whose actions update the same native view as the Rust sample.
 
-4. **[Run JS and TS commands through the same UI contract](ticket-drafts/04-run-js-and-ts-commands-through-the-same-ui-contract.md)**
+3. **[Build and run the sample command natively on macOS](issues/03-build-and-run-the-sample-command-natively-on-macos.md)**
 
-   **Blocked by:** 03.
+   **Blocked by:** 02.
 
-   **Delivers:** JS and TS fixture extensions drive the same native list/action interaction as Rust, using the candidate engine behind Pane's API.
+   **Delivers:** A macOS contributor builds Pane and the Rust/JS/TS samples locally, then completes the native action/result interaction.
 
-### Early macOS/Linux contributors and shared developer workflow
+4. **[Build and run the sample command natively on Linux](issues/04-build-and-run-the-sample-command-natively-on-linux.md)**
 
-5. **[Establish the macOS contributor baseline early](ticket-drafts/05-establish-the-macos-contributor-baseline-early.md)**
+   **Blocked by:** 02.
 
-   **Blocked by:** 04.
+   **Delivers:** A Linux contributor builds Pane and the Rust/JS/TS samples locally, then completes the native action/result interaction.
 
-   **Delivers:** A macOS contributor can build the core and JS/TS/Rust guest examples, run native checks and exercise real view/event round trips before shared SDK and package work expands.
+### Installation, lifecycle and recovery
 
-6. **[Establish the Linux contributor baseline early](ticket-drafts/06-establish-the-linux-contributor-baseline-early.md)**
+5. **[Install and run a local extension package](issues/05-install-and-run-a-local-extension-package.md)**
 
-   **Blocked by:** 04.
-
-   **Delivers:** A Linux contributor can build the core and JS/TS/Rust guest examples, run native checks and exercise real view/event round trips on an explicitly supported desktop baseline.
-
-7. **[Keep a working contributor workflow on all three operating systems](ticket-drafts/07-keep-a-working-contributor-workflow-on-all-three-operating-systems.md)**
-
-   **Blocked by:** 05, 06.
-
-   **Delivers:** Contributors on Windows, macOS and Linux have a documented build/run/test workflow backed by native automated checks before the shared extension system grows.
-
-### Local development, lifecycle and recovery
-
-8. **[Install and run local extension packages](ticket-drafts/08-install-and-run-local-extension-packages.md)**
-
-   **Blocked by:** 07.
+   **Blocked by:** 03, 04.
 
    **Delivers:** A user selects a supported local package in Pane, sees its identity and compatibility, installs it and invokes its command.
 
-9. **[Disable extensions and preserve settings across restart](ticket-drafts/09-disable-extensions-and-preserve-settings-across-restart.md)**
+6. **[Disable an extension and retain its settings after restart](issues/06-disable-an-extension-and-retain-its-settings-after-restart.md)**
 
-   **Blocked by:** 08.
+   **Blocked by:** 05.
 
    **Delivers:** A user disables a local extension in the UI, restarts Pane, and can re-enable it with its saved settings intact.
 
-10. **[Replace a running extension through manual reload](ticket-drafts/10-replace-a-running-extension-through-manual-reload.md)**
+7. **[Reload one extension without restarting Pane](issues/07-reload-one-extension-without-restarting-pane.md)**
 
-   **Blocked by:** 09.
+   **Blocked by:** 06.
 
    **Delivers:** Manual reload replaces one extension while Pane and an unrelated extension stay open, preserving saved data and reporting failed replacement startup.
 
-11. **[Build and reload on save for all launch languages](ticket-drafts/11-build-and-reload-on-save-for-all-launch-languages.md)**
-
-   **Blocked by:** 10.
-
-   **Delivers:** Saving a JS, TS or Rust development extension rebuilds and reloads that extension, with build diagnostics shown in Pane.
-
-12. **[Cancel in-flight work during reload and disable](ticket-drafts/12-cancel-in-flight-work-during-reload-and-disable.md)**
-
-   **Blocked by:** 10.
-
-   **Delivers:** Reloading or disabling an extension with pending async work stops managed resources and prevents old replies from changing the current UI.
-
-13. **[Invoke and clean up a prebuilt native helper](ticket-drafts/13-invoke-and-clean-up-a-prebuilt-native-helper.md)**
-
-   **Blocked by:** 12.
-
-   **Delivers:** A component command invokes an OS-matched prebuilt helper, shows its result, and stops the managed process on cancel, disable or reload.
-
-14. **[Pause an identified broken extension through the UI](ticket-drafts/14-pause-an-identified-broken-extension-through-the-ui.md)**
-
-   **Blocked by:** 12.
-
-   **Delivers:** Pane skips an identified failing extension, shows a toast and persistent status, and allows Retry without requiring a CLI.
-
-15. **[Recover when the shared runtime crashes or hangs](ticket-drafts/15-recover-when-the-shared-runtime-crashes-or-hangs.md)**
-
-   **Blocked by:** 13, 14.
-
-   **Delivers:** The native core stays recoverable after the runtime stops responding, with honest runtime-level diagnostics and no blind replay of user actions.
-
-16. **[Explain platform-limited extensions and actions](ticket-drafts/16-explain-platform-limited-extensions-and-actions.md)**
-
-   **Blocked by:** 08.
-
-   **Delivers:** Pane displays supported-OS information and explains unavailable actions while leaving supported actions usable.
-
-### Native views, composition and root search
-
-17. **[Submit a native form from JS/TS and Rust](ticket-drafts/17-submit-a-native-form-from-js-ts-and-rust.md)**
+8. **[Reload a Rust extension after saving valid source](issues/08-reload-a-rust-extension-after-saving-valid-source.md)**
 
    **Blocked by:** 07.
 
-   **Delivers:** A native extension form accepts input, validates it, and returns a visible guest result through the same contract in JS/TS and Rust.
+   **Delivers:** A Rust author edits the sample, saves it, and sees the new behavior while Pane stays open.
 
-18. **[Drive a custom interactive view from an extension](ticket-drafts/18-drive-a-custom-interactive-view-from-an-extension.md)**
+9. **[Reload JS and TS extensions after saving valid source](issues/09-reload-js-and-ts-extensions-after-saving-valid-source.md)**
 
-   **Blocked by:** 17.
+   **Blocked by:** 07.
 
-   **Delivers:** A JS/TS and Rust extension each drive one custom interactive visualization or control with real input and guest-updated rendering.
+   **Delivers:** A JS/TS author edits the sample, saves it, and sees the new behavior while Pane stays open.
 
-19. **[Call explicit operations across extension languages](ticket-drafts/19-call-explicit-operations-across-extension-languages.md)**
+10. **[Discard late guest results after reload or disable](issues/10-discard-late-guest-results-after-reload-or-disable.md)**
 
-   **Blocked by:** 09.
+   **Blocked by:** 07.
 
-   **Delivers:** An installed JS/TS command calls a Rust operation and a Rust command calls JS/TS, displaying structured results and meaningful target errors.
+   **Delivers:** Reloading or disabling an extension with pending async work stops managed resources and prevents old replies from changing the current UI.
 
-20. **[Discover and invoke commands through root search](ticket-drafts/20-discover-and-invoke-commands-through-root-search.md)**
+11. **[Run and stop a packaged native helper](issues/11-run-and-stop-a-packaged-native-helper.md)**
 
-   **Blocked by:** 09.
+   **Blocked by:** 10.
 
-   **Delivers:** Root search finds installed command metadata and activates only the selected enabled extension.
+   **Delivers:** A component command invokes an OS-matched prebuilt helper, shows its result, and stops the managed process on cancel, disable or reload.
 
-### Default features and data
+12. **[Pause an attributable broken extension and offer Retry](issues/12-pause-an-attributable-broken-extension-and-offer-retry.md)**
 
-21. **[Launch Windows applications from a default extension](ticket-drafts/21-launch-windows-applications-from-a-default-extension.md)**
+   **Blocked by:** 10.
 
-   **Blocked by:** 16, 20.
+   **Delivers:** Pane skips an identified failing extension, shows a toast and persistent status, and allows Retry without requiring a CLI.
 
-   **Delivers:** Pane finds installed Windows applications and launches a selected result through an independently disableable default extension.
+13. **[Keep recovery controls usable after a runtime crash](issues/13-keep-recovery-controls-usable-after-a-runtime-crash.md)**
 
-22. **[Show calculator answers as an extension feature](ticket-drafts/22-show-calculator-answers-as-an-extension-feature.md)**
+   **Blocked by:** 11, 12.
 
-   **Blocked by:** 20.
+   **Delivers:** A user sees that the extension runtime stopped, can open management and explicitly retry without replaying an action.
 
-   **Delivers:** Typing a supported expression into root search returns a calculator result from a disableable default extension.
-
-23. **[Create and invoke persistent quicklinks](ticket-drafts/23-create-and-invoke-persistent-quicklinks.md)**
-
-   **Blocked by:** 17, 20.
-
-   **Delivers:** A user creates a quicklink in a native form, finds it in root search and invokes it after restarting Pane.
-
-24. **[Search and open files through a default extension](ticket-drafts/24-search-and-open-files-through-a-default-extension.md)**
-
-   **Blocked by:** 12, 16, 20.
-
-   **Delivers:** Pane searches a documented local file scope and opens a selected Windows result, with cancellation as the query changes.
-
-25. **[Search inside an online command with quick access](ticket-drafts/25-search-inside-an-online-command-with-quick-access.md)**
-
-   **Blocked by:** 12, 20.
-
-   **Delivers:** A user reaches an online-search command through an alias, hotkey or fallback, and receives cancellable results inside that command.
-
-26. **[Capture clipboard history only when enabled](ticket-drafts/26-capture-clipboard-history-only-when-enabled.md)**
-
-   **Blocked by:** 09, 16.
-
-   **Delivers:** A Windows clipboard extension starts off, captures supported clipboard content only when enabled, and supports visible pause/disable controls.
-
-27. **[Expire and delete clipboard history predictably](ticket-drafts/27-expire-and-delete-clipboard-history-predictably.md)**
-
-   **Blocked by:** 26.
-
-   **Delivers:** Clipboard history has configurable finite retention and deletion controls whose effects remain correct while disabled and after downtime.
-
-28. **[Manage cache, credentials and uninstall data in the UI](ticket-drafts/28-manage-cache-credentials-and-uninstall-data-in-the-ui.md)**
-
-   **Blocked by:** 09.
-
-   **Delivers:** Users can clear an extension's cache, uninstall it with a durable-data choice, and later remove retained data without its code installed.
-
-### Dependencies, distribution and background work
-
-29. **[Install required extension dependencies](ticket-drafts/29-install-required-extension-dependencies.md)**
-
-   **Blocked by:** 19.
-
-   **Delivers:** Installing a local fixture extension shows and installs its compatible missing required dependencies while preserving optional, disabled and pinned choices.
-
-30. **[Disable or remove required dependents together](ticket-drafts/30-disable-or-remove-required-dependents-together.md)**
-
-   **Blocked by:** 28, 29.
-
-   **Delivers:** Disabling or uninstalling a dependency shows affected required dependents and applies the confirmed whole-set action or cancels cleanly.
-
-31. **[Install npm-distributed component packages](ticket-drafts/31-install-npm-distributed-component-packages.md)**
-
-   **Blocked by:** 29.
-
-   **Delivers:** A user installs a supported npm package through Pane without manually installing npm or Node, then runs its component command.
-
-32. **[Install Git-distributed component packages](ticket-drafts/32-install-git-distributed-component-packages.md)**
-
-   **Blocked by:** 29.
-
-   **Delivers:** A user installs a supported Git-sourced package or explicit revision through Pane without manual Git/compiler setup.
-
-33. **[Run scheduled and continuing background work](ticket-drafts/33-run-scheduled-and-continuing-background-work.md)**
-
-   **Blocked by:** 14.
-
-   **Delivers:** Enabled fixture extensions can schedule work or run an explicit background service, while unused installations remain inactive and disable stops managed activity.
-
-34. **[Update eligible extensions without interrupting commands](ticket-drafts/34-update-eligible-extensions-without-interrupting-commands.md)**
-
-   **Blocked by:** 31, 32, 33.
-
-   **Delivers:** Compatible published extensions update automatically under user controls, respecting pins/local copies and staging replacement until active work permits it.
-
-### Measurements, licensing, setup and author experience
-
-35. **[Measure Windows resource usage across real lifecycle flows](ticket-drafts/35-measure-windows-resource-usage-across-real-lifecycle-flows.md)**
-
-   **Blocked by:** 15, 20, 33.
-
-   **Delivers:** A repeatable Windows measurement report shows actual process-tree costs for idle Pane, inactive/active extensions, startup and lifecycle churn.
-
-36. **[Resolve first-party licensing and distribution notices](ticket-drafts/36-resolve-first-party-licensing-and-distribution-notices.md)**
+14. **[Recover through the UI when a guest stops responding](issues/14-recover-through-the-ui-when-a-guest-stops-responding.md)**
 
    **Blocked by:** 13.
 
-   **Delivers:** A concrete first-party application/SDK/component license split and dependency-notice plan fit Pane's provisional Zed-style direction.
+   **Delivers:** A user can recover from a non-cooperating guest without closing Pane or losing saved data.
 
-37. **[Install Pane and acquire a default feature on Windows](ticket-drafts/37-install-pane-and-acquire-a-default-feature-on-windows.md)**
+### Availability, views and composition
 
-   **Blocked by:** 13, 22.
+15. **[Explain an unavailable extension action without hiding working actions](issues/15-explain-an-unavailable-extension-action-without-hiding-working-actions.md)**
 
-   **Delivers:** A clean Windows machine installs a small Pane bootstrap and automatically acquires the runtime and a runnable calculator/default-feature package.
+   **Blocked by:** 05.
 
-38. **[Offer Pane updates for user-initiated installation](ticket-drafts/38-offer-pane-updates-for-user-initiated-installation.md)**
+   **Delivers:** Pane displays supported-OS information and explains unavailable actions while leaving supported actions usable.
 
-   **Blocked by:** 37.
+16. **[Submit and validate a native form from an extension](issues/16-submit-and-validate-a-native-form-from-an-extension.md)**
 
-   **Delivers:** Pane announces an available application update and installs it only after the user chooses, with a clear outcome if acquisition or replacement fails.
+   **Blocked by:** 03, 04.
 
-39. **[Validate author onboarding and distributable examples](ticket-drafts/39-validate-author-onboarding-and-distributable-examples.md)**
+   **Delivers:** A native extension form accepts input, validates it, and returns a visible guest result through the same contract in JS/TS and Rust.
 
-   **Blocked by:** 11, 13, 18, 31, 32, 33.
+17. **[Choose a color in an extension-owned interactive view](issues/17-choose-a-color-in-an-extension-owned-interactive-view.md)**
 
-   **Delivers:** A contributor on Windows, macOS or Linux can independently build Pane and JS/TS/Rust examples, run checks, use hot reload and prepare supported packages from a fresh checkout.
+   **Blocked by:** 16.
 
-### Platform integrations and installers
+   **Delivers:** A user adjusts a small color picker, the guest receives the change, and the native view displays the selected value.
 
-40. **[Use application, file and quicklink actions on macOS](ticket-drafts/40-use-application-file-and-quicklink-actions-on-macos.md)**
+18. **[Call an explicit operation in another extension](issues/18-call-an-explicit-operation-in-another-extension.md)**
 
-   **Blocked by:** 21, 23, 24.
+   **Blocked by:** 06.
 
-   **Delivers:** The existing default app/file/quicklink workflows use real macOS discovery and open actions with accurate availability reporting.
+   **Delivers:** An installed JS/TS command calls a Rust operation and a Rust command calls JS/TS, displaying structured results and meaningful target errors.
 
-41. **[Use clipboard controls and quick access on macOS](ticket-drafts/41-use-clipboard-controls-and-quick-access-on-macos.md)**
+### Root search and default actions
 
-   **Blocked by:** 25, 27.
+19. **[Find and invoke installed commands through root search](issues/19-find-and-invoke-installed-commands-through-root-search.md)**
 
-   **Delivers:** The existing opt-in clipboard and command quick-access flows work on macOS where available and explain unavailable OS integrations.
+   **Blocked by:** 06.
 
-42. **[Use application, file and quicklink actions on Linux](ticket-drafts/42-use-application-file-and-quicklink-actions-on-linux.md)**
+   **Delivers:** Root search finds installed command metadata and activates only the selected enabled extension.
 
-   **Blocked by:** 21, 23, 24.
+20. **[Launch a Windows application from root search](issues/20-launch-a-windows-application-from-root-search.md)**
 
-   **Delivers:** The existing default app/file/quicklink workflows use Linux desktop discovery and open actions on the recorded support matrix.
+   **Blocked by:** 15, 19.
 
-43. **[Use clipboard controls and quick access on Linux](ticket-drafts/43-use-clipboard-controls-and-quick-access-on-linux.md)**
+   **Delivers:** A user finds an installed Windows application in Pane, launches it, and can disable that default extension.
 
-   **Blocked by:** 25, 27.
+21. **[Launch a macOS application from root search](issues/21-launch-a-macos-application-from-root-search.md)**
 
-   **Delivers:** Clipboard and shortcut integration works on the explicitly supported Linux desktop combinations, with honest explanations where OS restrictions prevent it.
+   **Blocked by:** 15, 19.
 
-44. **[Install and update Pane on a clean macOS machine](ticket-drafts/44-install-and-update-pane-on-a-clean-macos-machine.md)**
+   **Delivers:** A user finds an installed macOS application in Pane, launches it, and can disable that default extension.
 
-   **Blocked by:** 38, 40, 41.
+22. **[Launch a Linux application from root search](issues/22-launch-a-linux-application-from-root-search.md)**
 
-   **Delivers:** A macOS package acquires runtime/default artifacts without developer tools and offers app updates under the user-initiated policy.
+   **Blocked by:** 15, 19.
 
-45. **[Install and update Pane on a clean Linux machine](ticket-drafts/45-install-and-update-pane-on-a-clean-linux-machine.md)**
+   **Delivers:** A user finds an installed Linux application in Pane, launches it, and can disable that default extension.
 
-   **Blocked by:** 38, 42, 43.
+23. **[Show a calculator result in root search](issues/23-show-a-calculator-result-in-root-search.md)**
 
-   **Delivers:** A package for the selected Linux baseline acquires runtime/default artifacts without developer tools and offers user-controlled app updates.
+   **Blocked by:** 19.
 
-### Independent preview-readiness checks
+   **Delivers:** Typing a supported expression into root search returns a calculator result from a disableable default extension.
 
-46. **[Verify the complete Windows preview](ticket-drafts/46-verify-the-complete-windows-preview.md)**
+24. **[Create and invoke a persistent URL quicklink](issues/24-create-and-invoke-a-persistent-url-quicklink.md)**
 
-   **Blocked by:** 21, 23, 24, 25, 27, 30, 34, 35, 36, 38, 39.
+   **Blocked by:** 16, 19.
 
-   **Delivers:** A Windows preview candidate has a complete acceptance record, assembled default features and explicit known limits, ready for a separate release decision.
+   **Delivers:** A user saves a URL quicklink, finds it in root search after restarting Pane, and opens it in their default browser.
 
-47. **[Verify the complete macOS preview](ticket-drafts/47-verify-the-complete-macos-preview.md)**
+25. **[Find and open a file within a selected folder](issues/25-find-and-open-a-file-within-a-selected-folder.md)**
 
-   **Blocked by:** 30, 34, 35, 36, 39, 44.
+   **Blocked by:** 10, 15, 16, 19.
 
-   **Delivers:** A macOS preview candidate has its own complete native acceptance/resource record and stated support limits, independently of Windows release timing.
+   **Delivers:** A user chooses a folder, searches its supported files through a default extension, and opens a result.
 
-48. **[Verify the complete Linux preview](ticket-drafts/48-verify-the-complete-linux-preview.md)**
+### Online commands and quick access
 
-   **Blocked by:** 30, 34, 35, 36, 39, 45.
+26. **[Search an online service inside its command](issues/26-search-an-online-service-inside-its-command.md)**
 
-   **Delivers:** A Linux preview candidate has native acceptance/resource evidence for its named desktop/package combinations, independently of other platform releases.
+   **Blocked by:** 10, 19.
 
-## Coverage and dependency checks
+   **Delivers:** Opening an online extension command and entering a query displays service results without querying it during ordinary root search.
 
-[Machine-readable checks](ticket-breakdown-checks.json) verify all 82 stories, 25 scenarios and eight gates have owners, that the graph is acyclic, and that early cross-platform contributor support gates shared feature development. These are planning checks, not evidence of implemented support.
+27. **[Invoke a command through an alias or explicit fallback](issues/27-invoke-a-command-through-an-alias-or-explicit-fallback.md)**
 
-| Gate | Ticket owners |
+   **Blocked by:** 26.
+
+   **Delivers:** A user configures an alias or fallback for an installed command and invokes it from root search.
+
+28. **[Open an extension command with a global hotkey on Windows](issues/28-open-an-extension-command-with-a-global-hotkey-on-windows.md)**
+
+   **Blocked by:** 19, 15.
+
+   **Delivers:** A user assigns a supported Windows shortcut and opens the selected command while another application has focus.
+
+29. **[Open an extension command with a global hotkey on macOS](issues/29-open-an-extension-command-with-a-global-hotkey-on-macos.md)**
+
+   **Blocked by:** 19, 15.
+
+   **Delivers:** A user assigns a supported macOS shortcut and opens the selected command while another application has focus.
+
+30. **[Open an extension command with a global hotkey on Linux](issues/30-open-an-extension-command-with-a-global-hotkey-on-linux.md)**
+
+   **Blocked by:** 19, 15.
+
+   **Delivers:** A user assigns a supported Linux shortcut and opens the selected command while another application has focus.
+
+### Clipboard history
+
+31. **[Capture opt-in clipboard history on Windows](issues/31-capture-opt-in-clipboard-history-on-windows.md)**
+
+   **Blocked by:** 06, 15.
+
+   **Delivers:** A Windows clipboard extension starts off, captures supported clipboard content only when enabled, and supports visible pause/disable controls.
+
+32. **[Expire and delete saved clipboard history](issues/32-expire-and-delete-saved-clipboard-history.md)**
+
+   **Blocked by:** 31.
+
+   **Delivers:** Clipboard history has configurable finite retention and deletion controls whose effects remain correct while disabled and after downtime.
+
+33. **[Capture opt-in clipboard history on macOS](issues/33-capture-opt-in-clipboard-history-on-macos.md)**
+
+   **Blocked by:** 32.
+
+   **Delivers:** A macOS user enables clipboard history, sees a captured item, and can pause, delete or expire it through Pane.
+
+34. **[Capture opt-in clipboard history on Linux](issues/34-capture-opt-in-clipboard-history-on-linux.md)**
+
+   **Blocked by:** 32.
+
+   **Delivers:** A Linux user enables clipboard history, sees a captured item, and can pause, delete or expire it through Pane.
+
+### Data and required dependencies
+
+35. **[Clear an extension's cache without deleting saved data](issues/35-clear-an-extension-s-cache-without-deleting-saved-data.md)**
+
+   **Blocked by:** 06.
+
+   **Delivers:** A user clears one extension's disposable cache while its settings, content and local credentials remain intact.
+
+36. **[Uninstall an extension with an explicit saved-data choice](issues/36-uninstall-an-extension-with-an-explicit-saved-data-choice.md)**
+
+   **Blocked by:** 35.
+
+   **Delivers:** A user removes an extension and chooses whether to keep its durable data.
+
+37. **[Delete retained data after its extension is uninstalled](issues/37-delete-retained-data-after-its-extension-is-uninstalled.md)**
+
+   **Blocked by:** 36.
+
+   **Delivers:** A user finds retained extension data in management and deletes it while the extension code is absent.
+
+38. **[Install missing required dependencies with a local extension](issues/38-install-missing-required-dependencies-with-a-local-extension.md)**
+
+   **Blocked by:** 18.
+
+   **Delivers:** Installing a local fixture extension shows and installs its compatible missing required dependencies while preserving optional, disabled and pinned choices.
+
+39. **[Disable required dependents together or cancel](issues/39-disable-required-dependents-together-or-cancel.md)**
+
+   **Blocked by:** 38.
+
+   **Delivers:** A user disabling a required dependency sees affected extensions and chooses Disable All or Cancel.
+
+40. **[Uninstall required dependents together or cancel](issues/40-uninstall-required-dependents-together-or-cancel.md)**
+
+   **Blocked by:** 39, 36.
+
+   **Delivers:** A user removing a required dependency reviews the affected set and its saved-data choices before uninstalling.
+
+### Distribution, background work and updates
+
+41. **[Install and run an npm-distributed component package](issues/41-install-and-run-an-npm-distributed-component-package.md)**
+
+   **Blocked by:** 38.
+
+   **Delivers:** A user installs a supported npm package through Pane without manually installing npm or Node, then runs its component command.
+
+42. **[Install and run a Git-distributed component package](issues/42-install-and-run-a-git-distributed-component-package.md)**
+
+   **Blocked by:** 38.
+
+   **Delivers:** A user installs a supported Git-sourced package or explicit revision through Pane without manual Git/compiler setup.
+
+43. **[Run a scheduled extension task and stop it on disable](issues/43-run-a-scheduled-extension-task-and-stop-it-on-disable.md)**
+
+   **Blocked by:** 12.
+
+   **Delivers:** A user enables a scheduled task, sees its result/status in Pane, and disables it to stop future runs.
+
+44. **[Run a continuing extension service and stop it on disable](issues/44-run-a-continuing-extension-service-and-stop-it-on-disable.md)**
+
+   **Blocked by:** 12.
+
+   **Delivers:** A user starts an enabled background service, sees its status, and stops it through extension management.
+
+45. **[Update an eligible npm extension at a safe activation boundary](issues/45-update-an-eligible-npm-extension-at-a-safe-activation-boundary.md)**
+
+   **Blocked by:** 41, 43, 44.
+
+   **Delivers:** A user receives a compatible npm extension update under their chosen update controls, without replacing an active command.
+
+46. **[Update a tracked Git extension without changing its identity](issues/46-update-a-tracked-git-extension-without-changing-its-identity.md)**
+
+   **Blocked by:** 42, 45.
+
+   **Delivers:** A user updates a tracked Git package through the existing controls while pinned revisions remain unchanged.
+
+### Native installation and application updates
+
+47. **[Install Pane and acquire its calculator on Windows](issues/47-install-pane-and-acquire-its-calculator-on-windows.md)**
+
+   **Blocked by:** 11, 23.
+
+   **Delivers:** A clean Windows machine installs Pane, acquires compatible runtime/default artifacts, and runs a calculator command without developer tools.
+
+48. **[Install Pane and acquire its calculator on macOS](issues/48-install-pane-and-acquire-its-calculator-on-macos.md)**
+
+   **Blocked by:** 11, 23.
+
+   **Delivers:** A clean macOS machine installs Pane, acquires compatible runtime/default artifacts, and runs a calculator command without developer tools.
+
+49. **[Install Pane and acquire its calculator on Linux](issues/49-install-pane-and-acquire-its-calculator-on-linux.md)**
+
+   **Blocked by:** 11, 23.
+
+   **Delivers:** A clean Linux machine installs Pane, acquires compatible runtime/default artifacts, and runs a calculator command without developer tools.
+
+50. **[Install a Pane application update by user choice on Windows](issues/50-install-a-pane-application-update-by-user-choice-on-windows.md)**
+
+   **Blocked by:** 47.
+
+   **Delivers:** A Windows user sees an update notification and chooses whether to install it.
+
+51. **[Install a Pane application update by user choice on macOS](issues/51-install-a-pane-application-update-by-user-choice-on-macos.md)**
+
+   **Blocked by:** 48.
+
+   **Delivers:** A macOS user sees an update notification and chooses whether to install it.
+
+52. **[Install a Pane application update by user choice on Linux](issues/52-install-a-pane-application-update-by-user-choice-on-linux.md)**
+
+   **Blocked by:** 49.
+
+   **Delivers:** A Linux user sees an update notification and chooses whether to install it.
+
+## Coverage and former draft numbers
+
+[Machine-readable mappings](ticket-breakdown-checks.json) identify each requirement's contributing slices and decision/release work, along with old-to-new draft numbers. All 82 user stories and 25 scenario identifiers have mapped contributors. This is traceability, not proof of behavioral coverage or completed gates. The old revision 2 is recoverable from Git commit `ebe95dc`; no published issue numbers have been changed.
+
+| Former draft | Current disposition |
 | --- | --- |
-| G1 | 01, 03, 04, 05, 06, 07, 11, 39, 46, 47, 48 |
-| G2 | 02, 03, 04, 05, 06, 07, 12, 13, 17, 18, 19, 20, 21, 25, 39, 46, 47, 48 |
-| G3 | 09, 10, 11, 12, 13, 14, 15, 24, 33, 34, 46, 47, 48 |
-| G4 | 08, 16, 19, 20, 29, 30, 31, 32, 34, 39, 46, 47, 48 |
-| G5 | 09, 10, 23, 26, 27, 28, 30, 46, 47, 48 |
-| G6 | 31, 32, 37, 38, 44, 45, 46, 47, 48 |
-| G7 | 05, 06, 07, 16, 21, 24, 26, 35, 40, 41, 42, 43, 44, 45, 46, 47, 48 |
-| G8 | 36, 46, 47, 48 |
+| 01 | P1 feasibility/candidate input; Rust native integration is in 01 |
+| 07 | Contributor commands and native checks are part of 01, 03 and 04; ongoing portability is a shared completion requirement |
+| 35 | P3 measured targets plus per-platform release validation |
+| 36 | P2 licensing decision and distribution evidence |
+| 39 | Author examples/docs/checks ship with language, form/custom view, helper, reload and package slices; final reproduction check is in release validation |
+| 46 | Windows release-validation checklist |
+| 47 | macOS release-validation checklist |
+| 48 | Linux release-validation checklist |
 
-## Approval requested
+The other former drafts map to the implementation slices in the JSON. Existing research, design decisions, saved artifacts and the parent spec are preserved.
 
-Does the granularity feel right, are the blockers genuine prerequisites, and should any slices be merged or split? The user-invoked [to-tickets skill](C:/Users/ADMIN/.agents/skills/to-tickets/SKILL.md) explicitly says: "Iterate until the user approves the breakdown." Only approved drafts will be published as ready-for-agent issues.
+## Publication
+
+2026-09-28: The user requested correction of the tracker structure after the structural review. Published all 52 existing slices under `issues/` with `ready-for-agent` status, retaining their numbering, scope and blockers.
+
+The [to-tickets skill](C:/Users/ADMIN/.agents/skills/to-tickets/SKILL.md) supplies the per-ticket publication format. Structural checks verify required fields, numbering, dependency references and local file links. Publication does not establish runtime feasibility or completion. The testing-boundary proposal remains separately labeled pending feedback.
 
 ## Comments
 
-2026-09-28: Revised against the existing spec and the user's cross-platform contributor clarification. No parent-issue/spec changes, runtime tests or implementation were performed.
+2026-09-28: Revision 3 responds to the user's finding that the earlier breakdown did not follow the skill's slicing discipline. This revision changes planning artifacts only; no runtime tests or application implementation were performed.
