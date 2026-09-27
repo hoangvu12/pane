@@ -20,7 +20,7 @@ Commands, from the repository root:
 ```sh
 cargo xtask guests   # build the Rust guests; copy them and the prebuilt JS/TS samples into target/guests/
 cargo run -p pane    # open the launcher window
-cargo xtask ci       # build guests, then check formatting, lints and tests
+cargo xtask ci       # build guests, check the prebuilt JS/TS samples, then formatting, lints and tests
 ```
 
 No JavaScript toolchain is needed for these: the JS and TS sample components are committed prebuilt in `guests/prebuilt/`. Rebuilding them from source with `cargo xtask js-guests` also needs Python 3.12+, git and Node.js 22+ on any of the three OSes; see [guests/README.md](guests/README.md#writing-a-javascript-or-typescript-command).
@@ -52,8 +52,8 @@ The 52 implementation issues are published; work starts when each issue's blocke
 ## Licensing
 
 - The application (everything not listed below, including `crates/`, `xtask/` and `scripts/`) is licensed under [GPL-3.0-or-later](LICENSE-GPL).
-- The extension contract (`wit/`), everything under `guests/` (guest bindings, TypeScript declarations, sample extensions, prebuilt components and fixtures) and Pane's own files in `tools/componentize-js/` are licensed under [Apache-2.0](guests/LICENSE-APACHE) OR [MIT](guests/LICENSE-MIT), at your option. Code compiled into an extension therefore imposes no license on it.
-- The patches in `tools/componentize-js/patches/` modify componentize-qjs and are licensed under [Apache-2.0](tools/componentize-js/patches/LICENSE-componentize-qjs), like it. The QuickJS runtime they build is part of every JS/TS component. `guests/js/wit/deps/clocks.wit` is WASI's, copied from wasmtime-wasi 49.0.1 (Apache-2.0 WITH LLVM-exception).
+- The extension contract (`wit/`), everything under `guests/` (guest bindings, TypeScript declarations, sample extensions and fixtures) and Pane's own files in `tools/componentize-js/` are licensed under [Apache-2.0](guests/LICENSE-APACHE) OR [MIT](guests/LICENSE-MIT), at your option. Code compiled into an extension therefore imposes no license on it.
+- The patches in `tools/componentize-js/patches/` modify componentize-qjs and are licensed under [Apache-2.0](tools/componentize-js/patches/LICENSE-componentize-qjs), like it. The QuickJS runtime they build is part of every JS/TS component, so the prebuilt components in `guests/prebuilt/` also carry that runtime's terms; see [its notice](guests/prebuilt/NOTICE.md). `guests/js/wit/deps/clocks.wit` is WASI's, copied from wasmtime-wasi 49.0.1 (Apache-2.0 WITH LLVM-exception).
 - Contributions are accepted under the same terms with a DCO sign-off; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Third-party dependencies keep their own licenses; `cargo deny` checks them in CI ([audit](docs/research/licensing-audit.md)). Release notice bundles and the per-release source procedure follow that audit and are not yet produced.

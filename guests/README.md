@@ -119,7 +119,7 @@ Build commands, from the repository root:
 ```sh
 cargo xtask js-guests        # rebuild guests/prebuilt/ and target/guests/ from the samples
 python3 tools/componentize-js/pane_js.py build <package dir> <out.wasm>   # any command package
-python3 tools/componentize-js/pane_js.py check   # are the prebuilt samples current?
+python3 tools/componentize-js/pane_js.py check   # are the prebuilt samples current and their npm licenses permissive?
 ```
 
 A build installs the package's locked dependencies into a staging copy,
@@ -136,8 +136,10 @@ written except for the output. After editing a sample, run
 
 Prerequisites, in addition to the Rust ones in the [README](../README.md):
 
-- Python 3.12 or later (`python3`; set `PYTHON` for `cargo xtask` if yours is
-  named differently), git, and Node.js 22 or later with npm.
+- Python 3.12 or later (`python3`; on Windows use `python` in the commands
+  above; set `PYTHON` for `cargo xtask` if yours is named differently), git,
+  and Node.js 22 or later with npm. `cargo xtask ci` also runs the `check`
+  subcommand, so it needs Python too.
 - The build installs Rust `nightly-2026-09-27` with `rust-src` through rustup,
   and downloads wasi-sdk 34 for the host (x86_64 or arm64, all three OSes).
 - **Windows:** `python` from python.org or the Microsoft Store and Node.js

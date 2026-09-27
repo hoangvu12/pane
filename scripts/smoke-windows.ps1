@@ -25,11 +25,15 @@ if ($process.MainWindowHandle -eq 0) { throw "Pane window did not appear" }
 Start-Sleep -Seconds 2
 Capture "1-root.png"
 [Win]::SetForegroundWindow($process.MainWindowHandle) | Out-Null
-[System.Windows.Forms.SendKeys]::SendWait("{ENTER}"); Start-Sleep -Seconds 2
-Capture "2-command.png"
-[System.Windows.Forms.SendKeys]::SendWait("{DOWN}{ENTER}"); Start-Sleep -Seconds 2
-Capture "3-action-result.png"
-[System.Windows.Forms.SendKeys]::SendWait("{ESC}"); Start-Sleep -Seconds 1
-Capture "4-back-to-root.png"
+# Open each sample command (Rust, JavaScript, TypeScript) and run an item.
+foreach ($index in 0..2) {
+    for ($i = 0; $i -lt $index; $i++) { [System.Windows.Forms.SendKeys]::SendWait("{DOWN}") }
+    [System.Windows.Forms.SendKeys]::SendWait("{ENTER}"); Start-Sleep -Seconds 3
+    Capture "$($index + 2)-command-$index.png"
+    [System.Windows.Forms.SendKeys]::SendWait("{DOWN}{ENTER}"); Start-Sleep -Seconds 2
+    Capture "$($index + 2)-result-$index.png"
+    [System.Windows.Forms.SendKeys]::SendWait("{ESC}"); Start-Sleep -Seconds 1
+}
+Capture "5-back-to-root.png"
 if ($process.HasExited) { throw "Pane exited during the smoke" }
 Stop-Process -Id $process.Id

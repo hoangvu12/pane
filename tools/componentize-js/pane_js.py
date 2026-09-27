@@ -25,6 +25,7 @@ import json
 import os
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -122,8 +123,11 @@ def tool_inputs() -> list[Path]:
 def host_platform() -> tuple[str, str]:
     """(arch, os) as wasi-sdk release assets spell them."""
     machine = platform.machine().lower()
-    arch = {"amd64": "x86_64", "x86_64": "x86_64", "arm64": "arm64", "aarch64": "arm64"}[machine]
-    system = {"linux": "linux", "darwin": "macos", "win32": "windows"}[sys.platform]
+    arch = {"amd64": "x86_64", "x86_64": "x86_64", "arm64": "arm64", "aarch64": "arm64"}.get(machine)
+    system = {"linux": "linux", "darwin": "macos", "win32": "windows"}.get(sys.platform)
+    if arch is None or system is None:
+        raise SystemExit(f"pane-js: no wasi-sdk build for {sys.platform}/{machine}; "
+                         "supported hosts are x86_64 and arm64 Linux, macOS and Windows")
     return arch, system
 
 
@@ -229,7 +233,9 @@ class Toolchain:
             CARGO_TARGET_DIR=str(runtime_target),
             PATH=str(self.sdk / "bin") + os.pathsep + os.environ["PATH"],
             CARGO_TARGET_WASM32_WASIP3_LINKER=clang,
-            CARGO_TARGET_WASM32_WASIP3_RUSTFLAGS=" ".join([
+            # Encoded (0x1f-separated) so a cache path containing spaces stays
+            # one argument. With --target, these reach only the Wasm target.
+            CARGO_ENCODED_RUSTFLAGS="\x1f".join([
                 "-Crelocation-model=pic", "-Clink-arg=--target=wasm32-wasip3",
                 "-Clink-arg=-shared", "-Clink-arg=-Wl,--no-entry", "-Clink-arg=-Wl,--allow-undefined",
                 "-Clink-arg=-Wl,--export=__wasm_library_tls_info", "-L", f"native={sysroot_lib}"]),
@@ -237,6 +243,12 @@ class Toolchain:
             # rquickjs' bindgen loads the SDK's libclang (bin/ on Windows, lib/ elsewhere).
             LIBCLANG_PATH=str(self.sdk / ("bin" if os.name == "nt" else "lib")),
             CC_wasm32_wasip3=clang,
+            AR_wasm32_wasip3=str(self.sdk / "bin" / f"llvm-ar{EXE}"),
+            # rquickjs-sys would pass the sysroot through CFLAGS, which cc splits
+            # on whitespace, so a cache path with spaces breaks it. The SDK's
+            # clang finds its own sysroot; bindgen gets it shell-quoted instead.
+            RQUICKJS_SYS_NO_WASI_SDK="1",
+            BINDGEN_EXTRA_CLANG_ARGS_wasm32_wasip3=shlex.quote(f"--sysroot={self.sdk / 'share' / 'wasi-sysroot'}"),
             CFLAGS_wasm32_wasip3="--target=wasm32-wasip3 -fPIC -Oz",
         )
         run([rustup, "run", nightly, "cargo", "build", "--release", "--locked", "--target", "wasm32-wasip3",
@@ -379,6 +391,27 @@ def check() -> None:
     if problems:
         raise SystemExit("pane-js: " + "; ".join(problems) + ". Run `cargo xtask js-guests`.")
     log("prebuilt components match their sources")
+    check_npm_licenses()
+
+
+# npm packages bundled into components must keep them permissively licensed,
+# like the Cargo policy in guests/deny.toml.
+NPM_LICENSES = {"MIT", "MIT-0", "Apache-2.0", "Apache-2.0 OR MIT", "MIT OR Apache-2.0", "BSD-2-Clause",
+                "BSD-3-Clause", "ISC", "0BSD", "Zlib", "CC0-1.0", "Unlicense"}
+
+
+def check_npm_licenses() -> None:
+    problems = []
+    for _, source in SAMPLES:
+        lock = json.loads((REPO / source / "package-lock.json").read_text(encoding="utf-8"))
+        for path, package in lock.get("packages", {}).items():
+            if package.get("link") or path.startswith("..") or not path:
+                continue  # in-repo packages carry the repository's own license
+            if not package.get("dev") and package.get("license") not in NPM_LICENSES:
+                problems.append(f"{source}: {path} is licensed {package.get('license')!r}")
+    if problems:
+        raise SystemExit("pane-js: bundled npm packages need a license review: " + "; ".join(problems))
+    log("bundled npm packages are permissively licensed")
 
 
 def main(argv: list[str]) -> None:
