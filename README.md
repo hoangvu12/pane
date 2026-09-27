@@ -7,7 +7,7 @@ Pane is currently in planning and prototype validation. There is no installable 
 ## Project documents
 
 - [Specification](.scratch/pane/spec.md)
-- [Proposed implementation tickets](.scratch/pane/ticket-breakdown.md)
+- [Implementation tickets](.scratch/pane/issues/)
 - [Cross-platform contributor requirements](.scratch/pane/contributor-platform-requirement.md)
 - [Current decisions](docs/current-decisions.md)
 - [Handoff and evidence limits](docs/HANDOFF.md)

@@ -1,6 +1,6 @@
 # Pane planning prerequisites
 
-These are unresolved decisions or bounded feasibility checks, separate from the implementation slices in the [breakdown](ticket-breakdown.md). They are not published ready-for-agent feature tickets, and writing them does not mark the work complete. The [parent spec](spec.md) remains unchanged.
+These are unresolved decisions or bounded feasibility checks, separate from the [implementation issues](issues/). They are not published ready-for-agent feature tickets, and writing them does not mark the work complete. The [parent spec](spec.md) remains unchanged.
 
 ## P1
 
