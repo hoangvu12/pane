@@ -17,12 +17,17 @@ xvfb-run -a -s "-screen 0 1280x800x24" bash -c '
   [ -n "${window:-}" ] || { echo "Pane window did not appear"; exit 1; }
   sleep 2
   import -window root "$out/1-root.png"
-  xdotool windowfocus --sync "$window" key Return; sleep 2
-  import -window root "$out/2-command.png"
-  xdotool key Down key Return; sleep 2
-  import -window root "$out/3-action-result.png"
-  xdotool key Escape; sleep 1
-  import -window root "$out/4-back-to-root.png"
+  xdotool windowfocus --sync "$window"
+  # Open each sample command (Rust, JavaScript, TypeScript) and run an item.
+  for index in 0 1 2; do
+    for _ in $(seq "$index"); do xdotool key Down; done
+    xdotool key Return; sleep 3
+    import -window root "$out/$((index + 2))-command-$index.png"
+    xdotool key Down key Return; sleep 2
+    import -window root "$out/$((index + 2))-result-$index.png"
+    xdotool key Escape; sleep 1
+  done
+  import -window root "$out/5-back-to-root.png"
   kill -0 "$pid" || { echo "Pane exited during the smoke"; exit 1; }
   kill "$pid"
 '

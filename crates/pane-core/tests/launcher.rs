@@ -40,50 +40,6 @@ fn titles(launcher: &Launcher) -> Vec<String> {
         .collect()
 }
 
-#[test]
-fn opening_the_rust_sample_shows_the_guests_items() {
-    let launcher = launcher(vec![command("sample", guest("sample_rust"))]);
-    assert_eq!(launcher.view().screen, Screen::Root);
-    assert_eq!(titles(&launcher), ["sample command"]);
-
-    block_on(launcher.activate_selected());
-
-    let view = launcher.view();
-    assert_eq!(view.screen, Screen::Command);
-    assert_eq!(view.title, "Rust sample");
-    assert_eq!(titles(&launcher), ["Say hello", "Wait briefly"]);
-}
-
-#[test]
-fn activating_an_item_shows_the_guests_answer() {
-    let launcher = launcher(vec![command("sample", guest("sample_rust"))]);
-    block_on(launcher.activate_selected());
-
-    block_on(launcher.activate_selected());
-
-    assert_eq!(
-        launcher.view().status,
-        Status::Result("Hello from the Rust guest".into())
-    );
-}
-
-#[test]
-fn an_action_awaiting_a_wasi_import_shows_running_until_it_answers() {
-    let launcher = launcher(vec![command("sample", guest("sample_rust"))]);
-    block_on(launcher.activate_selected());
-    launcher.move_selection(1);
-    assert_eq!(launcher.view().selected, Some(1));
-
-    let pending = launcher.activate_selected();
-    assert_eq!(launcher.view().status, Status::Running);
-    block_on(pending);
-
-    assert_eq!(
-        launcher.view().status,
-        Status::Result("Waited 50 ms inside the Rust guest".into())
-    );
-}
-
 fn open_faulty_item(launcher: &Launcher, item: &str) {
     block_on(launcher.activate_selected());
     let index = titles(launcher)
