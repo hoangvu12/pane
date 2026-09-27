@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use tokio::sync::{mpsc, oneshot};
 use wasmtime::component::{Component, Linker, ResourceTable};
-use wasmtime::{Config, Engine, Store};
+use wasmtime::{Cache, CacheConfig, Config, Engine, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 
 mod bindings {
@@ -95,14 +95,31 @@ enum Request {
 }
 
 impl Runtime {
-    /// Starts the runtime thread.
+    /// Starts the runtime thread. Extensions are compiled on every start.
     pub fn start() -> Result<Runtime, CallError> {
+        Runtime::start_with(None)
+    }
+
+    /// Starts the runtime thread, keeping compiled extension code in
+    /// `cache_dir` so later runtimes load it instead of recompiling. The
+    /// directory holds only disposable data.
+    pub fn start_with_cache(cache_dir: PathBuf) -> Result<Runtime, CallError> {
+        Runtime::start_with(Some(cache_dir))
+    }
+
+    fn start_with(cache_dir: Option<PathBuf>) -> Result<Runtime, CallError> {
         let unavailable =
             |error: &dyn fmt::Display| CallError::RuntimeUnavailable(error.to_string());
         let mut config = Config::new();
         config
             .wasm_component_model(true)
             .wasm_component_model_async(true);
+        if let Some(dir) = cache_dir {
+            let mut cache = CacheConfig::new();
+            cache.with_directory(dir);
+            let cache = Cache::new(cache).map_err(|error| unavailable(&error))?;
+            config.cache(Some(cache));
+        }
         let engine = Engine::new(&config).map_err(|error| unavailable(&error))?;
         let executor = tokio::runtime::Builder::new_current_thread()
             .enable_all()

@@ -45,6 +45,26 @@ pub fn sample_commands() -> Vec<CommandRegistration> {
     }]
 }
 
+/// Where Pane keeps disposable cached data, such as compiled extension code:
+/// `%LOCALAPPDATA%\Pane\cache` on Windows, `~/Library/Caches/Pane` on
+/// macOS and `$XDG_CACHE_HOME/pane` (default `~/.cache/pane`) elsewhere.
+pub fn cache_dir() -> Option<PathBuf> {
+    let env = |name| {
+        std::env::var_os(name)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+    };
+    if cfg!(target_os = "windows") {
+        env("LOCALAPPDATA").map(|dir| dir.join("Pane").join("cache"))
+    } else if cfg!(target_os = "macos") {
+        env("HOME").map(|home| home.join("Library/Caches/Pane"))
+    } else {
+        env("XDG_CACHE_HOME")
+            .or_else(|| env("HOME").map(|home| home.join(".cache")))
+            .map(|dir| dir.join("pane"))
+    }
+}
+
 /// The launcher window's root view.
 pub struct LauncherWindow {
     launcher: Launcher,

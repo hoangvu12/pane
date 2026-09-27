@@ -8,7 +8,11 @@ fn main() {
     gpui_platform::application().run(|cx: &mut App| {
         pane::bind_keys(cx);
         cx.on_window_closed(|cx, _| cx.quit()).detach();
-        let launcher = Launcher::new(Runtime::start(), pane::sample_commands());
+        let runtime = match pane::cache_dir() {
+            Some(dir) => Runtime::start_with_cache(dir),
+            None => Runtime::start(),
+        };
+        let launcher = Launcher::new(runtime, pane::sample_commands());
         let bounds = Bounds::centered(None, size(px(640.), px(420.)), cx);
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
