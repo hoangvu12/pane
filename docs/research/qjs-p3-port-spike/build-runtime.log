@@ -1,0 +1,46 @@
+warning: `package.homepage` is redundant with `package.repository`
+ --> napi\Cargo.toml:8:1
+  |
+7 | repository.workspace = true
+  | ----------
+8 | homepage.workspace = true
+  | ^^^^^^^^
+  |
+  = note: `cargo::redundant_homepage` is set to `warn` by default
+help: consider removing `package.homepage`
+warning: `componentize-qjs-napi` (manifest) generated 1 warning
+warning: `package.homepage` is redundant with `package.repository`
+ --> crates\core\Cargo.toml:9:1
+  |
+8 | repository.workspace = true
+  | ----------
+9 | homepage.workspace = true
+  | ^^^^^^^^
+  |
+  = note: `cargo::redundant_homepage` is set to `warn` by default
+help: consider removing `package.homepage`
+warning: `componentize-qjs` (manifest) generated 1 warning
+warning: `package.homepage` is redundant with `package.repository`
+ --> crates\runtime\Cargo.toml:8:1
+  |
+7 | repository.workspace = true
+  | ----------
+8 | homepage.workspace = true
+  | ^^^^^^^^
+  |
+  = note: `cargo::redundant_homepage` is set to `warn` by default
+help: consider removing `package.homepage`
+warning: `componentize-qjs-runtime` (manifest) generated 1 warning
+warning: `package.homepage` is redundant with `package.repository`
+  --> Cargo.toml:32:1
+   |
+31 | repository.workspace = true
+   | ----------
+32 | homepage.workspace = true
+   | ^^^^^^^^
+   |
+   = note: `cargo::redundant_homepage` is set to `warn` by default
+help: consider removing `package.homepage`
+warning: `componentize-qjs-cli` (manifest) generated 1 warning
+   Compiling componentize-qjs-runtime v0.4.5 (C:\Users\ADMIN\AppData\Local\Temp\kyoko-p3-native-toolchain\qjs-port\crates\runtime)
+    Finished `release` profile [optimized] target(s) in 5.77s

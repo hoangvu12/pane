@@ -1,0 +1,23 @@
+{
+  "interview_question_count": 41,
+  "register_question_count": 41,
+  "missing_from_interview": [],
+  "missing_from_register": [],
+  "adr_count": 14,
+  "documents_checked": 20,
+  "local_links_checked": 198,
+  "broken_links": [],
+  "saved_results_not_rerun": {
+    "qjs-p3-port-spike/validation-results.json": true,
+    "qjs-p3-port-spike/host-results.json": true,
+    "p3-std-spike/result.json": true,
+    "wasi03-gpui-spike/evidence/result.json": "pass"
+  },
+  "agent_entrypoints_match": true,
+  "archive_files_present": true,
+  "report_status": "Historical audit output; original values retained, not current verification",
+  "repository_recheck_2026_09_28": {
+    "archive_files_present": false,
+    "correction": "The previously reported pre-audit snapshots are absent from the current repository. Missing archive links and present-tense preservation claims were corrected in the documents."
+  }
+}
