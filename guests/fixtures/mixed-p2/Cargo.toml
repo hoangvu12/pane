@@ -1,0 +1,15 @@
+# Negative control: std on wasm32-wasip2 pulls in WASI 0.2 imports alongside
+# Pane's contract, which Pane must reject.
+[package]
+name = "mixed-p2"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "=0.62.0"
