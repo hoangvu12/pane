@@ -6,9 +6,9 @@ Pane is currently in planning and prototype validation. There is no installable 
 
 ## Project documents
 
-- [Specification](.scratch/pane/spec.md)
-- [Implementation tickets](.scratch/pane/issues/)
-- [Cross-platform contributor requirements](.scratch/pane/contributor-platform-requirement.md)
+- [Specification](https://github.com/hoangvu12/pane/issues/1)
+- [Implementation tickets](https://github.com/hoangvu12/pane/issues?q=is%3Aissue+label%3Aimplementation)
+- [Cross-platform contributor requirements](https://github.com/hoangvu12/pane/issues/1#cross-platform-contributor-requirement)
 - [Current decisions](docs/current-decisions.md)
 - [Handoff and evidence limits](docs/HANDOFF.md)
 - [Domain vocabulary](CONTEXT.md)

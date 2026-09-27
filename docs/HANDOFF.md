@@ -11,7 +11,7 @@ The project is published at [hoangvu12/pane](https://github.com/hoangvu12/pane).
 3. Use [the interview](launcher-design-interview.md) and relevant [ADRs](adr/) for rationale and history. Earlier proposals inside the interview are historical, not competing current instructions.
 4. See [record limits](current-decisions.md#record-limits) for the limits of the saved discussion and evidence.
 
-The [Pane specification](../.scratch/pane/spec.md) is published with `Status: ready-for-agent`: 82 user stories, eight engineering gates and 25 planned acceptance scenarios. Its proposed testing boundary remains a recommendation pending feedback. Following the user's criticism of the earlier slicing, [the 52 published implementation issues](../.scratch/pane/issues/) form revision 3, with [planning prerequisites](../.scratch/pane/planning-prerequisites.md) and [release validation](../.scratch/pane/release-validation.md) tracked separately. The [cross-platform contributor requirement](../.scratch/pane/contributor-platform-requirement.md) remains accepted: native macOS/Linux sample builds and runs (03-04), including contributor commands and native checks, precede broad shared features. The user requested correction of the tracker structure; all 52 issues now live in `.scratch/pane/issues/` with `ready-for-agent` status and their existing blockers. The parent spec is unchanged; no production implementation or new runtime tests have been performed.
+The [Pane specification](https://github.com/hoangvu12/pane/issues/1) and [52 implementation issues](https://github.com/hoangvu12/pane/issues?q=is%3Aissue+label%3Aimplementation) are tracked in GitHub Issues. The specification includes the accepted cross-platform contributor requirement; native macOS/Linux sample builds and runs ([#7](https://github.com/hoangvu12/pane/issues/7), [#8](https://github.com/hoangvu12/pane/issues/8)) precede broad shared features. [Planning prerequisites](https://github.com/hoangvu12/pane/issues/1#planning-prerequisites) and [release validation](https://github.com/hoangvu12/pane/issues/57) are separate issues. The proposed testing boundary remains pending feedback; migration does not complete implementation or validate runtime behavior.
 
 ## Current direction
 
@@ -45,11 +45,11 @@ Tool locations and scratch paths are recorded with the probes, including [P3 too
 
 Both [AGENTS.md](../AGENTS.md) and [CLAUDE.md](../CLAUDE.md) are present by explicit user choice. Shared configuration:
 
-- [Local Markdown issue tracker](agents/issue-tracker.md).
+- [GitHub issue tracker](agents/issue-tracker.md).
 - [Default triage labels](agents/triage-labels.md).
 - [Single-context domain documentation](agents/domain.md).
 
-Next: work published issues whose numbered blockers and linked planning prerequisites are complete. `ready-for-agent` records specification readiness, not completion of blockers. The first implementation frontier is 01, one Rust command completing a real native action/result interaction. P1 JS feasibility can be resolved independently and blocks JS/TS slice 02. Early native contributor checks follow in 03-04. P2 licensing and P3 measured-target work gate corresponding distribution/readiness claims, not arbitrary unrelated feature work. Platform installers and updaters have independent dependency branches; release-wide evidence is a checklist rather than a large implementation ticket. Real native environments remain execution prerequisites. Creating or publishing drafts does not settle unresolved choices or authorize a release.
+Next: work open, unassigned implementation issues whose native blockers and stated prerequisites are complete. Start with [#5: one Rust command through the native UI](https://github.com/hoangvu12/pane/issues/5). [JS/TS integration #6](https://github.com/hoangvu12/pane/issues/6) requires both that issue and [backend prerequisite #2](https://github.com/hoangvu12/pane/issues/2). Early native contributor checks follow in [#7](https://github.com/hoangvu12/pane/issues/7) and [#8](https://github.com/hoangvu12/pane/issues/8). [Licensing](https://github.com/hoangvu12/pane/issues/3) and [measured targets](https://github.com/hoangvu12/pane/issues/4) gate the corresponding distribution/readiness claims. Platform evidence remains independent; `ready-for-agent` does not clear blockers or authorize a release.
 
 ## Historical records
 

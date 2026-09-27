@@ -1,6 +1,6 @@
 # Triage labels
 
-Use these role names in the local tracker's `Status:` field.
+Apply these role names as GitHub issue labels in `hoangvu12/pane`.
 
 | Skill role | Tracker value | Meaning |
 | --- | --- | --- |

@@ -11,7 +11,7 @@ All Q1-Q41 have entries in the [saved interview](launcher-design-interview.md). 
 | Question | Current status and meaning | Supporting detail |
 | --- | --- | --- |
 | Q1 | Accepted: general-purpose, extension-driven desktop launcher inspired by Raycast, Tinycast and Pi. | [Small core](adr/0001-small-core.md) |
-| Q2 | Accepted: Windows, macOS and Linux targets, with early native contributor build/run/test support on all three. Only Windows prototypes tested; Q37 allows staggered previews. | [Contributor clarification](../.scratch/pane/contributor-platform-requirement.md), [platform notes](research/platform-specific-extensions-q34.md) |
+| Q2 | Accepted: Windows, macOS and Linux targets, with early native contributor build/run/test support on all three. Only Windows prototypes tested; Q37 allows staggered previews. | [Contributor clarification](https://github.com/hoangvu12/pane/issues/1#cross-platform-contributor-requirement), [platform notes](research/platform-specific-extensions-q34.md) |
 | Q3 | Accepted: small permanent feature core and low resource usage; AI belongs in extensions. Numerical budgets remain open. | [Small core](adr/0001-small-core.md) |
 | Q4 | Early comparison request; not an independent acceptance of Raycast's architecture. Later explicit choices govern. | [Interview](launcher-design-interview.md) |
 | Q5 | Flexibility and avoiding unnecessary architectural rework are intent; early unresolved trust discussion was settled by Q9. | [Interview](launcher-design-interview.md) |
@@ -95,11 +95,11 @@ The specification identifies bounded validation tasks and open contracts. A cons
 
 ## Workflow checkpoint
 
-The [specification](../.scratch/pane/spec.md) and [52 implementation issues](../.scratch/pane/issues/) are published in the local Markdown tracker with `ready-for-agent` status. Start with issue 01. Issue 02 also requires P1 from the [planning prerequisites](../.scratch/pane/planning-prerequisites.md). A ready status does not clear blockers or approve unresolved testing preferences.
+The [specification](https://github.com/hoangvu12/pane/issues/1) and [52 implementation issues](https://github.com/hoangvu12/pane/issues?q=is%3Aissue+label%3Aimplementation) are published in GitHub Issues with `ready-for-agent` labels. Start with [#5](https://github.com/hoangvu12/pane/issues/5). [#6](https://github.com/hoangvu12/pane/issues/6) also requires the [JS/TS backend prerequisite #2](https://github.com/hoangvu12/pane/issues/2). Labels do not clear native blockers or approve unresolved testing preferences.
 
-The [contributor requirement](../.scratch/pane/contributor-platform-requirement.md) gates shared features on early native Windows/macOS/Linux workflows. [Release validation](../.scratch/pane/release-validation.md) tracks platform-specific distribution and readiness evidence. Production implementation has not started.
+The [contributor requirement](https://github.com/hoangvu12/pane/issues/1#cross-platform-contributor-requirement) gates shared features on early native Windows/macOS/Linux workflows. [Release validation](https://github.com/hoangvu12/pane/issues/57) tracks platform-specific distribution and readiness evidence. Production implementation has not started.
 
-Both AGENTS.md and CLAUDE.md are retained by user choice. Follow the [local tracker conventions](agents/issue-tracker.md), [triage roles](agents/triage-labels.md), and [domain rules](agents/domain.md).
+Both AGENTS.md and CLAUDE.md are retained by user choice. Follow the [GitHub tracker conventions](agents/issue-tracker.md), [triage roles](agents/triage-labels.md), and [domain rules](agents/domain.md).
 
 ## Record limits
 
