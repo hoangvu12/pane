@@ -1,5 +1,7 @@
 # JS/TS WASI 0.3 backend: Linux validation (issue #2)
 
+> The adopted toolchain now lives in [tools/componentize-js](../../../tools/componentize-js/README.md) (issue #6), with the same pins and patches. This directory is kept as the evidence behind it.
+
 2026-09-28, Linux x86_64 (24 cores). **The patched QuickJS candidate reproduces on Linux. It passes the positive cases and the mixed P2/P3 control, and now runs JS and TS guests for Pane's real contract through `pane-core`.** The fresh-instance randomness defect from the [Windows checkpoint](../qjs-p3-port-spike/README.md) was reproduced. A second snapshot defect was found (`performance.now()` was negative). Both are fixed by a small runtime patch, and a regression check fails before the fix and passes after. This is still a patched prototype of an upstream tool, not a finished SDK or an adopted fork.
 
 ## Results

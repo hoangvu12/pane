@@ -8,6 +8,25 @@ use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, prelude::*};
 use pane::LauncherWindow;
 use pane_core::{CommandRegistration, Launcher, Runtime, Screen, Status};
 
+/// A sample command: its component and the language it is written in.
+struct Sample {
+    component: &'static str,
+    language: &'static str,
+}
+
+const RUST: Sample = Sample {
+    component: "sample_rust",
+    language: "Rust",
+};
+const JAVASCRIPT: Sample = Sample {
+    component: "sample_js",
+    language: "JavaScript",
+};
+const TYPESCRIPT: Sample = Sample {
+    component: "sample_ts",
+    language: "TypeScript",
+};
+
 fn command(title: &str, guest: &str) -> CommandRegistration {
     let component = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/guests")
@@ -25,8 +44,12 @@ fn command(title: &str, guest: &str) -> CommandRegistration {
     }
 }
 
-fn open(cx: &mut TestAppContext) -> (Entity<LauncherWindow>, &mut VisualTestContext) {
-    open_with(cx, vec![command("Rust sample", "sample_rust")])
+fn open<'a>(
+    cx: &'a mut TestAppContext,
+    sample: &Sample,
+) -> (Entity<LauncherWindow>, &'a mut VisualTestContext) {
+    let title = format!("{} sample", sample.language);
+    open_with(cx, vec![command(&title, sample.component)])
 }
 
 fn open_with(
@@ -46,7 +69,8 @@ fn wait_for_answer(
     window: &Entity<LauncherWindow>,
     cx: &mut VisualTestContext,
 ) -> pane_core::LauncherView {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    // Generous: opening a JS command compiles a 4 MB component first.
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         cx.run_until_parked();
         let view = cx.read_entity(window, |window, _| window.launcher().view());
@@ -58,13 +82,27 @@ fn wait_for_answer(
     }
 }
 
-#[gpui::test]
-fn the_keyboard_opens_the_sample_and_runs_an_action(cx: &mut TestAppContext) {
-    let (window, cx) = open(cx);
+/// Opens the sample's command with Enter and clicks the row whose debug
+/// selector is `row` (`row-<title>`).
+fn click_row(
+    window: &Entity<LauncherWindow>,
+    cx: &mut VisualTestContext,
+    row: &'static str,
+) -> pane_core::LauncherView {
+    cx.simulate_keystrokes("enter");
+    wait_for_answer(window, cx);
+    let row = cx.debug_bounds(row).expect("row rendered");
+    cx.simulate_click(row.center(), Modifiers::none());
+    wait_for_answer(window, cx)
+}
+
+fn the_keyboard_opens_the_sample_and_runs_an_action(cx: &mut TestAppContext, sample: &Sample) {
+    let (window, cx) = open(cx, sample);
 
     cx.simulate_keystrokes("enter");
     let view = wait_for_answer(&window, cx);
     assert_eq!(view.screen, Screen::Command);
+    assert_eq!(view.title, format!("{} sample", sample.language));
     assert!(
         cx.debug_bounds("row-Say hello").is_some(),
         "guest rows are rendered"
@@ -74,7 +112,7 @@ fn the_keyboard_opens_the_sample_and_runs_an_action(cx: &mut TestAppContext) {
     let view = wait_for_answer(&window, cx);
     assert_eq!(
         view.status,
-        Status::Result("Hello from the Rust guest".into())
+        Status::Result(format!("Hello from the {} guest", sample.language))
     );
     assert!(
         cx.debug_bounds("status-result").is_some(),
@@ -85,26 +123,87 @@ fn the_keyboard_opens_the_sample_and_runs_an_action(cx: &mut TestAppContext) {
     assert_eq!(wait_for_answer(&window, cx).screen, Screen::Root);
 }
 
-#[gpui::test]
-fn clicking_a_row_runs_its_action(cx: &mut TestAppContext) {
-    let (window, cx) = open(cx);
-    cx.simulate_keystrokes("enter");
-    wait_for_answer(&window, cx);
+fn clicking_a_row_runs_its_action(cx: &mut TestAppContext, sample: &Sample) {
+    let (window, cx) = open(cx, sample);
 
-    let row = cx.debug_bounds("row-Wait briefly").expect("row rendered");
-    cx.simulate_click(row.center(), Modifiers::none());
+    let view = click_row(&window, cx, "row-Wait briefly");
 
-    let view = wait_for_answer(&window, cx);
     assert_eq!(view.selected, Some(1));
     assert_eq!(
         view.status,
-        Status::Result("Waited 50 ms inside the Rust guest".into())
+        Status::Result(format!("Waited 50 ms inside the {} guest", sample.language))
     );
+}
+
+fn a_validation_error_is_rendered(cx: &mut TestAppContext, sample: &Sample) {
+    let (window, cx) = open(cx, sample);
+
+    let view = click_row(&window, cx, "row-Validate settings");
+
+    assert_eq!(
+        view.status,
+        Status::Error(
+            "The extension reported an error: Invalid settings: port must be between 1 and 65535"
+                .into()
+        )
+    );
+    assert!(
+        cx.debug_bounds("status-error").is_some(),
+        "the error is rendered"
+    );
+}
+
+/// Declares one window test per check for each sample.
+macro_rules! for_each_sample {
+    ($($check:ident),* $(,)?) => {
+        mod rust {
+            $(#[gpui::test] fn $check(cx: &mut gpui::TestAppContext) { super::$check(cx, &super::RUST) })*
+        }
+        mod javascript {
+            $(#[gpui::test] fn $check(cx: &mut gpui::TestAppContext) { super::$check(cx, &super::JAVASCRIPT) })*
+        }
+        mod typescript {
+            $(#[gpui::test] fn $check(cx: &mut gpui::TestAppContext) { super::$check(cx, &super::TYPESCRIPT) })*
+        }
+    };
+}
+
+for_each_sample!(
+    the_keyboard_opens_the_sample_and_runs_an_action,
+    clicking_a_row_runs_its_action,
+    a_validation_error_is_rendered,
+);
+
+#[gpui::test]
+fn the_launcher_offers_the_rust_javascript_and_typescript_samples(cx: &mut TestAppContext) {
+    let (window, cx) = open_with(cx, pane::sample_commands());
+    let root = wait_for_answer(&window, cx);
+    let titles: Vec<&str> = root.rows.iter().map(|row| row.title.as_str()).collect();
+    assert_eq!(
+        titles,
+        ["Rust sample", "JavaScript sample", "TypeScript sample"]
+    );
+
+    for (index, title) in titles.iter().enumerate() {
+        cx.simulate_keystrokes("enter");
+        let view = wait_for_answer(&window, cx);
+        assert_eq!(
+            (view.screen, view.title.as_str()),
+            (Screen::Command, *title)
+        );
+
+        cx.simulate_keystrokes("escape");
+        let view = wait_for_answer(&window, cx);
+        assert_eq!(view.screen, Screen::Root);
+        for _ in 0..=index {
+            cx.simulate_keystrokes("down");
+        }
+    }
 }
 
 #[gpui::test]
 fn arrow_keys_move_the_selection(cx: &mut TestAppContext) {
-    let (window, cx) = open(cx);
+    let (window, cx) = open(cx, &RUST);
     cx.simulate_keystrokes("enter");
     wait_for_answer(&window, cx);
 

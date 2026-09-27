@@ -1,6 +1,10 @@
 //! Portable developer commands, run as `cargo xtask <command>`.
 //!
-//! - `guests`: build the extension guests into `target/guests/`.
+//! - `guests`: build the Rust guests and copy them, with the prebuilt JS/TS
+//!   sample components from `guests/prebuilt/`, into `target/guests/`.
+//! - `js-guests`: rebuild the prebuilt JS/TS sample components with the pinned
+//!   toolchain in `tools/componentize-js` (prerequisites: guests/README.md),
+//!   then run `guests`.
 //! - `ci`: build guests, then check formatting, lints and tests.
 
 use std::path::{Path, PathBuf};
@@ -8,12 +12,17 @@ use std::process::{Command, ExitCode};
 
 const GUEST_TARGET: &str = "wasm32-wasip2";
 
+/// Components built by `js-guests` and committed, so that normal builds and
+/// tests need no JavaScript toolchain.
+const PREBUILT: &[&str] = &["sample_js", "sample_ts"];
+
 fn main() -> ExitCode {
     let task = std::env::args().nth(1);
     let result = match task.as_deref() {
         Some("guests") => guests(),
+        Some("js-guests") => js_guests(),
         Some("ci") => ci(),
-        _ => Err("usage: cargo xtask <guests|ci>".into()),
+        _ => Err("usage: cargo xtask <guests|js-guests|ci>".into()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -72,8 +81,25 @@ fn guests() -> Result<(), String> {
                 .map_err(|error| format!("copy {} failed: {error}", built.display()))?;
         }
     }
+    for name in PREBUILT {
+        let prebuilt = root.join(format!("guests/prebuilt/{name}.wasm"));
+        std::fs::copy(&prebuilt, out.join(format!("{name}.wasm")))
+            .map_err(|error| format!("copy {} failed: {error}", prebuilt.display()))?;
+    }
     println!("guests built into {}", out.display());
     Ok(())
+}
+
+/// Rebuilds `guests/prebuilt/` from the JS/TS sample sources, then refreshes
+/// `target/guests/`. `PYTHON` names the interpreter if the default is absent.
+fn js_guests() -> Result<(), String> {
+    let root = root();
+    let python = std::env::var_os("PYTHON")
+        .unwrap_or_else(|| if cfg!(windows) { "python" } else { "python3" }.into());
+    run(Command::new(python)
+        .current_dir(&root)
+        .args(["tools/componentize-js/pane_js.py", "samples"]))?;
+    guests()
 }
 
 fn ci() -> Result<(), String> {
