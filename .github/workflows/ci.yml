@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: Check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, macos-15, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libxcb1-dev libfontconfig1-dev libfreetype-dev libvulkan1 mesa-vulkan-drivers \
+            xvfb xdotool imagemagick
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            guests
+            guests/fixtures/mixed-p2
+      - name: Build guests, check formatting and lints, run tests
+        run: cargo xtask ci
+      - name: Build the launcher
+        run: cargo build --locked -p pane
+      - name: Native GUI smoke (Linux, Xvfb)
+        if: runner.os == 'Linux'
+        run: bash scripts/smoke-linux.sh smoke
+      - name: Native GUI smoke (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/smoke-windows.ps1 -OutDir smoke
+      - name: Native GUI smoke (macOS)
+        if: runner.os == 'macOS'
+        run: bash scripts/smoke-macos.sh smoke
+      - name: Upload GUI smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-smoke-${{ runner.os }}
+          path: smoke
+          if-no-files-found: ignore

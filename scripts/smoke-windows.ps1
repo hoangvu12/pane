@@ -1,0 +1,35 @@
+# Native GUI smoke on Windows: launches Pane, drives it with real key events
+# and captures the screen.
+# Usage: scripts/smoke-windows.ps1 -OutDir <output-dir>
+param([string]$OutDir = "smoke")
+$ErrorActionPreference = "Stop"
+New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+Add-Type @"
+using System; using System.Runtime.InteropServices;
+public static class Win { [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h); }
+"@
+function Capture($name) {
+    $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+    $bitmap.Save((Join-Path $OutDir $name))
+}
+$process = Start-Process -FilePath "target/debug/pane.exe" -PassThru `
+    -RedirectStandardError (Join-Path $OutDir "stderr.log")
+for ($i = 0; $i -lt 50 -and $process.MainWindowHandle -eq 0; $i++) {
+    Start-Sleep -Milliseconds 200; $process.Refresh()
+}
+if ($process.MainWindowHandle -eq 0) { throw "Pane window did not appear" }
+Start-Sleep -Seconds 2
+Capture "1-root.png"
+[Win]::SetForegroundWindow($process.MainWindowHandle) | Out-Null
+[System.Windows.Forms.SendKeys]::SendWait("{ENTER}"); Start-Sleep -Seconds 2
+Capture "2-command.png"
+[System.Windows.Forms.SendKeys]::SendWait("{DOWN}{ENTER}"); Start-Sleep -Seconds 2
+Capture "3-action-result.png"
+[System.Windows.Forms.SendKeys]::SendWait("{ESC}"); Start-Sleep -Seconds 1
+Capture "4-back-to-root.png"
+if ($process.HasExited) { throw "Pane exited during the smoke" }
+Stop-Process -Id $process.Id
