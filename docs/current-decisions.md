@@ -49,7 +49,7 @@ All Q1-Q41 have entries in the [saved interview](launcher-design-interview.md). 
 | Q37 | Accepted: staggered previews; Windows-only testing acknowledged. macOS/Linux support is not validated. | [Latest answers](launcher-design-interview.md#latest-answers-q36q41) |
 | Q38 | Accepted: notify about Pane updates; user chooses installation. No automatic application download/install/restart was accepted. Separate from Q21. | [Latest answers](launcher-design-interview.md#latest-answers-q36q41) |
 | Q39 | Accepted UX direction: automatically detect/skip an identified broken extension and notify through UI, without requiring CLI recovery. Detailed attribution, persistence and retry mechanics are proposed. | [Recovery proposal](launcher-design-interview.md#proposed-automatic-recovery-behavior-for-q39) |
-| Q40 | Provisional: follow Zed's primarily GPL-3.0-or-later approach; exact Apache-2.0 component/SDK split open. Compliant paid forks remain allowed; no license file applied. | [License research and follow-up](research/pane-license-options-q40.md) |
+| Q40 | Accepted 2026-09-27 (#3): the application is GPL-3.0-or-later; the WIT contract, guest SDKs, samples and fixtures are Apache-2.0 OR MIT; no additional GPL permission for extensions (no license flows into them through embedded Pane code); contributions under DCO with copyright kept by contributors ("The Pane contributors"). Compliant paid forks remain allowed. Release notice bundles and the source procedure are still to be exercised. | [License research](research/pane-license-options-q40.md), [dependency audit](research/licensing-audit.md) |
 | Q41 | Accepted: product name Pane. Kyoko is the existing workspace/history name; name availability has not been established. | [Latest answers](launcher-design-interview.md#latest-answers-q36q41) |
 
 ## Runtime direction and evidence
@@ -88,7 +88,7 @@ These remain open design/validation work in the specification and implementation
 5. API version signaling, deprecation/migration details, persisted-state schema/migration ownership and recovery limits.
 6. Supported OS versions/architectures/Linux desktops, release validation matrix and measured resource/startup/interaction targets.
 7. Installer acquisition/retry/cache mechanics; app/runtime update delivery; default clipboard retention and other concrete settings defaults.
-8. Exact launcher/SDK/component licensing split and dependency-license compatibility. Selecting a direction is not a completed audit or license grant.
+8. The licensing split is decided and applied; release notice generation (cargo-about plus a manual supplement) and the per-release Corresponding Source procedure remain to be exercised on a real artifact.
 9. Catalog and historical-version picker are explicitly deferred; Python/C# are later languages. Neither is silently restored to launch scope.
 
 The specification identifies bounded validation tasks and open contracts. A consequential new product choice still needs a user decision before implementation depends on it.

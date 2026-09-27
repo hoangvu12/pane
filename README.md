@@ -46,4 +46,10 @@ Contributors on all three operating systems must have working build/run/test wor
 
 The 52 implementation issues are published; work starts when each issue's blockers are complete. Research results and prototype source are under `docs/research/`; they are not production support guarantees.
 
-The provisional licensing direction is GPL-3.0-or-later for the application, with the exact component/SDK split still unresolved. A project license has not yet been applied. Existing third-party notices and licenses remain applicable.
+## Licensing
+
+- The application (everything not listed below, including `crates/`, `xtask/` and `scripts/`) is licensed under [GPL-3.0-or-later](LICENSE-GPL).
+- The extension contract (`wit/`) and everything under `guests/` (guest bindings, sample extensions and fixtures) are licensed under [Apache-2.0](guests/LICENSE-APACHE) OR [MIT](guests/LICENSE-MIT), at your option. Code compiled into an extension therefore imposes no license on it.
+- Contributions are accepted under the same terms with a DCO sign-off; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Third-party dependencies keep their own licenses; `cargo deny` checks them in CI ([audit](docs/research/licensing-audit.md)). Release notice bundles and the per-release source procedure follow that audit and are not yet produced.
