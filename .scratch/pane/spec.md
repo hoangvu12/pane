@@ -333,7 +333,7 @@ The following are provenance links, not prescribed implementation file locations
 - [Current decision index](../../docs/current-decisions.md).
 - [Detailed extension policies](../../docs/extension-policy-proposal.md).
 - [Saved interview and later corrections](../../docs/launcher-design-interview.md).
-- [Continuity audit and limitations](../../docs/pre-spec-context-audit.md).
+- [Saved-record limitations](../../docs/current-decisions.md#record-limits).
 - [ADRs](../../docs/adr/), especially [small core](../../docs/adr/0001-small-core.md), [trust](../../docs/adr/0002-trusted-extensions-and-open-distribution.md), [GPUI](../../docs/adr/0003-gpui-ce-and-extensible-views.md), [reload](../../docs/adr/0004-reload-extensions-without-restarting-launcher.md), [activation/setup](../../docs/adr/0005-lazy-activation-and-managed-dependencies.md), [search](../../docs/adr/0006-raycast-style-search-with-extension-providers.md), [API evolution](../../docs/adr/0010-best-effort-extension-api-compatibility.md), [composition](../../docs/adr/0011-extension-call-and-result-api.md), [identity](../../docs/adr/0012-pi-style-source-identity.md), [WASI3](../../docs/adr/0013-require-wasi-03.md) and [helpers](../../docs/adr/0014-optional-native-extension-helpers.md).
 - [Aggregate validation checkpoint](../../docs/research/wasi03-validation.md).
 - [P3-only embedded host](../../docs/research/p3-only-host/README.md).

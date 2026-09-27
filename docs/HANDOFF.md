@@ -9,7 +9,7 @@ The project is published at [hoangvu12/pane](https://github.com/hoangvu12/pane).
 1. Read [current decisions](current-decisions.md) for the reconciled Q1-Q41 index, runtime status and open work.
 2. Read [extension policies](extension-policy-proposal.md) for detailed accepted behavior.
 3. Use [the interview](launcher-design-interview.md) and relevant [ADRs](adr/) for rationale and history. Earlier proposals inside the interview are historical, not competing current instructions.
-4. Use [the audit](pre-spec-context-audit.md) for what was checked and what cannot be recovered from a summary.
+4. See [record limits](current-decisions.md#record-limits) for the limits of the saved discussion and evidence.
 
 The [Pane specification](../.scratch/pane/spec.md) is published with `Status: ready-for-agent`: 82 user stories, eight engineering gates and 25 planned acceptance scenarios. Its proposed testing boundary remains a recommendation pending feedback. Following the user's criticism of the earlier slicing, [the 52 published implementation issues](../.scratch/pane/issues/) form revision 3, with [planning prerequisites](../.scratch/pane/planning-prerequisites.md) and [release validation](../.scratch/pane/release-validation.md) tracked separately. The [cross-platform contributor requirement](../.scratch/pane/contributor-platform-requirement.md) remains accepted: native macOS/Linux sample builds and runs (03-04), including contributor commands and native checks, precede broad shared features. The user requested correction of the tracker structure; all 52 issues now live in `.scratch/pane/issues/` with `ready-for-agent` status and their existing blockers. The parent spec is unchanged; no production implementation or new runtime tests have been performed.
 

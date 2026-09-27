@@ -95,8 +95,14 @@ The specification identifies bounded validation tasks and open contracts. A cons
 
 ## Workflow checkpoint
 
-The planning documents and saved prototypes are now tracked in the public [Pane repository](https://github.com/hoangvu12/pane). This publication does not change the approval status of the ticket breakdown or establish production/platform readiness.
+The [specification](../.scratch/pane/spec.md) and [52 implementation issues](../.scratch/pane/issues/) are published in the local Markdown tracker with `ready-for-agent` status. Start with issue 01. Issue 02 also requires P1 from the [planning prerequisites](../.scratch/pane/planning-prerequisites.md). A ready status does not clear blockers or approve unresolved testing preferences.
 
-The main grilling round is complete for now. The user then selected local Markdown tracking, default triage labels, and **both AGENTS.md and CLAUDE.md**. [Tracker setup](agents/issue-tracker.md), [triage roles](agents/triage-labels.md), [domain rules](agents/domain.md).
+The [contributor requirement](../.scratch/pane/contributor-platform-requirement.md) gates shared features on early native Windows/macOS/Linux workflows. [Release validation](../.scratch/pane/release-validation.md) tracks platform-specific distribution and readiness evidence. Production implementation has not started.
 
-After the [continuity audit](pre-spec-context-audit.md), the user invoked `/to-spec`, producing the [local specification](../.scratch/pane/spec.md) with `Status: ready-for-agent`. The subsequent `/to-tickets` breakdown is now [revision 3 with 52 implementation issues](../.scratch/pane/issues/), published under `.scratch/pane/issues/` with `ready-for-agent` status after the user requested correction of the tracker structure. Existing numbered blockers and linked planning prerequisites remain in force. The user identified that the earlier tickets did not follow the skill's slicing discipline: decision/feasibility work is now in [planning prerequisites](../.scratch/pane/planning-prerequisites.md), release-wide checks in [release validation](../.scratch/pane/release-validation.md), and each feature includes its own author examples and observable checks. The [accepted contributor requirement](../.scratch/pane/contributor-platform-requirement.md) still gates shared features on native Windows/macOS/Linux build/run workflows. Platform packaging, update and measurement work no longer depends on another platform's corresponding completion. Earlier drafts remain historical records in Git. No unanswered testing preference is treated as approval. The parent spec is unchanged. Production implementation and new prototype execution have not started.
+Both AGENTS.md and CLAUDE.md are retained by user choice. Follow the [local tracker conventions](agents/issue-tracker.md), [triage roles](agents/triage-labels.md), and [domain rules](agents/domain.md).
+
+## Record limits
+
+The saved interview contains Q1-Q41 and later corrections, but is not a verbatim conversation transcript. Earlier claimed pre-audit snapshots are absent; do not assume they can be recovered. Historical audit reports and removed draft material remain in Git history.
+
+Research reports describe saved experiments, not newly rerun checks or production support guarantees. Some toolchains and built artifacts use temporary local paths; the saved source, patches, pinned dependencies and result files provide the reproducibility record. Keep unresolved decisions and platform limits explicit.

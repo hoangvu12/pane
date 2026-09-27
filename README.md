@@ -15,6 +15,6 @@ Pane is currently in planning and prototype validation. There is no installable 
 
 Contributors on all three operating systems must have working build/run/test workflows early in development. Existing prototype evidence covers Windows only; macOS and Linux support remains to be validated. Research scripts may depend on the temporary toolchains and local paths documented alongside them.
 
-The ticket breakdown is awaiting approval. Research results and prototype source are under `docs/research/`; they are not production support guarantees.
+The 52 implementation issues are published; work starts when each issue's blockers are complete. Research results and prototype source are under `docs/research/`; they are not production support guarantees.
 
 The provisional licensing direction is GPL-3.0-or-later for the application, with the exact component/SDK split still unresolved. A project license has not yet been applied. Existing third-party notices and licenses remain applicable.

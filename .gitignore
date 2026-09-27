@@ -15,3 +15,6 @@
 Thumbs.db
 
 # Keep .scratch planning records and saved research evidence tracked.
+
+# Research build logs are generated locally; retain source and result reports.
+/docs/research/**/build*.log
