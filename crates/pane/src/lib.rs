@@ -25,24 +25,48 @@ pub fn bind_keys(cx: &mut App) {
     ]);
 }
 
-/// File name of the Rust sample command's component.
-const SAMPLE_COMPONENT: &str = "sample_rust.wasm";
+/// The sample commands: (id, title, subtitle, component file name). Each
+/// implements the same command in a different extension language.
+const SAMPLES: [(&str, &str, &str, &str); 3] = [
+    (
+        "rust-sample",
+        "Rust sample",
+        "A sample command implemented by a Rust extension",
+        "sample_rust.wasm",
+    ),
+    (
+        "javascript-sample",
+        "JavaScript sample",
+        "The same command implemented by a JavaScript extension",
+        "sample_js.wasm",
+    ),
+    (
+        "typescript-sample",
+        "TypeScript sample",
+        "The same command implemented by a TypeScript extension",
+        "sample_ts.wasm",
+    ),
+];
 
-/// The commands this build offers: the Rust sample command.
+/// The commands this build offers: the Rust, JavaScript and TypeScript
+/// sample commands.
 ///
-/// Its component is read from `PANE_EXTENSIONS_DIR` when set, otherwise from
-/// the development build output `target/guests`. A missing component leaves
-/// the command listed; opening it explains what is missing.
+/// Their components are read from `PANE_EXTENSIONS_DIR` when set, otherwise
+/// from the development build output `target/guests`. A missing component
+/// leaves its command listed; opening it explains what is missing.
 pub fn sample_commands() -> Vec<CommandRegistration> {
     let dir = std::env::var_os("PANE_EXTENSIONS_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/guests"));
-    vec![CommandRegistration {
-        id: "rust-sample".into(),
-        title: "Rust sample".into(),
-        subtitle: Some("A sample command implemented by a Rust extension".into()),
-        component: dir.join(SAMPLE_COMPONENT),
-    }]
+    SAMPLES
+        .iter()
+        .map(|&(id, title, subtitle, file)| CommandRegistration {
+            id: id.into(),
+            title: title.into(),
+            subtitle: Some(subtitle.into()),
+            component: dir.join(file),
+        })
+        .collect()
 }
 
 /// The launcher window's root view.
