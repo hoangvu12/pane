@@ -1,6 +1,8 @@
 # Pane handoff
 
-Updated 2026-09-28 after revising the ticket breakdown for early cross-platform contributors.
+Updated 2026-09-28. This handoff covers Pane, the cross-platform launcher and its extension system.
+
+The project is published at [hoangvu12/pane](https://github.com/hoangvu12/pane). The repository contains planning documents and research prototypes; there is no installable Pane application yet.
 
 ## Start here
 
@@ -49,6 +51,6 @@ Both [AGENTS.md](../AGENTS.md) and [CLAUDE.md](../CLAUDE.md) are present by expl
 
 Next: obtain approval or edits to the drafted size/dependencies, then publish one file per approved ticket to the local issues directory. The initial proposed frontier is 01 (runtime validation) and 02 (portable native core). Per-ticket implementation is a subsequent user-invoked phase. Windows preview 46 depends on the early macOS/Linux contributor baseline, but not later platform feature/installer/release work (40-45, 47-48). These are branches in the dependency graph, not separate source forks. Real native test environments remain prerequisites. Unresolved gates remain explicit prerequisites; drafting or publication does not authorize external releases or silently settle engine/licensing choices.
 
-## Preservation
+## Historical records
 
-The older, contradictory handoff and the pre-audit interview/policy files are preserved in [the audit archive](archive/pre-spec-audit-2026-09-28/). That archive is historical evidence; its relative links retain their original locations and its contents are not current instructions.
+The interview, research reports and superseded ADRs retain Pane's design history. Use the current decision index for the accepted direction. Earlier notes referenced pre-audit snapshots, but those snapshots are absent from this repository; do not rely on them as recoverable evidence.

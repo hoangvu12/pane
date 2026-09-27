@@ -79,7 +79,7 @@ Recorded same-workload comparison: component 6.67 to 9.44 MiB; median fresh cach
 
 ## Explicitly unresolved or deferred
 
-Carry these into a spec as open design/validation work, not as silently chosen defaults:
+These remain open design/validation work in the specification and ticket drafts:
 
 1. Final JS engine, upstream patch/fork strategy, runtime packaging/topology and initialization fixes.
 2. Public WIT/SDK contracts, language parity, UI/event/custom drawing, input/IME/accessibility and host/helper IPC.
@@ -91,9 +91,11 @@ Carry these into a spec as open design/validation work, not as silently chosen d
 8. Exact launcher/SDK/component licensing split and dependency-license compatibility. Selecting a direction is not a completed audit or license grant.
 9. Catalog and historical-version picker are explicitly deferred; Python/C# are later languages. Neither is silently restored to launch scope.
 
-No user preference needs to be invented to write the initial spec: it can identify bounded validation tasks and open contracts. A consequential new product choice still needs a user decision before implementation depends on it.
+The specification identifies bounded validation tasks and open contracts. A consequential new product choice still needs a user decision before implementation depends on it.
 
 ## Workflow checkpoint
+
+The planning documents and saved prototypes are now tracked in the public [Pane repository](https://github.com/hoangvu12/pane). This publication does not change the approval status of the ticket breakdown or establish production/platform readiness.
 
 The main grilling round is complete for now. The user then selected local Markdown tracking, default triage labels, and **both AGENTS.md and CLAUDE.md**. [Tracker setup](agents/issue-tracker.md), [triage roles](agents/triage-labels.md), [domain rules](agents/domain.md).
 

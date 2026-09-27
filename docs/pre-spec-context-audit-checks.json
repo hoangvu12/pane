@@ -14,5 +14,10 @@
     "wasi03-gpui-spike/evidence/result.json": "pass"
   },
   "agent_entrypoints_match": true,
-  "archive_files_present": true
+  "archive_files_present": true,
+  "report_status": "Historical audit output; original values retained, not current verification",
+  "repository_recheck_2026_09_28": {
+    "archive_files_present": false,
+    "correction": "The previously reported pre-audit snapshots are absent from the current repository. Missing archive links and present-tense preservation claims were corrected in the documents."
+  }
 }

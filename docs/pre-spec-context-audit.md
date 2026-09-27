@@ -1,6 +1,6 @@
 # Pre-spec context continuity audit
 
-2026-09-28. Requested because the grilling session underwent repeated context compaction. This audit reconciles saved records; it does not recreate unavailable conversation text or authorize implementation.
+2026-09-28. Historical audit of Pane's launcher-design discussion, requested because the grilling session underwent repeated context compaction. This audit reconciles saved records; it does not recreate unavailable conversation text or authorize implementation. Current status is in the [handoff](HANDOFF.md).
 
 ## Conclusion and limits
 
@@ -18,7 +18,7 @@ This supports writing a spec from recorded decisions, with explicit unresolved i
 
 Primary research was not repeated against the internet and runtime experiments were not rerun. This is an audit of retained decisions/evidence, not a new compatibility or benchmark result. It does not independently re-audit every historical external source.
 
-The [recorded verification pass](pre-spec-context-audit-checks.json) found 41 question entries in both the interview and decision index, all 14 ADRs, matching agent entrypoints, and no broken targets/heading anchors among 198 local links across 20 checked documents. Saved prototype results report success; they were read, not re-executed.
+The [recorded verification pass](pre-spec-context-audit-checks.json) reported 41 question entries in both the interview and decision index, all 14 ADRs, matching agent entrypoints, and no broken targets/heading anchors among 198 local links across 20 checked documents. Its archive-presence claim is not supported by the current repository: those snapshots are absent. The original check values are retained as a historical report with a correction attached, not a current verification result. Saved prototype results report success; they were read, not re-executed.
 
 ## Contradictions corrected
 
@@ -28,7 +28,7 @@ The [recorded verification pass](pre-spec-context-audit-checks.json) found 41 qu
 | QuickJS was described as the next backend to test, despite completed patched tests and a later pause. | Record passed bounded tests, provisional engine status and deferred remaining experiments. |
 | A lower interview section still called Q36-Q41 unanswered and recommended offline bundling, automatic app downloads, permissive licensing and deferring naming. | Label it historical; current answers are internet-first setup, user-initiated app updates, provisional Zed-style licensing and Pane. |
 | CLI-first recovery and unresolved overall license intent remained in the latest-answer list. | Record automatic UI recovery as accepted direction; keep detailed mechanics proposed, and the precise license split open. |
-| Handoff combined mutually incompatible phase instructions and outdated "no libraries tested" claims. | Replace with a short current entry point and a linked decision index. Preserve original text in the archive. |
+| Handoff combined mutually incompatible phase instructions and outdated "no libraries tested" claims. | Replace with a short current entry point and a linked decision index. The previously reported archive is absent from the current repository. |
 | Prototype successes could be mistaken for a complete SDK, guest hot reload or cross-platform support. | Separate requirements from evidence and list each probe's limits. |
 
 ## Preserved evidence
@@ -45,13 +45,13 @@ Verified these nine files exist; JSON files parse:
 - [Initial GPUI screenshot](research/wasi03-gpui-spike/evidence/initial.png).
 - [Replaced-view GPUI screenshot](research/wasi03-gpui-spike/evidence/reloaded.png).
 
-Source scripts, WIT and result notes remain alongside the experiments. Some toolchains, upstream checkouts and executable artifacts live under Windows temporary storage; this audit does not promise those directories will persist. No claim of a backed-up remote repository is made; the workspace currently has no Git repository/remote.
+Source scripts, WIT and result notes remain alongside the experiments. Some toolchains, upstream checkouts and executable artifacts live under Windows temporary storage; this audit does not promise those directories will persist. At the time of the audit there was no Git repository/remote. The project has since been committed and published as [hoangvu12/pane](https://github.com/hoangvu12/pane).
 
 ## Preservation and reading order
 
-Pre-edit copies of [the handoff](archive/pre-spec-audit-2026-09-28/HANDOFF.md), [the interview](archive/pre-spec-audit-2026-09-28/launcher-design-interview.md) and [the policy](archive/pre-spec-audit-2026-09-28/extension-policy-proposal.md) are preserved as historical snapshots. These snapshots retain original relative links and are not current entry points.
+Earlier notes claimed that pre-edit handoff, interview and policy snapshots had been preserved. The referenced archive is absent from the current repository. Do not assume those snapshots can be recovered or recreate them from summaries. The current interview and ADRs retain recorded history, with the limits stated above.
 
-For `/to-spec`, read [current decisions](current-decisions.md), then [policies](extension-policy-proposal.md), then relevant ADRs/interview/research. [Domain configuration](agents/domain.md) now points future sessions to that order through the handoff. Keep unresolved contracts and validation work explicit rather than inferring approval from old recommendations.
+Read [current decisions](current-decisions.md), then [policies](extension-policy-proposal.md), then relevant ADRs/interview/research. The spec has already been produced; use the handoff for the current phase. [Domain configuration](agents/domain.md) points future sessions to these records. Keep unresolved contracts and validation work explicit rather than inferring approval from old recommendations.
 
 ## What still needs a decision or validation
 
