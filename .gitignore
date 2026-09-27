@@ -1,0 +1,17 @@
+# Local credentials
+.env
+.env.*
+!.env.example
+
+# Build/dependency caches
+**/target/
+**/node_modules/
+**/__pycache__/
+*.py[cod]
+.venv/
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+
+# Keep .scratch planning records and saved research evidence tracked.
