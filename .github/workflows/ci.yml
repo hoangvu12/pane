@@ -6,6 +6,20 @@ on:
   workflow_dispatch:
 
 jobs:
+  licenses:
+    name: Licenses and sources
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.20.2
+      - name: Application dependencies
+        run: cargo deny --locked --workspace --exclude-dev check licenses sources
+      - name: Code compiled into extension components
+        working-directory: guests
+        run: cargo deny --locked --workspace --exclude-dev check licenses sources
+
   check:
     name: Check (${{ matrix.os }})
     strategy:

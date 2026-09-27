@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+//
 // Host/guest contract for one extension command. Intentionally minimal: one
 // list view and one action per item. This is not the full Pane SDK.
 package pane:extension@0.1.0;
