@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use gpui::{
-    App, Context, Div, FocusHandle, KeyBinding, SharedString, Stateful, Window, actions, div,
+    App, Context, Div, FocusHandle, KeyBinding, Role, SharedString, Stateful, Window, actions, div,
     prelude::*, rgb,
 };
 use pane_core::{CommandRegistration, Launcher, Row, Screen, Status};
@@ -156,11 +156,18 @@ impl LauncherWindow {
             .py_2()
             .rounded_md()
             .cursor_pointer()
-            .when(selected, |row| row.bg(rgb(0x364355)))
+            .role(Role::ListBoxOption)
+            .aria_label(row.title.clone())
+            .aria_selected(selected)
+            .when(selected, |row| {
+                row.aria_active_descendant().bg(rgb(0x364355))
+            })
             .hover(|row| row.bg(rgb(0x2e3a48)))
             .child(div().child(row.title))
             .when_some(row.subtitle, |element, subtitle| {
-                element.child(div().text_sm().text_color(rgb(0xaab4c0)).child(subtitle))
+                element
+                    .aria_description(subtitle.clone())
+                    .child(div().text_sm().text_color(rgb(0xaab4c0)).child(subtitle))
             })
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.launcher.select(index);
@@ -198,7 +205,6 @@ impl Render for LauncherWindow {
 
         div()
             .key_context(KEY_CONTEXT)
-            .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::confirm))
@@ -210,10 +216,15 @@ impl Render for LauncherWindow {
             .p_4()
             .bg(rgb(0x20252d))
             .text_color(rgb(0xf1f3f5))
-            .child(div().text_xl().child(view.title))
+            .child(div().text_xl().child(view.title.clone()))
             .child(
                 div()
                     .id("rows")
+                    // The list holds keyboard focus; the selected row is its
+                    // active descendant, and key actions bubble to the root.
+                    .track_focus(&self.focus_handle)
+                    .role(Role::ListBox)
+                    .aria_label(view.title.clone())
                     .flex_1()
                     .flex()
                     .flex_col()
@@ -226,6 +237,9 @@ impl Render for LauncherWindow {
             )
             .child(
                 div()
+                    .id("status")
+                    .role(Role::Status)
+                    .aria_label(status_text.clone())
                     .debug_selector(|| status_selector.into())
                     .text_sm()
                     .text_color(rgb(status_color))

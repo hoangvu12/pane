@@ -4157,6 +4157,7 @@ dependencies = [
  "gpui-ce",
  "gpui_ce_platform",
  "pane-core",
+ "serde_json",
 ]
 
 [[package]]
