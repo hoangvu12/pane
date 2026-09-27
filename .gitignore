@@ -14,4 +14,7 @@
 .DS_Store
 Thumbs.db
 
-# Keep .scratch planning records and saved research evidence tracked.
+# Keep saved research evidence tracked; work is tracked in GitHub Issues.
+
+# Research build logs are generated locally; retain source and result reports.
+/docs/research/**/build*.log

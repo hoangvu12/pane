@@ -1,29 +1,30 @@
-# Issue tracker: Local Markdown
+# Issue tracker: GitHub Issues
 
-Specs and issues live in `.scratch/` within this workspace.
+Specs, implementation tickets, planning prerequisites and release checklists live in [hoangvu12/pane](https://github.com/hoangvu12/pane/issues). Use the `gh` CLI with `--repo hoangvu12/pane`, or `gh api` for relationships.
 
-## Conventions
+## Read and publish
 
-- One feature per directory: `.scratch/<feature-slug>/`.
-- Spec: `.scratch/<feature-slug>/spec.md`.
-- Implementation tickets: one file per ticket at `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01`.
-- Triage status: a `Status:` line near the top, using the roles in `docs/agents/triage-labels.md`.
-- Comments and conversation history: append under `## Comments`.
+- Read an issue with `gh issue view <number> --repo hoangvu12/pane --json number,title,body,labels,state,assignees,comments`.
+- List work with `gh issue list --repo hoangvu12/pane --state open --limit 100 --json number,title,labels,assignees` and an appropriate label filter.
+- Publish with `gh issue create --repo hoangvu12/pane --title "..." --body-file <file> --label <role>`. Use a UTF-8 body file for multiline creates, edits and comments.
+- Use the five triage labels in [triage-labels.md](triage-labels.md). Tickets produced by `/to-tickets` use `ready-for-agent`; they need no incoming-issue triage. Readiness does not clear open blockers.
+- Specs use `specification`; implementation tickets use `implementation`; bounded planning work uses `prerequisite`; release checklists use `release-validation`.
+- Add implementation and planning issues as native sub-issues of their specification. Include the parent URL in each body. Keep acceptance checkboxes and a readable `Blocked by` section in each ticket.
+- Append discussion as GitHub comments. Record actual results before closing an issue. Close completed blockers as completed; a cancelled blocker needs an explicit dependency decision.
+- GitHub issue numbers are authoritative. Use absolute GitHub URLs for issue and repository-document links; local Markdown ticket copies are no longer maintained.
 
-## Skill operations
+## Dependencies and execution
 
-When a skill says "publish to the issue tracker", write the corresponding local file. When it says "fetch the relevant ticket", read the referenced file. Resolve a ticket number within its feature directory; numbers are not globally unique.
+Use native relationships, with database IDs from `gh api repos/hoangvu12/pane/issues/<number> --jq .id`:
 
-Tickets produced by `/to-tickets` are already specified and do not need incoming-issue triage.
+- Parent: `gh api --method POST repos/hoangvu12/pane/issues/<parent>/sub_issues -F sub_issue_id=<child-db-id>`.
+- Blocker: `gh api --method POST repos/hoangvu12/pane/issues/<child>/dependencies/blocked_by -F issue_id=<blocker-db-id>`.
+- Inspect blockers with `gh api repos/hoangvu12/pane/issues/<child>/dependencies/blocked_by` and parent children with `gh api --paginate repos/hoangvu12/pane/issues/<parent>/sub_issues`.
 
-## Wayfinding operations
+Work open, unassigned implementation issues whose blockers are completed, in parent order. Check prerequisite issues and any platform-specific conditions in the body. Claim with `gh issue edit <number> --repo hoangvu12/pane --add-assignee @me`. Parentage alone is not a blocking dependency.
 
-For `/wayfinder`, use:
+## Wayfinding
 
-- Map: `.scratch/<effort>/map.md`, containing Notes, Decisions-so-far and Fog.
-- Child tickets: `.scratch/<effort>/issues/NN-<slug>.md`, with the question in the body and `Type: research|prototype|grilling|task`.
-- Lifecycle: `Status: open`, `Status: claimed`, or `Status: resolved`. These are wayfinding lifecycle states, separate from triage roles.
-- Blocking edges: `Blocked by: NN, NN`. A ticket is unblocked when every referenced ticket is resolved.
-- Frontier: select the lowest-numbered open, unblocked ticket.
-- Claim: set `Status: claimed` before working.
-- Resolve: append `## Answer`, set `Status: resolved`, and add a short result plus a link to the map's Decisions-so-far.
+The map is an issue labelled `wayfinder:map` with Notes, Decisions-so-far and Fog. Its native sub-issues carry `wayfinder:research`, `wayfinder:prototype`, `wayfinder:grilling` or `wayfinder:task`; create those labels when needed. Open/unassigned means available, an assignee means claimed, and closed as completed means resolved. Use native blocker relationships and choose the first open, unassigned, unblocked child in map order. Resolve by posting the answer, closing the child, and adding its gist and URL to the map's Decisions-so-far.
+
+PRs as a request surface: no. GitHub shares numbering between issues and PRs; check the resource type when a reference is ambiguous.

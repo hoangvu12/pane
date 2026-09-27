@@ -11,7 +11,7 @@ All Q1-Q41 have entries in the [saved interview](launcher-design-interview.md). 
 | Question | Current status and meaning | Supporting detail |
 | --- | --- | --- |
 | Q1 | Accepted: general-purpose, extension-driven desktop launcher inspired by Raycast, Tinycast and Pi. | [Small core](adr/0001-small-core.md) |
-| Q2 | Accepted: Windows, macOS and Linux targets, with early native contributor build/run/test support on all three. Only Windows prototypes tested; Q37 allows staggered previews. | [Contributor clarification](../.scratch/pane/contributor-platform-requirement.md), [platform notes](research/platform-specific-extensions-q34.md) |
+| Q2 | Accepted: Windows, macOS and Linux targets, with early native contributor build/run/test support on all three. Only Windows prototypes tested; Q37 allows staggered previews. | [Contributor clarification](https://github.com/hoangvu12/pane/issues/1#cross-platform-contributor-requirement), [platform notes](research/platform-specific-extensions-q34.md) |
 | Q3 | Accepted: small permanent feature core and low resource usage; AI belongs in extensions. Numerical budgets remain open. | [Small core](adr/0001-small-core.md) |
 | Q4 | Early comparison request; not an independent acceptance of Raycast's architecture. Later explicit choices govern. | [Interview](launcher-design-interview.md) |
 | Q5 | Flexibility and avoiding unnecessary architectural rework are intent; early unresolved trust discussion was settled by Q9. | [Interview](launcher-design-interview.md) |
@@ -79,7 +79,7 @@ Recorded same-workload comparison: component 6.67 to 9.44 MiB; median fresh cach
 
 ## Explicitly unresolved or deferred
 
-These remain open design/validation work in the specification and ticket drafts:
+These remain open design/validation work in the specification and implementation issues:
 
 1. Final JS engine, upstream patch/fork strategy, runtime packaging/topology and initialization fixes.
 2. Public WIT/SDK contracts, language parity, UI/event/custom drawing, input/IME/accessibility and host/helper IPC.
@@ -95,8 +95,14 @@ The specification identifies bounded validation tasks and open contracts. A cons
 
 ## Workflow checkpoint
 
-The planning documents and saved prototypes are now tracked in the public [Pane repository](https://github.com/hoangvu12/pane). This publication does not change the approval status of the ticket breakdown or establish production/platform readiness.
+The [specification](https://github.com/hoangvu12/pane/issues/1) and [52 implementation issues](https://github.com/hoangvu12/pane/issues?q=is%3Aissue+label%3Aimplementation) are published in GitHub Issues with `ready-for-agent` labels. Start with [#5](https://github.com/hoangvu12/pane/issues/5). [#6](https://github.com/hoangvu12/pane/issues/6) also requires the [JS/TS backend prerequisite #2](https://github.com/hoangvu12/pane/issues/2). Labels do not clear native blockers or approve unresolved testing preferences.
 
-The main grilling round is complete for now. The user then selected local Markdown tracking, default triage labels, and **both AGENTS.md and CLAUDE.md**. [Tracker setup](agents/issue-tracker.md), [triage roles](agents/triage-labels.md), [domain rules](agents/domain.md).
+The [contributor requirement](https://github.com/hoangvu12/pane/issues/1#cross-platform-contributor-requirement) gates shared features on early native Windows/macOS/Linux workflows. [Release validation](https://github.com/hoangvu12/pane/issues/57) tracks platform-specific distribution and readiness evidence. Production implementation has not started.
 
-After the [continuity audit](pre-spec-context-audit.md), the user invoked `/to-spec`, producing the [local specification](../.scratch/pane/spec.md) with `Status: ready-for-agent`. The subsequent `/to-tickets` invocation produced a proposed breakdown, now revised to [48 tickets](../.scratch/pane/ticket-breakdown.md), awaiting approval before issue publication. During review the user required early support for developers joining from other operating systems. The [accepted contributor requirement](../.scratch/pane/contributor-platform-requirement.md) gates shared extension development on actual Windows/macOS/Linux builds, native sample runs, portable workflows and automated native checks; later platform releases can remain staggered. The previous 47-ticket draft is preserved as historical planning data. Provisional choices and validation gates remain explicit, and no unanswered testing preference is treated as approval. The parent spec is unchanged. Production implementation and new prototype execution have not started.
+Both AGENTS.md and CLAUDE.md are retained by user choice. Follow the [GitHub tracker conventions](agents/issue-tracker.md), [triage roles](agents/triage-labels.md), and [domain rules](agents/domain.md).
+
+## Record limits
+
+The saved interview contains Q1-Q41 and later corrections, but is not a verbatim conversation transcript. Earlier claimed pre-audit snapshots are absent; do not assume they can be recovered. Historical audit reports and removed draft material remain in Git history.
+
+Research reports describe saved experiments, not newly rerun checks or production support guarantees. Some toolchains and built artifacts use temporary local paths; the saved source, patches, pinned dependencies and result files provide the reproducibility record. Keep unresolved decisions and platform limits explicit.

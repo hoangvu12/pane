@@ -4,7 +4,7 @@ Researched 2026-09-27. Status: recommendations for discussion, not accepted arch
 
 Follow-up: the user confirmed Windows/macOS/Linux, small feature core plus low resource usage, and AI as extension functionality. See [ADR 0001](../adr/0001-small-core.md). The user subsequently chose Pi-style full trust and npm/Git/local distribution, prioritizing extension capability over hardening: [ADR 0002](../adr/0002-trusted-extensions-and-open-distribution.md). The restricted contract and permission recommendations below are historical candidates, superseded where they conflict with that decision. Disable/data behavior is accepted in [extension policies](../extension-policy-proposal.md).
 
-Latest exploration: the user suggested multi-language WIT/WebAssembly extensions. See [feasibility and Windows smoke measurements](wasm-extension-feasibility.md) and [language support](wasm-language-support.md). Wasm remains optional research; native Rust executable extensions were subsequently accepted in [ADR 0007](../adr/0007-native-rust-extension-processes.md). Managed real Node is now accepted in [ADR 0008](../adr/0008-managed-node-for-javascript-extensions.md). For current status, start with [the handoff](../HANDOFF.md).
+Runtime update: WASI 0.3 is required by [ADR 0013](../adr/0013-require-wasi-03.md). The earlier native Rust and managed Node entry-point choices are superseded. WIT/Wasmtime remains under evaluation, with optional native helpers. The earlier [feasibility measurements](wasm-extension-feasibility.md) and [language review](wasm-language-support.md) are historical research; use [current decisions](../current-decisions.md#runtime-direction-and-evidence) for the runtime status.
 
 Renderer update: the user selected GPUI CE and Pi-style standard controls plus custom interactive views, with JS/TS and Rust extension authoring at launch. See [ADR 0003](../adr/0003-gpui-ce-and-extensible-views.md) and [proposed extension UI boundary](gpui-extension-bridge.md). Alternative renderer recommendations below are historical research, not the current renderer decision.
 
@@ -24,7 +24,7 @@ Cross-platform support, third-party extensions, and low resource usage are separ
 
 These conclusions are supported in the pinned [Tinycast source report](tinycast.md) and [Pi source report](pi.md). Tinycast's license text is AGPL-3.0-or-later; Pi's is MIT. Keep source reuse separate from architectural inspiration. [Tinycast license](https://github.com/abue-ammar/tinycast/blob/6fc6aa1b909ca24e3cd25e35c078a7c808ca34a9/LICENSE), [Pi license](https://github.com/earendil-works/pi/blob/2b0a123de98318c2ff8069661721ce0c3794c34e/LICENSE)
 
-For naming, see [the screened shortlist](launcher-names.md). Preferred fresh working name: **Keyroam**. For the current questions and unsettled decisions, see [the design interview](../launcher-design-interview.md).
+The user selected **Pane** as the product name. For current decisions and unresolved work, see [the decision index](../current-decisions.md).
 
 ## Relevant precedent beyond the two requested repositories
 
