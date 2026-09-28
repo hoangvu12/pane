@@ -54,7 +54,10 @@ impl FakeSystem {
         if !self.registered.lock().unwrap().contains(&shortcut) {
             return false;
         }
-        block_on(launcher.press_hotkey(&shortcut));
+        let opening = launcher
+            .press_hotkey(&shortcut)
+            .expect("a registered hotkey opens its command");
+        block_on(opening);
         true
     }
 }
@@ -560,6 +563,24 @@ fn an_update_keeps_the_hotkey_and_one_that_drops_the_command_releases_it() {
     .unwrap();
     update(&launcher);
     assert!(system.registered().is_empty());
+}
+
+#[test]
+fn a_press_that_opens_nothing_leaves_pane_as_it_was() {
+    let dirs = Dirs::new();
+    let system = FakeSystem::new();
+    let launcher = dirs.launcher(&system);
+    let folder = dirs.install(&launcher, "sample-settings");
+    assign(&launcher, "Greeting", "ctrl+alt+g");
+    let before = launcher.view();
+    // Not a hotkey, and one released by disabling its extension (the press
+    // was on its way): nothing opens, so the window is not raised either.
+    assert!(launcher.press_hotkey(&key("ctrl+alt+h")).is_none());
+    block_on(launcher.set_enabled(&PackageIdentity::local(&folder).unwrap(), false));
+    let before_disabled = launcher.view();
+    assert!(launcher.press_hotkey(&key("ctrl+alt+g")).is_none());
+    assert_eq!(launcher.view(), before_disabled);
+    assert_ne!(before, before_disabled);
 }
 
 #[test]

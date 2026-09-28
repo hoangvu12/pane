@@ -264,38 +264,34 @@ impl Launcher {
 
     /// Opens the command whose hotkey `shortcut` is, as the system reported
     /// it pressed, leaving whatever Pane shows (an open command, form or
-    /// view closes). Await the returned future to show the command. A
-    /// shortcut that opens nothing now, such as one released meanwhile, does
-    /// nothing.
-    pub fn press_hotkey(&self, shortcut: &Shortcut) -> impl Future<Output = ()> + Send + 'static {
+    /// view closes); await the returned future to show the command. A
+    /// shortcut that opens nothing now, such as one released meanwhile,
+    /// changes nothing and returns `None`, so the window is not raised for
+    /// it.
+    pub fn press_hotkey(
+        &self,
+        shortcut: &Shortcut,
+    ) -> Option<impl Future<Output = ()> + Send + 'static> {
         let mut state = self.lock();
         let command = state
             .bindings
             .registered
             .iter()
             .find(|(_, registered)| *registered == shortcut)
-            .map(|(command, _)| command.clone());
-        let component = command.and_then(|command| {
-            offered(&state.packages)
-                .into_iter()
-                .find(|(offered, unavailable)| offered.id == command && unavailable.is_none())
-                .map(|(offered, _)| offered.component)
-        });
-        let opening = component.map(|component| {
-            self.show_root(&mut state, Some(component.clone()));
-            state.view.status = Status::Running;
-            // Its data as the package is now, so a disable or reload
-            // meanwhile stops the opening.
-            let data = self.data_in(&state, &component);
-            (state.screen_epoch, component, data)
-        });
+            .map(|(command, _)| command.clone())?;
+        let component = offered(&state.packages)
+            .into_iter()
+            .find(|(offered, unavailable)| offered.id == command && unavailable.is_none())
+            .map(|(offered, _)| offered.component)?;
+        self.show_root(&mut state, Some(component.clone()));
+        state.view.status = Status::Running;
+        // Its data as the package is now, so a disable or reload meanwhile
+        // stops the opening.
+        let data = self.data_in(&state, &component);
+        let epoch = state.screen_epoch;
         drop(state);
         let launcher = self.clone();
-        async move {
-            if let Some((epoch, component, data)) = opening {
-                launcher.open_command(epoch, component, data).await;
-            }
-        }
+        Some(async move { launcher.open_command(epoch, component, data).await })
     }
 
     /// The hotkey rows of the extension list: one per command of each
