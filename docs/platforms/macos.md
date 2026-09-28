@@ -236,6 +236,20 @@ Nothing in it is specific to macOS (no system API is involved; the
 closure reuses the dependency identities recorded at install); **not run on
 macOS yet**.
 
+## Uninstalling required dependents (#44)
+
+The smoke's phase after it (screenshots 180 to 183, [uninstalling a required dependency](../dependencies.md#uninstalling-a-required-dependency)),
+with a data folder of its own, installs the dependencies sample, presses
+Enter on "Uninstall JavaScript operations sample" in Manage extensions,
+which must ask first (the details color), cancels, then chooses Uninstall
+all 2 keeping saved data (the result color); `installed.json` must then hold
+no package. Pane is started again to install the JavaScript operations
+sample alone, and `installed.json` must then hold exactly one package.
+Removing a managed copy uses the same `remove_dir_all` as a single
+uninstall; a folder still in use is listed and removed at the next start,
+reported against its own package. Nothing else in it is specific to
+macOS; **not run on macOS yet**.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms now have a text field. The

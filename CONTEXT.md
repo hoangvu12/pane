@@ -173,7 +173,7 @@ A dependency a package needs: installing the package shows it and installs it fi
 _Avoid_: Hard dependency, prerequisite
 
 **Required dependent**:
-An installed package that requires another on this system, directly or through other installed packages that do (its required dependent closure; optional dependencies never count). Disabling the package it requires first shows the enabled ones, which are disabled together or not at all (Disable all or Cancel); enabling that package again does not enable them.
+An installed package that requires another on this system, directly or through other installed packages that do (its required dependent closure; optional dependencies never count). Disabling the package it requires first shows the enabled ones, which are disabled together or not at all (Disable all or Cancel); enabling that package again does not enable them. Uninstalling it first shows all of them, disabled ones too, with their saved data; they are uninstalled together, keeping or deleting their saved data, or not at all (Uninstall all or Cancel), and installing that package again does not install them.
 _Avoid_: Reverse dependency, child extension
 
 **Optional dependency**:
