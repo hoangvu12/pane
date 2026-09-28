@@ -3,8 +3,10 @@
 //! commands the `open` crate names for this system: `/usr/bin/open` on
 //! macOS; PowerShell's `Start-Process` (then `explorer.exe`) on Windows;
 //! `xdg-open` (then `gio`, `gnome-open`, `kde-open`) on Linux. None runs
-//! through a shell, and the Windows opener passes the target to PowerShell
-//! in an environment variable, not on its command line.
+//! through a shell. On Windows the target reaches PowerShell in an
+//! environment variable, not on its command line, and an existing path (a
+//! file Pane checked) opens with `Invoke-Item -LiteralPath`, a web link with
+//! `Start-Process`.
 //!
 //! A handler that is still running after [`SETTLE`] counts as having opened
 //! the link or file: `xdg-open` outside a desktop session runs the program
@@ -30,33 +32,42 @@ pub struct SystemLinks;
 
 /// What is being opened, for the user's messages.
 #[derive(Clone, Copy)]
-enum Target {
+enum Opening {
     Link,
     File,
 }
 
-impl Target {
+impl Opening {
     /// "web links" or "this kind of file".
     fn what(self) -> &'static str {
         match self {
-            Target::Link => "web links",
-            Target::File => "this kind of file",
+            Opening::Link => "web links",
+            Opening::File => "this kind of file",
         }
     }
 }
 
 impl LinkOpener for SystemLinks {
     fn open(&self, url: &str) -> Result<(), String> {
-        open_with_system(url.as_ref(), Target::Link)
+        open_with_system(url.as_ref(), Opening::Link)
     }
 
     fn open_file(&self, path: &Path) -> Result<(), String> {
-        open_with_system(path.as_os_str(), Target::File)
+        // The macOS and Windows smokes record the file instead of opening
+        // it, since any program that opened it would be the user's own;
+        // nothing else sets this, and a release build has no such hook.
+        #[cfg(debug_assertions)]
+        if let Some(log) = std::env::var_os("PANE_TEST_OPEN_FILE_LOG") {
+            let line = format!("{}\n", path.display());
+            return std::fs::write(&log, line)
+                .map_err(|error| format!("the smoke's record could not be written ({error})"));
+        }
+        open_with_system(path.as_os_str(), Opening::File)
     }
 }
 
 /// Opens `target` with the first of the system's handlers that starts.
-fn open_with_system(target: &OsStr, kind: Target) -> Result<(), String> {
+fn open_with_system(target: &OsStr, kind: Opening) -> Result<(), String> {
     let mut missing = None;
     for mut command in open::commands(target) {
         command
@@ -79,7 +90,7 @@ fn open_with_system(target: &OsStr, kind: Target) -> Result<(), String> {
 
 /// Waits up to [`SETTLE`] for `child`, the handler `command` started, to
 /// report failure; one still running then is left to finish on its own.
-fn settle(command: &Command, mut child: Child, kind: Target) -> Result<(), String> {
+fn settle(command: &Command, mut child: Child, kind: Opening) -> Result<(), String> {
     let deadline = Instant::now() + SETTLE;
     loop {
         match child.try_wait() {
@@ -97,7 +108,7 @@ fn settle(command: &Command, mut child: Child, kind: Target) -> Result<(), Strin
 }
 
 /// Why the handler `command` exited with `status`, for the user.
-fn explain(command: &Command, status: ExitStatus, kind: Target) -> String {
+fn explain(command: &Command, status: ExitStatus, kind: Opening) -> String {
     // xdg-open documents exit status 3 for "a required tool could not be
     // found" and 4 for "the action failed".
     if command.get_program() == "xdg-open" {
@@ -110,8 +121,8 @@ fn explain(command: &Command, status: ExitStatus, kind: Target) -> String {
             }
             Some(4) => {
                 return match kind {
-                    Target::Link => "the browser or link handler refused or failed to open it",
-                    Target::File => {
+                    Opening::Link => "the browser or link handler refused or failed to open it",
+                    Opening::File => {
                         "the program for this kind of file refused or failed to open it"
                     }
                 }
@@ -121,8 +132,8 @@ fn explain(command: &Command, status: ExitStatus, kind: Target) -> String {
         }
     }
     let handler = match kind {
-        Target::Link => "link handler",
-        Target::File => "handler for files",
+        Opening::Link => "link handler",
+        Opening::File => "handler for files",
     };
     format!("the system's {handler} did not open it ({status})")
 }

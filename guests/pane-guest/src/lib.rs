@@ -166,12 +166,15 @@ pub mod helpers {
     }
 }
 
-/// The files of a folder (`pane:extension/files`), which Pane lists for the
-/// extension under its bounded scan policy with [`files::list_folder`]:
-/// breadth first, at most 8 folders deep and 5,000 files, without hidden
-/// entries or links. A command that finds files for root search answers
-/// `open-file` results ([`root::RootAction::OpenFile`]), which Pane opens.
-/// Dropping the future of a listing before it resolves stops it.
+/// The files of the folder the user granted the command's package
+/// (`pane:extension/files`), which Pane lists for it under its scan limits
+/// ([`files::limits`]): [`files::list_folder`] answers at once, with the
+/// listing Pane keeps for this visit of root search, or that it is still
+/// listing (Pane asks the command again when it is done), or that no folder
+/// is granted. The package's `pane.json` sets `"folderAccess": true`; the
+/// user chooses the folder in Pane's own row, and the extension never sees
+/// its path. A command answers `open-file` results
+/// ([`root::RootAction::OpenFile`]) with the files' ids.
 pub mod files {
     wit_bindgen::generate!({
         path: "../../wit",
@@ -179,7 +182,9 @@ pub mod files {
         default_bindings_module: "pane_guest::files",
     });
 
-    pub use pane::extension::files::{FolderListing, FoundFile, list_folder};
+    pub use pane::extension::files::{
+        FolderListing, FolderState, FoundFile, ScanLimits, limits, list_folder,
+    };
 }
 
 /// Root results a command supplies ahead of the query

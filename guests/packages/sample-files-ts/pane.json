@@ -7,9 +7,10 @@
     {
       "id": "find-files",
       "title": "Find files (TypeScript)",
-      "subtitle": "A TypeScript command that finds and opens the files of a folder you choose",
+      "subtitle": "A TypeScript command that finds and opens the files of a folder you grant it",
       "component": "sample_files_ts.wasm",
       "rootResults": true
     }
-  ]
+  ],
+  "folderAccess": true
 }

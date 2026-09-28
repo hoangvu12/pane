@@ -257,6 +257,7 @@ impl Launcher {
             Ok(leftover) => {
                 let forget_hotkeys = self.forget_hotkeys_of(&mut self.lock(), &identity);
                 let forget_aliases = self.forget_aliases_of(&mut self.lock(), &identity);
+                let files = self.lock().files.clone();
                 let (problems, retained) = {
                     let data = installation.data.clone();
                     let store = installation.store.clone();
@@ -269,6 +270,14 @@ impl Launcher {
                         }
                         if let Some(Err(error)) = forget_aliases.map(|forget| forget()) {
                             problems.push(format!("could not forget its aliases: {error}"));
+                        }
+                        // The folder it was granted is Pane's record, not
+                        // its data: it goes whether or not data is kept.
+                        if let Some(files) = files
+                            && files.granted(&identity.key()).is_some()
+                            && let Err(error) = files.revoke(&identity.key())
+                        {
+                            problems.push(format!("could not forget its folder: {error}"));
                         }
                         let store = &mut store.lock().unwrap_or_else(|p| p.into_inner());
                         let recorded = store.retained().iter().any(|r| r.identity == identity);

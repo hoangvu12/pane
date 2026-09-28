@@ -14,12 +14,6 @@ pub fn last_name(path: &str) -> &str {
         .unwrap_or(path)
 }
 
-/// The folder part of `relative` (`/` between names), empty for a file
-/// directly in the folder.
-pub fn parent(relative: &str) -> &str {
-    relative.rsplit_once('/').map_or("", |(parent, _)| parent)
-}
-
 /// The files `query` finds: those whose name contains every word of the
 /// query, then those where each word is in the name or the folders below
 /// the chosen one, ignoring letter case, each group in listing order; at

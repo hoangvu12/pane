@@ -50,7 +50,6 @@ pub(crate) mod bindings {
         imports: {
             "pane:extension/operations": store,
             "pane:extension/helpers": store,
-            "pane:extension/files": store,
         },
         exports: { default: async | store },
     });
@@ -100,7 +99,7 @@ use root_bindings::exports::pane::extension::root_results;
 
 use crate::applications::Applications;
 use crate::extension_data::{DataKind, PackageData};
-use crate::files::{self, Folders};
+use crate::files::{FileAccess, Folders};
 use crate::generation::{End, Generation};
 use crate::helpers;
 use crate::helpers::runner::{self, HelperError, HelperErrorKind, Helpers, Running, Spec};
@@ -179,10 +178,6 @@ pub(crate) struct Exports {
 /// The system's applications as the runtime's guests and the launcher see
 /// them; replaceable, for tests.
 type SharedApplications = Arc<Mutex<Arc<dyn Applications>>>;
-
-/// The system's folders as the runtime's guests list them; replaceable, for
-/// tests.
-type SharedFolders = Arc<Mutex<Arc<dyn Folders>>>;
 
 /// The installed packages as the launcher has them, once it has said, for
 /// resolving operation calls and finding a guest's helpers.
@@ -622,7 +617,6 @@ impl Runtime {
     fn start_with(cache_dir: Option<PathBuf>) -> Result<Runtime, CallError> {
         let engine = engine(cache_dir.clone())?;
         let applications: SharedApplications = Arc::new(Mutex::new(crate::applications::native()));
-        let folders: SharedFolders = Arc::new(Mutex::new(crate::files::native()));
         let code = Arc::new(Code::new(engine));
         let (checks, pending_checks) = std::sync::mpsc::channel::<Check>();
         let checker = code.clone();
@@ -644,7 +638,7 @@ impl Runtime {
                 }
             })
             .map_err(unavailable)?;
-        let shared = Shared::start(code, applications, folders, Helpers::default(), cache_dir)?;
+        let shared = Shared::start(code, applications, Helpers::default(), cache_dir)?;
         Ok(Runtime { shared, checks })
     }
 
@@ -816,10 +810,15 @@ impl Runtime {
         *lock(&self.shared.applications) = applications;
     }
 
-    /// Has the runtime's guests list folders through `folders` from now on,
+    /// Has the runtime list granted folders through `folders` from now on,
     /// instead of this system's own ([`crate::files::native`]).
     pub fn set_folders(&self, folders: Arc<dyn Folders>) {
-        *lock(&self.shared.folders) = folders;
+        self.shared.files.set_folders(folders);
+    }
+
+    /// The granted folders and their listings, which the launcher shares.
+    pub(crate) fn file_access(&self) -> FileAccess {
+        self.shared.files.clone()
     }
 
     /// Finds and opens the system's applications.
@@ -1131,8 +1130,8 @@ pub(crate) struct GuestState {
     pub(crate) serving: bool,
     /// Finds and opens the system's applications for the guest.
     applications: SharedApplications,
-    /// Lists folders for the guest.
-    folders: SharedFolders,
+    /// The granted folders and their listings.
+    files: FileAccess,
     /// The installed packages, for finding the guest's helpers.
     directory: SharedDirectory,
     /// The runtime's helper processes; those of this instance are ended
@@ -1228,12 +1227,15 @@ impl GuestState {
         lock(&self.applications).clone()
     }
 
-    /// Lists folders for the guest.
-    pub(crate) fn folders(&self) -> Arc<dyn Folders> {
-        self.folders
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
+    /// The granted folders and their listings, for the guest.
+    pub(crate) fn file_access(&self) -> FileAccess {
+        self.files.clone()
+    }
+
+    /// The identity key of the guest's package; `None` for a command
+    /// built into Pane.
+    pub(crate) fn owner(&self) -> Option<String> {
+        self.data.as_ref().map(|data| data.owner().to_owned())
     }
 }
 
@@ -1341,8 +1343,8 @@ struct Host {
     owners: Vec<Generation>,
     /// Finds and opens the system's applications for guests.
     applications: SharedApplications,
-    /// Lists folders for guests.
-    folders: SharedFolders,
+    /// The granted folders and their listings.
+    files: FileAccess,
 }
 
 impl Code {
@@ -1376,7 +1378,7 @@ impl Code {
             |state| state,
         )
         .expect("registering helpers in a fresh linker cannot conflict");
-        bindings::pane::extension::files::add_to_linker::<_, files::Listings>(
+        bindings::pane::extension::files::add_to_linker::<_, wasmtime::component::HasSelf<_>>(
             &mut linker,
             |state| state,
         )
@@ -1514,7 +1516,7 @@ impl Host {
             chain: Vec::new(),
             owners: Vec::new(),
             applications: shared.applications.clone(),
-            folders: shared.folders.clone(),
+            files: shared.files.clone(),
         }
     }
 
@@ -2269,7 +2271,7 @@ impl Host {
                 calls: self.calls.clone(),
                 serving: false,
                 applications: self.applications.clone(),
-                folders: self.folders.clone(),
+                files: self.files.clone(),
                 directory: self.directory.clone(),
                 owner: self.helpers.new_owner(),
                 helpers: self.helpers.clone(),

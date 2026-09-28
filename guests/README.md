@@ -35,9 +35,10 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   ([Root results supplied ahead of the query](#root-results-supplied-ahead-of-the-query),
   [applications](../docs/applications.md)). Its package is
   `packages/applications`; held by `crates/pane-core/tests/applications.rs`.
-- `files`: Pane's file search, a default extension in Rust: the user chooses
-  a folder in its form, and root search finds its files by name and opens
-  one ([Files of a folder](#files-of-a-folder), [files](../docs/files.md)).
+- `files`: Pane's file search, a default extension in Rust: the user grants
+  it a folder through Pane's own row, and root search finds its files by
+  name and opens one ([Files of a granted folder](#files-of-a-granted-folder),
+  [files](../docs/files.md)).
   Its package is `packages/files`; held by `crates/pane-core/tests/files.rs`.
 - `sample-files-js`, `sample-files-ts`: the same host import and `open-file`
   results in JavaScript and TypeScript; held by
@@ -551,30 +552,38 @@ module or struct state kept between queries is lost and the next query
 starts a fresh instance. Keep what must last in [settings](#keeping-settings)
 or the [cache](#keeping-content-cache-and-credentials).
 
-### Files of a folder
+### Files of a granted folder
 
-A command can list the files of a folder, which a WASI guest cannot read
-itself, through `pane:extension/files` ([`wit/files.wit`](../wit/files.wit)),
-and answer results that open a file: `open-file` with the file's absolute
-path, which Pane opens with the system's handler for its type (it refuses a
-relative path, a folder or a missing file). Such results are listed after
-the results root search finds by title. Pane lists the folder under its
-[scan policy](../docs/files.md#the-scan-policy) (regular files, breadth
-first in name order, at most 8 folders deep, 5,000 files and 20,000
-entries, without hidden entries or links), off the extension thread, and
-stops the listing when the call is cancelled. The [Files](files) default
-extension, in Rust, works this way; [`sample-files-js`](sample-files-js) and
+A command can find the files of the one folder the user granted its
+package, which a WASI guest cannot read itself, through
+`pane:extension/files` ([`wit/files.wit`](../wit/files.wit)), and answer
+results that open one (`open-file`). The package's `pane.json` sets
+`"folderAccess": true`: Pane then shows its own "Choose folder…" row at the
+top of the package's commands, and records the folder the user picks. The
+command never names or sees a path: `list-folder()` answers that no folder
+is granted, that Pane is listing it (Pane asks the command again once it is
+done, so answer no files for now), or the listing Pane keeps for this visit
+of root search, whose files have an `id` and a `relative` path. An
+`open-file` result gives the `id`; Pane shows the file's own name and folder
+in the row, whatever the result's title says, drops an id it did not give,
+checks the file again when it is invoked and refuses programs and scripts.
+Pane lists the folder under its [scan policy](../docs/files.md#the-scan-policy)
+(`files.limits()` gives its limits); file results are listed after the
+results root search finds by title. The [Files](files) default extension,
+in Rust, works this way; [`sample-files-js`](sample-files-js) and
 [`sample-files-ts`](sample-files-ts) do the same in JavaScript and
 TypeScript.
 
 Rust (`pane_guest::files`):
 
 ```rust
-use pane_guest::files;
+use pane_guest::files::{self, FolderState};
 use pane_guest::root::{RootAction, RootResult};
 
 async fn results_for(query: String) -> Result<Vec<RootResult>, String> {
-    let listing = files::list_folder("/home/you/Documents".into()).await?;
+    let FolderState::Ready(listing) = files::list_folder()? else {
+        return Ok(Vec::new());
+    };
     Ok(listing
         .files
         .into_iter()
@@ -583,22 +592,25 @@ async fn results_for(query: String) -> Result<Vec<RootResult>, String> {
             id: file.relative.clone(),
             title: file.relative,
             subtitle: None,
-            action: RootAction::OpenFile(file.path),
+            action: RootAction::OpenFile(file.id),
         })
         .collect())
 }
 ```
 
-JavaScript or TypeScript (`listFolder` rejects with an object whose
-`payload` is the reason; declarations in [`js/files.d.ts`](js/files.d.ts)):
+JavaScript or TypeScript: add `"files": true` to the `"pane"` options of
+`package.json`, so the build imports the interface (a command without it
+does not), and import it (`listFolder` throws an object whose `payload` is
+the reason; declarations in [`js/files.d.ts`](js/files.d.ts)):
 
 ```ts
 import { listFolder } from "pane:extension/files@0.1.0";
 
-const { files, truncated } = await listFolder("/home/you/Documents");
-return files
+const state = listFolder();
+if (state.tag !== "ready") return [];
+return state.val.files
   .filter((file) => file.relative.includes(query))
-  .map((file) => ({ id: file.relative, title: file.relative, action: { tag: "open-file", val: file.path } }));
+  .map((file) => ({ id: file.relative, title: file.relative, action: { tag: "open-file", val: file.id } }));
 ```
 
 ## Root results supplied ahead of the query
