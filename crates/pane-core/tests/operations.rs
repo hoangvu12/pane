@@ -566,6 +566,29 @@ fn invalid_operations_are_explained_and_not_installed() {
 }
 
 #[test]
+fn a_component_that_serves_no_operations_cannot_publish_one() {
+    let dirs = Dirs::new();
+    let folder = dirs.fixture("b", &["echo"], false);
+    // The Rust sample command exports `command` only.
+    let command_only = fixture_component().with_file_name("sample_rust.wasm");
+    fs::copy(command_only, folder.join("fixture.wasm")).unwrap();
+    let launcher = dirs.launcher();
+
+    block_on(launcher.install_package(&folder));
+
+    let status = launcher.view().status;
+    assert!(
+        matches!(&status, Status::Error(text) if text.starts_with(
+            "\"operation `echo`\": Incompatible extension: it does not implement Pane's \
+             extension interface: its manifest publishes operations it serves, but it does \
+             not export pane:extension/published-operations@0.1.0"
+        )),
+        "{status:?}"
+    );
+    assert!(launcher.packages().is_empty());
+}
+
+#[test]
 fn a_package_preview_lists_its_operations() {
     let dirs = Dirs::new();
     let launcher = dirs.launcher();

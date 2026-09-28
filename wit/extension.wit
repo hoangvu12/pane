@@ -2,9 +2,8 @@
 //
 // Host/guest contract for one extension command. Intentionally minimal: one
 // list view, one action per item, forms with a text field and a choice, the
-// operating systems an item's action supports, custom views the extension
-// draws from rectangles and text, and the operations it serves to other
-// extensions. This is not the full Pane SDK.
+// operating systems an item's action supports, and custom views the extension
+// draws from rectangles and text. This is not the full Pane SDK.
 package pane:extension@0.1.0;
 
 interface command {
@@ -192,13 +191,6 @@ interface command {
   /// Open the custom view of the item with `item-id`. Each call opens a new
   /// view with its own state.
   open-view: async func(item-id: string) -> result<custom-view, string>;
-
-  /// Serve a call to `operation`, which the package publishes under
-  /// `operations` in its pane.json. Pane calls it only for an operation the
-  /// manifest lists, on behalf of another extension. `input` and the
-  /// returned text are JSON; an error is passed to the caller as the
-  /// operation's own. A command that publishes nothing returns an error.
-  run-operation: async func(operation: string, input: string) -> result<string, string>;
 }
 
 world extension {

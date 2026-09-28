@@ -53,8 +53,4 @@ async function openView(itemId: string): Promise<CustomView> {
   throw new Error(`unknown view: ${itemId}`);
 }
 
-async function runOperation(operation: string): Promise<string> {
-  throw new Error(`unknown operation: ${operation}`);
-}
-
-export const command: Command = { getView, runAction, submitForm, openView, runOperation };
+export const command: Command = { getView, runAction, submitForm, openView };

@@ -1,12 +1,14 @@
 //! Pane's Rust sample command: a list with one action per item, a form, a
-//! color picker the command draws itself, and two actions each declared for
-//! some operating systems only. Items, titles, results, errors and drawings
-//! match the JavaScript and TypeScript samples.
+//! color picker the command draws itself, two actions each declared for
+//! some operating systems only, and a root result computed from the query
+//! ("reverse <text>"). Items, titles, results, errors and drawings match the
+//! JavaScript and TypeScript samples.
 #![no_std]
 
 use core::cell::Cell;
 
 use pane_guest::alloc::{format, string::String, vec, vec::Vec};
+use pane_guest::root::{RootAction, RootResult};
 use pane_guest::{
     Choice, CustomView, CustomViewInfo, CustomViewRole, Field, FieldKind, FieldValue, Form,
     FormError, Frame, Guest, GuestCustomView, Item, Key, Platform, Rect, Shape, Text, TextField,
@@ -338,8 +340,24 @@ impl Guest for Sample {
         }
         Ok(CustomView::new(ColorPicker::new()))
     }
+}
 
-    async fn run_operation(operation: String, _input: String) -> Result<String, String> {
-        Err(format!("unknown operation: {operation}"))
+pane_guest::root::export!(Sample);
+
+impl pane_guest::root::Guest for Sample {
+    /// "reverse <text>" typed into root search lists the text reversed,
+    /// which Enter copies; other queries have no results.
+    async fn results_for(query: String) -> Result<Vec<RootResult>, String> {
+        let text = query.strip_prefix("reverse ").unwrap_or_default().trim();
+        if text.is_empty() {
+            return Ok(Vec::new());
+        }
+        let reversed: String = text.chars().rev().collect();
+        Ok(vec![RootResult {
+            id: "reversed".into(),
+            title: reversed.clone(),
+            subtitle: Some("Reversed by the Rust guest".into()),
+            action: RootAction::Copy(reversed),
+        }])
     }
 }

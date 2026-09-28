@@ -1,6 +1,6 @@
 //! Pane's operations sample in Rust. Its package publishes the operation
 //! `greet` (under `operations` in its pane.json), served by
-//! [`Guest::run_operation`], and its command calls the `greet` operation the
+//! [`publish::Guest::run_operation`], and its command calls the `greet` operation the
 //! JavaScript and TypeScript operations samples publish, with
 //! [`pane_guest::operations::call`]. Items, titles, results and errors match
 //! those samples.
@@ -12,7 +12,7 @@
 
 use pane_guest::alloc::{format, string::String, string::ToString, vec, vec::Vec};
 use pane_guest::operations::call;
-use pane_guest::{CustomView, FieldValue, FormError, Guest, Item, NoCustomView, View};
+use pane_guest::{CustomView, FieldValue, FormError, Guest, Item, NoCustomView, View, publish};
 use serde_json::{Value, json};
 
 /// The packages this command calls, by source: relative to this package's
@@ -23,6 +23,7 @@ const MISSING: &str = "local:../no-such-extension";
 
 struct Operations;
 pane_guest::export!(Operations);
+pane_guest::publish::export!(Operations);
 
 /// Calls `greet` version 1 of the package with `source` for `name`, and
 /// returns its greeting, or why there is none.
@@ -83,7 +84,10 @@ impl Guest for Operations {
     async fn open_view(item_id: String) -> Result<CustomView, String> {
         Err(format!("unknown view: {item_id}"))
     }
+}
 
+/// The operations the package publishes: `greet`.
+impl publish::Guest for Operations {
     async fn run_operation(operation: String, input: String) -> Result<String, String> {
         if operation != "greet" {
             return Err(format!("unknown operation: {operation}"));

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 //
 // Pane's operations sample in TypeScript. Its package publishes the operation
-// `greet` (under `operations` in its pane.json), served by `runOperation`, and
+// `greet` (under `operations` in its pane.json), served by
+// `publishedOperations` (built with it through package.json's `"pane"`), and
 // its command calls the `greet` operation the Rust operations sample
 // publishes, with `pane:extension/operations`. Items, titles, results and
 // errors match the Rust sample (guests/sample-operations) and the JavaScript
@@ -10,7 +11,7 @@
 // `greet` version 1 takes `{"name": "<name>"}` and answers
 // `{"greeting": "Hello, <name>, from TypeScript"}`, or the error "a name is
 // needed".
-import type { Command, CustomView, Item, View } from "@pane/extension";
+import type { Command, CustomView, Item, PublishedOperations, View } from "@pane/extension";
 import { call, type CallError } from "pane:extension/operations@0.1.0";
 
 /**
@@ -94,4 +95,6 @@ async function runOperation(operation: string, input: string): Promise<string> {
   return JSON.stringify(result);
 }
 
-export const command: Command = { getView, runAction, submitForm, openView, runOperation };
+export const command: Command = { getView, runAction, submitForm, openView };
+
+export const publishedOperations: PublishedOperations = { runOperation };

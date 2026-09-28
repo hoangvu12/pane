@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 //
 // Pane's sample command in JavaScript: a list with one action per item, a
-// form and a color picker the command draws itself. Items, titles, results and errors match the Rust sample
+// form, a color picker the command draws itself and a root result computed
+// from the query ("reverse <text>"). Items, titles, results and errors match the Rust sample
 // (guests/sample-rust) and the TypeScript sample. The JSDoc types let
 // TypeScript check this file against Pane's contract; they are optional.
 // @ts-check
@@ -235,8 +236,25 @@ export const command = {
     }
     return new ColorPicker();
   },
+};
 
-  async runOperation(operation) {
-    throw new Error(`unknown operation: ${operation}`);
+/** @type {import("@pane/extension").RootResults} */
+export const rootResults = {
+  // "reverse <text>" typed into root search lists the text reversed, which
+  // Enter copies; other queries have no results.
+  async resultsFor(query) {
+    const text = query.startsWith("reverse ") ? query.slice("reverse ".length).trim() : "";
+    if (!text) {
+      return [];
+    }
+    const reversed = [...text].reverse().join("");
+    return [
+      {
+        id: "reversed",
+        title: reversed,
+        subtitle: "Reversed by the JavaScript guest",
+        action: { tag: "copy", val: reversed },
+      },
+    ];
   },
 };

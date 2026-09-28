@@ -243,6 +243,26 @@ capture 26-no-results.png
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{1-root,24-search,25-search-result,26-no-results}.png
 stop_pane
 
+# The calculator, a default extension: an expression typed into root search
+# lists its answer first, selected, and Enter copies it. Pasting the copy
+# over the query and typing on shows exactly the screen typing the whole
+# expression shows, so the clipboard held the answer.
+start_pane --install target/guests/packages/calculator
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 2   # Install
+"$xdotool" type --delay 50 '6*7'; sleep 2
+capture 27-answer.png
+check 27-answer.png 364355 3000   # the selected answer row
+"$xdotool" key Return; sleep 1
+capture 28-copied.png   # "Copied 42 to the clipboard"
+"$xdotool" key ctrl+a; "$xdotool" type --delay 50 '42+1'; sleep 2
+capture 29-typed.png
+"$xdotool" key ctrl+a ctrl+v; "$xdotool" type --delay 50 '+1'; sleep 2
+capture 30-pasted.png
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{27-answer,28-copied,29-typed}.png
+python3 "$(dirname "$0")/check_screenshot.py" --same "$out/29-typed.png" "$out/30-pasted.png"
+stop_pane
+
 # Operations: install the JavaScript operations sample, then the Rust one,
 # whose command (Call from Rust, selected once installed) asks the JavaScript
 # package's greet operation: "JavaScript answered: Hello, Rust, from
@@ -250,16 +270,16 @@ stop_pane
 start_pane --install target/guests/packages/sample-operations-js
 "$xdotool" windowfocus --sync "$window"
 "$xdotool" key Return; sleep 2   # Install
-capture 27-operations-target.png
-check 27-operations-target.png 9fd8a8   # "Installed JavaScript operations sample"
+capture 31-operations-target.png
+check 31-operations-target.png 9fd8a8   # "Installed JavaScript operations sample"
 stop_pane
 start_pane --install target/guests/packages/sample-operations
 "$xdotool" windowfocus --sync "$window"
 "$xdotool" key Return; sleep 2   # Install; Call from Rust is selected
 "$xdotool" key Return; sleep 3   # open Call from Rust
 "$xdotool" key Return; sleep 5   # "Ask JavaScript to greet"
-capture 28-operation-answer.png
-check 28-operation-answer.png 9fd8a8   # the JavaScript guest's answer
-python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{27-operations-target,28-operation-answer}.png
+capture 32-operation-answer.png
+check 32-operation-answer.png 9fd8a8   # the JavaScript guest's answer
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{31-operations-target,32-operation-answer}.png
 stop_pane
 echo "screenshots in $out"
