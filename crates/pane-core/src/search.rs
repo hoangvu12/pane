@@ -9,8 +9,10 @@
 //! and dotless I are out of scope.
 //!
 //! Every word of the query must appear in the title, subtitle or package
-//! title. Matches are ranked by how well the title matches, best first:
+//! title, unless the query is the result's alias. Matches are ranked by how
+//! well the title matches, best first:
 //!
+//! 0. the query is the alias the user gave the result;
 //! 1. the title is the query;
 //! 2. the title starts with the query;
 //! 3. every word of the query starts a word of the title;
@@ -28,6 +30,7 @@ use unicode_normalization::UnicodeNormalization;
 /// How well a result matches a query; lower is better.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Rank {
+    Alias,
     Exact,
     Prefix,
     WordPrefixes,
@@ -38,7 +41,7 @@ enum Rank {
 
 /// `text` as it is compared: NFC, lowercase, its words separated by single
 /// spaces.
-fn normalize(text: &str) -> String {
+pub(crate) fn normalize(text: &str) -> String {
     let text: String = text.to_lowercase().nfc().collect();
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -52,6 +55,8 @@ pub(crate) struct Keys {
     title_words: Vec<String>,
     subtitle: String,
     package: String,
+    /// The alias the user gave the result, if any.
+    alias: Option<String>,
 }
 
 impl Keys {
@@ -69,6 +74,15 @@ impl Keys {
             title_words,
             subtitle: subtitle.map(normalize).unwrap_or_default(),
             package: package.map(normalize).unwrap_or_default(),
+            alias: None,
+        }
+    }
+
+    /// These keys, also matched by `alias`, which the user gave the result.
+    pub(crate) fn with_alias(self, alias: Option<&str>) -> Keys {
+        Keys {
+            alias: alias.map(normalize).filter(|alias| !alias.is_empty()),
+            ..self
         }
     }
 }
@@ -89,12 +103,19 @@ impl Query {
         }
     }
 
+    /// Whether this query is the alias the user gave the result with `keys`.
+    pub(crate) fn is_alias_of(&self, keys: &Keys) -> bool {
+        !self.text.is_empty() && keys.alias.as_deref() == Some(self.text.as_str())
+    }
+
     /// How well a result with `keys` matches this non-empty query; `None`
     /// if it does not.
     fn rank(&self, keys: &Keys) -> Option<Rank> {
         let in_title = |word: &String| keys.title.contains(word.as_str());
         let in_subtitle = |word: &String| in_title(word) || keys.subtitle.contains(word.as_str());
-        let rank = if keys.title == self.text {
+        let rank = if keys.alias.as_deref() == Some(self.text.as_str()) {
+            Rank::Alias
+        } else if keys.title == self.text {
             Rank::Exact
         } else if keys.title.starts_with(&self.text) {
             Rank::Prefix

@@ -53,6 +53,15 @@ mod indexed_bindings {
     });
 }
 
+/// The `query-command` export of a command that takes a query.
+mod query_bindings {
+    wasmtime::component::bindgen!({
+        path: "../../wit",
+        world: "query-command-provider",
+        exports: { default: async | store },
+    });
+}
+
 /// The `published-operations` export of a component serving operations.
 mod operations_bindings {
     wasmtime::component::bindgen!({
@@ -85,6 +94,9 @@ const ROOT_RESULTS_INTERFACE: &str = "pane:extension/root-results@0.1.0";
 /// The interface a command that supplies root results ahead of the query
 /// also exports.
 const INDEXED_RESULTS_INTERFACE: &str = "pane:extension/indexed-results@0.1.0";
+
+/// The interface a command that takes a query also exports.
+const QUERY_COMMAND_INTERFACE: &str = "pane:extension/query-command@0.1.0";
 
 /// The interface a component serving published operations also exports.
 const OPERATIONS_INTERFACE: &str = "pane:extension/published-operations@0.1.0";
@@ -131,6 +143,8 @@ pub(crate) struct Exports {
     pub root_results: bool,
     /// `indexed-results`: it supplies root results ahead of the query.
     pub indexed_results: bool,
+    /// `query-command`: it takes a query when invoked from root search.
+    pub query_command: bool,
     /// `published-operations`: it serves published operations.
     pub operations: bool,
 }
@@ -473,6 +487,12 @@ enum Request {
         data: Option<PackageData>,
         reply: oneshot::Sender<Result<Vec<RootResult>, CallError>>,
     },
+    RunQuery {
+        component: PathBuf,
+        query: String,
+        data: Option<PackageData>,
+        reply: oneshot::Sender<Result<String, CallError>>,
+    },
     Forget {
         components: Vec<PathBuf>,
     },
@@ -716,6 +736,25 @@ impl Runtime {
     ) -> Result<Vec<RootResult>, CallError> {
         let (reply, response) = oneshot::channel();
         self.send(Request::RootResults {
+            component: component.to_path_buf(),
+            query: query.to_owned(),
+            data,
+            reply,
+        })?;
+        response.await.unwrap_or_else(|_| Err(stopped()))
+    }
+
+    /// Runs the command in `component`, which takes a query, with `query`;
+    /// the command reads and saves `data`. Starts its instance if it has
+    /// none.
+    pub(crate) async fn run_query_with(
+        &self,
+        component: &Path,
+        query: &str,
+        data: Option<PackageData>,
+    ) -> Result<String, CallError> {
+        let (reply, response) = oneshot::channel();
+        self.send(Request::RunQuery {
             component: component.to_path_buf(),
             query: query.to_owned(),
             data,
@@ -997,6 +1036,8 @@ struct Instance {
     root_results: Option<root_bindings::RootResultsProvider>,
     /// Its indexed results export, if it has one.
     indexed_results: Option<indexed_bindings::IndexedResultsProvider>,
+    /// Its query-taking export, if it has one.
+    query_command: Option<query_bindings::QueryCommandProvider>,
     /// Its published operations export, if it has one.
     operations: Option<operations_bindings::OperationsProvider>,
 }
@@ -1163,6 +1204,14 @@ impl Code {
                 ))
             })?;
         }
+        if exports.query_command {
+            query_bindings::QueryCommandProviderPre::new(pre.clone()).map_err(|error| {
+                CallError::Interface(format!(
+                    "its manifest says it takes a query, but it does not export \
+                     {QUERY_COMMAND_INTERFACE} with the functions Pane calls: {error:#}"
+                ))
+            })?;
+        }
         if exports.operations {
             operations_bindings::OperationsProviderPre::new(pre.clone()).map_err(|error| {
                 CallError::Interface(format!(
@@ -1232,6 +1281,15 @@ impl Host {
                     reply,
                 } => {
                     let result = self.root_results(&component, query, data).await;
+                    let _ = reply.send(result);
+                }
+                Request::RunQuery {
+                    component,
+                    query,
+                    data,
+                    reply,
+                } => {
+                    let result = self.run_query(&component, query, data).await;
                     let _ = reply.send(result);
                 }
                 Request::Forget { components } => {
@@ -1485,6 +1543,31 @@ impl Host {
                 },
             })
             .collect())
+    }
+
+    async fn run_query(
+        &mut self,
+        path: &Path,
+        query: String,
+        data: Option<PackageData>,
+    ) -> Result<String, CallError> {
+        let instance = self.instance(path, data).await?;
+        let command = instance
+            .query_command
+            .as_ref()
+            .map(|provider| provider.pane_extension_query_command().clone())
+            .ok_or_else(|| {
+                CallError::Interface(format!("it does not export {QUERY_COMMAND_INTERFACE}"))
+            })?;
+        let result = self
+            .run_guest(path, async |instance| {
+                instance
+                    .store
+                    .run_concurrent(async |store| command.call_run_query(store, query).await)
+                    .await
+            })
+            .await?;
+        self.settle(path, result, CallError::Guest)
     }
 
     async fn indexed_results(
@@ -1856,6 +1939,8 @@ impl Host {
         // them.
         let indexed_results =
             indexed_bindings::IndexedResultsProvider::new(&mut store, &instance).ok();
+        // Only a command that takes a query exports it.
+        let query_command = query_bindings::QueryCommandProvider::new(&mut store, &instance).ok();
         // Only a component serving published operations exports them.
         let operations = operations_bindings::OperationsProvider::new(&mut store, &instance).ok();
         self.instances.insert(
@@ -1865,6 +1950,7 @@ impl Host {
                 bindings,
                 root_results,
                 indexed_results,
+                query_command,
                 operations,
             },
         );

@@ -266,6 +266,7 @@ impl Launcher {
             }
             Ok(leftover) => {
                 let forget_hotkeys = self.forget_hotkeys_of(&mut self.lock(), &identity);
+                let forget_aliases = self.forget_aliases_of(&mut self.lock(), &identity);
                 let problems = {
                     let data = installation.data.clone();
                     let store = installation.store.clone();
@@ -275,6 +276,9 @@ impl Launcher {
                         let mut problems = data.remove_uninstalled(&identity, saved);
                         if let Some(Err(error)) = forget_hotkeys.map(|forget| forget()) {
                             problems.push(format!("could not forget its hotkeys: {error}"));
+                        }
+                        if let Some(Err(error)) = forget_aliases.map(|forget| forget()) {
+                            problems.push(format!("could not forget its aliases: {error}"));
                         }
                         let store = &mut store.lock().unwrap_or_else(|p| p.into_inner());
                         let recorded = store.retained().iter().any(|r| r.identity == identity);

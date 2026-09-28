@@ -545,10 +545,12 @@ impl Render for LauncherWindow {
             .gap_1()
             .overflow_y_scroll()
             .track_scroll(&self.scroll)
-            .children(rows)
+            // Above the rows: with none selected, the only rows are root
+            // search's fallbacks, listed below "No results".
             .when(view.selected.is_none(), |rows| {
                 rows.child(empty.text_color(rgb(0x8a96a3)))
-            });
+            })
+            .children(rows);
         // The launcher decides what an item opens; its screen says which.
         let body = match view.screen {
             Screen::Form(form) => self.render_form(view.title.clone(), form, cx),

@@ -45,6 +45,12 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   another's, Rust calling JavaScript and TypeScript and they calling Rust
   ([Operations](#operations)); held by
   `crates/pane-core/tests/operations.rs`.
+- `sample-query`: Echo, the smallest command that takes a query, in Rust:
+  it answers the text the user sends it from root search through its alias
+  or as a fallback ([A command that takes a query](#a-command-that-takes-a-query),
+  [aliases and fallbacks](../docs/aliases.md)). Its package is
+  `packages/sample-query`; held by `crates/pane-core/tests/aliases.rs` and
+  `crates/pane/tests/aliases.rs`.
 - `js`: `@pane/extension`, TypeScript declarations for the contract
   (`pane.d.ts`) and the WIT world JS/TS commands are built against.
 - `prebuilt`: the JS and TS sample components (both samples in each
@@ -565,6 +571,41 @@ The [JavaScript](sample-applications-js) and
 [TypeScript](sample-applications-ts) applications samples do this, and
 their commands list the applications and open one with `open(id)`; their
 packages in [`packages/`](packages) set `indexedResults`.
+
+## A command that takes a query
+
+The user can give any installed command an alias in Manage extensions, and
+typing it in root search lists the command first; nothing is needed of the
+command for that. A command that **takes a query** can also be sent text
+from root search: the user types its alias, a space and the text ("ec
+hello"), or makes it a fallback, which is listed below the results for any
+text typed, and invokes that row. Pane calls the command only then, never
+while the user types, and shows its answer as the result (an error as the
+failure); root search stays as it was. Set `"takesQuery": true` on the
+command in `pane.json` and export `pane:extension/query-command`
+([`wit/query.wit`](../wit/query.wit)) beside the command; Pane checks it at
+install without running it. The text is trimmed, never empty. See
+[aliases and fallbacks](../docs/aliases.md).
+
+Rust (`pane_guest::query`; the component then exports both interfaces), as
+[`sample-query`](sample-query) does:
+
+```rust
+use pane_guest::alloc::{format, string::String};
+
+pane_guest::export!(Echo);
+pane_guest::query::export!(Echo);
+
+impl pane_guest::query::Guest for Echo {
+    async fn run_query(query: String) -> Result<String, String> {
+        Ok(format!("Echo heard “{query}”"))
+    }
+}
+```
+
+JavaScript and TypeScript commands cannot take a query yet: the JS/TS build
+does not export `pane:extension/query-command`. Their commands can still be
+given an alias.
 
 ## Custom views
 

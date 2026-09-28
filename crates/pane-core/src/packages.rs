@@ -175,6 +175,11 @@ pub struct ManifestCommand {
     /// (`"indexedResults": true`), such as the installed applications: its
     /// component then also exports `pane:extension/indexed-results`.
     pub indexed_results: bool,
+    /// Whether the command takes a query (`"takesQuery": true`): text typed
+    /// into root search that Pane sends it when the user invokes it through
+    /// its alias or as a fallback. Its component then also exports
+    /// `pane:extension/query-command`.
+    pub takes_query: bool,
 }
 
 #[derive(Deserialize)]
@@ -216,6 +221,8 @@ struct CommandJson {
     root_results: bool,
     #[serde(default)]
     indexed_results: bool,
+    #[serde(default)]
+    takes_query: bool,
 }
 
 impl Manifest {
@@ -298,6 +305,7 @@ impl Manifest {
         Exports {
             root_results: commands().any(|command| command.root_results),
             indexed_results: commands().any(|command| command.indexed_results),
+            query_command: commands().any(|command| command.takes_query),
             operations: self
                 .operations
                 .iter()
@@ -355,6 +363,7 @@ impl Manifest {
                 platforms,
                 root_results: command.root_results,
                 indexed_results: command.indexed_results,
+                takes_query: command.takes_query,
             });
         }
         let mut operations: Vec<ManifestOperation> = Vec::new();
