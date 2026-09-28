@@ -4,7 +4,7 @@
 //! thread. Callers hold a cheap [`Runtime`] handle and await replies, so a slow
 //! or failing guest never blocks the caller's thread.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -19,7 +19,7 @@ use crate::platform::Platform;
 pub(crate) mod bindings {
     wasmtime::component::bindgen!({
         path: "../../wit",
-        world: "extension-with-settings",
+        world: "extension-with-data",
         imports: { "pane:extension/operations": store },
         exports: { default: async | store },
     });
@@ -44,12 +44,12 @@ mod operations_bindings {
 }
 
 use bindings::exports::pane::extension::command;
-use bindings::pane::extension::settings;
+use bindings::pane::extension::{cache, content, credentials, settings};
 use root_bindings::exports::pane::extension::root_results;
 
+use crate::extension_data::{DataKind, PackageData};
 use crate::operations::{self, Directory, OperationCall, OperationError, Target};
 use crate::packages::EXTENSION_API;
-use crate::settings::PackageSettings;
 
 /// Interface-version prefix every imported WASI interface must carry.
 const WASI_VERSION: &str = "@0.3.";
@@ -344,13 +344,13 @@ pub struct Runtime {
 enum Request {
     GetView {
         component: PathBuf,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
         reply: oneshot::Sender<Result<View, CallError>>,
     },
     RunAction {
         component: PathBuf,
         item_id: String,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
         reply: oneshot::Sender<Result<String, CallError>>,
     },
     Check {
@@ -364,7 +364,7 @@ enum Request {
     RootResults {
         component: PathBuf,
         query: String,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
         reply: oneshot::Sender<Result<Vec<RootResult>, CallError>>,
     },
     Forget {
@@ -374,13 +374,13 @@ enum Request {
         component: PathBuf,
         item_id: String,
         values: Vec<FieldValue>,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
         reply: oneshot::Sender<Result<String, CallError>>,
     },
     OpenView {
         component: PathBuf,
         item_id: String,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
         reply: oneshot::Sender<Result<(ViewId, Frame), CallError>>,
     },
     ViewEvent {
@@ -442,45 +442,45 @@ impl Runtime {
     }
 
     /// Asks the command in `component` for its list view. The command has
-    /// no settings.
+    /// no extension data.
     pub async fn get_view(&self, component: &Path) -> Result<View, CallError> {
         self.get_view_with(component, None).await
     }
 
     /// Runs the action of `item_id` in the command in `component`. The
-    /// command has no settings.
+    /// command has no extension data.
     pub async fn run_action(&self, component: &Path, item_id: &str) -> Result<String, CallError> {
         self.run_action_with(component, item_id, None).await
     }
 
-    /// Like [`Runtime::get_view`]; the command reads and saves `settings`.
-    /// An instance keeps the settings it was started with.
+    /// Like [`Runtime::get_view`]; the command reads and saves `data`.
+    /// An instance keeps the data it was started with.
     pub(crate) async fn get_view_with(
         &self,
         component: &Path,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
     ) -> Result<View, CallError> {
         let (reply, response) = oneshot::channel();
         self.send(Request::GetView {
             component: component.to_path_buf(),
-            settings,
+            data,
             reply,
         })?;
         response.await.unwrap_or_else(|_| Err(stopped()))
     }
 
-    /// Like [`Runtime::run_action`]; the command reads and saves `settings`.
+    /// Like [`Runtime::run_action`]; the command reads and saves `data`.
     pub(crate) async fn run_action_with(
         &self,
         component: &Path,
         item_id: &str,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
     ) -> Result<String, CallError> {
         let (reply, response) = oneshot::channel();
         self.send(Request::RunAction {
             component: component.to_path_buf(),
             item_id: item_id.to_owned(),
-            settings,
+            data,
             reply,
         })?;
         response.await.unwrap_or_else(|_| Err(stopped()))
@@ -515,19 +515,19 @@ impl Runtime {
     }
 
     /// Asks the command in `component`, which computes root results, for
-    /// its results for `query`; the command reads and saves `settings`.
+    /// its results for `query`; the command reads and saves `data`.
     /// Starts its instance if it has none.
     pub(crate) async fn root_results_with(
         &self,
         component: &Path,
         query: &str,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
     ) -> Result<Vec<RootResult>, CallError> {
         let (reply, response) = oneshot::channel();
         self.send(Request::RootResults {
             component: component.to_path_buf(),
             query: query.to_owned(),
-            settings,
+            data,
             reply,
         })?;
         response.await.unwrap_or_else(|_| Err(stopped()))
@@ -535,7 +535,7 @@ impl Runtime {
 
     /// Submits the form of `item_id` in the command in `component`. A
     /// rejection by the guest is [`CallError::Form`]. The command has no
-    /// settings.
+    /// extension data.
     pub async fn submit_form(
         &self,
         component: &Path,
@@ -546,20 +546,20 @@ impl Runtime {
             .await
     }
 
-    /// Like [`Runtime::submit_form`]; the command reads and saves `settings`.
+    /// Like [`Runtime::submit_form`]; the command reads and saves `data`.
     pub(crate) async fn submit_form_with(
         &self,
         component: &Path,
         item_id: &str,
         values: Vec<FieldValue>,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
     ) -> Result<String, CallError> {
         let (reply, response) = oneshot::channel();
         self.send(Request::SubmitForm {
             component: component.to_path_buf(),
             item_id: item_id.to_owned(),
             values,
-            settings,
+            data,
             reply,
         })?;
         response.await.unwrap_or_else(|_| Err(stopped()))
@@ -568,7 +568,7 @@ impl Runtime {
     /// Opens the custom view of `item_id` in the command in `component` and
     /// draws it. The view stays open, holding its state in the guest, until
     /// [`Runtime::close_view`] or until its instance stops.
-    /// The command has no settings.
+    /// The command has no extension data.
     pub async fn open_view(
         &self,
         component: &Path,
@@ -577,18 +577,18 @@ impl Runtime {
         self.open_view_with(component, item_id, None).await
     }
 
-    /// Like [`Runtime::open_view`]; the command reads and saves `settings`.
+    /// Like [`Runtime::open_view`]; the command reads and saves `data`.
     pub(crate) async fn open_view_with(
         &self,
         component: &Path,
         item_id: &str,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
     ) -> Result<(ViewId, Frame), CallError> {
         let (reply, response) = oneshot::channel();
         self.send(Request::OpenView {
             component: component.to_path_buf(),
             item_id: item_id.to_owned(),
-            settings,
+            data,
             reply,
         })?;
         response.await.unwrap_or_else(|_| Err(stopped()))
@@ -675,32 +675,46 @@ fn stopped() -> CallError {
 pub(crate) struct GuestState {
     wasi: WasiCtx,
     table: ResourceTable,
-    /// The settings of the package the command belongs to; `None` for a
+    /// The extension data of the package the command belongs to; `None` for a
     /// command built into Pane.
-    settings: Option<PackageSettings>,
+    data: Option<PackageData>,
     /// The guest's component, which identifies it as a caller.
     pub(crate) component: PathBuf,
     /// Where the guest's operation calls go, to be served while it waits.
     pub(crate) calls: mpsc::UnboundedSender<OperationCall>,
+    /// Whether Pane is running a call of this guest, whose frame serves the
+    /// guest's operation calls. A call made at any other time, such as while
+    /// the component starts, is refused.
+    pub(crate) serving: bool,
 }
 
 impl GuestState {
-    fn settings(&self) -> Result<&PackageSettings, String> {
-        self.settings.as_ref().ok_or_else(|| {
-            "only installed packages have settings; this command is built into Pane".into()
+    fn data(&self) -> Result<&PackageData, String> {
+        self.data.as_ref().ok_or_else(|| {
+            "only installed packages keep settings or data; this command is built into Pane".into()
         })
     }
 }
 
-impl settings::Host for GuestState {
-    fn get(&mut self, key: String) -> Result<Option<String>, String> {
-        self.settings()?.get(&key)
-    }
+/// Implements one kind of data's interface over the package's extension data.
+macro_rules! data_host {
+    ($interface:ident, $kind:expr) => {
+        impl $interface::Host for GuestState {
+            fn get(&mut self, key: String) -> Result<Option<String>, String> {
+                self.data()?.get($kind, &key)
+            }
 
-    fn set(&mut self, key: String, value: String) -> Result<(), String> {
-        self.settings()?.set(&key, &value)
-    }
+            fn set(&mut self, key: String, value: String) -> Result<(), String> {
+                self.data()?.set($kind, &key, &value)
+            }
+        }
+    };
 }
+
+data_host!(settings, DataKind::Settings);
+data_host!(content, DataKind::Content);
+data_host!(cache, DataKind::Cache);
+data_host!(credentials, DataKind::LocalCredentials);
 
 impl WasiView for GuestState {
     fn ctx(&mut self) -> WasiCtxView<'_> {
@@ -714,7 +728,7 @@ impl WasiView for GuestState {
 /// A running guest instance of one component.
 struct Instance {
     store: Store<GuestState>,
-    bindings: bindings::ExtensionWithSettings,
+    bindings: bindings::ExtensionWithData,
     /// Its root results export, if it has one.
     root_results: Option<root_bindings::RootResultsProvider>,
     /// Its published operations export, if it has one.
@@ -743,7 +757,10 @@ struct Host {
     /// Handed to every guest, for its operation calls.
     calls: mpsc::UnboundedSender<OperationCall>,
     /// Operation calls guests made, served while their callers wait.
-    pending_calls: mpsc::UnboundedReceiver<OperationCall>,
+    calls_sent: mpsc::UnboundedReceiver<OperationCall>,
+    /// Calls taken from `calls_sent` whose caller's frame has not served
+    /// them yet (see [`Host::run_guest`]).
+    waiting_calls: VecDeque<OperationCall>,
     /// The components running a guest call, outermost first: a chain of
     /// operation calls. Each is busy until its call returns.
     chain: Vec<PathBuf>,
@@ -758,12 +775,20 @@ impl Host {
             .expect("registering WASI 0.3 in a fresh linker cannot conflict");
         settings::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| state)
             .expect("registering settings in a fresh linker cannot conflict");
+        content::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| state)
+            .expect("registering content in a fresh linker cannot conflict");
+        cache::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| state)
+            .expect("registering the cache in a fresh linker cannot conflict");
+        credentials::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| {
+            state
+        })
+        .expect("registering credentials in a fresh linker cannot conflict");
         bindings::pane::extension::operations::add_to_linker::<_, operations::Calls>(
             &mut linker,
             |state| state,
         )
         .expect("registering operations in a fresh linker cannot conflict");
-        let (calls, pending_calls) = operations::channel();
+        let (calls, calls_sent) = operations::channel();
         Host {
             engine,
             linker,
@@ -773,7 +798,8 @@ impl Host {
             next_view: 0,
             directory: None,
             calls,
-            pending_calls,
+            calls_sent,
+            waiting_calls: VecDeque::new(),
             chain: Vec::new(),
         }
     }
@@ -783,19 +809,19 @@ impl Host {
             match request {
                 Request::GetView {
                     component,
-                    settings,
+                    data,
                     reply,
                 } => {
-                    let result = self.get_view(&component, settings).await;
+                    let result = self.get_view(&component, data).await;
                     let _ = reply.send(result);
                 }
                 Request::RunAction {
                     component,
                     item_id,
-                    settings,
+                    data,
                     reply,
                 } => {
-                    let result = self.run_action(&component, item_id, settings).await;
+                    let result = self.run_action(&component, item_id, data).await;
                     let _ = reply.send(result);
                 }
                 Request::Check {
@@ -809,10 +835,10 @@ impl Host {
                 Request::RootResults {
                     component,
                     query,
-                    settings,
+                    data,
                     reply,
                 } => {
-                    let result = self.root_results(&component, query, settings).await;
+                    let result = self.root_results(&component, query, data).await;
                     let _ = reply.send(result);
                 }
                 Request::Forget { components } => {
@@ -825,21 +851,19 @@ impl Host {
                     component,
                     item_id,
                     values,
-                    settings,
+                    data,
                     reply,
                 } => {
-                    let result = self
-                        .submit_form(&component, item_id, values, settings)
-                        .await;
+                    let result = self.submit_form(&component, item_id, values, data).await;
                     let _ = reply.send(result);
                 }
                 Request::OpenView {
                     component,
                     item_id,
-                    settings,
+                    data,
                     reply,
                 } => {
-                    let result = self.open_view(&component, item_id, settings).await;
+                    let result = self.open_view(&component, item_id, data).await;
                     let _ = reply.send(result);
                 }
                 Request::ViewEvent { view, event, reply } => {
@@ -861,9 +885,9 @@ impl Host {
     async fn get_view(
         &mut self,
         path: &Path,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
     ) -> Result<View, CallError> {
-        self.instance(path, settings).await?;
+        self.instance(path, data).await?;
         let result = self
             .run_guest(path, async |instance| {
                 let command = instance.bindings.pane_extension_command();
@@ -885,9 +909,9 @@ impl Host {
         path: &Path,
         item_id: String,
         values: Vec<FieldValue>,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
     ) -> Result<String, CallError> {
-        self.instance(path, settings).await?;
+        self.instance(path, data).await?;
         let values = values
             .into_iter()
             .map(|FieldValue { id, value }| command::FieldValue { id, value })
@@ -915,9 +939,9 @@ impl Host {
         &mut self,
         path: &Path,
         item_id: String,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
     ) -> Result<(ViewId, Frame), CallError> {
-        self.instance(path, settings).await?;
+        self.instance(path, data).await?;
         let result = self
             .run_guest(path, async |instance| {
                 let command = instance.bindings.pane_extension_command();
@@ -1019,21 +1043,18 @@ impl Host {
         &mut self,
         path: &Path,
         query: String,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
     ) -> Result<Vec<RootResult>, CallError> {
-        let instance = self.instance(path, settings).await?;
-        if instance.root_results.is_none() {
-            return Err(CallError::Interface(format!(
-                "it does not export {ROOT_RESULTS_INTERFACE}"
-            )));
-        }
+        let instance = self.instance(path, data).await?;
+        let provider = instance
+            .root_results
+            .as_ref()
+            .map(|provider| provider.pane_extension_root_results().clone())
+            .ok_or_else(|| {
+                CallError::Interface(format!("it does not export {ROOT_RESULTS_INTERFACE}"))
+            })?;
         let result = self
             .run_guest(path, async |instance| {
-                let provider = instance
-                    .root_results
-                    .as_ref()
-                    .expect("checked above")
-                    .pane_extension_root_results();
                 instance
                     .store
                     .run_concurrent(async |store| provider.call_results_for(store, query).await)
@@ -1059,9 +1080,9 @@ impl Host {
         &mut self,
         path: &Path,
         item_id: String,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
     ) -> Result<String, CallError> {
-        self.instance(path, settings).await?;
+        self.instance(path, data).await?;
         let result = self
             .run_guest(path, async |instance| {
                 let command = instance.bindings.pane_extension_command();
@@ -1075,15 +1096,17 @@ impl Host {
     }
 
     /// Runs `call` on the live instance of `path`, serving the operation
-    /// calls guests make while it runs. Without a live instance (a view's
+    /// calls its guest makes while it runs. Without a live instance (a view's
     /// instance has stopped) it is [`CallError::ViewClosed`].
     ///
     /// The instance is taken out of the host for the call, so the host can
     /// serve an operation call its guest makes, on this same thread, while
     /// the guest waits for the answer: the guest's call is not polled until
-    /// the operation's answer is sent, and then resumes. The component is on
-    /// the call chain meanwhile, so a call back into it is refused rather
-    /// than waiting on itself.
+    /// the operation's answer is sent, and then resumes. This frame serves
+    /// only its own guest's calls, one after another; a call another guest
+    /// sent meanwhile waits for that guest's frame. The component is on the
+    /// call chain meanwhile, so a call back into its package is refused
+    /// rather than waiting on itself.
     async fn run_guest<R>(
         &mut self,
         path: &Path,
@@ -1093,6 +1116,7 @@ impl Host {
 
         let mut instance = self.instances.remove(path).ok_or(CallError::ViewClosed)?;
         self.chain.push(path.to_path_buf());
+        instance.store.data_mut().serving = true;
         let result = {
             let mut running = std::pin::pin!(call(&mut instance));
             loop {
@@ -1100,9 +1124,19 @@ impl Host {
                     if let Poll::Ready(result) = running.as_mut().poll(cx) {
                         return Poll::Ready(Ok(result));
                     }
-                    self.pending_calls
-                        .poll_recv(cx)
-                        .map(|call| Err(call.expect("the host keeps a sender, so calls never end")))
+                    while let Poll::Ready(Some(call)) = self.calls_sent.poll_recv(cx) {
+                        self.waiting_calls.push_back(call);
+                    }
+                    match self
+                        .waiting_calls
+                        .iter()
+                        .position(|call| call.caller == path)
+                    {
+                        Some(index) => {
+                            Poll::Ready(Err(self.waiting_calls.remove(index).expect("found above")))
+                        }
+                        None => Poll::Pending,
+                    }
                 })
                 .await;
                 match next {
@@ -1113,8 +1147,18 @@ impl Host {
                 }
             }
         };
+        instance.store.data_mut().serving = false;
         self.chain.pop();
         self.instances.insert(path.to_path_buf(), instance);
+        // A call the guest sent but did not wait for before its call ended
+        // has no frame to serve it.
+        let (stranded, waiting) = std::mem::take(&mut self.waiting_calls)
+            .into_iter()
+            .partition(|call| call.caller == path);
+        self.waiting_calls = waiting;
+        for call in stranded {
+            let _ = call.reply.send(Err(operations::outside_a_call()));
+        }
         Ok(result)
     }
 
@@ -1124,31 +1168,31 @@ impl Host {
         if call.reply.is_closed() {
             return;
         }
-        let OperationCall {
-            caller,
-            source,
-            operation,
-            version,
-            input,
-            reply,
-        } = call;
-        let result = self
-            .operation(&caller, &source, &operation, version, input)
-            .await;
-        let _ = reply.send(result);
+        let result = self.operation(&call).await;
+        let _ = call.reply.send(result);
     }
 
-    /// Calls `operation` at `version` of the package with `source` for the
-    /// guest in `caller`, starting the target if it is not running.
-    async fn operation(
-        &mut self,
-        caller: &Path,
-        source: &str,
-        operation: &str,
-        version: u32,
-        input: String,
-    ) -> Result<String, OperationError> {
-        operations::check_json(&input, "input")?;
+    /// Serves `call`: checks it, resolves its target, runs the operation
+    /// (starting the target if it is not running) and checks the answer.
+    async fn operation(&mut self, call: &OperationCall) -> Result<String, OperationError> {
+        self.check_call(call)?;
+        let target = self.resolve_target(call)?;
+        let answer = self.run_operation(&target, call).await?;
+        // Disabled while it was serving the call: its answer is not passed on.
+        if target.data.as_ref().is_some_and(PackageData::is_disabled) {
+            return Err(OperationError::from_call(
+                &target.title,
+                CallError::Disabled,
+            ));
+        }
+        operations::check_json(&answer, &format!("result of {}", target.title))?;
+        Ok(answer)
+    }
+
+    /// Refuses a call whose input is not JSON within the limit, or that would
+    /// make the chain too deep.
+    fn check_call(&self, call: &OperationCall) -> Result<(), OperationError> {
+        operations::check_json(&call.input, "input")?;
         if self.chain.len() >= operations::MAX_CALL_DEPTH {
             return Err(OperationError::refused(format!(
                 "the chain of calls is {} deep; Pane allows at most {}",
@@ -1156,41 +1200,58 @@ impl Host {
                 operations::MAX_CALL_DEPTH
             )));
         }
+        Ok(())
+    }
+
+    /// The installed package and component serving `call`, unless its
+    /// package already serves a call in the chain, through whichever of its
+    /// components.
+    fn resolve_target(&self, call: &OperationCall) -> Result<Target, OperationError> {
         let installed = match &self.directory {
             Some(directory) => directory(),
             None => operations::Installed::default(),
         };
-        let Target {
-            title,
-            component,
-            settings,
-        } = installed.resolve(caller, source, operation, version)?;
-        if self.chain.contains(&component) {
+        let target = installed.resolve(&call.source, &call.operation, call.version)?;
+        let in_chain = self.chain.iter().any(|component| {
+            *component == target.component
+                || installed.package_of(component) == Some(&target.identity)
+        });
+        if in_chain {
             return Err(OperationError::refused(format!(
-                "{title} is already serving a call in this chain; an extension cannot be \
-                 called back while its own call waits"
+                "{} is already serving a call in this chain; an extension cannot be \
+                 called back while its own call waits",
+                target.title
             )));
         }
-        let failed = |error| OperationError::from_call(&title, error);
+        Ok(target)
+    }
+
+    /// Runs the operation of `call` in `target`'s component, starting it if
+    /// it is not running, and returns its answer.
+    async fn run_operation(
+        &mut self,
+        target: &Target,
+        call: &OperationCall,
+    ) -> Result<String, OperationError> {
+        let failed = |error| OperationError::from_call(&target.title, error);
         let instance = self
-            .instance(&component, settings.clone())
+            .instance(&target.component, target.data.clone())
             .await
             .map_err(failed)?;
-        if instance.operations.is_none() {
-            // The install check requires the export, so only a component
-            // replaced behind Pane's back lacks it.
-            return Err(failed(CallError::Interface(format!(
-                "it does not export {OPERATIONS_INTERFACE}"
-            ))));
-        }
-        let name = operation.to_owned();
+        // The install check requires the export, so only a component replaced
+        // behind Pane's back lacks it.
+        let provider = instance
+            .operations
+            .as_ref()
+            .map(|provider| provider.pane_extension_published_operations().clone())
+            .ok_or_else(|| {
+                failed(CallError::Interface(format!(
+                    "it does not export {OPERATIONS_INTERFACE}"
+                )))
+            })?;
+        let (name, input) = (call.operation.clone(), call.input.clone());
         let result = self
-            .run_guest(&component, async |instance| {
-                let provider = instance
-                    .operations
-                    .as_ref()
-                    .expect("checked above")
-                    .pane_extension_published_operations();
+            .run_guest(&target.component, async |instance| {
                 instance
                     .store
                     .run_concurrent(async |store| {
@@ -1200,15 +1261,8 @@ impl Host {
             })
             .await
             .map_err(failed)?;
-        let answer = self
-            .settle(&component, result, CallError::Guest)
-            .map_err(failed)?;
-        // Disabled while it was serving the call: its answer is not passed on.
-        if settings.as_ref().is_some_and(PackageSettings::is_disabled) {
-            return Err(failed(CallError::Disabled));
-        }
-        operations::check_json(&answer, &format!("result of {title}"))?;
-        Ok(answer)
+        self.settle(&target.component, result, CallError::Guest)
+            .map_err(failed)
     }
 
     /// Maps a call outcome to the caller's result, turning the guest's own
@@ -1235,9 +1289,9 @@ impl Host {
     async fn instance(
         &mut self,
         path: &Path,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
     ) -> Result<&mut Instance, CallError> {
-        if settings.as_ref().is_some_and(PackageSettings::is_disabled) {
+        if data.as_ref().is_some_and(PackageData::is_disabled) {
             self.drop_instance(path);
             return Err(CallError::Disabled);
         }
@@ -1248,9 +1302,10 @@ impl Host {
                 GuestState {
                     wasi: WasiCtx::builder().build(),
                     table: ResourceTable::new(),
-                    settings,
+                    data,
                     component: path.to_path_buf(),
                     calls: self.calls.clone(),
+                    serving: false,
                 },
             );
             let load = |error: wasmtime::Error| CallError::Load(format!("{error:#}"));
@@ -1259,8 +1314,7 @@ impl Host {
                 .instantiate_async(&mut store, &component)
                 .await
                 .map_err(load)?;
-            let bindings =
-                bindings::ExtensionWithSettings::new(&mut store, &instance).map_err(load)?;
+            let bindings = bindings::ExtensionWithData::new(&mut store, &instance).map_err(load)?;
             // Only a command that computes root results exports them.
             let root_results = root_bindings::RootResultsProvider::new(&mut store, &instance).ok();
             // Only a component serving published operations exports them.
@@ -1377,7 +1431,7 @@ impl Host {
                 ))
             })?;
         }
-        bindings::ExtensionWithSettingsPre::new(pre).map_err(interface)?;
+        bindings::ExtensionWithDataPre::new(pre).map_err(interface)?;
         Ok(())
     }
 }
@@ -1497,8 +1551,8 @@ impl From<command::Form> for Form {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::extension_data::ExtensionData;
     use crate::packages::PackageIdentity;
-    use crate::settings::Settings;
     use futures::executor::block_on;
 
     fn settings_sample() -> PathBuf {
@@ -1517,7 +1571,7 @@ mod tests {
     #[test]
     fn a_disabled_package_command_starts_no_instance() {
         let data = tempfile::tempdir().unwrap();
-        let settings = Settings::open(data.path());
+        let settings = ExtensionData::open(data.path());
         let identity = PackageIdentity::local(data.path()).unwrap();
         let owned = settings.owned_by(&identity);
         let component = settings_sample();
