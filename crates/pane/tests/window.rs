@@ -129,7 +129,11 @@ fn the_keyboard_opens_the_sample_and_runs_an_action(cx: &mut TestAppContext, sam
     );
 
     cx.simulate_keystrokes("escape");
-    assert_eq!(wait_for_answer(&window, cx).screen, Screen::Root);
+    assert!(
+        matches!(wait_for_answer(&window, cx).screen, Screen::Root { .. }),
+        "{:?}",
+        wait_for_answer(&window, cx).screen
+    );
 }
 
 fn clicking_a_row_runs_its_action(cx: &mut TestAppContext, sample: &Sample) {
@@ -169,10 +173,8 @@ fn open_form(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) {
     wait_for_answer(window, cx);
     cx.simulate_keystrokes("down down down down enter");
     let view = wait_for_answer(window, cx);
-    assert_eq!(
-        (view.screen, view.title.as_str()),
-        (Screen::Form, "Greet someone")
-    );
+    assert!(matches!(view.screen, Screen::Form(_)), "{:?}", view.screen);
+    assert_eq!(view.title, "Greet someone");
 }
 
 fn the_keyboard_fills_in_and_submits_the_form(cx: &mut TestAppContext, sample: &Sample) {
@@ -332,9 +334,9 @@ fn focused_label(cx: &mut VisualTestContext) -> Option<String> {
 /// The open form's value of field `id`.
 fn field_value(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext, id: &str) -> String {
     let view = cx.read_entity(window, |window, _| window.launcher().view());
-    let form = view.form.expect("a form is open");
-    let field = form.fields.into_iter().find(|field| field.id == id);
-    field.expect("the field exists").value
+    let form = view.form().expect("a form is open");
+    let field = form.fields.iter().find(|field| field.id == id);
+    field.expect("the field exists").value.clone()
 }
 
 #[gpui::test]
@@ -525,7 +527,11 @@ fn the_launcher_offers_the_rust_javascript_and_typescript_samples(cx: &mut TestA
 
         cx.simulate_keystrokes("escape");
         let view = wait_for_answer(&window, cx);
-        assert_eq!(view.screen, Screen::Root);
+        assert!(
+            matches!(view.screen, Screen::Root { .. }),
+            "{:?}",
+            view.screen
+        );
         for _ in 0..=index {
             cx.simulate_keystrokes("down");
         }
@@ -683,7 +689,7 @@ fn the_mouse_wheel_scrolls_away_until_the_rows_reload(cx: &mut TestAppContext) {
     cx.foreground_executor().block_on(install);
     redraw(&window, cx);
     let view = launcher.view();
-    assert_eq!((view.screen, view.selected), (Screen::Root, Some(0)));
+    assert_eq!((view.query(), view.selected), (Some(""), Some(0)));
     assert!(view.rows.iter().any(|row| row.title == "Say hello"));
     assert!(
         row_is_visible(cx, "row-Row 1"),
@@ -703,7 +709,11 @@ fn a_rejected_extension_shows_an_error_and_navigation_keeps_working(cx: &mut Tes
 
     cx.simulate_keystrokes("enter");
     let view = wait_for_answer(&window, cx);
-    assert_eq!(view.screen, Screen::Root);
+    assert!(
+        matches!(view.screen, Screen::Root { .. }),
+        "{:?}",
+        view.screen
+    );
     assert!(
         cx.debug_bounds("status-error").is_some(),
         "the error is rendered"
@@ -784,10 +794,12 @@ fn open_color(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) {
     wait_for_answer(window, cx);
     cx.simulate_keystrokes("down down down down down enter");
     let view = wait_for_answer(window, cx);
-    assert_eq!(
-        (view.screen, view.title.as_str()),
-        (Screen::CustomView, "Choose a color")
+    assert!(
+        matches!(view.screen, Screen::CustomView(_)),
+        "{:?}",
+        view.screen
     );
+    assert_eq!(view.title, "Choose a color");
 }
 
 /// Waits until the open view shows `expected` as its value, which it does
@@ -797,8 +809,8 @@ fn wait_for_color(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext, e
     loop {
         cx.run_until_parked();
         let view = cx.read_entity(window, |window, _| window.launcher().view());
-        let shown = view.custom_view.map(|view| view.frame.value);
-        if shown.as_deref() == Some(expected) {
+        let shown = view.custom_view().map(|view| view.frame.value.as_str());
+        if shown == Some(expected) {
             return;
         }
         assert!(
@@ -896,7 +908,11 @@ fn open_counter(
     wait_for_answer(window, cx);
     cx.simulate_keystrokes("down down down down down enter");
     let view = wait_for_answer(window, cx);
-    assert_eq!(view.screen, Screen::CustomView);
+    assert!(
+        matches!(view.screen, Screen::CustomView(_)),
+        "{:?}",
+        view.screen
+    );
     wait_for_color(window, cx, "0 events");
     cx.debug_bounds("custom-view")
         .expect("the view is drawn")
@@ -982,7 +998,7 @@ fn typing_in_root_search_narrows_the_results_and_enter_opens_the_best_match(
 
     cx.simulate_input("typescr");
     let view = wait_for_answer(&window, cx);
-    assert_eq!(view.query.as_deref(), Some("typescr"));
+    assert_eq!(view.query(), Some("typescr"));
     assert_eq!(row_titles(&window, cx), ["TypeScript sample"]);
     assert!(cx.debug_bounds("row-TypeScript sample").is_some());
     assert!(cx.debug_bounds("row-Rust sample").is_none());
@@ -1011,7 +1027,7 @@ fn arrow_keys_move_through_the_matches_while_the_query_keeps_focus(cx: &mut Test
     assert!(query_has_focus(&window, cx));
     // Editing keys still edit the query.
     cx.simulate_keystrokes("backspace backspace backspace");
-    assert_eq!(wait_for_answer(&window, cx).query.as_deref(), Some("scr"));
+    assert_eq!(wait_for_answer(&window, cx).query(), Some("scr"));
 
     cx.simulate_keystrokes("down enter");
     assert_eq!(wait_for_answer(&window, cx).title, "TypeScript sample");
@@ -1033,7 +1049,7 @@ fn a_query_that_matches_nothing_says_so_and_escape_clears_it(cx: &mut TestAppCon
 
     cx.simulate_keystrokes("escape");
     let view = wait_for_answer(&window, cx);
-    assert_eq!(view.query.as_deref(), Some(""));
+    assert_eq!(view.query(), Some(""));
     assert_eq!(row_titles(&window, cx).len(), 3);
     let text = cx.read_entity(&window, |window, cx| {
         window.query_field().read(cx).as_str().to_owned()
@@ -1053,10 +1069,7 @@ fn coming_back_to_root_search_starts_an_empty_search_with_focus(cx: &mut TestApp
 
     cx.simulate_keystrokes("escape");
     let view = wait_for_answer(&window, cx);
-    assert_eq!(
-        (view.screen, view.query.as_deref()),
-        (Screen::Root, Some(""))
-    );
+    assert_eq!(view.query(), Some(""));
     assert!(query_has_focus(&window, cx));
     cx.simulate_input("java");
     assert_eq!(row_titles(&window, cx), ["JavaScript sample"]);
@@ -1084,7 +1097,7 @@ fn input_method_composition_searches_root(cx: &mut TestAppContext) {
         })
     });
     assert_eq!(
-        wait_for_answer(&window, cx).query.as_deref(),
+        wait_for_answer(&window, cx).query(),
         Some("にほ"),
         "composing text is searched as it is typed"
     );

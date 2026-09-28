@@ -58,7 +58,7 @@ files) against each other.
 ## Host behavior
 
 The public host interface is [`pane_core::Launcher`](../crates/pane-core/src/launcher.rs):
-`LauncherView::query` (`Some` exactly on root search), `set_query`,
+`Screen::Root`, which carries the query, `set_query`,
 `move_selection`, `activate_selected` and `back`. The window renders that
 state and maps input to those calls.
 

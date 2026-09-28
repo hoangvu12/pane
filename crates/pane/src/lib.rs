@@ -4,6 +4,7 @@
 //! input call launcher actions, and each frame draws the launcher's snapshot.
 
 use std::future::Future;
+use std::mem::{Discriminant, discriminant};
 use std::path::{Path, PathBuf};
 
 use gpui::{
@@ -163,7 +164,8 @@ pub struct LauncherWindow {
 /// list never scrolls back while the user scrolls it.
 #[derive(PartialEq)]
 struct ScrolledFor {
-    screen: Screen,
+    /// Which screen, not its contents (a form's values, a view's drawing).
+    screen: Discriminant<Screen>,
     title: String,
     selected: Option<usize>,
     rows: Vec<Row>,
@@ -203,7 +205,7 @@ impl LauncherWindow {
     }
 
     fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        if self.launcher.view().screen == Screen::Form {
+        if matches!(self.launcher.view().screen, Screen::Form(_)) {
             self.submit_form(window, cx);
         } else {
             self.activate_selected(window, cx);
@@ -303,7 +305,7 @@ impl LauncherWindow {
     /// changed since it was last scrolled for (see [`ScrolledFor`]).
     fn keep_selected_visible(&mut self, view: &LauncherView, window: &mut Window) {
         let shown = ScrolledFor {
-            screen: view.screen,
+            screen: discriminant(&view.screen),
             title: view.title.clone(),
             selected: view.selected,
             rows: view.rows.clone(),
@@ -400,8 +402,8 @@ impl Render for LauncherWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let view = self.launcher.view();
         self.keep_selected_visible(&view, window);
-        let (empty, hint) = match view.screen {
-            Screen::Root => (
+        let (empty, hint) = match &view.screen {
+            Screen::Root { .. } => (
                 "No commands are installed.",
                 "Type to search · ↑↓ select · Enter open · Esc clear",
             ),
@@ -409,22 +411,27 @@ impl Render for LauncherWindow {
                 "This command has no items.",
                 "↑↓ select · Enter run · Esc back",
             ),
-            Screen::Package => ("Nothing to install.", "Enter confirm · Esc back"),
-            Screen::Form => ("", "Tab next field · Enter submit · Esc back"),
-            Screen::Extensions => (
+            Screen::Package { .. } => ("Nothing to install.", "Enter confirm · Esc back"),
+            Screen::Form(_) => ("", "Tab next field · Enter submit · Esc back"),
+            Screen::Extensions { .. } => (
                 "No extensions are installed.",
                 "↑↓ select · Enter enable or disable · Esc back",
             ),
-            Screen::CustomView => ("", "Keys and pointer go to the view · Esc back"),
+            Screen::CustomView(_) => ("", "Keys and pointer go to the view · Esc back"),
         };
-        let details = view.details.into_iter().enumerate().map(|(index, line)| {
-            div()
-                .id(("detail", index))
-                .debug_selector(|| format!("detail-{line}"))
-                .text_sm()
-                .text_color(rgb(0xaab4c0))
-                .child(line)
-        });
+        let details: Vec<_> = view
+            .details()
+            .iter()
+            .enumerate()
+            .map(|(index, line)| {
+                div()
+                    .id(("detail", index))
+                    .debug_selector(|| format!("detail-{line}"))
+                    .text_sm()
+                    .text_color(rgb(0xaab4c0))
+                    .child(line.clone())
+            })
+            .collect();
         let (status_selector, status_text, status_color): (&str, SharedString, u32) =
             match view.status {
                 Status::Idle => ("status-idle", hint.into(), 0x8a96a3),
@@ -441,8 +448,8 @@ impl Render for LauncherWindow {
                 self.render_row(index, row, selected, cx)
             })
             .collect();
-        let empty = match view.query.as_deref() {
-            Some(query) if !query.trim().is_empty() => div()
+        let empty = match &view.screen {
+            Screen::Root { query } if !query.trim().is_empty() => div()
                 .id("no-results")
                 .debug_selector(|| "no-results".into())
                 .child(format!("No results for “{}”", query.trim())),
@@ -453,7 +460,7 @@ impl Render for LauncherWindow {
             .debug_selector(|| "rows".into())
             .role(Role::ListBox)
             .aria_label(match view.screen {
-                Screen::Root => "Results".into(),
+                Screen::Root { .. } => "Results".into(),
                 _ => view.title.clone(),
             })
             .flex_1()
@@ -467,12 +474,10 @@ impl Render for LauncherWindow {
                 rows.child(empty.text_color(rgb(0x8a96a3)))
             });
         // The launcher decides what an item opens; its screen says which.
-        let body = match (view.screen, view.form, view.custom_view, view.query) {
-            (Screen::Form, Some(form), _, _) => self.render_form(view.title.clone(), form, cx),
-            (Screen::CustomView, _, Some(custom_view), _) => {
-                self.render_custom_view(custom_view, cx)
-            }
-            (Screen::Root, _, _, Some(query)) => self.render_root_search(query, list, cx),
+        let body = match view.screen {
+            Screen::Form(form) => self.render_form(view.title.clone(), form, cx),
+            Screen::CustomView(custom_view) => self.render_custom_view(custom_view, cx),
+            Screen::Root { query } => self.render_root_search(query, list, cx),
             // The list holds keyboard focus; the selected row is its active
             // descendant, and key actions bubble to the root.
             _ => list.track_focus(&self.focus_handle).into_any_element(),

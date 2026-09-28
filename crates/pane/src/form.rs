@@ -20,7 +20,7 @@ use gpui_elements::editable_text::actions::{
     DEFAULT_INPUT_CONTEXT, Enter, Escape, Tab, default_bindings,
 };
 use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged, text_input};
-use pane_core::{FieldKind, FormField, FormView, Status};
+use pane_core::{FieldKind, FormField, FormView, Screen, Status};
 
 use crate::LauncherWindow;
 
@@ -77,8 +77,9 @@ impl LauncherWindow {
     /// so the window tests compose through this instead.
     #[doc(hidden)]
     pub fn text_field(&self, field_id: &str) -> Option<Entity<EditableTextState>> {
-        let view = self.launcher.view();
-        let form = view.form?;
+        let Screen::Form(form) = self.launcher.view().screen else {
+            return None;
+        };
         let index = form.fields.iter().position(|field| field.id == field_id)?;
         match &self.form.as_ref()?.fields[index] {
             Control::Text(input) => Some(input.clone()),
@@ -92,7 +93,11 @@ impl LauncherWindow {
     /// after a rejected submission.
     pub(crate) fn sync_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let view = self.launcher.view();
-        match (view.form, self.form.is_some()) {
+        let form = match view.screen {
+            Screen::Form(form) => Some(form),
+            _ => None,
+        };
+        match (form, self.form.is_some()) {
             (Some(form), false) => {
                 let controls = self.form_controls(&form, cx);
                 if let Some(first) = controls.fields.first() {
@@ -153,7 +158,7 @@ impl LauncherWindow {
     /// Chooses the option `delta` places from the current one in the choice
     /// field `field_id`, clamped to the options.
     fn move_choice(&mut self, field_id: &str, delta: isize, cx: &mut Context<Self>) {
-        let Some(form) = self.launcher.view().form else {
+        let Screen::Form(form) = self.launcher.view().screen else {
             return;
         };
         let Some(field) = form.fields.into_iter().find(|field| field.id == field_id) else {

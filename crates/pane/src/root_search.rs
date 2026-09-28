@@ -19,6 +19,8 @@ use gpui::{
 use gpui_elements::editable_text::actions::DEFAULT_INPUT_CONTEXT;
 use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged, text_input};
 
+use pane_core::Screen;
+
 use crate::{LauncherWindow, SelectNext, SelectPrevious};
 
 const CONTEXT: &str = "RootSearch";
@@ -80,7 +82,10 @@ impl LauncherWindow {
     /// and takes focus when root search comes on screen; focus moves to the
     /// list when root search leaves the screen.
     pub(crate) fn sync_root_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let query = self.launcher.view().query;
+        let query = match self.launcher.view().screen {
+            Screen::Root { query } => Some(query),
+            _ => None,
+        };
         let was_shown = self.query.shown;
         self.query.shown = query.is_some();
         match query {

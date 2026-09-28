@@ -43,21 +43,26 @@ pub struct CommandRegistration {
     pub component: PathBuf,
 }
 
-/// Which screen the launcher shows.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Which screen the launcher shows, with what only that screen has.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Screen {
-    /// Root search: the installed commands matching the query.
-    Root,
+    /// Root search: the root results matching `query`, the text typed into
+    /// it, best match first, or every root result when it is empty.
+    Root { query: String },
     /// An opened command's list view.
     Command,
-    /// A package folder's identity and compatibility, before installing it.
-    Package,
-    /// A form opened from an item of the command's list view.
-    Form,
-    /// The installed packages, each enabled or disabled.
-    Extensions,
-    /// A custom view opened from an item of the command's list view.
-    CustomView,
+    /// A package folder's identity and compatibility, before installing it,
+    /// as lines of information under the title.
+    Package { details: Vec<String> },
+    /// A form opened from an item of the command's list view. It has no
+    /// rows.
+    Form(FormView),
+    /// The installed packages, each enabled or disabled, with lines of
+    /// information under the title.
+    Extensions { details: Vec<String> },
+    /// A custom view opened from an item of the command's list view. It has
+    /// no rows.
+    CustomView(CustomViewSnapshot),
 }
 
 /// A selectable row.
@@ -123,22 +128,66 @@ pub struct CustomViewSnapshot {
 pub struct LauncherView {
     pub screen: Screen,
     pub title: String,
-    /// The text typed into root search; `Some` exactly on root search.
-    /// The rows are the root results matching it, best match first, or
-    /// every root result when it is empty.
-    pub query: Option<String>,
-    /// Lines of information under the title, such as a package's source and
-    /// compatibility.
-    pub details: Vec<String>,
-    /// Empty on the form screen.
+    /// Empty on the form and custom view screens.
     pub rows: Vec<Row>,
     /// Index into `rows`; `None` when there are no rows.
     pub selected: Option<usize>,
     pub status: Status,
-    /// The open form; `Some` exactly on the form screen.
-    pub form: Option<FormView>,
-    /// The open custom view; `Some` exactly on the custom view screen.
-    pub custom_view: Option<CustomViewSnapshot>,
+}
+
+impl LauncherView {
+    /// `screen` titled `title`, with no rows and an idle status.
+    fn new(screen: Screen, title: impl Into<String>) -> LauncherView {
+        LauncherView {
+            screen,
+            title: title.into(),
+            rows: Vec::new(),
+            selected: None,
+            status: Status::Idle,
+        }
+    }
+
+    /// This view listing `rows`, with the first selected.
+    fn with_rows(self, rows: Vec<Row>) -> LauncherView {
+        LauncherView {
+            selected: first_index(&rows),
+            rows,
+            ..self
+        }
+    }
+
+    /// The text typed into root search; `None` on other screens.
+    pub fn query(&self) -> Option<&str> {
+        match &self.screen {
+            Screen::Root { query } => Some(query),
+            _ => None,
+        }
+    }
+
+    /// Lines of information under the title, such as a package's source and
+    /// compatibility; empty on screens without any.
+    pub fn details(&self) -> &[String] {
+        match &self.screen {
+            Screen::Package { details } | Screen::Extensions { details } => details,
+            _ => &[],
+        }
+    }
+
+    /// The open form, on the form screen.
+    pub fn form(&self) -> Option<&FormView> {
+        match &self.screen {
+            Screen::Form(form) => Some(form),
+            _ => None,
+        }
+    }
+
+    /// The open custom view, on the custom view screen.
+    pub fn custom_view(&self) -> Option<&CustomViewSnapshot> {
+        match &self.screen {
+            Screen::CustomView(view) => Some(view),
+            _ => None,
+        }
+    }
 }
 
 /// The launcher. Cloning shares the same state.
@@ -314,17 +363,8 @@ impl Launcher {
             None => (Vec::new(), None),
         };
         let state = State {
-            view: LauncherView {
-                screen: Screen::Root,
-                title: String::new(),
-                details: Vec::new(),
-                rows: Vec::new(),
-                selected: None,
-                status: Status::Idle,
-                query: None,
-                form: None,
-                custom_view: None,
-            },
+            // Replaced by root search below.
+            view: LauncherView::new(Screen::Command, ""),
             entries: Vec::new(),
             open: None,
             form: None,
@@ -383,11 +423,13 @@ impl Launcher {
     /// guest runs until the user invokes a result. Ignored on other screens.
     pub fn set_query(&self, query: &str) {
         let mut state = self.lock();
-        if state.view.screen != Screen::Root {
+        if !matches!(state.view.screen, Screen::Root { .. }) {
             return;
         }
         let (rows, entries) = self.root_rows(&state, query);
-        state.view.query = Some(query.to_owned());
+        state.view.screen = Screen::Root {
+            query: query.to_owned(),
+        };
         state.view.selected = first_index(&rows);
         state.view.rows = rows;
         state.entries = entries;
@@ -418,8 +460,8 @@ impl Launcher {
     /// custom view is closed. On root search it clears the query.
     pub fn back(&self) {
         let mut state = self.lock();
-        match state.view.screen {
-            Screen::Form => {
+        match &state.view.screen {
+            Screen::Form(_) => {
                 let form = state.form.take().expect("a form is open");
                 state.screen_generation += 1;
                 state.view = LauncherView {
@@ -427,12 +469,12 @@ impl Launcher {
                     ..form.return_to
                 };
             }
-            Screen::CustomView => self.return_from_custom_view(&mut state, Status::Idle),
-            Screen::Command | Screen::Package | Screen::Extensions => {
+            Screen::CustomView(_) => self.return_from_custom_view(&mut state, Status::Idle),
+            Screen::Command | Screen::Package { .. } | Screen::Extensions { .. } => {
                 self.show_root(&mut state, None)
             }
-            Screen::Root => {
-                if state.view.query.as_ref().is_some_and(|q| !q.is_empty()) {
+            Screen::Root { query } => {
+                if !query.is_empty() {
                     drop(state);
                     self.set_query("");
                 }
@@ -699,10 +741,10 @@ impl Launcher {
             }
         }
         match state.view.screen {
-            Screen::Root => self.refresh_root(state),
-            Screen::Extensions => self.refresh_extensions(state),
+            Screen::Root { .. } => self.refresh_root(state),
+            Screen::Extensions { .. } => self.refresh_extensions(state),
             // Other screens show no package state.
-            Screen::Command | Screen::Package | Screen::Form | Screen::CustomView => {}
+            Screen::Command | Screen::Package { .. } | Screen::Form(_) | Screen::CustomView(_) => {}
         }
     }
 
@@ -773,7 +815,7 @@ impl Launcher {
                 if current || replaced_is_open {
                     self.show_root(&mut state, first);
                     state.view.status = Status::Result(message);
-                } else if state.view.screen == Screen::Root {
+                } else if matches!(state.view.screen, Screen::Root { .. }) {
                     self.refresh_root(&mut state);
                 }
             }
@@ -814,18 +856,18 @@ impl Launcher {
         self.leave_command(state);
         state.entries = entries;
         state.view = LauncherView {
-            screen: Screen::Root,
-            title: "Pane".into(),
-            details: Vec::new(),
             rows,
             selected,
             status: match &state.store_problem {
                 Some(problem) => Status::Error(problem.clone()),
                 None => Status::Idle,
             },
-            query: Some(String::new()),
-            form: None,
-            custom_view: None,
+            ..LauncherView::new(
+                Screen::Root {
+                    query: String::new(),
+                },
+                "Pane",
+            )
         };
     }
 
@@ -839,7 +881,7 @@ impl Launcher {
             .selected
             .and_then(|index| state.view.rows.get(index))
             .map(|row| row.id.clone());
-        let query = state.view.query.clone().unwrap_or_default();
+        let query = state.view.query().unwrap_or_default().to_owned();
         let (rows, entries) = self.root_rows(state, &query);
         let selected = selected_id
             .and_then(|id| rows.iter().position(|row| row.id == id))
@@ -932,7 +974,7 @@ impl Launcher {
     /// options are ignored. Editing a field clears its error.
     pub fn set_field_value(&self, field_id: &str, value: &str) {
         let mut state = self.lock();
-        let Some(form) = state.view.form.as_mut() else {
+        let Screen::Form(form) = &mut state.view.screen else {
             return;
         };
         let Some(field) = form.fields.iter_mut().find(|field| field.id == field_id) else {
@@ -954,8 +996,8 @@ impl Launcher {
     pub fn submit_form(&self) -> impl Future<Output = ()> + Send + 'static {
         let mut state = self.lock();
         let state = &mut *state;
-        let submission = match (&state.view.form, &mut state.form, &state.open) {
-            (Some(form), Some(open), Some(component)) if !open.submitting => {
+        let submission = match (&state.view.screen, &mut state.form, &state.open) {
+            (Screen::Form(form), Some(open), Some(component)) if !open.submitting => {
                 open.submitting = true;
                 let values: Vec<FieldValue> = form
                     .fields
@@ -1013,7 +1055,10 @@ impl Launcher {
             return;
         }
         let view = &mut state.view;
-        let fields = &mut view.form.as_mut().expect("a form is open").fields;
+        let Screen::Form(form) = &mut view.screen else {
+            unreachable!("a form is open");
+        };
+        let fields = &mut form.fields;
         for field in fields.iter_mut() {
             field.error = None;
         }
@@ -1049,20 +1094,11 @@ impl Launcher {
         let (rows, entries) = extension_rows(&state.packages);
         self.leave_command(state);
         state.entries = entries;
-        state.view = LauncherView {
-            screen: Screen::Extensions,
-            title: "Extensions".into(),
-            details: vec![
-                "A disabled extension adds no commands and runs nothing; it keeps its settings."
-                    .into(),
-            ],
-            selected: first_index(&rows),
-            rows,
-            status: Status::Idle,
-            query: None,
-            form: None,
-            custom_view: None,
-        };
+        let details = vec![
+            "A disabled extension adds no commands and runs nothing; it keeps its settings.".into(),
+        ];
+        state.view =
+            LauncherView::new(Screen::Extensions { details }, "Extensions").with_rows(rows);
     }
 
     /// Updates the installed packages on screen after one was enabled or
@@ -1103,22 +1139,13 @@ impl Launcher {
         };
         match result {
             Ok((id, frame)) => {
-                let view = LauncherView {
-                    screen: Screen::CustomView,
-                    title: info.title,
-                    details: Vec::new(),
-                    rows: Vec::new(),
-                    selected: None,
-                    status: Status::Idle,
-                    query: None,
-                    form: None,
-                    custom_view: Some(CustomViewSnapshot {
-                        id,
-                        label: info.label,
-                        role: info.role,
-                        frame,
-                    }),
+                let snapshot = CustomViewSnapshot {
+                    id,
+                    label: info.label,
+                    role: info.role,
+                    frame,
                 };
+                let view = LauncherView::new(Screen::CustomView(snapshot), info.title);
                 let return_to = LauncherView {
                     status: Status::Idle,
                     ..std::mem::replace(&mut state.view, view)
@@ -1235,7 +1262,9 @@ impl Launcher {
             Ok(_) | Err(CallError::Guest(_)) if number <= open.shown => {}
             Ok(frame) => {
                 open.shown = number;
-                let snapshot = state.view.custom_view.as_mut().expect("a view is open");
+                let Screen::CustomView(snapshot) = &mut state.view.screen else {
+                    unreachable!("a view is open");
+                };
                 snapshot.frame = frame;
                 state.view.status = Status::Idle;
             }
@@ -1341,17 +1370,7 @@ impl Launcher {
                 state.entries = entries;
                 state.open = Some(component);
                 state.screen_generation += 1;
-                state.view = LauncherView {
-                    screen: Screen::Command,
-                    title: view.title,
-                    details: Vec::new(),
-                    selected: first_index(&rows),
-                    rows,
-                    status: Status::Idle,
-                    query: None,
-                    form: None,
-                    custom_view: None,
-                };
+                state.view = LauncherView::new(Screen::Command, view.title).with_rows(rows);
             }
             Err(error) => state.view.status = Status::Error(error.to_string()),
         }
@@ -1433,16 +1452,13 @@ fn preview_view(
     let package = match checked {
         Ok(package) => package,
         Err(error) => {
+            let details = vec![format!("Folder: {}", folder.display())];
             let view = LauncherView {
-                screen: Screen::Package,
-                title: format!("Cannot install {}", folder_name(folder)),
-                details: vec![format!("Folder: {}", folder.display())],
-                rows: Vec::new(),
-                selected: None,
                 status: Status::Error(error.to_string()),
-                query: None,
-                form: None,
-                custom_view: None,
+                ..LauncherView::new(
+                    Screen::Package { details },
+                    format!("Cannot install {}", folder_name(folder)),
+                )
             };
             return (view, Vec::new());
         }
@@ -1499,17 +1515,8 @@ fn preview_view(
             (row, Entry::Install(package.folder.clone(), Mode::Install))
         }
     };
-    let view = LauncherView {
-        screen: Screen::Package,
-        title: manifest.title.clone(),
-        details,
-        rows: vec![row],
-        selected: Some(0),
-        status: Status::Idle,
-        query: None,
-        form: None,
-        custom_view: None,
-    };
+    let view =
+        LauncherView::new(Screen::Package { details }, manifest.title.clone()).with_rows(vec![row]);
     (view, vec![entry])
 }
 
@@ -1536,20 +1543,13 @@ fn open_form(state: &mut State, item_id: String, form: Form) {
             }
         })
         .collect();
-    let form_view = LauncherView {
-        screen: Screen::Form,
-        title: form.title,
-        details: Vec::new(),
-        rows: Vec::new(),
-        selected: None,
-        status: Status::Idle,
-        query: None,
-        form: Some(FormView {
+    let form_view = LauncherView::new(
+        Screen::Form(FormView {
             fields,
             submit_label: form.submit_label,
         }),
-        custom_view: None,
-    };
+        form.title,
+    );
     let return_to = std::mem::replace(&mut state.view, form_view);
     state.form = Some(OpenForm {
         item_id,

@@ -76,7 +76,7 @@ fn downloads() -> Launcher {
 fn root_search_opens_with_an_empty_query_listing_every_command_in_order() {
     let launcher = downloads();
     let view = launcher.view();
-    assert_eq!(view.query.as_deref(), Some(""));
+    assert_eq!(view.query(), Some(""));
     assert_eq!(
         titles(&launcher),
         [
@@ -96,7 +96,7 @@ fn a_query_keeps_the_matching_commands_best_match_first() {
     let launcher = downloads();
     launcher.set_query("download");
 
-    assert_eq!(launcher.view().query.as_deref(), Some("download"));
+    assert_eq!(launcher.view().query(), Some("download"));
     // The whole title, then a title that starts with the query, then a word
     // of the title, then anywhere in the title, then the subtitle.
     assert_eq!(
@@ -172,7 +172,7 @@ fn the_selection_moves_among_the_matches_and_enter_opens_the_selected_one() {
 
     block_on(launcher.activate_selected());
     let view = launcher.view();
-    assert_eq!((view.screen, view.query), (Screen::Command, None));
+    assert_eq!(view.screen, Screen::Command);
     assert_eq!(view.title, "Rust sample", "the guest's view title");
 }
 
@@ -187,8 +187,8 @@ fn a_query_that_matches_nothing_shows_no_rows_and_enter_does_nothing() {
     block_on(launcher.activate_selected());
     let view = launcher.view();
     assert_eq!(
-        (view.screen, view.status),
-        (Screen::Root, Status::Idle),
+        (view.query(), &view.status),
+        (Some("zzz"), &Status::Idle),
         "a missing result is not a failed action"
     );
 }
@@ -199,7 +199,11 @@ fn a_matching_command_that_fails_explains_the_failure() {
     launcher.set_query("brok");
     block_on(launcher.activate_selected());
     let view = launcher.view();
-    assert_eq!(view.screen, Screen::Root);
+    assert!(
+        matches!(view.screen, Screen::Root { .. }),
+        "{:?}",
+        view.screen
+    );
     assert!(
         matches!(&view.status, Status::Error(message) if message.contains("no engine")),
         "{:?}",
@@ -213,10 +217,7 @@ fn back_clears_the_query_before_anything_else() {
     launcher.set_query("settings");
     launcher.back();
     let view = launcher.view();
-    assert_eq!(
-        (view.screen, view.query.as_deref()),
-        (Screen::Root, Some(""))
-    );
+    assert_eq!(view.query(), Some(""));
     assert_eq!(titles(&launcher).len(), 6);
 }
 
@@ -230,14 +231,15 @@ fn returning_to_root_search_starts_a_new_search() {
     block_on(launcher.activate_selected());
     assert_eq!(launcher.view().screen, Screen::Command);
     launcher.set_query("ignored");
-    assert_eq!(launcher.view().query, None, "only root search has a query");
+    assert_eq!(
+        launcher.view().query(),
+        None,
+        "only root search has a query"
+    );
 
     launcher.back();
     let view = launcher.view();
-    assert_eq!(
-        (view.screen, view.query.as_deref()),
-        (Screen::Root, Some(""))
-    );
+    assert_eq!(view.query(), Some(""));
     assert_eq!(titles(&launcher), ["Rust sample", "Other"]);
 }
 
@@ -376,7 +378,7 @@ fn disabling_a_package_removes_its_matches_at_once_and_enabling_brings_them_back
         "the disabled package's command leaves the results before it is recorded"
     );
     assert_eq!(selected_title(&launcher).as_deref(), Some("Greet second"));
-    assert_eq!(launcher.view().query.as_deref(), Some("greet"));
+    assert_eq!(launcher.view().query(), Some("greet"));
     block_on(disabling);
 
     block_on(launcher.set_enabled(&PackageIdentity::local(&first).unwrap(), true));
@@ -405,10 +407,7 @@ fn an_update_finishing_while_the_user_searches_updates_the_results_and_keeps_the
     block_on(update);
 
     let view = launcher.view();
-    assert_eq!(
-        (view.screen, view.query.as_deref()),
-        (Screen::Root, Some("note"))
-    );
+    assert_eq!(view.query(), Some("note"));
     assert!(titles(&launcher).is_empty(), "{:?}", titles(&launcher));
     launcher.set_query("jot");
     assert_eq!(titles(&launcher), ["Jot down"]);
