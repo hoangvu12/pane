@@ -9,9 +9,12 @@ use std::path::{Path, PathBuf};
 
 use futures::executor::block_on;
 use pane_core::{
-    CallError, CommandRegistration, Launcher, PackageIdentity, Runtime, Screen, Status,
+    CallError, CommandRegistration, Launcher, PackageIdentity, Platform, Runtime, Screen, Status,
 };
 use tempfile::TempDir;
+
+#[path = "support/platforms.rs"]
+mod platforms;
 
 fn guest(name: &str) -> PathBuf {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -693,4 +696,221 @@ fn a_sample_package_source_without_its_built_component_is_explained() {
     block_on(launcher.preview_package(&repository("guests/packages/sample-rust")));
 
     assert!(error(&launcher).contains("This looks like a source-only package"));
+}
+
+/// Writes the Hello package declaring `platforms` (a JSON array).
+fn package_for(folder: &Path, platforms: &str) -> PathBuf {
+    package(folder, "Hello", "1.0.0", "sample_rust");
+    let manifest = manifest("Hello", "1.0.0", "hello.wasm").replace(
+        r#""apiVersion": "0.1","#,
+        &format!(r#""apiVersion": "0.1", "platforms": {platforms},"#),
+    );
+    with_manifest(folder, &manifest);
+    folder.to_path_buf()
+}
+
+/// A JSON array of the `pane.json` names of `systems`.
+fn json_list(systems: &[Platform]) -> String {
+    let ids: Vec<String> = systems
+        .iter()
+        .map(|platform| format!(r#""{}""#, platform.id()))
+        .collect();
+    format!("[{}]", ids.join(", "))
+}
+
+#[test]
+fn a_package_only_for_other_systems_is_explained_and_not_installed() {
+    let dirs = Dirs::new();
+    let folder = package_for(
+        &dirs.source("elsewhere"),
+        &json_list(&platforms::other_systems()),
+    );
+    let launcher = dirs.launcher();
+    let explanation = platforms::only("this package", &platforms::other_names());
+
+    block_on(launcher.preview_package(&folder));
+    let view = launcher.view();
+    assert_eq!(view.screen, Screen::Package);
+    assert!(view.rows.is_empty(), "nothing to install");
+    assert_eq!(error(&launcher), explanation);
+
+    block_on(launcher.install_package(&folder));
+    assert_eq!(error(&launcher), explanation);
+    assert!(launcher.packages().is_empty());
+}
+
+#[test]
+fn a_package_declaring_no_system_is_explained_and_not_installed() {
+    let dirs = Dirs::new();
+    let folder = package_for(&dirs.source("nowhere"), "[]");
+    let launcher = dirs.launcher();
+    let explanation = platforms::nowhere("this package");
+
+    block_on(launcher.preview_package(&folder));
+    assert_eq!(error(&launcher), explanation);
+
+    block_on(launcher.install_package(&folder));
+    assert_eq!(error(&launcher), explanation);
+    assert!(launcher.packages().is_empty());
+}
+
+#[test]
+fn a_package_for_this_system_shows_its_systems_and_installs() {
+    let dirs = Dirs::new();
+    let [other, _] = platforms::other_systems();
+    let folder = package_for(
+        &dirs.source("here"),
+        &json_list(&[other, platforms::this_system()]),
+    );
+    let launcher = dirs.launcher();
+
+    block_on(launcher.preview_package(&folder));
+    let details = launcher.view().details;
+    let line = details
+        .iter()
+        .find(|line| line.starts_with("Supported systems: "))
+        .unwrap_or_else(|| panic!("{details:?}"));
+    assert_eq!(
+        line,
+        &format!(
+            "Supported systems: {} and {} (this system)",
+            platforms::name(other),
+            platforms::name(platforms::this_system())
+        )
+    );
+    block_on(launcher.activate_selected());
+
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Installed Hello".into())
+    );
+    assert_eq!(titles(&launcher), ["Say hello", INSTALL_ROW]);
+}
+
+#[test]
+fn an_installed_copy_for_other_systems_lists_its_commands_as_unavailable() {
+    let dirs = Dirs::new();
+    let this = platforms::this_system();
+    let [other, _] = platforms::other_systems();
+    let folder = package_for(&dirs.source("hello"), &json_list(&[this]));
+    let launcher = dirs.launcher();
+    block_on(launcher.install_package(&folder));
+    // As if the data folder had been copied from another system.
+    let copy = launcher.packages()[0].location.join("pane.json");
+    let text = fs::read_to_string(&copy).unwrap();
+    fs::write(&copy, text.replace(this.id(), other.id())).unwrap();
+    let explanation = platforms::only("this package", platforms::name(other));
+
+    let restarted = dirs.launcher();
+
+    assert_eq!(titles(&restarted), ["Say hello", INSTALL_ROW]);
+    let row = restarted.view().rows[0].clone();
+    assert_eq!(row.subtitle.as_deref(), Some("Greets you"));
+    assert_eq!(row.unavailable, Some(explanation.clone()));
+    block_on(restarted.activate_selected());
+    let view = restarted.view();
+    assert_eq!(
+        (view.screen, view.status),
+        (Screen::Root, Status::Error(explanation))
+    );
+}
+
+/// Writes a package whose three commands, all backed by the Rust sample,
+/// declare the other systems, this one, and none at all.
+fn package_with_command_platforms(folder: &Path) -> PathBuf {
+    package(folder, "Hello", "1.0.0", "sample_rust");
+    let manifest = format!(
+        r#"{{
+  "manifestVersion": 1,
+  "title": "Hello",
+  "apiVersion": "0.1",
+  "commands": [
+    {{ "id": "there", "title": "Elsewhere", "platforms": {there}, "component": "hello.wasm" }},
+    {{ "id": "here", "title": "Here", "platforms": {here}, "component": "hello.wasm" }},
+    {{ "id": "nowhere", "title": "Nowhere", "platforms": [], "component": "hello.wasm" }}
+  ]
+}}"#,
+        there = json_list(&platforms::other_systems()),
+        here = json_list(&[platforms::this_system()]),
+    );
+    with_manifest(folder, &manifest);
+    folder.to_path_buf()
+}
+
+#[test]
+fn a_command_for_other_systems_is_listed_with_its_reason_and_others_still_open() {
+    let dirs = Dirs::new();
+    let folder = package_with_command_platforms(&dirs.source("hello"));
+    let launcher = dirs.launcher();
+    block_on(launcher.install_package(&folder));
+    let elsewhere = platforms::only("this command", &platforms::other_names());
+    let nowhere = platforms::nowhere("this command");
+
+    for launcher in [launcher, dirs.launcher()] {
+        let reasons: Vec<(String, Option<String>)> = launcher
+            .view()
+            .rows
+            .into_iter()
+            .map(|row| (row.title, row.unavailable))
+            .collect();
+        assert_eq!(
+            reasons,
+            [
+                ("Elsewhere".into(), Some(elsewhere.clone())),
+                ("Here".into(), None),
+                ("Nowhere".into(), Some(nowhere.clone())),
+                (INSTALL_ROW.into(), None),
+            ]
+        );
+
+        for (index, reason) in [(0, &elsewhere), (2, &nowhere)] {
+            launcher.select(index);
+            block_on(launcher.activate_selected());
+            let view = launcher.view();
+            assert_eq!(
+                (view.screen, view.status),
+                (Screen::Root, Status::Error(reason.clone()))
+            );
+        }
+        launcher.select(1);
+        block_on(launcher.activate_selected());
+        assert_eq!(launcher.view().screen, Screen::Command);
+    }
+}
+
+#[test]
+fn a_platform_list_pane_does_not_know_is_an_invalid_manifest() {
+    for (platforms, explanation) in [
+        (r#"["windows", "beos"]"#, "unknown platform `beos`"),
+        (r#""linux""#, "invalid type"),
+    ] {
+        let dirs = Dirs::new();
+        let folder = package_for(&dirs.source("hello"), platforms);
+        let launcher = dirs.launcher();
+
+        block_on(launcher.preview_package(&folder));
+
+        let message = error(&launcher);
+        assert!(message.starts_with("Invalid pane.json: "), "{message}");
+        assert!(message.contains(explanation), "{platforms}: {message}");
+    }
+}
+
+#[test]
+fn a_command_platform_list_pane_does_not_know_is_an_invalid_manifest() {
+    let dirs = Dirs::new();
+    let folder = package(&dirs.source("hello"), "Hello", "1.0.0", "sample_rust");
+    let manifest = manifest("Hello", "1.0.0", "hello.wasm")
+        .replace(r#""component""#, r#""platforms": ["beos"], "component""#);
+    with_manifest(&folder, &manifest);
+    let launcher = dirs.launcher();
+
+    block_on(launcher.preview_package(&folder));
+
+    let message = error(&launcher);
+    assert!(message.starts_with("Invalid pane.json: "), "{message}");
+    assert!(
+        message.contains("unknown platform `beos` in `platforms` of command `hello`"),
+        "{message}"
+    );
 }

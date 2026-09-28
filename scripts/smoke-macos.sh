@@ -23,13 +23,18 @@ key() {  # macOS virtual key codes: 36 Return, 125 Down, 53 Escape, 48 Tab
 }
 type_text() { osascript -e "tell application \"System Events\" to keystroke \"$1\""; }
 
+# Brings the running Pane to the front, so that key events reach it.
+focus_pane() {
+  osascript -e "tell application \"System Events\" to set frontmost of (first process whose unix id is $pid) to true"
+  sleep 1
+}
+
 # Starts Pane with the given arguments and brings it to the front.
 start_pane() {
   "$pane" "$@" 2>>"$out/stderr.log" &
   pid=$!
   sleep 8
-  osascript -e "tell application \"System Events\" to set frontmost of (first process whose unix id is $pid) to true"
-  sleep 1
+  focus_pane
 }
 
 stop_pane() {
@@ -94,5 +99,38 @@ start_pane
 capture 12-restarted.png
 check 12-restarted.png 8a96a3
 [ -f "$out/data/extensions/installed.json" ] || { echo "no install record"; exit 1; }
+focus_pane
+
+# The Rust command's sixth item is declared for Windows only, its seventh
+# for macOS and Linux only. Here the first is explained without running and
+# the second runs.
+key 36; sleep 3
+for _ in 1 2 3 4 5; do key 125; done
+key 36; sleep 2
+capture 13-windows-only.png
+check 13-windows-only.png d6a36a   # the row's reason
+check 13-windows-only.png f08c8c   # macOS: the reason as the error
+key 125; key 36; sleep 2
+capture 14-not-windows.png
+check 14-not-windows.png 9fd8a8    # macOS: the guest's answer
+key 53; sleep 1
+stop_pane
+
+# A package that supports only the other two systems has nothing for this
+# one: it is explained instead of offered for installation.
+mkdir -p "$out/elsewhere"
+cp target/guests/sample_rust.wasm "$out/elsewhere/"
+cat >"$out/elsewhere/pane.json" <<'JSON'
+{
+  "manifestVersion": 1,
+  "title": "Elsewhere",
+  "apiVersion": "0.1",
+  "platforms": ["windows", "linux"],
+  "commands": [{ "id": "sample", "title": "Elsewhere sample", "component": "sample_rust.wasm" }]
+}
+JSON
+start_pane --install "$out/elsewhere"
+capture 15-no-compatible-package.png
+check 15-no-compatible-package.png f08c8c   # "Not available on macOS: ..."
 stop_pane
 echo "screenshots in $out"

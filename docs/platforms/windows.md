@@ -68,6 +68,19 @@ background. This is most likely hover under wherever the runner's mouse pointer
 sits, since keyboard selection (the Rust row) opened the Rust command. This was
 not confirmed.
 
+## Platform availability (#19)
+
+The smoke also runs the platform-availability steps (screenshots 13 to 15,
+[platform availability](../platform-availability.md#checks)): the Rust
+command's Windows-only and macOS-and-Linux actions, then a package listing
+only the two other systems. In run [36372625940](https://github.com/wasimysaid/pane/actions/runs/36372625940) (commit `38a95cb`, Windows NT 10.0.26100, AMD64) every step passed: the Windows-only action answered, the macOS-and-Linux action was listed with "Not available on Windows: this action supports only macOS and Linux" and did not run, and the package for macOS and Linux was refused with "Not available on Windows: this package supports only macOS and Linux". The list scrolled to keep the selected row visible. The later #19 fixes (per-command platforms, re-focusing before these steps) have not run here yet.
+
+| Step | Evidence |
+| --- | --- |
+| Windows-only action | [13-windows-only.png](evidence/windows/13-windows-only.png) |
+| macOS-and-Linux action | [14-not-windows.png](evidence/windows/14-not-windows.png) |
+| Package for the other two systems | [15-no-compatible-package.png](evidence/windows/15-no-compatible-package.png) |
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** the smoke now also opens the Rust command's
@@ -113,7 +126,8 @@ can't be ruled out from the log.
 The installed copy has the same title as the built-in Rust sample, so the
 screenshots can't show which copy opened; the core tests prove the installed
 copy runs. In these screenshots the root list is taller than the window and its
-last row is cut off (being fixed with #19).
+last row is cut off; since #19 the list scrolls to keep the selected row
+visible.
 
 ## Remaining limits
 

@@ -6,6 +6,9 @@ use std::path::PathBuf;
 use futures::executor::block_on;
 use pane_core::{CallError, CommandRegistration, Launcher, Runtime, Screen, Status};
 
+#[path = "support/platforms.rs"]
+mod platforms;
+
 fn guest(name: &str) -> PathBuf {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/guests")
@@ -283,6 +286,51 @@ fn selecting_a_row_directly_ignores_indexes_past_the_list() {
 
     launcher.select(1);
     assert_eq!(launcher.view().selected, Some(1));
-    launcher.select(5);
+    launcher.select(7);
     assert_eq!(launcher.view().selected, Some(1));
+}
+
+#[test]
+fn an_unavailable_form_explains_itself_instead_of_opening() {
+    let launcher = launcher(vec![command("faulty", guest("faulty"))]);
+    // The fixture's "nowhere" item has a form and declares no operating
+    // system at all, so it is unavailable wherever the test runs.
+    open_faulty_item(&launcher, "nowhere");
+    let view = launcher.view();
+    let reason = view.rows[view.selected.unwrap()].unavailable.clone();
+    let reason = reason.expect("the row says why it is unavailable");
+    assert_eq!(reason, platforms::nowhere("this action"));
+
+    block_on(launcher.activate_selected());
+
+    let view = launcher.view();
+    assert_eq!(
+        (view.screen, view.form, view.status),
+        (Screen::Command, None, Status::Error(reason))
+    );
+    launcher.select(0);
+    block_on(launcher.activate_selected());
+    assert_eq!(launcher.view().status, Status::Result("fine".into()));
+}
+
+/// The pre-release extension API 0.1 changes shape between slices without a
+/// version bump: `item` gained `platforms` in #19. A component built against
+/// the older shape declares the same API version, and the type check at
+/// instantiation refuses it when its command opens, naming the mismatch.
+#[test]
+fn a_component_of_an_older_api_shape_is_refused_when_it_loads() {
+    let launcher = launcher(vec![command("old", guest("old_api"))]);
+
+    block_on(launcher.activate_selected());
+
+    assert_eq!(launcher.view().screen, Screen::Root);
+    let message = error(&launcher);
+    assert!(
+        message.starts_with("Could not load the extension: "),
+        "{message}"
+    );
+    assert!(
+        message.contains("type mismatch for field items: expected record of 5 fields"),
+        "{message}"
+    );
 }

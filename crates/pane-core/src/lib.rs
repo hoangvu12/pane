@@ -3,6 +3,7 @@
 
 mod launcher;
 mod packages;
+mod platform;
 mod runtime;
 
 pub use launcher::{
@@ -12,6 +13,7 @@ pub use packages::{
     EXTENSION_API, InstalledPackage, MANIFEST_FILE, MANIFEST_VERSION, Manifest, ManifestCommand,
     PackageError, PackageIdentity,
 };
+pub use platform::Platform;
 pub use runtime::{
     CallError, Choice, Field, FieldKind, FieldValue, Form, FormError, Item, Runtime, View,
 };

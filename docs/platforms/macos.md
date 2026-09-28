@@ -90,6 +90,19 @@ from `PANE_EXTENSIONS_DIR`, or else from `target/guests` in the source tree it
 was built from. That is a development-build assumption, and the installer
 tickets will replace it.
 
+## Platform availability (#19)
+
+The smoke also runs the platform-availability steps (screenshots 13 to 15,
+[platform availability](../platform-availability.md#checks)): the Rust
+command's Windows-only and macOS-and-Linux actions, then a package listing
+only the two other systems. In run [36372625940](https://github.com/wasimysaid/pane/actions/runs/36372625940) (commit `38a95cb`, macOS 15.7.9, arm64) every step passed: the Windows-only action was listed with "Not available on macOS: this action supports only Windows" and did not run, the macOS-and-Linux action answered, and the package for Windows and Linux was refused with "Not available on macOS: this package supports only Windows and Linux". The list scrolled to keep the selected row visible. The later #19 fixes (per-command platforms, re-focusing before these steps) have not run here yet.
+
+| Step | Evidence |
+| --- | --- |
+| Windows-only action | [13-windows-only.png](evidence/macos/13-windows-only.png) |
+| macOS-and-Linux action | [14-not-windows.png](evidence/macos/14-not-windows.png) |
+| Package for the other two systems | [15-no-compatible-package.png](evidence/macos/15-no-compatible-package.png) |
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms now have a text field. The
@@ -138,7 +151,8 @@ treats them, and symbolic links.
 The installed copy has the same title as the built-in Rust sample, so the
 screenshots can't show which copy opened; the core tests prove the installed
 copy runs. In these screenshots the root list is taller than the window and its
-last row is cut off (being fixed with #19).
+last row is cut off; since #19 the list scrolls to keep the selected row
+visible.
 
 ## Remaining limits
 

@@ -16,6 +16,7 @@ use std::path::{Component as PathPart, Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::launcher::CommandRegistration;
+use crate::platform::{self, Platform};
 use crate::runtime::CallError;
 
 /// The manifest file at the root of every package.
@@ -125,6 +126,12 @@ pub struct Manifest {
     pub version: Option<String>,
     /// The extension API the package needs, such as `0.1`.
     pub api_version: String,
+    /// The operating systems the package supports; `None` when it does not
+    /// say, which means every system Pane runs on, and empty for none. A
+    /// package that does not support this system is explained instead of
+    /// installed, and an installed copy of one lists its commands as
+    /// unavailable.
+    pub platforms: Option<Vec<Platform>>,
     pub commands: Vec<ManifestCommand>,
 }
 
@@ -136,6 +143,9 @@ pub struct ManifestCommand {
     pub subtitle: Option<String>,
     /// The command's component, relative to the package folder.
     pub component: PathBuf,
+    /// The operating systems the command supports; `None` for every system
+    /// the package supports. Elsewhere it is listed as unavailable.
+    pub platforms: Option<Vec<Platform>>,
 }
 
 #[derive(Deserialize)]
@@ -145,6 +155,8 @@ struct ManifestJson {
     #[serde(default)]
     version: Option<String>,
     api_version: String,
+    #[serde(default)]
+    platforms: Option<Vec<String>>,
     commands: Vec<CommandJson>,
 }
 
@@ -155,17 +167,38 @@ struct CommandJson {
     #[serde(default)]
     subtitle: Option<String>,
     component: String,
+    #[serde(default)]
+    platforms: Option<Vec<String>>,
 }
 
 impl Manifest {
-    /// Reads and validates `pane.json` in `folder`, including that every
-    /// component it names is present. Runs no guest code.
+    /// Reads and validates `pane.json` in `folder`, including that the
+    /// package supports this operating system and that every component it
+    /// names is present. Runs no guest code.
     pub fn read(folder: &Path) -> Result<Manifest, PackageError> {
         Manifest::read_text(folder).map(|(manifest, _)| manifest)
     }
 
     /// Like [`Manifest::read`], also returning the text that was validated.
     fn read_text(folder: &Path) -> Result<(Manifest, String), PackageError> {
+        let (manifest, text) = Manifest::read_parsed(folder)?;
+        if let Some(reason) = platform::unavailable(manifest.platforms.as_deref(), "this package") {
+            return Err(PackageError::UnsupportedPlatform(reason));
+        }
+        manifest.check_components(folder)?;
+        Ok((manifest, text))
+    }
+
+    /// Reads a managed copy: like [`Manifest::read`], but a copy for other
+    /// systems is read, so that its commands can be listed as unavailable.
+    fn read_installed(folder: &Path) -> Result<Manifest, PackageError> {
+        let (manifest, _) = Manifest::read_parsed(folder)?;
+        manifest.check_components(folder)?;
+        Ok(manifest)
+    }
+
+    /// Reads and parses `pane.json` in `folder`.
+    fn read_parsed(folder: &Path) -> Result<(Manifest, String), PackageError> {
         let path = folder.join(MANIFEST_FILE);
         let text = match fs::read_to_string(&path) {
             Ok(text) => text,
@@ -175,7 +208,12 @@ impl Manifest {
             Err(error) => return Err(PackageError::InvalidManifest(error.to_string())),
         };
         let manifest = Manifest::parse(&text)?;
-        for command in &manifest.commands {
+        Ok((manifest, text))
+    }
+
+    /// Checks that every component the manifest names is in `folder`.
+    fn check_components(&self, folder: &Path) -> Result<(), PackageError> {
+        for command in &self.commands {
             let component = folder.join(&command.component);
             if !component.is_file() {
                 return Err(PackageError::MissingComponent {
@@ -184,7 +222,7 @@ impl Manifest {
                 });
             }
         }
-        Ok((manifest, text))
+        Ok(())
     }
 
     fn parse(text: &str) -> Result<Manifest, PackageError> {
@@ -209,6 +247,7 @@ impl Manifest {
         if json.title.trim().is_empty() {
             return Err(invalid("`title` is empty".into()));
         }
+        let platforms = parse_platforms(json.platforms, "`platforms`")?;
         if json.commands.is_empty() {
             return Err(invalid("`commands` is empty".into()));
         }
@@ -233,20 +272,46 @@ impl Manifest {
                     command.component
                 )));
             }
+            let platforms = parse_platforms(
+                command.platforms,
+                &format!("`platforms` of command `{}`", command.id),
+            )?;
             commands.push(ManifestCommand {
                 id: command.id,
                 title: command.title,
                 subtitle: command.subtitle,
                 component,
+                platforms,
             });
         }
         Ok(Manifest {
             title: json.title,
             version: json.version,
             api_version: json.api_version,
+            platforms,
             commands,
         })
     }
+}
+
+/// Reads a `platforms` list (named `field` in explanations): `None` when
+/// absent, and possibly empty, meaning no operating system.
+fn parse_platforms(
+    ids: Option<Vec<String>>,
+    field: &str,
+) -> Result<Option<Vec<Platform>>, PackageError> {
+    ids.map(|ids| {
+        ids.iter()
+            .map(|id| {
+                Platform::from_id(id).ok_or_else(|| {
+                    PackageError::InvalidManifest(format!(
+                        "unknown platform `{id}` in {field}; use windows, macos or linux"
+                    ))
+                })
+            })
+            .collect()
+    })
+    .transpose()
 }
 
 /// Whether a package needing extension API `required` (`MAJOR.MINOR`, with
@@ -285,6 +350,9 @@ pub enum PackageError {
     NewerManifest(u64),
     /// The package needs an extension API this Pane does not provide.
     IncompatibleApi(String),
+    /// The package does not support this operating system; the reason says
+    /// which ones it supports.
+    UnsupportedPlatform(String),
     /// A component the manifest names is not in the folder.
     MissingComponent { command: String, component: PathBuf },
     /// A component is present but Pane cannot run it.
@@ -325,6 +393,7 @@ impl fmt::Display for PackageError {
                 "Incompatible package: it needs Pane extension API {required}, but this Pane provides {}.{}",
                 EXTENSION_API.0, EXTENSION_API.1
             ),
+            PackageError::UnsupportedPlatform(reason) => f.write_str(reason),
             PackageError::MissingComponent { command, component } => write!(
                 f,
                 "Not ready to run: the component {} of \"{command}\" is missing. This looks like a source-only package; build its component before installing",
@@ -396,7 +465,7 @@ pub struct InstalledPackage {
 impl InstalledPackage {
     fn load(identity: PackageIdentity, location: PathBuf) -> InstalledPackage {
         InstalledPackage {
-            manifest: Manifest::read(&location),
+            manifest: Manifest::read_installed(&location),
             identity,
             location,
         }
@@ -419,20 +488,37 @@ impl InstalledPackage {
 
     /// The commands this package offers in root search.
     pub fn commands(&self) -> Vec<CommandRegistration> {
+        self.available_commands()
+            .into_iter()
+            .map(|(command, _)| command)
+            .collect()
+    }
+
+    /// The commands this package offers in root search, each with why it is
+    /// unavailable on this system, if it is: first because the package does
+    /// not support this system, else because the command does not.
+    pub(crate) fn available_commands(&self) -> Vec<(CommandRegistration, Option<String>)> {
         let Ok(manifest) = &self.manifest else {
             return Vec::new();
         };
+        let package = platform::unavailable(manifest.platforms.as_deref(), "this package");
         manifest
             .commands
             .iter()
-            .map(|command| CommandRegistration {
-                id: format!("{}#{}", self.identity.key(), command.id),
-                title: command.title.clone(),
-                subtitle: command
-                    .subtitle
-                    .clone()
-                    .or_else(|| Some(manifest.title.clone())),
-                component: self.location.join(&command.component),
+            .map(|command| {
+                let registration = CommandRegistration {
+                    id: format!("{}#{}", self.identity.key(), command.id),
+                    title: command.title.clone(),
+                    subtitle: command
+                        .subtitle
+                        .clone()
+                        .or_else(|| Some(manifest.title.clone())),
+                    component: self.location.join(&command.component),
+                };
+                let unavailable = package.clone().or_else(|| {
+                    platform::unavailable(command.platforms.as_deref(), "this command")
+                });
+                (registration, unavailable)
             })
             .collect()
     }

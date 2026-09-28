@@ -1,7 +1,8 @@
 """Asserts that a smoke screenshot shows Pane text drawn in a given color.
 
-Pane's window background is #20252d; its hint line is #8a96a3 and action
-results are #9fd8a8. Within the window's bounds (found by the background
+Pane's window background is #20252d; its hint line is #8a96a3, action
+results are #9fd8a8, errors #f08c8c and an unavailable action's reason
+#d6a36a. Within the window's bounds (found by the background
 color), pixels near the text color prove text actually rendered: a window
 without a text system shows only its backgrounds. Antialiasing blends glyph
 edges, so a pixel counts when it is near the target and closer to it than to
@@ -21,7 +22,7 @@ from PIL import Image
 BACKGROUND = (0x20, 0x25, 0x2D)
 # Every color Pane draws, so a pixel counts only if the target is the closest.
 PALETTE = ["20252d", "364355", "2e3a48", "f1f3f5", "aab4c0", "8a96a3", "d6c27a",
-           "9fd8a8", "f08c8c", "1a1e24", "8ab4f8"]
+           "9fd8a8", "f08c8c", "1a1e24", "8ab4f8", "d6a36a"]
 
 
 def rgb(color: str) -> tuple[int, int, int]:

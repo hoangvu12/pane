@@ -8,6 +8,9 @@ use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, prelude::*};
 use pane::LauncherWindow;
 use pane_core::{CommandRegistration, Launcher, Runtime, Screen, Status};
 
+#[path = "../../pane-core/tests/support/platforms.rs"]
+mod platforms;
+
 /// A sample command: its component and the language it is written in.
 struct Sample {
     component: &'static str,
@@ -56,11 +59,17 @@ fn open_with(
     cx: &mut TestAppContext,
     commands: Vec<CommandRegistration>,
 ) -> (Entity<LauncherWindow>, &mut VisualTestContext) {
+    open_launcher(cx, Launcher::new(Runtime::start(), commands))
+}
+
+fn open_launcher(
+    cx: &mut TestAppContext,
+    launcher: Launcher,
+) -> (Entity<LauncherWindow>, &mut VisualTestContext) {
     // Guest replies arrive from the real runtime thread, outside the test
     // scheduler's deterministic control.
     cx.executor().allow_parking();
     cx.update(pane::bind_keys);
-    let launcher = Launcher::new(Runtime::start(), commands);
     cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx))
 }
 
@@ -225,6 +234,70 @@ fn a_rejected_field_shows_its_error_and_takes_focus(cx: &mut TestAppContext, sam
     );
 }
 
+fn an_unavailable_action_is_listed_with_its_reason_and_others_still_run(
+    cx: &mut TestAppContext,
+    sample: &Sample,
+) {
+    let ((_, available), (_, unavailable), reason) = platforms::sample_items();
+    let answer = format!("Ran the {available} in the {} guest", sample.language);
+    let (window, cx) = open(cx, sample);
+    cx.simulate_resize(gpui::size(gpui::px(640.), gpui::px(420.)));
+    cx.simulate_keystrokes("enter");
+    let view = wait_for_answer(&window, cx);
+    let index = |title: &str| view.rows.iter().position(|row| row.title == title).unwrap();
+
+    // Select the unavailable item with the keyboard: it is still listed,
+    // scrolled into view, and says why it cannot run here.
+    for _ in 0..index(unavailable) {
+        cx.simulate_keystrokes("down");
+    }
+    cx.run_until_parked();
+    assert!(row_is_visible(cx, &format!("row-{unavailable}")));
+    assert!(
+        row_is_visible(cx, &format!("unavailable-reason-{unavailable}")),
+        "the selected row shows its reason"
+    );
+    assert!(
+        cx.debug_bounds(selector(&format!("unavailable-reason-{available}")))
+            .is_none(),
+        "the action for this system shows none"
+    );
+    let nodes = accessible_nodes(cx);
+    let option = node(&nodes, "ListBoxOption", unavailable);
+    let description = option["description"].as_str().unwrap_or_default();
+    // The row is also marked disabled, which GPUI CE's debug tree does not
+    // report, so only the description is checked.
+    assert!(description.ends_with(&reason), "{option:#}");
+    assert_eq!(focused_label(cx).as_deref(), Some(unavailable));
+
+    // Enter explains instead of running the action.
+    cx.simulate_keystrokes("enter");
+    let view = wait_for_answer(&window, cx);
+    assert_eq!(
+        (view.screen, view.status),
+        (Screen::Command, Status::Error(reason.clone()))
+    );
+    let (nodes, _) = accessibility_tree(cx);
+    assert!(has(&nodes, "Status", &reason), "{nodes:?}");
+
+    // The action declared for this system, and the others, still run.
+    let delta = index(available) as isize - index(unavailable) as isize;
+    let key = if delta > 0 { "down" } else { "up" };
+    for _ in 0..delta.abs() {
+        cx.simulate_keystrokes(key);
+    }
+    cx.simulate_keystrokes("enter");
+    assert_eq!(wait_for_answer(&window, cx).status, Status::Result(answer));
+    for _ in 0..index(available) {
+        cx.simulate_keystrokes("up");
+    }
+    cx.simulate_keystrokes("enter");
+    assert_eq!(
+        wait_for_answer(&window, cx).status,
+        Status::Result(format!("Hello from the {} guest", sample.language))
+    );
+}
+
 /// Declares one window test per check for each sample.
 macro_rules! for_each_sample {
     ($($check:ident),* $(,)?) => {
@@ -246,6 +319,7 @@ for_each_sample!(
     a_validation_error_is_rendered,
     the_keyboard_fills_in_and_submits_the_form,
     a_rejected_field_shows_its_error_and_takes_focus,
+    an_unavailable_action_is_listed_with_its_reason_and_others_still_run,
 );
 
 /// The label of the node assistive technology treats as focused.
@@ -466,6 +540,153 @@ fn arrow_keys_move_the_selection(cx: &mut TestAppContext) {
     assert_eq!(wait_for_answer(&window, cx).selected, Some(1));
     cx.simulate_keystrokes("up");
     assert_eq!(wait_for_answer(&window, cx).selected, Some(0));
+}
+
+/// A debug selector as GPUI's test context takes it, from a name a test
+/// builds.
+fn selector(name: &str) -> &'static str {
+    name.to_owned().leak()
+}
+
+/// Whether the element with debug selector `element` (such as `row-<title>`)
+/// lies wholly inside the list.
+fn row_is_visible(cx: &mut VisualTestContext, element: &str) -> bool {
+    let list = cx.debug_bounds("rows").expect("the list is rendered");
+    let element = cx.debug_bounds(selector(element)).expect("it is rendered");
+    element.top() >= list.top() && element.bottom() <= list.bottom()
+}
+
+#[gpui::test]
+fn the_list_scrolls_to_keep_the_selected_row_visible(cx: &mut TestAppContext) {
+    const TITLES: [&str; 12] = [
+        "Row 1", "Row 2", "Row 3", "Row 4", "Row 5", "Row 6", "Row 7", "Row 8", "Row 9", "Row 10",
+        "Row 11", "Row 12",
+    ];
+    let commands = TITLES
+        .iter()
+        .map(|title| command(title, "sample_rust"))
+        .collect();
+    let (window, cx) = open_with(cx, commands);
+    // The size of Pane's window: fewer than half of the rows fit.
+    cx.simulate_resize(gpui::size(gpui::px(640.), gpui::px(420.)));
+    cx.run_until_parked();
+    assert!(row_is_visible(cx, "row-Row 1"));
+    assert!(!row_is_visible(cx, "row-Row 12"), "the list overflows");
+
+    for _ in 1..TITLES.len() {
+        cx.simulate_keystrokes("down");
+    }
+    cx.run_until_parked();
+    assert_eq!(wait_for_answer(&window, cx).selected, Some(11));
+    assert!(
+        row_is_visible(cx, "row-Row 12"),
+        "the last row is scrolled into view"
+    );
+    assert!(!row_is_visible(cx, "row-Row 1"));
+
+    for _ in 1..TITLES.len() {
+        cx.simulate_keystrokes("up");
+    }
+    cx.run_until_parked();
+    assert!(row_is_visible(cx, "row-Row 1"), "and back to the first");
+}
+
+/// Twelve root commands, "Row 1" to "Row 12", all the Rust sample.
+fn twelve_rows() -> Vec<CommandRegistration> {
+    (1..=12)
+        .map(|n| command(&format!("Row {n}"), "sample_rust"))
+        .collect()
+}
+
+#[gpui::test]
+fn the_selected_row_stays_visible_when_the_window_shrinks(cx: &mut TestAppContext) {
+    let (window, cx) = open_with(cx, twelve_rows());
+    cx.simulate_resize(gpui::size(gpui::px(640.), gpui::px(420.)));
+    for _ in 0..3 {
+        cx.simulate_keystrokes("down");
+    }
+    cx.run_until_parked();
+    assert_eq!(wait_for_answer(&window, cx).selected, Some(3));
+    assert!(row_is_visible(cx, "row-Row 4"));
+
+    cx.simulate_resize(gpui::size(gpui::px(640.), gpui::px(200.)));
+    // The window asks for one more frame once the list's new size is laid
+    // out; the test platform delivers no frames by itself, so draw it.
+    redraw(&window, cx);
+
+    assert!(
+        row_is_visible(cx, "row-Row 4"),
+        "the selected row is scrolled back into the smaller list"
+    );
+}
+
+/// Turns the mouse wheel over the list by `pixels` (negative scrolls down).
+fn wheel(cx: &mut VisualTestContext, pixels: f32) {
+    let list = cx.debug_bounds("rows").expect("the list is rendered");
+    cx.simulate_event(gpui::ScrollWheelEvent {
+        position: list.center(),
+        delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(pixels))),
+        modifiers: Modifiers::none(),
+        touch_phase: gpui::TouchPhase::Moved,
+    });
+    cx.run_until_parked();
+}
+
+/// Redraws the window after the launcher changed outside it.
+fn redraw(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) {
+    window.update(cx, |_, cx| cx.notify());
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn the_mouse_wheel_scrolls_away_until_the_rows_reload(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    let folder = source.path().join("hello");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join("pane.json"),
+        r#"{ "manifestVersion": 1, "title": "Hello", "apiVersion": "0.1",
+  "commands": [{ "id": "hello", "title": "Say hello", "component": "hello.wasm" }] }"#,
+    )
+    .unwrap();
+    std::fs::copy(
+        command("hello", "sample_rust").component,
+        folder.join("hello.wasm"),
+    )
+    .unwrap();
+    let launcher = Launcher::with_packages(
+        Runtime::start(),
+        twelve_rows(),
+        data.path().join("extensions"),
+    );
+    let (window, cx) = open_launcher(cx, launcher.clone());
+    cx.simulate_resize(gpui::size(gpui::px(640.), gpui::px(420.)));
+    // An install that finishes after the user has moved on: it reloads root
+    // search in the background and keeps the selected row, the first.
+    let install = launcher.install_package(&folder);
+    cx.foreground_executor()
+        .block_on(launcher.activate_selected());
+    launcher.back();
+    redraw(&window, cx);
+    assert!(row_is_visible(cx, "row-Row 1"));
+
+    wheel(cx, -400.);
+    redraw(&window, cx);
+    assert!(
+        !row_is_visible(cx, "row-Row 1"),
+        "redrawing does not undo the wheel"
+    );
+
+    cx.foreground_executor().block_on(install);
+    redraw(&window, cx);
+    let view = launcher.view();
+    assert_eq!((view.screen, view.selected), (Screen::Root, Some(0)));
+    assert!(view.rows.iter().any(|row| row.title == "Say hello"));
+    assert!(
+        row_is_visible(cx, "row-Row 1"),
+        "the reloaded list shows the selected row again"
+    );
 }
 
 #[gpui::test]

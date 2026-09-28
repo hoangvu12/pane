@@ -17,6 +17,9 @@ use pane_core::{
 use wasmtime::component::Component;
 use wasmtime::{Config, Engine};
 
+#[path = "support/platforms.rs"]
+mod platforms;
+
 struct Sample {
     component: &'static str,
     language: &'static str,
@@ -36,12 +39,14 @@ const TYPESCRIPT: Sample = Sample {
 };
 
 /// (item id, title) of every sample, in order.
-const ITEMS: [(&str, &str); 5] = [
+const ITEMS: [(&str, &str); 7] = [
     ("greet", "Say hello"),
     ("wait", "Wait briefly"),
     ("validate", "Validate settings"),
     ("random", "Roll a number"),
     ("form", "Greet someone"),
+    ("windows-only", "Windows-only action"),
+    ("not-windows", "macOS and Linux action"),
 ];
 
 fn guest(name: &str) -> PathBuf {
@@ -311,6 +316,35 @@ fn an_unknown_choice_is_a_field_error_from_the_guest(sample: &Sample) {
     );
 }
 
+/// Each sample declares one action for Windows only and one for macOS and
+/// Linux only. On the system the test runs on, Pane runs the one declared
+/// for it and explains the other without calling the guest, and every other
+/// action keeps working.
+fn a_platform_limited_action_runs_only_on_its_declared_systems(sample: &Sample) {
+    let launcher = sample.open();
+    let reason = |id: &str| {
+        let view = launcher.view();
+        let row = view.rows.into_iter().find(|row| row.id == id);
+        row.expect("the item is listed").unavailable
+    };
+    let ran =
+        |title: &str| Status::Result(format!("Ran the {title} in the {} guest", sample.language));
+    let (available, (unavailable, _), explanation) = platforms::sample_items();
+
+    assert_eq!(reason(available.0), None);
+    assert_eq!(reason(unavailable), Some(explanation.clone()));
+    assert_eq!(sample.run(&launcher, available.0), ran(available.1));
+    assert_eq!(
+        sample.run(&launcher, unavailable),
+        Status::Error(explanation)
+    );
+    assert_eq!(launcher.view().screen, Screen::Command);
+    assert_eq!(
+        sample.run(&launcher, "greet"),
+        Status::Result(format!("Hello from the {} guest", sample.language))
+    );
+}
+
 /// Declares one test per check for each sample.
 macro_rules! contract {
     ($($check:ident),* $(,)?) => {
@@ -340,6 +374,7 @@ contract!(
     an_invalid_field_is_marked_and_the_form_stays_open,
     a_too_long_name_is_rejected_by_the_guest,
     an_unknown_choice_is_a_field_error_from_the_guest,
+    a_platform_limited_action_runs_only_on_its_declared_systems,
 );
 
 /// The names of the component's imports.

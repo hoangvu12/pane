@@ -1,11 +1,12 @@
-//! Pane's Rust sample command: a list with one action per item, and a form.
+//! Pane's Rust sample command: a list with one action per item, a form, and
+//! two actions each declared for some operating systems only.
 //! Items, titles, results and errors match the JavaScript and TypeScript
 //! samples.
 #![no_std]
 
 use pane_guest::alloc::{format, string::String, vec, vec::Vec};
 use pane_guest::{
-    Choice, Field, FieldKind, FieldValue, Form, FormError, Guest, Item, TextField, View,
+    Choice, Field, FieldKind, FieldValue, Form, FormError, Guest, Item, Platform, TextField, View,
 };
 
 struct Sample;
@@ -81,6 +82,7 @@ impl Guest for Sample {
             title: title.into(),
             subtitle: Some(subtitle.into()),
             form: None,
+            platforms: None,
         };
         Ok(View {
             title: "Rust sample".into(),
@@ -104,6 +106,24 @@ impl Guest for Sample {
                 Item {
                     form: Some(greeting_form()),
                     ..item("form", "Greet someone", "Fill in a form the guest checks")
+                },
+                // Elsewhere Pane lists these as unavailable, says why, and
+                // never calls `run_action` for them.
+                Item {
+                    platforms: Some(vec![Platform::Windows]),
+                    ..item(
+                        "windows-only",
+                        "Windows-only action",
+                        "Declared to work on Windows only",
+                    )
+                },
+                Item {
+                    platforms: Some(vec![Platform::Macos, Platform::Linux]),
+                    ..item(
+                        "not-windows",
+                        "macOS and Linux action",
+                        "Declared to work on macOS and Linux only",
+                    )
                 },
             ],
         })
@@ -135,6 +155,8 @@ impl Guest for Sample {
                 let bits = wasip3::random::random::get_random_u64() >> 11;
                 Ok(format!("{}", bits as f64 / (1u64 << 53) as f64))
             }
+            "windows-only" => Ok("Ran the Windows-only action in the Rust guest".into()),
+            "not-windows" => Ok("Ran the macOS and Linux action in the Rust guest".into()),
             other => Err(format!("unknown item: {other}")),
         }
     }
