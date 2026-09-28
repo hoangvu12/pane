@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 //
 // Pane's operations sample in JavaScript. Its package publishes the operation
-// `greet` (under `operations` in its pane.json), served by `runOperation`, and
+// `greet` (under `operations` in its pane.json), served by
+// `publishedOperations` (built with it through package.json's `"pane"`), and
 // its command calls the `greet` operation the Rust operations sample
 // publishes, with `pane:extension/operations`. Items, titles, results and
 // errors match the Rust sample (guests/sample-operations) and the TypeScript
@@ -83,7 +84,10 @@ export const command = {
   async openView(itemId) {
     throw new Error(`unknown view: ${itemId}`);
   },
+};
 
+/** @type {import("@pane/extension").PublishedOperations} */
+export const publishedOperations = {
   async runOperation(operation, input) {
     if (operation !== "greet") {
       throw new Error(`unknown operation: ${operation}`);

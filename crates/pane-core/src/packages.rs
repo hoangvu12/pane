@@ -172,6 +172,10 @@ pub struct ManifestCommand {
     /// The operating systems the command supports; `None` for every system
     /// the package supports. Elsewhere it is listed as unavailable.
     pub platforms: Option<Vec<Platform>>,
+    /// Whether the command computes root results from root search's query
+    /// (`"rootResults": true`), such as a calculator's answer: its component
+    /// then also exports `pane:extension/root-results`.
+    pub root_results: bool,
 }
 
 #[derive(Deserialize)]
@@ -198,6 +202,7 @@ struct OperationJson {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CommandJson {
     id: String,
     title: String,
@@ -206,6 +211,8 @@ struct CommandJson {
     component: String,
     #[serde(default)]
     platforms: Option<Vec<String>>,
+    #[serde(default)]
+    root_results: bool,
 }
 
 impl Manifest {
@@ -278,6 +285,20 @@ impl Manifest {
         commands.chain(operations)
     }
 
+    /// What `component` exports besides `command`, as the manifest says:
+    /// (root results, published operations).
+    pub(crate) fn exports_of(&self, component: &Path) -> (bool, bool) {
+        let root_results = self
+            .commands
+            .iter()
+            .any(|command| command.component == component && command.root_results);
+        let operations = self
+            .operations
+            .iter()
+            .any(|operation| operation.component == component);
+        (root_results, operations)
+    }
+
     fn parse(text: &str) -> Result<Manifest, PackageError> {
         let invalid = |message: String| PackageError::InvalidManifest(message);
         let value: serde_json::Value =
@@ -326,6 +347,7 @@ impl Manifest {
                 subtitle: command.subtitle,
                 component,
                 platforms,
+                root_results: command.root_results,
             });
         }
         let mut operations: Vec<ManifestOperation> = Vec::new();
@@ -524,14 +546,6 @@ impl SourcePackage {
             manifest_text,
         })
     }
-
-    /// The source path of each component the manifest names, with what it
-    /// serves (see [`Manifest::components`]).
-    pub fn components(&self) -> impl Iterator<Item = (String, PathBuf)> {
-        self.manifest
-            .components()
-            .map(|(name, component)| (name, self.folder.join(component)))
-    }
 }
 
 /// An installed package, as read from its managed copy.
@@ -606,6 +620,22 @@ impl InstalledPackage {
                 });
                 (registration, unavailable)
             })
+            .collect()
+    }
+}
+
+impl InstalledPackage {
+    /// The commands of this package that compute root results and can run
+    /// on this system; none if the package cannot be read.
+    pub(crate) fn root_result_commands(&self) -> Vec<CommandRegistration> {
+        let Ok(manifest) = &self.manifest else {
+            return Vec::new();
+        };
+        self.available_commands()
+            .into_iter()
+            .zip(&manifest.commands)
+            .filter(|((_, unavailable), command)| command.root_results && unavailable.is_none())
+            .map(|((registration, _), _)| registration)
             .collect()
     }
 }

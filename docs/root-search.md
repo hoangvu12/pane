@@ -5,13 +5,18 @@ T02, T03, G2, G4). Root search now has a query field: typing narrows root to
 the matching commands, best match first, and Enter invokes the selected one.
 Only command metadata from `pane.json` (and the commands built into Pane) is
 searched; no extension runs until the user invokes one of its commands. This
-is a first matching and ranking, not tuned relevance. App launching,
-calculator, quicklinks, file search, aliases, fallback actions and hotkeys
+is a first matching and ranking, not tuned relevance.
+[#27](https://github.com/hoangvu12/pane/issues/27) (US06, US12, T01, T03)
+adds [results computed from the query](#results-computed-from-the-query),
+with [the calculator](#the-calculator) as a default extension. App
+launching, quicklinks, file search, aliases, fallback actions and hotkeys
 (#24 to #34) are not part of it.
 
 ## What is searched
 
-Root search lists **root results**, in this order when the query is empty:
+Root search lists **root results**, in this order when the query is empty
+(for a query that is not blank, the [computed results](#results-computed-from-the-query)
+for it come first, once they arrive):
 
 1. the commands built into this Pane build (the three samples);
 2. the commands of each enabled installed package, in install order;
@@ -76,7 +81,7 @@ state and maps input to those calls.
 | --- | --- |
 | Typing, editing keys, clipboard, undo, input-method composition | Edit the query (GPUI CE's single-line editable text element); every change searches again |
 | Up / Down | Previous / next result (not the caret) |
-| Enter, or a click on a result | Invoke the selected result: open the command, explain an unavailable or unreadable one, or open Pane's own screen |
+| Enter, or a click on a result | Invoke the selected result: open the command, explain an unavailable or unreadable one, open Pane's own screen, or copy a computed result's text to the clipboard ("Copied 42 to the clipboard"; root search stays as it was) |
 | Escape | Clear the query; with an empty query, nothing |
 
 The query field has keyboard focus whenever root search is on screen: when
@@ -90,6 +95,81 @@ the status line stays idle. A result that matches but fails when invoked
 (its component is missing, the runtime is unavailable, the guest reports an
 error) shows the failure as the status error, as before this slice.
 
+## Results computed from the query
+
+A command can also answer the query itself, where matching titles cannot: a
+calculator's answer to "6*7" matches no title. Such a **computed result**
+comes from the extension, through the same guest boundary as its command:
+
+- The command's `pane.json` entry sets `"rootResults": true`, and its
+  component exports `pane:extension/root-results`
+  ([`wit/root-results.wit`](../wit/root-results.wit)) besides `command`;
+  Pane checks both at install, without running it
+  ([author guide](../guests/README.md#root-results-computed-from-the-query),
+  in Rust, JavaScript and TypeScript).
+- For every change of a query that is not blank, `Launcher::set_query`
+  ranks the metadata at once and returns a future that asks each enabled
+  command with `rootResults` for `results-for(query)`, in install order, and
+  lists the answers once all have arrived. The window awaits it off its
+  thread and redraws, so typing never waits for an extension. Answers for an
+  older query (or after leaving root search) are discarded; until the
+  answers arrive the new query lists no computed result, never an older
+  query's. The guest's work for an older query is not cancelled: calls run
+  one at a time on the runtime thread
+  ([#29](https://github.com/hoangvu12/pane/issues/29) owns cancellation).
+- Computed results are listed **above** every title match, in the order the
+  commands and their answers give them; they are not ranked against titles.
+  When they arrive the first row is selected again, unless the user had
+  moved the selection, which stays on its row.
+- A computed result has an id (`<command id>:<result id>`), title, optional
+  subtitle and an **action** Pane performs without calling the extension
+  again. The only action is **copy**: Enter copies the text to the
+  clipboard, which the window writes (`Launcher::selected_copy`), and the
+  status says "Copied … to the clipboard".
+- **No result is not a failure**: a query the command cannot answer (words,
+  an incomplete or invalid expression) gives no results and the status is
+  untouched. An error or crash of the extension is shown as a row titled
+  with the command and "Could not answer: …"; Enter on it shows the whole
+  error. Other results are listed as usual, and after a crash the next query
+  starts a fresh instance.
+- A **disabled** package is not asked, and its computed results leave the
+  results at once, even while the choice is being recorded. Enabled again, it
+  answers from the next change of the query.
+
+### The calculator
+
+The calculator ([`guests/calculator`](../guests/calculator)) is a default
+extension in Rust: package `guests/packages/calculator`, command
+"Calculator", which lists the expressions it understands, and computed
+results for root search. It is not part of the core and can be disabled
+like any package. Acquiring it automatically at setup is
+[#51](https://github.com/hoangvu12/pane/issues/51) to
+[#53](https://github.com/hoangvu12/pane/issues/53); until then it is
+installed from its folder like any package
+(`pane --install target/guests/packages/calculator`).
+
+Its expression scope is deliberately small (US06; no symbolic algebra and no
+arbitrary code evaluation):
+
+- numbers with an optional decimal point: `12`, `3.5`, `.5` (no thousands
+  separators, exponents or other bases);
+- `+`, `-` (or `−`), `*` (or `×`), `/` (or `÷`) and `^` for a power with a
+  whole-number exponent; `^` binds tightest and right to left, then `*` and
+  `/`, then `+` and `-`, left to right; a leading `-` or `+` applies to what
+  follows, so `-2^2` is -4;
+- parentheses and spaces anywhere.
+
+A query has an answer only if it applies at least one operator: "42" or
+"(5)" is not a calculation. Everything else has no answer and lists nothing:
+incomplete input ("2 +", "(1 + 2"), invalid input ("2 + * 3", "2 3",
+letters, functions, constants, units, percentages), and undefined or
+unrepresentable values ("1 / 0", "2 ^ 0.5", overflow). Arithmetic is IEEE
+double precision; the answer shows at most 15 significant digits and at most
+10 decimals, without trailing zeros (0.1 + 0.2 is 0.3, 1 / 3 is
+0.3333333333), and scientific notation from 10^15 up or below 10^-6
+(`1.00000000000001e15`, `1e-7`). The row shows the answer as its title and
+"<query> = <answer> · Enter copies the answer" as its subtitle.
+
 ## Activation
 
 Searching reads only what the launcher already holds: built-in command
@@ -101,15 +181,20 @@ instance; the tests use it to show that twelve installed packages can be
 listed and searched with none running, and that invoking one starts only
 that one. Background work declared by an extension does not exist yet
 (no services, timers or hotkeys), so there is nothing to keep distinct from
-it beyond this.
+it beyond this. A command with `rootResults` declares that it answers root
+search, so its instance starts with the first query that is not blank, not
+at start, install or an empty or blank query, and a disabled one never
+starts.
 
 ## Minimum search-provider contract
 
 Per [ADR 0006](adr/0006-raycast-style-search-with-extension-providers.md) the
 core owns the search interface, matching and ranking, aggregation,
-navigation and dispatch; features supply entries. This slice has one kind of
-provider, **command metadata**: contributions indexed from package
-manifests and built-in registrations without running anything. The minimum
+navigation and dispatch; features supply entries. There are two kinds of
+provider: **command metadata**, contributions indexed from package
+manifests and built-in registrations without running anything, and, since
+#27, [commands that compute results from the query](#results-computed-from-the-query),
+which run to answer and whose results the core lists first. The minimum
 a root result needs, which later default features (#24 onwards) must supply
 to plug in:
 
@@ -119,23 +204,20 @@ to plug in:
 - an optional **unavailability reason**, which keeps the result listed and
   searchable but stops it from running;
 - an **action** the core dispatches when it is invoked (today: open a
-  command, explain, or open one of Pane's screens).
+  command, explain, open one of Pane's screens, or copy a computed result).
 
 What is *not* settled here, and is left to the tickets that need it: results
-computed from the query itself (a calculator answer, which matches no title),
-results from a provider that must run to answer (files, applications),
-provider-supplied ranks and how they mix with title matching, asynchronous or
-cancellable providers, and online providers, which stay inside their own
-command (US11, T03): nothing in root search queries an online service.
+from a provider that must search something outside the query (files,
+applications), provider-supplied ranks and how they mix with title matching,
+cancelling a provider's work, and online providers, which stay inside their
+own command (US11, T03): nothing in root search queries an online service.
 
 ### Open: extension points later tickets need
 
-None of these exists yet; root search today ranks a fixed list of results
-rebuilt from metadata. Each is open, to be designed by its ticket:
+Results computed from the query exist since #27 (above), with discarding of
+late answers but no ranks of their own and no cancellation. Still open, to be
+designed by their tickets:
 
-- **Query-computed results** ([#27](https://github.com/hoangvu12/pane/issues/27)):
-  a provider that answers from the query itself (a calculator result) rather
-  than being matched by title, and where such a result ranks.
 - **Asynchronous, cancellable providers** ([#29](https://github.com/hoangvu12/pane/issues/29)):
   a provider that must run to answer (files, applications), whose late
   answers for an older query are discarded and whose work is cancelled when
@@ -194,6 +276,23 @@ searches, an unavailable command found and explained without running, and
 twelve installed packages searched with no guest running and only the
 invoked one started.
 
+For computed results and the calculator
+([`crates/pane-core/tests/calculator.rs`](../crates/pane-core/tests/calculator.rs)),
+with the real calculator guest: an answer listed first and selected, above a
+command whose title matches too; incomplete, invalid, undefined and
+operation-free queries listing nothing with the status untouched, and
+completing one answering it; precedence, signs, powers and the number
+format; Enter reporting the copy and `selected_copy` giving the text; an
+answer for an older query discarded and none shown before the new one
+arrives; a selection the user moved kept; the calculator not running until
+a non-blank query; disabling it removing its answer at once, asking it
+nothing more and keeping other results, and enabling it again; a failing
+and a crashing command (the `faulty` fixture) explained as a row while other
+results stay, and a fresh instance afterwards; and a package declaring
+`rootResults` whose component lacks the interface refused at install. The
+same computed result ("reverse <text>") in Rust, JavaScript and TypeScript
+([`samples.rs`](../crates/pane-core/tests/samples.rs)).
+
 Window checks through GPUI's test platform with real key events
 ([`crates/pane/tests/window.rs`](../crates/pane/tests/window.rs)): typing
 narrows the results and Enter opens the best match; Up/Down move through the
@@ -202,7 +301,10 @@ no-results state and Escape clearing the field; focus on the field at start
 and after returning from a command, and typing in a command not searching
 root; input-method composition searching as it composes (driven on the
 field's editing state, with the limits described for
-[forms](forms.md#checks)); and the accessibility nodes above.
+[forms](forms.md#checks)); the accessibility nodes above; and typing an
+expression showing the calculator's answer as the query changes, Enter
+writing it to the clipboard, and an incomplete expression showing no
+results.
 
 Native checks: the GUI smoke scripts' last phase types "typescr", presses
 Enter, runs "Wait briefly" and asserts the screen is pixel for pixel the one
@@ -211,4 +313,8 @@ Enter, and asserts root, the search and the no-results screens all differ.
 The earlier phases still navigate root with Down, which moves the selection
 while the field has focus. On Linux X11 this ran on 2026-09-28
 ([evidence](platforms/linux.md#root-search-23)); the macOS and Windows steps
-are written but have not run yet. No real input method was used.
+are written but have not run yet. No real input method was used. A further
+phase checks [the calculator](platforms/linux.md#calculator-27): its answer
+row, and that pasting the copied answer back gives the same screen as
+typing it; it ran on Linux X11 on 2026-09-28 and is written but not run on
+macOS and Windows.

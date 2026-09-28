@@ -1,4 +1,5 @@
-//! Test fixture: a guest whose actions fail in each way the host must report.
+//! Test fixture: a guest whose actions and root results fail in each way the
+//! host must report.
 #![no_std]
 
 use core::cell::Cell;
@@ -147,8 +148,18 @@ impl Guest for Faulty {
             _ => Err("the guest refused the view".into()),
         }
     }
+}
 
-    async fn run_operation(operation: String, _input: String) -> Result<String, String> {
-        Err(format!("unknown operation: {operation}"))
+pane_guest::root::export!(Faulty);
+
+/// Root results that fail: the query "error" is refused and "trap" traps;
+/// any other query has no results.
+impl pane_guest::root::Guest for Faulty {
+    async fn results_for(query: String) -> Result<Vec<pane_guest::root::RootResult>, String> {
+        match query.as_str() {
+            "error" => Err("the guest refused the query".into()),
+            "trap" => panic!("trap requested"),
+            _ => Ok(Vec::new()),
+        }
     }
 }

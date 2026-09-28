@@ -2,11 +2,17 @@ package pane:extension@0.1.0;
 
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 //
-// Calling an operation another installed package publishes. Rust commands
-// import it through pane-guest, JS/TS commands as the module
-// "pane:extension/operations@0.1.0" (guests/js/operations.d.ts). A package
-// publishes an operation by listing it under `operations` in its pane.json;
-// Pane then serves calls to it through the component's `run-operation`.
+// Operations: named, versioned functions an installed package publishes for
+// other extensions to call through Pane. Any command may call one through
+// `operations`, imported by the world Pane hosts: Rust commands through
+// pane-guest, JS/TS commands as the module "pane:extension/operations@0.1.0"
+// (guests/js/operations.d.ts). A package publishes an operation by listing
+// it under `operations` in its pane.json; the component named there exports
+// `published-operations` beside `command` (`pane_guest::publish::export!`
+// in Rust, `"pane": { "operations": true }` in a JS/TS package.json), and a
+// component that publishes none is unchanged.
+// The header follows `package`: comments above it would document the package,
+// which extension.wit already does.
 
 /// Calls an operation another installed package publishes, through Pane.
 interface operations {
@@ -48,4 +54,20 @@ interface operations {
   /// calling package's own source folder, such as `local:../other`. `input`
   /// and the result are JSON text.
   call: async func(source: string, operation: string, version: u32, input: string) -> result<string, call-error>;
+}
+
+/// The operations a package publishes, served by the component its
+/// pane.json names for them.
+interface published-operations {
+  /// Serve a call to `operation`, which the package's pane.json publishes,
+  /// on behalf of another extension. Pane calls it only for a published
+  /// operation. `input` and the returned text are JSON; an error is passed
+  /// to the caller as the operation's own.
+  run-operation: async func(operation: string, input: string) -> result<string, string>;
+}
+
+/// The published operations export alone: a component that serves
+/// operations exports it besides the `extension` world's `command`.
+world operations-provider {
+  export published-operations;
 }

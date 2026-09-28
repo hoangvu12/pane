@@ -31,15 +31,18 @@ so a command never becomes a headless API by accident (US49):
 - The package preview lists them ("Operations: greet (version 1)"). Their
   components are checked and copied at install like commands'.
 
-The component serves calls through `run-operation(operation, input) ->
-result<string, string>`, a function of the `command` interface in
-[`wit/extension.wit`](../wit/extension.wit) that every component now
-exports: Pane calls it only for an operation the manifest publishes, naming
-it, and a component that publishes nothing returns an error. Before the
-first release, API 0.1 changes shape between slices without a version bump
-([current decisions](current-decisions.md), item 5): a component built before
-this change lacks `run-operation` and is refused with "rebuild it against
-Pane's current extension API 0.1".
+The component named there serves calls through
+`run-operation(operation, input) -> result<string, string>` in the
+`published-operations` interface of
+[`wit/operations.wit`](../wit/operations.wit), which it exports beside
+`command`, like a command computing [root results](root-search.md) exports
+`root-results`: in Rust it implements `pane_guest::publish::Guest` and calls
+`pane_guest::publish::export!`; a JS/TS package sets
+`"pane": { "operations": true }` in its `package.json` and its module exports
+`publishedOperations`. Pane calls it only for an operation the manifest
+publishes, naming it. Installing checks the export, without running guest
+code, for every component that serves an operation; a component that
+publishes none does not export it and is unchanged.
 
 ### Calling
 

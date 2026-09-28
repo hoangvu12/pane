@@ -8,5 +8,8 @@
   "main": "src/index.js",
   "devDependencies": {
     "@pane/extension": "file:../js"
+  },
+  "pane": {
+    "operations": true
   }
 }

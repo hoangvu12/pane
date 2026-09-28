@@ -12,11 +12,14 @@
 
 use pane_guest::alloc::{format, string::String, string::ToString, vec::Vec};
 use pane_guest::operations::call;
-use pane_guest::{CustomView, FieldValue, FormError, Guest, Item, NoCustomView, View, settings};
+use pane_guest::{
+    CustomView, FieldValue, FormError, Guest, Item, NoCustomView, View, publish, settings,
+};
 use serde_json::{Value, json};
 
 struct Fixture;
 pane_guest::export!(Fixture);
+pane_guest::publish::export!(Fixture);
 
 /// Each item: (title, the call it makes: source, operation, version, input).
 const ITEMS: [(&str, &str, &str, u32, &str); 12] = [
@@ -144,7 +147,9 @@ impl Guest for Fixture {
     async fn open_view(item_id: String) -> Result<CustomView, String> {
         Err(format!("unknown view: {item_id}"))
     }
+}
 
+impl publish::Guest for Fixture {
     async fn run_operation(operation: String, input: String) -> Result<String, String> {
         match operation.as_str() {
             "echo" => Ok(input),

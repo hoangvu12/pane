@@ -7,6 +7,7 @@ members = [
     "pane-guest",
     "sample-rust",
     "sample-settings",
+    "calculator",
     "sample-operations",
     "fixtures/faulty",
     "fixtures/operations",
