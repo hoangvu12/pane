@@ -630,3 +630,40 @@ fn a_copy_that_cannot_be_removed_is_reported_against_its_package() {
     assert_eq!(installed(&restarted), ["Package d"]);
     assert!(!c.exists(), "{} was removed at the next start", c.display());
 }
+
+#[test]
+fn another_panes_install_on_the_same_folder_survives_an_uninstall() {
+    let dirs = Dirs::new();
+    dirs.fixture("a", "");
+    let c = dirs.fixture("c", &needs("a"));
+    let z = dirs.fixture("z", "");
+    let y = dirs.fixture("y", "");
+    let first = dirs.launcher();
+    block_on(first.install_package(&c));
+    block_on(first.install_package(&y));
+    // A second Pane on the same data folder installs Package z meanwhile.
+    let second = dirs.launcher();
+    block_on(second.install_package(&z));
+    assert_eq!(installed(&first), ["Package a", "Package c", "Package y"]);
+
+    ask_to_uninstall(&first, "Package a");
+    assert_eq!(
+        press(&first, "Uninstall all 2 and delete saved data"),
+        Status::Result(
+            "Uninstalled Package a and Package c, which requires it, and deleted their saved \
+             data"
+                .into()
+        )
+    );
+    // Uninstalling one package alone keeps it too.
+    block_on(first.uninstall(&dirs.identity("y"), SavedData::Delete));
+    assert!(first.packages().is_empty());
+
+    let restarted = dirs.launcher();
+    assert_eq!(installed(&restarted), ["Package z"]);
+    assert!(
+        location(&restarted, &dirs.identity("z"))
+            .join("pane.json")
+            .is_file()
+    );
+}

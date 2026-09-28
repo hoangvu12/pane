@@ -1142,9 +1142,12 @@ struct RetainedJson {
     title: String,
 }
 
-/// The title to record a removed package's retained data under, if any, and
-/// its position among the retained records if not last.
-type Retain = Option<(String, Option<usize>)>;
+/// How to record that Pane keeps a removed package's data: under the title
+/// it had, at a position among the retained records, or last.
+struct Retain {
+    title: String,
+    at: Option<usize>,
+}
 
 /// Whether uninstalling a package keeps its saved data: its extension
 /// settings and content. Its cache and local credentials are removed either
@@ -1508,13 +1511,19 @@ impl Store {
         identity: &PackageIdentity,
         retained: Option<(String, usize)>,
     ) -> Result<Leftover, PackageError> {
-        self.remove(identity, retained.map(|(title, at)| (title, Some(at))))
+        let retain = retained.map(|(title, at)| Retain {
+            title,
+            at: Some(at),
+        });
+        self.remove(identity, retain)
     }
 
     /// Uninstalls the packages of `removals`, in one write: each record
     /// goes, and with a title, its identity is recorded as keeping extension
-    /// data under that title. If one is not installed or the record cannot
-    /// be written, nothing changes. Then each managed copy is removed; a
+    /// data under that title. `installed.json` is read again first and only
+    /// those records change in it, so what another Pane on the same data
+    /// folder recorded since is kept. If one is not installed or the record
+    /// cannot be written, nothing changes. Then each managed copy is removed; a
     /// managed folder that cannot be (one in use on Windows) is listed so
     /// that the next start removes it, as an update's replaced copy is.
     /// Returns what is left of each managed copy, in the order given.
@@ -1522,9 +1531,12 @@ impl Store {
         &mut self,
         removals: &[(PackageIdentity, Option<String>)],
     ) -> Result<Vec<Leftover>, PackageError> {
-        let removals: Vec<(PackageIdentity, Retain)> = removals
+        let removals: Vec<(PackageIdentity, Option<Retain>)> = removals
             .iter()
-            .map(|(identity, retain)| (identity.clone(), retain.clone().map(|t| (t, None))))
+            .map(|(identity, title)| {
+                let retain = title.clone().map(|title| Retain { title, at: None });
+                (identity.clone(), retain)
+            })
             .collect();
         self.remove_all(&removals)
     }
@@ -1535,7 +1547,7 @@ impl Store {
     fn remove(
         &mut self,
         identity: &PackageIdentity,
-        retain: Retain,
+        retain: Option<Retain>,
     ) -> Result<Leftover, PackageError> {
         let mut left = self.remove_all(&[(identity.clone(), retain)])?;
         Ok(left.pop().unwrap_or(Leftover::None))
@@ -1545,56 +1557,63 @@ impl Store {
     /// under a title at a position among them if given, else last.
     fn remove_all(
         &mut self,
-        removals: &[(PackageIdentity, Retain)],
+        removals: &[(PackageIdentity, Option<Retain>)],
     ) -> Result<Vec<Leftover>, PackageError> {
         let registry = self
             .registry
             .as_mut()
             .map_err(|reason| PackageError::Storage(reason.clone()))?;
+        // The same changes to the records on disk, which another Pane may
+        // have changed since, and to this Pane's.
+        let mut on_disk = read_registry(&self.dir).map_err(PackageError::Storage)?;
         let mut updated = registry.clone();
         let mut dirs = Vec::new();
         for (identity, retain) in removals {
             let PackageIdentity(Source::Local(local)) = identity;
-            let Some(index) = updated.packages.iter().position(|r| &r.local == local) else {
-                return Err(PackageError::NotInstalled(identity.clone()));
-            };
-            dirs.push(updated.packages.remove(index).dir);
-            if let Some((title, at)) = retain {
+            let missing = || PackageError::NotInstalled(identity.clone());
+            take_record(&mut updated, local).ok_or_else(missing)?;
+            // Its managed copy as recorded now: another Pane may have
+            // updated it since.
+            let record = take_record(&mut on_disk, local).ok_or_else(missing)?;
+            dirs.push(record.dir);
+            if let Some(Retain { title, at }) = retain {
                 put_retained(&mut updated, local, title.clone(), *at);
+                put_retained(&mut on_disk, local, title.clone(), *at);
             }
         }
-        write_registry(&self.dir, &updated)
+        write_registry(&self.dir, &on_disk)
             .map_err(|error| PackageError::Storage(error.to_string()))?;
         *registry = updated;
-        let mut listed = registry.clone();
-        let failed: Vec<Option<(PathBuf, String)>> = dirs
+        let failed: Vec<Option<(String, PathBuf, String)>> = dirs
             .into_iter()
             .map(|dir| {
                 let location = self.dir.join(PACKAGES_DIR).join(&dir);
                 match fs::remove_dir_all(&location) {
                     Ok(()) => None,
                     Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-                    Err(error) => {
-                        listed.leftovers.push(dir);
-                        Some((location, error.to_string()))
-                    }
+                    Err(error) => Some((dir, location, error.to_string())),
                 }
             })
             .collect();
-        let recorded = failed.iter().all(Option::is_none)
-            || match write_registry(&self.dir, &listed) {
-                Ok(()) => {
-                    *registry = listed;
-                    true
-                }
-                Err(_) => false,
-            };
+        let left: Vec<String> = failed
+            .iter()
+            .flatten()
+            .map(|(dir, ..)| dir.clone())
+            .collect();
+        let recorded = left.is_empty() || {
+            on_disk.leftovers.extend(left.iter().cloned());
+            let written = write_registry(&self.dir, &on_disk).is_ok();
+            if written {
+                registry.leftovers.extend(left);
+            }
+            written
+        };
         Ok(failed
             .into_iter()
             .map(|failed| match failed {
                 None => Leftover::None,
-                Some((location, error)) if recorded => Leftover::Listed(location, error),
-                Some((location, error)) => Leftover::Unlisted(location, error),
+                Some((_, location, error)) if recorded => Leftover::Listed(location, error),
+                Some((_, location, error)) => Leftover::Unlisted(location, error),
             })
             .collect())
     }
@@ -1731,6 +1750,12 @@ impl Store {
 /// Records in `registry` that data is kept for the local source `local`,
 /// last uninstalled as `title`: at position `at` among the records if
 /// given, else last.
+/// Removes and returns the record of the installed package from `local`.
+fn take_record(registry: &mut RegistryJson, local: &str) -> Option<RecordJson> {
+    let index = registry.packages.iter().position(|r| r.local == local)?;
+    Some(registry.packages.remove(index))
+}
+
 fn put_retained(registry: &mut RegistryJson, local: &str, title: String, at: Option<usize>) {
     registry.retained.retain(|record| record.local != local);
     let record = RetainedJson {
