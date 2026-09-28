@@ -243,13 +243,7 @@ impl Pending {
         }
         let last = beats(&self.alive);
         thread::sleep(Duration::from_millis(200));
-        // A reload may remove the old managed copy, heartbeat included, just
-        // after its helper ended: a heartbeat gone is not one that beats.
-        let now = beats(&self.alive);
-        assert!(
-            now.is_none() || now == last,
-            "the helper still beats: {last:?} then {now:?}"
-        );
+        assert_eq!(beats(&self.alive), last, "the helper still beats");
     }
 }
 
@@ -821,21 +815,18 @@ fn a_development_build_reloaded_while_the_helper_runs_ends_its_process() {
     // reloading it stops the running helper before its copy is replaced.
     fs::write(installed.folder.join("notes.txt"), "saved").unwrap();
     pending.assert_stopped(&installed.runtime);
-    // Under load the watcher may report the save twice, so a second build
-    // can follow the first: wait for the reload that ends them.
     let started = Instant::now();
     while installed
         .launcher
         .development(&installed.identity)
         .is_none_or(|development| development.finished == 0)
-        || installed.launcher.view().status != Status::Result("Reloaded Helper sample".into())
     {
-        assert!(
-            started.elapsed() < STOPPED_WITHIN,
-            "not reloaded: {:?}",
-            installed.launcher.view().status
-        );
+        assert!(started.elapsed() < STOPPED_WITHIN, "not reloaded");
         thread::sleep(Duration::from_millis(5));
     }
+    assert_eq!(
+        installed.launcher.view().status,
+        Status::Result("Reloaded Helper sample".into())
+    );
     assert_eq!(installed.run("Echo through the helper"), echoed());
 }
