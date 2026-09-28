@@ -9,6 +9,13 @@
 //! Every reply is checked against the screen it was requested from: once the
 //! user has left that screen, the reply is discarded, and a custom view that
 //! opened after the user left is closed again.
+//!
+//! A call into an installed package also belongs to the package's
+//! generation current when the user asked for it (see `generation`):
+//! disabling, reloading or updating the package ends it, which stops the call
+//! in the runtime, and its answer is never shown, even on a screen that is
+//! still current. Leaving a screen only discards its replies; it does not
+//! stop the call.
 
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
@@ -19,6 +26,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 mod indexed;
 
 use crate::extension_data::{ExtensionData, PackageData};
+use crate::generation::End;
 use crate::links::{self, LinkOpener, NoOpener};
 use crate::operations::{self, Installed};
 use crate::packages::{
@@ -654,12 +662,16 @@ impl Launcher {
     ) {
         for (command, data) in commands {
             let answer = match self.runtime() {
-                Ok(runtime) => runtime.indexed_results_with(&command.component, data).await,
+                Ok(runtime) => {
+                    runtime
+                        .indexed_results_with(&command.component, data.clone())
+                        .await
+                }
                 Err(error) => Err(error),
             };
             let mut state = self.lock();
             let state = &mut *state;
-            if disabled_owner(state, &command.component).is_some() {
+            if data.as_ref().and_then(PackageData::stopped).is_some() {
                 continue;
             }
             state.indexes.answer(&command, answer);
@@ -764,7 +776,7 @@ impl Launcher {
             let answer = match self.runtime() {
                 Ok(runtime) => {
                     runtime
-                        .root_results_with(&command.component, &query, data)
+                        .root_results_with(&command.component, &query, data.clone())
                         .await
                 }
                 Err(error) => Err(error),
@@ -776,8 +788,8 @@ impl Launcher {
                 return;
             }
             let state = &mut *state;
-            // A command disabled meanwhile contributes nothing.
-            if disabled_owner(state, &command.component).is_some() {
+            // A command disabled or replaced meanwhile contributes nothing.
+            if data.as_ref().and_then(PackageData::stopped).is_some() {
                 continue;
             }
             state
@@ -927,6 +939,14 @@ impl Launcher {
         };
         let generation = state.screen_generation;
         let open = state.open.clone();
+        // A call into the package belongs to its generation as of now, not
+        // as of when the returned future first runs.
+        let called = match &entry {
+            Some(Entry::Open(component)) => Some(component),
+            Some(Entry::Run(_) | Entry::CustomView(..)) => open.as_ref(),
+            _ => None,
+        };
+        let data = called.and_then(|component| self.data_in(&state, component));
         drop(state);
         let launcher = self.clone();
         async move {
@@ -937,13 +957,17 @@ impl Launcher {
                 launcher.finish_reload(generation, reload).await;
             }
             match entry {
-                Some(Entry::Open(component)) => launcher.open_command(generation, component).await,
+                Some(Entry::Open(component)) => {
+                    launcher.open_command(generation, component, data).await
+                }
                 Some(Entry::OpenApplication { id, name }) => {
                     launcher.open_application(generation, id, name).await
                 }
                 Some(Entry::Run(item_id)) => {
                     if let Some(component) = open {
-                        launcher.run_action(generation, component, item_id).await
+                        launcher
+                            .run_action(generation, component, item_id, data)
+                            .await
                     }
                 }
                 Some(Entry::Install(folder, mode)) => {
@@ -956,7 +980,7 @@ impl Launcher {
                 Some(Entry::CustomView(item_id, info)) => {
                     if let Some(component) = open {
                         launcher
-                            .open_custom_view(generation, component, item_id, info)
+                            .open_custom_view(generation, component, item_id, info, data)
                             .await
                     }
                 }
@@ -1218,7 +1242,11 @@ impl Launcher {
             state.packages.push(installed);
             return false;
         };
-        // The replaced copy's code is not run again.
+        // The replaced copy's code is not run again: its generation ends,
+        // which stops its pending calls, and the new code runs in a new one.
+        if let Some(installation) = &self.installation {
+            installation.data.replace_code(&installed.identity);
+        }
         let replaced: Vec<PathBuf> = package
             .commands()
             .into_iter()
@@ -1465,11 +1493,14 @@ impl Launcher {
             state.view.status = Status::Running;
         }
         let generation = state.screen_generation;
+        let data = submission
+            .as_ref()
+            .and_then(|(component, ..)| self.data_in(state, component));
         let launcher = self.clone();
         async move {
             if let Some((component, item_id, values)) = submission {
                 launcher
-                    .submit(generation, component, item_id, values)
+                    .submit(generation, component, item_id, values, data)
                     .await
             }
         }
@@ -1484,12 +1515,12 @@ impl Launcher {
         component: PathBuf,
         item_id: String,
         values: Vec<FieldValue>,
+        data: Option<PackageData>,
     ) {
-        let data = self.data_of(&component);
         let result = match self.runtime() {
             Ok(runtime) => {
                 runtime
-                    .submit_form_with(&component, &item_id, values.clone(), data)
+                    .submit_form_with(&component, &item_id, values.clone(), data.clone())
                     .await
             }
             Err(error) => Err(error),
@@ -1499,8 +1530,8 @@ impl Launcher {
         };
         let state = &mut *state;
         state.form.as_mut().expect("a form is open").submitting = false;
-        if let Some(problem) = disabled_owner(state, &component) {
-            // Disabled while it was submitting: its answer is not shown.
+        if let Some(problem) = stopped(state, &component, &data) {
+            // Stopped while it was submitting: its answer is not shown.
             state.view.status = Status::Error(problem);
             return;
         }
@@ -1676,22 +1707,26 @@ impl Launcher {
         component: PathBuf,
         item_id: String,
         info: CustomViewInfo,
+        data: Option<PackageData>,
     ) {
-        let data = self.data_of(&component);
         let result = match self.runtime() {
-            Ok(runtime) => runtime.open_view_with(&component, &item_id, data).await,
+            Ok(runtime) => {
+                runtime
+                    .open_view_with(&component, &item_id, data.clone())
+                    .await
+            }
             Err(error) => Err(error),
         };
         let current = self.lock_if_current(generation);
-        let disabled = current
+        let stopped = current
             .as_ref()
-            .and_then(|state| disabled_owner(state, &component));
-        let Some(mut state) = current.filter(|_| disabled.is_none()) else {
+            .and_then(|state| stopped(state, &component, &data));
+        let Some(mut state) = current.filter(|_| stopped.is_none()) else {
             if let (Ok((id, _)), Ok(runtime)) = (result, self.runtime()) {
                 runtime.close_view(id);
             }
-            if let Some(problem) = disabled {
-                // Disabled while it was opening.
+            if let Some(problem) = stopped {
+                // Stopped while it was opening.
                 self.lock().view.status = Status::Error(problem);
             }
             return;
@@ -1885,40 +1920,49 @@ impl Launcher {
         };
     }
 
-    async fn run_action(&self, generation: u64, component: PathBuf, item_id: String) {
-        let data = self.data_of(&component);
+    async fn run_action(
+        &self,
+        generation: u64,
+        component: PathBuf,
+        item_id: String,
+        data: Option<PackageData>,
+    ) {
         let result = match self.runtime() {
-            Ok(runtime) => runtime.run_action_with(&component, &item_id, data).await,
+            Ok(runtime) => {
+                runtime
+                    .run_action_with(&component, &item_id, data.clone())
+                    .await
+            }
             Err(error) => Err(error),
         };
         let Some(mut state) = self.lock_if_current(generation) else {
             return;
         };
-        state.view.status = match (disabled_owner(&state, &component), result) {
-            // Disabled while it was running: its answer is not shown.
+        state.view.status = match (stopped(&state, &component, &data), result) {
+            // Stopped while it was running: its answer is not shown.
             (Some(problem), _) => Status::Error(problem),
             (None, Ok(answer)) => Status::Result(answer),
             (None, Err(error)) => Status::Error(error.to_string()),
         };
     }
 
-    async fn open_command(&self, generation: u64, component: PathBuf) {
-        let data = self.data_of(&component);
+    async fn open_command(&self, generation: u64, component: PathBuf, data: Option<PackageData>) {
         let result = match self.runtime() {
-            Ok(runtime) => runtime.get_view_with(&component, data).await,
+            Ok(runtime) => runtime.get_view_with(&component, data.clone()).await,
             Err(error) => Err(error),
         };
         let Some(mut state) = self.lock_if_current(generation) else {
             return;
         };
-        if let Some(problem) = disabled_owner(&state, &component) {
+        let end = data.as_ref().and_then(PackageData::stopped);
+        if end == Some(End::Disabled) {
             // Disabled while it was opening.
-            state.view.status = Status::Error(problem);
+            state.view.status = Status::Error(disabled(&state, &component));
             return;
         }
-        if self.is_replaced(&state, &component) {
-            // Reloaded or updated while it was opening: the answer came from
-            // code that no longer runs, or from none. Its package's commands
+        if end == Some(End::Replaced) {
+            // Reloaded or updated while it was opening: the call was stopped,
+            // or its answer came from code that no longer runs. Its package's commands
             // are in root search again. Unless the reload or update has
             // reported its outcome meanwhile, this opening is still shown as
             // running, so it ends here.
@@ -1968,20 +2012,16 @@ impl Launcher {
         }
     }
 
-    /// The extension data of the installed package `component` belongs to;
-    /// `None`
-    /// for a command built into Pane.
+    /// The extension data of the installed package `component` belongs to,
+    /// in its current generation; `None` for a command built into Pane.
     fn data_of(&self, component: &Path) -> Option<PackageData> {
-        let state = self.lock();
-        let package = owner(&state.packages, component)?;
-        Some(self.installation.as_ref()?.data.owned_by(&package.identity))
+        self.data_in(&self.lock(), component)
     }
 
-    /// Whether `component` belongs to a managed copy that has since been
-    /// replaced: it is neither built into Pane nor in an installed package.
-    fn is_replaced(&self, state: &State, component: &Path) -> bool {
-        !self.commands.iter().any(|c| c.component == component)
-            && owner(&state.packages, component).is_none()
+    /// Like [`Launcher::data_of`], with the state locked.
+    fn data_in(&self, state: &State, component: &Path) -> Option<PackageData> {
+        let package = owner(&state.packages, component)?;
+        Some(self.installation.as_ref()?.data.owned_by(&package.identity))
     }
 
     fn runtime(&self) -> Result<&Runtime, CallError> {
@@ -2008,11 +2048,23 @@ fn owner<'a>(packages: &'a [InstalledPackage], component: &Path) -> Option<&'a I
         .find(|package| component.starts_with(&package.location))
 }
 
-/// "<title> is disabled" if `component` belongs to a disabled package.
-fn disabled_owner(state: &State, component: &Path) -> Option<String> {
-    owner(&state.packages, component)
-        .filter(|package| !package.enabled)
-        .map(|package| format!("{} is disabled", package.title()))
+/// Why the answer of a call into `component` made with `data` is not shown:
+/// the generation it belonged to has ended, since its package was disabled
+/// ("<title> is disabled") or its code replaced. `None` while it lasts, and
+/// for a command built into Pane.
+fn stopped(state: &State, component: &Path, data: &Option<PackageData>) -> Option<String> {
+    match data.as_ref()?.stopped()? {
+        End::Disabled => Some(disabled(state, component)),
+        End::Replaced => Some(CallError::Replaced.to_string()),
+    }
+}
+
+/// "<title> is disabled", for the package `component` belongs to.
+fn disabled(state: &State, component: &Path) -> String {
+    match owner(&state.packages, component) {
+        Some(package) => format!("{} is disabled", package.title()),
+        None => CallError::Disabled.to_string(),
+    }
 }
 
 /// One row per installed package, saying whether it is enabled and which

@@ -4,6 +4,7 @@
 pub mod applications;
 mod atomic;
 mod extension_data;
+mod generation;
 mod launcher;
 mod links;
 mod operations;
