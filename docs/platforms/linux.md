@@ -64,6 +64,26 @@ Rendering, keyboard focus, selection, guest execution and result display all
 worked natively. Mesa reported "No DRI3 support detected - required for
 presentation" on stderr (expected under Xvfb); frames were still presented.
 
+### Installing a local package (#9)
+
+The smoke then keeps Pane's data in `<output-dir>/data` (`PANE_DATA_DIR`),
+starts `pane --install target/guests/packages/sample-rust`, presses Enter on
+**Install**, opens and runs the installed command, and restarts Pane. Run
+locally on 2026-09-28 (Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64,
+same Xvfb/lavapipe setup), all screenshot checks passed:
+
+| Step | Evidence |
+| --- | --- |
+| Package screen: source folder, version, commands, compatibility, Install | `6-package.png` (not committed: it shows the local checkout path) |
+| Installed; root lists the samples, the installed "Rust sample", then the install row; status "Installed Rust sample" | [7-installed.png](evidence/linux-x11/7-installed.png) |
+| The installed command answers "Hello from the Rust guest" | [8-installed-result.png](evidence/linux-x11/8-installed-result.png) |
+| After a restart the installed command is still listed | [9-restarted.png](evidence/linux-x11/9-restarted.png) |
+
+The folder picker itself is the XDG desktop portal, which this Xvfb session
+does not run, so the smoke uses `--install`; the picker flow is covered by the
+GPUI window tests (`crates/pane/tests/install.rs`). The macOS and Windows
+smokes do not include this phase yet.
+
 ## Text input and accessibility findings
 
 - **Text input / IME:** the current controls have no text field (root search

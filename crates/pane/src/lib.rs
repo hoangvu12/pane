@@ -3,11 +3,11 @@
 //! The window is a thin renderer over [`pane_core::Launcher`]: key and mouse
 //! input call launcher actions, and each frame draws the launcher's snapshot.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gpui::{
-    App, Context, Div, FocusHandle, KeyBinding, Role, SharedString, Stateful, Window, actions, div,
-    prelude::*, rgb,
+    App, Context, Div, FocusHandle, KeyBinding, PathPromptOptions, Role, SharedString, Stateful,
+    Window, actions, div, prelude::*, rgb,
 };
 use pane_core::{CommandRegistration, Launcher, Row, Screen, Status};
 
@@ -73,20 +73,49 @@ pub fn sample_commands() -> Vec<CommandRegistration> {
 /// `%LOCALAPPDATA%\Pane\cache` on Windows, `~/Library/Caches/Pane` on
 /// macOS and `$XDG_CACHE_HOME/pane` (default `~/.cache/pane`) elsewhere.
 pub fn cache_dir() -> Option<PathBuf> {
-    let env = |name| {
-        std::env::var_os(name)
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-    };
+    platform_dir(
+        r"Pane\cache",
+        "Library/Caches/Pane",
+        ("XDG_CACHE_HOME", ".cache"),
+    )
+}
+
+/// Where Pane keeps installed extension packages: `PANE_DATA_DIR` when set,
+/// otherwise `%LOCALAPPDATA%\Pane\data` on Windows,
+/// `~/Library/Application Support/Pane` on macOS and `$XDG_DATA_HOME/pane`
+/// (default `~/.local/share/pane`) elsewhere. Packages go in its
+/// `extensions` folder.
+pub fn data_dir() -> Option<PathBuf> {
+    env_dir("PANE_DATA_DIR").or_else(|| {
+        platform_dir(
+            r"Pane\data",
+            "Library/Application Support/Pane",
+            ("XDG_DATA_HOME", ".local/share"),
+        )
+    })
+}
+
+/// A per-user folder: `windows` under `%LOCALAPPDATA%`, `macos` under
+/// `$HOME`, and elsewhere `pane` under the XDG variable `xdg.0`, or under
+/// `$HOME/xdg.1` when that is unset.
+fn platform_dir(windows: &str, macos: &str, xdg: (&str, &str)) -> Option<PathBuf> {
     if cfg!(target_os = "windows") {
-        env("LOCALAPPDATA").map(|dir| dir.join("Pane").join("cache"))
+        env_dir("LOCALAPPDATA").map(|dir| dir.join(windows))
     } else if cfg!(target_os = "macos") {
-        env("HOME").map(|home| home.join("Library/Caches/Pane"))
+        env_dir("HOME").map(|home| home.join(macos))
     } else {
-        env("XDG_CACHE_HOME")
-            .or_else(|| env("HOME").map(|home| home.join(".cache")))
+        let (variable, fallback) = xdg;
+        env_dir(variable)
+            .or_else(|| env_dir("HOME").map(|home| home.join(fallback)))
             .map(|dir| dir.join("pane"))
     }
+}
+
+/// The folder in environment variable `name`, if it is set and not empty.
+fn env_dir(name: &str) -> Option<PathBuf> {
+    std::env::var_os(name)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
 }
 
 /// The launcher window's root view.
@@ -128,9 +157,56 @@ impl LauncherWindow {
         cx.notify();
     }
 
+    /// Shows the package in `folder` with its identity and compatibility,
+    /// redrawing when the check finishes.
+    pub fn preview_package(&mut self, folder: &Path, cx: &mut Context<Self>) {
+        let pending = self.launcher.preview_package(folder);
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            pending.await;
+            this.update(cx, |_, cx| cx.notify()).ok();
+        })
+        .detach();
+    }
+
+    /// Asks for a package folder with the platform's folder picker, then
+    /// previews it. Cancelling leaves root search as it was.
+    fn choose_package_folder(&mut self, cx: &mut Context<Self>) {
+        let chosen = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Install".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let folder = match chosen.await {
+                Ok(Ok(Some(paths))) => paths.into_iter().next(),
+                Ok(Ok(None)) | Err(_) => None,
+                Ok(Err(error)) => {
+                    this.update(cx, |this, cx| {
+                        this.launcher
+                            .show_error(format!("Could not open a folder picker: {error:#}"));
+                        cx.notify();
+                    })
+                    .ok();
+                    None
+                }
+            };
+            if let Some(folder) = folder {
+                this.update(cx, |this, cx| this.preview_package(&folder, cx))
+                    .ok();
+            }
+        })
+        .detach();
+    }
+
     /// Starts the selected row's action and redraws when the guest answers,
     /// without blocking the window meanwhile.
     fn activate_selected(&mut self, cx: &mut Context<Self>) {
+        if self.launcher.selected_asks_for_folder() {
+            self.choose_package_folder(cx);
+            return;
+        }
         let pending = self.launcher.activate_selected();
         cx.notify();
         cx.spawn(async move |this, cx| {
@@ -185,7 +261,16 @@ impl Render for LauncherWindow {
                 "This command has no items.",
                 "↑↓ select · Enter run · Esc back",
             ),
+            Screen::Package => ("Nothing to install.", "Enter confirm · Esc back"),
         };
+        let details = view.details.into_iter().enumerate().map(|(index, line)| {
+            div()
+                .id(("detail", index))
+                .debug_selector(|| format!("detail-{line}"))
+                .text_sm()
+                .text_color(rgb(0xaab4c0))
+                .child(line)
+        });
         let (status_selector, status_text, status_color): (&str, SharedString, u32) =
             match view.status {
                 Status::Idle => ("status-idle", hint.into(), 0x8a96a3),
@@ -217,6 +302,7 @@ impl Render for LauncherWindow {
             .bg(rgb(0x20252d))
             .text_color(rgb(0xf1f3f5))
             .child(div().text_xl().child(view.title.clone()))
+            .children(details)
             .child(
                 div()
                     .id("rows")

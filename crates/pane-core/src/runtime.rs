@@ -50,6 +50,8 @@ pub enum CallError {
     Load(String),
     /// The component needs interfaces Pane does not provide, such as WASI 0.2.
     Incompatible(Vec<String>),
+    /// The component does not implement Pane's extension interface.
+    Interface(String),
     /// The guest ran and reported an error.
     Guest(String),
     /// The guest trapped or otherwise failed while running.
@@ -67,6 +69,10 @@ impl fmt::Display for CallError {
                 f,
                 "Incompatible extension: Pane supports only WASI 0.3, but it imports {}",
                 imports.join(", ")
+            ),
+            CallError::Interface(reason) => write!(
+                f,
+                "Incompatible extension: it does not implement Pane's extension interface: {reason}"
             ),
             CallError::Guest(message) => write!(f, "The extension reported an error: {message}"),
             CallError::Trap(reason) => write!(f, "The extension crashed: {reason}"),
@@ -91,6 +97,13 @@ enum Request {
         component: PathBuf,
         item_id: String,
         reply: oneshot::Sender<Result<String, CallError>>,
+    },
+    Check {
+        component: PathBuf,
+        reply: oneshot::Sender<Result<(), CallError>>,
+    },
+    Forget {
+        components: Vec<PathBuf>,
     },
 }
 
@@ -152,6 +165,29 @@ impl Runtime {
             reply,
         })?;
         response.await.unwrap_or_else(|_| Err(stopped()))
+    }
+
+    /// Checks, without running any guest code, that `component` is a
+    /// component Pane can run: it compiles, imports only WASI 0.3 and exports
+    /// the extension interface. The check keeps nothing loaded.
+    pub async fn check(&self, component: &Path) -> Result<(), CallError> {
+        let (reply, response) = oneshot::channel();
+        self.send(Request::Check {
+            component: component.to_path_buf(),
+            reply,
+        })?;
+        response.await.unwrap_or_else(|_| Err(stopped()))
+    }
+
+    /// Drops the compiled code and live instances of `components`, for
+    /// example after their files were replaced or removed; a later call
+    /// loads the file again. Calls made afterwards see the effect; a call
+    /// already in progress finishes first. Nothing coordinates this with a
+    /// command the user has open: its instance's state is lost.
+    pub fn forget(&self, components: impl IntoIterator<Item = PathBuf>) {
+        let components = components.into_iter().collect();
+        // A stopped runtime holds nothing to forget.
+        let _ = self.send(Request::Forget { components });
     }
 
     fn send(&self, request: Request) -> Result<(), CallError> {
@@ -221,6 +257,15 @@ impl Host {
                     let result = self.run_action(&component, item_id).await;
                     let _ = reply.send(result);
                 }
+                Request::Check { component, reply } => {
+                    let _ = reply.send(self.check(&component));
+                }
+                Request::Forget { components } => {
+                    for component in &components {
+                        self.components.remove(component);
+                        self.instances.remove(component);
+                    }
+                }
             }
         }
     }
@@ -289,20 +334,35 @@ impl Host {
     /// Compiles `path` once and rejects components that import non-0.3 WASI.
     fn component(&mut self, path: &Path) -> Result<&Component, CallError> {
         if !self.components.contains_key(path) {
-            let component = Component::from_file(&self.engine, path)
-                .map_err(|error| CallError::Load(format!("{}: {error:#}", path.display())))?;
-            let unsupported: Vec<String> = component
-                .component_type()
-                .imports(&self.engine)
-                .map(|(name, _)| name.to_owned())
-                .filter(|name| name.starts_with("wasi:") && !name.contains(WASI_VERSION))
-                .collect();
-            if !unsupported.is_empty() {
-                return Err(CallError::Incompatible(unsupported));
-            }
+            let component = self.compile(path)?;
             self.components.insert(path.to_path_buf(), component);
         }
         Ok(&self.components[path])
+    }
+
+    fn compile(&self, path: &Path) -> Result<Component, CallError> {
+        let component = Component::from_file(&self.engine, path)
+            .map_err(|error| CallError::Load(format!("{}: {error:#}", path.display())))?;
+        let unsupported: Vec<String> = component
+            .component_type()
+            .imports(&self.engine)
+            .map(|(name, _)| name.to_owned())
+            .filter(|name| name.starts_with("wasi:") && !name.contains(WASI_VERSION))
+            .collect();
+        if !unsupported.is_empty() {
+            return Err(CallError::Incompatible(unsupported));
+        }
+        Ok(component)
+    }
+
+    /// Type-checks `path` against the linker and the extension world without
+    /// instantiating it, so no guest code runs.
+    fn check(&self, path: &Path) -> Result<(), CallError> {
+        let component = self.compile(path)?;
+        let interface = |error: wasmtime::Error| CallError::Interface(format!("{error:#}"));
+        let pre = self.linker.instantiate_pre(&component).map_err(interface)?;
+        bindings::ExtensionPre::new(pre).map_err(interface)?;
+        Ok(())
     }
 }
 

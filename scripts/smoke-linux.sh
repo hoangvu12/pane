@@ -4,7 +4,8 @@
 #
 # Requires Xvfb, xdotool, Python 3 with Pillow (screenshot checks and, without
 # ImageMagick's `import`, capture), plus a Vulkan driver (Mesa's lavapipe works without
-# a GPU). Set PANE_XVFB / PANE_XDOTOOL to use binaries outside PATH.
+# a GPU). Set PANE_XVFB / PANE_XDOTOOL to use binaries outside PATH. Pane keeps
+# installed packages in <output-dir>/data, not the user's data folder.
 # Usage: scripts/smoke-linux.sh <output-dir> [pane-binary]
 set -euo pipefail
 out=${1:-smoke}
@@ -12,6 +13,8 @@ pane=${2:-target/debug/pane}
 xvfb=${PANE_XVFB:-Xvfb}
 xdotool=${PANE_XDOTOOL:-xdotool}
 mkdir -p "$out"
+rm -rf "$out/data"
+export PANE_DATA_DIR=$out/data
 { grep PRETTY_NAME /etc/os-release; uname -srm; } >"$out/system.txt"   # the tested OS and architecture
 
 display=:$((90 + RANDOM % 100))
@@ -35,18 +38,30 @@ capture() {
       "$display" "$out/$1"
   fi
 }
-
-"$pane" 2>"$out/stderr.log" &
-pane_pid=$!
-window=
-for _ in $(seq 100); do
-  window=$("$xdotool" search --onlyvisible --pid "$pane_pid" 2>/dev/null | head -1) && [ -n "$window" ] && break
-  sleep 0.2
-done
-[ -n "$window" ] || { echo "Pane window did not appear"; exit 1; }
-sleep 2
-capture 1-root.png
 check() { python3 "$(dirname "$0")/check_screenshot.py" "$out/$1" "$2"; }
+
+# Starts Pane with the given arguments and focuses its window.
+start_pane() {
+  "$pane" "$@" 2>>"$out/stderr.log" &
+  pane_pid=$!
+  window=
+  for _ in $(seq 100); do
+    window=$("$xdotool" search --onlyvisible --pid "$pane_pid" 2>/dev/null | head -1) && [ -n "$window" ] && break
+    sleep 0.2
+  done
+  [ -n "$window" ] || { echo "Pane window did not appear"; exit 1; }
+  sleep 2
+}
+
+stop_pane() {
+  kill -0 "$pane_pid" || { echo "Pane exited during the smoke"; exit 1; }
+  kill "$pane_pid"
+  wait "$pane_pid" 2>/dev/null || true
+  pane_pid=
+}
+
+start_pane
+capture 1-root.png
 check 1-root.png 8a96a3   # the hint line: text renders
 "$xdotool" windowfocus --sync "$window"
 
@@ -63,6 +78,28 @@ done
 capture 5-back-to-root.png
 # Each command must have answered from its own guest, not the same view twice.
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{2,3,4}-result-*.png
+stop_pane
 
-kill -0 "$pane_pid" || { echo "Pane exited during the smoke"; exit 1; }
+# Install the assembled Rust sample package (the folder the picker would
+# return), then run its command. Root lists the three samples, the installed
+# command, then the install row.
+start_pane --install target/guests/packages/sample-rust
+"$xdotool" windowfocus --sync "$window"
+capture 6-package.png
+check 6-package.png aab4c0   # the package's identity and compatibility lines
+"$xdotool" key Return; sleep 2
+capture 7-installed.png
+check 7-installed.png 9fd8a8   # "Installed Rust sample"
+"$xdotool" key Return; sleep 3
+"$xdotool" key Return; sleep 2
+capture 8-installed-result.png
+check 8-installed-result.png 9fd8a8   # the installed guest's answer
+stop_pane
+
+# The installed command is still listed after a restart.
+start_pane
+capture 9-restarted.png
+check 9-restarted.png 8a96a3
+[ -f "$out/data/extensions/installed.json" ] || { echo "no install record"; exit 1; }
+stop_pane
 echo "screenshots in $out"

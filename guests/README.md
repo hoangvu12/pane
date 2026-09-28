@@ -17,6 +17,9 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
 - `prebuilt`: the JS and TS sample components, committed so that tests and
   `cargo run -p pane` need no JavaScript toolchain, with `manifest.json`
   recording their hashes and build inputs.
+- `packages`: the samples' package manifests (`pane.json`). `cargo xtask
+  guests` puts each one with its built component in
+  `target/guests/packages/<name>/`, a ready-to-install package.
 - `fixtures/faulty`: test fixture whose actions return an error or trap.
 - `fixtures/mixed-p2`: negative control that imports WASI 0.2 and must be rejected.
 
@@ -65,8 +68,9 @@ cd guests && cargo build --release --target wasm32-wasip2
 
 To try a rebuilt sample in the launcher, `cargo run -p pane` from the root; set
 `PANE_EXTENSIONS_DIR` to a directory containing `sample_rust.wasm`,
-`sample_js.wasm` and `sample_ts.wasm` to use different builds. Installing
-arbitrary extensions is not supported yet.
+`sample_js.wasm` and `sample_ts.wasm` to use different builds. To run your
+own command, make it a package and install it; see
+[Packaging and installing a local extension](#packaging-and-installing-a-local-extension).
 
 Toolchain used: Rust 1.98.1, `wit-bindgen` 0.62.0, `wasip3` 0.9.0+wasi-0.3.0;
 host Wasmtime and wasmtime-wasi 49.0.1.
@@ -158,3 +162,103 @@ through its libc, whatever the source uses, and is about 4.3 MB. Only Linux
 x86_64 builds have been run; the scripts avoid OS-specific paths, but Windows
 and macOS builds are unverified. See
 [tools/componentize-js](../tools/componentize-js/README.md) for the patch queue.
+
+## Packaging and installing a local extension
+
+A package is a folder with a `pane.json` manifest at its root and the built
+component of each command it lists. The same format serves Rust, JavaScript
+and TypeScript: Pane sees only components.
+
+```json
+{
+  "manifestVersion": 1,
+  "title": "Hello",
+  "version": "1.0.0",
+  "apiVersion": "0.1",
+  "commands": [
+    {
+      "id": "hello",
+      "title": "Say hi",
+      "subtitle": "Optional second line in root search",
+      "component": "target/wasm32-wasip2/release/hello.wasm"
+    }
+  ]
+}
+```
+
+- `manifestVersion` (required): the manifest format, currently `1`. A newer
+  number is refused with "a newer Pane is needed".
+- `title` (required): the display title. It is not the package's identity.
+- `version` (optional): shown before installing and after an update.
+- `apiVersion` (required): the `pane:extension` contract the components are
+  built against, `MAJOR.MINOR` (this Pane provides `0.1`, from
+  [`wit/extension.wit`](../wit/extension.wit)). Before 1.0 the minor version
+  must match; from 1.0, any minor version up to Pane's in the same major.
+- `commands` (required, at least one): `id` unique in the package, `title`,
+  optional `subtitle`, and `component`, a relative path inside the package
+  folder (no `..`, no absolute path) to a built component.
+
+Unknown fields are ignored. The component must exist when you install: a
+package whose component is not built is refused as source-only, with the
+missing path. Pane then checks each component without running it: it must
+compile, import only WASI 0.3 and export the extension interface.
+
+Where the component comes from is up to your build. A standalone Rust crate
+can point `component` at `target/wasm32-wasip2/release/<name>.wasm` inside
+the crate folder after `cargo build --release --target wasm32-wasip2`. A
+JavaScript or TypeScript package can build into its own folder with
+`python3 tools/componentize-js/pane_js.py build <package dir> <package dir>/dist/<name>.wasm`
+and point at `dist/<name>.wasm`. The repository's samples live in one Cargo
+workspace and a prebuilt folder, so their manifests are in
+[`packages/`](packages) and `cargo xtask guests` assembles each with its
+component into `target/guests/packages/<name>/`.
+
+To install, choose **Install extension from folder…** at the end of root
+search, pick the package folder, check the source, version, commands and
+compatibility Pane shows, and press Enter on **Install**. The package's
+commands appear in root search, the first one selected. From the command line,
+`cargo run -p pane -- --install target/guests/packages/sample-rust` (or
+`pane --install <folder>`) opens the same screen, which also helps where no
+folder picker is available: on Linux the picker is the desktop portal
+(`xdg-desktop-portal`), and without one Pane shows why it could not open it.
+
+What installing does:
+
+- **Identity.** The package is identified by its folder's absolute path as
+  the operating system resolves it (`std::fs::canonicalize`): symbolic links
+  and `..` are followed, and on file systems that ignore letter case or
+  Unicode normalization (the defaults on Windows and macOS) the stored
+  spelling is used, so two spellings of one folder are one package. Pane does
+  no case folding or normalization of its own, so on a case-sensitive Linux
+  file system `Hello` and `hello` are two packages. On Windows the `\\?\`
+  prefix is dropped. A folder path that is not valid Unicode is refused.
+  Moving or renaming the folder makes it a different package.
+- **Copy.** `pane.json` and the listed components (nothing else) are copied
+  into Pane's data folder, under `extensions/packages/<n>/`, and recorded in
+  `extensions/installed.json`. Your folder is never written, and the
+  installed copy keeps working if the folder changes or is deleted. The data
+  folder is `%LOCALAPPDATA%\Pane\data` on Windows,
+  `~/Library/Application Support/Pane` on macOS and `$XDG_DATA_HOME/pane`
+  (default `~/.local/share/pane`) on Linux; `PANE_DATA_DIR` overrides it.
+- **Duplicates and updates.** Installing a folder that is already installed is
+  refused. Choosing it again shows **Update** instead, which replaces the
+  installed copy with the folder's current contents under the same identity,
+  whatever its new title or version. Two different folders are two packages,
+  even with identical contents, and nothing is merged or switched between
+  them.
+- **Listing.** Installed commands are listed from the manifests alone; no
+  guest runs until you open a command. A damaged installed copy stays listed
+  with its problem.
+
+Disabling, uninstalling and rebuilding on save are not implemented yet; to
+pick up a rebuilt component, choose the folder again and Update.
+
+Known limits of local packages so far:
+
+- The manifest cannot yet declare the operating systems a package supports
+  (Q34's supported-OS metadata); that is deferred to a later ticket, so a
+  package is offered on every OS.
+- An update is not coordinated with a command that is running or open: the
+  replaced copy's code is dropped, so an open command of the package loses
+  its state and may fail until you open it again from root search. Staged
+  activation that waits for running commands comes with reload (#11, #14).
