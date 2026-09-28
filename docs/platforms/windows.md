@@ -122,7 +122,7 @@ here is checked only through the tests' recording opener. Not run yet.
 
 ## Global hotkeys (#32)
 
-The smoke's hotkey phase (screenshots 49 to 55, [global hotkeys](../hotkeys.md#checks))
+The smoke's hotkey phase (screenshots 52 to 58, [global hotkeys](../hotkeys.md#checks))
 assigns Ctrl+Alt+G to Greeting on its hotkey screen, minimizes Pane,
 presses it with `SendKeys` and checks that Pane's window is the foreground
 window again with Greeting open; then again after a restart; then, with the

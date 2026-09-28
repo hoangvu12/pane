@@ -440,8 +440,8 @@ stop_pane
 # quicklink (Quicklinks is selected once installed, and "Create quicklink" is
 # its first item). After a restart, typing part of its name lists it,
 # selected, and Enter opens its address with the system's link handler:
-# xdg-open, with no desktop session, only BROWSER to choose a browser, and
-# BROWSER a script that records the address instead of starting one.
+# xdg-open, with no desktop session and a script that records the address,
+# instead of starting a browser, as the only handler for web links.
 start_pane --install target/guests/packages/quicklinks
 "$xdotool" windowfocus --sync "$window"
 "$xdotool" key Return; sleep 2   # Install
@@ -455,17 +455,38 @@ capture 46-quicklink-saved.png
 check 46-quicklink-saved.png 9fd8a8   # "Saved quicklink “Pane issues”"
 "$xdotool" key Escape key Escape; sleep 1
 stop_pane
-mkdir -p "$out/xdg"
 printf '#!/bin/sh\necho "$1" >"%s/opened-link.txt"\n' "$out" >"$out/browser.sh"
 chmod +x "$out/browser.sh"
 rm -f "$out/opened-link.txt"
-# No desktop session or setting of the user's may choose a browser, only
-# BROWSER: xdg-open otherwise asks gio or the MIME defaults, which start one.
-unset XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP DESKTOP_SESSION GDMSESSION \
-  DBUS_SESSION_BUS_ADDRESS GNOME_DESKTOP_SESSION_ID KDE_FULL_SESSION
+# Only the recording script may open the link. No desktop session may choose
+# a browser: xdg-open would ask it (gio, kde-open, ...) for the user's.
+# XDG_CONFIG_HOME and XDG_DATA_HOME of the smoke's own, replacing the user's,
+# make the script the default for web links, and every way xdg-open finds a
+# default checks those before the system's; BROWSER, its last resort, is the
+# script too. XDG_DATA_DIRS and XDG_CONFIG_DIRS keep the system's folders:
+# Pane's Vulkan driver is found there (/usr/share/vulkan/icd.d), and without
+# one Pane has no window on CI.
+unset XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP DESKTOP_SESSION GDMSESSION DBUS_SESSION_BUS_ADDRESS \
+  GNOME_DESKTOP_SESSION_ID KDE_FULL_SESSION KDE_SESSION_VERSION MATE_DESKTOP_SESSION_ID
 xdg=$(cd "$out" && pwd)/xdg
-export BROWSER="$(cd "$out" && pwd)/browser.sh" XDG_CONFIG_HOME="$xdg" XDG_CONFIG_DIRS="$xdg" \
-  XDG_DATA_HOME="$xdg" XDG_DATA_DIRS="$xdg"
+rm -rf "$xdg"
+mkdir -p "$xdg/applications"
+cat >"$xdg/applications/pane-smoke-browser.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Pane Smoke Browser
+Exec=$(cd "$out" && pwd)/browser.sh %u
+MimeType=x-scheme-handler/http;x-scheme-handler/https;
+NoDisplay=true
+EOF
+printf '[Default Applications]\nx-scheme-handler/http=pane-smoke-browser.desktop\nx-scheme-handler/https=pane-smoke-browser.desktop\n' \
+  >"$xdg/mimeapps.list"
+cp "$xdg/mimeapps.list" "$xdg/applications/mimeapps.list"
+export BROWSER="$(cd "$out" && pwd)/browser.sh" XDG_CONFIG_HOME="$xdg" XDG_DATA_HOME="$xdg"
+if command -v xdg-mime >/dev/null; then
+  handler=$(xdg-mime query default x-scheme-handler/https)
+  [ "$handler" = pane-smoke-browser.desktop ] || { echo "web links would open with $handler, not the smoke's script"; exit 1; }
+fi
 start_pane
 "$xdotool" windowfocus --sync "$window"
 "$xdotool" type --delay 50 'pane iss'; sleep 2
@@ -478,11 +499,44 @@ check 48-quicklink-opened.png 9fd8a8   # "Opened https://example.com/pane-issues
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{46-quicklink-saved,47-quicklink-found,48-quicklink-opened}.png
 stop_pane
 
+# Uninstall the settings sample, keeping its saved data: its row follows the
+# eight Clear cache rows. Pane asks first, showing its saved data, and the first
+# choice keeps its settings and content while its copy and credential go.
+# Installing the same folder again finds its formal style and note, signed out.
+start_pane
+"$xdotool" windowfocus --sync "$window"
+for ((i = 0; i < 20; i++)); do "$xdotool" key Down; done   # the last row
+"$xdotool" key Return; sleep 1
+for ((i = 0; i < 25; i++)); do "$xdotool" key Down; done
+"$xdotool" key Return; sleep 1   # "Uninstall Settings sample"
+capture 49-confirm-uninstall.png
+check 49-confirm-uninstall.png aab4c0   # what is removed and the saved data
+"$xdotool" key Return; sleep 2   # "Uninstall and keep saved data"
+capture 50-uninstalled.png
+check 50-uninstalled.png 9fd8a8   # "Uninstalled Settings sample; its settings and content are kept"
+stop_pane
+grep -q '"retained"' "$out/data/extensions/installed.json" || { echo "kept data not recorded"; exit 1; }
+if grep -q 'sample-token' "$out/data/extensions/credentials.json"; then echo "credential not removed"; exit 1; fi
+grep -q '"greeting-style": "formal"' "$out/data/extensions/settings.json" || { echo "setting not kept"; exit 1; }
+grep -q '"note": "Water the plants"' "$out/data/extensions/content.json" || { echo "note not kept"; exit 1; }
+start_pane --install target/guests/packages/sample-settings
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 2   # Install; Greeting is selected
+"$xdotool" key Return; sleep 3   # open Greeting
+for ((i = 0; i < 5; i++)); do "$xdotool" key Down; done
+"$xdotool" key Return; sleep 2   # "Show what Pane keeps"
+capture 51-reinstalled.png
+check 51-reinstalled.png 9fd8a8   # "Style: formal · Note: Water the plants · Signed in: no ..."
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/43-kept-after-clear.png" "$out/51-reinstalled.png"
+"$xdotool" key Escape; sleep 1
+stop_pane
+if grep -q '"retained"' "$out/data/extensions/installed.json"; then echo "retained record not dropped"; exit 1; fi
+
 # Global hotkeys: in Manage extensions, the settings sample's command,
 # Greeting, is given Ctrl+Alt+G by pressing it on its hotkey screen (its row
-# follows the package's state, Reload and Clear cache rows). With Pane no
-# longer focused, pressing the hotkey opens Greeting in Pane's window, also
-# after a restart; once the extension is disabled, pressing it does nothing.
+# follows the package's state, Reload, Clear cache and Uninstall rows).
+# With Pane no longer focused, pressing the hotkey opens Greeting in Pane's
+# window, also after a restart; once the extension is disabled, pressing it does nothing.
 # A data folder of its own keeps the rows in a known order. Only the Xvfb
 # display is touched: Pane's key grab is on DISPLAY, and WAYLAND_DISPLAY is
 # unset for the whole smoke.
@@ -498,38 +552,38 @@ start_pane --install target/guests/packages/sample-settings
 "$xdotool" key Return; sleep 2   # Install; Greeting is selected
 for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
 "$xdotool" key Return; sleep 1
-"$xdotool" key Down Down Down Return; sleep 1   # "Hotkey for Greeting"
-capture 49-hotkey-screen.png
-check 49-hotkey-screen.png aab4c0   # "Press the keys that should open Greeting ..."
+"$xdotool" key Down Down Down Down Return; sleep 1   # "Hotkey for Greeting"
+capture 52-hotkey-screen.png
+check 52-hotkey-screen.png aab4c0   # "Press the keys that should open Greeting ..."
 "$xdotool" key ctrl+alt+g; sleep 2
-capture 50-hotkey-assigned.png
-check 50-hotkey-assigned.png 9fd8a8   # "Ctrl+Alt+G now opens Greeting"
+capture 53-hotkey-assigned.png
+check 53-hotkey-assigned.png 9fd8a8   # "Ctrl+Alt+G now opens Greeting"
 "$xdotool" key Escape; sleep 1   # root search
 unfocus_pane
-capture 51-unfocused.png
+capture 54-unfocused.png
 press_hotkey
-capture 52-hotkey-opened.png
-check 52-hotkey-opened.png 364355 3000   # Greeting's first item, selected
-python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{50-hotkey-assigned,52-hotkey-opened}.png
+capture 55-hotkey-opened.png
+check 55-hotkey-opened.png 364355 3000   # Greeting's first item, selected
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{53-hotkey-assigned,55-hotkey-opened}.png
 stop_pane
 grep -q '"ctrl+alt+g"' "$PANE_DATA_DIR/extensions/hotkeys.json" || { echo "hotkey not recorded"; exit 1; }
 start_pane
 unfocus_pane
 press_hotkey
-capture 53-hotkey-after-restart.png
-check 53-hotkey-after-restart.png 364355 3000   # Greeting's first item, selected
-python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{51-unfocused,53-hotkey-after-restart}.png
+capture 56-hotkey-after-restart.png
+check 56-hotkey-after-restart.png 364355 3000   # Greeting's first item, selected
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{54-unfocused,56-hotkey-after-restart}.png
 "$xdotool" windowfocus --sync "$window"   # no window manager: Pane is focused here
 "$xdotool" key Escape; sleep 1
 for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
 "$xdotool" key Return; sleep 1
 "$xdotool" key Return; sleep 2   # disable Settings sample
 "$xdotool" key Escape; sleep 1
-capture 54-disabled.png   # root search
+capture 57-disabled.png   # root search
 unfocus_pane
 press_hotkey
 "$xdotool" windowfocus --sync "$window"; sleep 1
-capture 55-disabled-pressed.png   # still root search: nothing opened
-python3 "$(dirname "$0")/check_screenshot.py" --same "$out"/{54-disabled,55-disabled-pressed}.png
+capture 58-disabled-pressed.png   # still root search: nothing opened
+python3 "$(dirname "$0")/check_screenshot.py" --same "$out"/{57-disabled,58-disabled-pressed}.png
 stop_pane
 echo "screenshots in $out"

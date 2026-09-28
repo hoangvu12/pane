@@ -29,6 +29,8 @@ pub(crate) enum End {
     /// The package's code was replaced by a reload or an update; the new
     /// code runs in a new generation.
     Replaced,
+    /// The user uninstalled the package.
+    Uninstalled,
 }
 
 /// One run of an installed package's code. Cloning shares it.

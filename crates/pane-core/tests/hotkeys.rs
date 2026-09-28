@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 
 use futures::executor::block_on;
 use pane_core::hotkeys::{HotkeyError, Hotkeys, Shortcut};
-use pane_core::{Launcher, PackageIdentity, Runtime, Screen, Status};
+use pane_core::{Launcher, PackageIdentity, Runtime, SavedData, Screen, Status};
 use tempfile::TempDir;
 
 const MANAGE_ROW: &str = "Manage extensions…";
@@ -501,6 +501,32 @@ fn a_hotkey_opens_a_javascript_command_too() {
     launcher.back();
     assert!(system.press(&launcher, "ctrl+alt+j"));
     assert_eq!(launcher.view().title, "Greeting");
+}
+
+#[test]
+fn uninstalling_releases_and_forgets_the_hotkey_even_when_saved_data_is_kept() {
+    let dirs = Dirs::new();
+    let system = FakeSystem::new();
+    let launcher = dirs.launcher(&system);
+    let folder = dirs.install(&launcher, "sample-settings");
+    let identity = PackageIdentity::local(&folder).unwrap();
+    assign(&launcher, "Greeting", "ctrl+alt+g");
+
+    block_on(launcher.uninstall(&identity, SavedData::Keep));
+    assert!(
+        matches!(launcher.view().status, Status::Result(_)),
+        "{:?}",
+        launcher.view().status
+    );
+    assert!(system.registered().is_empty());
+    assert!(!system.press(&launcher, "ctrl+alt+g"));
+
+    // Installed again from the same folder, it has no hotkey.
+    dirs.install(&launcher, "sample-settings");
+    assert!(system.registered().is_empty());
+    let restarted_system = FakeSystem::new();
+    dirs.launcher(&restarted_system);
+    assert!(restarted_system.registered().is_empty());
 }
 
 #[test]

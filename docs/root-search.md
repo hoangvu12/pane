@@ -284,9 +284,10 @@ designed by their tickets:
   extra words a result is found by, and actions offered when nothing
   matches.
 
-Removal is not covered either: a package's commands leave root search when
-it is disabled, and change when it is updated, but uninstalling a package
-is not built yet ([#40](https://github.com/hoangvu12/pane/issues/40)).
+A package's commands and root results leave root search when it is
+disabled or [uninstalled](extension-data.md#uninstalling-an-extension)
+([#40](https://github.com/hoangvu12/pane/issues/40)), and change when it is
+updated.
 
 ## Accessibility
 

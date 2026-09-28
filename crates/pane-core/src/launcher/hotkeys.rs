@@ -8,7 +8,8 @@
 //! and the command is available on this system. So disabling a package
 //! releases its hotkeys and enabling it registers them again, and a command
 //! an update removes releases its hotkey (the choice stays recorded, and
-//! comes back with the command). Uninstalling a package forgets its hotkeys
+//! comes back with the command). Uninstalling a package releases its
+//! hotkeys at once and forgets them, whether or not its saved data is kept
 //! ([`Launcher::forget_hotkeys_of`]).
 //!
 //! Registering can fail when another application uses the shortcut; that is
@@ -199,23 +200,27 @@ impl Launcher {
         }
     }
 
-    /// Forgets the hotkeys of the package with `identity`, releasing them:
-    /// for uninstalling it (#40). Call it after the package has left the
-    /// installed packages; the record is written before it returns.
-    // Nothing uninstalls a package yet; uninstalling (#40) calls this.
-    #[allow(dead_code)]
+    /// Forgets the hotkeys of the uninstalled package with `identity`
+    /// (their registrations went when it left the installed packages).
+    /// Returns what writes the record without them, to run off the window's
+    /// thread; nothing to write if it had none.
     pub(super) fn forget_hotkeys_of(
         &self,
         state: &mut State,
         identity: &PackageIdentity,
-    ) -> Result<(), String> {
+    ) -> Option<impl FnOnce() -> Result<(), String> + Send + 'static> {
         let prefix = format!("{}#", identity.key());
+        let before = state.bindings.chosen.len();
         state
             .bindings
             .chosen
             .retain(|command, _| !command.starts_with(&prefix));
+        if state.bindings.chosen.len() == before {
+            return None;
+        }
         self.sync_hotkeys(state);
-        save(state.bindings.record())
+        let record = state.bindings.record();
+        Some(move || save(record))
     }
 
     /// Opens the command whose hotkey `shortcut` is, as the system reported

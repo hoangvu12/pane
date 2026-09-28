@@ -357,6 +357,9 @@ pub enum CallError {
     /// The command's code was replaced by a reload or an update while the
     /// call was pending, so the call was stopped and its answer discarded.
     Replaced,
+    /// The command's package was uninstalled while the call was pending, so
+    /// the call was stopped and its answer discarded.
+    Uninstalled,
     /// The custom view was closed, or its guest instance has stopped, so it
     /// cannot handle events any more.
     ViewClosed,
@@ -370,6 +373,7 @@ impl fmt::Display for CallError {
                 f,
                 "The extension was reloaded or updated while this was running; try again"
             ),
+            CallError::Uninstalled => write!(f, "The extension was uninstalled"),
             CallError::RuntimeUnavailable(reason) => {
                 write!(f, "Extension runtime unavailable: {reason}")
             }
@@ -806,6 +810,7 @@ fn ended(end: End) -> CallError {
     match end {
         End::Disabled => CallError::Disabled,
         End::Replaced => CallError::Replaced,
+        End::Uninstalled => CallError::Uninstalled,
     }
 }
 
