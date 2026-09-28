@@ -417,6 +417,34 @@ fn a_dependent_disabled_while_the_question_is_shown_leaves_the_rest_to_disable()
 }
 
 #[test]
+fn a_package_disabled_while_the_question_is_shown_disables_nothing_even_with_a_new_dependent() {
+    let dirs = Dirs::new();
+    let launcher = four(&dirs);
+    block_on(launcher.set_enabled(&dirs.identity("c"), false));
+    toggle(&launcher, "Package a");
+    assert_eq!(titles(&launcher), ["Disable all 2", "Cancel"]);
+
+    // Meanwhile Package a is disabled, and Package c, which requires it and
+    // was not shown to be disabled, is enabled again.
+    block_on(launcher.set_enabled(&dirs.identity("a"), false));
+    block_on(launcher.set_enabled(&dirs.identity("c"), true));
+    assert_eq!(
+        press(&launcher, "Disable all 2"),
+        Status::Error("Package a is disabled already".into())
+    );
+    assert!(matches!(launcher.view().screen, Screen::Extensions { .. }));
+    assert_eq!(
+        enabled(&launcher),
+        [
+            ("Package a".into(), false),
+            ("Package c".into(), true),
+            ("Settings b".into(), true),
+            ("Package d".into(), true),
+        ]
+    );
+}
+
+#[test]
 fn packages_requiring_each_other_are_disabled_together() {
     let dirs = Dirs::new();
     dirs.fixture("x", &needs("y"));

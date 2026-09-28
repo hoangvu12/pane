@@ -226,7 +226,8 @@ shown (one was installed or enabled meanwhile), nothing is disabled and the
 question is shown again with "What disabling <title> affects changed since
 it was shown; check it again and choose Disable all once more". A dependent
 disabled or uninstalled meanwhile is simply not disabled again. If the
-package itself was disabled meanwhile, nothing is disabled.
+package itself was disabled meanwhile, nothing is disabled and nothing is
+asked again, even if a new dependent appeared too.
 
 **The closure.** A package is in it when it requires the package asked
 about, or another package in it, on this system, as its dependencies were

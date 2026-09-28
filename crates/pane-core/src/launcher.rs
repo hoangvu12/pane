@@ -480,6 +480,24 @@ impl State {
         false
     }
 
+    /// Notes that each `(identity, what)` of `claims` begins, all of them or
+    /// none: if something is already happening to one of them, claims
+    /// nothing and returns that identity with what is happening to it.
+    fn claim_all(
+        &mut self,
+        claims: &[(PackageIdentity, Changing)],
+    ) -> Result<(), (PackageIdentity, Changing)> {
+        for (identity, _) in claims {
+            if let Some(&busy) = self.changing.get(identity) {
+                return Err((identity.clone(), busy));
+            }
+        }
+        for (identity, what) in claims {
+            self.changing.insert(identity.clone(), *what);
+        }
+        Ok(())
+    }
+
     /// Notes that what began with [`State::claim`] on the package with
     /// `identity` has ended.
     fn release(&mut self, identity: &PackageIdentity) {
@@ -1272,8 +1290,12 @@ impl Launcher {
                 // The package's state when the user pressed, not when the
                 // future runs.
                 let enable = state.package(&identity).is_some_and(|p| !p.enabled);
-                if !enable && !dependents::enabled(&state, &identity).is_empty() {
-                    self.show_disable_dependents(&mut state, &identity);
+                let closure = match enable {
+                    true => Vec::new(),
+                    false => dependencies::required_dependents(&state.packages, &identity),
+                };
+                if closure.iter().any(|dependent| dependent.enabled) {
+                    self.show_disable_dependents(&mut state, &identity, closure);
                 } else {
                     change = self.begin_change(&mut state, vec![identity], enable);
                 }
@@ -1487,11 +1509,18 @@ impl Launcher {
             state.view.status = Status::Error(error.to_string());
             return None;
         }
-        for (claimed, identity) in identities.iter().enumerate() {
-            if !state.claim(identity, Changing::Recording) {
-                for identity in &identities[..claimed] {
-                    state.release(identity);
-                }
+        let claims: Vec<(PackageIdentity, Changing)> = identities
+            .iter()
+            .map(|identity| (identity.clone(), Changing::Recording))
+            .collect();
+        match state.claim_all(&claims) {
+            Ok(()) => {}
+            // A second enabling or disabling while one is recorded is
+            // ignored without a word, as pressing Enter twice would do.
+            Err((_, Changing::Recording)) => return None,
+            Err((identity, busy)) => {
+                let message = format!("{} {}", state.title_of(&identity), busy.doing());
+                state.view.status = Status::Error(message);
                 return None;
             }
         }

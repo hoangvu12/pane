@@ -20,15 +20,6 @@ use crate::dependencies::{self, Dependent};
 use crate::packages::{PackageError, PackageIdentity};
 use crate::platform;
 
-/// The enabled installed packages that require the package with `identity`,
-/// nearest first.
-pub(super) fn enabled(state: &State, identity: &PackageIdentity) -> Vec<Dependent> {
-    dependencies::required_dependents(&state.packages, identity)
-        .into_iter()
-        .filter(|dependent| dependent.enabled)
-        .collect()
-}
-
 /// "Disabled A and B, which requires it", after disabling `title` and the
 /// packages titled `dependents` that require it.
 pub(super) fn disabled(title: &str, dependents: &[String]) -> String {
@@ -44,14 +35,17 @@ pub(super) fn disabled(title: &str, dependents: &[String]) -> String {
 
 impl Launcher {
     /// Asks whether to disable the installed package with `identity`
-    /// together with the enabled packages that require it, listing them,
-    /// and those that require it but are disabled already.
-    pub(super) fn show_disable_dependents(&self, state: &mut State, identity: &PackageIdentity) {
+    /// together with the enabled packages of `closure`, its required
+    /// dependents, listing them, and those of them disabled already.
+    pub(super) fn show_disable_dependents(
+        &self,
+        state: &mut State,
+        identity: &PackageIdentity,
+        closure: Vec<Dependent>,
+    ) {
         let title = state.title_of(identity);
         let (to_disable, already): (Vec<Dependent>, Vec<Dependent>) =
-            dependencies::required_dependents(&state.packages, identity)
-                .into_iter()
-                .partition(|dependent| dependent.enabled);
+            closure.into_iter().partition(|dependent| dependent.enabled);
         let shown: Vec<PackageIdentity> = to_disable
             .iter()
             .map(|dependent| dependent.package.identity.clone())
@@ -113,7 +107,8 @@ impl Launcher {
     /// Disables the package with `identity` and the enabled packages that
     /// require it, if they are among those the confirmation showed
     /// (`shown`), to be recorded by `finish_change`, and shows the
-    /// extension list. If one that was not shown requires it now, disables
+    /// extension list. If the package was disabled meanwhile, disables
+    /// nothing; else if one that was not shown requires it now, disables
     /// nothing and asks again.
     pub(super) fn begin_disable_all(
         &self,
@@ -127,28 +122,34 @@ impl Launcher {
             return None;
         };
         let title = package.title();
-        let now: Vec<PackageIdentity> = enabled(state, &identity)
-            .into_iter()
-            .map(|dependent| dependent.package.identity)
+        if !package.enabled {
+            // Disabled meanwhile, which asks nothing more of its dependents,
+            // even if a new one appeared.
+            self.show_extensions_at(
+                state,
+                |entry| matches!(entry, Entry::Toggle(asked) if *asked == identity),
+            );
+            state.view.status = Status::Error(format!("{title} is disabled already"));
+            return None;
+        }
+        let closure = dependencies::required_dependents(&state.packages, &identity);
+        let now: Vec<PackageIdentity> = closure
+            .iter()
+            .filter(|dependent| dependent.enabled)
+            .map(|dependent| dependent.package.identity.clone())
             .collect();
         if now.iter().any(|dependent| !shown.contains(dependent)) {
-            self.show_disable_dependents(state, &identity);
+            self.show_disable_dependents(state, &identity, closure);
             state.view.status = Status::Error(format!(
                 "What disabling {title} affects changed since it was shown; check it again and \
                  choose Disable all once more"
             ));
             return None;
         }
-        let already = !package.enabled;
         self.show_extensions_at(
             state,
             |entry| matches!(entry, Entry::Toggle(asked) if *asked == identity),
         );
-        if already {
-            // Disabled meanwhile, which asks nothing more of its dependents.
-            state.view.status = Status::Error(format!("{title} is disabled already"));
-            return None;
-        }
         let identities = std::iter::once(identity).chain(now).collect();
         self.begin_change(state, identities, false)
     }
