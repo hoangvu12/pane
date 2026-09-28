@@ -32,6 +32,7 @@ mod indexed;
 use crate::dependencies;
 use crate::extension_data::{ExtensionData, PackageData};
 use crate::generation::End;
+use crate::helpers;
 use crate::hotkeys::{self as system_hotkeys, Hotkeys};
 use crate::links::{self, LinkOpener, NoOpener};
 use crate::operations::{self, Installed};
@@ -1626,11 +1627,8 @@ impl Launcher {
             self.sync_hotkeys(state);
             return false;
         };
-        // The replaced copy's code is not run again: its generation ends,
-        // which stops its pending calls, and the new code runs in a new one.
-        if let Some(installation) = &self.installation {
-            installation.data.replace_code(&installed.identity);
-        }
+        // The replaced copy's code no longer runs: its generation ended
+        // before its folder was removed ([`Launcher::retire`]).
         let replaced: Vec<PathBuf> = package
             .commands()
             .into_iter()
@@ -2632,6 +2630,26 @@ impl Launcher {
         Some(self.installation.as_ref()?.data.owned_by(&package.identity))
     }
 
+    /// What an update or reload of the package with `identity` does to the
+    /// old code once the new copy is recorded, before the old copy's folder
+    /// is removed: its generation ends, which stops its pending calls (the
+    /// new code runs in a new one), and its helpers are ended and reaped, so
+    /// no running program keeps the folder in use (Windows would refuse to
+    /// remove it).
+    fn retire(&self, identity: &PackageIdentity) -> impl FnOnce(&Path) + Send + 'static {
+        let data = self.installation.as_ref().map(|i| i.data.clone());
+        let runtime = self.runtime().ok().cloned();
+        let identity = identity.clone();
+        move |old: &Path| {
+            if let Some(data) = data {
+                data.replace_code(&identity);
+            }
+            if let Some(runtime) = runtime {
+                runtime.stop_helpers_in(old);
+            }
+        }
+    }
+
     fn runtime(&self) -> Result<&Runtime, CallError> {
         self.runtime.as_ref().map_err(Clone::clone)
     }
@@ -2812,6 +2830,9 @@ fn preview_view(
     }
     if let Some(operations) = operations::describe(&manifest.operations) {
         details.push(operations);
+    }
+    if let Some(helpers) = helpers::describe(&manifest.helpers) {
+        details.push(helpers);
     }
     details.push(format!(
         "Compatible: needs extension API {}, and its components import only WASI 0.3",

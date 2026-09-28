@@ -290,11 +290,12 @@ impl Launcher {
         let disabled = plan.titles_in(RequiredState::Disabled);
         let paused = plan.titles_in(RequiredState::Paused);
         let mode = mode.clone();
+        let retire = self.retire(&package.identity);
         let (dependencies, package) = off_thread(move || {
             let mut store = store.lock().unwrap_or_else(|p| p.into_inner());
             dependencies::install_all(&mut store, &plan.install, |store| match mode {
                 Mode::Install => store.install(&package),
-                Mode::Update(_) => store.update(&package),
+                Mode::Update(_) => store.update(&package, retire),
             })
         })
         .await

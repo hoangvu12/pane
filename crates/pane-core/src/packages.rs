@@ -4,10 +4,12 @@
 //! A local package is a folder holding `pane.json` and the components it
 //! names. Installing copies exactly those files into Pane's managed location,
 //! so the user's folder is never written and the installed copy keeps working
-//! if the folder changes or disappears. Installed packages are recorded in
+//! if the folder changes or disappears; of a native helper (see `helpers`),
+//! only its file for this system is copied. Installed packages are recorded in
 //! `installed.json`, with whether the user disabled each; reading them back
 //! needs only the manifests, never the guests.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::io;
@@ -16,9 +18,11 @@ use std::path::{Component as PathPart, Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::atomic::{Readers, write_atomically};
+use crate::helpers::runner;
 use crate::launcher::CommandRegistration;
 use crate::platform::{self, Platform};
 use crate::runtime::{CallError, Exports};
+use pane_target::Target;
 
 /// The manifest file at the root of every package.
 pub const MANIFEST_FILE: &str = "pane.json";
@@ -217,9 +221,29 @@ pub struct Manifest {
     /// The operations the package publishes for other extensions to call.
     /// Only these are callable: a command is not an operation.
     pub operations: Vec<ManifestOperation>,
+    /// The native helpers the package ships, which its commands run through
+    /// Pane (`pane:extension/helpers`).
+    pub helpers: Vec<ManifestHelper>,
     /// The other packages whose operations this one calls, required or
     /// optional.
     pub dependencies: Vec<ManifestDependency>,
+}
+
+/// A native helper a package ships: a prebuilt program per target (operating
+/// system and processor), which its commands run by name through Pane.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ManifestHelper {
+    pub id: String,
+    /// The helper's file for each target it is built for, such as
+    /// `linux-x86_64`, relative to the package folder.
+    pub targets: BTreeMap<Target, PathBuf>,
+}
+
+impl ManifestHelper {
+    /// The helper's file for this system, if the package ships one.
+    pub fn for_this_system(&self) -> Option<&Path> {
+        self.targets.get(&Target::current()?).map(PathBuf::as_path)
+    }
 }
 
 /// Another package whose operations a package calls, as its `pane.json`
@@ -337,7 +361,16 @@ struct ManifestJson {
     #[serde(default)]
     operations: Vec<OperationJson>,
     #[serde(default)]
+    helpers: Vec<HelperJson>,
+    #[serde(default)]
     dependencies: Vec<DependencyJson>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HelperJson {
+    id: String,
+    targets: BTreeMap<String, String>,
 }
 
 #[derive(Deserialize)]
@@ -427,13 +460,31 @@ impl Manifest {
         Ok((manifest, text))
     }
 
-    /// Checks that every component the manifest names is in `folder`.
+    /// Checks that every component the manifest names is in `folder`, and
+    /// that each helper's file for this system, where the package ships
+    /// one, is a regular file inside the package and a program for this
+    /// system ([`runner::check_file`]).
     fn check_components(&self, folder: &Path) -> Result<(), PackageError> {
         for (name, component) in self.components() {
             if !folder.join(component).is_file() {
                 return Err(PackageError::MissingComponent {
                     command: name,
                     component: component.to_path_buf(),
+                });
+            }
+        }
+        let Some(target) = Target::current() else {
+            return Ok(());
+        };
+        for helper in &self.helpers {
+            let Some(file) = helper.for_this_system() else {
+                continue;
+            };
+            if let Err(reason) = runner::check_file(folder, file, target) {
+                return Err(PackageError::Helper {
+                    helper: helper.id.clone(),
+                    target,
+                    reason,
                 });
             }
         }
@@ -520,7 +571,7 @@ impl Manifest {
             {
                 return Err(invalid(format!("command id `{}` is repeated", command.id)));
             }
-            let component = inside_package(&command.component)?;
+            let component = inside_package(&command.component, "component")?;
             let platforms = parse_platforms(
                 command.platforms,
                 &format!("`platforms` of command `{}`", command.id),
@@ -559,9 +610,45 @@ impl Manifest {
             )?;
             operations.push(ManifestOperation {
                 platforms,
-                component: inside_package(&operation.component)?,
+                component: inside_package(&operation.component, "component")?,
                 id: operation.id,
                 version: operation.version,
+            });
+        }
+        let mut helpers: Vec<ManifestHelper> = Vec::new();
+        for helper in json.helpers {
+            if let Some(problem) = runner::id_problem(&helper.id) {
+                return Err(invalid(problem));
+            }
+            if helpers.iter().any(|seen| seen.id == helper.id) {
+                return Err(invalid(format!("helper id `{}` is repeated", helper.id)));
+            }
+            if helper.targets.is_empty() {
+                return Err(invalid(format!(
+                    "helper `{}` has no `targets`; name its file for each system it is \
+                     built for, such as \"linux-x86_64\"",
+                    helper.id
+                )));
+            }
+            let mut targets = BTreeMap::new();
+            for (id, file) in helper.targets {
+                let Some(target) = Target::parse(&id) else {
+                    return Err(invalid(format!(
+                        "unknown target `{}` of helper `{}`; use windows, macos or linux, \
+                         a dash, and x86_64 or aarch64, such as \"linux-x86_64\"",
+                        id.escape_debug(),
+                        helper.id
+                    )));
+                };
+                let file = inside_package(&file, "helper file")?;
+                if let Some(problem) = runner::name_problem(&file, target) {
+                    return Err(invalid(format!("helper `{}`: {problem}", helper.id)));
+                }
+                targets.insert(target, file);
+            }
+            helpers.push(ManifestHelper {
+                id: helper.id,
+                targets,
             });
         }
         let dependencies = parse_dependencies(json.dependencies)?;
@@ -572,6 +659,7 @@ impl Manifest {
             platforms,
             commands,
             operations,
+            helpers,
             dependencies,
         })
     }
@@ -669,15 +757,16 @@ fn parse_dependencies(json: Vec<DependencyJson>) -> Result<Vec<ManifestDependenc
     Ok(dependencies)
 }
 
-/// `component` as a path, if it is a relative path inside the package folder.
-fn inside_package(component: &str) -> Result<PathBuf, PackageError> {
-    let path = PathBuf::from(component);
+/// `file` (a `what`, such as a component) as a path, if it is a relative
+/// path inside the package folder.
+fn inside_package(file: &str, what: &str) -> Result<PathBuf, PackageError> {
+    let path = PathBuf::from(file);
     let inside = path
         .components()
         .all(|part| matches!(part, PathPart::Normal(_)));
-    if !inside || component.is_empty() {
+    if !inside || file.is_empty() {
         return Err(PackageError::InvalidManifest(format!(
-            "component `{component}` must be a relative path inside the package folder"
+            "{what} `{file}` must be a relative path inside the package folder"
         )));
     }
     Ok(path)
@@ -744,6 +833,13 @@ pub enum PackageError {
     UnsupportedPlatform(String),
     /// A component the manifest names is not in the folder.
     MissingComponent { command: String, component: PathBuf },
+    /// The package ships a helper for this system whose file is missing or
+    /// is not a program for this system.
+    Helper {
+        helper: String,
+        target: Target,
+        reason: String,
+    },
     /// A component is present but Pane cannot run it.
     Component { command: String, error: CallError },
     /// A package with this identity is already installed.
@@ -790,6 +886,14 @@ impl fmt::Display for PackageError {
                 f,
                 "Not ready to run: the component {} of \"{command}\" is missing. This looks like a source-only package; build its component before installing",
                 component.display()
+            ),
+            PackageError::Helper {
+                helper,
+                target,
+                reason,
+            } => write!(
+                f,
+                "Not ready to run: the package ships helper `{helper}` for {target}, but {reason}"
             ),
             PackageError::Component { command, error } => write!(f, "\"{command}\": {error}"),
             PackageError::AlreadyInstalled(identity) => write!(
@@ -1254,17 +1358,24 @@ impl Store {
         if self.is_installed(&package.identity) {
             return Err(PackageError::AlreadyInstalled(package.identity.clone()));
         }
-        self.write_copy(package, None)
+        self.write_copy(package, None, |_| {})
     }
 
     /// Replaces the managed copy of an installed package with the current
     /// contents of its source; the identity and its record stay the same.
-    pub fn update(&mut self, package: &SourcePackage) -> Result<InstalledPackage, PackageError> {
+    /// Once the new copy is recorded, `retire` is told the old copy's folder
+    /// before it is removed: the old code must stop using it first (its
+    /// helpers' programs, which Windows would otherwise keep in use).
+    pub fn update(
+        &mut self,
+        package: &SourcePackage,
+        retire: impl FnOnce(&Path),
+    ) -> Result<InstalledPackage, PackageError> {
         let Some(record) = self.record(&package.identity) else {
             return Err(PackageError::NotInstalled(package.identity.clone()));
         };
         let old = record.dir.clone();
-        self.write_copy(package, Some(old))
+        self.write_copy(package, Some(old), retire)
     }
 
     /// Records whether each installed package of `identities` is enabled,
@@ -1477,6 +1588,7 @@ impl Store {
         &mut self,
         package: &SourcePackage,
         old: Option<String>,
+        retire: impl FnOnce(&Path),
     ) -> Result<InstalledPackage, PackageError> {
         let registry = self
             .registry
@@ -1534,6 +1646,9 @@ impl Store {
             return Err(storage(error));
         }
         *registry = updated;
+        if let Some(old) = &old {
+            retire(&self.dir.join(PACKAGES_DIR).join(old));
+        }
         if let Some(old) = old
             && fs::remove_dir_all(self.dir.join(PACKAGES_DIR).join(&old)).is_err()
         {
@@ -1570,19 +1685,58 @@ fn put_retained(registry: &mut RegistryJson, local: &str, title: String, at: Opt
     }
 }
 
-/// Writes the validated `pane.json` and copies the components it names,
-/// keeping their relative paths. Nothing else in the source folder is copied.
+/// Writes the validated `pane.json` and copies the components it names and
+/// the file of each helper for this system, keeping their relative paths.
+/// Nothing else in the source folder is copied, not even helpers' files for
+/// other systems.
 fn copy_package(package: &SourcePackage, location: &Path) -> io::Result<()> {
     fs::create_dir_all(location)?;
     fs::write(location.join(MANIFEST_FILE), &package.manifest_text)?;
-    for (_, component) in package.manifest.components() {
-        let source = package.folder.join(component);
-        let target = location.join(component);
+    let helper_files: Vec<&Path> = package
+        .manifest
+        .helpers
+        .iter()
+        .filter_map(ManifestHelper::for_this_system)
+        .collect();
+    for file in package
+        .manifest
+        .components()
+        .map(|(_, component)| component)
+        .chain(helper_files.iter().copied())
+    {
+        let source = package.folder.join(file);
+        let target = location.join(file);
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
         }
+        // Checked when the package was read; a helper file replaced by a
+        // link since is not followed.
+        if helper_files.contains(&file) && !fs::symlink_metadata(&source)?.is_file() {
+            return Err(io::Error::other(format!(
+                "the helper file {} is no longer a regular file",
+                file.display()
+            )));
+        }
         fs::copy(source, target)?;
     }
+    for file in helper_files {
+        make_executable(&location.join(file))?;
+    }
+    Ok(())
+}
+
+/// Lets the system run the helper file at `path` (a package fetched as an
+/// archive or through a tool may have lost the execute permission), with
+/// exactly `rwxr-xr-x`: no set-user-id, set-group-id or sticky bit, and no
+/// one but its owner may change it.
+#[cfg(unix)]
+fn make_executable(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+}
+
+#[cfg(not(unix))]
+fn make_executable(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
@@ -1618,4 +1772,100 @@ fn read_registry(dir: &Path) -> Result<RegistryJson, String> {
 fn write_registry(dir: &Path, registry: &RegistryJson) -> io::Result<()> {
     let text = serde_json::to_string_pretty(registry).map_err(io::Error::other)?;
     write_atomically(&dir.join(REGISTRY_FILE), text.as_bytes(), Readers::Default)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A package folder in `dir` with one command and, for this system, a
+    /// helper `tool` whose file holds `helper`.
+    fn package_with_helper(dir: &Path, helper: &[u8]) -> PathBuf {
+        let target = Target::current().expect("Pane names this system's target");
+        let file = format!("helpers/tool{}", target.exe_suffix());
+        let folder = dir.join("source");
+        fs::create_dir_all(folder.join("helpers")).unwrap();
+        fs::write(folder.join("command.wasm"), b"not checked here").unwrap();
+        fs::write(folder.join(&file), helper).unwrap();
+        let manifest = format!(
+            r#"{{ "manifestVersion": 1, "title": "Tool", "apiVersion": "0.1",
+                 "commands": [{{ "id": "c", "title": "C", "component": "command.wasm" }}],
+                 "helpers": [{{ "id": "tool", "targets": {{ "{}": "{file}" }} }}] }}"#,
+            target.id()
+        );
+        fs::write(folder.join(MANIFEST_FILE), manifest).unwrap();
+        folder
+    }
+
+    /// This test binary: a program for this system's target.
+    fn a_program() -> Vec<u8> {
+        fs::read(std::env::current_exe().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn an_update_retires_the_old_copy_before_removing_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = package_with_helper(dir.path(), &a_program());
+        let mut store = Store::open(dir.path().join("pane"));
+        let first = store
+            .install(&SourcePackage::read(&folder).unwrap())
+            .unwrap();
+
+        let mut retired = None;
+        let second = store
+            .update(&SourcePackage::read(&folder).unwrap(), |old| {
+                // Still there: whatever runs from it is stopped first.
+                assert!(old.join(MANIFEST_FILE).is_file());
+                retired = Some(old.to_path_buf());
+            })
+            .unwrap();
+
+        assert_eq!(retired.as_deref(), Some(first.location.as_path()));
+        assert!(!first.location.exists());
+        assert!(second.location.join(MANIFEST_FILE).is_file());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_installed_helper_is_exactly_rwxr_xr_x() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let folder = package_with_helper(dir.path(), &a_program());
+        let helper = folder.join("helpers/tool");
+        // Set-user-id, set-group-id, sticky, and writable by anyone.
+        fs::set_permissions(&helper, fs::Permissions::from_mode(0o7777)).unwrap();
+        let mut store = Store::open(dir.path().join("pane"));
+
+        let installed = store
+            .install(&SourcePackage::read(&folder).unwrap())
+            .unwrap();
+
+        let mode = fs::metadata(installed.location.join("helpers/tool"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o7777, 0o755, "{mode:o}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_helper_file_that_is_a_link_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = package_with_helper(dir.path(), &a_program());
+        let real = dir.path().join("real");
+        fs::rename(folder.join("helpers/tool"), &real).unwrap();
+        std::os::unix::fs::symlink(&real, folder.join("helpers/tool")).unwrap();
+
+        let error = SourcePackage::read(&folder).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "Not ready to run: the package ships helper `tool` for {}, but its file \
+                 helpers/tool is a symbolic link; a helper must be a regular file in the \
+                 package",
+                Target::current().unwrap()
+            )
+        );
+    }
 }

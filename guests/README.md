@@ -35,6 +35,15 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   ([Root results supplied ahead of the query](#root-results-supplied-ahead-of-the-query),
   [applications](../docs/applications.md)). Its package is
   `packages/applications`; held by `crates/pane-core/tests/applications.rs`.
+- `sample-helper`, `sample-helper-js`, `sample-helper-ts`: a command in
+  Rust, JavaScript and TypeScript running a [native helper](#native-helpers)
+  its package ships, `helpers/echo` (`pane-echo`, an ordinary program
+  `cargo xtask guests` builds for the system it runs on and puts in all
+  three packages): its answer, cancelling it, a failing and an undeclared
+  helper, and a slow run that disabling or reloading stops. Their packages
+  are `packages/sample-helper`, `packages/sample-helper-js` and
+  `packages/sample-helper-ts`; held alike by
+  `crates/pane-core/tests/helpers.rs`.
 - `sample-applications-js`, `sample-applications-ts`: the same host import
   and indexed results in JavaScript and TypeScript: "Launch <name>" for each
   installed application, and a command listing and opening them
@@ -834,6 +843,98 @@ version, two packages needing different versions of one operation) is
 explained and nothing is installed. An installed dependency is never
 replaced by installing another package: update it yourself.
 
+## Native helpers
+
+For what a WASI guest cannot do (an operating-system API, a native
+library), a package can ship a **native helper**: an ordinary program built
+for each operating system and processor it supports, which its commands run
+through Pane. The command stays a WASI 0.3 component; Pane runs the helper's
+file for the system it runs on and compiles nothing. The contract, errors
+and limits are in [docs/helpers.md](../docs/helpers.md). The helper samples
+are a [Rust](sample-helper/src/lib.rs), a
+[JavaScript](sample-helper-js/src/index.js) and a
+[TypeScript](sample-helper-ts/src/index.ts) command with their packages
+([`packages/sample-helper`](packages/sample-helper/pane.json) and the
+`-js` and `-ts` ones) and one helper,
+[`helpers/echo`](helpers/echo/src/main.rs).
+
+1. **Write the helper** as a plain program: it reads its input from
+   standard input (closed after the input), writes its answer as UTF-8 text
+   to standard output and exits with code 0; on failure it exits with
+   another code and explains on standard error, which Pane shows. It may
+   take arguments. It runs in its own folder of the installed copy, with
+   Pane's environment, and must not leave processes behind: Pane ends the
+   helper's own process when the run is cancelled or the package stops, not
+   processes it started. It must be a native program: Pane refuses scripts
+   (`#!`) on every system, and a Windows helper must be an `.exe`.
+2. **Build it for each target** you support, on that system or with a
+   cross toolchain, for example with Cargo:
+   `cargo build --release --target aarch64-apple-darwin`. A target is
+   `<os>-<arch>`: `windows`, `macos` or `linux`, then `x86_64` or `aarch64`.
+   Link what it needs statically where you can: Pane does not check a
+   helper's library dependencies or minimum OS version.
+3. **Put the files in the package** (regular files, not symbolic links)
+   and declare them in `pane.json`; an `id` is lowercase letters, digits
+   and dashes:
+
+   ```json
+   "helpers": [
+     {
+       "id": "echo",
+       "targets": {
+         "linux-x86_64": "helpers/linux-x86_64/pane-echo",
+         "macos-aarch64": "helpers/macos-aarch64/pane-echo",
+         "windows-x86_64": "helpers/windows-x86_64/pane-echo.exe"
+       }
+     }
+   ]
+   ```
+
+   Installing checks this system's file (it must exist and be a program for
+   this system: 64-bit ELF on Linux, Mach-O on macOS, PE on Windows, for
+   the named processor) and copies only it, with mode 0755; a package without a file
+   for this system still installs, and running that helper explains the
+   targets it has. The preview lists each helper's targets. For the sample,
+   `cargo xtask guests` builds `pane-echo` for the system it runs on and puts
+   it in `target/guests/packages/sample-helper/helpers/<target>/`.
+4. **Run it from a command** by its `id`, with arguments and input:
+
+   ```rust
+   use pane_guest::helpers;
+
+   let answer = helpers::run("echo".into(), vec![], "hello".into())
+       .await
+       .map_err(|error| format!("{}: {}", error.kind.name(), error.message))?;
+   // "not-found: …", "unavailable: Not available on Linux arm64: …",
+   // "failed: helper `echo` failed (exit code 3): …", "refused: …"
+   ```
+
+   Dropping the future before it resolves cancels the run, and Pane ends
+   the process; the sample's "Echo within a second" races it against
+   `wasip3::clocks::monotonic_clock::wait_for`. A helper also ends when the
+   call that started it returns and when the package is disabled, reloaded,
+   updated, paused or uninstalled, and when Pane quits.
+
+   In JavaScript or TypeScript, import `run` from
+   `pane:extension/helpers@0.1.0` (declared in
+   [`js/helpers.d.ts`](js/helpers.d.ts)); a failed run rejects with the
+   error as `payload`:
+
+   ```ts
+   import { run, type HelperError } from "pane:extension/helpers@0.1.0";
+
+   try {
+     return await run("echo", [], "hello");
+   } catch (error) {
+     const { kind, message } = (error as { payload: HelperError }).payload;
+     throw new Error(`${kind}: ${message}`);
+   }
+   ```
+
+   A promise cannot be cancelled: a run the command stops awaiting (the
+   samples' `Promise.race` against `waitFor`) keeps its helper until the
+   Pane call returns, which ends it.
+
 ## Packaging and installing a local extension
 
 A package is a folder with a `pane.json` manifest at its root and the built
@@ -887,6 +988,9 @@ and TypeScript: Pane sees only components.
   publishes; `commands` may then be empty.
 - `dependencies` (optional): the other packages whose operations it calls,
   required or optional ([dependencies](#dependencies-on-other-extensions)).
+- `helpers` (optional): the [native helpers](#native-helpers) the package
+  ships, each an `id` and its file for each target (`"linux-x86_64":
+  "helpers/linux-x86_64/tool"`).
 
 Unknown fields are ignored. The component must exist when you install: a
 package whose component is not built is refused as source-only, with the

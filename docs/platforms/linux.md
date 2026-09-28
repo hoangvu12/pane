@@ -386,7 +386,7 @@ window manager, so raising and focusing Pane's window
 
 ### Deleting retained data (#41)
 
-The phase after the hotkeys and pausing phases, with a data folder of its own,
+The retained-data phase, after the hotkeys and pausing phases, with a data folder of its own,
 installs the settings sample, saves a note, uninstalls it keeping its saved
 data, then chooses "Delete retained data of Settings sample" (the extension
 list's last row) and confirms with Down from the selected Cancel, then Return,
@@ -451,9 +451,44 @@ lavapipe setup): all checks of the whole smoke passed.
 | "Installed Dependencies sample with JavaScript operations sample, which it requires", its command selected | [76-dependencies-installed.png](evidence/linux-x11/76-dependencies-installed.png) |
 | "Hello, Pane, from JavaScript", from the dependency's guest | [77-dependency-answer.png](evidence/linux-x11/77-dependency-answer.png) |
 
+### Native helpers (#15)
+
+The last two phases, after the dependencies phase ([native helpers](../helpers.md#checks)). The first,
+with a data folder of its own (`helper-data`), installs the helper sample,
+whose `pane-echo` `cargo xtask guests` built for `linux-x86_64`, and runs
+it with real X11 key events: the answer names Linux x86-64; "Echo within a
+second" cancels the slow run after one second; "Echo after waiting" starts
+the ten-second run, which `pgrep -f` finds running from the managed copy in
+the data folder; Escape, then disabling the package in Manage extensions,
+ends it: `pgrep` finds no helper, `settings.json` keeps "started" and never
+gets "finished", and no helper outlives Pane. The second (`helper-quit-data`)
+starts the waiting helper again ("Running…"), finds its heartbeat file,
+then quits Pane by sending its window `WM_DELETE_WINDOW`
+([`scripts/close_window.py`](../../scripts/close_window.py), as a window
+manager's close button does; `xdotool windowclose` would destroy the
+window instead): Pane must exit within five seconds, `pgrep` must find no
+helper, and the heartbeat must stop growing. With the app's quit handler
+disabled the phase fails ("a helper outlived Pane quitting"). Run locally
+on 2026-09-28 (Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64, same
+Xvfb/lavapipe setup): all checks of the whole smoke passed.
+
+| Step | Evidence |
+| --- | --- |
+| "Echo through the helper": 'Echoed "hello from Pane" on Linux x86-64' | [90-helper-echoed.png](evidence/linux-x11/90-helper-echoed.png) |
+| "Echo within a second": "Stopped the helper after one second"; no helper runs | [91-helper-cancelled.png](evidence/linux-x11/91-helper-cancelled.png) |
+| "Echo after waiting" running; the helper process runs | [92-helper-waiting.png](evidence/linux-x11/92-helper-waiting.png) |
+| "Disabled Helper sample"; the helper process is gone, the note kept | `93-helper-disabled.png` (not committed: the list's rows show the local checkout path) |
+| "Echo after waiting" running, before Pane is quit | [94-helper-before-quit.png](evidence/linux-x11/94-helper-before-quit.png) |
+
+The tests in `crates/pane-core/tests/helpers.rs` also end the helper by
+reloading, updating, uninstalling and quitting, for the Rust, JavaScript
+and TypeScript samples, and check each ended helper by its heartbeat file,
+not its process id. Only Linux x86-64 ran a helper; `linux-aarch64` was
+not built or run.
+
 ### Disabling required dependents (#43)
 
-A phase of its own, after the dependencies phase, with its own data folder
+A phase of its own, after the native-helper phases, with its own data folder
 ([disabling a required dependency](../dependencies.md#disabling-a-required-dependency)),
 installs the dependencies sample with the JavaScript operations sample,
 opens Manage extensions and presses Enter on the JavaScript operations
