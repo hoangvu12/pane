@@ -938,18 +938,17 @@ impl Runtime {
     ) {
         let (stop, watched) = stoppable();
         let (reply, response) = oneshot::channel();
-        let sent = self.send(Request::Search {
-            component: component.to_path_buf(),
-            command: command.to_owned(),
-            query: query.to_owned(),
-            data,
-            stopped: watched,
-            reply,
-        });
-        let answer = async move {
-            sent?;
-            response.await.unwrap_or_else(|_| Err(stopped()))
-        };
+        let answer = self.call(
+            Request::Search {
+                component: component.to_path_buf(),
+                command: command.to_owned(),
+                query: query.to_owned(),
+                data,
+                stopped: watched,
+                reply,
+            },
+            response,
+        );
         (stop, answer)
     }
 
