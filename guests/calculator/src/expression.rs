@@ -8,6 +8,10 @@
 //! - a leading `-` or `+` (`-3`, `2 * -(1 + 1)`), and parentheses;
 //! - spaces anywhere between those.
 //!
+//! A query longer than 256 characters, or nesting parentheses more than 64
+//! deep, is not understood either, so that no query can exhaust the
+//! calculator's stack.
+//!
 //! An expression has an answer only if it applies at least one of the binary
 //! operators: a number alone, like `42` or `(5)`, is not a calculation.
 //! Nothing else is understood: no functions, constants, variables, units or
@@ -49,8 +53,17 @@ enum Failure {
     Invalid,
 }
 
+/// The longest query evaluated, in characters.
+const MAX_LENGTH: usize = 256;
+
+/// The deepest nesting of parentheses evaluated.
+const MAX_DEPTH: u32 = 64;
+
 /// Evaluates `query` (see the module documentation for the language).
 pub fn evaluate(query: &str) -> Outcome {
+    if query.chars().count() > MAX_LENGTH {
+        return Outcome::Invalid;
+    }
     let Some(tokens) = tokens(query) else {
         return Outcome::Invalid;
     };
@@ -58,6 +71,7 @@ pub fn evaluate(query: &str) -> Outcome {
         tokens: &tokens,
         next: 0,
         operations: 0,
+        depth: 0,
     };
     let value = match parser.sum() {
         Ok(value) if parser.next == tokens.len() => value,
@@ -137,6 +151,8 @@ struct Parser<'a> {
     next: usize,
     /// How many binary operations were applied.
     operations: u32,
+    /// How many parentheses enclose the next token.
+    depth: u32,
 }
 
 impl Parser<'_> {
@@ -186,17 +202,13 @@ impl Parser<'_> {
 
     /// A power with any number of leading signs. `-2^2` is `-(2^2)`.
     fn signed(&mut self) -> Result<f64, Failure> {
-        match self.peek() {
-            Some(Token::Minus) => {
-                self.next += 1;
-                Ok(-self.signed()?)
-            }
-            Some(Token::Plus) => {
-                self.next += 1;
-                self.signed()
-            }
-            _ => self.power(),
+        let mut negative = false;
+        while let Some(sign @ (Token::Minus | Token::Plus)) = self.peek() {
+            self.next += 1;
+            negative ^= sign == Token::Minus;
         }
+        let value = self.power()?;
+        Ok(if negative { -value } else { value })
     }
 
     /// An operand, raised to a power if `^` follows; right to left.
@@ -216,7 +228,12 @@ impl Parser<'_> {
         match self.take() {
             Some(Token::Number(value)) => Ok(value),
             Some(Token::Open) => {
+                if self.depth == MAX_DEPTH {
+                    return Err(Failure::Invalid);
+                }
+                self.depth += 1;
                 let value = self.sum()?;
+                self.depth -= 1;
                 match self.take() {
                     Some(Token::Close) => Ok(value),
                     None => Err(Failure::Incomplete),

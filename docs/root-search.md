@@ -156,13 +156,15 @@ arbitrary code evaluation):
 - `+`, `-` (or `−`), `*` (or `×`), `/` (or `÷`) and `^` for a power with a
   whole-number exponent; `^` binds tightest and right to left, then `*` and
   `/`, then `+` and `-`, left to right; a leading `-` or `+` applies to what
-  follows, so `-2^2` is -4;
-- parentheses and spaces anywhere.
+  follows, so `-2^2` is -4, and any number of signs may lead;
+- parentheses, nested at most 64 deep, and spaces anywhere;
+- at most 256 characters in all.
 
 A query has an answer only if it applies at least one operator: "42" or
 "(5)" is not a calculation. Everything else has no answer and lists nothing:
 incomplete input ("2 +", "(1 + 2"), invalid input ("2 + * 3", "2 3",
-letters, functions, constants, units, percentages), and undefined or
+letters, functions, constants, units, percentages, deeper nesting or a
+longer query, so that no query can exhaust the guest's stack), and undefined or
 unrepresentable values ("1 / 0", "2 ^ 0.5", overflow). Arithmetic is IEEE
 double precision; the answer shows at most 15 significant digits and at most
 10 decimals, without trailing zeros (0.1 + 0.2 is 0.3, 1 / 3 is
@@ -282,7 +284,9 @@ with the real calculator guest: an answer listed first and selected, above a
 command whose title matches too; incomplete, invalid, undefined and
 operation-free queries listing nothing with the status untouched, and
 completing one answering it; precedence, signs, powers and the number
-format; Enter reporting the copy and `selected_copy` giving the text; an
+format; parentheses 65 deep, a query over 256 characters and 100,000
+leading signs or parentheses listing nothing, without an error row or a
+restart of the calculator; Enter reporting the copy and `selected_copy` giving the text; an
 answer for an older query discarded and none shown before the new one
 arrives; a selection the user moved kept; the calculator not running until
 a non-blank query; disabling it removing its answer at once, asking it

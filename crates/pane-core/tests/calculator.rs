@@ -137,6 +137,49 @@ fn incomplete_and_invalid_expressions_and_ordinary_words_list_no_answer() {
 }
 
 #[test]
+fn deeply_nested_and_very_long_queries_list_no_answer_and_do_not_crash_the_calculator() {
+    let dirs = Dirs::new();
+    let runtime = dirs.runtime();
+    let launcher = dirs.launcher(runtime.clone());
+    let status = launcher.view().status;
+    search(&launcher, "1 + 1");
+    assert_eq!(block_on(runtime.running()).len(), 1);
+
+    // Deeper than 64 parentheses, longer than 256 characters: no answer,
+    // which is not a failure.
+    let nested = format!("{}1 + 1{}", "(".repeat(65), ")".repeat(65));
+    let long_sum = vec!["1"; 200].join(" + ");
+    let queries = [
+        nested,
+        long_sum,
+        "(".repeat(100_000),
+        format!("{}1 + 1", "-".repeat(100_000)),
+        format!("{}1 + 1", "(-".repeat(50_000)),
+    ];
+    for query in &queries {
+        search(&launcher, query);
+        let shown = &query[..query.len().min(20)];
+        assert_eq!(titles(&launcher), Vec::<String>::new(), "{shown}…");
+        assert_eq!(launcher.view().status, status, "{shown}…");
+        assert_eq!(
+            block_on(runtime.running()).len(),
+            1,
+            "{shown}…: the calculator's instance is not restarted"
+        );
+    }
+
+    // Within the limits, nesting and signs are answered as usual.
+    for (query, answer) in [
+        (format!("{}1 + 1{}", "(".repeat(64), ")".repeat(64)), "2"),
+        (format!("{}1 + 1", "-".repeat(200)), "2"),
+        (format!("{}1 * 3", "-".repeat(201)), "-3"),
+    ] {
+        search(&launcher, &query);
+        assert_eq!(titles(&launcher), [answer], "{query}");
+    }
+}
+
+#[test]
 fn answers_follow_the_documented_precedence_and_number_format() {
     let dirs = Dirs::new();
     let launcher = dirs.launcher(dirs.runtime());
