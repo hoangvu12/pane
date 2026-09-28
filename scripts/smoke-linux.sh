@@ -407,4 +407,37 @@ if grep -q 'Good day to you' "$out/data/extensions/cache.json"; then echo "cache
 grep -q '"greeting-style": "formal"' "$out/data/extensions/settings.json" || { echo "setting lost"; exit 1; }
 grep -q '"note": "Water the plants"' "$out/data/extensions/content.json" || { echo "note lost"; exit 1; }
 grep -q '"token": "sample-token"' "$out/data/extensions/credentials.json" || { echo "credential lost"; exit 1; }
+
+# Uninstall the settings sample, keeping its saved data: its row follows the
+# six Clear cache rows. Pane asks first, showing its saved data, and the first
+# choice keeps its settings and content while its copy and credential go.
+# Installing the same folder again finds its formal style and note, signed out.
+start_pane
+"$xdotool" windowfocus --sync "$window"
+for ((i = 0; i < 12; i++)); do "$xdotool" key Down; done   # the last row
+"$xdotool" key Return; sleep 1
+for ((i = 0; i < 19; i++)); do "$xdotool" key Down; done
+"$xdotool" key Return; sleep 1   # "Uninstall Settings sample"
+capture 44-confirm-uninstall.png
+check 44-confirm-uninstall.png aab4c0   # what is removed and the saved data
+"$xdotool" key Return; sleep 2   # "Uninstall and keep saved data"
+capture 45-uninstalled.png
+check 45-uninstalled.png 9fd8a8   # "Uninstalled Settings sample; its settings and content are kept"
+stop_pane
+grep -q '"retained"' "$out/data/extensions/installed.json" || { echo "kept data not recorded"; exit 1; }
+if grep -q 'sample-token' "$out/data/extensions/credentials.json"; then echo "credential not removed"; exit 1; fi
+grep -q '"greeting-style": "formal"' "$out/data/extensions/settings.json" || { echo "setting not kept"; exit 1; }
+grep -q '"note": "Water the plants"' "$out/data/extensions/content.json" || { echo "note not kept"; exit 1; }
+start_pane --install target/guests/packages/sample-settings
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 2   # Install; Greeting is selected
+"$xdotool" key Return; sleep 3   # open Greeting
+for ((i = 0; i < 5; i++)); do "$xdotool" key Down; done
+"$xdotool" key Return; sleep 2   # "Show what Pane keeps"
+capture 46-reinstalled.png
+check 46-reinstalled.png 9fd8a8   # "Style: formal · Note: Water the plants · Signed in: no ..."
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/43-kept-after-clear.png" "$out/46-reinstalled.png"
+"$xdotool" key Escape; sleep 1
+stop_pane
+if grep -q '"retained"' "$out/data/extensions/installed.json"; then echo "retained record not dropped"; exit 1; fi
 echo "screenshots in $out"

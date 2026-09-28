@@ -2,12 +2,12 @@
 //! Pane, string values by key, of four kinds, each through its own
 //! `pane:extension` interface (`wit/data.wit`).
 //!
-//! | Kind | File | Clear cache | Readable by |
-//! |---|---|---|---|
-//! | Settings | `settings.json` | kept | default |
-//! | Content | `content.json` | kept | default |
-//! | Cache | `cache.json` | removed | default |
-//! | Local credentials | `credentials.json` | kept | the user only (Unix: 0600) |
+//! | Kind | File | Clear cache | Uninstall | Readable by |
+//! |---|---|---|---|---|
+//! | Settings | `settings.json` | kept | the user's choice | default |
+//! | Content | `content.json` | kept | the user's choice | default |
+//! | Cache | `cache.json` | removed | removed | default |
+//! | Local credentials | `credentials.json` | kept | removed | the user only (Unix: 0600) |
 //!
 //! Each kind has one file next to `installed.json`, holding every package's
 //! values under the package identity's key, so they belong to the source
@@ -26,7 +26,7 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 
 use crate::atomic::{Readers, write_atomically};
-use crate::packages::PackageIdentity;
+use crate::packages::{PackageIdentity, SavedData};
 
 /// The version of every kind's file.
 const DATA_VERSION: u64 = 1;
@@ -45,6 +45,23 @@ pub(crate) enum DataKind {
 }
 
 impl DataKind {
+    const ALL: [DataKind; 4] = [
+        DataKind::Settings,
+        DataKind::Content,
+        DataKind::Cache,
+        DataKind::LocalCredentials,
+    ];
+
+    /// All of a package's values of this kind, as people call them.
+    fn all(self) -> &'static str {
+        match self {
+            DataKind::Settings => "its settings",
+            DataKind::Content => "its content",
+            DataKind::Cache => "its cache",
+            DataKind::LocalCredentials => "its credentials",
+        }
+    }
+
     fn file_name(self) -> &'static str {
         match self {
             DataKind::Settings => "settings.json",
@@ -183,27 +200,84 @@ impl ExtensionData {
     /// without restarting Pane. On failure nothing is removed, and the reason
     /// says what the user can do.
     pub fn clear_cache(&self, identity: &PackageIdentity) -> Result<(), String> {
+        self.remove(DataKind::Cache, identity)
+            .map_err(|failure| match failure {
+                Removal::Unreadable(reason) => format!(
+                    "{reason}. Nothing was deleted. That file holds only extension caches: \
+                     repair or delete it, then clear the cache again."
+                ),
+                Removal::Unwritable(path, error) => format!(
+                    "Cannot write {}: {error}. Nothing was deleted; check that Pane can write \
+                     that folder, then clear the cache again.",
+                    path.display()
+                ),
+            })
+    }
+
+    /// Removes the data of an uninstalled package with `identity`, without
+    /// running it: its cache and local credentials, and its settings and
+    /// content too when `saved` is [`SavedData::Delete`]. Each kind is
+    /// removed on its own, as [`ExtensionData::clear_cache`] removes the
+    /// cache. Returns why each kind that could not be removed was not; its
+    /// values remain where they were.
+    pub fn remove_uninstalled(&self, identity: &PackageIdentity, saved: SavedData) -> Vec<String> {
+        let mut kinds = vec![DataKind::Cache, DataKind::LocalCredentials];
+        if saved == SavedData::Delete {
+            kinds.extend([DataKind::Settings, DataKind::Content]);
+        }
+        kinds
+            .into_iter()
+            .filter_map(|kind| {
+                let failure = self.remove(kind, identity).err()?;
+                Some(match failure {
+                    Removal::Unreadable(reason) => {
+                        format!("could not delete {}: {reason}", kind.all())
+                    }
+                    Removal::Unwritable(path, error) => format!(
+                        "could not delete {}: Cannot write {}: {error}",
+                        kind.all(),
+                        path.display()
+                    ),
+                })
+            })
+            .collect()
+    }
+
+    /// Whether any data may be kept for the package with `identity`: a kind
+    /// holding some of its values, or whose file cannot be read.
+    pub fn holds_any(&self, identity: &PackageIdentity) -> bool {
+        DataKind::ALL
+            .into_iter()
+            .any(|kind| self.count(kind, identity) != Ok(0))
+    }
+
+    /// How many values of `kind` the package with `identity` keeps, as Pane
+    /// last read or wrote them, or why they cannot be read.
+    pub fn count(&self, kind: DataKind, identity: &PackageIdentity) -> Result<usize, String> {
         let mut store = self.lock();
-        let data = store.of(DataKind::Cache);
+        let file = store.of(kind).file.as_ref().map_err(Clone::clone)?;
+        Ok(file.packages.get(&identity.key()).map_or(0, BTreeMap::len))
+    }
+
+    /// Removes every value of `kind` of the package with `identity`, and
+    /// nothing else. The file is read again first, so values another Pane
+    /// process saved since are kept, and a file the user repaired or deleted
+    /// is used without restarting Pane. On failure nothing is removed.
+    fn remove(&self, kind: DataKind, identity: &PackageIdentity) -> Result<(), Removal> {
+        let mut store = self.lock();
+        let data = store.of(kind);
         data.file = read(&data.path);
-        let file = data.file.as_ref().map_err(|reason| {
-            format!(
-                "{reason}. Nothing was deleted. That file holds only extension caches: repair \
-                 or delete it, then clear the cache again."
-            )
-        })?;
+        let file = data
+            .file
+            .as_ref()
+            .map_err(|reason| Removal::Unreadable(reason.clone()))?;
         if !file.packages.contains_key(&identity.key()) {
             return Ok(());
         }
         let mut updated = file.clone();
         updated.packages.remove(&identity.key());
-        data.write(&updated).map_err(|error| {
-            format!(
-                "Cannot write {}: {error}. Nothing was deleted; check that Pane can write that \
-                 folder, then clear the cache again.",
-                data.path.display()
-            )
-        })?;
+        data.write(&updated)
+            .map_err(|error| Removal::Unwritable(data.path.clone(), error))?;
         data.file = Ok(updated);
         Ok(())
     }
@@ -213,6 +287,14 @@ impl ExtensionData {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
+}
+
+/// Why a kind's values could not be removed; none were.
+enum Removal {
+    /// The file cannot be read, for this reason.
+    Unreadable(String),
+    /// The file at this path cannot be written.
+    Unwritable(PathBuf, io::Error),
 }
 
 /// One package's extension data, handed to the runtime with each call into

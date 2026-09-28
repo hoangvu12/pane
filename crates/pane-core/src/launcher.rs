@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use crate::extension_data::{ExtensionData, PackageData};
 use crate::operations::{self, Installed};
 use crate::packages::{
-    InstalledPackage, PackageError, PackageIdentity, SourcePackage, Store, folder_name,
+    InstalledPackage, PackageError, PackageIdentity, SavedData, SourcePackage, Store, folder_name,
 };
 use crate::platform::{self, Platform};
 use crate::runtime::{
@@ -29,6 +29,7 @@ use crate::runtime::{
 use crate::search::{self, Keys, Query};
 
 mod reload;
+mod uninstall;
 
 use reload::StartFailures;
 
@@ -82,6 +83,9 @@ pub enum Question {
     /// Whether to clear the cache of the installed package with this
     /// identity.
     ClearCache(PackageIdentity),
+    /// Whether to uninstall the installed package with this identity, and
+    /// whether to keep its saved data.
+    Uninstall(PackageIdentity),
 }
 
 /// A selectable row.
@@ -277,6 +281,8 @@ enum Changing {
     Reloading,
     /// Its managed copy is being replaced from a package folder.
     Updating,
+    /// It is being uninstalled.
+    Uninstalling,
 }
 
 impl State {
@@ -308,6 +314,7 @@ impl State {
             Some(Changing::Recording) => return false,
             Some(Changing::Reloading) => "is reloading",
             Some(Changing::Updating) => "is updating",
+            Some(Changing::Uninstalling) => "is being uninstalled",
         };
         self.view.status = Status::Error(format!("{} {busy}", self.title_of(identity)));
         false
@@ -433,6 +440,12 @@ enum Entry {
     AskClearCache(PackageIdentity),
     /// Clear this installed package's cache (confirmation).
     ClearCache(PackageIdentity),
+    /// Ask whether to uninstall this installed package, and whether to keep
+    /// its saved data (extension list).
+    AskUninstall(PackageIdentity),
+    /// Uninstall this installed package, keeping or deleting its saved data
+    /// (confirmation).
+    Uninstall(PackageIdentity, SavedData),
     /// Return to the extension list without acting (confirmation).
     Cancel,
 }
@@ -760,6 +773,7 @@ impl Launcher {
             .and_then(|index| state.entries.get(index).cloned());
         let mut change = None;
         let mut reload = None;
+        let mut uninstall = None;
         let entry = match entry {
             Some(Entry::Broken(problem) | Entry::Unavailable(problem)) => {
                 state.view.status = Status::Error(problem);
@@ -779,6 +793,14 @@ impl Launcher {
             }
             Some(Entry::AskClearCache(identity)) => {
                 self.show_clear_cache(&mut state, &identity);
+                None
+            }
+            Some(Entry::AskUninstall(identity)) => {
+                self.show_uninstall(&mut state, &identity);
+                None
+            }
+            Some(Entry::Uninstall(identity, saved)) => {
+                uninstall = self.begin_uninstall(&mut state, identity, saved);
                 None
             }
             Some(Entry::Cancel) => {
@@ -822,6 +844,9 @@ impl Launcher {
             if let Some(reload) = reload {
                 launcher.finish_reload(generation, reload).await;
             }
+            if let Some(uninstall) = uninstall {
+                launcher.finish_uninstall(generation, uninstall).await;
+            }
             match entry {
                 Some(Entry::Open(component)) => launcher.open_command(generation, component).await,
                 Some(Entry::Run(item_id)) => {
@@ -852,6 +877,8 @@ impl Launcher {
                     | Entry::Reload(_)
                     | Entry::Retry(_)
                     | Entry::AskClearCache(_)
+                    | Entry::AskUninstall(_)
+                    | Entry::Uninstall(..)
                     | Entry::Cancel
                     | Entry::Form(..),
                 )
@@ -1040,6 +1067,13 @@ impl Launcher {
                 "this launcher does not install packages".into(),
             )),
             Some(store) => match self.read_and_check(folder).await {
+                // Not installed again while its data is being removed.
+                Ok(package) if self.is_uninstalling(&package.identity) => {
+                    Err(PackageError::Storage(format!(
+                        "{} is being uninstalled; install it again once that is done",
+                        package.manifest.title
+                    )))
+                }
                 Ok(package) => {
                     let store = store.clone();
                     let mode = mode.clone();
@@ -1094,6 +1128,13 @@ impl Launcher {
             .iter_mut()
             .find(|package| package.identity == installed.identity)
         else {
+            // An identity installed again after it was uninstalled may save
+            // data again.
+            if let Some(installation) = &self.installation {
+                installation
+                    .data
+                    .set_enabled(&installed.identity, installed.enabled);
+            }
             state.packages.push(installed);
             return false;
         };
@@ -1423,6 +1464,7 @@ impl Launcher {
              keeps its settings."
                 .into(),
             "Clearing an extension's cache keeps its settings, content and credentials.".into(),
+            "Uninstalling an extension asks whether to keep its settings and content.".into(),
         ];
         state.view =
             LauncherView::new(Screen::Extensions { details }, "Extensions").with_rows(rows);
@@ -1508,17 +1550,27 @@ impl Launcher {
         };
         match question.clone() {
             Question::ClearCache(identity) => self.show_extensions_at_clear_cache(state, &identity),
+            Question::Uninstall(identity) => self.show_extensions_at(
+                state,
+                |entry| matches!(entry, Entry::AskUninstall(asked) if *asked == identity),
+            ),
         }
     }
 
     /// Shows the extension list with the row that clears the cache of the
     /// package with `identity` selected, where the user asked.
     fn show_extensions_at_clear_cache(&self, state: &mut State, identity: &PackageIdentity) {
+        self.show_extensions_at(
+            state,
+            |entry| matches!(entry, Entry::AskClearCache(asked) if asked == identity),
+        );
+    }
+
+    /// Shows the extension list with the first row whose entry is `wanted`
+    /// selected, or the first row if there is none.
+    fn show_extensions_at(&self, state: &mut State, wanted: impl Fn(&Entry) -> bool) {
         self.show_extensions(state);
-        let row = state
-            .entries
-            .iter()
-            .position(|entry| matches!(entry, Entry::AskClearCache(asked) if asked == identity));
+        let row = state.entries.iter().position(wanted);
         if row.is_some() {
             state.view.selected = row;
         }
@@ -1875,7 +1927,7 @@ fn disabled_owner(state: &State, component: &Path) -> Option<String> {
 /// source it is, so copies with the same title can be told apart; then the
 /// rows that reload each enabled package, each followed by a Retry row if
 /// its reloaded code failed to start; then one row per package to clear its
-/// cache, in the same order.
+/// cache, and one to uninstall it, in the same order.
 fn extension_rows(packages: &[InstalledPackage], failed: &StartFailures) -> (Vec<Row>, Vec<Entry>) {
     let failure = |package: &InstalledPackage| failed.of(&package.identity).map(str::to_owned);
     let toggles = packages.iter().map(|package| {
@@ -1932,7 +1984,23 @@ fn extension_rows(packages: &[InstalledPackage], failed: &StartFailures) -> (Vec
         };
         (row, Entry::AskClearCache(package.identity.clone()))
     });
-    toggles.chain(reloads).chain(clear_cache).unzip()
+    let uninstall = packages.iter().map(|package| {
+        let row = Row {
+            id: format!("uninstall:{}", package.identity.key()),
+            title: format!("Uninstall {}", package.title()),
+            subtitle: Some(format!(
+                "Remove it and choose whether to keep its saved data · {}",
+                package.identity
+            )),
+            unavailable: None,
+        };
+        (row, Entry::AskUninstall(package.identity.clone()))
+    });
+    toggles
+        .chain(reloads)
+        .chain(clear_cache)
+        .chain(uninstall)
+        .unzip()
 }
 
 /// The package screen for `folder`: what the package is and whether it can

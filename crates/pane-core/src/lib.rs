@@ -17,7 +17,7 @@ pub use launcher::{
 pub use operations::{MAX_CALL_DEPTH, MAX_OPERATION_JSON};
 pub use packages::{
     EXTENSION_API, InstalledPackage, MANIFEST_FILE, MANIFEST_VERSION, Manifest, ManifestCommand,
-    ManifestOperation, PackageError, PackageIdentity,
+    ManifestOperation, PackageError, PackageIdentity, RetainedData, SavedData,
 };
 pub use platform::Platform;
 pub use runtime::{

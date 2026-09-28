@@ -10,7 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use futures::executor::block_on;
-use pane_core::{Launcher, PackageIdentity, Runtime, Screen, Status};
+use pane_core::{Launcher, PackageIdentity, Runtime, SavedData, Screen, Status};
 use tempfile::TempDir;
 
 #[path = "support/platforms.rs"]
@@ -516,6 +516,32 @@ fn a_disabled_target_is_reported_and_stays_disabled() {
     assert_eq!(
         fixture_run(&launcher, "Call b's echo"),
         result(r#"answered: {"hello":"world"}"#)
+    );
+}
+
+#[test]
+fn an_uninstalled_target_is_not_found_and_its_instance_stops() {
+    let dirs = Dirs::new();
+    let launcher = dirs.a_and_b();
+    assert_eq!(
+        fixture_run(&launcher, "Call b's echo"),
+        result(r#"answered: {"hello":"world"}"#)
+    );
+    assert_eq!(block_on(dirs.runtime.running()).len(), 2);
+
+    block_on(launcher.uninstall(&dirs.identity("b"), SavedData::Delete));
+    assert_eq!(
+        launcher.view().status,
+        result("Uninstalled Package b and deleted its saved data")
+    );
+    // Only the caller's instance is left.
+    assert_eq!(block_on(dirs.runtime.running()).len(), 1);
+    assert_eq!(
+        fixture_run(&launcher, "Call b's echo"),
+        error(&format!(
+            "not-found: no installed extension has the source {}",
+            dirs.source("b")
+        ))
     );
 }
 

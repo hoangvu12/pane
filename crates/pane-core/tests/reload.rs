@@ -432,7 +432,7 @@ fn a_disabled_package_is_not_reloaded() {
     manage(&launcher);
     assert_eq!(
         titles(&launcher),
-        ["Dev", "Clear cache of Dev"],
+        ["Dev", "Clear cache of Dev", "Uninstall Dev"],
         "no Reload row"
     );
 

@@ -418,4 +418,36 @@ if (Select-String -Quiet -SimpleMatch 'Good day to you' (Join-Path $data "extens
 if (-not (Select-String -Quiet -SimpleMatch '"greeting-style": "formal"' (Join-Path $data "extensions/settings.json"))) { throw "setting lost" }
 if (-not (Select-String -Quiet -SimpleMatch '"note": "Water the plants"' (Join-Path $data "extensions/content.json"))) { throw "note lost" }
 if (-not (Select-String -Quiet -SimpleMatch '"token": "sample-token"' (Join-Path $data "extensions/credentials.json"))) { throw "credential lost" }
+
+# Uninstall the settings sample, keeping its saved data: its row follows the
+# six Clear cache rows. Pane asks first, showing its saved data, and the first
+# choice keeps its settings and content while its copy and credential go.
+# Installing the same folder again finds its formal style and note, signed out.
+$process = Start-Pane "stderr-uninstall.log"
+Send "{DOWN 12}"   # the last row
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Send "{DOWN 19}"
+Send "{ENTER}"; Start-Sleep -Seconds 1   # "Uninstall Settings sample"
+Capture "44-confirm-uninstall.png"
+Check "44-confirm-uninstall.png" "aab4c0"   # what is removed and the saved data
+Send "{ENTER}"; Start-Sleep -Seconds 2   # "Uninstall and keep saved data"
+Capture "45-uninstalled.png"
+Check "45-uninstalled.png" "9fd8a8"   # "Uninstalled Settings sample; its settings and content are kept"
+Stop-Pane $process
+if (-not (Select-String -Quiet -SimpleMatch '"retained"' (Join-Path $data "extensions/installed.json"))) { throw "kept data not recorded" }
+if (Select-String -Quiet -SimpleMatch 'sample-token' (Join-Path $data "extensions/credentials.json")) { throw "credential not removed" }
+if (-not (Select-String -Quiet -SimpleMatch '"greeting-style": "formal"' (Join-Path $data "extensions/settings.json"))) { throw "setting not kept" }
+if (-not (Select-String -Quiet -SimpleMatch '"note": "Water the plants"' (Join-Path $data "extensions/content.json"))) { throw "note not kept" }
+$process = Start-Pane "stderr-reinstall.log" @("--install", "target/guests/packages/sample-settings")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Greeting is selected
+Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greeting
+Send "{DOWN 5}"
+Send "{ENTER}"; Start-Sleep -Seconds 2   # "Show what Pane keeps"
+Capture "46-reinstalled.png"
+Check "46-reinstalled.png" "9fd8a8"   # "Style: formal · Note: Water the plants · Signed in: no ..."
+python "$PSScriptRoot/check_screenshot.py" --distinct (Join-Path $OutDir "43-kept-after-clear.png") (Join-Path $OutDir "46-reinstalled.png")
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the credential is still shown" }
+Send "{ESC}"; Start-Sleep -Seconds 1
+Stop-Pane $process
+if (Select-String -Quiet -SimpleMatch '"retained"' (Join-Path $data "extensions/installed.json")) { throw "retained record not dropped" }
 Write-Output "screenshots in $OutDir"
