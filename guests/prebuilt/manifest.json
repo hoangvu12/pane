@@ -23,38 +23,38 @@
     "sample_js.wasm": {
       "source": "guests/sample-js",
       "inputs_sha256": "4f2cd91b3c1aca55c80d8a6e1925c2e3a7a4fcd3bc9f47aa510fd96d7dfa955c",
-      "bytes": 4394612,
-      "sha256": "015f6fc2daa9e6d085c50ad8923c8074cb84c747dffd87a0c36392624e1a032b"
+      "bytes": 4394611,
+      "sha256": "ab37409224e4fed53921a79fa4d473480dff36816abb7e0ac3e3efc276a91ff2"
     },
     "sample_ts.wasm": {
       "source": "guests/sample-ts",
       "inputs_sha256": "f6c56ef1aaa4f57706ab3352fc52dd3d21913b35882b2e1fc678dbd0781fff1e",
-      "bytes": 4398370,
-      "sha256": "6bfa68bdb3091084012fda6c7a0775e89095fb26ca3f7dd2e58139ae3572498b"
+      "bytes": 4398372,
+      "sha256": "5775d22f66c21d13455ce97d8f15684c086f63a421b3f12bbefaa9e3aba01dcf"
     },
     "sample_settings_js.wasm": {
       "source": "guests/sample-settings-js",
       "inputs_sha256": "f8eab4837614c7c5ef96ae00a1a8d31c03fec8752905ecfefc7da0ac8029e086",
-      "bytes": 4043428,
-      "sha256": "e14ae84558ee6d3679817a3587f48a2bc8ac7c4b4cd9d022e8caa660db2b7006"
+      "bytes": 4043431,
+      "sha256": "c2271e7865e53a8bd8005b69494511f501984b27f3925dac72bd483d71d4ee95"
     },
     "sample_settings_ts.wasm": {
       "source": "guests/sample-settings-ts",
       "inputs_sha256": "b154ea33b411671248bde2926b9f37d2bf6fdc7dbb39d869d422e205d4b9fcbc",
-      "bytes": 4043793,
-      "sha256": "c76c83ee3a4aedd71934506a6ea63a3f89b81baebee97d7a2d20304f2555d5c4"
+      "bytes": 4043789,
+      "sha256": "aeba9471b2626c6b029fd9fd1a34881576987b8d7d1c0760e7d627424dd519e2"
     },
     "sample_operations_js.wasm": {
       "source": "guests/sample-operations-js",
       "inputs_sha256": "a241d6368edd43ea893822fc8df8c2e08a40a49aaf04f5e7e2c1c59e777888d6",
-      "bytes": 4048802,
-      "sha256": "becffffccb5e1e470ccd9f1e9d6ffde0eaf87fae863f73cde2daecb24bad112d"
+      "bytes": 4048805,
+      "sha256": "b01d0c901ad9fa455ef228d89d2bf86cf2d10b9a1c8401ea8b2d824a21e0beed"
     },
     "sample_operations_ts.wasm": {
       "source": "guests/sample-operations-ts",
       "inputs_sha256": "9c30e70431bafec1824905c1c79202077cae20134413de0313fdff9cfab93fdb",
       "bytes": 4049926,
-      "sha256": "b1e5cebe7e530b1df21c9a1d618de9b17012743ab5569f0623c51237787ac63f"
+      "sha256": "974ce47d20e5ec1077209e4e1730fff28ec3a33ed892dff4aa31058b58bfd05c"
     }
   }
 }

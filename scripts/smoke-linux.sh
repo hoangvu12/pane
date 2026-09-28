@@ -408,6 +408,34 @@ grep -q '"greeting-style": "formal"' "$out/data/extensions/settings.json" || { e
 grep -q '"note": "Water the plants"' "$out/data/extensions/content.json" || { echo "note lost"; exit 1; }
 grep -q '"token": "sample-token"' "$out/data/extensions/credentials.json" || { echo "credential lost"; exit 1; }
 
+# Applications, a default extension: an installed application is found by
+# name in root search and Enter opens it. The application is a desktop entry
+# the smoke adds in an XDG_DATA_HOME of its own (for Pane only), whose
+# program writes a marker file, so nothing else is started; Pane still
+# searches the system's applications too.
+apps=$(cd "$out" && pwd)/apps
+rm -rf "$apps"
+mkdir -p "$apps/data/applications"
+cat >"$apps/data/applications/pane-smoke-app.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Pane Smoke App
+Exec=sh -c "echo launched > '$apps/launched'"
+EOF
+XDG_DATA_HOME=$apps/data start_pane --install target/guests/packages/applications
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 2   # Install
+"$xdotool" type --delay 50 'pane smoke'; sleep 3
+capture 44-application.png
+check 44-application.png 364355 3000   # the selected application row
+"$xdotool" key Return; sleep 3
+capture 45-opened.png
+check 45-opened.png 9fd8a8   # "Opened Pane Smoke App"
+for _ in $(seq 50); do [ -f "$apps/launched" ] && break; sleep 0.2; done
+[ -f "$apps/launched" ] || { echo "the application did not run"; exit 1; }
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{44-application,45-opened}.png
+stop_pane
+
 # Quicklinks, a default extension: installed, its command's form saves a
 # quicklink (Quicklinks is selected once installed, and "Create quicklink" is
 # its first item). After a restart, typing part of its name lists it,
@@ -423,8 +451,8 @@ start_pane --install target/guests/packages/quicklinks
 "$xdotool" key Tab
 "$xdotool" type --delay 50 'https://example.com/pane-issues'
 "$xdotool" key Return; sleep 2
-capture 44-quicklink-saved.png
-check 44-quicklink-saved.png 9fd8a8   # "Saved quicklink “Pane issues”"
+capture 46-quicklink-saved.png
+check 46-quicklink-saved.png 9fd8a8   # "Saved quicklink “Pane issues”"
 "$xdotool" key Escape key Escape; sleep 1
 stop_pane
 mkdir -p "$out/xdg"
@@ -441,12 +469,12 @@ export BROWSER="$(cd "$out" && pwd)/browser.sh" XDG_CONFIG_HOME="$xdg" XDG_CONFI
 start_pane
 "$xdotool" windowfocus --sync "$window"
 "$xdotool" type --delay 50 'pane iss'; sleep 2
-capture 45-quicklink-found.png
-check 45-quicklink-found.png 364355 3000   # the selected quicklink row
+capture 47-quicklink-found.png
+check 47-quicklink-found.png 364355 3000   # the selected quicklink row
 "$xdotool" key Return; sleep 3
-capture 46-quicklink-opened.png
-check 46-quicklink-opened.png 9fd8a8   # "Opened https://example.com/pane-issues"
+capture 48-quicklink-opened.png
+check 48-quicklink-opened.png 9fd8a8   # "Opened https://example.com/pane-issues"
 [ "$(cat "$out/opened-link.txt")" = https://example.com/pane-issues ] || { echo "the link handler was not asked to open the quicklink"; exit 1; }
-python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{44-quicklink-saved,45-quicklink-found,46-quicklink-opened}.png
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{46-quicklink-saved,47-quicklink-found,48-quicklink-opened}.png
 stop_pane
 echo "screenshots in $out"

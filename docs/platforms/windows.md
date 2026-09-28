@@ -95,9 +95,24 @@ package, types "6*7", checks the selected answer row, presses Enter to copy
 it, then compares typing "42+1" with pasting the copy (Ctrl+A, Ctrl+V through `SendKeys`) and typing
 "+1", which must look the same. In run [36423871204](https://github.com/wasimysaid/pane/actions/runs/36423871204) (commit `ab91081`) every step passed: "6*7" answered 42, Enter copied it, and pasting then typing "+1" matched typing "42+1", so the system clipboard held "42" ([27-answer.png](evidence/windows/27-answer.png), [30-pasted.png](evidence/windows/30-pasted.png)).
 
+## Applications (#24)
+
+[Applications](../applications.md) finds the `.lnk` shortcuts in the user's
+and all users' Start menu Programs folders and opens one with
+`ShellExecuteEx`, as Explorer does. Store (AppX/MSIX) apps without such a
+shortcut, such as Calculator on Windows 11, are not found yet. The smoke's
+last phase (screenshots 44 and 45) makes a shortcut "Pane Smoke App" to
+`cmd.exe` writing a marker file (with `WScript.Shell`, minimized) under an
+APPDATA given to Pane only, installs the package, types "pane smoke",
+checks the selected row, presses Enter and checks "Opened Pane Smoke App"
+and the marker; the adapter tests open such a shortcut too. **Not run on
+Windows yet**: this branch was not pushed, so the phase, the native tests
+and the `ShellExecuteEx` path are unverified here (the Windows code was
+only type-checked and linted for `x86_64-pc-windows-gnu`).
+
 ## Quicklinks (#28)
 
-The smoke's last phase (screenshots 44 and 45) installs the Quicklinks
+The smoke's last phase (screenshots 46 and 47) installs the Quicklinks
 package, creates "Pane issues" (https://example.com/pane-issues) in its
 form, restarts Pane and types "pane iss", which must list it selected. It
 stops before Enter, which would open the default browser; opening a link

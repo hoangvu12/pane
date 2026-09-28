@@ -8,6 +8,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use tokio::sync::{mpsc, oneshot};
 use wasmtime::component::{Component, Linker, ResourceAny, ResourceTable};
@@ -19,7 +20,7 @@ use crate::platform::Platform;
 pub(crate) mod bindings {
     wasmtime::component::bindgen!({
         path: "../../wit",
-        world: "extension-with-data",
+        world: "extension-with-applications",
         imports: { "pane:extension/operations": store },
         exports: { default: async | store },
     });
@@ -34,6 +35,16 @@ mod root_bindings {
     });
 }
 
+/// The `indexed-results` export of a command that supplies root results
+/// ahead of the query.
+mod indexed_bindings {
+    wasmtime::component::bindgen!({
+        path: "../../wit",
+        world: "indexed-results-provider",
+        exports: { default: async | store },
+    });
+}
+
 /// The `published-operations` export of a component serving operations.
 mod operations_bindings {
     wasmtime::component::bindgen!({
@@ -44,9 +55,11 @@ mod operations_bindings {
 }
 
 use bindings::exports::pane::extension::command;
-use bindings::pane::extension::{cache, content, credentials, settings};
+use bindings::pane::extension::{applications, cache, content, credentials, settings};
+use indexed_bindings::exports::pane::extension::indexed_results;
 use root_bindings::exports::pane::extension::root_results;
 
+use crate::applications::Applications;
 use crate::extension_data::{DataKind, PackageData};
 use crate::operations::{self, Directory, OperationCall, OperationError, Target};
 use crate::packages::EXTENSION_API;
@@ -59,6 +72,10 @@ const COMMAND_INTERFACE: &str = "pane:extension/command@0.1.0";
 
 /// The interface a command that computes root results also exports.
 const ROOT_RESULTS_INTERFACE: &str = "pane:extension/root-results@0.1.0";
+
+/// The interface a command that supplies root results ahead of the query
+/// also exports.
+const INDEXED_RESULTS_INTERFACE: &str = "pane:extension/indexed-results@0.1.0";
 
 /// The interface a component serving published operations also exports.
 const OPERATIONS_INTERFACE: &str = "pane:extension/published-operations@0.1.0";
@@ -80,6 +97,38 @@ pub(crate) enum RootAction {
     /// Open this web address with the system's link handler.
     OpenUrl(String),
 }
+
+/// A root result a command supplies ahead of the query.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct IndexedResult {
+    pub id: String,
+    pub title: String,
+    pub subtitle: Option<String>,
+    pub action: IndexedAction,
+}
+
+/// What invoking an indexed root result does; Pane performs it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum IndexedAction {
+    /// Open the installed application with this id.
+    OpenApplication(String),
+}
+
+/// What a component exports besides `command`, as its package manifest
+/// says, for [`Runtime::check_with`] to confirm.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Exports {
+    /// `root-results`: it computes root results from the query.
+    pub root_results: bool,
+    /// `indexed-results`: it supplies root results ahead of the query.
+    pub indexed_results: bool,
+    /// `published-operations`: it serves published operations.
+    pub operations: bool,
+}
+
+/// The system's applications as the runtime's guests and the launcher see
+/// them; replaceable, for tests.
+type SharedApplications = Arc<Mutex<Arc<dyn Applications>>>;
 
 /// One entry in a command's list view, as produced by the guest.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -339,6 +388,7 @@ impl std::error::Error for CallError {}
 #[derive(Clone)]
 pub struct Runtime {
     requests: mpsc::UnboundedSender<Request>,
+    applications: SharedApplications,
 }
 
 enum Request {
@@ -355,11 +405,14 @@ enum Request {
     },
     Check {
         component: PathBuf,
-        /// Whether the component must also compute root results.
-        root_results: bool,
-        /// Whether the component must also serve published operations.
-        operations: bool,
+        /// What the component must export besides `command`.
+        exports: Exports,
         reply: oneshot::Sender<Result<(), CallError>>,
+    },
+    IndexedResults {
+        component: PathBuf,
+        data: Option<PackageData>,
+        reply: oneshot::Sender<Result<Vec<IndexedResult>, CallError>>,
     },
     RootResults {
         component: PathBuf,
@@ -434,11 +487,16 @@ impl Runtime {
             .build()
             .map_err(|error| unavailable(&error))?;
         let (requests, receiver) = mpsc::unbounded_channel();
+        let applications: SharedApplications = Arc::new(Mutex::new(crate::applications::native()));
+        let host = Host::new(engine, applications.clone());
         std::thread::Builder::new()
             .name("pane-extension-runtime".into())
-            .spawn(move || executor.block_on(Host::new(engine).serve(receiver)))
+            .spawn(move || executor.block_on(host.serve(receiver)))
             .map_err(|error| unavailable(&error))?;
-        Ok(Runtime { requests })
+        Ok(Runtime {
+            requests,
+            applications,
+        })
     }
 
     /// Asks the command in `component` for its list view. The command has
@@ -492,26 +550,58 @@ impl Runtime {
     /// contract ([`CallError::OlderApiShape`] otherwise). The check keeps
     /// nothing loaded.
     pub async fn check(&self, component: &Path) -> Result<(), CallError> {
-        self.check_with(component, false, false).await
+        self.check_with(component, Exports::default()).await
     }
 
-    /// Like [`Runtime::check`]; with `root_results`, the component must also
-    /// export the root results interface, and with `operations` the
-    /// published operations interface, with the current function types.
+    /// Like [`Runtime::check`]; the component must also export each
+    /// interface `exports` names, with the current function types.
     pub(crate) async fn check_with(
         &self,
         component: &Path,
-        root_results: bool,
-        operations: bool,
+        exports: Exports,
     ) -> Result<(), CallError> {
         let (reply, response) = oneshot::channel();
         self.send(Request::Check {
             component: component.to_path_buf(),
-            root_results,
-            operations,
+            exports,
             reply,
         })?;
         response.await.unwrap_or_else(|_| Err(stopped()))
+    }
+
+    /// Asks the command in `component`, which supplies root results ahead
+    /// of the query, for all of them; the command uses
+    /// its `data`. Starts its instance if it has none.
+    pub(crate) async fn indexed_results_with(
+        &self,
+        component: &Path,
+        data: Option<PackageData>,
+    ) -> Result<Vec<IndexedResult>, CallError> {
+        let (reply, response) = oneshot::channel();
+        self.send(Request::IndexedResults {
+            component: component.to_path_buf(),
+            data,
+            reply,
+        })?;
+        response.await.unwrap_or_else(|_| Err(stopped()))
+    }
+
+    /// Has the runtime's guests, and the launcher opening their results,
+    /// find and open applications through `applications` from now on,
+    /// instead of this system's own ([`crate::applications::native`]).
+    pub fn set_applications(&self, applications: Arc<dyn Applications>) {
+        *self
+            .applications
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = applications;
+    }
+
+    /// Finds and opens the system's applications.
+    pub(crate) fn applications(&self) -> Arc<dyn Applications> {
+        self.applications
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     /// Asks the command in `component`, which computes root results, for
@@ -686,6 +776,8 @@ pub(crate) struct GuestState {
     /// guest's operation calls. A call made at any other time, such as while
     /// the component starts, is refused.
     pub(crate) serving: bool,
+    /// Finds and opens the system's applications for the guest.
+    applications: SharedApplications,
 }
 
 impl GuestState {
@@ -716,6 +808,34 @@ data_host!(content, DataKind::Content);
 data_host!(cache, DataKind::Cache);
 data_host!(credentials, DataKind::LocalCredentials);
 
+impl GuestState {
+    fn applications(&self) -> Arc<dyn Applications> {
+        self.applications
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+}
+
+impl applications::Host for GuestState {
+    fn installed(&mut self) -> Result<Vec<applications::Application>, String> {
+        Ok(self
+            .applications()
+            .installed()?
+            .into_iter()
+            .map(|application| applications::Application {
+                id: application.id,
+                name: application.name,
+                location: application.location,
+            })
+            .collect())
+    }
+
+    fn open(&mut self, id: String) -> Result<(), String> {
+        self.applications().open(&id)
+    }
+}
+
 impl WasiView for GuestState {
     fn ctx(&mut self) -> WasiCtxView<'_> {
         WasiCtxView {
@@ -728,9 +848,11 @@ impl WasiView for GuestState {
 /// A running guest instance of one component.
 struct Instance {
     store: Store<GuestState>,
-    bindings: bindings::ExtensionWithData,
+    bindings: bindings::ExtensionWithApplications,
     /// Its root results export, if it has one.
     root_results: Option<root_bindings::RootResultsProvider>,
+    /// Its indexed results export, if it has one.
+    indexed_results: Option<indexed_bindings::IndexedResultsProvider>,
     /// Its published operations export, if it has one.
     operations: Option<operations_bindings::OperationsProvider>,
 }
@@ -764,10 +886,12 @@ struct Host {
     /// The components running a guest call, outermost first: a chain of
     /// operation calls. Each is busy until its call returns.
     chain: Vec<PathBuf>,
+    /// Finds and opens the system's applications for guests.
+    applications: SharedApplications,
 }
 
 impl Host {
-    fn new(engine: Engine) -> Host {
+    fn new(engine: Engine, applications: SharedApplications) -> Host {
         let mut linker = Linker::new(&engine);
         // Only WASI 0.3 is registered: no P2 linker and no stubs for unknown
         // imports, so a mixed P2/P3 component cannot instantiate.
@@ -788,6 +912,10 @@ impl Host {
             |state| state,
         )
         .expect("registering operations in a fresh linker cannot conflict");
+        applications::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| {
+            state
+        })
+        .expect("registering applications in a fresh linker cannot conflict");
         let (calls, calls_sent) = operations::channel();
         Host {
             engine,
@@ -801,6 +929,7 @@ impl Host {
             calls_sent,
             waiting_calls: VecDeque::new(),
             chain: Vec::new(),
+            applications,
         }
     }
 
@@ -826,11 +955,18 @@ impl Host {
                 }
                 Request::Check {
                     component,
-                    root_results,
-                    operations,
+                    exports,
                     reply,
                 } => {
-                    let _ = reply.send(self.check(&component, root_results, operations));
+                    let _ = reply.send(self.check(&component, exports));
+                }
+                Request::IndexedResults {
+                    component,
+                    data,
+                    reply,
+                } => {
+                    let result = self.indexed_results(&component, data).await;
+                    let _ = reply.send(result);
                 }
                 Request::RootResults {
                     component,
@@ -1076,6 +1212,46 @@ impl Host {
             .collect())
     }
 
+    async fn indexed_results(
+        &mut self,
+        path: &Path,
+        data: Option<PackageData>,
+    ) -> Result<Vec<IndexedResult>, CallError> {
+        let instance = self.instance(path, data).await?;
+        if instance.indexed_results.is_none() {
+            return Err(CallError::Interface(format!(
+                "it does not export {INDEXED_RESULTS_INTERFACE}"
+            )));
+        }
+        let result = self
+            .run_guest(path, async |instance| {
+                let provider = instance
+                    .indexed_results
+                    .as_ref()
+                    .expect("checked above")
+                    .pane_extension_indexed_results();
+                instance
+                    .store
+                    .run_concurrent(async |store| provider.call_results(store).await)
+                    .await
+            })
+            .await?;
+        let results = self.settle(path, result, CallError::Guest)?;
+        Ok(results
+            .into_iter()
+            .map(|result| IndexedResult {
+                id: result.id,
+                title: result.title,
+                subtitle: result.subtitle,
+                action: match result.action {
+                    indexed_results::IndexedAction::OpenApplication(id) => {
+                        IndexedAction::OpenApplication(id)
+                    }
+                },
+            })
+            .collect())
+    }
+
     async fn run_action(
         &mut self,
         path: &Path,
@@ -1306,6 +1482,7 @@ impl Host {
                     component: path.to_path_buf(),
                     calls: self.calls.clone(),
                     serving: false,
+                    applications: self.applications.clone(),
                 },
             );
             let load = |error: wasmtime::Error| CallError::Load(format!("{error:#}"));
@@ -1314,9 +1491,14 @@ impl Host {
                 .instantiate_async(&mut store, &component)
                 .await
                 .map_err(load)?;
-            let bindings = bindings::ExtensionWithData::new(&mut store, &instance).map_err(load)?;
+            let bindings =
+                bindings::ExtensionWithApplications::new(&mut store, &instance).map_err(load)?;
             // Only a command that computes root results exports them.
             let root_results = root_bindings::RootResultsProvider::new(&mut store, &instance).ok();
+            // Only a command that supplies results ahead of the query exports
+            // them.
+            let indexed_results =
+                indexed_bindings::IndexedResultsProvider::new(&mut store, &instance).ok();
             // Only a component serving published operations exports them.
             let operations =
                 operations_bindings::OperationsProvider::new(&mut store, &instance).ok();
@@ -1326,6 +1508,7 @@ impl Host {
                     store,
                     bindings,
                     root_results,
+                    indexed_results,
                     operations,
                 },
             );
@@ -1407,15 +1590,14 @@ impl Host {
         )
     }
 
-    /// Type-checks `path` against the linker and the extension world, with
-    /// `root_results` against the root results interface too, and with
-    /// `operations` against the published operations interface, without
-    /// instantiating it, so no guest code runs.
-    fn check(&self, path: &Path, root_results: bool, operations: bool) -> Result<(), CallError> {
+    /// Type-checks `path` against the linker and the extension world, and
+    /// against each interface `exports` names too, without instantiating it,
+    /// so no guest code runs.
+    fn check(&self, path: &Path, exports: Exports) -> Result<(), CallError> {
         let component = self.compile(path)?;
         let interface = |error: wasmtime::Error| CallError::Interface(format!("{error:#}"));
         let pre = self.linker.instantiate_pre(&component).map_err(interface)?;
-        if root_results {
+        if exports.root_results {
             root_bindings::RootResultsProviderPre::new(pre.clone()).map_err(|error| {
                 CallError::Interface(format!(
                     "its manifest says it computes root results, but it does not export \
@@ -1423,7 +1605,15 @@ impl Host {
                 ))
             })?;
         }
-        if operations {
+        if exports.indexed_results {
+            indexed_bindings::IndexedResultsProviderPre::new(pre.clone()).map_err(|error| {
+                CallError::Interface(format!(
+                    "its manifest says it supplies indexed results, but it does not export \
+                     {INDEXED_RESULTS_INTERFACE} with the functions Pane calls: {error:#}"
+                ))
+            })?;
+        }
+        if exports.operations {
             operations_bindings::OperationsProviderPre::new(pre.clone()).map_err(|error| {
                 CallError::Interface(format!(
                     "its manifest publishes operations it serves, but it does not export \
@@ -1431,7 +1621,7 @@ impl Host {
                 ))
             })?;
         }
-        bindings::ExtensionWithDataPre::new(pre).map_err(interface)?;
+        bindings::ExtensionWithApplicationsPre::new(pre).map_err(interface)?;
         Ok(())
     }
 }
