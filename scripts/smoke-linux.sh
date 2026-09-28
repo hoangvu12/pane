@@ -1100,7 +1100,7 @@ if grep -q '"helper-wait": "finished"' "$PANE_DATA_DIR/extensions/settings.json"
 "$xdotool" type --delay 50 greet; sleep 1
 "$xdotool" key Return; sleep 2   # open Greeting in the restarted runtime
 for ((i = 0; i < 8; i++)); do "$xdotool" key Down; done   # Count
-inject crash-before-answer
+inject crash-before-answer:count
 "$xdotool" key Return; sleep 3   # counts, then the runtime crashes before answering
 capture 203-runtime-stopped.png
 check 203-runtime-stopped.png f08c8c   # the runtime stopped; its answer is lost

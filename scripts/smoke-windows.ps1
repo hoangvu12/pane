@@ -1101,7 +1101,7 @@ Send "{ESC}"; Start-Sleep -Seconds 1
 Send "greet"; Start-Sleep -Seconds 1
 Send "{ENTER}"; Start-Sleep -Seconds 2   # open Greeting in the restarted runtime
 Send "{DOWN 8}"   # Count
-Inject-Fault "crash-before-answer"
+Inject-Fault "crash-before-answer:count"
 Send "{ENTER}"; Start-Sleep -Seconds 3   # counts, then the runtime crashes before answering
 Capture "203-runtime-stopped.png"
 Check "203-runtime-stopped.png" "f08c8c"   # the runtime stopped; its answer is lost

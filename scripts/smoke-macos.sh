@@ -1048,7 +1048,7 @@ key 53; sleep 1
 type_text greet; sleep 1
 key 36; sleep 2   # open Greeting in the restarted runtime
 for ((i = 0; i < 8; i++)); do key 125; done   # Count
-inject crash-before-answer
+inject crash-before-answer:count
 key 36; sleep 3   # counts, then the runtime crashes before answering
 capture 203-runtime-stopped.png
 check 203-runtime-stopped.png f08c8c   # the runtime stopped; its answer is lost

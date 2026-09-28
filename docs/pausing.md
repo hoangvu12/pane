@@ -124,8 +124,10 @@ it holds across a restart. The earlier code is still not restored.
 
 Added for [#17](https://github.com/hoangvu12/pane/issues/17) (US77, US78,
 US80, T18, T19, G3; contributions, not a claim that the whole scenario or
-gate passes). The [extension runtime](../CONTEXT.md) is one thread of
-Pane's process that runs every extension. A **runtime crash** is a panic of
+gate passes). The [extension runtime](../CONTEXT.md) runs every
+extension; it is a thread in Pane's process today (the ticket speaks of
+killing the runtime process; whether it becomes one is pending the user's
+decision, see [current decisions](current-decisions.md) Q39). A **runtime crash** is a panic of
 that thread: a fault in Pane's host code or in Wasmtime, not a guest trap
 (a trap is caught and counts as a crash of its package, above). Pane cannot
 tell which extension, if any, caused it, so:
@@ -157,8 +159,9 @@ tell which extension, if any, caused it, so:
   carries on.
 - **Restarting is suppressed after a repeat.** Pane starts a fresh runtime
   thread (with a fresh engine) after a crash, unless the runtime crashed
-  within 5 minutes before (`RESTART_WINDOW` in
-  [`runtime/supervisor.rs`](../crates/pane-core/src/runtime/supervisor.rs)):
+  within 5 minutes before (`CRASH_WINDOW` in
+  [`runtime/supervisor.rs`](../crates/pane-core/src/runtime/supervisor.rs),
+  the same window as for pausing a package):
   then it stays stopped, and every extension call answers "it stopped after
   crashing and runs nothing until you restart it in Manage extensions".
 - **Manage extensions** then starts with **Restart the extension runtime**
@@ -172,18 +175,39 @@ tell which extension, if any, caused it, so:
 Faults are injected to check this, since no extension can crash the
 runtime thread: `Runtime::inject(Fault::Crash)` panics the thread wherever
 it waits (for the next request, or for a guest's clock, helper or
-operation), `Fault::CrashBeforeAnswer` panics it once the next guest call
-has returned, before its answer is sent (a lost response after a completed
-side effect). The native smokes set `PANE_TEST_RUNTIME_FAULTS` to a file
-whose appearance injects one (`crash` or `crash-before-answer`); nothing
-else sets it.
+operation), `Fault::CrashBeforeAnswer { item }` panics it once the action
+`item` has run, before its answer is sent (a lost response after a
+completed side effect; other calls, such as root search's, are not
+affected). The native smokes set `PANE_TEST_RUNTIME_FAULTS` to a file whose
+appearance injects one (`crash`, or `crash-before-answer:count`). All of
+this exists in debug builds only (`cfg(any(test, debug_assertions))`, which
+the tests and smokes use): a release build has no fault types, hook or
+environment variable.
 
-Limits: a failure that ends Pane's whole process (an abort, a fault in
-native code, the system killing Pane) is not recovered: the runtime is a
-thread, not a process of its own. The crash history is in memory only. A
-lock held by the thread when it panics is taken over by the next user
-(every shared lock ignores poisoning), but the state it guarded is not
-checked. A crash that loses the answer of an operation call loses the
+Recovery relies on the panic **unwinding** to a `catch_unwind` on the
+runtime thread: Pane refuses to build with `panic = "abort"`
+(`compile_error!` in `runtime/supervisor.rs`).
+
+**Taking over a lock.** The runtime's own locks ignore poisoning (one
+`lock` helper in `runtime.rs`); what they guard is replaced as a whole, so
+it is never half written. The launcher's state is different: the runtime
+thread holds it while it notes a package's failure, and could panic half
+way through pausing it. When the launcher finds its state poisoned, it
+clears the poison and first resets it: every claim of a change in progress
+is dropped (the panicked thread's would never be released; a change still
+running elsewhere finishes, but another change to the same package is no
+longer refused meanwhile), the listed pauses are made to agree with the
+packages whose code is stopped (one stopped but not yet listed is listed as
+paused, with Retry), and root search is shown afresh, closing any command,
+form or custom view, with "Pane recovered from an internal error". The
+installed packages, their records and extension data are not rebuilt:
+they change only after their change is written.
+
+Limits: a failure that ends Pane's whole process is not recovered: an
+abort, a fault in native code, the system killing Pane, or **a panic in a
+destructor while the thread unwinds from the first panic** (Rust then
+aborts the process). The runtime is a thread in Pane's process today, not
+a process of its own. The crash history is in memory only. A crash that loses the answer of an operation call loses the
 caller's answer too; neither is sent again. A guest computing without
 yielding holds the thread, so an injected crash waits for it to yield
 (#18).
