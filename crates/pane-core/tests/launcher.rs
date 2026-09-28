@@ -159,6 +159,123 @@ fn going_back_while_an_action_runs_discards_its_answer() {
     assert_eq!((view.screen, view.status), (Screen::Root, Status::Idle));
 }
 
+/// A launcher with the Rust sample's form ("Greet someone") opened.
+fn sample_form() -> Launcher {
+    let launcher = launcher(vec![command("sample", guest("sample_rust"))]);
+    block_on(launcher.activate_selected());
+    launcher.select(4);
+    block_on(launcher.activate_selected());
+    assert_eq!(launcher.view().screen, Screen::Form);
+    launcher
+}
+
+fn field_errors(launcher: &Launcher) -> Vec<Option<String>> {
+    let form = launcher.view().form.expect("a form");
+    form.fields.into_iter().map(|field| field.error).collect()
+}
+
+#[test]
+fn back_from_a_form_returns_to_the_command_with_its_item_selected() {
+    let launcher = sample_form();
+
+    launcher.back();
+
+    let view = launcher.view();
+    assert_eq!(
+        (view.screen, view.title.as_str(), view.selected, view.form),
+        (Screen::Command, "Rust sample", Some(4), None)
+    );
+    launcher.back();
+    assert_eq!(launcher.view().screen, Screen::Root);
+}
+
+#[test]
+fn editing_an_invalid_field_clears_its_error() {
+    let launcher = sample_form();
+    block_on(launcher.submit_form());
+    assert_eq!(field_errors(&launcher), [Some("Enter a name".into()), None]);
+
+    launcher.set_field_value("name", "A");
+
+    assert_eq!(field_errors(&launcher), [None, None]);
+}
+
+#[test]
+fn a_choice_the_form_does_not_offer_is_ignored() {
+    let launcher = sample_form();
+
+    launcher.set_field_value("greeting", "howdy");
+    launcher.set_field_value("missing", "value");
+
+    let values: Vec<String> = launcher
+        .view()
+        .form
+        .unwrap()
+        .fields
+        .into_iter()
+        .map(|field| field.value)
+        .collect();
+    assert_eq!(values, ["", "hello"]);
+}
+
+#[test]
+fn a_form_level_error_is_shown_without_marking_a_field() {
+    let launcher = launcher(vec![command("faulty", guest("faulty"))]);
+    open_faulty_item(&launcher, "form");
+    block_on(launcher.activate_selected());
+
+    block_on(launcher.submit_form());
+
+    assert_eq!(error(&launcher), "the guest refused the form");
+    assert_eq!(field_errors(&launcher), [None]);
+}
+
+#[test]
+fn going_back_while_a_form_is_submitted_discards_its_answer() {
+    let launcher = sample_form();
+    launcher.set_field_value("name", "Ada");
+
+    let pending = launcher.submit_form();
+    assert_eq!(launcher.view().status, Status::Running);
+    launcher.back();
+    block_on(pending);
+
+    let view = launcher.view();
+    assert_eq!((view.screen, view.status), (Screen::Command, Status::Idle));
+}
+
+#[test]
+fn submitting_again_while_a_submission_is_pending_is_ignored() {
+    let launcher = sample_form();
+    let first = launcher.submit_form();
+    launcher.set_field_value("name", "Ada");
+
+    let second = launcher.submit_form();
+    block_on(second);
+    assert_eq!(launcher.view().status, Status::Running);
+    block_on(first);
+
+    // Only the empty submission ran. Its rejection reports the name, but
+    // does not mark the field, which the user has edited since.
+    assert_eq!(error(&launcher), "Name: Enter a name");
+    assert_eq!(field_errors(&launcher), [None, None]);
+    block_on(launcher.submit_form());
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Hello, Ada, from the Rust guest".into())
+    );
+}
+
+#[test]
+fn submitting_outside_a_form_does_nothing() {
+    let launcher = launcher(vec![command("sample", guest("sample_rust"))]);
+    block_on(launcher.activate_selected());
+
+    block_on(launcher.submit_form());
+
+    assert_eq!(launcher.view().status, Status::Idle);
+}
+
 #[test]
 fn selecting_a_row_directly_ignores_indexes_past_the_list() {
     let launcher = launcher(vec![command("sample", guest("sample_rust"))]);

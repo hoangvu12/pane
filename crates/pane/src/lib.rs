@@ -3,6 +3,7 @@
 //! The window is a thin renderer over [`pane_core::Launcher`]: key and mouse
 //! input call launcher actions, and each frame draws the launcher's snapshot.
 
+use std::future::Future;
 use std::path::{Path, PathBuf};
 
 use gpui::{
@@ -11,7 +12,19 @@ use gpui::{
 };
 use pane_core::{CommandRegistration, Launcher, Row, Screen, Status};
 
-actions!(launcher, [SelectNext, SelectPrevious, Confirm, Back]);
+mod form;
+
+actions!(
+    launcher,
+    [
+        SelectNext,
+        SelectPrevious,
+        Confirm,
+        Back,
+        FocusNext,
+        FocusPrevious
+    ]
+);
 
 const KEY_CONTEXT: &str = "Launcher";
 
@@ -22,7 +35,10 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("up", SelectPrevious, Some(KEY_CONTEXT)),
         KeyBinding::new("enter", Confirm, Some(KEY_CONTEXT)),
         KeyBinding::new("escape", Back, Some(KEY_CONTEXT)),
+        KeyBinding::new("tab", FocusNext, Some(KEY_CONTEXT)),
+        KeyBinding::new("shift-tab", FocusPrevious, Some(KEY_CONTEXT)),
     ]);
+    form::bind_keys(cx);
 }
 
 /// The sample commands: (id, title, subtitle, component file name). Each
@@ -122,6 +138,8 @@ fn env_dir(name: &str) -> Option<PathBuf> {
 pub struct LauncherWindow {
     launcher: Launcher,
     focus_handle: FocusHandle,
+    /// The open form's controls; `Some` exactly on the form screen.
+    form: Option<form::FormControls>,
 }
 
 impl LauncherWindow {
@@ -131,6 +149,7 @@ impl LauncherWindow {
         LauncherWindow {
             launcher,
             focus_handle,
+            form: None,
         }
     }
 
@@ -148,12 +167,17 @@ impl LauncherWindow {
         cx.notify();
     }
 
-    fn confirm(&mut self, _: &Confirm, _: &mut Window, cx: &mut Context<Self>) {
-        self.activate_selected(cx);
+    fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        if self.launcher.view().screen == Screen::Form {
+            self.submit_form(window, cx);
+        } else {
+            self.activate_selected(window, cx);
+        }
     }
 
-    fn back(&mut self, _: &Back, _: &mut Window, cx: &mut Context<Self>) {
+    fn back(&mut self, _: &Back, window: &mut Window, cx: &mut Context<Self>) {
         self.launcher.back();
+        self.sync_form(window, cx);
         cx.notify();
     }
 
@@ -200,18 +224,44 @@ impl LauncherWindow {
         .detach();
     }
 
+    fn focus_next(&mut self, _: &FocusNext, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus_next(cx);
+    }
+
+    fn focus_previous(&mut self, _: &FocusPrevious, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus_prev(cx);
+    }
+
     /// Starts the selected row's action and redraws when the guest answers,
     /// without blocking the window meanwhile.
-    fn activate_selected(&mut self, cx: &mut Context<Self>) {
+    fn activate_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.launcher.selected_asks_for_folder() {
             self.choose_package_folder(cx);
             return;
         }
         let pending = self.launcher.activate_selected();
+        self.show_until_done(pending, window, cx);
+    }
+
+    /// Shows the launcher's state now and again when `pending`, a launcher
+    /// action's reply, has been applied, without blocking the window
+    /// meanwhile. Each time the form's controls follow the launcher's screen
+    /// (opening a form needs no guest call, so its controls appear at once).
+    fn show_until_done(
+        &mut self,
+        pending: impl Future<Output = ()> + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sync_form(window, cx);
         cx.notify();
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             pending.await;
-            this.update(cx, |_, cx| cx.notify()).ok();
+            this.update_in(cx, |this, window, cx| {
+                this.sync_form(window, cx);
+                cx.notify();
+            })
+            .ok();
         })
         .detach();
     }
@@ -245,9 +295,9 @@ impl LauncherWindow {
                     .aria_description(subtitle.clone())
                     .child(div().text_sm().text_color(rgb(0xaab4c0)).child(subtitle))
             })
-            .on_click(cx.listener(move |this, _, _, cx| {
+            .on_click(cx.listener(move |this, _, window, cx| {
                 this.launcher.select(index);
-                this.activate_selected(cx);
+                this.activate_selected(window, cx);
             }))
     }
 }
@@ -262,6 +312,7 @@ impl Render for LauncherWindow {
                 "↑↓ select · Enter run · Esc back",
             ),
             Screen::Package => ("Nothing to install.", "Enter confirm · Esc back"),
+            Screen::Form => ("", "Tab next field · Enter submit · Esc back"),
         };
         let details = view.details.into_iter().enumerate().map(|(index, line)| {
             div()
@@ -287,6 +338,26 @@ impl Render for LauncherWindow {
                 self.render_row(index, row, selected, cx)
             })
             .collect();
+        let body = match view.form {
+            Some(form) => self.render_form(view.title.clone(), form, cx),
+            None => div()
+                .id("rows")
+                // The list holds keyboard focus; the selected row is its
+                // active descendant, and key actions bubble to the root.
+                .track_focus(&self.focus_handle)
+                .role(Role::ListBox)
+                .aria_label(view.title.clone())
+                .flex_1()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .overflow_y_scroll()
+                .children(rows)
+                .when(view.selected.is_none(), |rows| {
+                    rows.child(div().text_color(rgb(0x8a96a3)).child(empty))
+                })
+                .into_any_element(),
+        };
 
         div()
             .key_context(KEY_CONTEXT)
@@ -294,6 +365,8 @@ impl Render for LauncherWindow {
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::back))
+            .on_action(cx.listener(Self::focus_next))
+            .on_action(cx.listener(Self::focus_previous))
             .size_full()
             .flex()
             .flex_col()
@@ -303,24 +376,7 @@ impl Render for LauncherWindow {
             .text_color(rgb(0xf1f3f5))
             .child(div().text_xl().child(view.title.clone()))
             .children(details)
-            .child(
-                div()
-                    .id("rows")
-                    // The list holds keyboard focus; the selected row is its
-                    // active descendant, and key actions bubble to the root.
-                    .track_focus(&self.focus_handle)
-                    .role(Role::ListBox)
-                    .aria_label(view.title.clone())
-                    .flex_1()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .overflow_y_scroll()
-                    .children(rows)
-                    .when(view.selected.is_none(), |rows| {
-                        rows.child(div().text_color(rgb(0x8a96a3)).child(empty))
-                    }),
-            )
+            .child(body)
             .child(
                 div()
                     .id("status")

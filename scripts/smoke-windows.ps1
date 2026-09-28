@@ -68,27 +68,41 @@ Capture "5-back-to-root.png"
 # Each command must have answered from its own guest, not the same view twice.
 python "$PSScriptRoot/check_screenshot.py" --distinct @(2..4 | ForEach-Object { Join-Path $OutDir "$_-result-$($_ - 2).png" })
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: result screenshots are not distinct" }
+
+# The Rust command's form (its fifth item): submitting it empty is rejected
+# and focus returns to the name, so typing there and choosing a greeting with
+# Tab and Down makes the guest answer.
+Send "{ENTER}"; Start-Sleep -Seconds 3
+Send "{DOWN}{DOWN}{DOWN}{DOWN}{ENTER}"; Start-Sleep -Seconds 1
+Capture "6-form.png"
+Send "{ENTER}"; Start-Sleep -Seconds 2
+Capture "7-form-error.png"
+Check "7-form-error.png" "f08c8c"   # the rejected field's message
+Send "Ada{TAB}{DOWN}{ENTER}"; Start-Sleep -Seconds 2
+Capture "8-form-result.png"
+Check "8-form-result.png" "9fd8a8"   # the guest's answer
+Send "{ESC}{ESC}"; Start-Sleep -Seconds 1
 Stop-Pane $process
 
 # Install the assembled Rust sample package (the folder the picker would
 # return), then run its command. Root lists the three samples, the installed
 # command, then the install row.
 $process = Start-Pane "stderr-install.log" @("--install", "target/guests/packages/sample-rust")
-Capture "6-package.png"
-Check "6-package.png" "aab4c0"   # the package's identity and compatibility lines
+Capture "9-package.png"
+Check "9-package.png" "aab4c0"   # the package's identity and compatibility lines
 Send "{ENTER}"; Start-Sleep -Seconds 2
-Capture "7-installed.png"
-Check "7-installed.png" "9fd8a8"   # "Installed Rust sample"
+Capture "10-installed.png"
+Check "10-installed.png" "9fd8a8"   # "Installed Rust sample"
 Send "{ENTER}"; Start-Sleep -Seconds 3
 Send "{ENTER}"; Start-Sleep -Seconds 2
-Capture "8-installed-result.png"
-Check "8-installed-result.png" "9fd8a8"   # the installed guest's answer
+Capture "11-installed-result.png"
+Check "11-installed-result.png" "9fd8a8"   # the installed guest's answer
 Stop-Pane $process
 
 # The installed command is still listed after a restart.
 $process = Start-Pane "stderr-restart.log"
-Capture "9-restarted.png"
-Check "9-restarted.png" "8a96a3"
+Capture "12-restarted.png"
+Check "12-restarted.png" "8a96a3"
 if (-not (Test-Path (Join-Path $data "extensions/installed.json"))) { throw "no install record" }
 Stop-Pane $process
 Write-Output "screenshots in $OutDir"

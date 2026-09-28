@@ -82,7 +82,7 @@ Recorded same-workload comparison: component 6.67 to 9.44 MiB; median fresh cach
 These remain open design/validation work in the specification and implementation issues:
 
 1. Final JS engine, upstream patch/fork strategy, runtime packaging/topology and initialization fixes.
-2. Public WIT/SDK contracts, language parity, UI/event/custom drawing, input/IME/accessibility and host/helper IPC.
+2. Public WIT/SDK contracts, language parity, UI/event/custom drawing, input/IME/accessibility and host/helper IPC. #20 adds the first standard-control slice, [forms](forms.md): an item can open a form with single-line text and single-choice fields and a submit button, which the extension validates per field or as a whole (Rust, JavaScript and TypeScript). Still open: other controls (multi-line text, checkboxes, dates, lists in forms), events beyond submit, custom drawing, real input-method and screen-reader verification on every OS, accessibility actions and invalid state, and the rest of the SDK surface.
 3. Cancellation, hangs, concurrent work, stale generation replies, reload/disable resource cleanup and fatal shared-runtime recovery.
 4. Package manifest/artifact format beyond the minimal local `pane.json` v1 of #9 (title, version, extension API, one component per command; [format](../guests/README.md#packaging-and-installing-a-local-extension)), dependency/resource/operation addressing, dependency cycles/partial installation, Git tracking and staged update activation. #9 does not implement Q34's supported-OS manifest metadata (deferred to a later ticket), and its update is not coordinated with a running or open command of the package.
 5. API version signaling, deprecation/migration details, persisted-state schema/migration ownership and recovery limits.

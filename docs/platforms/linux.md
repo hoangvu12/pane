@@ -44,7 +44,9 @@ scripts/smoke-linux.sh smoke            # needs Xvfb, xdotool, and ImageMagick o
 The script starts Xvfb, launches `target/debug/pane`, and sends real X11 key
 events with xdotool: for each of the Rust, JavaScript and TypeScript sample
 commands it presses Enter to open it, Down and Enter to run "Wait briefly"
-(an async WASI 0.3 clock import inside the guest), then Escape. It fails if the
+(an async WASI 0.3 clock import inside the guest), then Escape. Since #20 it
+then opens the Rust command's form, submits it empty, types a name, presses
+Tab, Down and Enter, and checks the error and result colors. It fails if the
 window does not appear or Pane exits. Without root, Xvfb and xdotool were
 unpacked from the distribution packages (`apt-get download`, `dpkg -x`) and
 selected with `PANE_XVFB`, `PANE_XDOTOOL` and `LD_LIBRARY_PATH`; CI installs them
@@ -59,6 +61,9 @@ Screenshots (inspected, not machine-asserted):
 | JavaScript command; "Waited 50 ms inside the JavaScript guest" | [3-command-1.png](evidence/linux-x11/3-command-1.png), [3-result-1.png](evidence/linux-x11/3-result-1.png) |
 | TypeScript command; "Waited 50 ms inside the TypeScript guest" | [4-command-2.png](evidence/linux-x11/4-command-2.png), [4-result-2.png](evidence/linux-x11/4-result-2.png) |
 | Escape returns to root search | [5-back-to-root.png](evidence/linux-x11/5-back-to-root.png) |
+| Rust command's form "Greet someone" opened, name field focused (#20) | [6-form.png](evidence/linux-x11/6-form.png) |
+| Submitted empty: "Enter a name" under the field, focus back on it | [7-form-error.png](evidence/linux-x11/7-form-error.png) |
+| Typed "Ada", Tab, Down, Enter: "Good morning, Ada, from the Rust guest" | [8-form-result.png](evidence/linux-x11/8-form-result.png) |
 
 Rendering, keyboard focus, selection, guest execution and result display all
 worked natively. Mesa reported "No DRI3 support detected - required for
@@ -74,21 +79,33 @@ same Xvfb/lavapipe setup), all screenshot checks passed:
 
 | Step | Evidence |
 | --- | --- |
-| Package screen: source folder, version, commands, compatibility, Install | `6-package.png` (not committed: it shows the local checkout path) |
-| Installed; root lists the samples, the installed "Rust sample", then the install row; status "Installed Rust sample" | [7-installed.png](evidence/linux-x11/7-installed.png) |
-| The installed command answers "Hello from the Rust guest" | [8-installed-result.png](evidence/linux-x11/8-installed-result.png) |
-| After a restart the installed command is still listed | [9-restarted.png](evidence/linux-x11/9-restarted.png) |
+| Package screen: source folder, version, commands, compatibility, Install | `9-package.png` (not committed: it shows the local checkout path) |
+| Installed; root lists the samples, the installed "Rust sample", then the install row; status "Installed Rust sample" | [10-installed.png](evidence/linux-x11/10-installed.png) |
+| The installed command answers "Hello from the Rust guest" | [11-installed-result.png](evidence/linux-x11/11-installed-result.png) |
+| After a restart the installed command is still listed | [12-restarted.png](evidence/linux-x11/12-restarted.png) |
 
 The folder picker itself is the XDG desktop portal, which this Xvfb session
 does not run, so the smoke uses `--install`; the picker flow is covered by the
 GPUI window tests (`crates/pane/tests/install.rs`). The macOS and Windows
-smokes do not include this phase yet.
+smokes run the same phase (screenshots 9 to 12); it has not run there yet.
 
 ## Text input and accessibility findings
 
-- **Text input / IME:** the current controls have no text field (root search
-  lists commands but has no query input yet), so text input and IME could not
-  be exercised. They remain open for the ticket that adds query input.
+- **Text input / IME (#20):** extension forms have a text field (GPUI CE's
+  editable text element). On 2026-09-28 the smoke above, on the same Ubuntu
+  26.04.1 / Xvfb combination, typed "Ada" with real X11 key events
+  (`xdotool type`) into the name field after a rejected empty submission had
+  returned focus to it, then used Tab and Down to change the greeting and
+  Enter to submit; the guest's answer shows the typed text arrived
+  ([8-form-result.png](evidence/linux-x11/8-form-result.png), checked by the
+  script's result-color assertion and by inspection). Editing keys (arrows,
+  Backspace), Tab order and composition are covered by the window tests
+  through GPUI's test platform, where composition is driven on the
+  focused field's editing state (`replace_and_mark_text_in_range` then
+  `replace_text_in_range`) as a platform input method would, not through the
+  window's platform input handler ([what that proves](../forms.md#checks)). **No real input
+  method (IBus, Fcitx) was run**: X11 XIM/preedit handling in GPUI CE and
+  composition with a CJK IME on Linux are unverified.
 - **Accessibility:** before this slice the window exposed only an empty
   `Window` node to assistive technology. The list is now a `ListBox` labelled
   with the view title and holding keyboard focus; rows are `ListBoxOption`s
@@ -97,7 +114,9 @@ smokes do not include this phase yet.
   through GPUI's accessibility tree in the window tests
   (`assistive_technology_sees_the_list_the_selection_and_the_result`), which is
   platform-independent. **No screen reader (Orca/AT-SPI) was run**, so
-  announcement behaviour on Linux is unverified.
+  announcement behaviour on Linux is unverified. Forms are covered in
+  [accessibility of forms](../forms.md#accessibility), which applies to all
+  three platforms.
 
 ## Remaining limits
 

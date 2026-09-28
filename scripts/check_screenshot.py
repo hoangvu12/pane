@@ -21,7 +21,7 @@ from PIL import Image
 BACKGROUND = (0x20, 0x25, 0x2D)
 # Every color Pane draws, so a pixel counts only if the target is the closest.
 PALETTE = ["20252d", "364355", "2e3a48", "f1f3f5", "aab4c0", "8a96a3", "d6c27a",
-           "9fd8a8", "f08c8c"]
+           "9fd8a8", "f08c8c", "1a1e24", "8ab4f8"]
 
 
 def rgb(color: str) -> tuple[int, int, int]:

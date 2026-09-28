@@ -18,9 +18,10 @@ trap '[ -n "$pid" ] && kill "$pid" 2>/dev/null || true' EXIT
 
 capture() { screencapture -x "$out/$1"; }
 check() { python3 "$(dirname "$0")/check_screenshot.py" "$out/$1" "$2"; }
-key() {  # macOS virtual key codes: 36 Return, 125 Down, 53 Escape
+key() {  # macOS virtual key codes: 36 Return, 125 Down, 53 Escape, 48 Tab
   osascript -e "tell application \"System Events\" to key code $1"
 }
+type_text() { osascript -e "tell application \"System Events\" to keystroke \"$1\""; }
 
 # Starts Pane with the given arguments and brings it to the front.
 start_pane() {
@@ -55,27 +56,43 @@ done
 capture 5-back-to-root.png
 # Each command must have answered from its own guest, not the same view twice.
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{2,3,4}-result-*.png
+
+# The Rust command's form (its fifth item): submitting it empty is rejected
+# and focus returns to the name, so typing there and choosing a greeting with
+# Tab and Down makes the guest answer.
+key 36; sleep 3
+for _ in 1 2 3 4; do key 125; done
+key 36; sleep 1
+capture 6-form.png
+key 36; sleep 2
+capture 7-form-error.png
+check 7-form-error.png f08c8c   # the rejected field's message
+type_text Ada
+key 48; key 125; key 36; sleep 2
+capture 8-form-result.png
+check 8-form-result.png 9fd8a8   # the guest's answer
+key 53; key 53; sleep 1
 stop_pane
 
 # Install the assembled Rust sample package (the folder the picker would
 # return), then run its command. Root lists the three samples, the installed
 # command, then the install row.
 start_pane --install target/guests/packages/sample-rust
-capture 6-package.png
-check 6-package.png aab4c0   # the package's identity and compatibility lines
+capture 9-package.png
+check 9-package.png aab4c0   # the package's identity and compatibility lines
 key 36; sleep 2
-capture 7-installed.png
-check 7-installed.png 9fd8a8   # "Installed Rust sample"
+capture 10-installed.png
+check 10-installed.png 9fd8a8   # "Installed Rust sample"
 key 36; sleep 3
 key 36; sleep 2
-capture 8-installed-result.png
-check 8-installed-result.png 9fd8a8   # the installed guest's answer
+capture 11-installed-result.png
+check 11-installed-result.png 9fd8a8   # the installed guest's answer
 stop_pane
 
 # The installed command is still listed after a restart.
 start_pane
-capture 9-restarted.png
-check 9-restarted.png 8a96a3
+capture 12-restarted.png
+check 12-restarted.png 8a96a3
 [ -f "$out/data/extensions/installed.json" ] || { echo "no install record"; exit 1; }
 stop_pane
 echo "screenshots in $out"

@@ -55,3 +55,7 @@ _Avoid_: Cache (it is not disposable)
 **Update**:
 Replacing the managed copy of an installed package from its source while keeping its package identity. A second explicit install of the same identity is rejected instead.
 _Avoid_: Reinstall
+
+**Form**:
+A set of fields an extension command asks the user to fill in and submit; the launcher renders its standard controls and the extension validates the submitted values.
+_Avoid_: Dialog, custom view
