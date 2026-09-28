@@ -579,4 +579,41 @@ $shots = "57-disabled", "58-disabled-pressed" | ForEach-Object { Join-Path $OutD
 python "$PSScriptRoot/check_screenshot.py" --same @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the released hotkey still did something" }
 Stop-Pane $process
+
+# Pausing a broken extension: the settings sample's last item, Crash, crashes
+# on purpose; the third crash within five minutes pauses the package and
+# returns to root search, where Greeting stays listed with why it does not
+# run. The pause holds after a restart. In Manage extensions, the package's
+# "Why ... is paused" row (after its Reload and Retry rows) shows the
+# details, whose only row, Retry, starts it again. A data folder of its own
+# keeps the rows in a known order.
+$data = Join-Path $OutDir "pausing-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+$process = Start-Pane "stderr-pausing.log" @("--install", "target/guests/packages/sample-settings")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Greeting is selected
+Send "{ENTER}"; Start-Sleep -Seconds 2   # open Greeting
+Send "{DOWN 7}"   # Crash
+for ($i = 0; $i -lt 3; $i++) { Send "{ENTER}"; Start-Sleep -Seconds 2 }
+Capture "59-paused.png"
+Check "59-paused.png" "f08c8c"   # "Settings sample crashed 3 times within 5 minutes and is paused ..."
+Check "59-paused.png" "d6a36a"   # Greeting: "Settings sample is paused after an error; ..."
+Stop-Pane $process
+if (-not (Select-String -Quiet -SimpleMatch '"paused"' (Join-Path $data "extensions/installed.json"))) { throw "pause not recorded" }
+$process = Start-Pane "stderr-pausing-restart.log"
+Capture "60-paused-after-restart.png"
+Check "60-paused-after-restart.png" "d6a36a"   # Greeting is still paused
+Send "{DOWN 10}"   # Manage extensions…
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Send "{DOWN 3}{ENTER}"; Start-Sleep -Seconds 1   # "Why Settings sample is paused"
+Capture "61-pause-details.png"
+Check "61-pause-details.png" "aab4c0"   # the details
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Retry Settings sample
+Capture "62-pause-retried.png"
+Check "62-pause-retried.png" "9fd8a8"   # "Started Settings sample"
+$shots = "61-pause-details", "62-pause-retried" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: Retry changed nothing" }
+Stop-Pane $process
+if (Select-String -Quiet -SimpleMatch '"paused"' (Join-Path $data "extensions/installed.json")) { throw "pause not cleared" }
 Write-Output "screenshots in $OutDir"
