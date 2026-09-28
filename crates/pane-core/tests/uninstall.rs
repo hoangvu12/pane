@@ -297,7 +297,10 @@ fn uninstalling_and_keeping_saved_data_restores_it_on_reinstall(fixture: &Fixtur
             "Saved data: 1 setting and 1 content record".to_string(),
             format!(
                 "Its source folder {} and files it saved elsewhere are not touched.",
-                folder.display()
+                // As the identity names it: resolved by the operating system
+                // (macOS reports `/private/var/...` for a temporary
+                // `/var/...` folder, Windows the long form of `RUNNER~1`).
+                identity.local_folder().unwrap().display()
             ),
         ]
     );
