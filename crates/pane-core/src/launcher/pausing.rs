@@ -36,10 +36,11 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use super::{Launcher, State, Status, owner};
 use crate::extension_data::PackageData;
+use crate::generation::End;
 use crate::packages::{PackageError, PackageIdentity, Pause, PauseCause, Store};
 use crate::runtime::Health;
 
@@ -48,11 +49,12 @@ use crate::runtime::Health;
 /// bad input does not stop an extension that otherwise works.
 const CRASHES_BEFORE_PAUSE: usize = 3;
 
-/// How close together crashes count towards pausing a package: long enough
-/// to catch a user trying a broken command again, or root search asking a
-/// broken provider on each key, and short enough that rare crashes of a
-/// long-running Pane never add up to a pause.
-const CRASH_WINDOW: Duration = Duration::from_secs(5 * 60);
+// How close together crashes count towards pausing a package: long enough
+// to catch a user trying a broken command again, or root search asking a
+// broken provider on each key, and short enough that rare crashes of a
+// long-running Pane never add up to a pause. Shared with the runtime's
+// restart policy.
+use crate::runtime::CRASH_WINDOW;
 
 /// The installed packages Pane paused, each with why, and when each
 /// package's current generation crashed within [`CRASH_WINDOW`].
@@ -270,6 +272,40 @@ impl Launcher {
         }
     }
 
+    /// Makes the pauses the launcher lists agree with the packages whose
+    /// code is stopped as paused, after a thread panicked while holding the
+    /// state, perhaps halfway through [`Launcher::pause`]: a package whose
+    /// code was stopped but not yet listed is listed as paused (with Retry),
+    /// and one listed whose code still runs is stopped. Its record is
+    /// written again either way.
+    pub(super) fn reconcile_pauses(&self, state: &mut State) {
+        let Some(installation) = &self.installation else {
+            return;
+        };
+        for package in state.packages.clone() {
+            let identity = &package.identity;
+            let stopped = installation.data.owned_by(identity).stopped() == Some(End::Paused);
+            match (stopped, state.paused.of(identity).cloned()) {
+                (true, None) => {
+                    let pause = Pause {
+                        after: PauseCause::Crashes,
+                        why: "Pane was interrupted while it paused this extension after an \
+                              error; retry it to start it again"
+                            .into(),
+                        version: package.version(),
+                    };
+                    installation.records.record(identity, Some(pause.clone()));
+                    state.paused.pause(identity.clone(), pause);
+                }
+                (false, Some(pause)) if package.enabled => {
+                    installation.data.pause(identity);
+                    installation.records.record(identity, Some(pause));
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Runs the package with `identity` again, which Pane may have paused,
     /// and queues the record of it: a new generation, with no crashes
     /// counted. Returns the pause it ends, if any.
@@ -301,6 +337,7 @@ impl Launcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     fn identity(dir: &tempfile::TempDir) -> PackageIdentity {
         PackageIdentity::local(dir.path()).unwrap()
