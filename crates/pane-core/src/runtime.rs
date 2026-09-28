@@ -858,6 +858,12 @@ impl GuestState {
 
 impl applications::Host for GuestState {
     fn installed(&mut self) -> Result<Vec<applications::Application>, String> {
+        // Code whose generation ended starts no more work.
+        if self.stopped().is_some() {
+            return Err(
+                "this code of the extension was stopped (disabled, reloaded or updated)".into(),
+            );
+        }
         Ok(self
             .applications()
             .installed()?

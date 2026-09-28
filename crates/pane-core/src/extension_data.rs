@@ -269,8 +269,23 @@ impl PackageData {
         self.generation.ended()
     }
 
-    /// The value of `kind` saved under `key`, if any.
+    /// Why code of this data's generation may no longer read or save
+    /// values, if its generation has ended.
+    fn refusal(&self) -> Option<&'static str> {
+        match self.stopped()? {
+            End::Disabled => Some("the extension is disabled"),
+            End::Replaced => {
+                Some("this code of the extension was replaced by a reload or an update")
+            }
+        }
+    }
+
+    /// The value of `kind` saved under `key`, if any, unless this data's
+    /// generation has ended: stopped code reads nothing more either.
     pub fn get(&self, kind: DataKind, key: &str) -> Result<Option<String>, String> {
+        if let Some(refusal) = self.refusal() {
+            return Err(refusal.into());
+        }
         let mut store = self.data.lock();
         let file = store.of(kind).file.as_ref().map_err(Clone::clone)?;
         Ok(file
@@ -284,20 +299,8 @@ impl PackageData {
     /// has ended: code that was disabled or replaced saves nothing more.
     pub fn set(&self, kind: DataKind, key: &str, value: &str) -> Result<(), String> {
         let mut store = self.data.lock();
-        match self.stopped() {
-            Some(End::Disabled) => {
-                return Err(format!(
-                    "the extension is disabled; {}",
-                    kind.kept_unchanged()
-                ));
-            }
-            Some(End::Replaced) => {
-                return Err(format!(
-                    "this code of the extension was replaced by a reload or an update; {}",
-                    kind.kept_unchanged()
-                ));
-            }
-            None => {}
+        if let Some(refusal) = self.refusal() {
+            return Err(format!("{refusal}; {}", kind.kept_unchanged()));
         }
         let data = store.of(kind);
         let file = data.file.as_ref().map_err(Clone::clone)?;
@@ -342,10 +345,10 @@ fn read(path: &Path) -> Result<DataJson, String> {
 mod tests {
     use super::*;
 
-    /// Code whose generation ended saves nothing more, even though a newer
+    /// Code whose generation ended reads and saves nothing more, even though a newer
     /// generation of the same package may.
     #[test]
-    fn replaced_or_disabled_code_saves_nothing() {
+    fn replaced_or_disabled_code_reads_and_saves_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let data = ExtensionData::open(dir.path());
         let identity = PackageIdentity::local(dir.path()).unwrap();
@@ -362,11 +365,19 @@ mod tests {
                     .into()
             )
         );
+        assert_eq!(
+            old.get(DataKind::Settings, "key"),
+            Err("this code of the extension was replaced by a reload or an update".into())
+        );
         assert_eq!(new.set(DataKind::Settings, "key", "new"), Ok(()));
         data.set_enabled(&identity, false);
         assert_eq!(
             new.set(DataKind::Content, "key", "late"),
             Err("the extension is disabled; its content is kept unchanged".into())
+        );
+        assert_eq!(
+            new.get(DataKind::Settings, "key"),
+            Err("the extension is disabled".into())
         );
         data.set_enabled(&identity, true);
         assert!(new.stopped().is_some());
