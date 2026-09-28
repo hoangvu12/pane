@@ -569,6 +569,7 @@ key 36; sleep 2   # Install; Greeting is selected
 key 36; sleep 2   # open Greeting
 for ((i = 0; i < 7; i++)); do key 125; done   # Crash
 for ((i = 0; i < 3; i++)); do key 36; sleep 2; done
+type_text greet; sleep 1   # Greeting and its reason at the top on any window height
 capture 59-paused.png
 check 59-paused.png f08c8c   # "Settings sample crashed 3 times within 5 minutes and is paused ..."
 check 59-paused.png d6a36a   # Greeting: "Settings sample is paused after an error; ..."

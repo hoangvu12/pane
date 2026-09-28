@@ -432,7 +432,8 @@ impl LauncherWindow {
             .when(selected, |row| {
                 row.aria_active_descendant().bg(rgb(0x364355))
             })
-            .hover(|row| row.bg(rgb(0x2e3a48)))
+            // Hovering never hides which row is selected.
+            .when(!selected, |row| row.hover(|row| row.bg(rgb(0x2e3a48))))
             .child(
                 div()
                     .when(row.unavailable.is_some(), |title| {
