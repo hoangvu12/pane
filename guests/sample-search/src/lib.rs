@@ -70,9 +70,12 @@ fn service() -> Result<String, String> {
 /// Fetches `path` from the service and reads its JSON answer as `T`.
 async fn fetch<T: for<'a> Deserialize<'a>>(path: &str) -> Result<T, String> {
     let service = service()?;
-    let response = http::get(&format!("{service}{path}"), &[("accept", "application/json")])
-        .await
-        .map_err(|why| format!("Could not reach the service at {service}: {why}"))?;
+    let response = http::get(
+        &format!("{service}{path}"),
+        &[("accept", "application/json")],
+    )
+    .await
+    .map_err(|why| format!("Could not reach the service at {service}: {why}"))?;
     if response.status != 200 {
         let why = serde_json::from_slice::<Problem>(&response.body)
             .map(|problem| problem.error)

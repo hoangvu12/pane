@@ -732,4 +732,73 @@ python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{75-dependencies
 stop_pane
 grep -q '"id": "greeter"' "$PANE_DATA_DIR/extensions/installed.json" || { echo "dependency not recorded"; exit 1; }
 [ "$(grep -c '"dir"' "$PANE_DATA_DIR/extensions/installed.json")" = 2 ] || { echo "not exactly two packages installed"; exit 1; }
+
+# Searching an online service inside its command: Package search, the Rust
+# search sample, queries the fixture service (a made-up package registry on
+# 127.0.0.1:8740, the sample's default address; nothing leaves this
+# computer), whose log lists each request. Typed into root search, "aurora"
+# finds nothing and sends the service nothing. Opened, the command's own
+# search field sends it: its results are listed, Enter shows a package's
+# details. A search the service holds ("slow...") is stopped when the text
+# changes: the service sees its client hang up and the newer results show.
+# The service's own error, then the service stopped (offline), are errors in
+# place of results; once it is back, searching works again: the extension
+# was not paused. A data folder of its own keeps the rows in a known order.
+export PANE_DATA_DIR=$out/search-data
+rm -rf "$PANE_DATA_DIR"
+cargo build --locked --quiet -p pane-core --example fixture_service
+service_log=$out/fixture-service.log
+service_pid=
+start_service() {
+  target/debug/examples/fixture_service --port 8740 >>"$service_log" 2>&1 &
+  service_pid=$!
+  for _ in $(seq 50); do
+    [ "$(grep -c 'listening on' "$service_log" 2>/dev/null)" -ge "$1" ] && return
+    kill -0 "$service_pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  echo "the fixture service did not start (see $service_log)"; exit 1
+}
+stop_service() { kill "$service_pid"; wait "$service_pid" 2>/dev/null || true; service_pid=; }
+trap '[ -n "$service_pid" ] && kill "$service_pid" 2>/dev/null; [ -n "$pid" ] && kill "$pid" 2>/dev/null || true' EXIT
+rm -f "$service_log"
+start_service 1
+start_pane --install target/guests/packages/sample-search
+key 36; sleep 2   # Install; Package search is selected
+capture 160-search-installed.png
+check 160-search-installed.png 9fd8a8   # "Installed Search sample"
+type_text aurora; sleep 2
+capture 161-root-typed.png   # root search: "No results for “aurora”"
+if grep -q '^GET' "$service_log"; then echo "root search reached the service"; exit 1; fi
+key 53; sleep 1   # clears the query
+type_text 'package search'; sleep 1
+key 36; sleep 3   # open Package search
+capture 162-command-opened.png   # its own list, its search field empty
+check 162-command-opened.png 364355 3000   # its first row, selected
+type_text aurora; sleep 3
+capture 163-search-results.png   # aurora-charts, selected, and aurora-cli
+check 163-search-results.png 364355 3000
+grep -q '^GET /search?q=aurora$' "$service_log" || { echo "the command's search did not reach the service"; exit 1; }
+key 125; key 36; sleep 3   # aurora-cli's details
+capture 164-details.png
+check 164-details.png 9fd8a8   # "aurora-cli 0.9.3 (Apache-2.0): Command-line parsing with subcommands"
+command_key a; type_text slow; sleep 2   # held by the service
+command_key a; type_text ember; sleep 3
+capture 165-newer-search.png   # ember-tz, not what "slow" would list
+check 165-newer-search.png 364355 3000
+grep -q '^ABANDONED /search?q=slow$' "$service_log" || { echo "the replaced search was not stopped"; exit 1; }
+command_key a; type_text down; sleep 3
+capture 166-service-error.png
+check 166-service-error.png f08c8c   # "... The service answered 503: the registry is down for maintenance"
+stop_service
+command_key a; type_text basalt; sleep 3
+capture 167-offline.png
+check 167-offline.png f08c8c   # "... Could not reach the service at http://127.0.0.1:8740: connection refused"
+start_service 2
+command_key a; type_text cobalt; sleep 3
+capture 168-back-online.png   # cobalt-http, selected: not paused
+check 168-back-online.png 364355 3000
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{161-root-typed,162-command-opened,163-search-results,164-details,165-newer-search,166-service-error,167-offline,168-back-online}.png
+stop_pane
+stop_service
 echo "screenshots in $out"

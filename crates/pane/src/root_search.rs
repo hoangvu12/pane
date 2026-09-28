@@ -115,7 +115,11 @@ impl LauncherWindow {
                     self.query.focus(window, cx);
                 }
             }
-            None if was_shown => window.focus(&self.focus_handle, cx),
+            // A form or custom view opened from a command's search has taken
+            // focus already.
+            None if was_shown && self.form.is_none() && self.custom_view.is_none() => {
+                window.focus(&self.focus_handle, cx)
+            }
             None => {}
         }
     }

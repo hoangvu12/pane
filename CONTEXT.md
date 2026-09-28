@@ -96,6 +96,10 @@ _Avoid_: Default action, catch-all
 An extension command that declares it takes a query: text typed in root search, which Pane sends it only when the user invokes it through its alias or as a fallback, and whose answer Pane shows.
 _Avoid_: Argument (Raycast's per-field input), search provider (a provider is asked while the user types)
 
+**Command search**:
+The search field an opened command has when it searches as the user types, such as one searching an online service; Pane sends the text typed there only to that command, stops a search the text has replaced, and never asks the command from root search.
+_Avoid_: Search provider (root search asks those), query-taking command (sent text from root search once, when invoked)
+
 **Search provider**:
 A source of matching results for a query, such as applications, files or an online service.
 _Avoid_: The entire search interface

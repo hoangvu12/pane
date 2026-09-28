@@ -169,6 +169,18 @@ package identity; a folder that does not exist is resolved from its
 spelling. **Not run on Windows yet**, so `..` across drive-letter and UNC
 paths is untested natively.
 
+## Searching inside a command (#30)
+
+The smoke's search phase (screenshots 160 to 168, [command search](../command-search.md#checks)),
+with a data folder of its own, builds and starts the fixture service
+(`fixture_service --port 8740`, 127.0.0.1 only) and installs Package
+search, the Rust search sample. "aurora" typed in root search must leave the
+service's log without a request; opened, the command's search field sends
+it (results listed, Enter shows a package's details); "slow" then "ember"
+must log the held search as abandoned; the service's 503, then the service
+stopped, are errors; restarted, a search lists results again. Windows retries a refused connection for about two seconds, so the offline step waits longer.
+**Not run on Windows yet.**
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** the smoke now also opens the Rust command's

@@ -21,7 +21,7 @@
 //! ```
 
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::vec::Vec;
 
 wit_bindgen::generate!({
@@ -69,7 +69,7 @@ pub async fn get(url: &str, headers: &[(&str, &str)]) -> Result<Response, String
     let fields = Fields::new();
     for (name, value) in headers {
         fields
-            .append(&name.to_string(), &value.as_bytes().to_vec())
+            .append(name, value.as_bytes())
             .map_err(|error| format!("header {name} cannot be sent: {error:?}"))?;
     }
     // No body and no trailers.
