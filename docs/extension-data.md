@@ -184,7 +184,7 @@ of the accepted
 for one identity at a time; data of different sources is never merged.
 
 Manage extensions (offered in root search while anything is installed or
-retained) lists, after the Uninstall rows, a row "Delete retained data of
+retained) lists, last (after the Uninstall and hotkey rows), a row "Delete retained data of
 <title>" per retained identity, in the order they were uninstalled, whose
 subtitle reads "Not installed · keeps 1 setting and 1 content record ·
 <source>" (or "keeps nothing"; a kind whose file cannot be read says so).
@@ -253,7 +253,7 @@ The record is dropped only once every kind is deleted:
   uninstall deleted with it; an `installed.json` that cannot be written
   (explained, still listed keeping nothing); an installed package refused.
   `crates/pane/tests/install.rs`: the row, confirmation, Esc and outcome in
-  the native window. The native GUI smokes, screenshots 52 to 54: the
+  the native window. The native GUI smokes, screenshots 59 to 61: the
   confirmation, the outcome, and after reinstalling the same folder nothing
   shown, with the files checked in between.
 - `crates/pane-core/tests/clear_cache.rs`, for each language's settings sample:

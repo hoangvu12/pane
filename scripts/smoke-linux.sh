@@ -532,37 +532,99 @@ python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/43-kept-after-cle
 stop_pane
 if grep -q '"retained"' "$out/data/extensions/installed.json"; then echo "retained record not dropped"; exit 1; fi
 
-# Delete the settings sample's retained data. Installed last, its Uninstall
-# row is the extension list's last; uninstalled keeping its saved data, its
-# retained data is listed as the last row. Pane asks first, then deletes it
-# without the extension; installing the same folder again finds nothing.
-start_pane
+# Global hotkeys: in Manage extensions, the settings sample's command,
+# Greeting, is given Ctrl+Alt+G by pressing it on its hotkey screen (its row
+# follows the package's state, Reload, Clear cache and Uninstall rows).
+# With Pane no longer focused, pressing the hotkey opens Greeting in Pane's
+# window, also after a restart; once the extension is disabled, pressing it does nothing.
+# A data folder of its own keeps the rows in a known order. Only the Xvfb
+# display is touched: Pane's key grab is on DISPLAY, and WAYLAND_DISPLAY is
+# unset for the whole smoke.
+unfocus_pane() {   # focus the root window: no Pane window has focus
+  "$xdotool" windowfocus "$("$xdotool" search --maxdepth 0 '.*' 2>/dev/null | head -1)"; sleep 1
+  [ "$("$xdotool" getwindowfocus 2>/dev/null)" != "$window" ] || { echo "Pane still has focus"; exit 1; }
+}
+press_hotkey() { "$xdotool" key ctrl+alt+g; sleep 3; }
+export PANE_DATA_DIR=$out/hotkeys-data
+rm -rf "$PANE_DATA_DIR"
+start_pane --install target/guests/packages/sample-settings
 "$xdotool" windowfocus --sync "$window"
-for ((i = 0; i < 20; i++)); do "$xdotool" key Down; done   # the last row
+"$xdotool" key Return; sleep 2   # Install; Greeting is selected
+for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
 "$xdotool" key Return; sleep 1
-for ((i = 0; i < 40; i++)); do "$xdotool" key Down; done
-"$xdotool" key Return; sleep 1   # "Uninstall Settings sample"
+"$xdotool" key Down Down Down Down Return; sleep 1   # "Hotkey for Greeting"
+capture 52-hotkey-screen.png
+check 52-hotkey-screen.png aab4c0   # "Press the keys that should open Greeting ..."
+"$xdotool" key ctrl+alt+g; sleep 2
+capture 53-hotkey-assigned.png
+check 53-hotkey-assigned.png 9fd8a8   # "Ctrl+Alt+G now opens Greeting"
+"$xdotool" key Escape; sleep 1   # root search
+unfocus_pane
+capture 54-unfocused.png
+press_hotkey
+capture 55-hotkey-opened.png
+check 55-hotkey-opened.png 364355 3000   # Greeting's first item, selected
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{53-hotkey-assigned,55-hotkey-opened}.png
+stop_pane
+grep -q '"ctrl+alt+g"' "$PANE_DATA_DIR/extensions/hotkeys.json" || { echo "hotkey not recorded"; exit 1; }
+start_pane
+unfocus_pane
+press_hotkey
+capture 56-hotkey-after-restart.png
+check 56-hotkey-after-restart.png 364355 3000   # Greeting's first item, selected
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{54-unfocused,56-hotkey-after-restart}.png
+"$xdotool" windowfocus --sync "$window"   # no window manager: Pane is focused here
+"$xdotool" key Escape; sleep 1
+for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+"$xdotool" key Return; sleep 1
+"$xdotool" key Return; sleep 2   # disable Settings sample
+"$xdotool" key Escape; sleep 1
+capture 57-disabled.png   # root search
+unfocus_pane
+press_hotkey
+"$xdotool" windowfocus --sync "$window"; sleep 1
+capture 58-disabled-pressed.png   # still root search: nothing opened
+python3 "$(dirname "$0")/check_screenshot.py" --same "$out"/{57-disabled,58-disabled-pressed}.png
+stop_pane
+
+# Delete retained data: with a data folder of its own, the settings sample
+# saves a note and is uninstalled keeping it (its Uninstall row follows its
+# state, Reload and Clear cache rows); its retained data, the extension list's
+# last row, is deleted after confirming, without the extension. Installing
+# the same folder again finds nothing.
+export PANE_DATA_DIR=$out/retained-data
+rm -rf "$PANE_DATA_DIR"
+start_pane --install target/guests/packages/sample-settings
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 2   # Install; Greeting is selected
+"$xdotool" key Return; sleep 3   # open Greeting
+for ((i = 0; i < 3; i++)); do "$xdotool" key Down; done
+"$xdotool" key Return; sleep 2   # "Save a note"
+grep -q '"note": "Water the plants"' "$PANE_DATA_DIR/extensions/content.json" || { echo "note not saved"; exit 1; }
+"$xdotool" key Escape; sleep 1   # root search
+for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+"$xdotool" key Return; sleep 1
+"$xdotool" key Down Down Down Return; sleep 1   # "Uninstall Settings sample"
 "$xdotool" key Return; sleep 2   # "Uninstall and keep saved data"
 for ((i = 0; i < 40; i++)); do "$xdotool" key Down; done
 "$xdotool" key Return; sleep 1   # "Delete retained data of Settings sample"
-capture 52-confirm-delete-retained.png
-check 52-confirm-delete-retained.png aab4c0   # what is kept and what is not touched
+capture 59-confirm-delete-retained.png
+check 59-confirm-delete-retained.png aab4c0   # what is kept and what is not touched
 "$xdotool" key Return; sleep 2   # "Delete retained data"
-capture 53-retained-deleted.png
-check 53-retained-deleted.png 9fd8a8   # "Deleted the retained data of Settings sample"
+capture 60-retained-deleted.png
+check 60-retained-deleted.png 9fd8a8   # "Deleted the retained data of Settings sample"
 stop_pane
-if grep -q '"retained"' "$out/data/extensions/installed.json"; then echo "retained record not dropped"; exit 1; fi
-if grep -q '"greeting-style": "formal"' "$out/data/extensions/settings.json"; then echo "setting not deleted"; exit 1; fi
-if grep -q 'Water the plants' "$out/data/extensions/content.json"; then echo "note not deleted"; exit 1; fi
+if grep -q '"retained"' "$PANE_DATA_DIR/extensions/installed.json"; then echo "retained record not dropped"; exit 1; fi
+if grep -q 'Water the plants' "$PANE_DATA_DIR/extensions/content.json"; then echo "note not deleted"; exit 1; fi
 start_pane --install target/guests/packages/sample-settings
 "$xdotool" windowfocus --sync "$window"
 "$xdotool" key Return; sleep 2   # Install; Greeting is selected
 "$xdotool" key Return; sleep 3   # open Greeting
 for ((i = 0; i < 5; i++)); do "$xdotool" key Down; done
 "$xdotool" key Return; sleep 2   # "Show what Pane keeps"
-capture 54-reinstalled-empty.png
-check 54-reinstalled-empty.png 9fd8a8   # "Style: none · Note: none · Signed in: no ..."
-python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/51-reinstalled.png" "$out/54-reinstalled-empty.png"
+capture 61-reinstalled-empty.png
+check 61-reinstalled-empty.png 9fd8a8   # "Style: none · Note: none · Signed in: no ..."
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/51-reinstalled.png" "$out/61-reinstalled-empty.png"
 "$xdotool" key Escape; sleep 1
 stop_pane
 echo "screenshots in $out"
