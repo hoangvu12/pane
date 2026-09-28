@@ -67,8 +67,9 @@ interface credentials {
   set: func(key: string, value: string) -> result<_, string>;
 }
 
-/// A command that may also keep extension data: settings, content, cache
-/// and local credentials. Pane hosts this world; a component built for
+/// A command that may also keep extension data (settings, content, cache
+/// and local credentials) and call other packages' operations
+/// (operations.wit). Pane hosts this world; a component built for
 /// `extension` alone runs unchanged.
 world extension-with-data {
   include extension;
@@ -76,4 +77,5 @@ world extension-with-data {
   import content;
   import cache;
   import credentials;
+  import operations;
 }

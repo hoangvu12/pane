@@ -8,8 +8,8 @@ use std::mem::{Discriminant, discriminant};
 use std::path::{Path, PathBuf};
 
 use gpui::{
-    App, Context, Div, FocusHandle, KeyBinding, PathPromptOptions, Pixels, Role, ScrollHandle,
-    SharedString, Size, Stateful, Window, actions, div, prelude::*, rgb,
+    App, ClipboardItem, Context, Div, FocusHandle, KeyBinding, PathPromptOptions, Pixels, Role,
+    ScrollHandle, SharedString, Size, Stateful, Window, actions, div, prelude::*, rgb,
 };
 use pane_core::{CommandRegistration, Launcher, LauncherView, Row, Screen, Status};
 
@@ -273,6 +273,9 @@ impl LauncherWindow {
         if self.launcher.selected_asks_for_folder() {
             self.choose_package_folder(window, cx);
             return;
+        }
+        if let Some(text) = self.launcher.selected_copy() {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
         }
         let pending = self.launcher.activate_selected();
         self.show_until_done(pending, window, cx);

@@ -179,9 +179,54 @@ No input method (IBus, Fcitx) was used; composition in the field is covered
 only by the window tests. The macOS and Windows smokes run the same phase
 (screenshots 24 to 26); it has not run there yet.
 
+### Calculator (#27)
+
+The calculator phase installs the calculator package
+(`--install target/guests/packages/calculator`), types "6*7" with real X11
+key events and checks the selected answer row's color; Enter copies the
+answer. Ctrl+A and typing "42+1" gives screenshot 29; Ctrl+A, Ctrl+V (the
+copied "42") and typing "+1" must give exactly the same screen (`--same`),
+which holds only if the X11 clipboard held "42"; screens 27 to 29 must
+differ. Run locally on 2026-09-28 (Ubuntu 26.04.1 LTS, kernel
+7.0.0-31-generic, x86_64, same Xvfb/lavapipe setup): all checks of the
+whole smoke passed.
+
+| Step | Evidence |
+| --- | --- |
+| "6*7" typed: the answer 42, first and selected, computed by the calculator's guest | [27-answer.png](evidence/linux-x11/27-answer.png) |
+| Enter: "Copied 42 to the clipboard", root search unchanged | [28-copied.png](evidence/linux-x11/28-copied.png) |
+| Pasted "42", typed "+1": the answer 43, the same screen as typing "42+1" | [30-pasted.png](evidence/linux-x11/30-pasted.png) |
+
+The macOS and Windows smokes run the same phase (screenshots 27 to 30, with
+Cmd and Ctrl respectively); it has not run there yet. Disabling the
+calculator is covered by the launcher tests, not natively.
+
+### Operations (#22)
+
+The operations phase (screenshots 31 and 32) installs the JavaScript
+operations sample, then the Rust one
+(`--install target/guests/packages/sample-operations-js`, then
+`sample-operations`), opens the Rust sample's command and runs "Ask
+JavaScript to greet" with real X11 key events: the Rust guest calls the
+JavaScript package's `greet` operation through Pane, which starts that
+package's guest for the call. Run locally on 2026-09-28 (Ubuntu 26.04.1 LTS,
+kernel 7.0.0-31-generic, x86_64, same Xvfb/lavapipe setup): all checks of
+the whole smoke passed.
+
+| Step | Evidence |
+| --- | --- |
+| JavaScript operations sample installed | [31-operations-target.png](evidence/linux-x11/31-operations-target.png) |
+| "JavaScript answered: Hello, Rust, from JavaScript", from the other package's guest | [32-operation-answer.png](evidence/linux-x11/32-operation-answer.png) |
+
+The macOS and Windows smokes run the same phase (screenshots 31 and 32); it
+has not run there yet. The other directions (JavaScript and TypeScript
+calling Rust) and every failure are covered by the launcher tests, not
+natively.
+
 ### Reloading a package (#11)
 
-After the search phase, the smoke writes a package `Dev` in `<output-dir>/dev` whose component
+After the operations phase, the smoke writes a package `Dev` in
+`<output-dir>/dev` whose component
 is a copy of the Rust sample, installs it and runs "Say hello". It then
 copies the JavaScript sample over the component, reloads Dev in **Manage
 extensions…** without restarting Pane, and runs "Say hello" again. Next it
@@ -189,24 +234,25 @@ deletes the component and reloads (the checks fail, so the working code must
 keep answering exactly as before), and finally copies in the
 `failing-start` fixture, whose first start traps, reloads, and presses Retry.
 It checks that `settings.json` kept the setting the failed start saved. Run
-locally on 2026-09-28 (Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64,
+locally on 2026-09-28 (Ubuntu 26.04.1 LTS, kernel 7.0.0-37-generic, x86_64,
 same Xvfb/lavapipe setup), all checks of the whole smoke passed:
 
 | Step | Evidence |
 | --- | --- |
-| Dev as installed: the Rust guest answers | [27-dev-before.png](evidence/linux-x11/27-dev-before.png) |
-| Reload Dev: "Reloaded Dev" | `28-reloaded.png` (not committed: it shows local paths) |
-| The same command now shows the JavaScript sample and its answer (`--distinct` from step 27) | [29-dev-after.png](evidence/linux-x11/29-dev-after.png) |
-| Component deleted, Reload Dev: "Dev was not reloaded: Not ready to run: … It keeps running its installed code." | `30-not-reloaded.png` (not committed: it shows local paths) |
-| The command still answers from the JavaScript code, pixel for pixel as in step 29 (`--same`) | `31-still-running.png` |
-| Failing start: "Reloaded Dev, but it failed to start; its earlier code is not restored. …" | `32-start-failed.png` (not committed: it shows local paths) |
-| Retry starting Dev: "Started Dev" | `33-retried.png` (not committed: it shows local paths) |
+| Dev as installed: the Rust guest answers | [33-dev-before.png](evidence/linux-x11/33-dev-before.png) |
+| Reload Dev: "Reloaded Dev" | `34-reloaded.png` (not committed: it shows local paths) |
+| The same command now shows the JavaScript sample and its answer (`--distinct` from step 33) | [35-dev-after.png](evidence/linux-x11/35-dev-after.png) |
+| Component deleted, Reload Dev: "Dev was not reloaded: Not ready to run: … It keeps running its installed code." | `36-not-reloaded.png` (not committed: it shows local paths) |
+| The command still answers from the JavaScript code, pixel for pixel as in step 35 (`--same`) | `37-still-running.png` |
+| Failing start: "Reloaded Dev, but it failed to start; its earlier code is not restored. …" | `38-start-failed.png` (not committed: it shows local paths) |
+| Retry starting Dev: "Started Dev" | `39-retried.png` (not committed: it shows local paths) |
 
-The macOS and Windows smokes run the same phase (screenshots 27 to 33); it
+The macOS and Windows smokes run the same phase (screenshots 33 to 39); it
 
 ### Clearing an extension's cache (#39)
 
-After the reload phase, the smoke restarts Pane, and in Greeting chooses "Save a note" and
+After the reload phase, the smoke restarts Pane, and in Greeting chooses
+"Save a note" and
 "Sign in", so the settings sample keeps one value of each kind of
 [extension data](../extension-data.md): its style (settings), a note
 (content), the greeting cached by "Greet me" earlier (cache) and a token
@@ -215,17 +261,17 @@ After the reload phase, the smoke restarts Pane, and in Greeting chooses "Save a
 extensions…**, confirms, and shows what Pane keeps again. Finally it checks
 that `cache.json` no longer holds the greeting while the style, note and
 token are still in their files. Run locally on 2026-09-28 (Ubuntu 26.04.1
-LTS, kernel 7.0.0-31-generic, x86_64, same Xvfb/lavapipe setup), all checks
+LTS, kernel 7.0.0-37-generic, x86_64, same Xvfb/lavapipe setup), all checks
 of the whole smoke passed.
 
 | Step | Evidence |
 | --- | --- |
-| "Style: formal · Note: Water the plants · Signed in: yes · Cached greeting: Good day to you" | [34-kept.png](evidence/linux-x11/34-kept.png) |
-| "Clear the cache of Settings sample?", its source, what is deleted and what is kept; Clear cache and Cancel | `35-confirm-clear-cache.png` (not committed: it shows the local checkout path) |
-| "Cleared the cache of Settings sample" | `36-cache-cleared.png` (not committed: it shows the local checkout path) |
-| "... Cached greeting: none", the other three kept | [37-kept-after-clear.png](evidence/linux-x11/37-kept-after-clear.png) |
+| "Style: formal · Note: Water the plants · Signed in: yes · Cached greeting: Good day to you" | [40-kept.png](evidence/linux-x11/40-kept.png) |
+| "Clear the cache of Settings sample?", its source, what is deleted and what is kept; Clear cache and Cancel | `41-confirm-clear-cache.png` (not committed: it shows the local checkout path) |
+| "Cleared the cache of Settings sample" | `42-cache-cleared.png` (not committed: it shows the local checkout path) |
+| "... Cached greeting: none", the other three kept | [43-kept-after-clear.png](evidence/linux-x11/43-kept-after-clear.png) |
 
-The macOS and Windows smokes run the same phase (screenshots 34 to 37); it
+The macOS and Windows smokes run the same phase (screenshots 40 to 43); it
 has not run there yet.
 
 ## Text input and accessibility findings

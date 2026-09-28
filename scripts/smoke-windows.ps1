@@ -250,11 +250,55 @@ python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: root search showed the same window twice" }
 Stop-Pane $process
 
+# The calculator, a default extension: an expression typed into root search
+# lists its answer first, selected, and Enter copies it. Pasting the copy
+# over the query and typing on shows exactly the screen typing the whole
+# expression shows, so the clipboard held the answer.
+# SendKeys: {+} is a plus sign, ^ holds Ctrl.
+$process = Start-Pane "stderr-calculator.log" @("--install", "target/guests/packages/calculator")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install
+Send "6*7"; Start-Sleep -Seconds 2
+Capture "27-answer.png"
+Check "27-answer.png" "364355" 3000   # the selected answer row
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Capture "28-copied.png"   # "Copied 42 to the clipboard"
+Send "^a"; Send "42{+}1"; Start-Sleep -Seconds 2
+Capture "29-typed.png"
+Send "^a"; Send "^v"; Send "{+}1"; Start-Sleep -Seconds 2
+Capture "30-pasted.png"
+$shots = "27-answer", "28-copied", "29-typed" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the calculator showed the same window twice" }
+python "$PSScriptRoot/check_screenshot.py" --same (Join-Path $OutDir "29-typed.png") (Join-Path $OutDir "30-pasted.png")
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: pasting did not give the copied answer" }
+Stop-Pane $process
+
+# Operations: install the JavaScript operations sample, then the Rust one,
+# whose command (Call from Rust, selected once installed) asks the JavaScript
+# package's greet operation: "JavaScript answered: Hello, Rust, from
+# JavaScript" comes from the other package's guest, started for the call.
+$process = Start-Pane "stderr-operations-target.log" @("--install", "target/guests/packages/sample-operations-js")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install
+Capture "31-operations-target.png"
+Check "31-operations-target.png" "9fd8a8"   # "Installed JavaScript operations sample"
+Stop-Pane $process
+$process = Start-Pane "stderr-operations.log" @("--install", "target/guests/packages/sample-operations")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Call from Rust is selected
+Send "{ENTER}"; Start-Sleep -Seconds 3   # open Call from Rust
+Send "{ENTER}"; Start-Sleep -Seconds 5   # "Ask JavaScript to greet"
+Capture "32-operation-answer.png"
+Check "32-operation-answer.png" "9fd8a8"   # the JavaScript guest's answer
+$shots = "31-operations-target", "32-operation-answer" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the operation's answer did not appear" }
+Stop-Pane $process
+
 # Reload a development package while Pane stays open. Its command starts as
 # the Rust sample; a new build of it is the JavaScript sample. Root lists the
-# three samples, Rust sample, Greeting, Dev sample, the install row, then
-# Manage extensions... last; the extension list holds Rust sample, Settings
-# sample, Dev, then Reload Rust sample, Reload Settings sample, Reload Dev.
+# three samples, Rust sample, Greeting, Calculator, Call from JavaScript, Call
+# from Rust, Dev sample (the ninth row), the install row, then Manage
+# extensions... last; the extension list holds the six packages (Dev is the
+# sixth), then their six Reload rows (Reload Dev is the twelfth).
 $dev = Join-Path $OutDir "dev"
 New-Item -ItemType Directory -Force -Path $dev | Out-Null
 Copy-Item "target/guests/sample_rust.wasm" (Join-Path $dev "command.wasm")
@@ -270,56 +314,56 @@ $process = Start-Pane "stderr-reload.log" @("--install", $dev)
 Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Dev sample is selected
 Send "{ENTER}"; Start-Sleep -Seconds 3
 Send "{ENTER}"; Start-Sleep -Seconds 2   # "Say hello"
-Capture "27-dev-before.png"
-Check "27-dev-before.png" "9fd8a8"   # "Hello from the Rust guest"
+Capture "33-dev-before.png"
+Check "33-dev-before.png" "9fd8a8"   # "Hello from the Rust guest"
 Send "{ESC}"; Start-Sleep -Seconds 1
 Copy-Item -Force "target/guests/sample_js.wasm" (Join-Path $dev "command.wasm")
-Send "{DOWN 10}"   # the last row
+Send "{DOWN 12}"   # the last row
 Send "{ENTER}"; Start-Sleep -Seconds 1
-Send "{DOWN 5}"   # Reload Dev
+Send "{DOWN 11}"   # Reload Dev
 Send "{ENTER}"; Start-Sleep -Seconds 3
-Capture "28-reloaded.png"
-Check "28-reloaded.png" "9fd8a8"   # "Reloaded Dev"
+Capture "34-reloaded.png"
+Check "34-reloaded.png" "9fd8a8"   # "Reloaded Dev"
 Send "{ESC}"; Start-Sleep -Seconds 1
-Send "{DOWN 5}"   # Dev sample
+Send "{DOWN 8}"   # Dev sample
 Send "{ENTER}"; Start-Sleep -Seconds 3
 Send "{ENTER}"; Start-Sleep -Seconds 2   # "Say hello"
-Capture "29-dev-after.png"
-Check "29-dev-after.png" "9fd8a8"   # "Hello from the JavaScript guest"
-python "$PSScriptRoot/check_screenshot.py" --distinct (Join-Path $OutDir "27-dev-before.png") (Join-Path $OutDir "29-dev-after.png")
+Capture "35-dev-after.png"
+Check "35-dev-after.png" "9fd8a8"   # "Hello from the JavaScript guest"
+python "$PSScriptRoot/check_screenshot.py" --distinct (Join-Path $OutDir "33-dev-before.png") (Join-Path $OutDir "35-dev-after.png")
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the reloaded command shows its earlier code" }
 Send "{ESC}"; Start-Sleep -Seconds 1
 
 # A build that fails the install checks (here its component is missing) is
 # not reloaded: the working code keeps running, exactly as before.
 Remove-Item (Join-Path $dev "command.wasm")
-Send "{DOWN 10}"
+Send "{DOWN 12}"
 Send "{ENTER}"; Start-Sleep -Seconds 1
-Send "{DOWN 5}"
+Send "{DOWN 11}"
 Send "{ENTER}"; Start-Sleep -Seconds 2
-Capture "30-not-reloaded.png"
-Check "30-not-reloaded.png" "f08c8c"   # "Dev was not reloaded: ..."
+Capture "36-not-reloaded.png"
+Check "36-not-reloaded.png" "f08c8c"   # "Dev was not reloaded: ..."
 Send "{ESC}"; Start-Sleep -Seconds 1
-Send "{DOWN 5}"
+Send "{DOWN 8}"
 Send "{ENTER}"; Start-Sleep -Seconds 3
 Send "{ENTER}"; Start-Sleep -Seconds 2
-Capture "31-still-running.png"
-python "$PSScriptRoot/check_screenshot.py" --same (Join-Path $OutDir "29-dev-after.png") (Join-Path $OutDir "31-still-running.png")
+Capture "37-still-running.png"
+python "$PSScriptRoot/check_screenshot.py" --same (Join-Path $OutDir "35-dev-after.png") (Join-Path $OutDir "37-still-running.png")
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: a build that failed its checks replaced the working code" }
 Send "{ESC}"; Start-Sleep -Seconds 1
 
 # A build whose start fails is reported with Retry, after Reload Dev; this
 # one saves a setting and fails its first start only, so Retry starts it.
 Copy-Item "target/guests/failing_start.wasm" (Join-Path $dev "command.wasm")
-Send "{DOWN 10}"
+Send "{DOWN 12}"
 Send "{ENTER}"; Start-Sleep -Seconds 1
-Send "{DOWN 5}"
+Send "{DOWN 11}"
 Send "{ENTER}"; Start-Sleep -Seconds 3
-Capture "32-start-failed.png"
-Check "32-start-failed.png" "f08c8c"   # "Reloaded Dev, but it failed to start; ..."
+Capture "38-start-failed.png"
+Check "38-start-failed.png" "f08c8c"   # "Reloaded Dev, but it failed to start; ..."
 Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 3   # Retry starting Dev
-Capture "33-retried.png"
-Check "33-retried.png" "9fd8a8"   # "Started Dev"
+Capture "39-retried.png"
+Check "39-retried.png" "9fd8a8"   # "Started Dev"
 Stop-Pane $process
 if (-not (Select-String -Quiet -SimpleMatch '"start-attempted": "yes"' (Join-Path $data "extensions/settings.json"))) { throw "the failed start's setting was not kept" }
 
@@ -334,8 +378,8 @@ Send "{DOWN 3}"
 Send "{ENTER}"; Start-Sleep -Seconds 2   # "Save a note"
 Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2   # "Sign in"
 Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2   # "Show what Pane keeps"
-Capture "34-kept.png"
-Check "34-kept.png" "9fd8a8"   # every value, the cached greeting included
+Capture "40-kept.png"
+Check "40-kept.png" "9fd8a8"   # every value, the cached greeting included
 Send "{ESC}"; Start-Sleep -Seconds 1
 Stop-Pane $process
 if (-not (Select-String -Quiet -SimpleMatch '"note": "Water the plants"' (Join-Path $data "extensions/content.json"))) { throw "note not saved" }
@@ -343,27 +387,26 @@ if (-not (Select-String -Quiet -SimpleMatch '"token": "sample-token"' (Join-Path
 if (-not (Select-String -Quiet -SimpleMatch '"last-greeting": "Good day to you"' (Join-Path $data "extensions/cache.json"))) { throw "greeting not cached" }
 
 # Clear the settings sample's cache in Manage extensions: its row follows the
-# three package rows (Dev is the third), their three Reload rows and "Clear
-# cache of Rust sample". Pane asks first, then deletes only the cached
+# six package rows, their six Reload rows and "Clear cache of Rust sample". Pane asks first, then deletes only the cached
 # greeting, without running the extension.
 $process = Start-Pane "stderr-clear-cache.log"
-Send "{DOWN 10}"   # the last row
+Send "{DOWN 12}"   # the last row
 Send "{ENTER}"; Start-Sleep -Seconds 1
-Send "{DOWN 7}"
+Send "{DOWN 13}"
 Send "{ENTER}"; Start-Sleep -Seconds 1   # "Clear cache of Settings sample"
-Capture "35-confirm-clear-cache.png"
-Check "35-confirm-clear-cache.png" "aab4c0"   # what is deleted and what is kept
+Capture "41-confirm-clear-cache.png"
+Check "41-confirm-clear-cache.png" "aab4c0"   # what is deleted and what is kept
 Send "{ENTER}"; Start-Sleep -Seconds 2   # "Clear cache"
-Capture "36-cache-cleared.png"
-Check "36-cache-cleared.png" "9fd8a8"   # "Cleared the cache of Settings sample"
+Capture "42-cache-cleared.png"
+Check "42-cache-cleared.png" "9fd8a8"   # "Cleared the cache of Settings sample"
 Send "{ESC}"; Start-Sleep -Seconds 1
 Send "{DOWN 4}"   # Greeting
 Send "{ENTER}"; Start-Sleep -Seconds 3
 Send "{DOWN 5}"
 Send "{ENTER}"; Start-Sleep -Seconds 2   # "Show what Pane keeps"
-Capture "37-kept-after-clear.png"
-Check "37-kept-after-clear.png" "9fd8a8"   # "... Cached greeting: none"
-python "$PSScriptRoot/check_screenshot.py" --distinct (Join-Path $OutDir "34-kept.png") (Join-Path $OutDir "37-kept-after-clear.png")
+Capture "43-kept-after-clear.png"
+Check "43-kept-after-clear.png" "9fd8a8"   # "... Cached greeting: none"
+python "$PSScriptRoot/check_screenshot.py" --distinct (Join-Path $OutDir "40-kept.png") (Join-Path $OutDir "43-kept-after-clear.png")
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the cached greeting is still shown" }
 Send "{ESC}"; Start-Sleep -Seconds 1
 Stop-Pane $process

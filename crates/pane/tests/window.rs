@@ -1135,3 +1135,75 @@ fn assistive_technology_sees_the_search_field_and_the_selected_result(cx: &mut T
     cx.simulate_input("zzz");
     assert_eq!(focused_label(cx).as_deref(), Some("Search"));
 }
+
+/// A launcher with the calculator package from `cargo xtask guests`
+/// installed in `data`.
+fn with_calculator(cx: &mut TestAppContext, data: &std::path::Path) -> Launcher {
+    let folder =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/guests/packages/calculator");
+    let launcher = Launcher::with_packages(Runtime::start(), vec![], data.join("extensions"));
+    // The install's guest check answers from the runtime thread.
+    cx.executor().allow_parking();
+    cx.foreground_executor()
+        .block_on(launcher.install_package(&folder));
+    assert!(
+        matches!(launcher.view().status, Status::Result(_)),
+        "{:?}",
+        launcher.view().status
+    );
+    launcher.back();
+    launcher
+}
+
+/// Lets the window apply answers computed from the query until the rows
+/// are `expected`.
+fn wait_for_rows(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext, expected: &[&str]) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        cx.run_until_parked();
+        if row_titles(window, cx) == expected {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "rows stayed {:?}",
+            row_titles(window, cx)
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[gpui::test]
+fn typing_an_expression_shows_its_answer_and_enter_copies_it(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let launcher = with_calculator(cx, data.path());
+    let (window, cx) = open_launcher(cx, launcher);
+
+    cx.simulate_input("6*7");
+    wait_for_rows(&window, cx, &["42"]);
+    assert!(
+        cx.debug_bounds("row-42").is_some(),
+        "the answer is rendered"
+    );
+    assert!(query_has_focus(&window, cx), "typing goes on in the field");
+    // Typing on: the answer follows the query.
+    cx.simulate_input("+1");
+    wait_for_rows(&window, cx, &["43"]);
+
+    cx.simulate_keystrokes("enter");
+    let view = wait_for_answer(&window, cx);
+    assert_eq!(
+        view.status,
+        Status::Result("Copied 43 to the clipboard".into())
+    );
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("43".into())
+    );
+    assert_eq!(view.query(), Some("6*7+1"), "root search stays as it was");
+
+    // An incomplete expression has no answer and nothing failed.
+    cx.simulate_input("*");
+    wait_for_rows(&window, cx, &[]);
+    assert!(cx.debug_bounds("no-results").is_some());
+}

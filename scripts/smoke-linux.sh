@@ -243,11 +243,52 @@ capture 26-no-results.png
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{1-root,24-search,25-search-result,26-no-results}.png
 stop_pane
 
+# The calculator, a default extension: an expression typed into root search
+# lists its answer first, selected, and Enter copies it. Pasting the copy
+# over the query and typing on shows exactly the screen typing the whole
+# expression shows, so the clipboard held the answer.
+start_pane --install target/guests/packages/calculator
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 2   # Install
+"$xdotool" type --delay 50 '6*7'; sleep 2
+capture 27-answer.png
+check 27-answer.png 364355 3000   # the selected answer row
+"$xdotool" key Return; sleep 1
+capture 28-copied.png   # "Copied 42 to the clipboard"
+"$xdotool" key ctrl+a; "$xdotool" type --delay 50 '42+1'; sleep 2
+capture 29-typed.png
+"$xdotool" key ctrl+a ctrl+v; "$xdotool" type --delay 50 '+1'; sleep 2
+capture 30-pasted.png
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{27-answer,28-copied,29-typed}.png
+python3 "$(dirname "$0")/check_screenshot.py" --same "$out/29-typed.png" "$out/30-pasted.png"
+stop_pane
+
+# Operations: install the JavaScript operations sample, then the Rust one,
+# whose command (Call from Rust, selected once installed) asks the JavaScript
+# package's greet operation: "JavaScript answered: Hello, Rust, from
+# JavaScript" comes from the other package's guest, started for the call.
+start_pane --install target/guests/packages/sample-operations-js
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 2   # Install
+capture 31-operations-target.png
+check 31-operations-target.png 9fd8a8   # "Installed JavaScript operations sample"
+stop_pane
+start_pane --install target/guests/packages/sample-operations
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 2   # Install; Call from Rust is selected
+"$xdotool" key Return; sleep 3   # open Call from Rust
+"$xdotool" key Return; sleep 5   # "Ask JavaScript to greet"
+capture 32-operation-answer.png
+check 32-operation-answer.png 9fd8a8   # the JavaScript guest's answer
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{31-operations-target,32-operation-answer}.png
+stop_pane
+
 # Reload a development package while Pane stays open. Its command starts as
 # the Rust sample; a new build of it is the JavaScript sample. Root lists the
-# three samples, Rust sample, Greeting, Dev sample, the install row, then
-# Manage extensions… last; the extension list holds Rust sample, Settings
-# sample, Dev, then Reload Rust sample, Reload Settings sample, Reload Dev.
+# three samples, Rust sample, Greeting, Calculator, Call from JavaScript, Call
+# from Rust, Dev sample (the ninth row), the install row, then Manage
+# extensions… last; the extension list holds the six packages (Dev is the
+# sixth), then their six Reload rows (Reload Dev is the twelfth).
 mkdir -p "$out/dev"
 cp target/guests/sample_rust.wasm "$out/dev/command.wasm"
 cat >"$out/dev/pane.json" <<'JSON'
@@ -263,54 +304,54 @@ start_pane --install "$out/dev"
 "$xdotool" key Return; sleep 2   # Install; Dev sample is selected
 "$xdotool" key Return; sleep 3
 "$xdotool" key Return; sleep 2   # "Say hello"
-capture 27-dev-before.png
-check 27-dev-before.png 9fd8a8   # "Hello from the Rust guest"
+capture 33-dev-before.png
+check 33-dev-before.png 9fd8a8   # "Hello from the Rust guest"
 "$xdotool" key Escape; sleep 1
 cp target/guests/sample_js.wasm "$out/dev/command.wasm"
-for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # the last row
+for ((i = 0; i < 12; i++)); do "$xdotool" key Down; done   # the last row
 "$xdotool" key Return; sleep 1
-for ((i = 0; i < 5; i++)); do "$xdotool" key Down; done   # Reload Dev
+for ((i = 0; i < 11; i++)); do "$xdotool" key Down; done   # Reload Dev
 "$xdotool" key Return; sleep 3
-capture 28-reloaded.png
-check 28-reloaded.png 9fd8a8   # "Reloaded Dev"
+capture 34-reloaded.png
+check 34-reloaded.png 9fd8a8   # "Reloaded Dev"
 "$xdotool" key Escape; sleep 1
-for ((i = 0; i < 5; i++)); do "$xdotool" key Down; done   # Dev sample
+for ((i = 0; i < 8; i++)); do "$xdotool" key Down; done   # Dev sample
 "$xdotool" key Return; sleep 3
 "$xdotool" key Return; sleep 2   # "Say hello"
-capture 29-dev-after.png
-check 29-dev-after.png 9fd8a8   # "Hello from the JavaScript guest"
-python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/27-dev-before.png" "$out/29-dev-after.png"
+capture 35-dev-after.png
+check 35-dev-after.png 9fd8a8   # "Hello from the JavaScript guest"
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/33-dev-before.png" "$out/35-dev-after.png"
 "$xdotool" key Escape; sleep 1
 
 # A build that fails the install checks (here its component is missing) is
 # not reloaded: the working code keeps running, exactly as before.
 rm "$out/dev/command.wasm"
-for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done
+for ((i = 0; i < 12; i++)); do "$xdotool" key Down; done
 "$xdotool" key Return; sleep 1
-for ((i = 0; i < 5; i++)); do "$xdotool" key Down; done
+for ((i = 0; i < 11; i++)); do "$xdotool" key Down; done
 "$xdotool" key Return; sleep 2
-capture 30-not-reloaded.png
-check 30-not-reloaded.png f08c8c   # "Dev was not reloaded: ..."
+capture 36-not-reloaded.png
+check 36-not-reloaded.png f08c8c   # "Dev was not reloaded: ..."
 "$xdotool" key Escape; sleep 1
-for ((i = 0; i < 5; i++)); do "$xdotool" key Down; done
+for ((i = 0; i < 8; i++)); do "$xdotool" key Down; done
 "$xdotool" key Return; sleep 3
 "$xdotool" key Return; sleep 2
-capture 31-still-running.png
-python3 "$(dirname "$0")/check_screenshot.py" --same "$out/29-dev-after.png" "$out/31-still-running.png"
+capture 37-still-running.png
+python3 "$(dirname "$0")/check_screenshot.py" --same "$out/35-dev-after.png" "$out/37-still-running.png"
 "$xdotool" key Escape; sleep 1
 
 # A build whose start fails is reported with Retry, after Reload Dev; this
 # one saves a setting and fails its first start only, so Retry starts it.
 cp target/guests/failing_start.wasm "$out/dev/command.wasm"
-for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done
+for ((i = 0; i < 12; i++)); do "$xdotool" key Down; done
 "$xdotool" key Return; sleep 1
-for ((i = 0; i < 5; i++)); do "$xdotool" key Down; done
+for ((i = 0; i < 11; i++)); do "$xdotool" key Down; done
 "$xdotool" key Return; sleep 3
-capture 32-start-failed.png
-check 32-start-failed.png f08c8c   # "Reloaded Dev, but it failed to start; ..."
+capture 38-start-failed.png
+check 38-start-failed.png f08c8c   # "Reloaded Dev, but it failed to start; ..."
 "$xdotool" key Down key Return; sleep 3   # Retry starting Dev
-capture 33-retried.png
-check 33-retried.png 9fd8a8   # "Started Dev"
+capture 39-retried.png
+check 39-retried.png 9fd8a8   # "Started Dev"
 stop_pane
 grep -q '"start-attempted": "yes"' "$out/data/extensions/settings.json" || { echo "the failed start's setting was not kept"; exit 1; }
 
@@ -326,8 +367,8 @@ for ((i = 0; i < 3; i++)); do "$xdotool" key Down; done
 "$xdotool" key Return; sleep 2   # "Save a note"
 "$xdotool" key Down key Return; sleep 2   # "Sign in"
 "$xdotool" key Down key Return; sleep 2   # "Show what Pane keeps"
-capture 34-kept.png
-check 34-kept.png 9fd8a8   # every value, the cached greeting included
+capture 40-kept.png
+check 40-kept.png 9fd8a8   # every value, the cached greeting included
 "$xdotool" key Escape; sleep 1
 stop_pane
 grep -q '"note": "Water the plants"' "$out/data/extensions/content.json" || { echo "note not saved"; exit 1; }
@@ -335,28 +376,27 @@ grep -q '"token": "sample-token"' "$out/data/extensions/credentials.json" || { e
 grep -q '"last-greeting": "Good day to you"' "$out/data/extensions/cache.json" || { echo "greeting not cached"; exit 1; }
 
 # Clear the settings sample's cache in Manage extensions: its row follows the
-# three package rows (Dev is the third), their three Reload rows and "Clear
-# cache of Rust sample". Pane asks first, then deletes only the cached
+# six package rows, their six Reload rows and "Clear cache of Rust sample". Pane asks first, then deletes only the cached
 # greeting, without running the extension.
 start_pane
 "$xdotool" windowfocus --sync "$window"
-for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # the last row
+for ((i = 0; i < 12; i++)); do "$xdotool" key Down; done   # the last row
 "$xdotool" key Return; sleep 1
-for ((i = 0; i < 7; i++)); do "$xdotool" key Down; done
+for ((i = 0; i < 13; i++)); do "$xdotool" key Down; done
 "$xdotool" key Return; sleep 1   # "Clear cache of Settings sample"
-capture 35-confirm-clear-cache.png
-check 35-confirm-clear-cache.png aab4c0   # what is deleted and what is kept
+capture 41-confirm-clear-cache.png
+check 41-confirm-clear-cache.png aab4c0   # what is deleted and what is kept
 "$xdotool" key Return; sleep 2   # "Clear cache"
-capture 36-cache-cleared.png
-check 36-cache-cleared.png 9fd8a8   # "Cleared the cache of Settings sample"
+capture 42-cache-cleared.png
+check 42-cache-cleared.png 9fd8a8   # "Cleared the cache of Settings sample"
 "$xdotool" key Escape; sleep 1
 for ((i = 0; i < 4; i++)); do "$xdotool" key Down; done   # Greeting
 "$xdotool" key Return; sleep 3
 for ((i = 0; i < 5; i++)); do "$xdotool" key Down; done
 "$xdotool" key Return; sleep 2   # "Show what Pane keeps"
-capture 37-kept-after-clear.png
-check 37-kept-after-clear.png 9fd8a8   # "... Cached greeting: none"
-python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/34-kept.png" "$out/37-kept-after-clear.png"
+capture 43-kept-after-clear.png
+check 43-kept-after-clear.png 9fd8a8   # "... Cached greeting: none"
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/40-kept.png" "$out/43-kept-after-clear.png"
 "$xdotool" key Escape; sleep 1
 stop_pane
 if grep -q 'Good day to you' "$out/data/extensions/cache.json"; then echo "cache not cleared"; exit 1; fi

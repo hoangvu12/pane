@@ -109,8 +109,14 @@ Root search has a query field with focus ([root search](../root-search.md)).
 The smoke's search phase (screenshots 24 to 26) types "typescr" with System
 Events `keystroke`, opens the only match and runs "Wait briefly", which must
 look exactly like step 4, then types "zzz" and presses Return on no results.
-**It has not run on macOS yet**; typing into the query field through
-`NSTextInputClient` is therefore unverified here, as is any input method.
+In run [36420611977](https://github.com/wasimysaid/pane/actions/runs/36420611977) (commit `6d73d18`) every step passed: typing "typescr" left only TypeScript sample and Enter ran it, and "zzz" showed No results ([24-search.png](evidence/macos/24-search.png), [26-no-results.png](evidence/macos/26-no-results.png)). Input-method composition in the query field is still unverified here.
+
+## Calculator (#27)
+
+The smoke's calculator phase (screenshots 27 to 30) installs the calculator
+package, types "6*7", checks the selected answer row, presses Enter to copy
+it, then compares typing "42+1" with pasting the copy (Cmd+A, Cmd+V) and typing
+"+1", which must look the same. In run [36423871204](https://github.com/wasimysaid/pane/actions/runs/36423871204) (commit `ab91081`) every step passed: "6*7" answered 42, Enter copied it, and pasting then typing "+1" matched typing "42+1", so the system clipboard held "42" ([27-answer.png](evidence/macos/27-answer.png), [30-pasted.png](evidence/macos/30-pasted.png)).
 
 ## Text input and accessibility findings
 
@@ -146,11 +152,11 @@ Screenshots from run [36371205770](https://github.com/wasimysaid/pane/actions/ru
   screenshot's pixels to points (half on Retina). Each step must show the
   chosen color over at least 3000 pixels. In run [36378453278](https://github.com/wasimysaid/pane/actions/runs/36378453278) (commit `1487dc8`, macOS 15.7.9, arm64) every step passed: the picker opened on blue (#1E88E5), Right moved to purple (#8E24AA) and the click chose dark green (#1B5E20); posting the Quartz event needed no permission beyond the one System Events has. Accessibility: see
   [custom views](../custom-views.md#accessibility).
-- **Reload (#11):** after the search phase, the smoke installs a package from
+- **Reload (#11):** after the calculator and operations phases, the smoke installs a package from
   `<output-dir>/dev`, replaces its component with the JavaScript sample and
   reloads it in Manage extensions, then reloads it without its component (the
   checks fail and the old code keeps answering) and with the `failing-start`
-  fixture (a startup failure, then Retry); screenshots 27 to 33, the same
+  fixture (a startup failure, then Retry); screenshots 33 to 39, the same
   steps as on [Linux](linux.md#reloading-a-package-11). **This phase has not
   run on macOS yet.**
 

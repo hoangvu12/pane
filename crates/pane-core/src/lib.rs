@@ -4,18 +4,20 @@
 mod atomic;
 mod extension_data;
 mod launcher;
+mod operations;
 mod packages;
 mod platform;
 mod runtime;
 mod search;
 
 pub use launcher::{
-    CommandRegistration, CustomViewSnapshot, FormField, FormView, Launcher, LauncherView, Row,
-    Screen, Status,
+    CommandRegistration, CustomViewSnapshot, FormField, FormView, Launcher, LauncherView, Question,
+    Row, Screen, Status,
 };
+pub use operations::{MAX_CALL_DEPTH, MAX_OPERATION_JSON};
 pub use packages::{
     EXTENSION_API, InstalledPackage, MANIFEST_FILE, MANIFEST_VERSION, Manifest, ManifestCommand,
-    PackageError, PackageIdentity,
+    ManifestOperation, PackageError, PackageIdentity,
 };
 pub use platform::Platform;
 pub use runtime::{

@@ -86,9 +86,14 @@ only the two other systems. In run [36372625940](https://github.com/wasimysaid/p
 Root search has a query field with focus ([root search](../root-search.md)).
 The smoke's search phase (screenshots 24 to 26) types "typescr" with
 `SendKeys`, opens the only match and runs "Wait briefly", which must look
-exactly like step 4, then types "zzz" and presses Enter on no results. **It
-has not run on Windows yet**; typing into the query field through the
-window's text input (TSF) is therefore unverified here, as is any IME.
+exactly like step 4, then types "zzz" and presses Enter on no results. In run [36420611977](https://github.com/wasimysaid/pane/actions/runs/36420611977) (commit `6d73d18`) every step passed: typing "typescr" left only TypeScript sample and Enter ran it, and "zzz" showed No results ([24-search.png](evidence/windows/24-search.png), [26-no-results.png](evidence/windows/26-no-results.png)). Input-method composition in the query field is still unverified here.
+
+## Calculator (#27)
+
+The smoke's calculator phase (screenshots 27 to 30) installs the calculator
+package, types "6*7", checks the selected answer row, presses Enter to copy
+it, then compares typing "42+1" with pasting the copy (Ctrl+A, Ctrl+V through `SendKeys`) and typing
+"+1", which must look the same. In run [36423871204](https://github.com/wasimysaid/pane/actions/runs/36423871204) (commit `ab91081`) every step passed: "6*7" answered 42, Enter copied it, and pasting then typing "+1" matched typing "42+1", so the system clipboard held "42" ([27-answer.png](evidence/windows/27-answer.png), [30-pasted.png](evidence/windows/30-pasted.png)).
 
 ## Text input and accessibility findings
 
@@ -120,11 +125,11 @@ Screenshots from run [36371205770](https://github.com/wasimysaid/pane/actions/ru
   the screenshot, the screen bounds and `SetCursorPos` all use physical
   pixels and the click should land on the swatch at any display scaling;
   scaling other than 100 % is unverified.
-- **Reload (#11):** after the search phase, the smoke installs a package from
+- **Reload (#11):** after the calculator and operations phases, the smoke installs a package from
   `<output-dir>\dev`, replaces its component with the JavaScript sample and
   reloads it in Manage extensions, then reloads it without its component (the
   checks fail and the old code keeps answering) and with the `failing-start`
-  fixture (a startup failure, then Retry); screenshots 27 to 33, the same
+  fixture (a startup failure, then Retry); screenshots 33 to 39, the same
   steps as on [Linux](linux.md#reloading-a-package-11). **This phase has not
   run on Windows yet.** Replacing the managed copy removes the old folder on
   a best-effort basis; on Windows a folder still in use is left behind,

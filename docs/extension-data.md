@@ -101,7 +101,7 @@ meanwhile are kept.
   (Unix).
 - `crates/pane/tests/install.rs`: the rows, confirmation text, Esc and the
   outcome in the native window.
-- The native GUI smokes, screenshots 34 to 37: every kind shown, the
+- The native GUI smokes, screenshots 40 to 43: every kind shown, the
   confirmation, the outcome, and the cached greeting gone with the other
   kinds still shown and still in their files.
 

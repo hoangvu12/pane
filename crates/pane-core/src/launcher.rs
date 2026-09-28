@@ -17,13 +17,14 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::extension_data::{ExtensionData, PackageData};
+use crate::operations::{self, Installed};
 use crate::packages::{
     InstalledPackage, PackageError, PackageIdentity, SourcePackage, Store, folder_name,
 };
 use crate::platform::{self, Platform};
 use crate::runtime::{
-    CallError, CustomViewInfo, CustomViewRole, FieldKind, FieldValue, Form, Frame, Point, Runtime,
-    ViewEvent, ViewId,
+    CallError, CustomViewInfo, CustomViewRole, FieldKind, FieldValue, Form, Frame, Point,
+    RootAction, RootResult as ComputedResult, Runtime, ViewEvent, ViewId,
 };
 use crate::search::{self, Keys, Query};
 
@@ -237,6 +238,12 @@ struct State {
     /// Every root result in root search order, built when root search is
     /// shown or refreshed, so that searching only ranks them.
     root: Vec<RootResult>,
+    /// The root results commands computed from the current query, listed
+    /// first; each command's results are added when it answers.
+    computed: Vec<Computed>,
+    /// Incremented on every search, so that an answer arriving for an
+    /// earlier search, even of the same query, is discarded.
+    search_generation: u64,
     /// The component of the command whose view is open.
     open: Option<PathBuf>,
     /// The form on screen, if one is open.
@@ -383,9 +390,19 @@ struct RootResult {
     keys: Keys,
 }
 
+/// A root result a command computed from the current query.
+struct Computed {
+    /// The component of the command that computed it.
+    component: PathBuf,
+    row: Row,
+    entry: Entry,
+}
+
 /// What activating a row does.
 #[derive(Clone)]
 enum Entry {
+    /// Copy this text to the clipboard, which the window does (root).
+    Copy(String),
     /// Open the command with this component (root).
     Open(PathBuf),
     /// Explain why this installed package cannot load (root).
@@ -466,6 +483,8 @@ impl Launcher {
             view: LauncherView::new(Screen::Command, ""),
             entries: Vec::new(),
             root: Vec::new(),
+            computed: Vec::new(),
+            search_generation: 0,
             open: None,
             form: None,
             custom_view: None,
@@ -488,6 +507,18 @@ impl Launcher {
             installation,
             state: Arc::new(Mutex::new(state)),
         };
+        if let (Ok(runtime), Some(installation)) = (&launcher.runtime, &launcher.installation) {
+            // Operation calls see the packages as the launcher has them.
+            let state = Arc::downgrade(&launcher.state);
+            let data = installation.data.clone();
+            runtime.set_directory(Arc::new(move || Installed {
+                packages: state.upgrade().map_or_else(Vec::new, |state| {
+                    let state = state.lock().unwrap_or_else(|p| p.into_inner());
+                    state.packages.clone()
+                }),
+                data: Some(data.clone()),
+            }));
+        }
         launcher.show_root(&mut launcher.lock(), None);
         launcher
     }
@@ -520,18 +551,47 @@ impl Launcher {
 
     /// Searches root search for `query`: the rows become the root results
     /// that match it, best match first, and the best match is selected. An
-    /// empty query lists every root result. Only metadata is searched: no
-    /// guest runs until the user invokes a result. Ignored on other screens,
-    /// and when `query` is already the query.
-    pub fn set_query(&self, query: &str) {
+    /// empty query lists every root result. Ignored on other screens, and
+    /// when `query` is already the query.
+    ///
+    /// Metadata is searched at once, without running any guest. For a query
+    /// that is not blank, the enabled commands that compute root results
+    /// (such as the calculator) are asked too, one after another: await the
+    /// returned future to list each one's results, above the others, as soon
+    /// as it answers. Their answers are discarded if the query has changed
+    /// meanwhile, and a command that fails is listed as a result explaining
+    /// the failure.
+    pub fn set_query(&self, query: &str) -> impl Future<Output = ()> + Send + 'static {
         let mut state = self.lock();
-        match &state.view.screen {
-            Screen::Root { query: current } if current != query => {}
+        let asked = match &state.view.screen {
+            Screen::Root { query: current } if current != query => {
+                self.search(&mut state, query);
+                self.ask_for_root_results(&state, query)
+            }
             // Searching the same query again changes nothing, not even the
             // selection.
-            _ => return,
+            _ => Vec::new(),
+        };
+        let query = query.to_owned();
+        let generation = state.screen_generation;
+        let search = state.search_generation;
+        drop(state);
+        let launcher = self.clone();
+        async move {
+            if !asked.is_empty() {
+                launcher
+                    .show_root_results(generation, search, query, asked)
+                    .await
+            }
         }
-        let (rows, entries) = root_rows(&state.root, query);
+    }
+
+    /// Shows the root results matching `query` from metadata alone; results
+    /// computed for an earlier query are gone.
+    fn search(&self, state: &mut State, query: &str) {
+        state.search_generation += 1;
+        state.computed.clear();
+        let (rows, entries) = root_rows(&state.root, &state.computed, query);
         state.view.screen = Screen::Root {
             query: query.to_owned(),
         };
@@ -540,11 +600,109 @@ impl Launcher {
         state.entries = entries;
     }
 
+    /// The enabled commands that compute root results, each with its
+    /// extension data, to be asked for their results for `query`; none for a blank
+    /// query.
+    fn ask_for_root_results(
+        &self,
+        state: &State,
+        query: &str,
+    ) -> Vec<(CommandRegistration, Option<PackageData>)> {
+        if query.trim().is_empty() {
+            return Vec::new();
+        }
+        state
+            .packages
+            .iter()
+            .filter(|package| package.enabled)
+            .flat_map(|package| {
+                let data = self
+                    .installation
+                    .as_ref()
+                    .map(|installation| installation.data.owned_by(&package.identity));
+                package
+                    .root_result_commands()
+                    .into_iter()
+                    .map(move |command| (command, data.clone()))
+            })
+            .collect()
+    }
+
+    /// Asks each of `commands` in turn for its root results for `query` and
+    /// lists each one's as soon as it answers, unless the query, the search
+    /// or the screen has changed meanwhile.
+    ///
+    /// The runtime serves calls one at a time, so a command that is slow or
+    /// hangs still delays the commands asked after it (cancellation and
+    /// timeouts are #29 and #18); it no longer hides the answers of those
+    /// asked before it.
+    async fn show_root_results(
+        &self,
+        generation: u64,
+        search: u64,
+        query: String,
+        commands: Vec<(CommandRegistration, Option<PackageData>)>,
+    ) {
+        for (command, data) in commands {
+            let answer = match self.runtime() {
+                Ok(runtime) => {
+                    runtime
+                        .root_results_with(&command.component, &query, data)
+                        .await
+                }
+                Err(error) => Err(error),
+            };
+            let Some(mut state) = self.lock_if_current(generation) else {
+                return;
+            };
+            if state.search_generation != search || state.view.query() != Some(query.as_str()) {
+                return;
+            }
+            let state = &mut *state;
+            // A command disabled meanwhile contributes nothing.
+            if disabled_owner(state, &command.component).is_some() {
+                continue;
+            }
+            state
+                .computed
+                .extend(computed_results(command, &query, answer));
+            // The best match stays selected, now that better ones may be
+            // first; a row the user moved to stays selected.
+            let keep = state
+                .view
+                .selected
+                .filter(|&index| index > 0)
+                .and_then(|index| state.view.rows.get(index))
+                .map(|row| row.id.clone());
+            let (rows, entries) = root_rows(&state.root, &state.computed, &query);
+            state.view.selected = keep
+                .and_then(|id| rows.iter().position(|row| row.id == id))
+                .or_else(|| first_index(&rows));
+            state.view.rows = rows;
+            state.entries = entries;
+        }
+    }
+
     /// Selects the row at `index`, if there is one.
     pub fn select(&self, index: usize) {
         let mut state = self.lock();
         if index < state.view.rows.len() {
             state.view.selected = Some(index);
+        }
+    }
+
+    /// The text activating the selected row copies to the clipboard, if it
+    /// copies. Activating it only reports the copy: the window writes the
+    /// clipboard.
+    pub fn selected_copy(&self) -> Option<String> {
+        let state = self.lock();
+        let entry = state
+            .view
+            .selected
+            .and_then(|index| state.entries.get(index));
+        match entry {
+            Some(Entry::Copy(text)) => Some(text.clone()),
+            _ => None,
         }
     }
 
@@ -581,8 +739,7 @@ impl Launcher {
             }
             Screen::Root { query } => {
                 if !query.is_empty() {
-                    drop(state);
-                    self.set_query("");
+                    self.search(&mut state, "");
                 }
             }
         }
@@ -606,6 +763,10 @@ impl Launcher {
         let entry = match entry {
             Some(Entry::Broken(problem) | Entry::Unavailable(problem)) => {
                 state.view.status = Status::Error(problem);
+                None
+            }
+            Some(Entry::Copy(text)) => {
+                state.view.status = Status::Result(format!("Copied {text} to the clipboard"));
                 None
             }
             Some(Entry::Form(item_id, form)) => {
@@ -682,7 +843,8 @@ impl Launcher {
                     }
                 }
                 Some(
-                    Entry::Broken(_)
+                    Entry::Copy(_)
+                    | Entry::Broken(_)
                     | Entry::Unavailable(_)
                     | Entry::InstallFromFolder
                     | Entry::Manage
@@ -955,13 +1117,22 @@ impl Launcher {
     /// runtime check each component without running it.
     async fn read_and_check(&self, folder: PathBuf) -> Result<SourcePackage, PackageError> {
         let package = off_thread(move || SourcePackage::read(&folder)).await?;
-        for (command, component) in package.components() {
+        let mut checked_components = Vec::new();
+        for (name, component) in package.manifest.components() {
+            // A component serving several commands or operations is checked
+            // once, for everything it serves.
+            if checked_components.contains(&component) {
+                continue;
+            }
+            checked_components.push(component);
+            let (root_results, operations) = package.manifest.exports_of(component);
+            let source = package.folder.join(component);
             let checked = match self.runtime() {
-                Ok(runtime) => runtime.check(&component).await,
+                Ok(runtime) => runtime.check_with(&source, root_results, operations).await,
                 Err(error) => Err(error),
             };
             checked.map_err(|error| PackageError::Component {
-                command: command.title.clone(),
+                command: name.clone(),
                 error,
             })?;
         }
@@ -973,7 +1144,8 @@ impl Launcher {
     /// command with component `select` if given, else the first row.
     fn show_root(&self, state: &mut State, select: Option<PathBuf>) {
         state.root = self.root_results(state);
-        let (rows, entries) = root_rows(&state.root, "");
+        state.computed.clear();
+        let (rows, entries) = root_rows(&state.root, &state.computed, "");
         let selected = select
             .and_then(|component| {
                 entries
@@ -1024,8 +1196,20 @@ impl Launcher {
             .and_then(|index| state.view.rows.get(index))
             .map(|row| row.id.clone());
         state.root = self.root_results(state);
+        // A command that was disabled or replaced contributes nothing more;
+        // one enabled again answers from the next change of the query.
+        let computing: Vec<PathBuf> = state
+            .packages
+            .iter()
+            .filter(|package| package.enabled)
+            .flat_map(|package| package.root_result_commands())
+            .map(|command| command.component)
+            .collect();
+        state
+            .computed
+            .retain(|computed| computing.contains(&computed.component));
         let query = state.view.query().unwrap_or_default();
-        let (rows, entries) = root_rows(&state.root, query);
+        let (rows, entries) = root_rows(&state.root, &state.computed, query);
         let selected = selected_id
             .and_then(|id| rows.iter().position(|row| row.id == id))
             .or_else(|| first_index(&rows));
@@ -1778,7 +1962,12 @@ fn preview_view(
         details.push(format!("Version: {version}"));
     }
     let titles: Vec<&str> = manifest.commands.iter().map(|c| c.title.as_str()).collect();
-    details.push(format!("Commands: {}", titles.join(", ")));
+    if !titles.is_empty() {
+        details.push(format!("Commands: {}", titles.join(", ")));
+    }
+    if let Some(operations) = operations::describe(&manifest.operations) {
+        details.push(operations);
+    }
     details.push(format!(
         "Compatible: needs extension API {}, and its components import only WASI 0.3",
         manifest.api_version
@@ -1869,14 +2058,61 @@ fn open_form(state: &mut State, item_id: String, form: Form) {
     state.screen_generation += 1;
 }
 
-/// The rows of the `root` results matching `query`, best match first, and
-/// what activating each does.
-fn root_rows(root: &[RootResult], query: &str) -> (Vec<Row>, Vec<Entry>) {
+/// The rows of root search for `query`, and what activating each does: the
+/// results `computed` from it, then the `root` results matching it, best
+/// match first.
+fn root_rows(root: &[RootResult], computed: &[Computed], query: &str) -> (Vec<Row>, Vec<Entry>) {
     let keys = root.iter().map(|result| &result.keys);
-    search::ranked_matches(&Query::new(query), keys)
+    let matches = search::ranked_matches(&Query::new(query), keys)
         .into_iter()
-        .map(|index| (root[index].row.clone(), root[index].entry.clone()))
+        .map(|index| (&root[index].row, &root[index].entry));
+    computed
+        .iter()
+        .map(|computed| (&computed.row, &computed.entry))
+        .chain(matches)
+        .map(|(row, entry)| (row.clone(), entry.clone()))
         .unzip()
+}
+
+/// The rows for `command`'s `answer` to `query`: its results, or one
+/// explaining why it failed.
+fn computed_results(
+    command: CommandRegistration,
+    query: &str,
+    answer: Result<Vec<ComputedResult>, CallError>,
+) -> Vec<Computed> {
+    let computed = |row: Row, entry: Entry| Computed {
+        component: command.component.clone(),
+        row,
+        entry,
+    };
+    match answer {
+        Ok(results) => results
+            .into_iter()
+            .map(|result| {
+                let row = Row {
+                    id: format!("{}:{}", command.id, result.id),
+                    title: result.title,
+                    subtitle: result.subtitle,
+                    unavailable: None,
+                };
+                let entry = match result.action {
+                    RootAction::Copy(text) => Entry::Copy(text),
+                };
+                computed(row, entry)
+            })
+            .collect(),
+        Err(error) => {
+            let row = Row {
+                id: format!("{}:failed", command.id),
+                title: command.title.clone(),
+                subtitle: Some(format!("Could not answer: {error}")),
+                unavailable: None,
+            };
+            let problem = format!("{} could not answer “{query}”: {error}", command.title);
+            vec![computed(row, Entry::Broken(problem))]
+        }
+    }
 }
 
 /// Runs blocking file work on its own thread, so the caller's thread (the
