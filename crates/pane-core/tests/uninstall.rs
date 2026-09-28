@@ -727,7 +727,7 @@ fn retained_data_is_listed_and_deleted_without_the_extension(fixture: &Fixture) 
             format!(
                 "Its source folder {}, files it saved elsewhere and other extensions' data are \
                  not touched.",
-                folder.display()
+                identity.local_folder().unwrap().display()
             ),
         ]
     );

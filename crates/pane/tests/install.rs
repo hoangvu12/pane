@@ -527,6 +527,14 @@ fn an_installed_package_is_uninstalled_after_choosing_what_to_keep(cx: &mut Test
     assert!(folder.join("pane.json").exists(), "the source is kept");
 }
 
+/// Whether the settings file keeps settings for `key`. The file is parsed, since
+/// JSON escapes the backslashes of a Windows path in a key.
+fn keeps_settings(settings: &Path, key: &str) -> bool {
+    let text = fs::read_to_string(settings).unwrap();
+    let saved: serde_json::Value = serde_json::from_str(&text).unwrap();
+    saved["packages"].get(key).is_some()
+}
+
 #[gpui::test]
 fn retained_data_is_deleted_from_the_extension_list_after_confirming(cx: &mut TestAppContext) {
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
@@ -569,7 +577,7 @@ fn retained_data_is_deleted_from_the_extension_list_after_confirming(cx: &mut Te
     let view = settle(&window, cx);
     assert!(matches!(view.screen, Screen::Extensions { .. }));
     assert_eq!((view.status, view.selected), (Status::Idle, Some(0)));
-    assert!(fs::read_to_string(&settings).unwrap().contains(&key));
+    assert!(keeps_settings(&settings, &key));
 
     press_enter_on(&window, cx, "Delete retained data of Hello");
     let view = press_enter_on(&window, cx, "Delete retained data");
@@ -580,8 +588,7 @@ fn retained_data_is_deleted_from_the_extension_list_after_confirming(cx: &mut Te
     );
     assert!(view.rows.is_empty());
     assert!(cx.debug_bounds("status-result").is_some());
-    let text = fs::read_to_string(&settings).unwrap();
-    assert!(!text.contains(&key), "{text}");
+    assert!(!keeps_settings(&settings, &key));
 
     // Nothing is left to manage.
     cx.simulate_keystrokes("escape");
