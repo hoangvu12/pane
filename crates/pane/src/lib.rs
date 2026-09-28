@@ -3,13 +3,13 @@
 //! The window is a thin renderer over [`pane_core::Launcher`]: key and mouse
 //! input call launcher actions, and each frame draws the launcher's snapshot.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gpui::{
-    App, Context, Div, FocusHandle, KeyBinding, Role, SharedString, Stateful, Window, actions, div,
-    prelude::*, rgb,
+    App, Context, Div, FocusHandle, KeyBinding, PathPromptOptions, Role, SharedString, Stateful,
+    Window, actions, div, prelude::*, rgb,
 };
-use pane_core::{CommandRegistration, Launcher, Row, Screen, Status};
+use pane_core::{CommandRegistration, INSTALL_FROM_FOLDER, Launcher, Row, Screen, Status};
 
 actions!(launcher, [SelectNext, SelectPrevious, Confirm, Back]);
 
@@ -89,6 +89,30 @@ pub fn cache_dir() -> Option<PathBuf> {
     }
 }
 
+/// Where Pane keeps installed extension packages: `PANE_DATA_DIR` when set,
+/// otherwise `%LOCALAPPDATA%\Pane\data` on Windows,
+/// `~/Library/Application Support/Pane` on macOS and `$XDG_DATA_HOME/pane`
+/// (default `~/.local/share/pane`) elsewhere. Packages go in its
+/// `extensions` folder.
+pub fn data_dir() -> Option<PathBuf> {
+    let env = |name| {
+        std::env::var_os(name)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+    };
+    if let Some(dir) = env("PANE_DATA_DIR") {
+        Some(dir)
+    } else if cfg!(target_os = "windows") {
+        env("LOCALAPPDATA").map(|dir| dir.join("Pane").join("data"))
+    } else if cfg!(target_os = "macos") {
+        env("HOME").map(|home| home.join("Library/Application Support/Pane"))
+    } else {
+        env("XDG_DATA_HOME")
+            .or_else(|| env("HOME").map(|home| home.join(".local/share")))
+            .map(|dir| dir.join("pane"))
+    }
+}
+
 /// The launcher window's root view.
 pub struct LauncherWindow {
     launcher: Launcher,
@@ -128,9 +152,58 @@ impl LauncherWindow {
         cx.notify();
     }
 
+    /// Shows the package in `folder` with its identity and compatibility,
+    /// redrawing when the check finishes.
+    pub fn preview_package(&mut self, folder: &Path, cx: &mut Context<Self>) {
+        let pending = self.launcher.preview_package(folder);
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            pending.await;
+            this.update(cx, |_, cx| cx.notify()).ok();
+        })
+        .detach();
+    }
+
+    /// Asks for a package folder with the platform's folder picker, then
+    /// previews it. Cancelling leaves root search as it was.
+    fn choose_package_folder(&mut self, cx: &mut Context<Self>) {
+        let chosen = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Install".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let folder = match chosen.await {
+                Ok(Ok(Some(paths))) => paths.into_iter().next(),
+                Ok(Ok(None)) | Err(_) => None,
+                Ok(Err(error)) => {
+                    this.update(cx, |this, cx| {
+                        this.launcher
+                            .show_error(format!("Could not open a folder picker: {error:#}"));
+                        cx.notify();
+                    })
+                    .ok();
+                    None
+                }
+            };
+            if let Some(folder) = folder {
+                this.update(cx, |this, cx| this.preview_package(&folder, cx))
+                    .ok();
+            }
+        })
+        .detach();
+    }
+
     /// Starts the selected row's action and redraws when the guest answers,
     /// without blocking the window meanwhile.
     fn activate_selected(&mut self, cx: &mut Context<Self>) {
+        let view = self.launcher.view();
+        let selected = view.selected.and_then(|index| view.rows.get(index));
+        if selected.is_some_and(|row| row.id == INSTALL_FROM_FOLDER) {
+            self.choose_package_folder(cx);
+            return;
+        }
         let pending = self.launcher.activate_selected();
         cx.notify();
         cx.spawn(async move |this, cx| {
@@ -185,7 +258,16 @@ impl Render for LauncherWindow {
                 "This command has no items.",
                 "↑↓ select · Enter run · Esc back",
             ),
+            Screen::Package => ("Nothing to install.", "Enter confirm · Esc back"),
         };
+        let details = view.details.into_iter().enumerate().map(|(index, line)| {
+            div()
+                .id(("detail", index))
+                .debug_selector(|| format!("detail-{line}"))
+                .text_sm()
+                .text_color(rgb(0xaab4c0))
+                .child(line)
+        });
         let (status_selector, status_text, status_color): (&str, SharedString, u32) =
             match view.status {
                 Status::Idle => ("status-idle", hint.into(), 0x8a96a3),
@@ -217,6 +299,7 @@ impl Render for LauncherWindow {
             .bg(rgb(0x20252d))
             .text_color(rgb(0xf1f3f5))
             .child(div().text_xl().child(view.title.clone()))
+            .children(details)
             .child(
                 div()
                     .id("rows")

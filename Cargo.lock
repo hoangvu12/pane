@@ -4159,6 +4159,7 @@ dependencies = [
  "gpui_ce_platform",
  "pane-core",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -4166,6 +4167,9 @@ name = "pane-core"
 version = "0.1.0"
 dependencies = [
  "futures",
+ "serde",
+ "serde_json",
+ "tempfile",
  "tokio",
  "wasmtime",
  "wasmtime-wasi",
