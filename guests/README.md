@@ -391,20 +391,23 @@ async submitForm(itemId, values) {
 ```
 
 In JS/TS, reject a submission by throwing a plain `FormError` object as above.
-Throwing an `Error` from `submitForm` is treated as a crash, not as a
-validation message. The samples validate with Zod and turn its first issue
-into a `FormError`.
+Throwing an `Error` (or a string) from `submitForm` rejects the form as a
+whole with its message. The samples validate with Zod and turn its first
+issue into a `FormError`.
 
 ## Errors and crashes
 
-An error a command returns (Rust `Err`, a thrown `Error` in JS/TS) is its
-message to the user: Pane shows it and the command keeps running, however
-often it happens. A crash is different: a Rust panic, or in JS/TS resolving
-with a value of the wrong type (or throwing an `Error` from `submitForm`),
-traps the guest. Pane reports it and starts a fresh instance for the next
+An error a command returns (Rust `Err`; in JS/TS, anything a handler
+throws) is its message to the user: Pane shows it and the command keeps
+running, however often it happens. The JS/TS build wraps the exported
+handlers ([`guests/js/adapt.js`](js/adapt.js)) so that a thrown `Error`,
+string or `{ message }` object is always such an error. A crash is
+different: a Rust panic, or in JS/TS resolving with a value of the wrong
+type (or a custom view's `render` throwing), traps the guest. Pane reports it and starts a fresh instance for the next
 call; after three crashes within five minutes, or a component that cannot
 start, Pane pauses the whole package until the user chooses Retry in
-**Manage extensions…**, keeping its data ([pausing](../docs/pausing.md)).
+**Manage extensions…** (where "Why <title> is paused" shows the details),
+keeping its data ([pausing](../docs/pausing.md)).
 So report expected failures, such as a missing sign-in, as errors, never by
 crashing. The settings samples' **Crash** item shows a crash in each
 language.

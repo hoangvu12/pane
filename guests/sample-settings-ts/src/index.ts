@@ -9,7 +9,7 @@
 // seconds, then notes that it finished: disabling or reloading the package
 // meanwhile stops the call, so it never finishes. "Crash" crashes on purpose:
 // three crashes within five minutes pause the package until retried.
-import type { Command, CustomView, FormError, Item, View } from "@pane/extension";
+import type { Command, CustomView, Item, View } from "@pane/extension";
 import { get, set } from "pane:extension/settings@0.1.0";
 import * as cache from "pane:extension/cache@0.1.0";
 import * as content from "pane:extension/content@0.1.0";
@@ -102,7 +102,8 @@ async function runAction(itemId: string): Promise<string> {
 }
 
 async function submitForm(itemId: string): Promise<string> {
-  throw { message: `unknown form: ${itemId}` } satisfies FormError;
+  // Any Error thrown from submitForm is a message about the whole form.
+  throw new Error(`unknown form: ${itemId}`);
 }
 
 async function openView(itemId: string): Promise<CustomView> {

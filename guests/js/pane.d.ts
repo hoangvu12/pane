@@ -196,11 +196,12 @@ export interface CustomView {
  * ```
  *
  * Resolving gives Pane the value. Throwing (rejecting) reports an error to the
- * user: from `getView`, `runAction`, `openView` and a view's `handleEvent` an
- * `Error`'s message, or a thrown string as is; from `submitForm` a
- * {@link FormError} object. Resolving with a value of the wrong type, such as
- * `undefined` instead of a string, or throwing an `Error` from `submitForm`,
- * is a crash: Pane reports it and starts a fresh instance for the next call.
+ * user, never a crash: from `getView`, `runAction`, `openView` and a view's
+ * `handleEvent` an `Error`'s message, or a thrown string as is; from
+ * `submitForm` a {@link FormError} object as is, and an `Error` or string as a
+ * message about the whole form. Resolving with a value of the wrong type, such
+ * as `undefined` instead of a string, is a crash: Pane reports it and starts a
+ * fresh instance for the next call, and repeated crashes pause the extension.
  * A crash closes any open custom view, whose state was in the old instance.
  */
 export interface Command {

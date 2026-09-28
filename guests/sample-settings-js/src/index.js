@@ -114,7 +114,8 @@ export const command = {
   },
 
   async submitForm(itemId) {
-    throw { message: `unknown form: ${itemId}` };
+    // Any Error thrown from submitForm is a message about the whole form.
+    throw new Error(`unknown form: ${itemId}`);
   },
 
   async openView(itemId) {

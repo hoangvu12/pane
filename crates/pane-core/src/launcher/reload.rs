@@ -172,6 +172,8 @@ impl Launcher {
                         self.pause(&mut state, &identity, pause);
                     }
                 }
+                // The pause is on record before the outcome is shown.
+                self.records_written().await;
                 let failed = match attempt {
                     Attempt::Reload => format!("Reloaded {title}, but it failed to start"),
                     Attempt::Retry => format!("{title} failed to start again"),
@@ -185,8 +187,6 @@ impl Launcher {
                 ))
             }
         };
-        // Whether it is paused is on record before the outcome is shown.
-        self.records_written().await;
         self.end_reload(epoch, &identity, status);
     }
 
