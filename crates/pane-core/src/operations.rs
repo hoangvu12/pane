@@ -77,6 +77,10 @@ impl OperationError {
         let (kind, message) = match error {
             CallError::Guest(message) => (Failed, message),
             CallError::Disabled => (Disabled, disabled(title)),
+            CallError::Replaced => (
+                Unavailable,
+                format!("{title} was reloaded or updated while serving the call; call it again"),
+            ),
             CallError::Trap(reason) => (Crashed, format!("{title} crashed: {reason}")),
             CallError::RuntimeUnavailable(_) => (Unavailable, format!("{title}: {error}")),
             CallError::Load(_)
@@ -276,6 +280,12 @@ impl<T> operations::HostWithStore<T> for Calls {
             let state = view.get();
             if !state.serving {
                 return Err(outside_a_call());
+            }
+            // Code whose generation ended starts no more work.
+            if state.stopped().is_some() {
+                return Err(OperationError::refused(
+                    "this code of the extension was stopped (disabled, reloaded or updated)",
+                ));
             }
             state
                 .calls

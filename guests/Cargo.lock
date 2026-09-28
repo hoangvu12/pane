@@ -63,6 +63,7 @@ name = "faulty"
 version = "0.1.0"
 dependencies = [
  "pane-guest",
+ "wasip3",
 ]
 
 [[package]]
@@ -229,6 +230,7 @@ dependencies = [
  "futures",
  "pane-guest",
  "serde_json",
+ "wasip3",
 ]
 
 [[package]]
@@ -294,6 +296,7 @@ dependencies = [
  "futures",
  "pane-guest",
  "serde_json",
+ "wasip3",
 ]
 
 [[package]]
@@ -309,6 +312,7 @@ name = "sample-settings"
 version = "0.1.0"
 dependencies = [
  "pane-guest",
+ "wasip3",
 ]
 
 [[package]]

@@ -12,14 +12,16 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
-use windows_sys::Win32::Foundation::{ERROR_HOTKEY_ALREADY_REGISTERED, GetLastError};
-use windows_sys::Win32::System::Threading::GetCurrentThreadId;
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN, RegisterHotKey, UnregisterHotKey,
+use ::windows::Win32::Foundation::{ERROR_HOTKEY_ALREADY_REGISTERED, LPARAM, WPARAM};
+use ::windows::Win32::System::Threading::GetCurrentThreadId;
+use ::windows::Win32::UI::Input::KeyboardAndMouse::{
+    HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN, RegisterHotKey,
+    UnregisterHotKey,
 };
-use windows_sys::Win32::UI::WindowsAndMessaging::{
+use ::windows::Win32::UI::WindowsAndMessaging::{
     GetMessageW, MSG, PM_NOREMOVE, PeekMessageW, PostThreadMessageW, WM_APP, WM_HOTKEY, WM_USER,
 };
+use ::windows::core::HRESULT;
 
 use super::{HotkeyError, Hotkeys, PressSender, Shortcut};
 
@@ -52,7 +54,7 @@ fn virtual_key(key: &str) -> Option<u32> {
     }
 }
 
-fn modifiers(shortcut: &Shortcut) -> u32 {
+fn modifiers(shortcut: &Shortcut) -> HOT_KEY_MODIFIERS {
     // Holding the keys reports one press, not one per repeat.
     let mut modifiers = MOD_NOREPEAT;
     if shortcut.control() {
@@ -93,7 +95,7 @@ impl WindowsHotkeys {
             .unwrap_or_else(|p| p.into_inner())
             .push_back(request);
         // SAFETY: posting a message with no pointers to a thread id.
-        unsafe { PostThreadMessageW(self.thread, WM_REQUEST, 0, 0) != 0 }
+        unsafe { PostThreadMessageW(self.thread, WM_REQUEST, WPARAM(0), LPARAM(0)).is_ok() }
     }
 }
 
@@ -125,24 +127,19 @@ impl Hotkeys for WindowsHotkeys {
 fn serve(requests: &Mutex<VecDeque<Request>>, presses: &PressSender, started: &mpsc::Sender<u32>) {
     // SAFETY: plain Win32 calls on this thread with a valid MSG buffer.
     unsafe {
-        let mut message: MSG = std::mem::zeroed();
+        let mut message = MSG::default();
         // Makes the thread's message queue, so posts to it are not lost.
-        PeekMessageW(
-            &mut message,
-            std::ptr::null_mut(),
-            WM_USER,
-            WM_USER,
-            PM_NOREMOVE,
-        );
+        let _ = PeekMessageW(&mut message, None, WM_USER, WM_USER, PM_NOREMOVE);
         if started.send(GetCurrentThreadId()).is_err() {
             return;
         }
+        let taken = HRESULT::from_win32(ERROR_HOTKEY_ALREADY_REGISTERED.0);
         let mut registered: HashMap<i32, Shortcut> = HashMap::new();
         let mut next_id: i32 = 1;
-        while GetMessageW(&mut message, std::ptr::null_mut(), 0, 0) > 0 {
+        while GetMessageW(&mut message, None, 0, 0).0 > 0 {
             match message.message {
                 WM_HOTKEY => {
-                    if let Some(shortcut) = registered.get(&(message.wParam as i32)) {
+                    if let Some(shortcut) = registered.get(&(message.wParam.0 as i32)) {
                         presses.send(shortcut.clone());
                     }
                 }
@@ -164,25 +161,14 @@ fn serve(requests: &Mutex<VecDeque<Request>>, presses: &PressSender, started: &m
                                 continue;
                             };
                             let id = next_id;
-                            let result = if RegisterHotKey(
-                                std::ptr::null_mut(),
-                                id,
-                                modifiers(&shortcut),
-                                key,
-                            ) != 0
-                            {
-                                next_id += 1;
-                                registered.insert(id, shortcut);
-                                Ok(())
-                            } else {
-                                let error = GetLastError();
-                                if error == ERROR_HOTKEY_ALREADY_REGISTERED {
-                                    Err(HotkeyError::Taken)
-                                } else {
-                                    Err(HotkeyError::Refused(
-                                        std::io::Error::from_raw_os_error(error as i32).to_string(),
-                                    ))
+                            let result = match RegisterHotKey(None, id, modifiers(&shortcut), key) {
+                                Ok(()) => {
+                                    next_id += 1;
+                                    registered.insert(id, shortcut);
+                                    Ok(())
                                 }
+                                Err(error) if error.code() == taken => Err(HotkeyError::Taken),
+                                Err(error) => Err(HotkeyError::Refused(error.message())),
                             };
                             let _ = answer.send(result);
                         }
@@ -193,7 +179,7 @@ fn serve(requests: &Mutex<VecDeque<Request>>, presses: &PressSender, started: &m
                                 .map(|(id, _)| *id)
                                 .collect();
                             for id in ids {
-                                UnregisterHotKey(std::ptr::null_mut(), id);
+                                let _ = UnregisterHotKey(None, id);
                                 registered.remove(&id);
                             }
                             let _ = answer.send(());

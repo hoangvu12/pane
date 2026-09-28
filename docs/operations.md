@@ -123,11 +123,16 @@ that rejects with an object whose `payload` is `{ kind, message }`
   and never outlives it: the caller's call cannot finish while its operation
   runs. If the caller abandons the call (drops the future) before Pane starts
   it, it is not started (tested). The caller's guest is not polled while its
-  operation runs, so it cannot abandon a running call; one whose caller
-  crashed meanwhile finishes and its answer is discarded. Pane has no timeouts or user cancellation yet (#14), so a target
-  that never returns holds the caller and, as with any hung guest call, the
-  runtime. A target disabled while serving a call finishes, and the caller
-  gets `disabled` instead of its answer.
+  operation runs, so it cannot abandon a running call. A call also belongs
+  to the target's [generation](generations.md) and, through the chain, to
+  every caller's: a target disabled, reloaded or updated while it serves a
+  call is stopped at once and the caller gets `disabled` or `unavailable`
+  instead of its answer; a caller stopped meanwhile stops the operation it
+  waits for, whose instance is dropped too (the target stays enabled and
+  the next call starts it afresh). Pane has no timeouts or user
+  cancellation yet (#18), so a target that never returns, or computes
+  without yielding, holds the caller and, as with any hung guest call, the
+  runtime.
 - **Concurrent calls from one caller** (Rust `join!`, JavaScript
   `Promise.all`) are served one after another in the caller's own frame: each
   frame serves only its own guest's calls, so a second call is never taken
@@ -147,7 +152,10 @@ that rejects with an object whose `payload` is `{ kind, message }`
   [JavaScript](../guests/sample-operations-js/src/index.js) and
   [TypeScript](../guests/sample-operations-ts/src/index.ts). They answer
   "Hello, Rust, from JavaScript" and so on, show the target's own error
-  ("failed: a name is needed") and a missing package (`not-found`).
+  ("failed: a name is needed") and a missing package (`not-found`). They
+  also publish `wait` version 1, which waits ten seconds, and a second item,
+  "Wait in another extension", calls it: disabling or reloading either
+  package meanwhile stops the call ([generations](generations.md)).
 - [`guests/fixtures/operations`](../guests/fixtures/operations/src/lib.rs):
   a Rust fixture the tests install as several packages to drive every error
   kind, cycles, the depth limit and settings isolation.
@@ -165,6 +173,6 @@ that rejects with an object whose `payload` is `{ kind, message }`
 - No declared dependencies: a caller names its targets in code, so Pane
   cannot show, install or check them before a call (#42), and disabling a
   target does not consider its callers (#43).
-- No timeouts or cancellation of a running operation (#14).
-- A target whose update or disable happens while it serves a call is
-  handled like a command's call in the same situation (#10, #11).
+- No timeouts, and a running operation stops only when a generation in its
+  chain ends; one computing without yielding is not preempted (#18,
+  [generations](generations.md#what-stopping-cannot-do-yet)).
