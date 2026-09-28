@@ -142,6 +142,14 @@ pub fn explain(error: &ErrorCode) -> String {
         ErrorCode::ConnectionTerminated => "the connection was closed".into(),
         ErrorCode::ConnectionTimeout => "connecting timed out".into(),
         ErrorCode::ConnectionReadTimeout => "the service did not answer in time".into(),
+        ErrorCode::HttpResponseTimeout => "the service took too long to answer".into(),
+        ErrorCode::HttpResponseBodySize(Some(limit)) => {
+            format!("the answer is larger than the {limit} bytes Pane accepts")
+        }
+        ErrorCode::HttpResponseBodySize(None) => "the answer is too large".into(),
+        ErrorCode::ConnectionLimitReached => {
+            "too many of the extension's requests are open at once".into()
+        }
         ErrorCode::TlsCertificateError => "the host's certificate is not trusted".into(),
         ErrorCode::TlsProtocolError | ErrorCode::TlsAlertReceived(_) => {
             "the secure connection failed".into()

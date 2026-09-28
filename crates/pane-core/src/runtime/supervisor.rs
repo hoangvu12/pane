@@ -86,6 +86,9 @@ pub(super) struct Shared {
     /// Custom view ids, never reused, even by a restarted thread: a view
     /// the window still shows from a crashed one must not name a new view.
     pub(super) next_view: Arc<AtomicU64>,
+    /// Guests' web requests: their limits, and what each package did this
+    /// session, which a restarted thread carries on.
+    pub(super) network: Arc<crate::http::Network>,
     crashes: Mutex<Option<CrashReport>>,
     /// Counts the crashed threads Pane is done with (restarted or not, the
     /// launcher told), for a call whose answer a crash lost.
@@ -165,6 +168,7 @@ impl Shared {
             directory: SharedDirectory::default(),
             health: Arc::default(),
             next_view: Arc::default(),
+            network: Arc::default(),
             crashes: Mutex::new(None),
             handled: watch::Sender::new(0),
             cache_dir,

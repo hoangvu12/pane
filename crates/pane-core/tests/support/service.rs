@@ -14,6 +14,17 @@
 //! - `GET /packages/<name>`: `{"name", "summary", "version", "license"}`,
 //!   or `404 Not Found`.
 //!
+//! Misbehaving answers, for either path, by the search text or package
+//! name they start with (each ends when the client hangs up, which is
+//! recorded as for `slow`, or after a minute):
+//!
+//! - `huge`: a body that never ends, sent as fast as it is read.
+//! - `stall`: the head of an answer, then nothing more.
+//! - `drip`: the head, then one byte of body every 50 ms.
+//!
+//! The search text `misbehaving` lists `huge-details`, `stall-details` and
+//! `drip-details`, whose details misbehave so.
+//!
 //! Every request's path is recorded in order (see [`Service::requests`]).
 
 #![allow(dead_code)]
@@ -172,6 +183,60 @@ impl Drop for Service {
     }
 }
 
+/// An `https` service on 127.0.0.1 whose certificate no system trusts
+/// (self-signed, in `untrusted.pem` beside this file): every TLS handshake
+/// with it fails on the certificate. It answers nothing else.
+pub struct UntrustedService {
+    address: SocketAddr,
+}
+
+impl UntrustedService {
+    pub fn start() -> UntrustedService {
+        use rustls::pki_types::pem::PemObject;
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+
+        let pem = include_bytes!("untrusted.pem");
+        let certificates = CertificateDer::pem_slice_iter(pem)
+            .collect::<Result<Vec<_>, _>>()
+            .expect("the test certificate");
+        let key = PrivateKeyDer::from_pem_slice(pem).expect("the test key");
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let config = rustls::ServerConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(certificates, key)
+            .expect("a TLS configuration");
+        let config = Arc::new(config);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a free port");
+        let address = listener.local_addr().unwrap();
+        thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let config = config.clone();
+                thread::spawn(move || {
+                    let Ok(mut connection) = rustls::ServerConnection::new(config) else {
+                        return;
+                    };
+                    let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
+                    // Until the client gives up on the certificate.
+                    while connection.is_handshaking() {
+                        if connection.complete_io(&mut stream).is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        UntrustedService { address }
+    }
+
+    /// `https://127.0.0.1:<port>`.
+    pub fn url(&self) -> String {
+        format!("https://{}", self.address)
+    }
+}
+
 /// A port of 127.0.0.1 that refuses connections for as long as this is
 /// kept: a socket bound to it that never listens, so nothing else can take
 /// the port meanwhile (as it could once a listener was released).
@@ -201,6 +266,13 @@ fn serve(mut stream: TcpStream, log: &Log) -> io::Result<()> {
         return Ok(());
     };
     log.requests.lock().unwrap().push(path.clone());
+    let name = query_of(&path).or_else(|| path.strip_prefix("/packages/").map(decode));
+    if let Some(misbehaving) = name.as_deref().and_then(Misbehaving::of) {
+        if misbehaving.answer(&mut stream)? {
+            log.abandoned.lock().unwrap().push(path);
+        }
+        return Ok(());
+    }
     let (status, body) = answer(&path);
     if status == 0 {
         // A slow search: held until the client hangs up or SLOW passes.
@@ -212,6 +284,73 @@ fn serve(mut stream: TcpStream, log: &Log) -> io::Result<()> {
         return respond(&mut stream, 200, &search(query.trim_start_matches("slow")));
     }
     respond(&mut stream, status, &body)
+}
+
+/// An answer that misbehaves, chosen by the start of a search text or
+/// package name.
+#[derive(Clone, Copy)]
+enum Misbehaving {
+    /// A body that never ends.
+    Huge,
+    /// A head, then nothing.
+    Stall,
+    /// A head, then a byte every 50 ms.
+    Drip,
+}
+
+/// How long a misbehaving answer goes on if the client never hangs up.
+const MISBEHAVING: Duration = Duration::from_secs(60);
+
+impl Misbehaving {
+    fn of(name: &str) -> Option<Misbehaving> {
+        [
+            ("huge", Misbehaving::Huge),
+            ("stall", Misbehaving::Stall),
+            ("drip", Misbehaving::Drip),
+        ]
+        .into_iter()
+        .find_map(|(start, misbehaving)| name.starts_with(start).then_some(misbehaving))
+    }
+
+    /// Answers so on `stream`; whether the client hung up.
+    fn answer(self, stream: &mut TcpStream) -> io::Result<bool> {
+        stream.write_all(
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+              Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+        )?;
+        stream.flush()?;
+        let deadline = Instant::now() + MISBEHAVING;
+        match self {
+            Misbehaving::Stall => hung_up_within(stream, MISBEHAVING),
+            Misbehaving::Huge => {
+                let chunk = [b' '; 64 * 1024];
+                while Instant::now() < deadline {
+                    let sent = write!(stream, "{:x}\r\n", chunk.len())
+                        .and_then(|()| stream.write_all(&chunk))
+                        .and_then(|()| stream.write_all(b"\r\n"));
+                    if sent.is_err() {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            Misbehaving::Drip => {
+                while Instant::now() < deadline {
+                    if stream
+                        .write_all(b"1\r\n \r\n")
+                        .and_then(|()| stream.flush())
+                        .is_err()
+                    {
+                        return Ok(true);
+                    }
+                    if hung_up_within(stream, Duration::from_millis(50))? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+        }
+    }
 }
 
 /// Reads a request's head; its path with query, or `None` for a
@@ -250,6 +389,15 @@ fn answer(path: &str) -> (u16, String) {
                 503,
                 r#"{"error": "the registry is down for maintenance"}"#.into(),
             );
+        }
+        if query == "misbehaving" {
+            let results: Vec<String> = ["huge", "stall", "drip"]
+                .iter()
+                .map(|how| {
+                    format!(r#"{{"name": "{how}-details", "summary": "Its details misbehave"}}"#)
+                })
+                .collect();
+            return (200, format!(r#"{{"results": [{}]}}"#, results.join(", ")));
         }
         return (200, search(&query));
     }

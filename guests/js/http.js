@@ -89,6 +89,14 @@ export function explain(error) {
       return "connecting timed out";
     case "connection-read-timeout":
       return "the service did not answer in time";
+    case "HTTP-response-timeout":
+      return "the service took too long to answer";
+    case "HTTP-response-body-size":
+      return typeof code.val === "bigint" || typeof code.val === "number"
+        ? `the answer is larger than the ${code.val} bytes Pane accepts`
+        : "the answer is too large";
+    case "connection-limit-reached":
+      return "too many of the extension's requests are open at once";
     case "TLS-certificate-error":
       return "the host's certificate is not trusted";
     case "TLS-protocol-error":

@@ -20,6 +20,8 @@ mod runtime;
 mod search;
 
 pub use helpers::runner::{MAX_HELPER_INPUT, MAX_HELPER_OUTPUT};
+#[doc(hidden)]
+pub use http::HttpLimits;
 pub use launcher::{
     BuildFailure, CommandRegistration, CustomViewSnapshot, Development, FormField, FormView,
     Launcher, LauncherView, Question, Row, Screen, Status, Unavailable,

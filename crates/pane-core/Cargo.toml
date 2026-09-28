@@ -22,6 +22,7 @@ wasmtime-wasi = { version = "=49.0.1", default-features = false, features = ["p3
 wasmtime-wasi-http = { version = "=49.0.1", default-features = false, features = ["p3", "component-model-async"] }
 bytes = "1"
 http = "1"
+http-body = "1"
 http-body-util = "0.1"
 hyper = { version = "1", features = ["client", "http1"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }

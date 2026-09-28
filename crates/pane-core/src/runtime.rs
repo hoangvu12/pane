@@ -25,7 +25,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::packages::paused_reason;
 use wasmtime::component::{Component, Linker, ResourceAny, ResourceTable};
-use wasmtime::{Cache, CacheConfig, Config, Engine, Store};
+use wasmtime::{Cache, CacheConfig, Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
 
@@ -165,7 +165,19 @@ impl SearchStopped {
     fn stopped(&mut self) -> bool {
         !matches!(self.0.try_recv(), Err(oneshot::error::TryRecvError::Empty))
     }
+
+    /// Waits up to `wait` for the search to be stopped; whether it was.
+    async fn stopped_within(&mut self, wait: std::time::Duration) -> bool {
+        tokio::time::timeout(wait, &mut self.0).await.is_ok()
+    }
 }
+
+/// How long the runtime waits before it starts a search: one the user
+/// replaces by typing on within it is stopped before its command is asked
+/// (and before its instance could be dropped for it), so fast typing asks
+/// only for the text the user stops at. The runtime serves nothing else
+/// meanwhile, as it serves one call at a time.
+pub(crate) const SEARCH_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(150);
 
 /// A way to stop a search, and what the runtime watches for it.
 fn stoppable() -> (StopSearch, SearchStopped) {
@@ -719,6 +731,20 @@ impl Runtime {
         self.shared.inject(fault);
     }
 
+    /// Sets the ceilings of guests' web requests started from now on, so
+    /// tests can reach them quickly. For tests only; debug builds only.
+    #[cfg(any(test, debug_assertions))]
+    #[doc(hidden)]
+    pub fn set_http_limits(&self, limits: http::HttpLimits) {
+        self.shared.network.set_limits(limits);
+    }
+
+    /// `host:port` of every address the package with identity key `owner`
+    /// tried to reach this session, sorted.
+    pub(crate) fn contacted(&self, owner: &str) -> Vec<String> {
+        self.shared.network.contacted(owner)
+    }
+
     /// Injects a fault each time a file appears at `file`, then removes it:
     /// `crash` injects [`Fault::Crash`], `crash-before-answer:<item>`
     /// [`Fault::CrashBeforeAnswer`] for the action `<item>`. For the native
@@ -1182,6 +1208,12 @@ fn engine(cache_dir: Option<PathBuf>) -> Result<Engine, CallError> {
     Engine::new(&config).map_err(unavailable)
 }
 
+/// The most one linear memory of a guest instance may grow to. Web
+/// responses are capped well below it ([`http::HttpLimits::body`]); a guest
+/// that grows past it anyway fails to allocate, and so crashes, rather than
+/// taking Pane's memory.
+const GUEST_MEMORY: usize = 512 * 1024 * 1024;
+
 /// How a check answers once the checker thread has stopped.
 fn checker_stopped() -> CallError {
     CallError::RuntimeUnavailable("Pane's component checker has stopped".into())
@@ -1217,6 +1249,8 @@ pub(crate) struct GuestState {
     http: WasiHttpCtx,
     /// Sends the guest's web requests.
     sender: http::Sender,
+    /// What the guest's memory may grow to ([`GUEST_MEMORY`]).
+    limits: StoreLimits,
     /// The installed packages, for finding the guest's helpers.
     directory: SharedDirectory,
     /// The runtime's helper processes; those of this instance are ended
@@ -1429,6 +1463,8 @@ struct Host {
     owners: Vec<Generation>,
     /// Finds and opens the system's applications for guests.
     applications: SharedApplications,
+    /// Guests' web requests, shared with the threads that replace this one.
+    network: Arc<http::Network>,
 }
 
 impl Code {
@@ -1606,6 +1642,7 @@ impl Host {
             chain: Vec::new(),
             owners: Vec::new(),
             applications: shared.applications.clone(),
+            network: shared.network.clone(),
         }
     }
 
@@ -1975,8 +2012,9 @@ impl Host {
         data: Option<PackageData>,
         mut stopped: SearchStopped,
     ) -> Result<Vec<SearchResult>, CallError> {
-        // Replaced while it waited in the queue: it is not started.
-        if stopped.stopped() {
+        // Replaced while it waited in the queue, or soon after: it is not
+        // started.
+        if stopped.stopped() || stopped.stopped_within(SEARCH_DEBOUNCE).await {
             return Err(CallError::SearchStopped);
         }
         let instance = self.instance(path, data).await?;
@@ -2403,7 +2441,8 @@ impl Host {
                 wasi: WasiCtx::builder().build(),
                 table: ResourceTable::new(),
                 http: WasiHttpCtx::new(),
-                sender: http::Sender::new(data.clone()),
+                sender: http::Sender::new(data.clone(), self.network.clone()),
+                limits: StoreLimitsBuilder::new().memory_size(GUEST_MEMORY).build(),
                 data,
                 component: path.to_path_buf(),
                 calls: self.calls.clone(),
@@ -2414,6 +2453,7 @@ impl Host {
                 helpers: self.helpers.clone(),
             },
         );
+        store.limiter(|state| &mut state.limits);
         let load = |error: wasmtime::Error| CallError::Load(format!("{error:#}"));
         let instance = self
             .code

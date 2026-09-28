@@ -4383,6 +4383,7 @@ dependencies = [
  "futures",
  "global-hotkey",
  "http",
+ "http-body",
  "http-body-util",
  "hyper",
  "libc",

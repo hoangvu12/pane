@@ -477,6 +477,11 @@ impl PackageData {
         &self.generation
     }
 
+    /// The key of the identity of the package this data belongs to.
+    pub fn owner(&self) -> &str {
+        &self.owner
+    }
+
     /// Why this data's generation ended, if it has: its commands may no
     /// longer run or save values.
     pub fn stopped(&self) -> Option<End> {

@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use futures::executor::block_on;
-use pane_core::{Launcher, Runtime, Screen, Status};
+use pane_core::{HttpLimits, Launcher, Runtime, Screen, Status};
 use service::Service;
 use tempfile::TempDir;
 
@@ -68,10 +68,20 @@ struct Pane {
 
 impl Pane {
     fn with(fixture: &Fixture) -> Pane {
+        Pane::with_runtime(fixture, Runtime::start().unwrap())
+    }
+
+    /// Like [`Pane::with`], its web requests bounded by `limits`.
+    fn with_limits(fixture: &Fixture, limits: HttpLimits) -> Pane {
+        let runtime = Runtime::start().unwrap();
+        runtime.set_http_limits(limits);
+        Pane::with_runtime(fixture, runtime)
+    }
+
+    fn with_runtime(fixture: &Fixture, runtime: Runtime) -> Pane {
         let sources = tempfile::tempdir().unwrap();
         let data = tempfile::tempdir().unwrap();
-        let launcher =
-            Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"));
+        let launcher = Launcher::with_packages(Ok(runtime), vec![], data.path().join("extensions"));
         let folder = package(fixture.package, &sources.path().join(fixture.package));
         block_on(launcher.install_package(&folder));
         assert!(
@@ -312,6 +322,40 @@ fn a_cleared_search_lists_the_command_as_it_is_now() {
 }
 
 #[test]
+fn typing_on_asks_only_for_the_text_the_user_stops_at() {
+    for fixture in &ALL {
+        let service = Service::start();
+        let pane = Pane::with(fixture);
+        pane.use_service(&service.url());
+
+        // A search that asks at once is quicker than this.
+        pane.search("granite");
+        let asked = service.requests().len();
+
+        // Keystrokes closer together than the search's short wait: each
+        // search is stopped before it asks the service anything.
+        let typed: Vec<_> = ["a", "au", "aur", "auro", "auror", "aurora"]
+            .into_iter()
+            .map(|text| {
+                let search = pane.launcher.set_query(text);
+                std::thread::sleep(Duration::from_millis(60));
+                search
+            })
+            .collect();
+        for search in typed {
+            block_on(search);
+        }
+        assert_eq!(pane.titles(), ["aurora-charts", "aurora-cli"]);
+        assert_eq!(
+            service.requests()[asked..],
+            ["/search?q=aurora"],
+            "{}",
+            fixture.package
+        );
+    }
+}
+
+#[test]
 fn a_newer_search_stops_the_one_the_service_is_still_answering() {
     for fixture in &ALL {
         let service = Service::start();
@@ -444,6 +488,148 @@ fn an_offline_or_failing_service_is_an_error_that_does_not_pause_the_extension()
         pane.search("granite");
         assert_eq!(pane.titles(), ["granite-uuid"], "{}", fixture.package);
         assert_eq!(pane.view().status, Status::Idle);
+    }
+}
+
+#[test]
+fn an_endless_answer_is_an_error_that_does_not_pause_the_extension() {
+    for fixture in &ALL {
+        let service = Service::start();
+        let pane = Pane::with(fixture);
+        pane.use_service(&service.url());
+        // More than would pause a crashing extension (three within five
+        // minutes).
+        for text in ["huge", "huger", "hugest", "huge again"] {
+            pane.search(text);
+            assert_eq!(
+                pane.error(),
+                format!(
+                    "The extension reported an error: Could not reach the service at {}: \
+                     the answer is larger than the 4194304 bytes Pane accepts",
+                    service.url()
+                ),
+                "{}",
+                fixture.package
+            );
+            assert_eq!(pane.titles(), Vec::<String>::new());
+        }
+        // Pane hung up on each.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while service.abandoned().len() < 4 {
+            assert!(Instant::now() < deadline, "{:?}", service.abandoned());
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        pane.search("granite");
+        assert_eq!(pane.titles(), ["granite-uuid"], "{}", fixture.package);
+    }
+}
+
+/// Short ceilings, so a service that stalls is given up on quickly.
+fn short_limits() -> HttpLimits {
+    HttpLimits {
+        first_byte: Duration::from_millis(500),
+        between_bytes: Duration::from_millis(300),
+        deadline: Duration::from_millis(1500),
+        ..HttpLimits::default()
+    }
+}
+
+#[test]
+fn a_service_that_stalls_is_given_up_on_within_the_limits() {
+    for fixture in &ALL {
+        let service = Service::start();
+        let pane = Pane::with_limits(fixture, short_limits());
+        pane.use_service(&service.url());
+        let failed = |why: &str| {
+            format!(
+                "The extension reported an error: Could not reach the service at {}: {why}",
+                service.url()
+            )
+        };
+
+        // A head, then nothing: the wait between two pieces of the body.
+        let started = Instant::now();
+        pane.search("stall");
+        assert_eq!(
+            pane.error(),
+            failed("the service did not answer in time"),
+            "{}",
+            fixture.package
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "{:?}",
+            started.elapsed()
+        );
+
+        // A byte now and then: the whole request's deadline.
+        let started = Instant::now();
+        pane.search("drip");
+        assert_eq!(pane.error(), failed("the service took too long to answer"));
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "{:?}",
+            started.elapsed()
+        );
+
+        // An action's request is bounded the same way.
+        pane.search("misbehaving");
+        assert_eq!(
+            pane.titles(),
+            ["huge-details", "stall-details", "drip-details"]
+        );
+        let started = Instant::now();
+        pane.activate("stall-details");
+        assert_eq!(
+            pane.error(),
+            failed("the service did not answer in time"),
+            "{}",
+            fixture.package
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "{:?}",
+            started.elapsed()
+        );
+        pane.activate("drip-details");
+        assert_eq!(pane.error(), failed("the service took too long to answer"));
+        pane.activate("huge-details");
+        assert_eq!(
+            pane.error(),
+            failed("the answer is larger than the 4194304 bytes Pane accepts")
+        );
+
+        // Pane hung up on each, and the extension carries on.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while service.abandoned().len() < 5 {
+            assert!(Instant::now() < deadline, "{:?}", service.abandoned());
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        pane.search("cobalt");
+        assert_eq!(pane.titles(), ["cobalt-http"], "{}", fixture.package);
+    }
+}
+
+#[test]
+fn a_service_whose_certificate_is_not_trusted_is_an_error() {
+    for fixture in &ALL {
+        let service = service::UntrustedService::start();
+        let pane = Pane::with(fixture);
+        pane.use_service(&service.url());
+        // Twice: a failed handshake leaves nothing behind for the next.
+        for text in ["aurora", "basalt"] {
+            pane.search(text);
+            assert_eq!(
+                pane.error(),
+                format!(
+                    "The extension reported an error: Could not reach the service at {}: \
+                     the host's certificate is not trusted",
+                    service.url()
+                ),
+                "{}",
+                fixture.package
+            );
+        }
     }
 }
 

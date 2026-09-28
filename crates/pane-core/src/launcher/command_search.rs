@@ -7,7 +7,10 @@
 //! Each change of the text starts a new search and stops the one before, in
 //! the runtime (where it waits, with its web requests) as well as here: an
 //! answer to an older text is never shown, whether it arrives late or is
-//! the older search's error. Leaving the command stops its search too. An error the command answers with, such
+//! the older search's error. The runtime waits a moment
+//! ([`crate::runtime::SEARCH_DEBOUNCE`]) before it starts a search, so
+//! typing on stops each one before it has asked anything. Leaving the
+//! command stops its search too. An error the command answers with, such
 //! as a service that is down, is shown in place of results, and counts
 //! against the extension no more than any error it answers with: it is not
 //! paused for it.
