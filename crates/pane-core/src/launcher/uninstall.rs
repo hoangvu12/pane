@@ -8,14 +8,18 @@
 //!
 //! 1. records it as uninstalled in `installed.json`, with a record of the
 //!    identity whose saved data is kept when the user keeps it. If this
-//!    fails nothing else changes and the package is back as it was;
-//! 2. removes its cache and local credentials, and its settings and content
+//!    fails nothing else changes and the package is back as it was. This is
+//!    the point after which the package is uninstalled;
+//! 2. removes its managed copy. A folder still in use (Windows) is listed
+//!    for removal at the next start, as an update's replaced copy is;
+//! 3. removes its cache and local credentials, and its settings and content
 //!    too when the user deletes them. Data that could not be removed stays
-//!    recorded as kept, so it is not lost track of;
-//! 3. removes its managed copy. A folder still in use (Windows) is listed
-//!    for removal at the next start, as an update's replaced copy is.
+//!    recorded as kept, so it is not lost track of.
 //!
-//! A failure of step 2 or 3 is explained rather than reported as a
+//! Recording first means a failure leaves either an installed package with
+//! all its data or an uninstalled one whose leftovers are on record, never
+//! an installed package whose data was deleted. A failure of step 2 or 3 is
+//! explained rather than reported as a
 //! successful uninstall. The source folder and anything outside Pane's data
 //! folder are never touched. Kept data belongs to the package identity:
 //! installing the same source again finds it, another source never does.
