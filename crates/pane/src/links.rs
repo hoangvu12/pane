@@ -111,7 +111,9 @@ fn explain(command: &Command, status: ExitStatus, kind: Target) -> String {
             Some(4) => {
                 return match kind {
                     Target::Link => "the browser or link handler refused or failed to open it",
-                    Target::File => "the program for this kind of file refused or failed to open it",
+                    Target::File => {
+                        "the program for this kind of file refused or failed to open it"
+                    }
                 }
                 .into();
             }

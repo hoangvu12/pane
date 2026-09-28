@@ -81,8 +81,8 @@ use indexed_bindings::exports::pane::extension::indexed_results;
 use root_bindings::exports::pane::extension::root_results;
 
 use crate::applications::Applications;
-use crate::files::{self, Folders};
 use crate::extension_data::{DataKind, PackageData};
+use crate::files::{self, Folders};
 use crate::generation::{End, Generation};
 use crate::helpers;
 use crate::helpers::runner::{self, HelperError, HelperErrorKind, Helpers, Running, Spec};
@@ -1452,9 +1452,7 @@ impl Host {
                     data,
                     mut reply,
                 } => {
-                    let result = self
-                        .root_results(&component, query, data, &mut reply)
-                        .await;
+                    let result = self.root_results(&component, query, data, &mut reply).await;
                     let _ = reply.send(result);
                 }
                 Request::RunQuery {

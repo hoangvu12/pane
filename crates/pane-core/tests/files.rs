@@ -143,7 +143,10 @@ fn open_choose_form(launcher: &Launcher, title: &str) {
         .expect("the command offers Choose folder");
     launcher.select(index);
     block_on(launcher.activate_selected());
-    assert!(launcher.view().form().is_some(), "Choose folder opens a form");
+    assert!(
+        launcher.view().form().is_some(),
+        "Choose folder opens a form"
+    );
 }
 
 /// Submits `folder` in the open form and returns the status.
@@ -233,7 +236,10 @@ fn a_listing_is_breadth_first_in_name_order_without_hidden_entries() {
     // Each path is the absolute path of the file listed.
     for file in &listing.files {
         assert!(Path::new(&file.path).is_absolute(), "{}", file.path);
-        assert!(same_file(Path::new(&file.path), &fixture.file(&file.relative)));
+        assert!(same_file(
+            Path::new(&file.path),
+            &fixture.file(&file.relative)
+        ));
     }
 }
 
@@ -266,7 +272,11 @@ fn hidden_attributes_and_junctions_are_skipped_on_windows() {
     let fixture = Fixture::new();
     let hidden = fixture.root.join("attribute plan.txt");
     fs::write(&hidden, "hidden by its attribute").unwrap();
-    let status = Command::new("attrib").arg("+h").arg(&hidden).status().unwrap();
+    let status = Command::new("attrib")
+        .arg("+h")
+        .arg(&hidden)
+        .status()
+        .unwrap();
     assert!(status.success());
     let elsewhere = tempfile::tempdir().unwrap();
     fs::write(elsewhere.path().join("outside.txt"), "outside").unwrap();
@@ -282,9 +292,9 @@ fn hidden_attributes_and_junctions_are_skipped_on_windows() {
     assert!(status.success());
     let listing = files::walk(&fixture.root, &Limits::default(), &never).unwrap();
     assert!(
-        !relatives(&listing).iter().any(|relative| {
-            relative.contains("attribute") || relative.contains("junction")
-        }),
+        !relatives(&listing)
+            .iter()
+            .any(|relative| { relative.contains("attribute") || relative.contains("junction") }),
         "{:?}",
         relatives(&listing)
     );
@@ -310,11 +320,7 @@ fn a_listing_stops_at_its_limits_and_says_so() {
     let listing = files::walk(dir.path(), &shallow, &never).unwrap();
     assert_eq!(
         relatives(&listing),
-        [
-            "level 0.txt",
-            "sub0/level 1.txt",
-            "sub0/sub1/level 2.txt"
-        ]
+        ["level 0.txt", "sub0/level 1.txt", "sub0/sub1/level 2.txt"]
     );
     assert!(listing.truncated, "a folder deeper than the limit was left");
 
@@ -688,15 +694,17 @@ fn a_new_query_cancels_the_pending_search_whose_late_files_never_show() {
     let (_pane, launcher, _runtime, _folder) = held(&folders);
 
     let first = search_in_background(&launcher, "repor");
-    folders.wait_for("the first search lists the folder", |held| held.started == 2);
+    folders.wait_for("the first search lists the folder", |held| {
+        held.started == 2
+    });
     let second = search_in_background(&launcher, "report");
     // The first search's listing is told to stop, and its search ends
     // without waiting for it.
-    folders.wait_for("the first listing is cancelled", |held| {
-        held.cancelled == 1
-    });
+    folders.wait_for("the first listing is cancelled", |held| held.cancelled == 1);
     finishes(&first);
-    folders.wait_for("the second search lists the folder", |held| held.started == 3);
+    folders.wait_for("the second search lists the folder", |held| {
+        held.started == 3
+    });
     folders.release();
     finishes(&second);
     assert_eq!(titles(&launcher), ["report current.txt"]);
@@ -712,12 +720,16 @@ fn a_listing_that_ignores_cancelling_holds_up_nothing_and_its_answer_is_discarde
     let (_pane, launcher, _runtime, _folder) = held(&folders);
 
     let first = search_in_background(&launcher, "repor");
-    folders.wait_for("the first search lists the folder", |held| held.started == 2);
+    folders.wait_for("the first search lists the folder", |held| {
+        held.started == 2
+    });
     let second = search_in_background(&launcher, "report");
     finishes(&first);
     // The second search reaches the extension while the first listing still
     // runs: the runtime does not wait for it.
-    folders.wait_for("the second search lists the folder", |held| held.started == 3);
+    folders.wait_for("the second search lists the folder", |held| {
+        held.started == 3
+    });
     folders.release();
     finishes(&second);
     assert_eq!(titles(&launcher), ["report current.txt"]);
