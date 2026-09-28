@@ -162,6 +162,8 @@ impl Launcher {
         }
         let package = state.packages.remove(index);
         installation.data.uninstall(&identity);
+        // Its development ends, with a build that is running.
+        self.developing.stop(&identity);
         let components: Vec<PathBuf> = package
             .commands()
             .into_iter()

@@ -275,7 +275,7 @@ impl Launcher {
         }
     }
 
-    fn title_of(&self, identity: &PackageIdentity) -> String {
+    pub(super) fn title_of(&self, identity: &PackageIdentity) -> String {
         self.lock().title_of(identity)
     }
 }

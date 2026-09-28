@@ -244,8 +244,9 @@ impl Manifest {
         Ok(manifest)
     }
 
-    /// Reads and parses `pane.json` in `folder`.
-    fn read_parsed(folder: &Path) -> Result<(Manifest, String), PackageError> {
+    /// Reads and parses `pane.json` in `folder`, without checking that its
+    /// components exist (a development build is about to make them).
+    pub(crate) fn read_parsed(folder: &Path) -> Result<(Manifest, String), PackageError> {
         let path = folder.join(MANIFEST_FILE);
         let text = match fs::read_to_string(&path) {
             Ok(text) => text,

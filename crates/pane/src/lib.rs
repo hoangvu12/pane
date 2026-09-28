@@ -12,6 +12,7 @@ use gpui::{
     Pixels, Role, ScrollHandle, SharedString, Size, Stateful, Window, actions, div, prelude::*,
     rgb,
 };
+use pane_core::develop::Changes;
 use pane_core::hotkeys::Shortcut;
 use pane_core::{CommandRegistration, Launcher, LauncherView, Row, Screen, Status};
 
@@ -188,6 +189,13 @@ impl LauncherWindow {
         let query = root_search::QueryField::new(cx);
         // The launcher starts at root search.
         query.focus(window, cx);
+        // Quitting ends development: its watchers go and a running build
+        // is stopped with the processes it started.
+        cx.on_app_quit(|this: &mut Self, _| {
+            this.launcher.stop_all_development();
+            async {}
+        })
+        .detach();
         LauncherWindow {
             launcher,
             focus_handle,
@@ -202,6 +210,30 @@ impl LauncherWindow {
 
     pub fn launcher(&self) -> &Launcher {
         &self.launcher
+    }
+
+    /// Redraws whenever the launcher changes in the background, as
+    /// `changes` (the other end of the launcher's
+    /// [`with_development`](Launcher::with_development)) reports: a package
+    /// being developed is building, failed to build or was reloaded.
+    pub fn follow_changes(
+        &mut self,
+        mut changes: Changes,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn_in(window, async move |this, cx| {
+            while changes.next().await.is_some() {
+                let shown = this.update_in(cx, |this, window, cx| {
+                    this.sync_screen(window, cx);
+                    cx.notify();
+                });
+                if shown.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 
     fn select_next(&mut self, _: &SelectNext, _: &mut Window, cx: &mut Context<Self>) {
@@ -494,6 +526,7 @@ impl Render for LauncherWindow {
             Screen::Confirm { .. } => ("", "↑↓ select · Enter choose · Esc cancel"),
             Screen::Hotkey { .. } => ("", "Press the new hotkey · Enter choose · Esc back"),
             Screen::PauseDetails { .. } => ("", "Enter retry · Esc back"),
+            Screen::BuildDetails { .. } => ("", "Enter build again · Esc back"),
         };
         let details: Vec<_> = view
             .details()
@@ -512,6 +545,7 @@ impl Render for LauncherWindow {
             match view.status {
                 Status::Idle => ("status-idle", hint.into(), 0x8a96a3),
                 Status::Running => ("status-running", "Running…".into(), 0xd6c27a),
+                Status::Progress(work) => ("status-progress", work.into(), 0xd6c27a),
                 Status::Result(answer) => ("status-result", answer.into(), 0x9fd8a8),
                 Status::Error(message) => ("status-error", message.into(), 0xf08c8c),
             };
