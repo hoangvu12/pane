@@ -36,7 +36,7 @@ mod supervisor;
 pub use supervisor::Fault;
 pub(crate) use supervisor::RESTART_WINDOW;
 pub use supervisor::RuntimeStatus;
-use supervisor::{Faults, Shared, lost};
+use supervisor::{Faults, NotSent, Shared};
 
 pub(crate) mod bindings {
     wasmtime::component::bindgen!({
@@ -697,12 +697,15 @@ impl Runtime {
         data: Option<PackageData>,
     ) -> Result<View, CallError> {
         let (reply, response) = oneshot::channel();
-        self.send(Request::GetView {
-            component: component.to_path_buf(),
-            data,
-            reply,
-        })?;
-        response.await.unwrap_or_else(|_| Err(lost()))
+        self.call(
+            Request::GetView {
+                component: component.to_path_buf(),
+                data,
+                reply,
+            },
+            response,
+        )
+        .await
     }
 
     /// Like [`Runtime::run_action`]; the command reads and saves `data`.
@@ -713,13 +716,16 @@ impl Runtime {
         data: Option<PackageData>,
     ) -> Result<String, CallError> {
         let (reply, response) = oneshot::channel();
-        self.send(Request::RunAction {
-            component: component.to_path_buf(),
-            item_id: item_id.to_owned(),
-            data,
-            reply,
-        })?;
-        response.await.unwrap_or_else(|_| Err(lost()))
+        self.call(
+            Request::RunAction {
+                component: component.to_path_buf(),
+                item_id: item_id.to_owned(),
+                data,
+                reply,
+            },
+            response,
+        )
+        .await
     }
 
     /// Checks, without running any guest code, that `component` is a
@@ -760,12 +766,15 @@ impl Runtime {
         data: Option<PackageData>,
     ) -> Result<Vec<IndexedResult>, CallError> {
         let (reply, response) = oneshot::channel();
-        self.send(Request::IndexedResults {
-            component: component.to_path_buf(),
-            data,
-            reply,
-        })?;
-        response.await.unwrap_or_else(|_| Err(lost()))
+        self.call(
+            Request::IndexedResults {
+                component: component.to_path_buf(),
+                data,
+                reply,
+            },
+            response,
+        )
+        .await
     }
 
     /// Has the runtime's guests, and the launcher opening their results,
@@ -796,13 +805,16 @@ impl Runtime {
         data: Option<PackageData>,
     ) -> Result<Vec<RootResult>, CallError> {
         let (reply, response) = oneshot::channel();
-        self.send(Request::RootResults {
-            component: component.to_path_buf(),
-            query: query.to_owned(),
-            data,
-            reply,
-        })?;
-        response.await.unwrap_or_else(|_| Err(lost()))
+        self.call(
+            Request::RootResults {
+                component: component.to_path_buf(),
+                query: query.to_owned(),
+                data,
+                reply,
+            },
+            response,
+        )
+        .await
     }
 
     /// Runs the command with manifest id `command` in `component`, which
@@ -816,14 +828,17 @@ impl Runtime {
         data: Option<PackageData>,
     ) -> Result<String, CallError> {
         let (reply, response) = oneshot::channel();
-        self.send(Request::RunQuery {
-            component: component.to_path_buf(),
-            command: command.to_owned(),
-            query: query.to_owned(),
-            data,
-            reply,
-        })?;
-        response.await.unwrap_or_else(|_| Err(lost()))
+        self.call(
+            Request::RunQuery {
+                component: component.to_path_buf(),
+                command: command.to_owned(),
+                query: query.to_owned(),
+                data,
+                reply,
+            },
+            response,
+        )
+        .await
     }
 
     /// Submits the form of `item_id` in the command in `component`. A
@@ -848,14 +863,17 @@ impl Runtime {
         data: Option<PackageData>,
     ) -> Result<String, CallError> {
         let (reply, response) = oneshot::channel();
-        self.send(Request::SubmitForm {
-            component: component.to_path_buf(),
-            item_id: item_id.to_owned(),
-            values,
-            data,
-            reply,
-        })?;
-        response.await.unwrap_or_else(|_| Err(lost()))
+        self.call(
+            Request::SubmitForm {
+                component: component.to_path_buf(),
+                item_id: item_id.to_owned(),
+                values,
+                data,
+                reply,
+            },
+            response,
+        )
+        .await
     }
 
     /// Opens the custom view of `item_id` in the command in `component` and
@@ -878,13 +896,16 @@ impl Runtime {
         data: Option<PackageData>,
     ) -> Result<(ViewId, Frame), CallError> {
         let (reply, response) = oneshot::channel();
-        self.send(Request::OpenView {
-            component: component.to_path_buf(),
-            item_id: item_id.to_owned(),
-            data,
-            reply,
-        })?;
-        response.await.unwrap_or_else(|_| Err(lost()))
+        self.call(
+            Request::OpenView {
+                component: component.to_path_buf(),
+                item_id: item_id.to_owned(),
+                data,
+                reply,
+            },
+            response,
+        )
+        .await
     }
 
     /// Has the open custom view `view` handle `event`, then draws it again.
@@ -899,11 +920,7 @@ impl Runtime {
         event: ViewEvent,
     ) -> impl Future<Output = Result<Frame, CallError>> + Send + 'static {
         let (reply, response) = oneshot::channel();
-        let sent = self.send(Request::ViewEvent { view, event, reply });
-        async move {
-            sent?;
-            response.await.unwrap_or_else(|_| Err(lost()))
-        }
+        self.call(Request::ViewEvent { view, event, reply }, response)
     }
 
     /// Closes the custom view `view`: the guest's view is dropped, after any
@@ -994,7 +1011,33 @@ impl Runtime {
     }
 
     fn send(&self, request: Request) -> Result<(), CallError> {
-        self.shared.send(request)
+        self.shared.send(request).map_err(NotSent::error)
+    }
+
+    /// Sends `request`, when this is called, and returns its answer from
+    /// `response`. An answer lost because the runtime
+    /// thread crashed is known once Pane has restarted it or chosen not to,
+    /// and says which; the request is never sent again.
+    fn call<T: Send + 'static>(
+        &self,
+        request: Request,
+        response: oneshot::Receiver<Result<T, CallError>>,
+    ) -> impl Future<Output = Result<T, CallError>> + Send + 'static + use<T> {
+        let handled = self.shared.handled();
+        let sent = self.shared.send(request);
+        let shared = Arc::downgrade(&self.shared);
+        async move {
+            match sent {
+                Err(NotSent::Stopped) => return Err(supervisor::stopped()),
+                Err(NotSent::Lost) => {}
+                Ok(()) => {
+                    if let Ok(answer) = response.await {
+                        return answer;
+                    }
+                }
+            }
+            Err(supervisor::lost(shared, handled).await)
+        }
     }
 }
 

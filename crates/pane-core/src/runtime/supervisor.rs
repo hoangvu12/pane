@@ -27,7 +27,7 @@ use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
-use tokio::sync::{Notify, mpsc};
+use tokio::sync::{Notify, mpsc, watch};
 
 use super::{CallError, Code, HealthReport, Host, Request, SharedApplications, SharedDirectory};
 use crate::helpers::runner::Helpers;
@@ -125,8 +125,41 @@ pub(super) struct Shared {
     /// the window still shows from a crashed one must not name a new view.
     pub(super) next_view: Arc<AtomicU64>,
     crashes: Mutex<Option<CrashReport>>,
+    /// Counts the crashed threads Pane is done with (restarted or not, the
+    /// launcher told), for a call whose answer a crash lost.
+    handled: watch::Sender<u64>,
     cache_dir: Option<PathBuf>,
     current: Mutex<Current>,
+}
+
+/// Why a request was not sent to the runtime thread.
+pub(super) enum NotSent {
+    /// The runtime is stopped after crashing.
+    Stopped,
+    /// The thread has just crashed; Pane is handling it.
+    Lost,
+}
+
+impl NotSent {
+    /// How a request that answers nothing says it was not sent.
+    pub(super) fn error(self) -> CallError {
+        match self {
+            NotSent::Stopped => stopped(),
+            NotSent::Lost => lost_in(&RuntimeStatus::Running),
+        }
+    }
+}
+
+/// Counts a crashed thread as handled when it ends, however its handling
+/// ends.
+struct Handled(Weak<Shared>);
+
+impl Drop for Handled {
+    fn drop(&mut self) {
+        if let Some(shared) = self.0.upgrade() {
+            shared.handled.send_modify(|handled| *handled += 1);
+        }
+    }
 }
 
 impl Drop for Shared {
@@ -175,6 +208,7 @@ impl Shared {
             health: Arc::default(),
             next_view: Arc::default(),
             crashes: Mutex::new(None),
+            handled: watch::Sender::new(0),
             cache_dir,
             current: Mutex::new(Current {
                 thread: None,
@@ -193,14 +227,20 @@ impl Shared {
     }
 
     /// Sends `request` to the runtime thread.
-    pub(super) fn send(&self, request: Request) -> Result<(), CallError> {
+    pub(super) fn send(&self, request: Request) -> Result<(), NotSent> {
         let requests = match &lock(&self.current).thread {
             Some(thread) => thread.requests.clone(),
-            None => return Err(stopped()),
+            None => return Err(NotSent::Stopped),
         };
         // A thread that just crashed has dropped its requests: this one is
         // not sent, nor sent again to the next thread.
-        requests.send(request).map_err(|_| lost())
+        requests.send(request).map_err(|_| NotSent::Lost)
+    }
+
+    /// Resolves, through [`lost`], once a thread that crashes after this
+    /// call has been handled.
+    pub(super) fn handled(&self) -> watch::Receiver<u64> {
+        self.handled.subscribe()
     }
 
     pub(super) fn status(&self) -> RuntimeStatus {
@@ -269,6 +309,8 @@ impl Shared {
         std::thread::Builder::new()
             .name("pane-extension-runtime".into())
             .spawn(move || {
+                // Dropped last, once the crash (if any) was handled.
+                let _handled = Handled(shared.clone());
                 let served = std::panic::catch_unwind(AssertUnwindSafe(|| {
                     executor.block_on(host.serve(receiver))
                 }));
@@ -360,12 +402,35 @@ pub(super) fn stopped() -> CallError {
     )
 }
 
-/// How a call answers when the runtime thread stopped before answering it:
-/// it is not sent again.
-pub(super) fn lost() -> CallError {
-    CallError::RuntimeUnavailable(
-        "it stopped before answering; Pane does not run this again by itself".into(),
-    )
+/// How a call answers when the runtime thread crashed before answering
+/// it, once Pane has handled the crash (`handled` changed): whether it
+/// restarted the runtime. It is not sent again.
+pub(super) async fn lost(shared: Weak<Shared>, mut handled: watch::Receiver<u64>) -> CallError {
+    // The thread counts itself as handled however its handling ends; the
+    // count's sender goes only with the last runtime handle.
+    let _ = handled.changed().await;
+    let status = match shared.upgrade() {
+        Some(shared) => shared.status(),
+        None => RuntimeStatus::Running,
+    };
+    lost_in(&status)
+}
+
+/// How a call whose answer was lost answers, while the runtime does
+/// `status`.
+fn lost_in(status: &RuntimeStatus) -> CallError {
+    CallError::RuntimeUnavailable(match status {
+        RuntimeStatus::Restarted { .. } => "it stopped before answering and was started again; \
+                                            Pane does not run this again by itself"
+            .into(),
+        RuntimeStatus::Stopped { not_restarted, .. } => format!(
+            "it stopped before answering and was not restarted ({not_restarted}); Pane does not \
+             run this again by itself. Restart it in Manage extensions"
+        ),
+        RuntimeStatus::Running => {
+            "it stopped before answering; Pane does not run this again by itself".into()
+        }
+    })
 }
 
 #[cfg(test)]
