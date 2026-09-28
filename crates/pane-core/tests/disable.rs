@@ -161,7 +161,11 @@ fn a_disabled_package_leaves_root_search_and_stays_disabled_after_a_restart(fixt
 
     manage(&launcher);
     let identity = PackageIdentity::local(&folder).unwrap();
-    assert_eq!(titles(&launcher), ["Settings sample"]);
+    // After each package's row, one per package clears its cache.
+    assert_eq!(
+        titles(&launcher),
+        ["Settings sample", "Clear cache of Settings sample"]
+    );
     assert_eq!(launcher.view().rows[0].id, identity.key());
     assert!(subtitles(&launcher)[0].starts_with("Enabled"));
 
@@ -239,11 +243,19 @@ fn copies_with_the_same_title_are_enabled_and_keep_settings_by_identity(fixture:
     block_on(launcher.activate_selected());
 
     manage(&launcher);
-    assert_eq!(titles(&launcher), ["Greeter", "Greeter"]);
+    assert_eq!(
+        titles(&launcher),
+        [
+            "Greeter",
+            "Greeter",
+            "Clear cache of Greeter",
+            "Clear cache of Greeter"
+        ]
+    );
     let published_id = PackageIdentity::local(&published).unwrap();
     let development_id = PackageIdentity::local(&development).unwrap();
     let ids: Vec<String> = launcher.view().rows.into_iter().map(|r| r.id).collect();
-    assert_eq!(ids, [published_id.key(), development_id.key()]);
+    assert_eq!(ids[..2], [published_id.key(), development_id.key()]);
     // The row says which copy it is.
     assert!(subtitles(&launcher)[0].contains(&published_id.to_string()));
 

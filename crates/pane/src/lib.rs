@@ -402,9 +402,10 @@ impl Render for LauncherWindow {
             Screen::Form => ("", "Tab next field · Enter submit · Esc back"),
             Screen::Extensions => (
                 "No extensions are installed.",
-                "↑↓ select · Enter enable or disable · Esc back",
+                "↑↓ select · Enter choose · Esc back",
             ),
             Screen::CustomView => ("", "Keys and pointer go to the view · Esc back"),
+            Screen::Confirm => ("", "↑↓ select · Enter choose · Esc cancel"),
         };
         let details = view.details.into_iter().enumerate().map(|(index, line)| {
             div()
