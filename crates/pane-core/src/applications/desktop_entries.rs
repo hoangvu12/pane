@@ -95,13 +95,20 @@ impl DesktopEntries {
             let Some(desktop) = Entry::read(&path) else {
                 continue;
             };
-            if desktop.listed(&self.desktops) {
-                found.push(Application {
-                    id: path.to_string_lossy().into_owned(),
-                    name: desktop.name,
-                    location: dir.display().to_string(),
-                });
+            if !desktop.listed(&self.desktops) {
+                continue;
             }
+            // An entry Pane could not run correctly is not offered.
+            let exec = desktop.exec.as_deref().unwrap_or_default();
+            if let Err(problem) = exec_arguments(exec, &desktop, &path) {
+                eprintln!("pane: skipped desktop entry {}: {problem}", path.display());
+                continue;
+            }
+            found.push(Application {
+                id: path.to_string_lossy().into_owned(),
+                name: desktop.name,
+                location: dir.display().to_string(),
+            });
         }
     }
 }
@@ -119,17 +126,22 @@ impl Applications for DesktopEntries {
     fn open(&self, id: &str) -> Result<(), String> {
         let path = id_path(id, "desktop", "a desktop entry")?;
         let entry = Entry::read(&path).ok_or_else(|| format!("{id} is not an application"))?;
-        if entry.terminal {
-            return Err(format!(
-                "{} runs in a terminal, and Pane does not open terminal applications yet",
-                entry.name
-            ));
-        }
         let exec = entry
             .exec
             .as_deref()
             .ok_or_else(|| format!("{id} names no program to run (no Exec key)"))?;
-        let arguments = exec_arguments(exec, &entry, &path)?;
+        let mut arguments = exec_arguments(exec, &entry, &path)?;
+        if entry.terminal {
+            let terminal = std::env::var("TERMINAL").ok();
+            arguments = terminal_command(&arguments, terminal.as_deref(), &program_exists)
+                .ok_or_else(|| {
+                    format!(
+                        "{} runs in a terminal, and Pane found no terminal to open it in \
+                         (set $TERMINAL, or install x-terminal-emulator or xterm)",
+                        entry.name
+                    )
+                })?;
+        }
         let (program, rest) = arguments
             .split_first()
             .ok_or_else(|| format!("the Exec key of {id} is empty"))?;
@@ -320,6 +332,7 @@ fn exec_arguments(exec: &str, entry: &Entry, path: &Path) -> Result<Vec<String>,
     if in_word {
         words.push(word);
     }
+    check_field_codes(&words)?;
     let mut arguments = Vec::new();
     for word in words {
         match word.as_str() {
@@ -334,6 +347,79 @@ fn exec_arguments(exec: &str, entry: &Entry, path: &Path) -> Result<Vec<String>,
         }
     }
     Ok(arguments)
+}
+
+/// Why the field codes in the `Exec` arguments `words` break the Desktop
+/// Entry specification, if they do: `%i`, `%F` and `%U` (which expand to
+/// several arguments or none) only as a whole argument, at most one of `%f`,
+/// `%u`, `%F` and `%U`, only the codes it defines, and `%` always followed by
+/// a code. Such an entry is not run: guessing what it meant could pass the
+/// wrong arguments.
+fn check_field_codes(words: &[String]) -> Result<(), String> {
+    let mut file_codes = 0;
+    for word in words {
+        let mut chars = word.chars();
+        while let Some(c) = chars.next() {
+            if c != '%' {
+                continue;
+            }
+            match chars.next() {
+                None => return Err("its Exec key ends with a lone %".into()),
+                Some(code @ ('i' | 'F' | 'U')) if word.chars().count() != 2 => {
+                    return Err(format!(
+                        "its Exec key uses %{code} inside an argument ({word})"
+                    ));
+                }
+                Some('f' | 'u' | 'F' | 'U') => file_codes += 1,
+                Some('%' | 'i' | 'c' | 'k' | 'd' | 'D' | 'n' | 'N' | 'v' | 'm') => {}
+                Some(other) => {
+                    return Err(format!("its Exec key has an unknown field code %{other}"));
+                }
+            }
+        }
+    }
+    if file_codes > 1 {
+        return Err("its Exec key has more than one of %f, %u, %F and %U".into());
+    }
+    Ok(())
+}
+
+/// The terminal emulators Pane tries for an entry with `Terminal=true`, in
+/// order after `$TERMINAL`, each with the option before the command it runs.
+const TERMINALS: [(&str, Option<&str>); 8] = [
+    ("x-terminal-emulator", Some("-e")),
+    ("gnome-terminal", Some("--")),
+    ("konsole", Some("-e")),
+    ("xfce4-terminal", Some("-x")),
+    ("alacritty", Some("-e")),
+    ("kitty", None),
+    ("foot", None),
+    ("xterm", Some("-e")),
+];
+
+/// `argv` run in a terminal emulator: `$TERMINAL -e` (`terminal_env`) when
+/// it is installed, else the first of [`TERMINALS`] installed; `None` when
+/// there is none. `installed` says whether a program can be run.
+fn terminal_command(
+    argv: &[String],
+    terminal_env: Option<&str>,
+    installed: &dyn Fn(&str) -> bool,
+) -> Option<Vec<String>> {
+    let chosen = terminal_env
+        .filter(|terminal| !terminal.is_empty() && installed(terminal))
+        .map(|terminal| (terminal, Some("-e")))
+        .or_else(|| {
+            TERMINALS
+                .into_iter()
+                .find(|(terminal, _)| installed(terminal))
+        })?;
+    let (terminal, option) = chosen;
+    Some(
+        std::iter::once(terminal.to_owned())
+            .chain(option.map(str::to_owned))
+            .chain(argv.iter().cloned())
+            .collect(),
+    )
 }
 
 /// `word` with the field codes inside it expanded or dropped.
@@ -409,5 +495,73 @@ mod tests {
     fn an_unclosed_quote_is_an_error() {
         let entry = Entry::default();
         assert!(exec_arguments(r#"viewer "a"#, &entry, Path::new("/a.desktop")).is_err());
+    }
+
+    fn invalid(exec: &str) -> String {
+        let entry = Entry::default();
+        exec_arguments(exec, &entry, Path::new("/a.desktop")).unwrap_err()
+    }
+
+    #[test]
+    fn field_codes_used_against_the_specification_make_the_exec_line_invalid() {
+        // %i, %F and %U expand to several arguments or none: only whole.
+        assert_eq!(
+            invalid("viewer --icon=%i"),
+            "its Exec key uses %i inside an argument (--icon=%i)"
+        );
+        assert_eq!(
+            invalid("viewer --files=%F"),
+            "its Exec key uses %F inside an argument (--files=%F)"
+        );
+        // At most one of %f, %u, %F and %U.
+        assert_eq!(
+            invalid("viewer %f%u"),
+            "its Exec key has more than one of %f, %u, %F and %U"
+        );
+        assert_eq!(
+            invalid("viewer %f %U"),
+            "its Exec key has more than one of %f, %u, %F and %U"
+        );
+        assert_eq!(
+            invalid("viewer %z"),
+            "its Exec key has an unknown field code %z"
+        );
+        assert_eq!(invalid("viewer 100%"), "its Exec key ends with a lone %");
+    }
+
+    fn terminal(
+        terminal_env: Option<&str>,
+        installed: &[&str],
+        argv: &[&str],
+    ) -> Option<Vec<String>> {
+        let argv: Vec<String> = argv.iter().map(|word| (*word).to_owned()).collect();
+        terminal_command(&argv, terminal_env, &|program| installed.contains(&program))
+    }
+
+    #[test]
+    fn a_terminal_application_runs_in_the_first_terminal_found() {
+        let top = ["top", "-d", "1"];
+        assert_eq!(
+            terminal(Some("foot"), &["foot", "xterm"], &top).unwrap(),
+            ["foot", "-e", "top", "-d", "1"]
+        );
+        // $TERMINAL names a missing program: the usual ones are tried.
+        assert_eq!(
+            terminal(Some("missing"), &["x-terminal-emulator", "xterm"], &top).unwrap(),
+            ["x-terminal-emulator", "-e", "top", "-d", "1"]
+        );
+        assert_eq!(
+            terminal(None, &["gnome-terminal", "xterm"], &top).unwrap(),
+            ["gnome-terminal", "--", "top", "-d", "1"]
+        );
+        assert_eq!(
+            terminal(None, &["konsole"], &top).unwrap(),
+            ["konsole", "-e", "top", "-d", "1"]
+        );
+        assert_eq!(
+            terminal(Some(""), &["xterm"], &top).unwrap(),
+            ["xterm", "-e", "top", "-d", "1"]
+        );
+        assert_eq!(terminal(None, &[], &top), None);
     }
 }

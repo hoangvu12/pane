@@ -410,3 +410,56 @@ fn a_package_saying_it_supplies_indexed_results_without_the_interface_is_refused
     );
     assert!(launcher.packages().is_empty());
 }
+
+/// The JavaScript and TypeScript author examples: each supplies "Launch
+/// <name>" for every installed application, found through
+/// `pane:extension/applications`, and its command lists and opens them.
+fn a_js_command_finds_and_opens_applications(package: &str, language: &str) {
+    let dirs = Dirs::new();
+    let system = FakeSystem::with(&["Firefox", "Files"]);
+    let (launcher, _) = dirs.launcher(&system, &[package]);
+
+    search(&launcher, "launch fire");
+
+    assert_eq!(titles(&launcher), ["Launch Firefox"]);
+    let view = launcher.view();
+    let sample = format!("{language} applications sample");
+    assert_eq!(view.rows[0].subtitle.as_deref(), Some(sample.as_str()));
+    block_on(launcher.activate_selected());
+    // Pane names the opened result by its title.
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Opened Launch Firefox".into())
+    );
+    assert_eq!(system.opened(), ["/apps/Firefox.app"]);
+
+    // Its command lists them by name and opens one through the import.
+    search(&launcher, &sample.to_lowercase());
+    // The command first; its results match by their subtitle below it.
+    assert_eq!(titles(&launcher)[0], sample);
+    block_on(launcher.activate_selected());
+    assert_eq!(titles(&launcher), ["Files", "Firefox"]);
+    block_on(launcher.activate_selected());
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Opened Files".into())
+    );
+
+    // A failure the system reports reaches the command as an error.
+    *system.opening_fails.lock().unwrap() = Some("permission denied".into());
+    block_on(launcher.activate_selected());
+    assert_eq!(
+        launcher.view().status,
+        Status::Error("The extension reported an error: permission denied".into())
+    );
+}
+
+#[test]
+fn a_javascript_command_finds_and_opens_applications() {
+    a_js_command_finds_and_opens_applications("sample-applications-js", "JavaScript");
+}
+
+#[test]
+fn a_typescript_command_finds_and_opens_applications() {
+    a_js_command_finds_and_opens_applications("sample-applications-ts", "TypeScript");
+}

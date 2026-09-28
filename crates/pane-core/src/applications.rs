@@ -16,12 +16,15 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 mod app_bundles;
+mod cached;
 mod desktop_entries;
 mod start_menu;
 
 pub use app_bundles::AppBundles;
+pub use cached::Cached;
 pub use desktop_entries::DesktopEntries;
 pub use start_menu::StartMenu;
 
@@ -49,9 +52,15 @@ pub trait Applications: Send + Sync + 'static {
     fn open(&self, id: &str) -> Result<(), String>;
 }
 
-/// This system's adapter, reading the usual locations from the environment.
+/// How old the kept list of applications may get before a guest asking for
+/// it has it rescanned in the background ([`Cached`]).
+pub const RESCAN_AFTER: Duration = Duration::from_secs(10);
+
+/// This system's adapter, reading the usual locations from the environment,
+/// behind a [`Cached`] list rescanned in the background once older than
+/// [`RESCAN_AFTER`].
 pub fn native() -> Arc<dyn Applications> {
-    if cfg!(target_os = "windows") {
+    let adapter: Arc<dyn Applications> = if cfg!(target_os = "windows") {
         Arc::new(StartMenu::from_env())
     } else if cfg!(target_os = "macos") {
         Arc::new(AppBundles::from_env())
@@ -59,7 +68,8 @@ pub fn native() -> Arc<dyn Applications> {
         Arc::new(DesktopEntries::from_env())
     } else {
         Arc::new(Unsupported)
-    }
+    };
+    Arc::new(Cached::new(adapter, RESCAN_AFTER))
 }
 
 /// A system Pane does not find applications on.

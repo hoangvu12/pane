@@ -99,8 +99,10 @@ it, then compares typing "42+1" with pasting the copy (Ctrl+A, Ctrl+V through `S
 
 [Applications](../applications.md) finds the `.lnk` shortcuts in the user's
 and all users' Start menu Programs folders and opens one with
-`ShellExecuteEx`, as Explorer does. Store (AppX/MSIX) apps without such a
-shortcut, such as Calculator on Windows 11, are not found yet. The smoke's
+`ShellExecuteEx`, as Explorer does, plus the packaged (AppX/MSIX) apps of
+the shell's Apps folder, such as Calculator on Windows 11, opened by their
+AppUserModelID; a native test requires an inbox packaged app (Calculator or
+Settings) to be found. The smoke's
 last phase (screenshots 44 and 45) makes a shortcut "Pane Smoke App" to
 `cmd.exe` writing a marker file (with `WScript.Shell`, minimized) under an
 APPDATA given to Pane only, installs the package, types "pane smoke",
