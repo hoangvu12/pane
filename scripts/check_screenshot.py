@@ -75,8 +75,17 @@ def distinct(paths: list[str]) -> None:
     print(f"{len(paths)} screenshots show different Pane windows")
 
 
+# The outermost pixels of the window: rounded corners (macOS) antialias against
+# whatever is behind the window, so they differ between otherwise equal frames.
+EDGE = 12
+
+
+def inner(window: Image.Image) -> Image.Image:
+    return window.crop((EDGE, EDGE, window.width - EDGE, window.height - EDGE))
+
+
 def same(first: str, second: str) -> None:
-    if pane_window(first).tobytes() != pane_window(second).tobytes():
+    if inner(pane_window(first)).tobytes() != inner(pane_window(second)).tobytes():
         raise SystemExit(f"{first} and {second} show different Pane windows")
     print(f"{first} and {second} show the same Pane window")
 

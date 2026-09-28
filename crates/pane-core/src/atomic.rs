@@ -1,7 +1,7 @@
 //! Replacing a small file whole, for Pane's own records such as
 //! `installed.json` and `settings.json`.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -57,7 +57,7 @@ pub(crate) fn write_atomically(path: &Path, contents: &[u8]) -> io::Result<()> {
 
 #[cfg(unix)]
 fn sync_dir(dir: &Path) -> io::Result<()> {
-    File::open(dir)?.sync_all()
+    fs::File::open(dir)?.sync_all()
 }
 
 #[cfg(not(unix))]
