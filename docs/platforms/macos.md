@@ -106,7 +106,7 @@ only the two other systems. In run [36372625940](https://github.com/wasimysaid/p
 ## Root search (#23)
 
 Root search has a query field with focus ([root search](../root-search.md)).
-The smoke's last phase (screenshots 24 to 26) types "typescr" with System
+The smoke's search phase (screenshots 24 to 26) types "typescr" with System
 Events `keystroke`, opens the only match and runs "Wait briefly", which must
 look exactly like step 4, then types "zzz" and presses Return on no results.
 **It has not run on macOS yet**; typing into the query field through
@@ -146,6 +146,13 @@ Screenshots from run [36371205770](https://github.com/wasimysaid/pane/actions/ru
   screenshot's pixels to points (half on Retina). Each step must show the
   chosen color over at least 3000 pixels. In run [36378453278](https://github.com/wasimysaid/pane/actions/runs/36378453278) (commit `1487dc8`, macOS 15.7.9, arm64) every step passed: the picker opened on blue (#1E88E5), Right moved to purple (#8E24AA) and the click chose dark green (#1B5E20); posting the Quartz event needed no permission beyond the one System Events has. Accessibility: see
   [custom views](../custom-views.md#accessibility).
+- **Reload (#11):** after the search phase, the smoke installs a package from
+  `<output-dir>/dev`, replaces its component with the JavaScript sample and
+  reloads it in Manage extensions, then reloads it without its component (the
+  checks fail and the old code keeps answering) and with the `failing-start`
+  fixture (a startup failure, then Retry); screenshots 27 to 33, the same
+  steps as on [Linux](linux.md#reloading-a-package-11). **This phase has not
+  run on macOS yet.**
 
 ## Disabling an extension and keeping its settings (#10)
 

@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use gpui::{Entity, TestAppContext, VisualTestContext, prelude::*};
+use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, prelude::*};
 use pane::LauncherWindow;
 use pane_core::{Launcher, LauncherView, Runtime, Screen, Status};
 use tempfile::TempDir;
@@ -170,7 +170,7 @@ fn an_installed_package_is_disabled_and_enabled_from_the_extension_list(cx: &mut
         view.screen
     );
     assert_eq!(view.title, "Extensions");
-    assert_eq!(titles(&view), ["Hello"]);
+    assert_eq!(titles(&view), ["Hello", "Reload Hello"]);
     assert!(
         cx.debug_bounds("row-Hello").is_some(),
         "the package is listed"
@@ -197,4 +197,88 @@ fn an_installed_package_is_disabled_and_enabled_from_the_extension_list(cx: &mut
         titles(&settle(&window, cx)),
         ["Say hello", INSTALL_ROW, MANAGE_ROW]
     );
+}
+
+/// Replaces the package's component with the built guest `name`, as a new
+/// build of the package would.
+fn rebuild(folder: &Path, name: &str) {
+    let guest = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/guests")
+        .join(format!("{name}.wasm"));
+    fs::copy(guest, folder.join("hello.wasm")).unwrap();
+}
+
+/// Installs the package in `folder` through the folder picker.
+fn install(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext, folder: &Path) {
+    choose_folder(window, cx, Some(folder.to_path_buf()));
+    cx.simulate_keystrokes("enter");
+    settle(window, cx);
+}
+
+/// From root search, clicks Manage extensions… and then the row whose
+/// debug selector is `row`.
+fn click_in_extension_list(
+    window: &Entity<LauncherWindow>,
+    cx: &mut VisualTestContext,
+    row: &'static str,
+) -> LauncherView {
+    let manage = cx.debug_bounds("row-Manage extensions…").expect("row");
+    cx.simulate_click(manage.center(), Modifiers::none());
+    settle(window, cx);
+    let row = cx.debug_bounds(row).expect("row rendered");
+    cx.simulate_click(row.center(), Modifiers::none());
+    settle(window, cx)
+}
+
+#[gpui::test]
+fn an_installed_package_is_reloaded_from_the_extension_list(cx: &mut TestAppContext) {
+    let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let folder = package(&sources.path().join("hello"));
+    let (window, cx) = open(cx, &data);
+    install(&window, cx, &folder);
+
+    rebuild(&folder, "sample_js");
+    let view = click_in_extension_list(&window, cx, "row-Reload Hello");
+    assert_eq!(view.status, Status::Result("Reloaded Hello".into()));
+    assert!(cx.debug_bounds("status-result").is_some());
+
+    // Pane stayed open; the command now runs the new code.
+    cx.simulate_keystrokes("escape");
+    settle(&window, cx);
+    cx.simulate_keystrokes("enter");
+    assert_eq!(settle(&window, cx).title, "JavaScript sample");
+    cx.simulate_keystrokes("enter");
+    assert_eq!(
+        settle(&window, cx).status,
+        Status::Result("Hello from the JavaScript guest".into())
+    );
+}
+
+#[gpui::test]
+fn a_reload_that_fails_to_start_offers_retry(cx: &mut TestAppContext) {
+    let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let folder = package(&sources.path().join("hello"));
+    let (window, cx) = open(cx, &data);
+    install(&window, cx, &folder);
+
+    rebuild(&folder, "failing_start");
+    let view = click_in_extension_list(&window, cx, "row-Reload Hello");
+    let Status::Error(message) = &view.status else {
+        panic!("expected an error, got {:?}", view.status);
+    };
+    assert!(
+        message.starts_with("Reloaded Hello, but it failed to start"),
+        "{message}"
+    );
+    assert!(cx.debug_bounds("status-error").is_some());
+    assert_eq!(
+        titles(&view),
+        ["Hello", "Reload Hello", "Retry starting Hello"]
+    );
+
+    // The Reload row stays selected; Retry is next.
+    cx.simulate_keystrokes("down enter");
+    let view = settle(&window, cx);
+    assert_eq!(view.status, Status::Result("Started Hello".into()));
+    assert_eq!(titles(&view), ["Hello", "Reload Hello"]);
 }

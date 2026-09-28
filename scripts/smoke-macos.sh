@@ -238,4 +238,74 @@ key 36; sleep 1
 capture 26-no-results.png
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{1-root,24-search,25-search-result,26-no-results}.png
 stop_pane
+
+# Reload a development package while Pane stays open. Its command starts as
+# the Rust sample; a new build of it is the JavaScript sample. Root lists the
+# three samples, Rust sample, Greeting, Dev sample, the install row, then
+# Manage extensions… last; the extension list holds Rust sample, Settings
+# sample, Dev, then Reload Rust sample, Reload Settings sample, Reload Dev.
+mkdir -p "$out/dev"
+cp target/guests/sample_rust.wasm "$out/dev/command.wasm"
+cat >"$out/dev/pane.json" <<'JSON'
+{
+  "manifestVersion": 1,
+  "title": "Dev",
+  "apiVersion": "0.1",
+  "commands": [{ "id": "sample", "title": "Dev sample", "component": "command.wasm" }]
+}
+JSON
+start_pane --install "$out/dev"
+key 36; sleep 2   # Install; Dev sample is selected
+key 36; sleep 3
+key 36; sleep 2   # "Say hello"
+capture 27-dev-before.png
+check 27-dev-before.png 9fd8a8   # "Hello from the Rust guest"
+key 53; sleep 1
+cp target/guests/sample_js.wasm "$out/dev/command.wasm"
+for ((i = 0; i < 10; i++)); do key 125; done   # the last row
+key 36; sleep 1
+for ((i = 0; i < 5; i++)); do key 125; done   # Reload Dev
+key 36; sleep 3
+capture 28-reloaded.png
+check 28-reloaded.png 9fd8a8   # "Reloaded Dev"
+key 53; sleep 1
+for ((i = 0; i < 5; i++)); do key 125; done   # Dev sample
+key 36; sleep 3
+key 36; sleep 2   # "Say hello"
+capture 29-dev-after.png
+check 29-dev-after.png 9fd8a8   # "Hello from the JavaScript guest"
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/27-dev-before.png" "$out/29-dev-after.png"
+key 53; sleep 1
+
+# A build that fails the install checks (here its component is missing) is
+# not reloaded: the working code keeps running, exactly as before.
+rm "$out/dev/command.wasm"
+for ((i = 0; i < 10; i++)); do key 125; done
+key 36; sleep 1
+for ((i = 0; i < 5; i++)); do key 125; done
+key 36; sleep 2
+capture 30-not-reloaded.png
+check 30-not-reloaded.png f08c8c   # "Dev was not reloaded: ..."
+key 53; sleep 1
+for ((i = 0; i < 5; i++)); do key 125; done
+key 36; sleep 3
+key 36; sleep 2
+capture 31-still-running.png
+python3 "$(dirname "$0")/check_screenshot.py" --same "$out/29-dev-after.png" "$out/31-still-running.png"
+key 53; sleep 1
+
+# A build whose start fails is reported with Retry, after Reload Dev; this
+# one saves a setting and fails its first start only, so Retry starts it.
+cp target/guests/failing_start.wasm "$out/dev/command.wasm"
+for ((i = 0; i < 10; i++)); do key 125; done
+key 36; sleep 1
+for ((i = 0; i < 5; i++)); do key 125; done
+key 36; sleep 3
+capture 32-start-failed.png
+check 32-start-failed.png f08c8c   # "Reloaded Dev, but it failed to start; ..."
+key 125; key 36; sleep 3   # Retry starting Dev
+capture 33-retried.png
+check 33-retried.png 9fd8a8   # "Started Dev"
+stop_pane
+grep -q '"start-attempted": "yes"' "$out/data/extensions/settings.json" || { echo "the failed start's setting was not kept"; exit 1; }
 echo "screenshots in $out"

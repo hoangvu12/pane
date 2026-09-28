@@ -27,6 +27,8 @@ use crate::runtime::{
 use crate::search::{self, Keys, Query};
 use crate::settings::{PackageSettings, Settings};
 
+mod reload;
+
 /// The id of the root row that installs a package from a local folder.
 const INSTALL_FROM_FOLDER: &str = "pane.install-from-folder";
 
@@ -234,6 +236,10 @@ struct State {
     changing: Vec<PackageIdentity>,
     /// Why the installed packages could not be read, if they could not.
     store_problem: Option<String>,
+    /// Packages whose reloaded code failed to start, each with why. They
+    /// stay installed with that code, offering Retry; nothing older is
+    /// restored.
+    failed: Vec<(PackageIdentity, String)>,
 }
 
 /// An enabling or disabling that has taken effect and is being recorded.
@@ -331,6 +337,10 @@ enum Entry {
     Manage,
     /// Enable this installed package if it is disabled, else disable it.
     Toggle(PackageIdentity),
+    /// Reload this installed package from its source folder.
+    Reload(PackageIdentity),
+    /// Start again this package, whose reloaded code failed to start.
+    Retry(PackageIdentity),
 }
 
 #[derive(Clone, Copy)]
@@ -385,6 +395,7 @@ impl Launcher {
             packages,
             changing: Vec::new(),
             store_problem,
+            failed: Vec::new(),
         };
         if let Some(installation) = &installation {
             for package in &state.packages {
@@ -512,6 +523,7 @@ impl Launcher {
             .selected
             .and_then(|index| state.entries.get(index).cloned());
         let mut change = None;
+        let mut reload = None;
         let entry = match entry {
             Some(Entry::Broken(problem) | Entry::Unavailable(problem)) => {
                 state.view.status = Status::Error(problem);
@@ -536,6 +548,14 @@ impl Launcher {
                 change = self.begin_change(&mut state, identity, enable);
                 None
             }
+            Some(Entry::Reload(identity)) => {
+                reload = self.begin_reload(&mut state, identity, reload::Attempt::Reload);
+                None
+            }
+            Some(Entry::Retry(identity)) => {
+                reload = self.begin_reload(&mut state, identity, reload::Attempt::Retry);
+                None
+            }
             Some(Entry::InstallFromFolder) | None => None,
             Some(entry) => {
                 state.view.status = Status::Running;
@@ -549,6 +569,9 @@ impl Launcher {
         async move {
             if let Some(change) = change {
                 launcher.finish_change(generation, change).await;
+            }
+            if let Some(reload) = reload {
+                launcher.finish_reload(generation, reload).await;
             }
             match entry {
                 Some(Entry::Open(component)) => launcher.open_command(generation, component).await,
@@ -573,6 +596,8 @@ impl Launcher {
                     | Entry::InstallFromFolder
                     | Entry::Manage
                     | Entry::Toggle(_)
+                    | Entry::Reload(_)
+                    | Entry::Retry(_)
                     | Entry::Form(..),
                 )
                 | None => {}
@@ -802,32 +827,7 @@ impl Launcher {
                     (Mode::Update, None) => format!("Updated {}", installed.title()),
                 };
                 let first = installed.commands().first().map(|c| c.component.clone());
-                let mut replaced = Vec::new();
-                match state
-                    .packages
-                    .iter_mut()
-                    .find(|package| package.identity == installed.identity)
-                {
-                    Some(package) => {
-                        // The replaced copy's code is not run again, and a
-                        // command of it that is open closes below: its state
-                        // is not carried over (#11, #14).
-                        replaced = package
-                            .commands()
-                            .into_iter()
-                            .map(|c| c.component)
-                            .collect();
-                        if let Ok(runtime) = self.runtime() {
-                            runtime.forget(replaced.iter().cloned());
-                        }
-                        *package = installed;
-                    }
-                    None => state.packages.push(installed),
-                }
-                let replaced_is_open = state
-                    .open
-                    .as_ref()
-                    .is_some_and(|open| replaced.contains(open));
+                let replaced_is_open = self.put_installed(&mut state, installed);
                 if current || replaced_is_open {
                     self.show_root(&mut state, first);
                     state.view.status = Status::Result(message);
@@ -838,6 +838,38 @@ impl Launcher {
             Err(error) if current => state.view.status = Status::Error(error.to_string()),
             Err(_) => {}
         }
+    }
+
+    /// Records `installed` as the managed copy of its package: added, or
+    /// replacing the copy before it, whose instances stop. Returns whether a
+    /// command of the replaced copy is open; the caller leaves it, since its
+    /// state is not carried over to the new code.
+    fn put_installed(&self, state: &mut State, installed: InstalledPackage) -> bool {
+        state
+            .failed
+            .retain(|(identity, _)| *identity != installed.identity);
+        let Some(package) = state
+            .packages
+            .iter_mut()
+            .find(|package| package.identity == installed.identity)
+        else {
+            state.packages.push(installed);
+            return false;
+        };
+        // The replaced copy's code is not run again.
+        let replaced: Vec<PathBuf> = package
+            .commands()
+            .into_iter()
+            .map(|c| c.component)
+            .collect();
+        if let Ok(runtime) = self.runtime() {
+            runtime.forget(replaced.iter().cloned());
+        }
+        *package = installed;
+        state
+            .open
+            .as_ref()
+            .is_some_and(|open| replaced.contains(open))
     }
 
     /// Reads the package in `folder` off the calling thread, then has the
@@ -1105,11 +1137,14 @@ impl Launcher {
 
     /// Shows the installed packages, each enabled or disabled.
     fn show_extensions(&self, state: &mut State) {
-        let (rows, entries) = extension_rows(&state.packages);
+        let (rows, entries) = extension_rows(&state.packages, &state.failed);
         self.leave_command(state);
         state.entries = entries;
         let details = vec![
             "A disabled extension adds no commands and runs nothing; it keeps its settings.".into(),
+            "Reloading replaces an extension's code with its source folder's current build; it \
+             keeps its settings."
+                .into(),
         ];
         state.view =
             LauncherView::new(Screen::Extensions { details }, "Extensions").with_rows(rows);
@@ -1118,7 +1153,7 @@ impl Launcher {
     /// Updates the installed packages on screen after one was enabled or
     /// disabled; the rows stay in place, and so does the selection.
     fn refresh_extensions(&self, state: &mut State) {
-        let (rows, entries) = extension_rows(&state.packages);
+        let (rows, entries) = extension_rows(&state.packages, &state.failed);
         state.entries = entries;
         state.view.rows = rows;
     }
@@ -1358,8 +1393,18 @@ impl Launcher {
             state.view.status = Status::Error(problem);
             return;
         }
+        if self.is_replaced(&state, &component) {
+            // Reloaded or updated while it was opening: the answer came from
+            // code that no longer runs, or from none. Its package's commands
+            // are in root search again.
+            return;
+        }
         match result {
             Ok(view) => {
+                if let Some(package) = owner(&state.packages, &component) {
+                    let identity = package.identity.clone();
+                    state.failed.retain(|(failed, _)| *failed != identity);
+                }
                 let (rows, entries): (Vec<Row>, Vec<Entry>) = view
                     .items
                     .into_iter()
@@ -1403,6 +1448,13 @@ impl Launcher {
         )
     }
 
+    /// Whether `component` belongs to a managed copy that has since been
+    /// replaced: it is neither built into Pane nor in an installed package.
+    fn is_replaced(&self, state: &State, component: &Path) -> bool {
+        !self.commands.iter().any(|c| c.component == component)
+            && owner(&state.packages, component).is_none()
+    }
+
     fn runtime(&self) -> Result<&Runtime, CallError> {
         self.runtime.as_ref().map_err(Clone::clone)
     }
@@ -1435,25 +1487,62 @@ fn disabled_owner(state: &State, component: &Path) -> Option<String> {
 }
 
 /// One row per installed package, saying whether it is enabled and which
-/// source it is, so copies with the same title can be told apart.
-fn extension_rows(packages: &[InstalledPackage]) -> (Vec<Row>, Vec<Entry>) {
-    packages
+/// source it is, so copies with the same title can be told apart; then the
+/// rows that reload each enabled package, each followed by a Retry row if
+/// its reloaded code failed to start.
+fn extension_rows(
+    packages: &[InstalledPackage],
+    failed: &[(PackageIdentity, String)],
+) -> (Vec<Row>, Vec<Entry>) {
+    let failure = |package: &InstalledPackage| {
+        failed
+            .iter()
+            .find(|(identity, _)| *identity == package.identity)
+            .map(|(_, problem)| problem.clone())
+    };
+    let toggles = packages.iter().map(|package| {
+        let state = match (package.enabled, failure(package)) {
+            (false, _) => "Disabled",
+            (true, None) => "Enabled",
+            (true, Some(_)) => "Enabled · Failed to start",
+        };
+        let row = Row {
+            id: package.identity.key(),
+            title: package.title(),
+            subtitle: Some(format!("{state} · {}", package.identity)),
+            unavailable: None,
+        };
+        (row, Entry::Toggle(package.identity.clone()))
+    });
+    let reloads = packages
         .iter()
-        .map(|package| {
-            let state = if package.enabled {
-                "Enabled"
-            } else {
-                "Disabled"
+        .filter(|package| package.enabled)
+        .flat_map(|package| {
+            let title = package.title();
+            let source = match package.identity.local_folder() {
+                Some(folder) => folder.display().to_string(),
+                None => package.identity.to_string(),
             };
-            let row = Row {
-                id: package.identity.key(),
-                title: package.title(),
-                subtitle: Some(format!("{state} · {}", package.identity)),
+            let reload = Row {
+                id: format!("reload:{}", package.identity.key()),
+                title: format!("Reload {title}"),
+                subtitle: Some(format!(
+                    "Replace its code with the current build in {source}"
+                )),
                 unavailable: None,
             };
-            (row, Entry::Toggle(package.identity.clone()))
-        })
-        .unzip()
+            let retry = failure(package).map(|problem| {
+                let row = Row {
+                    id: format!("retry:{}", package.identity.key()),
+                    title: format!("Retry starting {title}"),
+                    subtitle: Some(problem),
+                    unavailable: None,
+                };
+                (row, Entry::Retry(package.identity.clone()))
+            });
+            std::iter::once((reload, Entry::Reload(package.identity.clone()))).chain(retry)
+        });
+    toggles.chain(reloads).unzip()
 }
 
 /// The package screen for `folder`: what the package is and whether it can

@@ -76,6 +76,7 @@ fn guests() -> Result<(), String> {
                 "faulty",
                 "old_api",
                 "mismatched_api",
+                "failing_start",
             ],
         ),
         ("guests/fixtures/mixed-p2", &["mixed_p2"]),

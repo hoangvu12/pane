@@ -204,7 +204,7 @@ root; input-method composition searching as it composes (driven on the
 field's editing state, with the limits described for
 [forms](forms.md#checks)); and the accessibility nodes above.
 
-Native checks: the GUI smoke scripts' last phase types "typescr", presses
+Native checks: the GUI smoke scripts' search phase (screenshots 24 to 26) types "typescr", presses
 Enter, runs "Wait briefly" and asserts the screen is pixel for pixel the one
 step 4 reached by Down; then it types a query that matches nothing, presses
 Enter, and asserts root, the search and the no-results screens all differ.

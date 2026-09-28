@@ -29,6 +29,9 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   `target/guests/packages/<name>/`, a ready-to-install package.
 - `fixtures/faulty`: test fixture whose actions, form and custom view return
   an error or trap.
+- `fixtures/failing-start`: test fixture that builds and installs but traps
+  the first time it is asked for its view (after saving a setting), so a
+  reload to it fails to start and Retry then starts it.
 - `fixtures/mixed-p2`: negative control that imports WASI 0.2 and must be rejected.
 - `fixtures/old-api`: negative control built against extension API 0.1 as it
   was before `item` gained `platforms` and custom views, with its own copy of
@@ -562,15 +565,63 @@ What installing does:
   commands back with them. The package stays installed at the same identity;
   choosing its folder again shows it as disabled.
 
-Uninstalling and rebuilding on save are not implemented yet; to pick up a
-rebuilt component, choose the folder again and Update.
+### Reloading a package while Pane stays open
+
+After rebuilding a component, reload the package instead of restarting
+Pane: in **Manage extensions…**, after the rows that enable or disable each
+package, every enabled package has a **Reload <title>** row. Enter (or a
+click) on it reads the package's source folder again and replaces only that
+package; Pane and every other package keep running, including a custom view
+of another package that is open. It works the same for Rust, JavaScript and
+TypeScript packages, since Pane sees only components. A reload goes through
+two stages, and a failure in each is reported differently:
+
+1. **Checks.** The folder is checked exactly as an install checks it
+   (manifest, built components, WASI 0.3 imports, the extension API shape),
+   without running anything. If that fails, nothing is replaced: the
+   package keeps running the code installed before, and the status says
+   "Dev was not reloaded: <reason>. It keeps running its installed code."
+2. **Start.** Otherwise the new copy replaces the installed one, the old
+   instances are stopped (an open command, form or custom view of the
+   package closes; root search then selects its command), and the new code
+   starts: Pane starts each of the package's commands available on this
+   system and asks it for its view (`get-view`). Success shows "Reloaded
+   Dev". If a command fails, for example it traps or returns an error from
+   `get-view`, its instances are stopped again and the package is reported
+   as failed to start: the package's row says "Failed to start", a **Retry
+   starting <title>** row appears under its Reload row with the diagnostics
+   (for a trap, the guest backtrace), which Pane also writes to its standard
+   error. The earlier code is not restored. Retry starts the same code
+   again; to fix it, rebuild and reload.
+
+What a reload keeps and what it does not:
+
+- **Settings are kept.** They belong to the package identity, so the new
+  code reads what the old code saved ([Keeping settings](#keeping-settings)),
+  including anything saved by a start that then failed. Nothing is migrated
+  or undone.
+- **Nothing live is carried over.** The old instance's memory, an open
+  view's state and a running call are not transferred to the new code, and
+  there is no API for an extension to hand transient state to its
+  replacement: save what must survive in settings. An answer from the old
+  code that arrives after the reload (for example a command that was
+  opening) is not shown.
+- A disabled package has no Reload row and is not reloaded; enable it first.
+- Reload is manual. Rebuilding and reloading on save (#12, #13) come later;
+  the Update in the install screen still replaces the copy too, without the
+  start stage.
+
+Uninstalling is not implemented yet.
 
 Known limits of local packages so far:
 
 - An update is not coordinated with a command that is running or open: the
   replaced copy's code is dropped, so an open command of the package loses
-  its state and may fail until you open it again from root search. Staged
-  activation that waits for running commands comes with reload (#11, #14).
+  its state and may fail until you open it again from root search.
+- A reload does not cancel a call of the old code that is already running;
+  it finishes first (its answer is not shown), since calls into extensions
+  run one at a time. Cancelling pending async work across a reload or
+  disable is #14.
 - Disabling does not cancel a call already running in the package: it
   finishes (its answer is not shown, and it cannot save settings), then its
   instance is dropped; a call that had not started is refused. Cancelling async work,

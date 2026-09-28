@@ -84,7 +84,7 @@ only the two other systems. In run [36372625940](https://github.com/wasimysaid/p
 ## Root search (#23)
 
 Root search has a query field with focus ([root search](../root-search.md)).
-The smoke's last phase (screenshots 24 to 26) types "typescr" with
+The smoke's search phase (screenshots 24 to 26) types "typescr" with
 `SendKeys`, opens the only match and runs "Wait briefly", which must look
 exactly like step 4, then types "zzz" and presses Enter on no results. **It
 has not run on Windows yet**; typing into the query field through the
@@ -120,6 +120,14 @@ Screenshots from run [36371205770](https://github.com/wasimysaid/pane/actions/ru
   the screenshot, the screen bounds and `SetCursorPos` all use physical
   pixels and the click should land on the swatch at any display scaling;
   scaling other than 100 % is unverified.
+- **Reload (#11):** after the search phase, the smoke installs a package from
+  `<output-dir>\dev`, replaces its component with the JavaScript sample and
+  reloads it in Manage extensions, then reloads it without its component (the
+  checks fail and the old code keeps answering) and with the `failing-start`
+  fixture (a startup failure, then Retry); screenshots 27 to 33, the same
+  steps as on [Linux](linux.md#reloading-a-package-11). **This phase has not
+  run on Windows yet.** Replacing the managed copy removes the old folder on
+  a best-effort basis; on Windows a folder still in use is left behind.
 
 ## Disabling an extension and keeping its settings (#10)
 

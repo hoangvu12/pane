@@ -161,7 +161,7 @@ click helpers; it has not run there yet.
 Root search now has a query field with focus ([root search](../root-search.md));
 the earlier phases still reach each command with Down, which moves the
 selection while the field keeps focus, and the screenshots above predate the
-field. The last phase restarts Pane, types "typescr" with real X11 key
+field. The search phase restarts Pane, types "typescr" with real X11 key
 events, presses Enter on the only match and runs "Wait briefly"; the screen
 must be pixel for pixel step 4's (`--same` with `4-result-2.png`). Escape
 clears the query, "zzz" and Enter show no results and open nothing, and root,
@@ -178,6 +178,32 @@ same Xvfb/lavapipe setup), all checks of the whole smoke passed.
 No input method (IBus, Fcitx) was used; composition in the field is covered
 only by the window tests. The macOS and Windows smokes run the same phase
 (screenshots 24 to 26); it has not run there yet.
+
+### Reloading a package (#11)
+
+After the search phase, the smoke writes a package `Dev` in `<output-dir>/dev` whose component
+is a copy of the Rust sample, installs it and runs "Say hello". It then
+copies the JavaScript sample over the component, reloads Dev in **Manage
+extensions…** without restarting Pane, and runs "Say hello" again. Next it
+deletes the component and reloads (the checks fail, so the working code must
+keep answering exactly as before), and finally copies in the
+`failing-start` fixture, whose first start traps, reloads, and presses Retry.
+It checks that `settings.json` kept the setting the failed start saved. Run
+locally on 2026-09-28 (Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64,
+same Xvfb/lavapipe setup), all checks of the whole smoke passed:
+
+| Step | Evidence |
+| --- | --- |
+| Dev as installed: the Rust guest answers | [27-dev-before.png](evidence/linux-x11/27-dev-before.png) |
+| Reload Dev: "Reloaded Dev" | `28-reloaded.png` (not committed: it shows local paths) |
+| The same command now shows the JavaScript sample and its answer (`--distinct` from step 27) | [29-dev-after.png](evidence/linux-x11/29-dev-after.png) |
+| Component deleted, Reload Dev: "Dev was not reloaded: Not ready to run: … It keeps running its installed code." | `30-not-reloaded.png` (not committed: it shows local paths) |
+| The command still answers from the JavaScript code, pixel for pixel as in step 29 (`--same`) | `31-still-running.png` |
+| Failing start: "Reloaded Dev, but it failed to start; its earlier code is not restored. …" | `32-start-failed.png` (not committed: it shows local paths) |
+| Retry starting Dev: "Started Dev" | `33-retried.png` (not committed: it shows local paths) |
+
+The macOS and Windows smokes run the same phase (screenshots 27 to 33); it
+has not run there yet.
 
 ## Text input and accessibility findings
 

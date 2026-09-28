@@ -10,6 +10,7 @@ members = [
     "fixtures/faulty",
     "fixtures/old-api",
     "fixtures/mismatched-api",
+    "fixtures/failing-start",
 ]
 # `mixed-p2` deliberately uses std (WASI 0.2) and has its own workspace.
 exclude = ["fixtures/mixed-p2"]
