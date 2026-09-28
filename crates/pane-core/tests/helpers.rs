@@ -1,20 +1,25 @@
 //! Native helpers through the launcher's public interface, with the helper
-//! sample (`guests/sample-helper`) and its real helper program, `pane-echo`,
-//! built for this system by `cargo xtask guests` and put in the package as
-//! this target's file. Pane runs that file and compiles nothing; it ends
-//! the helper's process when the guest cancels the run, and when the
-//! package is disabled, reloaded, updated or uninstalled while it runs,
-//! keeping the package's saved data. Each check that a process ended asks
-//! the system too, not only Pane.
+//! samples in Rust, JavaScript and TypeScript (`guests/sample-helper`,
+//! `guests/sample-helper-js`, `guests/sample-helper-ts`) and their real
+//! helper program, `pane-echo`, built for this system by `cargo xtask
+//! guests` and put in each package as this target's file. Pane runs that
+//! file and compiles nothing; it ends the helper's process when the guest
+//! cancels the run, when the package is disabled, reloaded, updated or
+//! uninstalled while it runs, and when Pane quits, keeping the package's
+//! saved data.
+//!
+//! A check that a helper ended does not trust a process id, which the
+//! system may give to another process once the helper is reaped: Pane must
+//! list no running helper, and the file `pane-echo --wait` beats in every
+//! 20 ms while it runs must stop growing.
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use futures::executor::block_on;
-use pane_core::{Launcher, PackageIdentity, Runtime, SavedData, Screen, Status, current_target};
+use pane_core::{Launcher, PackageIdentity, Runtime, SavedData, Screen, Status, Target};
 use tempfile::TempDir;
 
 /// Under the ten seconds "Echo after waiting" has its helper wait: a run
@@ -24,62 +29,93 @@ const STOPPED_WITHIN: Duration = Duration::from_secs(8);
 /// How long starting the command and its helper may take.
 const PROMPTLY: Duration = Duration::from_secs(6);
 
-/// The assembled helper sample package.
-fn assembled() -> PathBuf {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/guests/packages/sample-helper");
-    assert!(
-        path.exists(),
-        "{} is missing; run `cargo xtask guests`",
-        path.display()
-    );
-    let manifest = fs::read_to_string(path.join("pane.json")).unwrap();
-    assert!(
-        manifest.contains(&format!("\"{}\"", current_target())),
-        "the helper sample ships no helper for {}: it is built for the contributor \
-         baselines (linux-x86_64, macos-aarch64, windows-x86_64) only",
-        current_target()
-    );
-    path
+/// Where `pane-echo --wait` beats while it runs, in its working folder.
+const ALIVE: &str = "pane-echo.alive";
+
+/// A helper sample in one language.
+struct Sample {
+    /// Its assembled package, under `target/guests/packages`.
+    package: &'static str,
+    component: &'static str,
+    /// Its package and command title; the copies these tests install are
+    /// retitled "Helper sample", so that every language reads the same.
+    title: &'static str,
+}
+
+const RUST: Sample = Sample {
+    package: "sample-helper",
+    component: "sample_helper.wasm",
+    title: "Helper sample",
+};
+
+const JAVASCRIPT: Sample = Sample {
+    package: "sample-helper-js",
+    component: "sample_helper_js.wasm",
+    title: "JavaScript helper sample",
+};
+
+const TYPESCRIPT: Sample = Sample {
+    package: "sample-helper-ts",
+    component: "sample_helper_ts.wasm",
+    title: "TypeScript helper sample",
+};
+
+fn this() -> Target {
+    Target::current().expect("Pane names this system's target")
+}
+
+/// "Linux x86-64", as the helper names the system it was built for.
+fn this_system() -> String {
+    this().to_string()
+}
+
+impl Sample {
+    /// The assembled package.
+    fn assembled(&self) -> PathBuf {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/guests/packages")
+            .join(self.package);
+        assert!(
+            path.exists(),
+            "{} is missing; run `cargo xtask guests`",
+            path.display()
+        );
+        let manifest = fs::read_to_string(path.join("pane.json")).unwrap();
+        assert!(
+            manifest.contains(&format!("\"{}\"", this().id())),
+            "the helper sample ships no helper for {}: it is built for the contributor \
+             baselines (linux-x86_64, macos-aarch64, windows-x86_64) only",
+            this()
+        );
+        path
+    }
+
+    /// Copies the assembled sample into `folder`, retitled "Helper sample"
+    /// and with its `pane.json` then changed by `manifest`, and returns
+    /// `folder`.
+    fn copy_to(&self, folder: &Path, manifest: impl FnOnce(String) -> String) -> PathBuf {
+        let from = self.assembled();
+        fs::create_dir_all(folder.join(Path::new(&helper_file()).parent().unwrap())).unwrap();
+        let text = fs::read_to_string(from.join("pane.json"))
+            .unwrap()
+            .replace(self.title, "Helper sample");
+        fs::write(folder.join("pane.json"), manifest(text)).unwrap();
+        for file in [self.component.to_owned(), helper_file()] {
+            fs::copy(from.join(&file), folder.join(&file))
+                .unwrap_or_else(|error| panic!("{file}: {error}"));
+        }
+        folder.to_path_buf()
+    }
 }
 
 /// This system's helper file in the package, as its `pane.json` names it.
 fn helper_file() -> String {
-    let file = format!("helpers/{}/pane-echo", current_target());
-    if cfg!(windows) { file + ".exe" } else { file }
+    format!("helpers/{}/pane-echo{}", this().id(), this().exe_suffix())
 }
 
-/// Copies the assembled helper sample into `folder`, with its `pane.json`
-/// changed by `manifest`, and returns `folder`.
-fn helper_package(folder: &Path, manifest: impl FnOnce(String) -> String) -> PathBuf {
-    let from = assembled();
-    fs::create_dir_all(folder.join(Path::new(&helper_file()).parent().unwrap())).unwrap();
-    let text = fs::read_to_string(from.join("pane.json")).unwrap();
-    fs::write(folder.join("pane.json"), manifest(text)).unwrap();
-    for file in ["sample_helper.wasm".to_owned(), helper_file()] {
-        fs::copy(from.join(&file), folder.join(&file))
-            .unwrap_or_else(|error| panic!("{file}: {error}"));
-    }
-    folder.to_path_buf()
-}
-
-/// Whether the system still has a process with id `pid`, asked of the
-/// system itself.
-fn process_exists(pid: u32) -> bool {
-    if cfg!(windows) {
-        let output = Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
-            .output()
-            .expect("tasklist runs");
-        String::from_utf8_lossy(&output.stdout).contains(&format!("\"{pid}\""))
-    } else {
-        Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .stderr(Stdio::null())
-            .status()
-            .expect("kill runs")
-            .success()
-    }
+/// The length of the heartbeat file at `path`, if it exists.
+fn beats(path: &Path) -> Option<u64> {
+    fs::metadata(path).ok().map(|metadata| metadata.len())
 }
 
 struct Installed {
@@ -92,19 +128,27 @@ struct Installed {
     identity: PackageIdentity,
 }
 
+/// However a test ends, its helpers end with it, as they do when Pane
+/// quits.
+impl Drop for Installed {
+    fn drop(&mut self) {
+        self.runtime.stop_helpers();
+    }
+}
+
 impl Installed {
-    fn new() -> Installed {
-        Installed::with_manifest(|text| text)
+    fn new(sample: &Sample) -> Installed {
+        Installed::with_manifest(sample, |text| text)
     }
 
-    fn with_manifest(manifest: impl FnOnce(String) -> String) -> Installed {
+    fn with_manifest(sample: &Sample, manifest: impl FnOnce(String) -> String) -> Installed {
         let sources = tempfile::tempdir().unwrap();
         let data = tempfile::tempdir().unwrap();
         let cache = tempfile::tempdir().unwrap();
         let runtime = Runtime::start_with_cache(cache.path().to_path_buf()).unwrap();
         let launcher =
             Launcher::with_packages(Ok(runtime.clone()), vec![], data.path().join("extensions"));
-        let folder = helper_package(&sources.path().join("helper"), manifest);
+        let folder = sample.copy_to(&sources.path().join("helper"), manifest);
         block_on(launcher.install_package(&folder));
         assert_eq!(
             launcher.view().status,
@@ -140,9 +184,14 @@ impl Installed {
             .map(str::to_owned)
     }
 
-    /// Runs `item` on another thread and returns once its helper process
-    /// runs, with that process's id.
+    /// Runs `item` on another thread and returns once its helper runs:
+    /// Pane lists it, and it beats.
     fn start(&self, item: &str) -> Pending {
+        let alive = self.launcher.packages()[0]
+            .location
+            .join(Path::new(&helper_file()).parent().unwrap())
+            .join(ALIVE);
+        let before = beats(&alive);
         open_sample_at(&self.launcher, item);
         let running = self.launcher.activate_selected();
         let started = Instant::now();
@@ -150,22 +199,18 @@ impl Installed {
             block_on(running);
             Instant::now()
         });
-        let pid = loop {
-            if let [pid] = self.runtime.helper_processes().as_slice() {
-                break *pid;
-            }
+        while self.runtime.helper_processes().len() != 1 || beats(&alive) <= before {
             assert!(
                 started.elapsed() < PROMPTLY,
                 "the helper did not start: {:?}",
                 self.launcher.view().status
             );
             thread::sleep(Duration::from_millis(5));
-        };
-        assert!(process_exists(pid), "the system does not list {pid}");
+        }
         Pending {
             thread,
             started,
-            pid,
+            alive,
         }
     }
 }
@@ -174,23 +219,30 @@ impl Installed {
 struct Pending {
     thread: thread::JoinHandle<Instant>,
     started: Instant,
-    pid: u32,
+    /// The helper's heartbeat file.
+    alive: PathBuf,
 }
 
 impl Pending {
     /// Waits for the call to end, and checks it ended well before the
-    /// helper would have finished, and that the helper's process is gone:
-    /// Pane lists none, and the system has none with its id.
+    /// helper would have finished, and that the helper is gone: Pane soon
+    /// lists none, and it beats no more.
     fn assert_stopped(self, runtime: &Runtime) {
         let ended = self.thread.join().unwrap();
         let took = ended - self.started;
         assert!(took < STOPPED_WITHIN, "the call ran for {took:?}");
-        assert_eq!(runtime.helper_processes(), Vec::<u32>::new());
-        assert!(
-            !process_exists(self.pid),
-            "helper process {} is still running",
-            self.pid
-        );
+        // The call may answer before the helper's process is reaped.
+        while !runtime.helper_processes().is_empty() {
+            assert!(
+                self.started.elapsed() < STOPPED_WITHIN,
+                "Pane still runs {:?}",
+                runtime.helper_processes()
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+        let last = beats(&self.alive);
+        thread::sleep(Duration::from_millis(200));
+        assert_eq!(beats(&self.alive), last, "the helper still beats");
     }
 }
 
@@ -227,40 +279,34 @@ fn open_sample_at(launcher: &Launcher, item: &str) {
     select_title(launcher, item);
 }
 
-/// "Linux x86-64", as the helper names the system it was built for.
-fn this_system() -> String {
-    let os = match std::env::consts::OS {
-        "macos" => "macOS",
-        "windows" => "Windows",
-        _ => "Linux",
-    };
-    let arch = match std::env::consts::ARCH {
-        "aarch64" => "arm64",
-        _ => "x86-64",
-    };
-    format!("{os} {arch}")
-}
-
 fn error(message: &str) -> Status {
     Status::Error(format!("The extension reported an error: {message}"))
 }
 
-#[test]
-fn the_helper_for_this_system_answers_and_leaves_no_process() {
-    let installed = Installed::new();
+fn echoed() -> Status {
+    Status::Result(format!("Echoed \"hello from Pane\" on {}", this_system()))
+}
 
-    let status = installed.run("Echo through the helper");
+/// A launcher with no packages, for previews and refused installs.
+fn bare_launcher(data: &TempDir) -> Launcher {
+    Launcher::with_packages(
+        Ok(Runtime::start().unwrap()),
+        vec![],
+        data.path().join("extensions"),
+    )
+}
 
-    assert_eq!(
-        status,
-        Status::Result(format!("Echoed \"hello from Pane\" on {}", this_system()))
-    );
+// The contract every helper sample meets, whatever its language.
+
+fn the_helper_for_this_system_answers_and_leaves_no_process(sample: &Sample) {
+    let installed = Installed::new(sample);
+
+    assert_eq!(installed.run("Echo through the helper"), echoed());
     assert_eq!(installed.runtime.helper_processes(), Vec::<u32>::new());
 }
 
-#[test]
-fn installing_copies_only_this_system_s_helper_file_ready_to_run() {
-    let installed = Installed::new();
+fn installing_copies_only_this_system_s_helper_file_ready_to_run(sample: &Sample) {
+    let installed = Installed::new(sample);
 
     let location = installed.launcher.packages()[0].location.clone();
     let file = location.join(helper_file());
@@ -269,59 +315,17 @@ fn installing_copies_only_this_system_s_helper_file_ready_to_run() {
         .unwrap()
         .map(|entry| entry.unwrap().file_name().into())
         .collect();
-    assert_eq!(helpers, [PathBuf::from(current_target())]);
+    assert_eq!(helpers, [PathBuf::from(this().id())]);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let mode = fs::metadata(&file).unwrap().permissions().mode();
-        assert_eq!(mode & 0o111, 0o111, "{mode:o}");
+        assert_eq!(mode & 0o7777, 0o755, "{mode:o}");
     }
 }
 
-#[test]
-fn the_package_preview_lists_its_helpers_and_this_system() {
-    let sources = tempfile::tempdir().unwrap();
-    let data = tempfile::tempdir().unwrap();
-    let launcher = Launcher::with_packages(
-        Ok(Runtime::start().unwrap()),
-        vec![],
-        data.path().join("extensions"),
-    );
-    let targets = ["linux-x86_64", "macos-aarch64", "windows-x86_64"];
-    let names = ["Linux x86-64", "macOS arm64", "Windows x86-64"];
-    let folder = helper_package(&sources.path().join("helper"), |text| text);
-
-    block_on(launcher.preview_package(&folder));
-
-    let listed: Vec<String> = targets
-        .iter()
-        .zip(names)
-        .map(|(target, name)| {
-            if *target == current_target() {
-                format!("{name} (this system)")
-            } else {
-                name.to_owned()
-            }
-        })
-        .collect();
-    let expected = format!(
-        "Helpers: echo for {}, {} and {}{}",
-        listed[0],
-        listed[1],
-        listed[2],
-        if targets.contains(&current_target().as_str()) {
-            ""
-        } else {
-            " (none for this system)"
-        }
-    );
-    let view = launcher.view();
-    assert!(view.details().contains(&expected), "{:?}", view.details());
-}
-
-#[test]
-fn a_failing_helper_is_explained_with_its_exit_code_and_errors() {
-    let installed = Installed::new();
+fn a_failing_helper_is_explained_with_its_exit_code_and_errors(sample: &Sample) {
+    let installed = Installed::new(sample);
 
     let status = installed.run("Make the helper fail");
 
@@ -332,9 +336,8 @@ fn a_failing_helper_is_explained_with_its_exit_code_and_errors() {
     assert_eq!(installed.runtime.helper_processes(), Vec::<u32>::new());
 }
 
-#[test]
-fn an_undeclared_helper_is_explained() {
-    let installed = Installed::new();
+fn an_undeclared_helper_is_explained(sample: &Sample) {
+    let installed = Installed::new(sample);
 
     let status = installed.run("Run an undeclared helper");
 
@@ -347,28 +350,24 @@ fn an_undeclared_helper_is_explained() {
     );
 }
 
-#[test]
-fn a_helper_not_built_for_this_system_is_explained_and_the_rest_works() {
+fn a_helper_not_built_for_this_system_is_explained_and_the_rest_works(sample: &Sample) {
     // The package ships echo only for a target other than this one.
-    let other = if current_target() == "windows-aarch64" {
+    let other = if this().id() == "windows-aarch64" {
         "linux-aarch64"
     } else {
         "windows-aarch64"
     };
-    let other_name = if other == "linux-aarch64" {
-        "Linux arm64"
-    } else {
-        "Windows arm64"
-    };
-    let file = helper_file();
-    let installed = Installed::with_manifest(|text| {
+    let other = Target::parse(other).unwrap();
+    let file = format!("helpers/{}/pane-echo{}", other.id(), other.exe_suffix());
+    let installed = Installed::with_manifest(sample, |text| {
         let echo = text
             .find("\"targets\"")
             .expect("the sample declares targets");
         let end = echo + text[echo..].find('}').unwrap() + 1;
         format!(
-            "{}\"targets\": {{ \"{other}\": \"{file}\" }}{}",
+            "{}\"targets\": {{ \"{}\": \"{file}\" }}{}",
             &text[..echo],
+            other.id(),
             &text[end..]
         )
     });
@@ -378,7 +377,7 @@ fn a_helper_not_built_for_this_system_is_explained_and_the_rest_works() {
     assert_eq!(
         status,
         error(&format!(
-            "unavailable: Not available on {}: helper `echo` is built only for {other_name}",
+            "unavailable: Not available on {}: helper `echo` is built only for {other}",
             this_system()
         ))
     );
@@ -390,6 +389,240 @@ fn a_helper_not_built_for_this_system_is_explained_and_the_rest_works() {
              it declares `echo`"
         )
     );
+}
+
+fn a_helper_file_replaced_after_install_is_explained_when_run(sample: &Sample) {
+    let installed = Installed::new(sample);
+    let location = installed.launcher.packages()[0].location.clone();
+    let shown = Path::new(&helper_file()).display().to_string();
+    for (content, problem) in [
+        (
+            &b"not a program"[..],
+            format!("is not a program Pane recognizes for {}", this_system()),
+        ),
+        (
+            &b"#!/bin/sh\necho replaced\n"[..],
+            format!(
+                "is a script; a helper must be a native program built for {}",
+                this_system()
+            ),
+        ),
+    ] {
+        fs::write(location.join(helper_file()), content).unwrap();
+
+        let status = installed.run("Echo through the helper");
+
+        assert_eq!(
+            status,
+            error(&format!(
+                "unavailable: helper `echo` cannot run: its file {shown} {problem}"
+            ))
+        );
+    }
+}
+
+fn cancelling_a_run_ends_the_helper_s_process(sample: &Sample) {
+    let installed = Installed::new(sample);
+    let pending = installed.start("Echo within a second");
+
+    pending.assert_stopped(&installed.runtime);
+
+    assert_eq!(
+        installed.launcher.view().status,
+        Status::Result("Stopped the helper after one second".into())
+    );
+    // The command runs its helper again at once.
+    assert_eq!(installed.run("Echo through the helper"), echoed());
+}
+
+fn disabling_while_the_helper_runs_ends_its_process_and_keeps_saved_data(sample: &Sample) {
+    let installed = Installed::new(sample);
+    let pending = installed.start("Echo after waiting");
+    assert_eq!(installed.waiting().as_deref(), Some("started"));
+
+    block_on(installed.launcher.set_enabled(&installed.identity, false));
+    pending.assert_stopped(&installed.runtime);
+
+    assert_eq!(
+        installed.launcher.view().status,
+        Status::Result("Disabled Helper sample".into())
+    );
+    assert_eq!(installed.waiting().as_deref(), Some("started"));
+    assert_eq!(block_on(installed.runtime.running()), Vec::<PathBuf>::new());
+
+    block_on(installed.launcher.set_enabled(&installed.identity, true));
+    assert_eq!(installed.run("Echo through the helper"), echoed());
+    assert_eq!(installed.waiting().as_deref(), Some("started"));
+}
+
+fn reloading_while_the_helper_runs_ends_its_process_and_the_new_code_runs_it(sample: &Sample) {
+    let installed = Installed::new(sample);
+    let pending = installed.start("Echo after waiting");
+
+    block_on(installed.launcher.reload(&installed.identity));
+    pending.assert_stopped(&installed.runtime);
+
+    assert_eq!(
+        installed.launcher.view().status,
+        Status::Result("Reloaded Helper sample".into())
+    );
+    assert_eq!(installed.waiting().as_deref(), Some("started"));
+    assert_eq!(installed.run("Echo through the helper"), echoed());
+}
+
+fn updating_while_the_helper_runs_ends_its_process(sample: &Sample) {
+    let installed = Installed::new(sample);
+    let pending = installed.start("Echo after waiting");
+
+    block_on(installed.launcher.preview_package(&installed.folder));
+    select_title(&installed.launcher, "Update");
+    block_on(installed.launcher.activate_selected());
+    pending.assert_stopped(&installed.runtime);
+
+    assert_eq!(
+        installed.launcher.view().status,
+        Status::Result("Updated Helper sample to 0.1.0".into())
+    );
+    assert_eq!(installed.waiting().as_deref(), Some("started"));
+    assert_eq!(installed.run("Echo through the helper"), echoed());
+}
+
+fn uninstalling_while_the_helper_runs_ends_its_process_and_keeps_saved_data(sample: &Sample) {
+    let installed = Installed::new(sample);
+    let pending = installed.start("Echo after waiting");
+
+    block_on(
+        installed
+            .launcher
+            .uninstall(&installed.identity, SavedData::Keep),
+    );
+    pending.assert_stopped(&installed.runtime);
+
+    assert_eq!(installed.waiting().as_deref(), Some("started"));
+    assert_eq!(block_on(installed.runtime.running()), Vec::<PathBuf>::new());
+}
+
+/// Quitting Pane (`main.rs` stops the runtime's helpers when the app quits)
+/// ends a helper that is still running, and no helper starts afterwards.
+fn quitting_while_the_helper_runs_ends_its_process(sample: &Sample) {
+    let installed = Installed::new(sample);
+    let pending = installed.start("Echo after waiting");
+
+    installed.runtime.stop_helpers();
+    pending.assert_stopped(&installed.runtime);
+
+    assert_eq!(
+        installed.launcher.view().status,
+        error("refused: helper `echo` was stopped before it finished")
+    );
+    assert_eq!(installed.waiting().as_deref(), Some("started"));
+    assert_eq!(
+        installed.run("Echo through the helper"),
+        error("refused: Pane is quitting; helper `echo` does not start")
+    );
+}
+
+fn repeated_stops_leave_no_helper_running(sample: &Sample) {
+    let installed = Installed::new(sample);
+    for _ in 0..3 {
+        let pending = installed.start("Echo after waiting");
+        block_on(installed.launcher.set_enabled(&installed.identity, false));
+        pending.assert_stopped(&installed.runtime);
+        block_on(installed.launcher.set_enabled(&installed.identity, true));
+
+        let pending = installed.start("Echo after waiting");
+        block_on(installed.launcher.reload(&installed.identity));
+        pending.assert_stopped(&installed.runtime);
+
+        let pending = installed.start("Echo within a second");
+        pending.assert_stopped(&installed.runtime);
+    }
+    assert_eq!(installed.waiting().as_deref(), Some("started"));
+}
+
+/// Runs each check of the contract above for each sample, as a test in the
+/// module of its language.
+macro_rules! contract {
+    ($($check:ident),* $(,)?) => {
+        mod rust {
+            $(
+                #[test]
+                fn $check() {
+                    super::$check(&super::RUST);
+                }
+            )*
+        }
+        mod javascript {
+            $(
+                #[test]
+                fn $check() {
+                    super::$check(&super::JAVASCRIPT);
+                }
+            )*
+        }
+        mod typescript {
+            $(
+                #[test]
+                fn $check() {
+                    super::$check(&super::TYPESCRIPT);
+                }
+            )*
+        }
+    };
+}
+
+contract!(
+    the_helper_for_this_system_answers_and_leaves_no_process,
+    installing_copies_only_this_system_s_helper_file_ready_to_run,
+    a_failing_helper_is_explained_with_its_exit_code_and_errors,
+    an_undeclared_helper_is_explained,
+    a_helper_not_built_for_this_system_is_explained_and_the_rest_works,
+    a_helper_file_replaced_after_install_is_explained_when_run,
+    cancelling_a_run_ends_the_helper_s_process,
+    disabling_while_the_helper_runs_ends_its_process_and_keeps_saved_data,
+    reloading_while_the_helper_runs_ends_its_process_and_the_new_code_runs_it,
+    updating_while_the_helper_runs_ends_its_process,
+    uninstalling_while_the_helper_runs_ends_its_process_and_keeps_saved_data,
+    quitting_while_the_helper_runs_ends_its_process,
+    repeated_stops_leave_no_helper_running,
+);
+
+// What Pane checks of a package's helpers, whatever its code's language.
+
+#[test]
+fn the_package_preview_lists_its_helpers_and_this_system() {
+    let sources = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let launcher = bare_launcher(&data);
+    let targets = ["linux-x86_64", "macos-aarch64", "windows-x86_64"];
+    let folder = RUST.copy_to(&sources.path().join("helper"), |text| text);
+
+    block_on(launcher.preview_package(&folder));
+
+    let listed: Vec<String> = targets
+        .iter()
+        .map(|id| {
+            let target = Target::parse(id).unwrap();
+            if target == this() {
+                format!("{target} (this system)")
+            } else {
+                target.to_string()
+            }
+        })
+        .collect();
+    let expected = format!(
+        "Helpers: echo for {}, {} and {}{}",
+        listed[0],
+        listed[1],
+        listed[2],
+        if targets.contains(&this().id().as_str()) {
+            ""
+        } else {
+            " (none for this system)"
+        }
+    );
+    let view = launcher.view();
+    assert!(view.details().contains(&expected), "{:?}", view.details());
 }
 
 /// The first bytes of a program for another system than this one.
@@ -412,31 +645,40 @@ fn program_for_another_system() -> (Vec<u8>, &'static str) {
 }
 
 #[test]
-fn a_helper_file_for_another_system_or_missing_is_refused_at_install() {
+fn a_helper_file_for_another_system_a_script_or_missing_is_refused_at_install() {
     let sources = tempfile::tempdir().unwrap();
     let data = tempfile::tempdir().unwrap();
-    let launcher = Launcher::with_packages(
-        Ok(Runtime::start().unwrap()),
-        vec![],
-        data.path().join("extensions"),
-    );
-    let folder = helper_package(&sources.path().join("helper"), |text| text);
-    let (program, found) = program_for_another_system();
-    fs::write(folder.join(helper_file()), program).unwrap();
-
-    block_on(launcher.install_package(&folder));
-
+    let launcher = bare_launcher(&data);
+    let folder = RUST.copy_to(&sources.path().join("helper"), |text| text);
     let shown = Path::new(&helper_file()).display().to_string();
-    assert_eq!(
-        launcher.view().status,
-        Status::Error(format!(
-            "Not ready to run: the package ships helper `echo` for {}, but its file {shown} \
-             is a program for {found}, not {}",
-            this_system(),
-            this_system()
-        ))
-    );
-    assert!(launcher.packages().is_empty());
+    let (program, found) = program_for_another_system();
+    for (content, problem) in [
+        (
+            program,
+            format!("is a program for {found}, not {}", this_system()),
+        ),
+        (
+            b"#!/bin/sh\necho hello\n".to_vec(),
+            format!(
+                "is a script; a helper must be a native program built for {}",
+                this_system()
+            ),
+        ),
+    ] {
+        fs::write(folder.join(helper_file()), content).unwrap();
+
+        block_on(launcher.install_package(&folder));
+
+        assert_eq!(
+            launcher.view().status,
+            Status::Error(format!(
+                "Not ready to run: the package ships helper `echo` for {}, but its file \
+                 {shown} {problem}",
+                this_system()
+            ))
+        );
+        assert!(launcher.packages().is_empty());
+    }
 
     fs::remove_file(folder.join(helper_file())).unwrap();
     block_on(launcher.install_package(&folder));
@@ -450,119 +692,6 @@ fn a_helper_file_for_another_system_or_missing_is_refused_at_install() {
         ))
     );
     assert!(launcher.packages().is_empty());
-}
-
-#[test]
-fn a_helper_file_replaced_after_install_is_explained_when_run() {
-    let installed = Installed::new();
-    let location = installed.launcher.packages()[0].location.clone();
-    fs::write(location.join(helper_file()), b"not a program").unwrap();
-
-    let status = installed.run("Echo through the helper");
-
-    let shown = Path::new(&helper_file()).display().to_string();
-    assert_eq!(
-        status,
-        error(&format!(
-            "unavailable: helper `echo` cannot run: its file {shown} is not a program Pane \
-             recognizes for {}",
-            this_system()
-        ))
-    );
-}
-
-#[test]
-fn cancelling_a_run_ends_the_helper_s_process() {
-    let installed = Installed::new();
-    let pending = installed.start("Echo within a second");
-
-    pending.assert_stopped(&installed.runtime);
-
-    assert_eq!(
-        installed.launcher.view().status,
-        Status::Result("Stopped the helper after one second".into())
-    );
-    // The command runs its helper again at once.
-    assert_eq!(
-        installed.run("Echo through the helper"),
-        Status::Result(format!("Echoed \"hello from Pane\" on {}", this_system()))
-    );
-}
-
-#[test]
-fn disabling_while_the_helper_runs_ends_its_process_and_keeps_saved_data() {
-    let installed = Installed::new();
-    let pending = installed.start("Echo after waiting");
-    assert_eq!(installed.waiting().as_deref(), Some("started"));
-
-    block_on(installed.launcher.set_enabled(&installed.identity, false));
-    pending.assert_stopped(&installed.runtime);
-
-    assert_eq!(
-        installed.launcher.view().status,
-        Status::Result("Disabled Helper sample".into())
-    );
-    assert_eq!(installed.waiting().as_deref(), Some("started"));
-    assert_eq!(block_on(installed.runtime.running()), Vec::<PathBuf>::new());
-
-    block_on(installed.launcher.set_enabled(&installed.identity, true));
-    assert_eq!(
-        installed.run("Echo through the helper"),
-        Status::Result(format!("Echoed \"hello from Pane\" on {}", this_system()))
-    );
-    assert_eq!(installed.waiting().as_deref(), Some("started"));
-}
-
-#[test]
-fn reloading_while_the_helper_runs_ends_its_process_and_the_new_code_runs_it() {
-    let installed = Installed::new();
-    let pending = installed.start("Echo after waiting");
-
-    block_on(installed.launcher.reload(&installed.identity));
-    pending.assert_stopped(&installed.runtime);
-
-    assert_eq!(
-        installed.launcher.view().status,
-        Status::Result("Reloaded Helper sample".into())
-    );
-    assert_eq!(installed.waiting().as_deref(), Some("started"));
-    assert_eq!(
-        installed.run("Echo through the helper"),
-        Status::Result(format!("Echoed \"hello from Pane\" on {}", this_system()))
-    );
-}
-
-#[test]
-fn updating_while_the_helper_runs_ends_its_process() {
-    let installed = Installed::new();
-    let pending = installed.start("Echo after waiting");
-
-    block_on(installed.launcher.preview_package(&installed.folder));
-    select_title(&installed.launcher, "Update");
-    block_on(installed.launcher.activate_selected());
-    pending.assert_stopped(&installed.runtime);
-
-    assert_eq!(
-        installed.launcher.view().status,
-        Status::Result("Updated Helper sample to 0.1.0".into())
-    );
-    assert_eq!(installed.waiting().as_deref(), Some("started"));
-}
-
-#[test]
-fn uninstalling_while_the_helper_runs_ends_its_process_and_keeps_saved_data() {
-    let installed = Installed::new();
-    let pending = installed.start("Echo after waiting");
-
-    block_on(
-        installed
-            .launcher
-            .uninstall(&installed.identity, SavedData::Keep),
-    );
-    pending.assert_stopped(&installed.runtime);
-
-    assert_eq!(installed.waiting().as_deref(), Some("started"));
-    assert_eq!(block_on(installed.runtime.running()), Vec::<PathBuf>::new());
 }
 
 #[test]
@@ -587,6 +716,25 @@ fn a_helper_declaration_pane_cannot_use_is_an_invalid_manifest() {
             "helper file `../echo` must be a relative path inside the package folder",
         ),
         (
+            r#"[{ "id": "echo", "targets": { "windows-x86_64": "helpers/echo.cmd" } }]"#,
+            "helper `echo`: its file helpers/echo.cmd for Windows x86-64 must be a program \
+             ending in .exe",
+        ),
+        (
+            r#"[{ "id": "echo", "targets": { "windows-x86_64": "helpers/echo" } }]"#,
+            "helper `echo`: its file helpers/echo for Windows x86-64 must be a program \
+             ending in .exe",
+        ),
+        (
+            r#"[{ "id": "Echo", "targets": { "linux-x86_64": "echo" } }]"#,
+            "helper id `Echo` must be lowercase letters, digits and dashes, starting with a \
+             letter or digit, at most 64 long",
+        ),
+        (
+            r#"[{ "id": "echo\u0000", "targets": { "linux-x86_64": "echo" } }]"#,
+            "helper id `echo\\0` must be lowercase letters",
+        ),
+        (
             r#"[{ "id": "echo", "targets": {} }]"#,
             "helper `echo` has no `targets`",
         ),
@@ -602,12 +750,8 @@ fn a_helper_declaration_pane_cannot_use_is_an_invalid_manifest() {
     ] {
         let sources = tempfile::tempdir().unwrap();
         let data = tempfile::tempdir().unwrap();
-        let launcher = Launcher::with_packages(
-            Ok(Runtime::start().unwrap()),
-            vec![],
-            data.path().join("extensions"),
-        );
-        let folder = helper_package(&sources.path().join("helper"), declared(helpers));
+        let launcher = bare_launcher(&data);
+        let folder = RUST.copy_to(&sources.path().join("helper"), declared(helpers));
 
         block_on(launcher.preview_package(&folder));
 
@@ -617,23 +761,4 @@ fn a_helper_declaration_pane_cannot_use_is_an_invalid_manifest() {
         assert!(message.starts_with("Invalid pane.json: "), "{message}");
         assert!(message.contains(explanation), "{helpers}: {message}");
     }
-}
-
-#[test]
-fn repeated_stops_leave_no_helper_running() {
-    let installed = Installed::new();
-    for _ in 0..3 {
-        let pending = installed.start("Echo after waiting");
-        block_on(installed.launcher.set_enabled(&installed.identity, false));
-        pending.assert_stopped(&installed.runtime);
-        block_on(installed.launcher.set_enabled(&installed.identity, true));
-
-        let pending = installed.start("Echo after waiting");
-        block_on(installed.launcher.reload(&installed.identity));
-        pending.assert_stopped(&installed.runtime);
-
-        let pending = installed.start("Echo within a second");
-        pending.assert_stopped(&installed.runtime);
-    }
-    assert_eq!(installed.waiting().as_deref(), Some("started"));
 }

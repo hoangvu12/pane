@@ -16,3 +16,7 @@ license = "Apache-2.0 OR MIT"
 opt-level = "s"
 lto = true
 strip = true
+
+[dependencies]
+# The target names Pane uses, so the answer names the file that ran.
+pane-target = { path = "../../../crates/pane-target" }

@@ -1,18 +1,28 @@
 //! `pane-echo`, the helper sample's native helper: a plain program Pane
-//! runs for the sample's command, with no dependencies. It reads its input
-//! from standard input and answers on standard output, naming the system it
-//! was built for, so the answer shows which of the package's files ran.
+//! runs for the sample's command. It reads its input from standard input
+//! and answers on standard output, naming the target it was built for (as
+//! `pane-target` names it), so the answer shows which of the package's files
+//! ran.
 //!
 //! - no arguments: answers `Echoed "<input>" on <system> <processor>`;
 //! - `--wait <seconds>`: waits that long first, so that stopping it (by
-//!   cancelling, disabling or reloading) can be seen;
+//!   cancelling, disabling or reloading) can be seen. While it waits it
+//!   appends a byte to `pane-echo.alive` in its working folder every 20 ms,
+//!   and removes the file when it finishes, so a check can see that a
+//!   stopped helper no longer runs without trusting a process id;
 //! - `--fail`: writes an explanation to standard error and exits with code 3;
 //! - `--flood`: writes more output than Pane passes back (2 MiB).
 
+use std::fs::OpenOptions;
 use std::io::{self, Read, Write};
 use std::process::ExitCode;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+use pane_target::Target;
+
+/// Where `--wait` shows that it is still running, in the working folder.
+const ALIVE: &str = "pane-echo.alive";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -29,7 +39,7 @@ fn main() -> ExitCode {
     {
         [] => {}
         ["--wait", seconds] => match seconds.parse::<u64>() {
-            Ok(seconds) => thread::sleep(Duration::from_secs(seconds)),
+            Ok(seconds) => wait(Duration::from_secs(seconds)),
             Err(_) => {
                 eprintln!("pane-echo: --wait needs a whole number of seconds, not {seconds}");
                 return ExitCode::from(2);
@@ -54,17 +64,28 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     }
-    let system = match std::env::consts::OS {
-        "macos" => "macOS",
-        "windows" => "Windows",
-        "linux" => "Linux",
-        other => other,
-    };
-    let processor = match std::env::consts::ARCH {
-        "x86_64" => "x86-64",
-        "aarch64" => "arm64",
-        other => other,
-    };
-    print!("Echoed \"{}\" on {system} {processor}", input.trim());
+    let system = Target::current().map_or_else(
+        || format!("{} {}", std::env::consts::OS, std::env::consts::ARCH),
+        |target| target.to_string(),
+    );
+    print!("Echoed \"{}\" on {system}", input.trim());
     ExitCode::SUCCESS
+}
+
+/// Waits for `duration`, beating in [`ALIVE`] meanwhile.
+fn wait(duration: Duration) {
+    let started = Instant::now();
+    let mut alive = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(ALIVE)
+        .ok();
+    while started.elapsed() < duration {
+        if let Some(file) = &mut alive {
+            let _ = file.write_all(b".");
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    drop(alive);
+    let _ = std::fs::remove_file(ALIVE);
 }

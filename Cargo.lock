@@ -4221,6 +4221,7 @@ version = "0.1.0"
 dependencies = [
  "futures",
  "global-hotkey",
+ "pane-target",
  "serde",
  "serde_json",
  "tempfile",
@@ -4231,6 +4232,10 @@ dependencies = [
  "windows 0.62.2",
  "x11rb",
 ]
+
+[[package]]
+name = "pane-target"
+version = "0.1.0"
 
 [[package]]
 name = "parking"
@@ -7629,6 +7634,9 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 [[package]]
 name = "xtask"
 version = "0.1.0"
+dependencies = [
+ "pane-target",
+]
 
 [[package]]
 name = "y4m"

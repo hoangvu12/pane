@@ -5,3 +5,10 @@ version = 4
 [[package]]
 name = "pane-echo"
 version = "0.1.0"
+dependencies = [
+ "pane-target",
+]
+
+[[package]]
+name = "pane-target"
+version = "0.1.0"

@@ -15,7 +15,7 @@ mod platform;
 mod runtime;
 mod search;
 
-pub use helpers::runner::{MAX_HELPER_INPUT, MAX_HELPER_OUTPUT, current_target};
+pub use helpers::runner::{MAX_HELPER_INPUT, MAX_HELPER_OUTPUT};
 pub use launcher::{
     CommandRegistration, CustomViewSnapshot, FormField, FormView, Launcher, LauncherView, Question,
     Row, Screen, Status, Unavailable,
@@ -26,6 +26,7 @@ pub use packages::{
     EXTENSION_API, InstalledPackage, MANIFEST_FILE, MANIFEST_VERSION, Manifest, ManifestCommand,
     ManifestHelper, ManifestOperation, PackageError, PackageIdentity, RetainedData, SavedData,
 };
+pub use pane_target::{Arch, Target};
 pub use platform::Platform;
 pub use runtime::{
     CallError, Choice, CustomViewInfo, CustomViewRole, Field, FieldKind, FieldValue, Form,

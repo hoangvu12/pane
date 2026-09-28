@@ -70,7 +70,8 @@ use root_bindings::exports::pane::extension::root_results;
 use crate::applications::Applications;
 use crate::extension_data::{DataKind, PackageData};
 use crate::generation::{End, Generation};
-use crate::helpers::{self, HelperError, HelperErrorKind, Helpers, Running};
+use crate::helpers;
+use crate::helpers::runner::{self, HelperError, HelperErrorKind, Helpers, Running, Spec};
 use crate::operations::{self, Directory, OperationCall, OperationError, Target};
 use crate::packages::EXTENSION_API;
 
@@ -421,8 +422,9 @@ impl std::error::Error for CallError {}
 pub struct Runtime {
     requests: mpsc::UnboundedSender<Request>,
     applications: SharedApplications,
-    /// The native helper processes guests started, for diagnostics.
-    helpers: Helpers,
+    /// The native helper processes guests started, which end once every
+    /// handle is dropped.
+    lifetime: Arc<Lifetime>,
     /// Component checks, served one at a time by the checker thread, apart
     /// from the runtime thread: a reload's check must not wait behind the
     /// guest call the reload is about to stop.
@@ -436,8 +438,21 @@ pub struct Runtime {
 pub(crate) struct WeakRuntime {
     requests: mpsc::WeakUnboundedSender<Request>,
     applications: SharedApplications,
-    helpers: Helpers,
+    lifetime: std::sync::Weak<Lifetime>,
     checks: std::sync::mpsc::Sender<Check>,
+}
+
+/// What ends with the last [`Runtime`] handle: the helper processes, which
+/// would otherwise outlive it (quitting Pane drops the launcher, and so its
+/// runtime).
+struct Lifetime {
+    helpers: Helpers,
+}
+
+impl Drop for Lifetime {
+    fn drop(&mut self) {
+        self.helpers.stop_all();
+    }
 }
 
 impl WeakRuntime {
@@ -446,7 +461,7 @@ impl WeakRuntime {
         Some(Runtime {
             requests: self.requests.upgrade()?,
             applications: self.applications.clone(),
-            helpers: self.helpers.clone(),
+            lifetime: self.lifetime.upgrade()?,
             checks: self.checks.clone(),
         })
     }
@@ -545,7 +560,7 @@ impl Runtime {
         WeakRuntime {
             requests: self.requests.downgrade(),
             applications: self.applications.clone(),
-            helpers: self.helpers.clone(),
+            lifetime: Arc::downgrade(&self.lifetime),
             checks: self.checks.clone(),
         }
     }
@@ -603,7 +618,7 @@ impl Runtime {
         Ok(Runtime {
             requests,
             applications,
-            helpers,
+            lifetime: Arc::new(Lifetime { helpers }),
             checks,
         })
     }
@@ -851,7 +866,7 @@ impl Runtime {
     /// running (not yet ended and reaped), in no particular order. A
     /// diagnostic for tests and logs, like [`Runtime::running`].
     pub fn helper_processes(&self) -> Vec<u32> {
-        self.helpers.running()
+        self.lifetime.helpers.running()
     }
 
     /// Ends every native helper process guests started, waiting until each
@@ -859,7 +874,14 @@ impl Runtime {
     /// would end them otherwise. The calls that ran them answer that they
     /// were stopped.
     pub fn stop_helpers(&self) {
-        self.helpers.stop_all();
+        self.lifetime.helpers.stop_all();
+    }
+
+    /// Ends the native helper processes running a file inside `folder`,
+    /// waiting (briefly) until each is reaped: before a replaced managed
+    /// copy is removed, so no running program keeps it in use.
+    pub(crate) fn stop_helpers_in(&self, folder: &Path) {
+        self.lifetime.helpers.stop_in(folder);
     }
 
     /// Drops the compiled code and live instances of `components`, for
@@ -952,80 +974,25 @@ impl GuestState {
         args: Vec<String>,
         input: String,
     ) -> Result<Running, HelperError> {
-        use HelperErrorKind::*;
         // Code whose generation ended starts no more work.
         if let Some(end) = self.stopped() {
-            return Err(helpers::stopped_code(end));
+            return Err(runner::stopped_code(end));
         }
         if self.data.is_none() {
             return Err(HelperError::new(
-                Refused,
+                HelperErrorKind::Refused,
                 "only installed packages ship helpers; this command is built into Pane",
             ));
         }
-        helpers::check_limits(&args, &input)?;
+        runner::check_limits(&args, &input)?;
         let directory = self
             .directory
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
         let installed = directory.map(|directory| directory()).unwrap_or_default();
-        let package = installed
-            .packages
-            .iter()
-            .find(|package| self.component.starts_with(&package.location))
-            .ok_or_else(|| {
-                HelperError::new(
-                    Refused,
-                    "Pane does not know the package of this command; only installed \
-                     packages ship helpers",
-                )
-            })?;
-        let manifest = package.manifest.as_ref().map_err(|error| {
-            HelperError::new(Unavailable, format!("the package cannot load: {error}"))
-        })?;
-        let Some(helper) = manifest.helpers.iter().find(|helper| helper.id == name) else {
-            let declared: Vec<String> = manifest
-                .helpers
-                .iter()
-                .map(|helper| format!("`{}`", helper.id))
-                .collect();
-            let declared = match declared.as_slice() {
-                [] => "it declares none".to_owned(),
-                names => format!("it declares {}", crate::platform::join(names)),
-            };
-            return Err(HelperError::new(
-                NotFound,
-                format!(
-                    "{} declares no helper `{name}` in its pane.json; {declared}",
-                    package.title()
-                ),
-            ));
-        };
-        let target = helpers::current_target();
-        let Some(file) = helper.for_this_system() else {
-            let targets: Vec<String> = helper
-                .targets
-                .keys()
-                .map(|target| helpers::target_name(target))
-                .collect();
-            return Err(HelperError::new(
-                Unavailable,
-                format!(
-                    "Not available on {}: helper `{name}` is built only for {}",
-                    helpers::target_name(&target),
-                    crate::platform::join(&targets)
-                ),
-            ));
-        };
-        let program = package.location.join(file);
-        if let Some(reason) = helpers::unfit(&program, file, &target) {
-            return Err(HelperError::new(
-                Unavailable,
-                format!("helper `{name}` cannot run: {reason}"),
-            ));
-        }
-        self.helpers.start(helpers::Spec {
+        let program = helpers::find(&installed, &self.component, &name)?;
+        self.helpers.start(Spec {
             name,
             program,
             args,
@@ -1034,6 +1001,7 @@ impl GuestState {
             owner: self.owner,
         })
     }
+
     /// The generation the instance belongs to; `None` for a command built
     /// into Pane, which runs as long as Pane.
     pub(crate) fn generation(&self) -> Option<&Generation> {
@@ -2167,6 +2135,58 @@ mod tests {
             path.display()
         );
         path
+    }
+
+    /// Quitting Pane drops the launcher, and with it the last runtime
+    /// handle: a helper still running then ends too.
+    #[test]
+    fn dropping_the_last_runtime_handle_ends_running_helpers() {
+        let target = pane_target::Target::current().expect("a known target");
+        let program = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/guests/packages/sample-helper/helpers")
+            .join(target.id())
+            .join(format!("pane-echo{}", target.exe_suffix()));
+        assert!(
+            program.exists(),
+            "{} is missing; run `cargo xtask guests`",
+            program.display()
+        );
+        let runtime = Runtime::start().unwrap();
+        let helpers = runtime.lifetime.helpers.clone();
+        let running = helpers
+            .start(runner::Spec {
+                name: "echo".into(),
+                program,
+                args: vec!["--wait".into(), "5".into()],
+                input: "hi".into(),
+                generation: None,
+                owner: helpers.new_owner(),
+            })
+            .unwrap();
+        let clone = runtime.clone();
+        drop(runtime);
+        assert_eq!(helpers.running().len(), 1, "a clone keeps the runtime");
+
+        let dropped = std::time::Instant::now();
+        drop(clone);
+
+        assert_eq!(helpers.running(), Vec::<u32>::new());
+        let error = block_on(running.finish()).unwrap_err();
+        assert_eq!(error.kind, HelperErrorKind::Refused, "{error:?}");
+        assert!(dropped.elapsed() < std::time::Duration::from_secs(4));
+        // Nothing starts once it is gone.
+        assert!(
+            helpers
+                .start(runner::Spec {
+                    name: "echo".into(),
+                    program: PathBuf::from("unused"),
+                    args: vec![],
+                    input: String::new(),
+                    generation: None,
+                    owner: 0,
+                })
+                .is_err()
+        );
     }
 
     /// A call for a package that was disabled, served after its instances

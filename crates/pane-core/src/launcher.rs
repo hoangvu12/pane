@@ -1473,11 +1473,12 @@ impl Launcher {
                 Ok(package) => {
                     let store = store.clone();
                     let mode = mode.clone();
+                    let retire = self.retire(&package.identity);
                     off_thread(move || {
                         let mut store = store.lock().unwrap_or_else(|p| p.into_inner());
                         match mode {
                             Mode::Install => store.install(&package),
-                            Mode::Update(_) => store.update(&package),
+                            Mode::Update(_) => store.update(&package, retire),
                         }
                     })
                     .await
@@ -1539,11 +1540,8 @@ impl Launcher {
             self.sync_hotkeys(state);
             return false;
         };
-        // The replaced copy's code is not run again: its generation ends,
-        // which stops its pending calls, and the new code runs in a new one.
-        if let Some(installation) = &self.installation {
-            installation.data.replace_code(&installed.identity);
-        }
+        // The replaced copy's code no longer runs: its generation ended
+        // before its folder was removed ([`Launcher::retire`]).
         let replaced: Vec<PathBuf> = package
             .commands()
             .into_iter()
@@ -2447,6 +2445,26 @@ impl Launcher {
     fn data_in(&self, state: &State, component: &Path) -> Option<PackageData> {
         let package = owner(&state.packages, component)?;
         Some(self.installation.as_ref()?.data.owned_by(&package.identity))
+    }
+
+    /// What an update or reload of the package with `identity` does to the
+    /// old code once the new copy is recorded, before the old copy's folder
+    /// is removed: its generation ends, which stops its pending calls (the
+    /// new code runs in a new one), and its helpers are ended and reaped, so
+    /// no running program keeps the folder in use (Windows would refuse to
+    /// remove it).
+    fn retire(&self, identity: &PackageIdentity) -> impl FnOnce(&Path) + Send + 'static {
+        let data = self.installation.as_ref().map(|i| i.data.clone());
+        let runtime = self.runtime().ok().cloned();
+        let identity = identity.clone();
+        move |old: &Path| {
+            if let Some(data) = data {
+                data.replace_code(&identity);
+            }
+            if let Some(runtime) = runtime {
+                runtime.stop_helpers_in(old);
+            }
+        }
     }
 
     fn runtime(&self) -> Result<&Runtime, CallError> {

@@ -25,6 +25,8 @@ const PREBUILT: &[&str] = &[
     "sample_operations_ts",
     "sample_applications_js",
     "sample_applications_ts",
+    "sample_helper_js",
+    "sample_helper_ts",
 ];
 
 fn main() -> ExitCode {
@@ -139,29 +141,39 @@ fn guests() -> Result<(), String> {
     Ok(())
 }
 
-/// Builds the helper sample's native helper, `pane-echo`, for the system
-/// this runs on, and puts it in the helper sample package as that target's
-/// file, as its `pane.json` names it. An author ships one build per target;
+/// Builds the helper samples' native helper, `pane-echo`, for the system
+/// this runs on, and puts it in each helper sample package (Rust,
+/// JavaScript, TypeScript) as that target's file, as its `pane.json` names
+/// it. CI runs this natively on each of its three systems, so each runs a
+/// real helper built for it. An author ships one build per target;
 /// Pane runs the one for its own system and compiles nothing.
 fn echo_helper(root: &Path, out: &Path) -> Result<(), String> {
     let dir = root.join("guests/helpers/echo");
     run(cargo()
         .current_dir(&dir)
         .args(["build", "--locked", "--release"]))?;
-    let file = format!("pane-echo{}", std::env::consts::EXE_SUFFIX);
-    let target = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
+    let target = pane_target::Target::current()
+        .ok_or("Pane names no helper target for this system and processor")?;
+    let file = format!("pane-echo{}", target.exe_suffix());
+    let target = target.id();
     let built = dir.join("target/release").join(&file);
-    let dest = out.join("packages/sample-helper/helpers").join(target);
-    std::fs::create_dir_all(&dest).map_err(|error| error.to_string())?;
-    std::fs::copy(&built, dest.join(&file))
-        .map_err(|error| format!("copy {} failed: {error}", built.display()))?;
+    for package in ["sample-helper", "sample-helper-js", "sample-helper-ts"] {
+        let dest = out
+            .join("packages")
+            .join(package)
+            .join("helpers")
+            .join(&target);
+        std::fs::create_dir_all(&dest).map_err(|error| error.to_string())?;
+        std::fs::copy(&built, dest.join(&file))
+            .map_err(|error| format!("copy {} failed: {error}", built.display()))?;
+    }
     Ok(())
 }
 
 /// (package folder in `guests/packages`, component) of each sample package,
 /// and of the default extensions (the calculator, applications and
 /// quicklinks).
-const SAMPLE_PACKAGES: [(&str, &str); 15] = [
+const SAMPLE_PACKAGES: [(&str, &str); 17] = [
     ("sample-rust", "sample_rust"),
     ("sample-settings", "sample_settings"),
     ("sample-js", "sample_js"),
@@ -177,6 +189,8 @@ const SAMPLE_PACKAGES: [(&str, &str); 15] = [
     ("sample-applications-js", "sample_applications_js"),
     ("sample-applications-ts", "sample_applications_ts"),
     ("sample-helper", "sample_helper"),
+    ("sample-helper-js", "sample_helper_js"),
+    ("sample-helper-ts", "sample_helper_ts"),
 ];
 
 /// Rebuilds `guests/prebuilt/` from the JS/TS sample sources, then refreshes
@@ -209,7 +223,7 @@ fn ci() -> Result<(), String> {
             .current_dir(root.join(dir))
             .args(["fmt", "--all", "--check"]))?;
     }
-    run(cargo().current_dir(&root).args([
+    let clippy = [
         "clippy",
         "--locked",
         "--workspace",
@@ -217,7 +231,12 @@ fn ci() -> Result<(), String> {
         "--",
         "-D",
         "warnings",
-    ]))?;
+    ];
+    run(cargo().current_dir(&root).args(clippy))?;
+    // The helper sample's native helper, an ordinary program of its own.
+    run(cargo()
+        .current_dir(root.join("guests/helpers/echo"))
+        .args(clippy))?;
     run(cargo()
         .current_dir(&root)
         .args(["test", "--locked", "--workspace"]))
