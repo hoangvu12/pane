@@ -27,6 +27,12 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   copies ([Root results](#root-results-computed-from-the-query),
   [expression scope](../docs/root-search.md#the-calculator)). Its package
   is `packages/calculator`; held by `crates/pane-core/tests/calculator.rs`.
+- `applications`: Pane's application launcher, a default extension in
+  Rust: the installed applications, which Pane's host finds, are found by
+  name in root search and Enter opens one
+  ([Root results supplied ahead of the query](#root-results-supplied-ahead-of-the-query),
+  [applications](../docs/applications.md)). Its package is
+  `packages/applications`; held by `crates/pane-core/tests/applications.rs`.
 - `sample-operations`, `sample-operations-js`, `sample-operations-ts`: each
   package publishes the operation `greet` and has a command that calls
   another's, Rust calling JavaScript and TypeScript and they calling Rust
@@ -38,7 +44,7 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   language), committed so that tests and
   `cargo run -p pane` need no JavaScript toolchain, with `manifest.json`
   recording their hashes and build inputs.
-- `packages`: the samples' and the calculator's package manifests (`pane.json`). `cargo xtask
+- `packages`: the samples', the calculator's and applications' package manifests (`pane.json`). `cargo xtask
   guests` puts each one with its built component in
   `target/guests/packages/<name>/`, a ready-to-install package.
 - `fixtures/faulty`: test fixture whose actions, form, custom view and root
@@ -463,6 +469,49 @@ export const rootResults: RootResults = {
 
 The three samples answer "reverse <text>" this way; their packages in
 [`packages/`](packages) set `rootResults`.
+
+## Root results supplied ahead of the query
+
+A command can also give root search results that do not depend on the
+query, as the [applications](applications) extension gives the installed
+applications: Pane asks once root search is used, keeps them, and matches
+and ranks them by title like commands, for a query that is not blank. Set
+`"indexedResults": true` on the command in `pane.json` and export
+`pane:extension/indexed-results` ([`wit/applications.wit`](../wit/applications.wit))
+beside the command. Pane asks again after each return to root search; an
+error is listed as a row explaining it. The only action is opening an
+installed application. See [root search](../docs/root-search.md#results-supplied-ahead-of-the-query)
+and [applications](../docs/applications.md).
+
+Any Rust command can also find and open the installed applications through
+Pane (`pane_guest::applications`, the `pane:extension/applications`
+import), since a WASI guest cannot:
+
+```rust
+use pane_guest::alloc::{string::String, vec::Vec};
+use pane_guest::applications;
+use pane_guest::indexed::{IndexedAction, IndexedResult};
+
+pane_guest::export!(Apps);
+pane_guest::indexed::export!(Apps);
+
+impl pane_guest::indexed::Guest for Apps {
+    async fn results() -> Result<Vec<IndexedResult>, String> {
+        Ok(applications::installed()?
+            .into_iter()
+            .map(|app| IndexedResult {
+                action: IndexedAction::OpenApplication(app.id.clone()),
+                id: app.id,
+                title: app.name,
+                subtitle: Some("Application".into()),
+            })
+            .collect())
+    }
+}
+```
+
+`applications::open(&id)` opens one from a command's own action. JavaScript
+and TypeScript commands cannot use either yet.
 
 ## Custom views
 

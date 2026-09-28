@@ -408,21 +408,49 @@ grep -q '"greeting-style": "formal"' "$out/data/extensions/settings.json" || { e
 grep -q '"note": "Water the plants"' "$out/data/extensions/content.json" || { echo "note lost"; exit 1; }
 grep -q '"token": "sample-token"' "$out/data/extensions/credentials.json" || { echo "credential lost"; exit 1; }
 
+# Applications, a default extension: an installed application is found by
+# name in root search and Enter opens it. The application is a desktop entry
+# the smoke adds in an XDG_DATA_HOME of its own (for Pane only), whose
+# program writes a marker file, so nothing else is started; Pane still
+# searches the system's applications too.
+apps=$(cd "$out" && pwd)/apps
+rm -rf "$apps"
+mkdir -p "$apps/data/applications"
+cat >"$apps/data/applications/pane-smoke-app.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Pane Smoke App
+Exec=sh -c "echo launched > '$apps/launched'"
+EOF
+XDG_DATA_HOME=$apps/data start_pane --install target/guests/packages/applications
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 2   # Install
+"$xdotool" type --delay 50 'pane smoke'; sleep 3
+capture 44-application.png
+check 44-application.png 364355 3000   # the selected application row
+"$xdotool" key Return; sleep 3
+capture 45-opened.png
+check 45-opened.png 9fd8a8   # "Opened Pane Smoke App"
+for _ in $(seq 50); do [ -f "$apps/launched" ] && break; sleep 0.2; done
+[ -f "$apps/launched" ] || { echo "the application did not run"; exit 1; }
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{44-application,45-opened}.png
+stop_pane
+
 # Uninstall the settings sample, keeping its saved data: its row follows the
-# six Clear cache rows. Pane asks first, showing its saved data, and the first
+# seven Clear cache rows. Pane asks first, showing its saved data, and the first
 # choice keeps its settings and content while its copy and credential go.
 # Installing the same folder again finds its formal style and note, signed out.
 start_pane
 "$xdotool" windowfocus --sync "$window"
-for ((i = 0; i < 12; i++)); do "$xdotool" key Down; done   # the last row
+for ((i = 0; i < 13; i++)); do "$xdotool" key Down; done   # the last row
 "$xdotool" key Return; sleep 1
-for ((i = 0; i < 19; i++)); do "$xdotool" key Down; done
+for ((i = 0; i < 22; i++)); do "$xdotool" key Down; done
 "$xdotool" key Return; sleep 1   # "Uninstall Settings sample"
-capture 44-confirm-uninstall.png
-check 44-confirm-uninstall.png aab4c0   # what is removed and the saved data
+capture 46-confirm-uninstall.png
+check 46-confirm-uninstall.png aab4c0   # what is removed and the saved data
 "$xdotool" key Return; sleep 2   # "Uninstall and keep saved data"
-capture 45-uninstalled.png
-check 45-uninstalled.png 9fd8a8   # "Uninstalled Settings sample; its settings and content are kept"
+capture 47-uninstalled.png
+check 47-uninstalled.png 9fd8a8   # "Uninstalled Settings sample; its settings and content are kept"
 stop_pane
 grep -q '"retained"' "$out/data/extensions/installed.json" || { echo "kept data not recorded"; exit 1; }
 if grep -q 'sample-token' "$out/data/extensions/credentials.json"; then echo "credential not removed"; exit 1; fi
@@ -434,9 +462,9 @@ start_pane --install target/guests/packages/sample-settings
 "$xdotool" key Return; sleep 3   # open Greeting
 for ((i = 0; i < 5; i++)); do "$xdotool" key Down; done
 "$xdotool" key Return; sleep 2   # "Show what Pane keeps"
-capture 46-reinstalled.png
-check 46-reinstalled.png 9fd8a8   # "Style: formal · Note: Water the plants · Signed in: no ..."
-python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/43-kept-after-clear.png" "$out/46-reinstalled.png"
+capture 48-reinstalled.png
+check 48-reinstalled.png 9fd8a8   # "Style: formal · Note: Water the plants · Signed in: no ..."
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/43-kept-after-clear.png" "$out/48-reinstalled.png"
 "$xdotool" key Escape; sleep 1
 stop_pane
 if grep -q '"retained"' "$out/data/extensions/installed.json"; then echo "retained record not dropped"; exit 1; fi

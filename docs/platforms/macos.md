@@ -118,6 +118,21 @@ package, types "6*7", checks the selected answer row, presses Enter to copy
 it, then compares typing "42+1" with pasting the copy (Cmd+A, Cmd+V) and typing
 "+1", which must look the same. In run [36423871204](https://github.com/wasimysaid/pane/actions/runs/36423871204) (commit `ab91081`) every step passed: "6*7" answered 42, Enter copied it, and pasting then typing "+1" matched typing "42+1", so the system clipboard held "42" ([27-answer.png](evidence/macos/27-answer.png), [30-pasted.png](evidence/macos/30-pasted.png)).
 
+## Applications (#25)
+
+[Applications](../applications.md) finds the `.app` bundles in
+`/Applications`, `/System/Applications` and `~/Applications` (and their
+subfolders such as `Utilities`) and opens one with `/usr/bin/open`. The
+smoke's last phase (screenshots 44 and 45) makes a bundle "Pane Smoke App"
+whose program is a shell script writing a marker file, in `~/Applications`
+of a HOME given to Pane only, installs the package, types "pane smoke",
+checks the selected row, presses Return and checks "Opened Pane Smoke App"
+and the marker. The adapter tests also open such a bundle and require
+Calculator among the system's applications. **Not run on macOS yet**: this
+branch was not pushed, so the phase, the native tests and the
+`open`/Launch Services path are unverified here, including whether Launch
+Services runs an unsigned script bundle on the runner.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms now have a text field. The

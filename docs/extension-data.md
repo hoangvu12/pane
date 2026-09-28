@@ -185,7 +185,10 @@ reads this list; `Launcher::retained_data` returns it):
   (explained, removed at the next start).
   `crates/pane-core/tests/operations.rs`: an uninstalled target is not found
   and its instance stops. `crates/pane/tests/install.rs`: the rows, the
-  confirmation, Esc and the outcome in the native window.
+  confirmation, Esc and the outcome in the native window. The native GUI
+  smokes, screenshots 46 to 48: the confirmation, the outcome, and after
+  reinstalling the same folder its style and note shown, signed out, with
+  the files checked in between.
 - `crates/pane-core/tests/clear_cache.rs`, for each language's settings sample:
   each kind before and after clearing, and after a restart; Cancel and Esc;
   two copies with the same title, with the source folders and a user document

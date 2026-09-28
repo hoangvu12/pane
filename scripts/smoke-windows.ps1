@@ -419,20 +419,54 @@ if (-not (Select-String -Quiet -SimpleMatch '"greeting-style": "formal"' (Join-P
 if (-not (Select-String -Quiet -SimpleMatch '"note": "Water the plants"' (Join-Path $data "extensions/content.json"))) { throw "note lost" }
 if (-not (Select-String -Quiet -SimpleMatch '"token": "sample-token"' (Join-Path $data "extensions/credentials.json"))) { throw "credential lost" }
 
+# Applications, a default extension: an installed application is found by
+# name in root search and Enter opens it. The application is a Start menu
+# shortcut the smoke adds under an APPDATA of its own (for Pane only), to
+# cmd.exe writing a marker file, so nothing else is started; Pane still
+# searches the system's applications too.
+$apps = Join-Path (Resolve-Path $OutDir) "apps"
+if (Test-Path $apps) { Remove-Item -Recurse -Force $apps }
+$programs = Join-Path $apps "AppData\Microsoft\Windows\Start Menu\Programs"
+New-Item -ItemType Directory -Force -Path $programs | Out-Null
+$launched = Join-Path $apps "launched.txt"
+$shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $programs "Pane Smoke App.lnk"))
+$shortcut.TargetPath = "$env:SystemRoot\System32\cmd.exe"
+$shortcut.Arguments = "/c echo launched> `"$launched`""
+$shortcut.WindowStyle = 7   # minimized, so it does not cover Pane
+$shortcut.Save()
+$appData = $env:APPDATA
+$env:APPDATA = Join-Path $apps "AppData"
+$process = Start-Pane "stderr-applications.log" @("--install", "target/guests/packages/applications")
+$env:APPDATA = $appData
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install
+Send "pane smoke"; Start-Sleep -Seconds 3
+Capture "44-application.png"
+Check "44-application.png" "364355" 3000   # the selected application row
+Send "{ENTER}"; Start-Sleep -Seconds 3
+Focus-Pane $process
+Capture "45-opened.png"
+Check "45-opened.png" "9fd8a8"   # "Opened Pane Smoke App"
+for ($i = 0; $i -lt 50 -and -not (Test-Path $launched); $i++) { Start-Sleep -Milliseconds 200 }
+if (-not (Test-Path $launched)) { throw "the application did not run" }
+$shots = "44-application", "45-opened" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: opening the application changed nothing" }
+Stop-Pane $process
+
 # Uninstall the settings sample, keeping its saved data: its row follows the
-# six Clear cache rows. Pane asks first, showing its saved data, and the first
+# seven Clear cache rows. Pane asks first, showing its saved data, and the first
 # choice keeps its settings and content while its copy and credential go.
 # Installing the same folder again finds its formal style and note, signed out.
 $process = Start-Pane "stderr-uninstall.log"
-Send "{DOWN 12}"   # the last row
+Send "{DOWN 13}"   # the last row
 Send "{ENTER}"; Start-Sleep -Seconds 1
-Send "{DOWN 19}"
+Send "{DOWN 22}"
 Send "{ENTER}"; Start-Sleep -Seconds 1   # "Uninstall Settings sample"
-Capture "44-confirm-uninstall.png"
-Check "44-confirm-uninstall.png" "aab4c0"   # what is removed and the saved data
+Capture "46-confirm-uninstall.png"
+Check "46-confirm-uninstall.png" "aab4c0"   # what is removed and the saved data
 Send "{ENTER}"; Start-Sleep -Seconds 2   # "Uninstall and keep saved data"
-Capture "45-uninstalled.png"
-Check "45-uninstalled.png" "9fd8a8"   # "Uninstalled Settings sample; its settings and content are kept"
+Capture "47-uninstalled.png"
+Check "47-uninstalled.png" "9fd8a8"   # "Uninstalled Settings sample; its settings and content are kept"
 Stop-Pane $process
 if (-not (Select-String -Quiet -SimpleMatch '"retained"' (Join-Path $data "extensions/installed.json"))) { throw "kept data not recorded" }
 if (Select-String -Quiet -SimpleMatch 'sample-token' (Join-Path $data "extensions/credentials.json")) { throw "credential not removed" }
@@ -443,9 +477,9 @@ Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Greeting is selected
 Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greeting
 Send "{DOWN 5}"
 Send "{ENTER}"; Start-Sleep -Seconds 2   # "Show what Pane keeps"
-Capture "46-reinstalled.png"
-Check "46-reinstalled.png" "9fd8a8"   # "Style: formal · Note: Water the plants · Signed in: no ..."
-python "$PSScriptRoot/check_screenshot.py" --distinct (Join-Path $OutDir "43-kept-after-clear.png") (Join-Path $OutDir "46-reinstalled.png")
+Capture "48-reinstalled.png"
+Check "48-reinstalled.png" "9fd8a8"   # "Style: formal · Note: Water the plants · Signed in: no ..."
+python "$PSScriptRoot/check_screenshot.py" --distinct (Join-Path $OutDir "43-kept-after-clear.png") (Join-Path $OutDir "48-reinstalled.png")
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the credential is still shown" }
 Send "{ESC}"; Start-Sleep -Seconds 1
 Stop-Pane $process

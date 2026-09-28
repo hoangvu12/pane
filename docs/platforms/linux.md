@@ -278,6 +278,51 @@ of the whole smoke passed.
 The macOS and Windows smokes run the same phase (screenshots 40 to 43); it
 has not run there yet.
 
+### Applications (#24, #25, #26)
+
+The applications phase adds a desktop entry "Pane Smoke App" whose `Exec` writes a
+marker file, in an `XDG_DATA_HOME` given to Pane only (the system's
+`XDG_DATA_DIRS` entries are searched too), installs the
+[applications](../applications.md) package, types "pane smoke" with real
+X11 key events, checks the selected row, presses Return and checks "Opened
+Pane Smoke App" and that the marker was written. Run locally on 2026-09-28
+(Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64, same Xvfb/lavapipe
+setup): all checks of the whole smoke passed. The adapter tests also run a
+desktop entry's program natively and explain a missing program and a
+terminal application.
+
+| Step | Evidence |
+| --- | --- |
+| "pane smoke" typed: the application found by name, selected | [44-application.png](evidence/linux-x11/44-application.png) |
+| Return: "Opened Pane Smoke App"; its program wrote the marker | [45-opened.png](evidence/linux-x11/45-opened.png) |
+
+Only X11 (Xvfb, no desktop session) ran; Wayland and real desktops'
+`XDG_CURRENT_DESKTOP`, Flatpak and Snap folders are untested. Disabling is
+covered by the launcher tests, not natively.
+
+### Uninstalling an extension (#40)
+
+The last phase restarts Pane, chooses "Uninstall Settings sample" in
+**Manage extensions…** and the first choice, "Uninstall and keep saved
+data". It then checks that `installed.json` records the retained data, that
+the token is gone from `credentials.json` and that the style and note are
+still in `settings.json` and `content.json`; installs the same folder again
+and shows what Pane keeps, which must differ from screenshot 43 (signed out
+now), and checks that the retained record was dropped. Run locally on
+2026-09-28 (Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64, same
+Xvfb/lavapipe setup): all checks of the whole smoke passed.
+
+| Step | Evidence |
+| --- | --- |
+| "Uninstall Settings sample?", its source, what is removed, "Saved data: 1 setting and 1 content record", the source folder kept; the three choices | `46-confirm-uninstall.png` (not committed: it shows the local checkout path) |
+| "Uninstalled Settings sample; its settings and content are kept" | `47-uninstalled.png` (not committed: the list's rows show the local checkout path) |
+| Reinstalled: "Style: formal · Note: Water the plants · Signed in: no · Cached greeting: none" | [48-reinstalled.png](evidence/linux-x11/48-reinstalled.png) |
+
+The macOS and Windows smokes run the same phase (screenshots 46 to 48); it
+has not run there yet. A managed folder that Windows keeps in use is covered
+only by the leftover mechanism's Unix test (a read-only folder), not
+natively.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms have a text field (GPUI CE's

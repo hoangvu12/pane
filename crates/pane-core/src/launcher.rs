@@ -16,6 +16,8 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+mod indexed;
+
 use crate::extension_data::{ExtensionData, PackageData};
 use crate::operations::{self, Installed};
 use crate::packages::{
@@ -245,6 +247,9 @@ struct State {
     /// The root results commands computed from the current query, listed
     /// first; each command's results are added when it answers.
     computed: Vec<Computed>,
+    /// The root results commands supplied ahead of the query, such as the
+    /// installed applications, listed for a query that is not blank.
+    indexes: indexed::Indexes,
     /// Incremented on every search, so that an answer arriving for an
     /// earlier search, even of the same query, is discarded.
     search_generation: u64,
@@ -410,6 +415,8 @@ struct Computed {
 enum Entry {
     /// Copy this text to the clipboard, which the window does (root).
     Copy(String),
+    /// Open the installed application `id`, named `name` (root).
+    OpenApplication { id: String, name: String },
     /// Open the command with this component (root).
     Open(PathBuf),
     /// Explain why this installed package cannot load (root).
@@ -497,6 +504,7 @@ impl Launcher {
             entries: Vec::new(),
             root: Vec::new(),
             computed: Vec::new(),
+            indexes: indexed::Indexes::default(),
             search_generation: 0,
             open: None,
             form: None,
@@ -574,16 +582,24 @@ impl Launcher {
     /// as it answers. Their answers are discarded if the query has changed
     /// meanwhile, and a command that fails is listed as a result explaining
     /// the failure.
+    ///
+    /// The first query that is not blank since root search was shown also
+    /// asks the enabled commands that supply results ahead of the query
+    /// (such as the installed applications), after those; the future lists
+    /// their results, matched like titles, when they answer, and they are
+    /// kept for later queries. Until then the results kept from before are
+    /// listed.
     pub fn set_query(&self, query: &str) -> impl Future<Output = ()> + Send + 'static {
         let mut state = self.lock();
-        let asked = match &state.view.screen {
+        let (asked, indexing) = match &state.view.screen {
             Screen::Root { query: current } if current != query => {
                 self.search(&mut state, query);
-                self.ask_for_root_results(&state, query)
+                let indexing = self.ask_for_indexed_results(&mut state, query);
+                (self.ask_for_root_results(&state, query), indexing)
             }
             // Searching the same query again changes nothing, not even the
             // selection.
-            _ => Vec::new(),
+            _ => (Vec::new(), Vec::new()),
         };
         let query = query.to_owned();
         let generation = state.screen_generation;
@@ -596,7 +612,95 @@ impl Launcher {
                     .show_root_results(generation, search, query, asked)
                     .await
             }
+            launcher.show_indexed_results(indexing).await;
         }
+    }
+
+    /// The enabled commands that supply root results ahead of the query and
+    /// are to be asked now, each with its settings; none for a blank query.
+    fn ask_for_indexed_results(
+        &self,
+        state: &mut State,
+        query: &str,
+    ) -> Vec<(CommandRegistration, Option<PackageData>)> {
+        if query.trim().is_empty() {
+            return Vec::new();
+        }
+        let commands = state
+            .packages
+            .iter()
+            .filter(|package| package.enabled)
+            .flat_map(|package| {
+                let data = self
+                    .installation
+                    .as_ref()
+                    .map(|installation| installation.data.owned_by(&package.identity));
+                package
+                    .indexed_result_commands()
+                    .into_iter()
+                    .map(move |command| (command, data.clone()))
+            })
+            .collect();
+        state.indexes.begin_asking(commands)
+    }
+
+    /// Asks each of `commands` in turn for its results ahead of the query
+    /// and keeps them, listing them in root search if it is on screen,
+    /// whatever the query is by then. A command disabled or replaced
+    /// meanwhile contributes nothing.
+    async fn show_indexed_results(
+        &self,
+        commands: Vec<(CommandRegistration, Option<PackageData>)>,
+    ) {
+        for (command, data) in commands {
+            let answer = match self.runtime() {
+                Ok(runtime) => runtime.indexed_results_with(&command.component, data).await,
+                Err(error) => Err(error),
+            };
+            let mut state = self.lock();
+            let state = &mut *state;
+            if disabled_owner(state, &command.component).is_some() {
+                continue;
+            }
+            state.indexes.answer(&command, answer);
+            if let Some(query) = state.view.query().map(str::to_owned) {
+                relist_root(state, &query);
+            }
+        }
+    }
+
+    /// Forgets the results supplied ahead of the query by commands that are
+    /// no longer enabled, or were replaced.
+    fn forget_indexes(state: &mut State) {
+        let indexing: Vec<PathBuf> = state
+            .packages
+            .iter()
+            .filter(|package| package.enabled)
+            .flat_map(|package| package.indexed_result_commands())
+            .map(|command| command.component)
+            .collect();
+        state
+            .indexes
+            .retain(|component| indexing.iter().any(|kept| kept == component));
+    }
+
+    /// Opens the installed application `id`, named `name`, off the calling
+    /// thread, and reports whether the system opened it.
+    async fn open_application(&self, generation: u64, id: String, name: String) {
+        let opened = match self.runtime() {
+            Ok(runtime) => {
+                let applications = runtime.applications();
+                off_thread(move || applications.open(&id)).await
+            }
+            Err(error) => Err(error.to_string()),
+        };
+        let Some(mut state) = self.lock_if_current(generation) else {
+            return;
+        };
+        state.view.status = match opened {
+            Ok(()) => Status::Result(format!("Opened {name}")),
+            Err(problem) => Status::Error(format!("Could not open {name}: {problem}")),
+        };
     }
 
     /// Shows the root results matching `query` from metadata alone; results
@@ -604,7 +708,7 @@ impl Launcher {
     fn search(&self, state: &mut State, query: &str) {
         state.search_generation += 1;
         state.computed.clear();
-        let (rows, entries) = root_rows(&state.root, &state.computed, query);
+        let (rows, entries) = root_rows(state, query);
         state.view.screen = Screen::Root {
             query: query.to_owned(),
         };
@@ -679,20 +783,7 @@ impl Launcher {
             state
                 .computed
                 .extend(computed_results(command, &query, answer));
-            // The best match stays selected, now that better ones may be
-            // first; a row the user moved to stays selected.
-            let keep = state
-                .view
-                .selected
-                .filter(|&index| index > 0)
-                .and_then(|index| state.view.rows.get(index))
-                .map(|row| row.id.clone());
-            let (rows, entries) = root_rows(&state.root, &state.computed, &query);
-            state.view.selected = keep
-                .and_then(|id| rows.iter().position(|row| row.id == id))
-                .or_else(|| first_index(&rows));
-            state.view.rows = rows;
-            state.entries = entries;
+            relist_root(state, &query);
         }
     }
 
@@ -849,6 +940,9 @@ impl Launcher {
             }
             match entry {
                 Some(Entry::Open(component)) => launcher.open_command(generation, component).await,
+                Some(Entry::OpenApplication { id, name }) => {
+                    launcher.open_application(generation, id, name).await
+                }
                 Some(Entry::Run(item_id)) => {
                     if let Some(component) = open {
                         launcher.run_action(generation, component, item_id).await
@@ -1037,6 +1131,9 @@ impl Launcher {
                 .into_iter()
                 .map(|command| command.component)
                 .collect();
+            // Its results kept for root search go, and so does an answer
+            // from it being awaited.
+            Launcher::forget_indexes(state);
             // Its instances stop; enabling it again starts fresh ones, so a
             // failure to start no longer describes it.
             if let Ok(runtime) = self.runtime() {
@@ -1148,6 +1245,10 @@ impl Launcher {
             runtime.forget(replaced.iter().cloned());
         }
         *package = installed;
+        // The replaced copy's results are asked for afresh.
+        state
+            .indexes
+            .retain(|component| !replaced.iter().any(|old| old == component));
         state
             .open
             .as_ref()
@@ -1166,10 +1267,10 @@ impl Launcher {
                 continue;
             }
             checked_components.push(component);
-            let (root_results, operations) = package.manifest.exports_of(component);
+            let exports = package.manifest.exports_of(component);
             let source = package.folder.join(component);
             let checked = match self.runtime() {
-                Ok(runtime) => runtime.check_with(&source, root_results, operations).await,
+                Ok(runtime) => runtime.check_with(&source, exports).await,
                 Err(error) => Err(error),
             };
             checked.map_err(|error| PackageError::Component {
@@ -1186,7 +1287,8 @@ impl Launcher {
     fn show_root(&self, state: &mut State, select: Option<PathBuf>) {
         state.root = self.root_results(state);
         state.computed.clear();
-        let (rows, entries) = root_rows(&state.root, &state.computed, "");
+        state.indexes.stale();
+        let (rows, entries) = root_rows(state, "");
         let selected = select
             .and_then(|component| {
                 entries
@@ -1249,8 +1351,9 @@ impl Launcher {
         state
             .computed
             .retain(|computed| computing.contains(&computed.component));
+        Launcher::forget_indexes(state);
         let query = state.view.query().unwrap_or_default();
-        let (rows, entries) = root_rows(&state.root, &state.computed, query);
+        let (rows, entries) = root_rows(state, query);
         let selected = selected_id
             .and_then(|id| rows.iter().position(|row| row.id == id))
             .or_else(|| first_index(&rows));
@@ -2127,19 +2230,52 @@ fn open_form(state: &mut State, item_id: String, form: Form) {
 }
 
 /// The rows of root search for `query`, and what activating each does: the
-/// results `computed` from it, then the `root` results matching it, best
-/// match first.
-fn root_rows(root: &[RootResult], computed: &[Computed], query: &str) -> (Vec<Row>, Vec<Entry>) {
-    let keys = root.iter().map(|result| &result.keys);
-    let matches = search::ranked_matches(&Query::new(query), keys)
+/// results computed from it, then the root results matching it, best match
+/// first, with, for a query that is not blank, those supplied ahead of it
+/// (after the others of the same rank), then the rows explaining why a
+/// command could not supply them.
+fn root_rows(state: &State, query: &str) -> (Vec<Row>, Vec<Entry>) {
+    let blank = query.trim().is_empty();
+    let candidates: Vec<&RootResult> = state
+        .root
+        .iter()
+        .chain(state.indexes.results().filter(|_| !blank))
+        .collect();
+    let keys: Vec<&Keys> = candidates.iter().map(|result| &result.keys).collect();
+    let matches = search::ranked_matches(&Query::new(query), keys.into_iter())
         .into_iter()
-        .map(|index| (&root[index].row, &root[index].entry));
-    computed
+        .map(|index| (&candidates[index].row, &candidates[index].entry));
+    let failures = state
+        .indexes
+        .failures()
+        .filter(|_| !blank)
+        .map(|(row, entry)| (row, entry));
+    state
+        .computed
         .iter()
         .map(|computed| (&computed.row, &computed.entry))
         .chain(matches)
+        .chain(failures)
         .map(|(row, entry)| (row.clone(), entry.clone()))
         .unzip()
+}
+
+/// Lists root search's rows for `query` again after results arrived: the
+/// best match stays selected, now that better ones may be first, and a row
+/// the user moved to stays selected.
+fn relist_root(state: &mut State, query: &str) {
+    let keep = state
+        .view
+        .selected
+        .filter(|&index| index > 0)
+        .and_then(|index| state.view.rows.get(index))
+        .map(|row| row.id.clone());
+    let (rows, entries) = root_rows(state, query);
+    state.view.selected = keep
+        .and_then(|id| rows.iter().position(|row| row.id == id))
+        .or_else(|| first_index(&rows));
+    state.view.rows = rows;
+    state.entries = entries;
 }
 
 /// The rows for `command`'s `answer` to `query`: its results, or one

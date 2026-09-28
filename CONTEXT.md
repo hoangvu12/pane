@@ -68,6 +68,14 @@ _Avoid_: Item (an item belongs to a command's own list), search hit
 A root result an extension command computes from the query itself, such as the calculator's answer to "6*7", rather than one found by matching titles; it is listed above those, and invoking it performs its action, such as copying the answer.
 _Avoid_: Suggestion, answer card, inline result
 
+**Indexed result**:
+A root result an extension command supplies ahead of the query, such as an installed application; Pane asks for them once root search is used, keeps them, and matches and ranks them by title like commands, for a query that is not blank.
+_Avoid_: Index entry, cached result
+
+**Installed application**:
+A program the operating system lists as installed where Pane looks for it (Start menu shortcuts, application bundles, desktop entries); Pane's host finds and opens it for an extension, which a WASI guest cannot do itself.
+_Avoid_: App (ambiguous with Pane itself), program
+
 **Search provider**:
 A source of matching results for a query, such as applications, files or an online service.
 _Avoid_: The entire search interface
