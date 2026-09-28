@@ -8,7 +8,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use futures::executor::block_on;
-use pane_core::{CallError, Launcher, PackageIdentity, Runtime, Screen, Status};
+use pane_core::{
+    CallError, CommandRegistration, Launcher, PackageIdentity, Runtime, Screen, Status,
+};
 use tempfile::TempDir;
 
 fn guest(name: &str) -> PathBuf {
@@ -95,8 +97,10 @@ fn a_previewed_local_package_installs_and_its_command_runs() {
     let folder = package(&dirs.source("hello"), "Hello", "1.0.0", "sample_rust");
     let launcher = dirs.launcher();
     assert_eq!(titles(&launcher), [INSTALL_ROW]);
+    assert!(launcher.selected_asks_for_folder());
 
     block_on(launcher.preview_package(&folder));
+    assert!(!launcher.selected_asks_for_folder());
 
     let view = launcher.view();
     assert_eq!(
@@ -130,6 +134,10 @@ fn a_previewed_local_package_installs_and_its_command_runs() {
     assert_eq!(titles(&launcher), ["Say hello", INSTALL_ROW]);
     assert_eq!(view.selected, Some(0));
     assert_eq!(view.status, Status::Result("Installed Hello".into()));
+    // Row ids come from the identity's stable key, not its display text.
+    assert_eq!(view.rows[0].id, format!("{}#hello", identity.key()));
+    assert!(!view.rows[0].id.contains("local folder"));
+    assert!(!launcher.selected_asks_for_folder());
 
     block_on(launcher.activate_selected());
     assert_eq!(launcher.view().title, "Rust sample");
@@ -537,6 +545,90 @@ fn an_unreadable_install_record_is_explained_and_never_overwritten() {
     block_on(launcher.install_package(&folder));
     assert!(error(&launcher).starts_with("Could not update Pane's installed extensions"));
     assert_eq!(fs::read_to_string(&record).unwrap(), "not a record");
+}
+
+/// A launcher whose build offers the JavaScript sample command.
+fn launcher_with_build_command(dirs: &Dirs) -> Launcher {
+    let command = CommandRegistration {
+        id: "javascript-sample".into(),
+        title: "JavaScript sample".into(),
+        subtitle: None,
+        component: guest("sample_js"),
+    };
+    Launcher::with_packages(
+        Runtime::start(),
+        vec![command],
+        dirs.data.path().join("extensions"),
+    )
+}
+
+fn selected_title(launcher: &Launcher) -> Option<String> {
+    let view = launcher.view();
+    Some(view.rows.get(view.selected?)?.title.clone())
+}
+
+#[test]
+fn an_install_finishing_in_the_background_keeps_a_command_the_user_is_opening() {
+    let dirs = Dirs::new();
+    let folder = package(&dirs.source("hello"), "Hello", "1.0.0", "sample_rust");
+    let launcher = launcher_with_build_command(&dirs);
+    block_on(launcher.preview_package(&folder));
+    let installing = launcher.activate_selected();
+    // The user leaves the preview and opens a command before it finishes.
+    launcher.back();
+    launcher.select(0);
+    let opening = launcher.activate_selected();
+
+    block_on(installing);
+    block_on(opening);
+
+    let view = launcher.view();
+    assert_eq!(
+        (view.screen, view.title.as_str()),
+        (Screen::Command, "JavaScript sample")
+    );
+}
+
+#[test]
+fn an_install_finishing_in_the_background_keeps_the_selected_row() {
+    let dirs = Dirs::new();
+    let folder = package(&dirs.source("hello"), "Hello", "1.0.0", "sample_rust");
+    let launcher = launcher_with_build_command(&dirs);
+    block_on(launcher.preview_package(&folder));
+    let installing = launcher.activate_selected();
+    launcher.back();
+    launcher.select(1);
+    assert_eq!(selected_title(&launcher).as_deref(), Some(INSTALL_ROW));
+
+    block_on(installing);
+
+    assert_eq!(
+        titles(&launcher),
+        ["JavaScript sample", "Say hello", INSTALL_ROW]
+    );
+    assert_eq!(selected_title(&launcher).as_deref(), Some(INSTALL_ROW));
+}
+
+#[test]
+fn installing_after_the_install_record_is_lost_keeps_existing_managed_copies() {
+    let dirs = Dirs::new();
+    let first = package(&dirs.source("first"), "First", "1.0.0", "sample_rust");
+    let second = package(&dirs.source("second"), "Second", "1.0.0", "sample_js");
+    let launcher = dirs.launcher();
+    block_on(launcher.install_package(&first));
+    let kept = launcher.packages()[0].location.clone();
+    let before = snapshot(&kept);
+    fs::remove_file(dirs.data.path().join("extensions").join("installed.json")).unwrap();
+
+    let restarted = dirs.launcher();
+    block_on(restarted.install_package(&second));
+
+    assert_eq!(
+        restarted.view().status,
+        Status::Result("Installed Second".into())
+    );
+    assert_ne!(restarted.packages()[0].location, kept);
+    assert_eq!(snapshot(&kept), before, "the earlier copy is not replaced");
 }
 
 #[test]

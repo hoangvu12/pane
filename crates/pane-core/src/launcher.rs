@@ -10,13 +10,11 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use crate::packages::{InstalledPackage, PackageError, SourcePackage, Store};
+use crate::packages::{InstalledPackage, PackageError, SourcePackage, Store, folder_name};
 use crate::runtime::{CallError, Runtime};
 
-/// The id of the root row that installs a package from a local folder. The
-/// window answers its activation by asking for a folder, then calls
-/// [`Launcher::preview_package`].
-pub const INSTALL_FROM_FOLDER: &str = "pane.install-from-folder";
+/// The id of the root row that installs a package from a local folder.
+const INSTALL_FROM_FOLDER: &str = "pane.install-from-folder";
 
 /// A command offered in root search, backed by one extension component.
 #[derive(Clone, Debug)]
@@ -108,10 +106,9 @@ enum Entry {
     InstallFromFolder,
     /// Run the open command's item with this id.
     Run(String),
-    /// Install the previewed package from this folder.
-    Install(PathBuf),
-    /// Replace the installed copy from this folder.
-    Update(PathBuf),
+    /// Install the previewed package from this folder, or replace its
+    /// installed copy.
+    Install(PathBuf, Mode),
 }
 
 #[derive(Clone, Copy)]
@@ -202,6 +199,18 @@ impl Launcher {
         }
     }
 
+    /// Whether the selected row installs a package from a folder the user
+    /// chooses. Activating it does nothing in the launcher: the window asks
+    /// for a folder and calls [`Launcher::preview_package`].
+    pub fn selected_asks_for_folder(&self) -> bool {
+        let state = self.lock();
+        let entry = state
+            .view
+            .selected
+            .and_then(|index| state.entries.get(index));
+        matches!(entry, Some(Entry::InstallFromFolder))
+    }
+
     /// Leaves an open command or package preview for root search.
     pub fn back(&self) {
         let mut state = self.lock();
@@ -214,8 +223,8 @@ impl Launcher {
     /// (command view) or installs or updates the previewed package. Await
     /// the returned future to apply the reply.
     ///
-    /// The [`INSTALL_FROM_FOLDER`] row does nothing here: the window asks for
-    /// a folder and calls [`Launcher::preview_package`].
+    /// A row that [asks for a folder](Launcher::selected_asks_for_folder)
+    /// does nothing here.
     pub fn activate_selected(&self) -> impl Future<Output = ()> + Send + 'static {
         let mut state = self.lock();
         let entry = state
@@ -245,11 +254,8 @@ impl Launcher {
                         launcher.run_action(generation, component, item_id).await
                     }
                 }
-                Some(Entry::Install(folder)) => {
-                    launcher.install(generation, folder, Mode::Install).await
-                }
-                Some(Entry::Update(folder)) => {
-                    launcher.install(generation, folder, Mode::Update).await
+                Some(Entry::Install(folder, mode)) => {
+                    launcher.install(generation, folder, mode).await
                 }
                 Some(Entry::Broken(_) | Entry::InstallFromFolder) | None => {}
             }
@@ -338,16 +344,21 @@ impl Launcher {
                     .iter_mut()
                     .find(|package| package.identity == installed.identity)
                 {
-                    Some(package) => *package = installed,
+                    Some(package) => {
+                        // The replaced copy's code is not run again. A command
+                        // of it that is open is not coordinated with (#11, #14).
+                        if let Ok(runtime) = self.runtime() {
+                            runtime.forget(package.commands().into_iter().map(|c| c.component));
+                        }
+                        *package = installed;
+                    }
                     None => state.packages.push(installed),
                 }
                 if current {
                     self.show_root(&mut state, first);
                     state.view.status = Status::Result(message);
                 } else if state.view.screen == Screen::Root {
-                    let selected = state.view.selected;
-                    self.show_root(&mut state, None);
-                    state.view.selected = selected;
+                    self.refresh_root(&mut state);
                 }
             }
             Err(error) if current => state.view.status = Status::Error(error.to_string()),
@@ -376,51 +387,7 @@ impl Launcher {
     /// packages' commands, then the install row. Selects the command with
     /// component `select` if given, else the first row.
     fn show_root(&self, state: &mut State, select: Option<PathBuf>) {
-        let mut rows = Vec::new();
-        let mut entries = Vec::new();
-        let mut add = |row: Row, entry: Entry| {
-            rows.push(row);
-            entries.push(entry);
-        };
-        let installed = state
-            .packages
-            .iter()
-            .flat_map(|package| match &package.manifest {
-                Ok(_) => package.commands(),
-                Err(_) => Vec::new(),
-            });
-        for command in self.commands.iter().cloned().chain(installed) {
-            let entry = Entry::Open(command.component);
-            let row = Row {
-                id: command.id,
-                title: command.title,
-                subtitle: command.subtitle,
-            };
-            add(row, entry);
-        }
-        for package in &state.packages {
-            if let Err(error) = &package.manifest {
-                let row = Row {
-                    id: package.identity.to_string(),
-                    title: package.title(),
-                    subtitle: Some("Cannot load this installed extension".into()),
-                };
-                let problem = format!(
-                    "{} cannot load from {}: {error}",
-                    package.title(),
-                    package.location.display()
-                );
-                add(row, Entry::Broken(problem));
-            }
-        }
-        if self.store.is_some() {
-            let row = Row {
-                id: INSTALL_FROM_FOLDER.into(),
-                title: "Install extension from folder…".into(),
-                subtitle: Some("Choose a local extension package to install".into()),
-            };
-            add(row, Entry::InstallFromFolder);
-        }
+        let (rows, entries) = self.root_rows(state);
         let selected = select
             .and_then(|component| {
                 entries
@@ -442,6 +409,69 @@ impl Launcher {
                 None => Status::Idle,
             },
         };
+    }
+
+    /// Updates the rows of the root search on screen after the installed
+    /// packages changed in the background. Unlike navigating, it keeps the
+    /// screen generation, so an action the user started from root still
+    /// applies, and it keeps the selection on the same row.
+    fn refresh_root(&self, state: &mut State) {
+        let selected_id = state
+            .view
+            .selected
+            .and_then(|index| state.view.rows.get(index))
+            .map(|row| row.id.clone());
+        let (rows, entries) = self.root_rows(state);
+        let selected = selected_id
+            .and_then(|id| rows.iter().position(|row| row.id == id))
+            .or_else(|| first_index(&rows));
+        state.entries = entries;
+        state.view.rows = rows;
+        state.view.selected = selected;
+    }
+
+    /// The rows of root search and what activating each does.
+    fn root_rows(&self, state: &State) -> (Vec<Row>, Vec<Entry>) {
+        let mut rows = Vec::new();
+        let mut entries = Vec::new();
+        let mut add = |row: Row, entry: Entry| {
+            rows.push(row);
+            entries.push(entry);
+        };
+        let installed = state.packages.iter().flat_map(InstalledPackage::commands);
+        for command in self.commands.iter().cloned().chain(installed) {
+            let entry = Entry::Open(command.component);
+            let row = Row {
+                id: command.id,
+                title: command.title,
+                subtitle: command.subtitle,
+            };
+            add(row, entry);
+        }
+        for package in &state.packages {
+            if let Err(error) = &package.manifest {
+                let row = Row {
+                    id: package.identity.key(),
+                    title: package.title(),
+                    subtitle: Some("Cannot load this installed extension".into()),
+                };
+                let problem = format!(
+                    "{} cannot load from {}: {error}",
+                    package.title(),
+                    package.location.display()
+                );
+                add(row, Entry::Broken(problem));
+            }
+        }
+        if self.store.is_some() {
+            let row = Row {
+                id: INSTALL_FROM_FOLDER.into(),
+                title: "Install extension from folder…".into(),
+                subtitle: Some("Choose a local extension package to install".into()),
+            };
+            add(row, Entry::InstallFromFolder);
+        }
+        (rows, entries)
     }
 
     async fn run_action(&self, generation: u64, component: PathBuf, item_id: String) {
@@ -520,13 +550,9 @@ fn preview_view(
     let package = match checked {
         Ok(package) => package,
         Err(error) => {
-            let name = folder
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_else(|| folder.display().to_string());
             let view = LauncherView {
                 screen: Screen::Package,
-                title: format!("Cannot install {name}"),
+                title: format!("Cannot install {}", folder_name(folder)),
                 details: vec![format!("Folder: {}", folder.display())],
                 rows: Vec::new(),
                 selected: None,
@@ -557,7 +583,7 @@ fn preview_view(
                 title: "Update".into(),
                 subtitle: Some("Replace the installed copy with this folder's contents".into()),
             };
-            (row, Entry::Update(package.folder.clone()))
+            (row, Entry::Install(package.folder.clone(), Mode::Update))
         }
         None => {
             let row = Row {
@@ -565,7 +591,7 @@ fn preview_view(
                 title: "Install".into(),
                 subtitle: Some("Copy the package into Pane and add its commands".into()),
             };
-            (row, Entry::Install(package.folder.clone()))
+            (row, Entry::Install(package.folder.clone(), Mode::Install))
         }
     };
     let view = LauncherView {

@@ -9,7 +9,7 @@ use gpui::{
     App, Context, Div, FocusHandle, KeyBinding, PathPromptOptions, Role, SharedString, Stateful,
     Window, actions, div, prelude::*, rgb,
 };
-use pane_core::{CommandRegistration, INSTALL_FROM_FOLDER, Launcher, Row, Screen, Status};
+use pane_core::{CommandRegistration, Launcher, Row, Screen, Status};
 
 actions!(launcher, [SelectNext, SelectPrevious, Confirm, Back]);
 
@@ -73,20 +73,11 @@ pub fn sample_commands() -> Vec<CommandRegistration> {
 /// `%LOCALAPPDATA%\Pane\cache` on Windows, `~/Library/Caches/Pane` on
 /// macOS and `$XDG_CACHE_HOME/pane` (default `~/.cache/pane`) elsewhere.
 pub fn cache_dir() -> Option<PathBuf> {
-    let env = |name| {
-        std::env::var_os(name)
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-    };
-    if cfg!(target_os = "windows") {
-        env("LOCALAPPDATA").map(|dir| dir.join("Pane").join("cache"))
-    } else if cfg!(target_os = "macos") {
-        env("HOME").map(|home| home.join("Library/Caches/Pane"))
-    } else {
-        env("XDG_CACHE_HOME")
-            .or_else(|| env("HOME").map(|home| home.join(".cache")))
-            .map(|dir| dir.join("pane"))
-    }
+    platform_dir(
+        r"Pane\cache",
+        "Library/Caches/Pane",
+        ("XDG_CACHE_HOME", ".cache"),
+    )
 }
 
 /// Where Pane keeps installed extension packages: `PANE_DATA_DIR` when set,
@@ -95,22 +86,36 @@ pub fn cache_dir() -> Option<PathBuf> {
 /// (default `~/.local/share/pane`) elsewhere. Packages go in its
 /// `extensions` folder.
 pub fn data_dir() -> Option<PathBuf> {
-    let env = |name| {
-        std::env::var_os(name)
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-    };
-    if let Some(dir) = env("PANE_DATA_DIR") {
-        Some(dir)
-    } else if cfg!(target_os = "windows") {
-        env("LOCALAPPDATA").map(|dir| dir.join("Pane").join("data"))
+    env_dir("PANE_DATA_DIR").or_else(|| {
+        platform_dir(
+            r"Pane\data",
+            "Library/Application Support/Pane",
+            ("XDG_DATA_HOME", ".local/share"),
+        )
+    })
+}
+
+/// A per-user folder: `windows` under `%LOCALAPPDATA%`, `macos` under
+/// `$HOME`, and elsewhere `pane` under the XDG variable `xdg.0`, or under
+/// `$HOME/xdg.1` when that is unset.
+fn platform_dir(windows: &str, macos: &str, xdg: (&str, &str)) -> Option<PathBuf> {
+    if cfg!(target_os = "windows") {
+        env_dir("LOCALAPPDATA").map(|dir| dir.join(windows))
     } else if cfg!(target_os = "macos") {
-        env("HOME").map(|home| home.join("Library/Application Support/Pane"))
+        env_dir("HOME").map(|home| home.join(macos))
     } else {
-        env("XDG_DATA_HOME")
-            .or_else(|| env("HOME").map(|home| home.join(".local/share")))
+        let (variable, fallback) = xdg;
+        env_dir(variable)
+            .or_else(|| env_dir("HOME").map(|home| home.join(fallback)))
             .map(|dir| dir.join("pane"))
     }
+}
+
+/// The folder in environment variable `name`, if it is set and not empty.
+fn env_dir(name: &str) -> Option<PathBuf> {
+    std::env::var_os(name)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
 }
 
 /// The launcher window's root view.
@@ -198,9 +203,7 @@ impl LauncherWindow {
     /// Starts the selected row's action and redraws when the guest answers,
     /// without blocking the window meanwhile.
     fn activate_selected(&mut self, cx: &mut Context<Self>) {
-        let view = self.launcher.view();
-        let selected = view.selected.and_then(|index| view.rows.get(index));
-        if selected.is_some_and(|row| row.id == INSTALL_FROM_FOLDER) {
+        if self.launcher.selected_asks_for_folder() {
             self.choose_package_folder(cx);
             return;
         }

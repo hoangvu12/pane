@@ -5,9 +5,7 @@ mod launcher;
 mod packages;
 mod runtime;
 
-pub use launcher::{
-    CommandRegistration, INSTALL_FROM_FOLDER, Launcher, LauncherView, Row, Screen, Status,
-};
+pub use launcher::{CommandRegistration, Launcher, LauncherView, Row, Screen, Status};
 pub use packages::{
     EXTENSION_API, InstalledPackage, MANIFEST_FILE, MANIFEST_VERSION, Manifest, ManifestCommand,
     PackageError, PackageIdentity,

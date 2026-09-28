@@ -102,6 +102,9 @@ enum Request {
         component: PathBuf,
         reply: oneshot::Sender<Result<(), CallError>>,
     },
+    Forget {
+        components: Vec<PathBuf>,
+    },
 }
 
 impl Runtime {
@@ -176,6 +179,17 @@ impl Runtime {
         response.await.unwrap_or_else(|_| Err(stopped()))
     }
 
+    /// Drops the compiled code and live instances of `components`, for
+    /// example after their files were replaced or removed; a later call
+    /// loads the file again. Calls made afterwards see the effect; a call
+    /// already in progress finishes first. Nothing coordinates this with a
+    /// command the user has open: its instance's state is lost.
+    pub fn forget(&self, components: impl IntoIterator<Item = PathBuf>) {
+        let components = components.into_iter().collect();
+        // A stopped runtime holds nothing to forget.
+        let _ = self.send(Request::Forget { components });
+    }
+
     fn send(&self, request: Request) -> Result<(), CallError> {
         self.requests.send(request).map_err(|_| stopped())
     }
@@ -245,6 +259,12 @@ impl Host {
                 }
                 Request::Check { component, reply } => {
                     let _ = reply.send(self.check(&component));
+                }
+                Request::Forget { components } => {
+                    for component in &components {
+                        self.components.remove(component);
+                        self.instances.remove(component);
+                    }
                 }
             }
         }

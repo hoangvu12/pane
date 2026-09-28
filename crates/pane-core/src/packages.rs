@@ -67,6 +67,15 @@ impl PackageIdentity {
         Ok(PackageIdentity(Source::Local(path.to_owned())))
     }
 
+    /// A stable key for this identity, for ids and records rather than for
+    /// people to read: `local:` followed by the folder's resolved path. The
+    /// [`Display`](fmt::Display) form is the wording shown to users.
+    pub fn key(&self) -> String {
+        match &self.0 {
+            Source::Local(path) => format!("local:{path}"),
+        }
+    }
+
     /// The source folder of a local package.
     pub fn local_folder(&self) -> Option<&Path> {
         match &self.0 {
@@ -81,6 +90,15 @@ impl fmt::Display for PackageIdentity {
             Source::Local(path) => write!(f, "local folder {path}"),
         }
     }
+}
+
+/// The name people know a package folder by: its last component, or the
+/// whole path when it has none.
+pub(crate) fn folder_name(folder: &Path) -> String {
+    folder
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| folder.display().to_string())
 }
 
 /// Windows' canonical paths carry a `\\?\` prefix; the identity uses the
@@ -143,6 +161,11 @@ impl Manifest {
     /// Reads and validates `pane.json` in `folder`, including that every
     /// component it names is present. Runs no guest code.
     pub fn read(folder: &Path) -> Result<Manifest, PackageError> {
+        Manifest::read_text(folder).map(|(manifest, _)| manifest)
+    }
+
+    /// Like [`Manifest::read`], also returning the text that was validated.
+    fn read_text(folder: &Path) -> Result<(Manifest, String), PackageError> {
         let path = folder.join(MANIFEST_FILE);
         let text = match fs::read_to_string(&path) {
             Ok(text) => text,
@@ -161,7 +184,7 @@ impl Manifest {
                 });
             }
         }
-        Ok(manifest)
+        Ok((manifest, text))
     }
 
     fn parse(text: &str) -> Result<Manifest, PackageError> {
@@ -330,6 +353,9 @@ pub(crate) struct SourcePackage {
     pub identity: PackageIdentity,
     pub folder: PathBuf,
     pub manifest: Manifest,
+    /// The `pane.json` text `manifest` was validated from; the managed copy
+    /// gets exactly this, even if the source changes meanwhile.
+    manifest_text: String,
 }
 
 impl SourcePackage {
@@ -339,11 +365,12 @@ impl SourcePackage {
             .local_folder()
             .expect("a local identity has a folder")
             .to_path_buf();
-        let manifest = Manifest::read(&folder)?;
+        let (manifest, manifest_text) = Manifest::read_text(&folder)?;
         Ok(SourcePackage {
             identity,
             folder,
             manifest,
+            manifest_text,
         })
     }
 
@@ -379,12 +406,10 @@ impl InstalledPackage {
     pub fn title(&self) -> String {
         match &self.manifest {
             Ok(manifest) => manifest.title.clone(),
-            Err(_) => self
-                .identity
-                .local_folder()
-                .and_then(Path::file_name)
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_else(|| self.identity.to_string()),
+            Err(_) => match self.identity.local_folder() {
+                Some(folder) => folder_name(folder),
+                None => self.identity.to_string(),
+            },
         }
     }
 
@@ -401,7 +426,7 @@ impl InstalledPackage {
             .commands
             .iter()
             .map(|command| CommandRegistration {
-                id: format!("{}#{}", self.identity, command.id),
+                id: format!("{}#{}", self.identity.key(), command.id),
                 title: command.title.clone(),
                 subtitle: command
                     .subtitle
@@ -537,11 +562,18 @@ impl Store {
             .as_mut()
             .map_err(|reason| PackageError::Storage(reason.clone()))?;
         let storage = |error: io::Error| PackageError::Storage(error.to_string());
-        let dir = registry.next.to_string();
-        let location = self.dir.join(PACKAGES_DIR).join(&dir);
-        if location.exists() {
-            fs::remove_dir_all(&location).map_err(storage)?;
-        }
+        // A folder can exist at or beyond `next` if the registry was lost or
+        // replaced; it is skipped, never deleted.
+        let mut number = registry.next;
+        let (dir, location) = loop {
+            let dir = number.to_string();
+            let location = self.dir.join(PACKAGES_DIR).join(&dir);
+            match fs::symlink_metadata(&location) {
+                Err(error) if error.kind() == io::ErrorKind::NotFound => break (dir, location),
+                Err(error) => return Err(storage(error)),
+                Ok(_) => number += 1,
+            }
+        };
         let copied = copy_package(package, &location);
         if let Err(error) = copied {
             let _ = fs::remove_dir_all(&location);
@@ -549,7 +581,7 @@ impl Store {
         }
         let PackageIdentity(Source::Local(local)) = &package.identity;
         let mut updated = RegistryJson {
-            next: registry.next + 1,
+            next: number + 1,
             ..registry.clone()
         };
         match updated.packages.iter_mut().find(|r| &r.local == local) {
@@ -572,14 +604,11 @@ impl Store {
     }
 }
 
-/// Copies `pane.json` and the manifest's components, keeping their relative
-/// paths. Nothing else in the source folder is copied.
+/// Writes the validated `pane.json` and copies the components it names,
+/// keeping their relative paths. Nothing else in the source folder is copied.
 fn copy_package(package: &SourcePackage, location: &Path) -> io::Result<()> {
     fs::create_dir_all(location)?;
-    fs::copy(
-        package.folder.join(MANIFEST_FILE),
-        location.join(MANIFEST_FILE),
-    )?;
+    fs::write(location.join(MANIFEST_FILE), &package.manifest_text)?;
     for (command, source) in package.components() {
         let target = location.join(&command.component);
         if let Some(parent) = target.parent() {
