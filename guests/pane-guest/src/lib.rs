@@ -3,7 +3,8 @@
 //! An extension implements [`Guest`] and calls [`export!`]. It may keep
 //! values between runs with [`settings`], and its own records, disposable
 //! values and secrets with [`content`], [`cache`] and [`credentials`]. It
-//! may compute results from root search's query with [`root`], call
+//! may compute results from root search's query with [`root`], take a query
+//! the user sends it from root search with [`query`], call
 //! operations other packages publish with [`operations::call`], serve those
 //! its own package publishes with [`publish`], find and open installed
 //! applications with [`applications`], supply root results ahead of the
@@ -101,6 +102,28 @@ pub mod root {
     });
 
     pub use exports::pane::extension::root_results::{Guest, RootAction, RootResult};
+}
+
+/// A command that takes a query (`pane:extension/query-command`): text the
+/// user typed into root search, which Pane sends only when the user invokes
+/// the command through its alias ("ec hello") or chooses it as a fallback.
+/// A command whose `pane.json` entry sets `"takesQuery": true` implements
+/// [`query::Guest`] too and calls [`query::export!`](crate::query::export)
+/// beside [`export!`]:
+///
+/// ```ignore
+/// pane_guest::export!(Echo);
+/// pane_guest::query::export!(Echo);
+/// ```
+pub mod query {
+    wit_bindgen::generate!({
+        path: "../../wit",
+        world: "query-command-provider",
+        pub_export_macro: true,
+        default_bindings_module: "pane_guest::query",
+    });
+
+    pub use exports::pane::extension::query_command::Guest;
 }
 
 /// The applications installed on the system (`pane:extension/applications`),

@@ -15,7 +15,7 @@ package's current generation, failed on its own.
 | Failure | Paused | Why |
 | --- | --- | --- |
 | A component could not be loaded or instantiated, or a reload's new code trapped as it started (a [startup failure](../CONTEXT.md)) | At once | Starting it again would fail the same way. |
-| A guest call trapped (a crash): opening a command, an action, a form, a custom view's event, drawing or destructor, root results, indexed results, or an operation another package called | On the **3rd crash within 5 minutes** | A broken command stops failing soon; one bad input does not stop an extension that otherwise works. |
+| A guest call trapped (a crash): opening a command, an action, a form, a custom view's event, drawing or destructor, root results, indexed results, a query sent to a command through its alias or as a fallback, or an operation another package called | On the **3rd crash within 5 minutes** | A broken command stops failing soon; one bad input does not stop an extension that otherwise works. |
 
 These are explicit choices, not measurements (`CRASHES_BEFORE_PAUSE` and
 `CRASH_WINDOW` in
@@ -67,7 +67,9 @@ What is **not** a failure of the package:
   is paused after an error; retry it in Manage extensions"; activating one
   shows that and runs nothing. A global hotkey assigned to one stays
   registered (it is the user's choice); pressing it shows the same reason.
-  It computes no root results and supplies no indexed ones. Another
+  It computes no root results and supplies no indexed ones. Its commands'
+  alias and fallback rows ([aliases](aliases.md)) stay listed with the same
+  reason and send nothing. Another
   package calling its operations is answered `unavailable` with the same
   reason. Root search tells a paused command from one this system does not
   support by its reason's kind (`Unavailable::Paused` against
@@ -136,7 +138,9 @@ it holds across a restart. The earlier code is still not restored.
   a component that cannot load is paused at once; an uninstall that cannot
   be recorded keeps the pause; a reload that fails to start is paused across
   a restart; a root result provider that keeps crashing is paused and asked
-  no more. Unit tests in `launcher/pausing.rs` cover the crash window with
+  no more. [`aliases.rs`](../crates/pane-core/tests/aliases.rs): a command
+  whose query ("crash") traps three times is paused, in Rust, JavaScript and
+  TypeScript, and its alias row then explains the pause and runs nothing. Unit tests in `launcher/pausing.rs` cover the crash window with
   explicit times and crashes of code disabled meanwhile.
 - [`crates/pane-core/tests/operations.rs`](../crates/pane-core/tests/operations.rs):
   a target that keeps crashing is paused and its caller is not; a target

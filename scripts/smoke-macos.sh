@@ -569,6 +569,7 @@ key 36; sleep 2   # Install; Greeting is selected
 key 36; sleep 2   # open Greeting
 for ((i = 0; i < 7; i++)); do key 125; done   # Crash
 for ((i = 0; i < 3; i++)); do key 36; sleep 2; done
+type_text greet; sleep 1   # Greeting and its reason at the top on any window height
 capture 59-paused.png
 check 59-paused.png f08c8c   # "Settings sample crashed 3 times within 5 minutes and is paused ..."
 check 59-paused.png d6a36a   # Greeting: "Settings sample is paused after an error; ..."
@@ -643,6 +644,69 @@ python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/51-reinstalled.pn
 key 53; sleep 1
 stop_pane
 
+# Aliases and fallbacks: in Manage extensions, the query sample's command,
+# Echo, is given the alias "ec" (its row follows the package's state, Reload,
+# Clear cache, Uninstall and hotkey rows) and made a fallback (the next row).
+# In root search, "ec hello" lists the row that sends "hello" to Echo,
+# selected, and Enter shows Echo's answer; text nothing matches lists "No
+# results" with Echo below it, not selected, until Down selects it and Enter
+# sends the text. After a restart with the extension disabled, "ec hello"
+# lists nothing: the same screen as a Pane with nothing installed. Data
+# folders of their own keep the rows in a known order.
+export PANE_DATA_DIR=$out/aliases-data
+rm -rf "$PANE_DATA_DIR"
+start_pane --install target/guests/packages/sample-query
+key 36; sleep 2   # Install; Echo is selected
+for ((i = 0; i < 10; i++)); do key 125; done   # Manage extensions…
+key 36; sleep 1
+for ((i = 0; i < 5; i++)); do key 125; done   # "Alias for Echo"
+key 36; sleep 1
+type_text ec
+key 36; sleep 2
+capture 66-alias-saved.png
+check 66-alias-saved.png 9fd8a8   # "Typing “ec” now finds Echo"
+key 125; key 36; sleep 2   # "Fallback: Echo"
+capture 67-fallback-on.png
+check 67-fallback-on.png 9fd8a8   # "Echo is now offered for any text typed in root search"
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{66-alias-saved,67-fallback-on}.png
+key 53; sleep 1   # root search
+type_text 'ec hello'; sleep 1
+capture 68-alias-row.png
+check 68-alias-row.png 364355 3000   # Echo, sending “hello”, selected
+key 36; sleep 3
+capture 69-alias-answer.png
+check 69-alias-answer.png 9fd8a8   # "Echo heard “hello”"
+key 53; sleep 1   # clears the query
+type_text zqx; sleep 1
+capture 70-fallback-listed.png   # "No results for “zqx”", then Echo, not selected
+key 125; sleep 1
+capture 71-fallback-chosen.png
+check 71-fallback-chosen.png 364355 3000   # Echo, now selected
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{70-fallback-listed,71-fallback-chosen}.png
+key 36; sleep 3
+capture 72-fallback-answer.png
+check 72-fallback-answer.png 9fd8a8   # "Echo heard “zqx”"
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{69-alias-answer,72-fallback-answer}.png
+stop_pane
+grep -q '"ec"' "$PANE_DATA_DIR/extensions/aliases.json" || { echo "alias not recorded"; exit 1; }
+grep -q '#echo"' "$PANE_DATA_DIR/extensions/aliases.json" || { echo "fallback not recorded"; exit 1; }
+start_pane
+for ((i = 0; i < 10; i++)); do key 125; done   # Manage extensions…
+key 36; sleep 1
+key 36; sleep 2   # disable Query sample
+key 53; sleep 1
+type_text 'ec hello'; sleep 1
+capture 73-alias-disabled.png   # "No results for “ec hello”"
+stop_pane
+grep -q '"disabled": true' "$PANE_DATA_DIR/extensions/installed.json" || { echo "not disabled"; exit 1; }
+export PANE_DATA_DIR=$out/aliases-empty-data
+rm -rf "$PANE_DATA_DIR"
+start_pane
+type_text 'ec hello'; sleep 1
+capture 74-nothing-installed.png   # "No results for “ec hello”"
+python3 "$(dirname "$0")/check_screenshot.py" --same "$out"/{73-alias-disabled,74-nothing-installed}.png
+stop_pane
+
 # Native helpers: the helper sample's command runs pane-echo, the file its
 # package ships for this system (built by `cargo xtask guests`). Its first
 # item shows the helper's answer, naming the system; its third races the
@@ -659,22 +723,22 @@ start_pane --install target/guests/packages/sample-helper
 key 36; sleep 2   # Install; Helper sample is selected
 key 36; sleep 2   # open Helper sample
 key 36; sleep 2   # Echo through the helper
-capture 66-helper-echoed.png
-check 66-helper-echoed.png 9fd8a8   # 'Echoed "hello from Pane" on macOS arm64'
+capture 90-helper-echoed.png
+check 90-helper-echoed.png 9fd8a8   # 'Echoed "hello from Pane" on macOS arm64'
 key 125; key 125; key 36; sleep 3   # Echo within a second
-capture 67-helper-cancelled.png
-check 67-helper-cancelled.png 9fd8a8   # "Stopped the helper after one second"
-python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{66-helper-echoed,67-helper-cancelled}.png
+capture 91-helper-cancelled.png
+check 91-helper-cancelled.png 9fd8a8   # "Stopped the helper after one second"
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{90-helper-echoed,91-helper-cancelled}.png
 if helpers_running; then echo "a cancelled helper is still running"; exit 1; fi
 key 126; key 36; sleep 2   # Up: Echo after waiting
 helpers_running || { echo "the waiting helper is not running"; exit 1; }
-capture 68-helper-waiting.png
+capture 92-helper-waiting.png
 key 53; sleep 1   # root search; the helper keeps running
 for ((i = 0; i < 10; i++)); do key 125; done   # Manage extensions…
 key 36; sleep 1
 key 36; sleep 2   # disable Helper sample
-capture 69-helper-disabled.png
-check 69-helper-disabled.png 9fd8a8   # "Disabled Helper sample"
+capture 93-helper-disabled.png
+check 93-helper-disabled.png 9fd8a8   # "Disabled Helper sample"
 if helpers_running; then echo "the helper outlived its disabled package"; exit 1; fi
 grep -q '"helper-wait": "started"' "$PANE_DATA_DIR/extensions/settings.json" || { echo "saved note lost"; exit 1; }
 if grep -q '"helper-wait": "finished"' "$PANE_DATA_DIR/extensions/settings.json"; then echo "the stopped call finished"; exit 1; fi

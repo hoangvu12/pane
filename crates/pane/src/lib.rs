@@ -92,6 +92,7 @@ pub fn sample_commands() -> Vec<CommandRegistration> {
             title: title.into(),
             subtitle: Some(subtitle.into()),
             component: dir.join(file),
+            takes_query: false,
         })
         .collect()
 }
@@ -431,7 +432,8 @@ impl LauncherWindow {
             .when(selected, |row| {
                 row.aria_active_descendant().bg(rgb(0x364355))
             })
-            .hover(|row| row.bg(rgb(0x2e3a48)))
+            // Hovering never hides which row is selected.
+            .when(!selected, |row| row.hover(|row| row.bg(rgb(0x2e3a48))))
             .child(
                 div()
                     .when(row.unavailable.is_some(), |title| {
@@ -545,10 +547,12 @@ impl Render for LauncherWindow {
             .gap_1()
             .overflow_y_scroll()
             .track_scroll(&self.scroll)
-            .children(rows)
+            // Above the rows: with none selected, the only rows are root
+            // search's fallbacks, listed below "No results".
             .when(view.selected.is_none(), |rows| {
                 rows.child(empty.text_color(rgb(0x8a96a3)))
-            });
+            })
+            .children(rows);
         // The launcher decides what an item opens; its screen says which.
         let body = match view.screen {
             Screen::Form(form) => self.render_form(view.title.clone(), form, cx),

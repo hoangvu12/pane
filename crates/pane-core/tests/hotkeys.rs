@@ -560,6 +560,41 @@ fn uninstalling_releases_and_forgets_the_hotkey_even_when_saved_data_is_kept() {
 }
 
 #[test]
+fn uninstalling_forgets_exactly_its_own_hotkeys_not_those_of_a_longer_source() {
+    let dirs = Dirs::new();
+    let system = FakeSystem::new();
+    let launcher = dirs.launcher(&system);
+    // "x#y" starts with "x" and `#`, as "x"'s command ids do.
+    let mut identities = Vec::new();
+    for name in ["x", "x#y"] {
+        let folder = package("sample-settings", &dirs.sources.path().join(name));
+        block_on(launcher.install_package(&folder));
+        identities.push(PackageIdentity::local(&folder).unwrap());
+    }
+    manage(&launcher);
+    let long = identities[1].to_string();
+    let index = launcher
+        .view()
+        .rows
+        .iter()
+        .position(|row| {
+            row.title == "Hotkey for Greeting" && row.subtitle.as_deref().unwrap().ends_with(&long)
+        })
+        .unwrap();
+    launcher.select(index);
+    block_on(launcher.activate_selected());
+    block_on(launcher.record_hotkey(key("ctrl+alt+g")));
+
+    block_on(launcher.uninstall(&identities[0], SavedData::Keep));
+    assert_eq!(system.registered(), ["ctrl+alt+g"]);
+    let recorded = fs::read_to_string(dirs.packages_dir().join("hotkeys.json")).unwrap();
+    assert!(recorded.contains("x#y#greeting"), "{recorded}");
+    let restarted_system = FakeSystem::new();
+    dirs.launcher(&restarted_system);
+    assert_eq!(restarted_system.registered(), ["ctrl+alt+g"]);
+}
+
+#[test]
 fn an_update_keeps_the_hotkey_and_one_that_drops_the_command_releases_it() {
     let dirs = Dirs::new();
     let system = FakeSystem::new();

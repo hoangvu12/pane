@@ -215,7 +215,8 @@ fn clearing_the_cache_keeps_settings_content_and_credentials(fixture: &Fixture) 
             "Reload Settings sample",
             "Clear cache of Settings sample",
             "Uninstall Settings sample",
-            "Hotkey for Greeting"
+            "Hotkey for Greeting",
+            "Alias for Greeting",
         ]
     );
     ask_to_clear(&launcher, "Settings sample", 0);

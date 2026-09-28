@@ -308,6 +308,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "sample-query"
+version = "0.1.0"
+dependencies = [
+ "pane-guest",
+]
+
+[[package]]
 name = "sample-rust"
 version = "0.1.0"
 dependencies = [

@@ -199,6 +199,11 @@ pub struct ManifestCommand {
     /// (`"indexedResults": true`), such as the installed applications: its
     /// component then also exports `pane:extension/indexed-results`.
     pub indexed_results: bool,
+    /// Whether the command takes a query (`"takesQuery": true`): text typed
+    /// into root search that Pane sends it when the user invokes it through
+    /// its alias or as a fallback. Its component then also exports
+    /// `pane:extension/query-command`.
+    pub takes_query: bool,
 }
 
 #[derive(Deserialize)]
@@ -249,6 +254,8 @@ struct CommandJson {
     root_results: bool,
     #[serde(default)]
     indexed_results: bool,
+    #[serde(default)]
+    takes_query: bool,
 }
 
 impl Manifest {
@@ -349,6 +356,7 @@ impl Manifest {
         Exports {
             root_results: commands().any(|command| command.root_results),
             indexed_results: commands().any(|command| command.indexed_results),
+            query_command: commands().any(|command| command.takes_query),
             operations: self
                 .operations
                 .iter()
@@ -387,6 +395,14 @@ impl Manifest {
             if command.id.is_empty() || command.title.trim().is_empty() {
                 return Err(invalid("every command needs an `id` and a `title`".into()));
             }
+            // Pane's records name a command `<package identity>#<id>`; an id
+            // without `#` keeps the package's part of that unambiguous.
+            if command.id.contains('#') {
+                return Err(invalid(format!(
+                    "command id `{}` contains `#`, which command ids cannot",
+                    command.id
+                )));
+            }
             if commands
                 .iter()
                 .any(|seen: &ManifestCommand| seen.id == command.id)
@@ -406,6 +422,7 @@ impl Manifest {
                 platforms,
                 root_results: command.root_results,
                 indexed_results: command.indexed_results,
+                takes_query: command.takes_query,
             });
         }
         let mut operations: Vec<ManifestOperation> = Vec::new();
@@ -730,6 +747,7 @@ impl InstalledPackage {
                         .clone()
                         .or_else(|| Some(manifest.title.clone())),
                     component: self.location.join(&command.component),
+                    takes_query: command.takes_query,
                 };
                 let unavailable = package.clone().or_else(|| {
                     platform::unavailable(command.platforms.as_deref(), "this command")

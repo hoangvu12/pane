@@ -166,9 +166,18 @@ saved data, deletes its retained data from the extension list's last row
 and `content.json` no longer hold it, and reinstalls the same folder, which
 must show nothing kept. **Not run on macOS yet.**
 
+## Aliases and fallbacks (#31)
+
+The smoke's alias phase (screenshots 66 to 74, [aliases and fallbacks](../aliases.md#checks))
+gives Echo, the query sample's command, the alias "ec" and makes it a
+fallback in Manage extensions, sends "ec hello" and, from the unselected
+fallback row chosen with Down, "zqx" to it, and checks that with the
+extension disabled "ec hello" lists nothing. Nothing in it is specific to
+macOS (no system API is involved); **not run on macOS yet**.
+
 ## Native helpers (#15)
 
-The smoke's last phase (screenshots 66 to 69, data folder `helper-data`,
+The smoke's last phase (screenshots 90 to 93, data folder `helper-data`,
 [native helpers](../helpers.md#checks)) installs the helper sample, whose
 `pane-echo` `cargo xtask guests` builds for the runner (`macos-aarch64` on
 `macos-15`), runs it (the answer must name macOS arm64), cancels a slow run

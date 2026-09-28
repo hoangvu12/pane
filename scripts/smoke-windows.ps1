@@ -595,6 +595,7 @@ Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Greeting is selected
 Send "{ENTER}"; Start-Sleep -Seconds 2   # open Greeting
 Send "{DOWN 7}"   # Crash
 for ($i = 0; $i -lt 3; $i++) { Send "{ENTER}"; Start-Sleep -Seconds 2 }
+Send "greet"; Start-Sleep -Seconds 1   # Greeting and its reason at the top on any window height
 Capture "59-paused.png"
 Check "59-paused.png" "f08c8c"   # "Settings sample crashed 3 times within 5 minutes and is paused ..."
 Check "59-paused.png" "d6a36a"   # Greeting: "Settings sample is paused after an error; ..."
@@ -673,6 +674,78 @@ if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the deleted data is s
 Send "{ESC}"; Start-Sleep -Seconds 1
 Stop-Pane $process
 
+# Aliases and fallbacks: in Manage extensions, the query sample's command,
+# Echo, is given the alias "ec" (its row follows the package's state, Reload,
+# Clear cache, Uninstall and hotkey rows) and made a fallback (the next row).
+# In root search, "ec hello" lists the row that sends "hello" to Echo,
+# selected, and Enter shows Echo's answer; text nothing matches lists "No
+# results" with Echo below it, not selected, until Down selects it and Enter
+# sends the text. After a restart with the extension disabled, "ec hello"
+# lists nothing: the same screen as a Pane with nothing installed. Data
+# folders of their own keep the rows in a known order.
+$data = Join-Path $OutDir "aliases-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+$process = Start-Pane "stderr-aliases.log" @("--install", "target/guests/packages/sample-query")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Echo is selected
+Send "{DOWN 10}"   # Manage extensions…
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Send "{DOWN 5}{ENTER}"; Start-Sleep -Seconds 1   # "Alias for Echo"
+Send "ec"
+Send "{ENTER}"; Start-Sleep -Seconds 2
+Capture "66-alias-saved.png"
+Check "66-alias-saved.png" "9fd8a8"   # "Typing “ec” now finds Echo"
+Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2   # "Fallback: Echo"
+Capture "67-fallback-on.png"
+Check "67-fallback-on.png" "9fd8a8"   # "Echo is now offered for any text typed in root search"
+$shots = "66-alias-saved", "67-fallback-on" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the fallback row changed nothing" }
+Send "{ESC}"; Start-Sleep -Seconds 1   # root search
+Send "ec hello"; Start-Sleep -Seconds 1
+Capture "68-alias-row.png"
+Check "68-alias-row.png" "364355" 3000   # Echo, sending “hello”, selected
+Send "{ENTER}"; Start-Sleep -Seconds 3
+Capture "69-alias-answer.png"
+Check "69-alias-answer.png" "9fd8a8"   # "Echo heard “hello”"
+Send "{ESC}"; Start-Sleep -Seconds 1   # clears the query
+Send "zqx"; Start-Sleep -Seconds 1
+Capture "70-fallback-listed.png"   # "No results for “zqx”", then Echo, not selected
+Send "{DOWN}"; Start-Sleep -Seconds 1
+Capture "71-fallback-chosen.png"
+Check "71-fallback-chosen.png" "364355" 3000   # Echo, now selected
+$shots = "70-fallback-listed", "71-fallback-chosen" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: Down did not select the fallback" }
+Send "{ENTER}"; Start-Sleep -Seconds 3
+Capture "72-fallback-answer.png"
+Check "72-fallback-answer.png" "9fd8a8"   # "Echo heard “zqx”"
+$shots = "69-alias-answer", "72-fallback-answer" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the fallback got the alias's text" }
+Stop-Pane $process
+$aliases = Join-Path $data "extensions/aliases.json"
+if (-not (Select-String -Quiet -SimpleMatch '"ec"' $aliases)) { throw "alias not recorded" }
+if (-not (Select-String -Quiet -SimpleMatch '#echo"' $aliases)) { throw "fallback not recorded" }
+$process = Start-Pane "stderr-aliases-restart.log"
+Send "{DOWN 10}"   # Manage extensions…
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Send "{ENTER}"; Start-Sleep -Seconds 2   # disable Query sample
+Send "{ESC}"; Start-Sleep -Seconds 1
+Send "ec hello"; Start-Sleep -Seconds 1
+Capture "73-alias-disabled.png"   # "No results for “ec hello”"
+Stop-Pane $process
+if (-not (Select-String -Quiet -SimpleMatch '"disabled": true' (Join-Path $data "extensions/installed.json"))) { throw "not disabled" }
+$data = Join-Path $OutDir "aliases-empty-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+$process = Start-Pane "stderr-aliases-empty.log"
+Send "ec hello"; Start-Sleep -Seconds 1
+Capture "74-nothing-installed.png"   # "No results for “ec hello”"
+python "$PSScriptRoot/check_screenshot.py" --same (Join-Path $OutDir "73-alias-disabled.png") (Join-Path $OutDir "74-nothing-installed.png")
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: a disabled extension's alias still lists a row" }
+Stop-Pane $process
+
 # Native helpers: the helper sample's command runs pane-echo, the file its
 # package ships for this system (built by `cargo xtask guests`). Its first
 # item shows the helper's answer, naming the system; its third races the
@@ -694,24 +767,24 @@ $process = Start-Pane "stderr-helper.log" @("--install", "target/guests/packages
 Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Helper sample is selected
 Send "{ENTER}"; Start-Sleep -Seconds 2   # open Helper sample
 Send "{ENTER}"; Start-Sleep -Seconds 2   # Echo through the helper
-Capture "66-helper-echoed.png"
-Check "66-helper-echoed.png" "9fd8a8"   # 'Echoed "hello from Pane" on Windows x86-64'
+Capture "90-helper-echoed.png"
+Check "90-helper-echoed.png" "9fd8a8"   # 'Echoed "hello from Pane" on Windows x86-64'
 Send "{DOWN 2}{ENTER}"; Start-Sleep -Seconds 3   # Echo within a second
-Capture "67-helper-cancelled.png"
-Check "67-helper-cancelled.png" "9fd8a8"   # "Stopped the helper after one second"
-$shots = "66-helper-echoed", "67-helper-cancelled" | ForEach-Object { Join-Path $OutDir "$_.png" }
+Capture "91-helper-cancelled.png"
+Check "91-helper-cancelled.png" "9fd8a8"   # "Stopped the helper after one second"
+$shots = "90-helper-echoed", "91-helper-cancelled" | ForEach-Object { Join-Path $OutDir "$_.png" }
 python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the helper's answers look the same" }
 if (Helpers-Running) { throw "a cancelled helper is still running" }
 Send "{UP}{ENTER}"; Start-Sleep -Seconds 2   # Echo after waiting
 if (-not (Helpers-Running)) { throw "the waiting helper is not running" }
-Capture "68-helper-waiting.png"
+Capture "92-helper-waiting.png"
 Send "{ESC}"; Start-Sleep -Seconds 1   # root search; the helper keeps running
 Send "{DOWN 10}"   # Manage extensions…
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{ENTER}"; Start-Sleep -Seconds 2   # disable Helper sample
-Capture "69-helper-disabled.png"
-Check "69-helper-disabled.png" "9fd8a8"   # "Disabled Helper sample"
+Capture "93-helper-disabled.png"
+Check "93-helper-disabled.png" "9fd8a8"   # "Disabled Helper sample"
 if (Helpers-Running) { throw "the helper outlived its disabled package" }
 $settings = Join-Path $data "extensions/settings.json"
 if (-not (Select-String -Quiet -SimpleMatch '"helper-wait": "started"' $settings)) { throw "saved note lost" }

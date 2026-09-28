@@ -163,7 +163,7 @@ README: writing the helper, building it for each target, declaring it in
   helper again; three cycles of disable, reload and cancel; and invalid
   helper declarations.
 - Native GUI smokes, one identical phase on all three systems (screenshots
-  66 to 69, data folder `helper-data`): install the helper sample, run the
+  90 to 93, data folder `helper-data`): install the helper sample, run the
   helper (its answer names the system), cancel one after a second, start
   the waiting one, check with the system (`pgrep`, `Get-Process`) that it
   runs, disable the package and check that the process is gone, the note is

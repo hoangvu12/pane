@@ -146,9 +146,18 @@ must show nothing kept. **Not run on Windows yet.** A data file locked by
 another program is covered only by the tests' unreadable files, and a
 record that cannot be written after the data is deleted only by a Unix test.
 
+## Aliases and fallbacks (#31)
+
+The smoke's alias phase (screenshots 66 to 74, [aliases and fallbacks](../aliases.md#checks))
+gives Echo, the query sample's command, the alias "ec" and makes it a
+fallback in Manage extensions, sends "ec hello" and, from the unselected
+fallback row chosen with Down, "zqx" to it, and checks that with the
+extension disabled "ec hello" lists nothing. Nothing in it is specific to
+Windows (no system API is involved); **not run on Windows yet**.
+
 ## Native helpers (#15)
 
-The smoke's last phase (screenshots 66 to 69, data folder `helper-data`,
+The smoke's last phase (screenshots 90 to 93, data folder `helper-data`,
 [native helpers](../helpers.md#checks)) installs the helper sample, whose
 `pane-echo.exe` `cargo xtask guests` builds for the runner
 (`windows-x86_64` on `windows-2025`), runs it (the answer must name Windows

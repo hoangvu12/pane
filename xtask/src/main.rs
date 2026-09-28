@@ -25,6 +25,8 @@ const PREBUILT: &[&str] = &[
     "sample_operations_ts",
     "sample_applications_js",
     "sample_applications_ts",
+    "sample_query_js",
+    "sample_query_ts",
     "sample_helper_js",
     "sample_helper_ts",
 ];
@@ -84,6 +86,7 @@ fn guests() -> Result<(), String> {
                 "applications",
                 "quicklinks",
                 "sample_operations",
+                "sample_query",
                 "sample_helper",
                 "faulty",
                 "operations_fixture",
@@ -173,7 +176,7 @@ fn echo_helper(root: &Path, out: &Path) -> Result<(), String> {
 /// (package folder in `guests/packages`, component) of each sample package,
 /// and of the default extensions (the calculator, applications and
 /// quicklinks).
-const SAMPLE_PACKAGES: [(&str, &str); 17] = [
+const SAMPLE_PACKAGES: [(&str, &str); 20] = [
     ("sample-rust", "sample_rust"),
     ("sample-settings", "sample_settings"),
     ("sample-js", "sample_js"),
@@ -188,6 +191,9 @@ const SAMPLE_PACKAGES: [(&str, &str); 17] = [
     ("sample-operations-ts", "sample_operations_ts"),
     ("sample-applications-js", "sample_applications_js"),
     ("sample-applications-ts", "sample_applications_ts"),
+    ("sample-query", "sample_query"),
+    ("sample-query-js", "sample_query_js"),
+    ("sample-query-ts", "sample_query_ts"),
     ("sample-helper", "sample_helper"),
     ("sample-helper-js", "sample_helper_js"),
     ("sample-helper-ts", "sample_helper_ts"),

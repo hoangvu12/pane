@@ -270,6 +270,30 @@ export interface RootResults {
 }
 
 /**
+ * A command that takes a query (`pane:extension/query-command` in
+ * wit/query.wit): text the user typed into root search, which Pane sends
+ * only when the user invokes the command through its alias ("ec hello") or
+ * chooses it as a fallback. A command that takes one sets
+ * `"takesQuery": true` on its entry in `pane.json`, and
+ * `"pane": { "takesQuery": true }` in its `package.json` so that it is built
+ * with the interface; its module exports it as `queryCommand`:
+ *
+ * ```ts
+ * export const queryCommand: QueryCommand = {
+ *   async runQuery(command, query) { return `Echo heard “${query}”`; },
+ * };
+ * ```
+ */
+export interface QueryCommand {
+  /**
+   * Runs the command with id `command` (its id in `pane.json`) with `query`,
+   * trimmed and never empty. The text it resolves with is shown to the user
+   * as the result; throwing shows the error as the failure.
+   */
+  runQuery(command: string, query: string): Promise<string>;
+}
+
+/**
  * What invoking an indexed result does; Pane performs it.
  * `{ tag: "open-application", val: id }` opens the installed application
  * with `id`, as `open` in `pane:extension/applications@0.1.0` does.

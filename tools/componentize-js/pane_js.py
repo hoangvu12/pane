@@ -46,6 +46,7 @@ EXPORT_OPTIONS = {
     "rootResults": "pane:extension/root-results@0.1.0",
     "indexedResults": "pane:extension/indexed-results@0.1.0",
     "operations": "pane:extension/published-operations@0.1.0",
+    "takesQuery": "pane:extension/query-command@0.1.0",
 }
 PREBUILT = REPO / "guests" / "prebuilt"
 MANIFEST = PREBUILT / "manifest.json"
@@ -59,11 +60,13 @@ SAMPLES = [
     ("sample_operations_ts.wasm", "guests/sample-operations-ts"),
     ("sample_applications_js.wasm", "guests/sample-applications-js"),
     ("sample_applications_ts.wasm", "guests/sample-applications-ts"),
+    ("sample_query_js.wasm", "guests/sample-query-js"),
+    ("sample_query_ts.wasm", "guests/sample-query-ts"),
     ("sample_helper_js.wasm", "guests/sample-helper-js"),
     ("sample_helper_ts.wasm", "guests/sample-helper-ts"),
 ]
 # Pane's WIT, copied beside the world in guests/js/wit.
-PANE_WIT = ["extension.wit", "data.wit", "root-results.wit", "operations.wit", "applications.wit",
+PANE_WIT = ["extension.wit", "data.wit", "root-results.wit", "operations.wit", "applications.wit", "query.wit",
             "helpers.wit"]
 # Toolchain inputs that decide what a component contains.
 TOOL_INPUTS = ["pins.json", "package.json", "package-lock.json", "bundle.mjs", "p3_build.rs", "patches"]
@@ -381,6 +384,7 @@ ADAPTED_PROVIDERS = {
     "rootResults": ("rootResults", "resultsFor"),
     "indexedResults": ("indexedResults", "results"),
     "operations": ("publishedOperations", "runOperation"),
+    "takesQuery": ("queryCommand", "runQuery"),
 }
 
 
