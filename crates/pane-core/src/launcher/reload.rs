@@ -18,7 +18,7 @@
 use std::future::Future;
 use std::path::PathBuf;
 
-use super::{Launcher, Screen, State, Status, off_thread};
+use super::{Launcher, State, Status, off_thread};
 use crate::packages::{InstalledPackage, PackageError, PackageIdentity};
 use crate::runtime::CallError;
 
@@ -240,16 +240,6 @@ impl Launcher {
         self.refresh(&mut state);
         if state.screen_generation == generation {
             state.view.status = status;
-        }
-    }
-
-    /// Updates root search or the extension list on screen after a package
-    /// changed; other screens show no package state.
-    fn refresh(&self, state: &mut State) {
-        match &state.view.screen {
-            Screen::Root { .. } => self.refresh_root(state),
-            Screen::Extensions { .. } => self.refresh_extensions(state),
-            Screen::Command | Screen::Package { .. } | Screen::Form(_) | Screen::CustomView(_) => {}
         }
     }
 

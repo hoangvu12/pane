@@ -170,7 +170,10 @@ fn an_installed_package_is_disabled_and_enabled_from_the_extension_list(cx: &mut
         view.screen
     );
     assert_eq!(view.title, "Extensions");
-    assert_eq!(titles(&view), ["Hello", "Reload Hello"]);
+    assert_eq!(
+        titles(&view),
+        ["Hello", "Reload Hello", "Clear cache of Hello"]
+    );
     assert!(
         cx.debug_bounds("row-Hello").is_some(),
         "the package is listed"
@@ -273,12 +276,65 @@ fn a_reload_that_fails_to_start_offers_retry(cx: &mut TestAppContext) {
     assert!(cx.debug_bounds("status-error").is_some());
     assert_eq!(
         titles(&view),
-        ["Hello", "Reload Hello", "Retry starting Hello"]
+        [
+            "Hello",
+            "Reload Hello",
+            "Retry starting Hello",
+            "Clear cache of Hello"
+        ]
     );
 
     // The Reload row stays selected; Retry is next.
     cx.simulate_keystrokes("down enter");
     let view = settle(&window, cx);
     assert_eq!(view.status, Status::Result("Started Hello".into()));
-    assert_eq!(titles(&view), ["Hello", "Reload Hello"]);
+    assert_eq!(
+        titles(&view),
+        ["Hello", "Reload Hello", "Clear cache of Hello"]
+    );
+}
+
+#[gpui::test]
+fn an_installed_package_cache_is_cleared_after_confirming(cx: &mut TestAppContext) {
+    let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let folder = package(&sources.path().join("hello"));
+    let (window, cx) = open(cx, &data);
+    install(&window, cx, &folder);
+    cx.simulate_keystrokes("down down enter");
+    let view = settle(&window, cx);
+    assert!(matches!(view.screen, Screen::Extensions { .. }));
+    assert_eq!(
+        titles(&view),
+        ["Hello", "Reload Hello", "Clear cache of Hello"]
+    );
+
+    // The third row asks first, saying what is kept; Escape keeps the cache
+    // and returns to that row.
+    cx.simulate_keystrokes("down down enter");
+    let view = settle(&window, cx);
+    assert!(
+        matches!(view.screen, Screen::Confirm { .. }),
+        "{:?}",
+        view.screen
+    );
+    assert_eq!(view.title, "Clear the cache of Hello?");
+    assert_eq!(titles(&view), ["Clear cache", "Cancel"]);
+    let kept = "detail-Pane deletes the data this extension keeps as its cache. Its settings, \
+                content and credentials are kept, and the extension does not run.";
+    assert!(cx.debug_bounds(kept).is_some(), "what is kept is rendered");
+    cx.simulate_keystrokes("escape");
+    let view = settle(&window, cx);
+    assert!(matches!(view.screen, Screen::Extensions { .. }));
+    assert_eq!((view.status, view.selected), (Status::Idle, Some(2)));
+
+    cx.simulate_keystrokes("enter");
+    settle(&window, cx);
+    cx.simulate_keystrokes("enter");
+    let view = settle(&window, cx);
+    assert!(matches!(view.screen, Screen::Extensions { .. }));
+    assert_eq!(
+        (view.status, view.selected),
+        (Status::Result("Cleared the cache of Hello".into()), Some(2))
+    );
+    assert!(cx.debug_bounds("status-result").is_some());
 }

@@ -65,6 +65,20 @@ pub enum Screen {
     /// A custom view opened from an item of the command's list view. It has
     /// no rows.
     CustomView(CustomViewSnapshot),
+    /// `question` about an installed package before Pane acts on it, with
+    /// lines of information under the title, answered by choosing a row.
+    Confirm {
+        question: Question,
+        details: Vec<String>,
+    },
+}
+
+/// What a confirmation screen asks before Pane acts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Question {
+    /// Whether to clear the cache of the installed package with this
+    /// identity.
+    ClearCache(PackageIdentity),
 }
 
 /// A selectable row.
@@ -170,7 +184,9 @@ impl LauncherView {
     /// compatibility; empty on screens without any.
     pub fn details(&self) -> &[String] {
         match &self.screen {
-            Screen::Package { details } | Screen::Extensions { details } => details,
+            Screen::Package { details }
+            | Screen::Extensions { details }
+            | Screen::Confirm { details, .. } => details,
             _ => &[],
         }
     }
@@ -341,6 +357,12 @@ enum Entry {
     Reload(PackageIdentity),
     /// Start again this package, whose reloaded code failed to start.
     Retry(PackageIdentity),
+    /// Ask whether to clear this installed package's cache (extension list).
+    AskClearCache(PackageIdentity),
+    /// Clear this installed package's cache (confirmation).
+    ClearCache(PackageIdentity),
+    /// Return to the extension list without acting (confirmation).
+    Cancel,
 }
 
 #[derive(Clone, Copy)]
@@ -497,6 +519,7 @@ impl Launcher {
                 };
             }
             Screen::CustomView(_) => self.return_from_custom_view(&mut state, Status::Idle),
+            Screen::Confirm { .. } => self.leave_confirm(&mut state),
             Screen::Command | Screen::Package { .. } | Screen::Extensions { .. } => {
                 self.show_root(&mut state, None)
             }
@@ -535,6 +558,14 @@ impl Launcher {
             }
             Some(Entry::Manage) => {
                 self.show_extensions(&mut state);
+                None
+            }
+            Some(Entry::AskClearCache(identity)) => {
+                self.show_clear_cache(&mut state, &identity);
+                None
+            }
+            Some(Entry::Cancel) => {
+                self.leave_confirm(&mut state);
                 None
             }
             Some(Entry::Toggle(identity)) => {
@@ -583,6 +614,9 @@ impl Launcher {
                 Some(Entry::Install(folder, mode)) => {
                     launcher.install(generation, folder, mode).await
                 }
+                Some(Entry::ClearCache(identity)) => {
+                    launcher.clear_cache(generation, identity).await
+                }
                 Some(Entry::CustomView(item_id, info)) => {
                     if let Some(component) = open {
                         launcher
@@ -598,6 +632,8 @@ impl Launcher {
                     | Entry::Toggle(_)
                     | Entry::Reload(_)
                     | Entry::Retry(_)
+                    | Entry::AskClearCache(_)
+                    | Entry::Cancel
                     | Entry::Form(..),
                 )
                 | None => {}
@@ -781,12 +817,7 @@ impl Launcher {
                 return;
             }
         }
-        match state.view.screen {
-            Screen::Root { .. } => self.refresh_root(state),
-            Screen::Extensions { .. } => self.refresh_extensions(state),
-            // Other screens show no package state.
-            Screen::Command | Screen::Package { .. } | Screen::Form(_) | Screen::CustomView(_) => {}
-        }
+        self.refresh(state);
     }
 
     fn start_running(&self) -> u64 {
@@ -918,6 +949,20 @@ impl Launcher {
                 "Pane",
             )
         };
+    }
+
+    /// Updates root search or the extension list on screen after a package
+    /// changed; other screens show no package state.
+    fn refresh(&self, state: &mut State) {
+        match &state.view.screen {
+            Screen::Root { .. } => self.refresh_root(state),
+            Screen::Extensions { .. } => self.refresh_extensions(state),
+            Screen::Command
+            | Screen::Package { .. }
+            | Screen::Form(_)
+            | Screen::CustomView(_)
+            | Screen::Confirm { .. } => {}
+        }
     }
 
     /// Updates the rows of the root search on screen after the installed
@@ -1145,9 +1190,84 @@ impl Launcher {
             "Reloading replaces an extension's code with its source folder's current build; it \
              keeps its settings."
                 .into(),
+            "Clearing an extension's cache keeps its settings, content and credentials.".into(),
         ];
         state.view =
             LauncherView::new(Screen::Extensions { details }, "Extensions").with_rows(rows);
+    }
+
+    /// Asks whether to clear the cache of the installed package with
+    /// `identity`, saying what is deleted and what is kept.
+    fn show_clear_cache(&self, state: &mut State, identity: &PackageIdentity) {
+        let title = package_title(state, identity);
+        let choice = |title: &str, subtitle: &str| Row {
+            id: title.into(),
+            title: title.into(),
+            subtitle: Some(subtitle.into()),
+            unavailable: None,
+        };
+        state.screen_generation += 1;
+        state.entries = vec![Entry::ClearCache(identity.clone()), Entry::Cancel];
+        let details = vec![
+            format!("From {identity}"),
+            "Pane deletes the data this extension keeps as its cache. Its settings, content and \
+             credentials are kept, and the extension does not run."
+                .into(),
+        ];
+        let screen = Screen::Confirm {
+            question: Question::ClearCache(identity.clone()),
+            details,
+        };
+        state.view =
+            LauncherView::new(screen, format!("Clear the cache of {title}?")).with_rows(vec![
+                choice("Clear cache", "Delete the cached data now"),
+                choice("Cancel", "Keep the cache"),
+            ]);
+    }
+
+    /// Clears the cache of the installed package with `identity` without
+    /// running it, then shows the extension list with the outcome.
+    async fn clear_cache(&self, generation: u64, identity: PackageIdentity) {
+        let cleared = match &self.installation {
+            Some(installation) => {
+                let settings = installation.settings.clone();
+                let identity = identity.clone();
+                off_thread(move || settings.clear_cache(&identity)).await
+            }
+            None => Err("this launcher does not install packages".into()),
+        };
+        let Some(mut state) = self.lock_if_current(generation) else {
+            return;
+        };
+        let title = package_title(&state, &identity);
+        self.show_extensions_at_clear_cache(&mut state, &identity);
+        state.view.status = match cleared {
+            Ok(()) => Status::Result(format!("Cleared the cache of {title}")),
+            Err(reason) => Status::Error(format!("Could not clear the cache of {title}: {reason}")),
+        };
+    }
+
+    /// Returns from a confirmation to the extension list without acting.
+    fn leave_confirm(&self, state: &mut State) {
+        let Screen::Confirm { question, .. } = &state.view.screen else {
+            return;
+        };
+        match question.clone() {
+            Question::ClearCache(identity) => self.show_extensions_at_clear_cache(state, &identity),
+        }
+    }
+
+    /// Shows the extension list with the row that clears the cache of the
+    /// package with `identity` selected, where the user asked.
+    fn show_extensions_at_clear_cache(&self, state: &mut State, identity: &PackageIdentity) {
+        self.show_extensions(state);
+        let row = state
+            .entries
+            .iter()
+            .position(|entry| matches!(entry, Entry::AskClearCache(asked) if asked == identity));
+        if row.is_some() {
+            state.view.selected = row;
+        }
     }
 
     /// Updates the installed packages on screen after one was enabled or
@@ -1486,10 +1606,22 @@ fn disabled_owner(state: &State, component: &Path) -> Option<String> {
         .map(|package| format!("{} is disabled", package.title()))
 }
 
+/// The title of the installed package with `identity`, or its identity if
+/// it is no longer installed.
+fn package_title(state: &State, identity: &PackageIdentity) -> String {
+    state
+        .packages
+        .iter()
+        .find(|package| package.identity == *identity)
+        .map(InstalledPackage::title)
+        .unwrap_or_else(|| identity.to_string())
+}
+
 /// One row per installed package, saying whether it is enabled and which
 /// source it is, so copies with the same title can be told apart; then the
 /// rows that reload each enabled package, each followed by a Retry row if
-/// its reloaded code failed to start.
+/// its reloaded code failed to start; then one row per package to clear its
+/// cache, in the same order.
 fn extension_rows(
     packages: &[InstalledPackage],
     failed: &[(PackageIdentity, String)],
@@ -1542,7 +1674,19 @@ fn extension_rows(
             });
             std::iter::once((reload, Entry::Reload(package.identity.clone()))).chain(retry)
         });
-    toggles.chain(reloads).unzip()
+    let clear_cache = packages.iter().map(|package| {
+        let row = Row {
+            id: format!("clear-cache:{}", package.identity.key()),
+            title: format!("Clear cache of {}", package.title()),
+            subtitle: Some(format!(
+                "Keeps its settings, content and credentials · {}",
+                package.identity
+            )),
+            unavailable: None,
+        };
+        (row, Entry::AskClearCache(package.identity.clone()))
+    });
+    toggles.chain(reloads).chain(clear_cache).unzip()
 }
 
 /// The package screen for `folder`: what the package is and whether it can

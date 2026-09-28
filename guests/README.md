@@ -15,9 +15,12 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   hold each of them to that.
 - `sample-settings`, `sample-settings-js`, `sample-settings-ts`: the same
   command in Rust, JavaScript and TypeScript, which keeps a chosen greeting
-  style in Pane's settings ([Keeping settings](#keeping-settings)); the
-  fixtures for disabling and re-enabling a package, held alike by
-  `crates/pane-core/tests/disable.rs`.
+  style in Pane's settings ([Keeping settings](#keeping-settings)) and one
+  value of each other kind of data
+  ([content, cache and credentials](#keeping-content-cache-and-credentials));
+  the fixtures for disabling and re-enabling a package and for clearing its
+  cache, held alike by `crates/pane-core/tests/disable.rs` and
+  `crates/pane-core/tests/clear_cache.rs`.
 - `js`: `@pane/extension`, TypeScript declarations for the contract
   (`pane.d.ts`) and the WIT world JS/TS commands are built against.
 - `prebuilt`: the JS and TS sample components (both samples in each
@@ -157,6 +160,35 @@ const style: string | null = get("greeting-style");
   with this change. JavaScript and TypeScript commands are built against a
   world that includes it, so the prebuilt JS/TS components list the import
   whether or not they use it.
+
+### Keeping content, cache and credentials
+
+Next to `settings`, [`wit/settings.wit`](../wit/settings.wit) has three
+interfaces with the same `get` and `set`, one per other kind of
+[extension data](../docs/extension-data.md): `content` for the extension's own
+durable records, `cache` for values it can make again, and `credentials` for
+secrets kept on this computer. The settings sample uses all three. In Rust
+they are `pane_guest::{content, cache, credentials}`; in JavaScript and
+TypeScript the modules `pane:extension/content@0.1.0`,
+`pane:extension/cache@0.1.0` and `pane:extension/credentials@0.1.0`:
+
+```ts
+import * as cache from "pane:extension/cache@0.1.0";
+
+const greeting = cache.get("last-greeting") ?? makeGreeting();
+cache.set("last-greeting", greeting);
+```
+
+- They behave like settings: owned by the source identity, kept while the
+  package is disabled or updated, refused while it is disabled, and each kept
+  in its own file (`content.json`, `cache.json`, `credentials.json`).
+- The user can clear an extension's cache in Manage extensions at any time,
+  without the extension running: expect any cache value to be missing. Its
+  settings, content and credentials are kept.
+- Credentials are plain text in Pane's data folder, not in the system's
+  keychain.
+- The extension migrates its own values between its versions; Pane keeps
+  them unchanged across an update.
 
 ## Writing a JavaScript or TypeScript command
 

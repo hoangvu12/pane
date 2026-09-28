@@ -165,9 +165,15 @@ fn a_disabled_package_leaves_root_search_and_stays_disabled_after_a_restart(fixt
 
     manage(&launcher);
     let identity = PackageIdentity::local(&folder).unwrap();
+    // After the packages' rows, one per enabled package reloads it, then one
+    // per package clears its cache.
     assert_eq!(
         titles(&launcher),
-        ["Settings sample", "Reload Settings sample"]
+        [
+            "Settings sample",
+            "Reload Settings sample",
+            "Clear cache of Settings sample"
+        ]
     );
     assert_eq!(launcher.view().rows[0].id, identity.key());
     assert!(subtitles(&launcher)[0].starts_with("Enabled"));
@@ -248,7 +254,14 @@ fn copies_with_the_same_title_are_enabled_and_keep_settings_by_identity(fixture:
     manage(&launcher);
     assert_eq!(
         titles(&launcher),
-        ["Greeter", "Greeter", "Reload Greeter", "Reload Greeter"]
+        [
+            "Greeter",
+            "Greeter",
+            "Reload Greeter",
+            "Reload Greeter",
+            "Clear cache of Greeter",
+            "Clear cache of Greeter"
+        ]
     );
     let published_id = PackageIdentity::local(&published).unwrap();
     let development_id = PackageIdentity::local(&development).unwrap();

@@ -323,7 +323,11 @@ fn a_disabled_package_is_not_reloaded() {
     let (launcher, _, identity) = dirs.installed("Dev", "sample_rust");
     block_on(launcher.set_enabled(&identity, false));
     manage(&launcher);
-    assert_eq!(titles(&launcher), ["Dev"], "no Reload row");
+    assert_eq!(
+        titles(&launcher),
+        ["Dev", "Clear cache of Dev"],
+        "no Reload row"
+    );
 
     block_on(launcher.reload(&identity));
 

@@ -308,4 +308,52 @@ capture 33-retried.png
 check 33-retried.png 9fd8a8   # "Started Dev"
 stop_pane
 grep -q '"start-attempted": "yes"' "$out/data/extensions/settings.json" || { echo "the failed start's setting was not kept"; exit 1; }
+
+# The settings sample keeps one value of each kind of data: its formal style
+# (settings) and "Good day to you" (cache) are saved above; its fourth and
+# fifth items save a note (content) and sign in (a local credential), and its
+# sixth shows all four.
+start_pane
+for ((i = 0; i < 4; i++)); do key 125; done   # Greeting
+key 36; sleep 3
+for ((i = 0; i < 3; i++)); do key 125; done
+key 36; sleep 2   # "Save a note"
+key 125; key 36; sleep 2   # "Sign in"
+key 125; key 36; sleep 2   # "Show what Pane keeps"
+capture 34-kept.png
+check 34-kept.png 9fd8a8   # every value, the cached greeting included
+key 53; sleep 1
+stop_pane
+grep -q '"note": "Water the plants"' "$out/data/extensions/content.json" || { echo "note not saved"; exit 1; }
+grep -q '"token": "sample-token"' "$out/data/extensions/credentials.json" || { echo "credential not saved"; exit 1; }
+grep -q '"last-greeting": "Good day to you"' "$out/data/extensions/cache.json" || { echo "greeting not cached"; exit 1; }
+
+# Clear the settings sample's cache in Manage extensions: its row follows the
+# three package rows (Dev is the third), their three Reload rows and "Clear
+# cache of Rust sample". Pane asks first, then deletes only the cached
+# greeting, without running the extension.
+start_pane
+for ((i = 0; i < 10; i++)); do key 125; done   # the last row
+key 36; sleep 1
+for ((i = 0; i < 7; i++)); do key 125; done
+key 36; sleep 1   # "Clear cache of Settings sample"
+capture 35-confirm-clear-cache.png
+check 35-confirm-clear-cache.png aab4c0   # what is deleted and what is kept
+key 36; sleep 2   # "Clear cache"
+capture 36-cache-cleared.png
+check 36-cache-cleared.png 9fd8a8   # "Cleared the cache of Settings sample"
+key 53; sleep 1
+for ((i = 0; i < 4; i++)); do key 125; done   # Greeting
+key 36; sleep 3
+for ((i = 0; i < 5; i++)); do key 125; done
+key 36; sleep 2   # "Show what Pane keeps"
+capture 37-kept-after-clear.png
+check 37-kept-after-clear.png 9fd8a8   # "... Cached greeting: none"
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/34-kept.png" "$out/37-kept-after-clear.png"
+key 53; sleep 1
+stop_pane
+if grep -q 'Good day to you' "$out/data/extensions/cache.json"; then echo "cache not cleared"; exit 1; fi
+grep -q '"greeting-style": "formal"' "$out/data/extensions/settings.json" || { echo "setting lost"; exit 1; }
+grep -q '"note": "Water the plants"' "$out/data/extensions/content.json" || { echo "note lost"; exit 1; }
+grep -q '"token": "sample-token"' "$out/data/extensions/credentials.json" || { echo "credential lost"; exit 1; }
 echo "screenshots in $out"

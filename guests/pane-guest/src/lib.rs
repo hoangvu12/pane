@@ -1,7 +1,9 @@
 //! Guest-side bindings for Pane's `pane:extension` contract.
 //!
 //! An extension implements [`Guest`] and calls [`export!`]. It may keep
-//! values between runs with [`settings`]. The crate is
+//! values between runs with [`settings`], and its own records, disposable
+//! values and secrets with [`content`], [`cache`] and [`credentials`]. The
+//! crate is
 //! `no_std` so the component imports only WASI 0.3 interfaces; it supplies the
 //! allocator and a panic handler that traps, which the host reports as a
 //! runtime error.
@@ -29,7 +31,7 @@ pub use exports::pane::extension::command::{
     FormError, Frame, Guest, GuestCustomView, Item, Key, Platform, Point, Rect, Shape, Text,
     TextField, View, ViewEvent,
 };
-pub use pane::extension::settings;
+pub use pane::extension::{cache, content, credentials, settings};
 
 /// The custom view type of a command that has none: `type CustomView =
 /// NoCustomView;` in its `Guest` implementation, with an `open_view` that

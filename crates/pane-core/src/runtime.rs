@@ -25,10 +25,10 @@ mod bindings {
 }
 
 use bindings::exports::pane::extension::command;
-use bindings::pane::extension::settings;
+use bindings::pane::extension::{cache, content, credentials, settings};
 
 use crate::packages::EXTENSION_API;
-use crate::settings::PackageSettings;
+use crate::settings::{DataKind, PackageSettings};
 
 /// Interface-version prefix every imported WASI interface must carry.
 const WASI_VERSION: &str = "@0.3.";
@@ -584,20 +584,30 @@ struct GuestState {
 impl GuestState {
     fn settings(&self) -> Result<&PackageSettings, String> {
         self.settings.as_ref().ok_or_else(|| {
-            "only installed packages have settings; this command is built into Pane".into()
+            "only installed packages keep settings or data; this command is built into Pane".into()
         })
     }
 }
 
-impl settings::Host for GuestState {
-    fn get(&mut self, key: String) -> Result<Option<String>, String> {
-        self.settings()?.get(&key)
-    }
+/// Implements one kind of data's interface over the package's settings.
+macro_rules! data_host {
+    ($interface:ident, $kind:expr) => {
+        impl $interface::Host for GuestState {
+            fn get(&mut self, key: String) -> Result<Option<String>, String> {
+                self.settings()?.get($kind, &key)
+            }
 
-    fn set(&mut self, key: String, value: String) -> Result<(), String> {
-        self.settings()?.set(&key, &value)
-    }
+            fn set(&mut self, key: String, value: String) -> Result<(), String> {
+                self.settings()?.set($kind, &key, &value)
+            }
+        }
+    };
 }
+
+data_host!(settings, DataKind::Settings);
+data_host!(content, DataKind::Content);
+data_host!(cache, DataKind::Cache);
+data_host!(credentials, DataKind::Credentials);
 
 impl WasiView for GuestState {
     fn ctx(&mut self) -> WasiCtxView<'_> {
@@ -642,6 +652,14 @@ impl Host {
             .expect("registering WASI 0.3 in a fresh linker cannot conflict");
         settings::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| state)
             .expect("registering settings in a fresh linker cannot conflict");
+        content::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| state)
+            .expect("registering content in a fresh linker cannot conflict");
+        cache::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| state)
+            .expect("registering the cache in a fresh linker cannot conflict");
+        credentials::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| {
+            state
+        })
+        .expect("registering credentials in a fresh linker cannot conflict");
         Host {
             engine,
             linker,
