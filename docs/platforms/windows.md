@@ -134,9 +134,21 @@ adapter was only compile- and lint-checked for `x86_64-pc-windows-gnu` from
 Linux; **not run on Windows yet**, so registration, delivery and the focus
 transition (foreground rules) are unverified natively.
 
+## Deleting retained data (#41)
+
+The smoke's last phase (screenshots 63 to 65, [deleting retained
+data](../extension-data.md#deleting-retained-data)), with a data folder of
+its own, saves a note with the settings sample, uninstalls it keeping its
+saved data, deletes its retained data from the extension list's last row
+(Down from the selected Cancel, then Enter), checks that `installed.json`
+and `content.json` no longer hold it, and reinstalls the same folder, which
+must show nothing kept. **Not run on Windows yet.** A data file locked by
+another program is covered only by the tests' unreadable files, and a
+record that cannot be written after the data is deleted only by a Unix test.
+
 ## Aliases and fallbacks (#31)
 
-The smoke's alias phase (screenshots 63 to 71, [aliases and fallbacks](../aliases.md#checks))
+The smoke's alias phase (screenshots 66 to 74, [aliases and fallbacks](../aliases.md#checks))
 gives Echo, the query sample's command, the alias "ec" and makes it a
 fallback in Manage extensions, sends "ec hello" and, from the unselected
 fallback row chosen with Down, "zqx" to it, and checks that with the

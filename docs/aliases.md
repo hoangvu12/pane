@@ -123,7 +123,7 @@ prebuilt JS/TS sample).
   hello" and Enter show Echo's answer; "zqx" shows "No results" and the
   fallback unselected, Enter changes nothing, Down and Enter send "zqx".
 - Native GUI smokes, one identical phase on all three systems (screenshots
-  63 to 71): with data folders of their own, install the query sample, set
+  66 to 74): with data folders of their own, install the query sample, set
   the alias "ec" and the fallback in Manage extensions, send "ec hello" and,
   from the fallback chosen with Down, "zqx"; check `aliases.json`; restart,
   disable the extension and check that "ec hello" gives the same screen as

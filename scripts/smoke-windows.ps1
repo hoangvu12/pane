@@ -616,6 +616,63 @@ python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: Retry changed nothing" }
 Stop-Pane $process
 if (Select-String -Quiet -SimpleMatch '"paused"' (Join-Path $data "extensions/installed.json")) { throw "pause not cleared" }
+
+# Delete retained data: with a data folder of its own, the settings sample
+# saves a note and is uninstalled keeping it (its Uninstall row follows its
+# state, Reload and Clear cache rows); its retained data, the extension list's
+# last row, is deleted after confirming (Cancel is selected first, so Down
+# then Enter), without the extension. Installing the same folder again finds
+# nothing. Steps that change Pane's files wait for the change instead of a
+# fixed time.
+$data = Join-Path $OutDir "retained-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+# Waits until $file contains $text ($present) or no longer does (-not $present).
+function Wait-For($file, $text, [bool]$present) {
+    for ($i = 0; $i -lt 100; $i++) {
+        $found = (Test-Path $file) -and (Select-String -Quiet -SimpleMatch $text $file)
+        if ($found -eq $present) { return }
+        Start-Sleep -Milliseconds 100
+    }
+    throw "${file}: $text is not $(if ($present) { 'present' } else { 'absent' })"
+}
+$registry = Join-Path $data "extensions/installed.json"
+$process = Start-Pane "stderr-retained.log" @("--install", "target/guests/packages/sample-settings")
+Send "{ENTER}"   # Install; Greeting is selected
+Wait-For $registry "sample-settings" $true; Start-Sleep -Seconds 1
+Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greeting
+Send "{DOWN 3}"
+Send "{ENTER}"   # "Save a note"
+Wait-For (Join-Path $data "extensions/content.json") '"note": "Water the plants"' $true
+Send "{ESC}"; Start-Sleep -Seconds 1   # root search
+Send "{DOWN 10}"   # Manage extensions…
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Send "{DOWN 3}{ENTER}"; Start-Sleep -Seconds 1   # "Uninstall Settings sample"
+Send "{ENTER}"   # "Uninstall and keep saved data"
+Wait-For $registry '"retained"' $true; Start-Sleep -Seconds 1
+Send "{DOWN 40}"
+Send "{ENTER}"; Start-Sleep -Seconds 1   # "Delete retained data of Settings sample"
+Capture "63-confirm-delete-retained.png"
+Check "63-confirm-delete-retained.png" "aab4c0"   # what is kept and what is not touched
+Send "{DOWN}{ENTER}"   # "Delete retained data"
+Wait-For $registry '"retained"' $false; Start-Sleep -Seconds 1
+Capture "64-retained-deleted.png"
+Check "64-retained-deleted.png" "9fd8a8"   # "Deleted the retained data of Settings sample"
+Stop-Pane $process
+if (Select-String -Quiet -SimpleMatch 'Water the plants' (Join-Path $data "extensions/content.json")) { throw "note not deleted" }
+$process = Start-Pane "stderr-reinstall-empty.log" @("--install", "target/guests/packages/sample-settings")
+Send "{ENTER}"   # Install; Greeting is selected
+Wait-For $registry "sample-settings" $true; Start-Sleep -Seconds 1
+Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greeting
+Send "{DOWN 5}"
+Send "{ENTER}"; Start-Sleep -Seconds 2   # "Show what Pane keeps"
+Capture "65-reinstalled-empty.png"
+Check "65-reinstalled-empty.png" "9fd8a8"   # "Style: none · Note: none · Signed in: no ..."
+python "$PSScriptRoot/check_screenshot.py" --distinct (Join-Path $OutDir "51-reinstalled.png") (Join-Path $OutDir "65-reinstalled-empty.png")
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the deleted data is still shown" }
+Send "{ESC}"; Start-Sleep -Seconds 1
+Stop-Pane $process
+
 # Aliases and fallbacks: in Manage extensions, the query sample's command,
 # Echo, is given the alias "ec" (its row follows the package's state, Reload,
 # Clear cache, Uninstall and hotkey rows) and made a fallback (the next row).
@@ -635,34 +692,34 @@ Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{DOWN 5}{ENTER}"; Start-Sleep -Seconds 1   # "Alias for Echo"
 Send "ec"
 Send "{ENTER}"; Start-Sleep -Seconds 2
-Capture "63-alias-saved.png"
-Check "63-alias-saved.png" "9fd8a8"   # "Typing “ec” now finds Echo"
+Capture "66-alias-saved.png"
+Check "66-alias-saved.png" "9fd8a8"   # "Typing “ec” now finds Echo"
 Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2   # "Fallback: Echo"
-Capture "64-fallback-on.png"
-Check "64-fallback-on.png" "9fd8a8"   # "Echo is now offered for any text typed in root search"
-$shots = "63-alias-saved", "64-fallback-on" | ForEach-Object { Join-Path $OutDir "$_.png" }
+Capture "67-fallback-on.png"
+Check "67-fallback-on.png" "9fd8a8"   # "Echo is now offered for any text typed in root search"
+$shots = "66-alias-saved", "67-fallback-on" | ForEach-Object { Join-Path $OutDir "$_.png" }
 python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the fallback row changed nothing" }
 Send "{ESC}"; Start-Sleep -Seconds 1   # root search
 Send "ec hello"; Start-Sleep -Seconds 1
-Capture "65-alias-row.png"
-Check "65-alias-row.png" "364355" 3000   # Echo, sending “hello”, selected
+Capture "68-alias-row.png"
+Check "68-alias-row.png" "364355" 3000   # Echo, sending “hello”, selected
 Send "{ENTER}"; Start-Sleep -Seconds 3
-Capture "66-alias-answer.png"
-Check "66-alias-answer.png" "9fd8a8"   # "Echo heard “hello”"
+Capture "69-alias-answer.png"
+Check "69-alias-answer.png" "9fd8a8"   # "Echo heard “hello”"
 Send "{ESC}"; Start-Sleep -Seconds 1   # clears the query
 Send "zqx"; Start-Sleep -Seconds 1
-Capture "67-fallback-listed.png"   # "No results for “zqx”", then Echo, not selected
+Capture "70-fallback-listed.png"   # "No results for “zqx”", then Echo, not selected
 Send "{DOWN}"; Start-Sleep -Seconds 1
-Capture "68-fallback-chosen.png"
-Check "68-fallback-chosen.png" "364355" 3000   # Echo, now selected
-$shots = "67-fallback-listed", "68-fallback-chosen" | ForEach-Object { Join-Path $OutDir "$_.png" }
+Capture "71-fallback-chosen.png"
+Check "71-fallback-chosen.png" "364355" 3000   # Echo, now selected
+$shots = "70-fallback-listed", "71-fallback-chosen" | ForEach-Object { Join-Path $OutDir "$_.png" }
 python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: Down did not select the fallback" }
 Send "{ENTER}"; Start-Sleep -Seconds 3
-Capture "69-fallback-answer.png"
-Check "69-fallback-answer.png" "9fd8a8"   # "Echo heard “zqx”"
-$shots = "66-alias-answer", "69-fallback-answer" | ForEach-Object { Join-Path $OutDir "$_.png" }
+Capture "72-fallback-answer.png"
+Check "72-fallback-answer.png" "9fd8a8"   # "Echo heard “zqx”"
+$shots = "69-alias-answer", "72-fallback-answer" | ForEach-Object { Join-Path $OutDir "$_.png" }
 python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the fallback got the alias's text" }
 Stop-Pane $process
@@ -675,7 +732,7 @@ Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{ENTER}"; Start-Sleep -Seconds 2   # disable Query sample
 Send "{ESC}"; Start-Sleep -Seconds 1
 Send "ec hello"; Start-Sleep -Seconds 1
-Capture "70-alias-disabled.png"   # "No results for “ec hello”"
+Capture "73-alias-disabled.png"   # "No results for “ec hello”"
 Stop-Pane $process
 if (-not (Select-String -Quiet -SimpleMatch '"disabled": true' (Join-Path $data "extensions/installed.json"))) { throw "not disabled" }
 $data = Join-Path $OutDir "aliases-empty-data"
@@ -683,8 +740,8 @@ if (Test-Path $data) { Remove-Item -Recurse -Force $data }
 $env:PANE_DATA_DIR = $data
 $process = Start-Pane "stderr-aliases-empty.log"
 Send "ec hello"; Start-Sleep -Seconds 1
-Capture "71-nothing-installed.png"   # "No results for “ec hello”"
-python "$PSScriptRoot/check_screenshot.py" --same (Join-Path $OutDir "70-alias-disabled.png") (Join-Path $OutDir "71-nothing-installed.png")
+Capture "74-nothing-installed.png"   # "No results for “ec hello”"
+python "$PSScriptRoot/check_screenshot.py" --same (Join-Path $OutDir "73-alias-disabled.png") (Join-Path $OutDir "74-nothing-installed.png")
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: a disabled extension's alias still lists a row" }
 Stop-Pane $process
 Write-Output "screenshots in $OutDir"

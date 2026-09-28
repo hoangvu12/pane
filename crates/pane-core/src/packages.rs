@@ -715,6 +715,16 @@ pub enum SavedData {
     Delete,
 }
 
+/// Where a package identity stands in `installed.json`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Standing {
+    Installed,
+    /// Not installed, with its data kept.
+    Retained,
+    /// Neither installed nor with data on record.
+    Neither,
+}
+
 /// Extension data Pane keeps for a package identity that is not installed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RetainedData {
@@ -806,32 +816,25 @@ pub(crate) struct Store {
 
 impl Store {
     pub fn open(dir: PathBuf) -> Store {
-        let registry = match fs::read_to_string(dir.join(REGISTRY_FILE)) {
-            Ok(text) => serde_json::from_str::<RegistryJson>(&text)
-                .map_err(|error| error.to_string())
-                .and_then(|registry| {
-                    if registry.version == REGISTRY_VERSION {
-                        Ok(registry)
-                    } else {
-                        Err(format!(
-                            "{REGISTRY_FILE} has version {}, this Pane reads {REGISTRY_VERSION}",
-                            registry.version
-                        ))
-                    }
-                }),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(RegistryJson {
-                version: REGISTRY_VERSION,
-                next: 1,
-                packages: Vec::new(),
-                leftovers: Vec::new(),
-                retained: Vec::new(),
-            }),
-            Err(error) => Err(error.to_string()),
-        }
-        .map_err(|reason| format!("{}: {reason}", dir.join(REGISTRY_FILE).display()));
+        let registry = read_registry(&dir);
         let mut store = Store { dir, registry };
         store.remove_leftovers();
         store
+    }
+
+    /// Where `identity` stands in `installed.json` as it is on disk now,
+    /// which another Pane on the same data folder may have changed since
+    /// this one read it.
+    pub fn standing_on_disk(&self, identity: &PackageIdentity) -> Result<Standing, PackageError> {
+        let registry = read_registry(&self.dir).map_err(PackageError::Storage)?;
+        let PackageIdentity(Source::Local(local)) = identity;
+        Ok(if registry.packages.iter().any(|r| &r.local == local) {
+            Standing::Installed
+        } else if registry.retained.iter().any(|r| &r.local == local) {
+            Standing::Retained
+        } else {
+            Standing::Neither
+        })
     }
 
     /// Tries again to remove the managed folders of replaced copies that
@@ -1058,6 +1061,27 @@ impl Store {
         })
     }
 
+    /// Drops the record that Pane keeps extension data for `identity`, once
+    /// that data is deleted or no longer kept. `installed.json` is read
+    /// again first and only that record is removed from it, so what another
+    /// Pane on the same data folder recorded since, such as installing the
+    /// same source again, is kept. A failure leaves the record.
+    pub fn forget_retained(&mut self, identity: &PackageIdentity) -> Result<(), PackageError> {
+        let registry = self
+            .registry
+            .as_mut()
+            .map_err(|reason| PackageError::Storage(reason.clone()))?;
+        let PackageIdentity(Source::Local(local)) = identity;
+        let mut on_disk = read_registry(&self.dir).map_err(PackageError::Storage)?;
+        if on_disk.retained.iter().any(|record| &record.local == local) {
+            on_disk.retained.retain(|record| &record.local != local);
+            write_registry(&self.dir, &on_disk)
+                .map_err(|error| PackageError::Storage(error.to_string()))?;
+        }
+        registry.retained.retain(|record| &record.local != local);
+        Ok(())
+    }
+
     /// Records that Pane keeps extension data for `identity`, which is not
     /// installed, under `title`.
     pub fn retain(
@@ -1182,6 +1206,33 @@ fn copy_package(package: &SourcePackage, location: &Path) -> io::Result<()> {
         fs::copy(source, target)?;
     }
     Ok(())
+}
+
+/// Reads the registry in `dir`; a missing one holds nothing.
+fn read_registry(dir: &Path) -> Result<RegistryJson, String> {
+    match fs::read_to_string(dir.join(REGISTRY_FILE)) {
+        Ok(text) => serde_json::from_str::<RegistryJson>(&text)
+            .map_err(|error| error.to_string())
+            .and_then(|registry| {
+                if registry.version == REGISTRY_VERSION {
+                    Ok(registry)
+                } else {
+                    Err(format!(
+                        "{REGISTRY_FILE} has version {}, this Pane reads {REGISTRY_VERSION}",
+                        registry.version
+                    ))
+                }
+            }),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(RegistryJson {
+            version: REGISTRY_VERSION,
+            next: 1,
+            packages: Vec::new(),
+            leftovers: Vec::new(),
+            retained: Vec::new(),
+        }),
+        Err(error) => Err(error.to_string()),
+    }
+    .map_err(|reason| format!("{}: {reason}", dir.join(REGISTRY_FILE).display()))
 }
 
 /// Replaces the registry whole (see [`write_atomically`] for what a crash or
