@@ -252,3 +252,13 @@ What installing does:
 
 Disabling, uninstalling and rebuilding on save are not implemented yet; to
 pick up a rebuilt component, choose the folder again and Update.
+
+Known limits of local packages so far:
+
+- The manifest cannot yet declare the operating systems a package supports
+  (Q34's supported-OS metadata); that is deferred to a later ticket, so a
+  package is offered on every OS.
+- An update is not coordinated with a command that is running or open: the
+  replaced copy's code is dropped, so an open command of the package loses
+  its state and may fail until you open it again from root search. Staged
+  activation that waits for running commands comes with reload (#11, #14).

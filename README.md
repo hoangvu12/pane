@@ -27,6 +27,14 @@ No JavaScript toolchain is needed for these: the JS and TS sample components are
 
 In the window, use the arrow keys to select, Enter to open a command or run an item, and Escape to go back; clicking a row runs it too. **Install extension from folder…**, the last row, installs a local extension package; see [Packaging and installing a local extension](guests/README.md#packaging-and-installing-a-local-extension).
 
+To try a package without the folder picker, open the launcher on its install screen, then press Enter to install it:
+
+```sh
+cargo run -p pane -- --install target/guests/packages/sample-rust   # pane --install <folder>
+```
+
+Installed packages go in Pane's data folder (`%LOCALAPPDATA%\Pane\data` on Windows, `~/Library/Application Support/Pane` on macOS, `$XDG_DATA_HOME/pane` or `~/.local/share/pane` on Linux). Set `PANE_DATA_DIR` to another folder to keep test installs out of it; the GUI smoke scripts use `<output-dir>/data`.
+
 Layout:
 
 - `wit/extension.wit`: the host/guest contract for one extension command.
