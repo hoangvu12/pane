@@ -57,7 +57,7 @@ SAMPLES = [
     ("sample_operations_ts.wasm", "guests/sample-operations-ts"),
 ]
 # Pane's WIT, copied beside the world in guests/js/wit.
-PANE_WIT = ["extension.wit", "settings.wit", "root-results.wit", "operations.wit"]
+PANE_WIT = ["extension.wit", "data.wit", "root-results.wit", "operations.wit"]
 # Toolchain inputs that decide what a component contains.
 TOOL_INPUTS = ["pins.json", "package.json", "package-lock.json", "bundle.mjs", "p3_build.rs", "patches"]
 SKIP_DIRS = {"node_modules", ".git"}

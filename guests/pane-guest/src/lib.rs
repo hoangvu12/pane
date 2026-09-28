@@ -1,10 +1,11 @@
 //! Guest-side bindings for Pane's `pane:extension` contract.
 //!
 //! An extension implements [`Guest`] and calls [`export!`]. It may keep
-//! values between runs with [`settings`], compute results from root
-//! search's query with [`root`], call operations other packages publish with
-//! [`operations::call`] and serve those its own package publishes with
-//! [`publish`]. The crate is
+//! values between runs with [`settings`], and its own records, disposable
+//! values and secrets with [`content`], [`cache`] and [`credentials`]. It
+//! may compute results from root search's query with [`root`], call
+//! operations other packages publish with [`operations::call`] and serve
+//! those its own package publishes with [`publish`]. The crate is
 //! `no_std` so the component imports only WASI 0.3 interfaces; it supplies the
 //! allocator and a panic handler that traps, which the host reports as a
 //! runtime error.
@@ -22,7 +23,7 @@ use core::ffi::c_void;
 
 wit_bindgen::generate!({
     path: "../../wit",
-    world: "extension-with-settings",
+    world: "extension-with-data",
     pub_export_macro: true,
     default_bindings_module: "pane_guest",
 });
@@ -32,7 +33,7 @@ pub use exports::pane::extension::command::{
     FormError, Frame, Guest, GuestCustomView, Item, Key, Platform, Point, Rect, Shape, Text,
     TextField, View, ViewEvent,
 };
-pub use pane::extension::{operations, settings};
+pub use pane::extension::{cache, content, credentials, operations, settings};
 
 impl operations::CallErrorKind {
     /// The kind's WIT name, such as `not-found`, as JavaScript sees it too.

@@ -422,9 +422,10 @@ impl Render for LauncherWindow {
             Screen::Form(_) => ("", "Tab next field · Enter submit · Esc back"),
             Screen::Extensions { .. } => (
                 "No extensions are installed.",
-                "↑↓ select · Enter enable or disable · Esc back",
+                "↑↓ select · Enter choose · Esc back",
             ),
             Screen::CustomView(_) => ("", "Keys and pointer go to the view · Esc back"),
+            Screen::Confirm { .. } => ("", "↑↓ select · Enter choose · Esc cancel"),
         };
         let details: Vec<_> = view
             .details()
