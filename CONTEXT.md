@@ -32,6 +32,10 @@ _Avoid_: Preferences, cache
 The launcher's main search and result view before a specific command is opened.
 _Avoid_: Every integration's internal search
 
+**Root result**:
+One entry root search lists for a query and can invoke, such as an extension command; it is matched by its title and subtitle and ranked by the core.
+_Avoid_: Item (an item belongs to a command's own list), search hit
+
 **Search provider**:
 A source of matching results for a query, such as applications, files or an online service.
 _Avoid_: The entire search interface

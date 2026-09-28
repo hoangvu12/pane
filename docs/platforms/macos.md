@@ -103,6 +103,15 @@ only the two other systems. In run [36372625940](https://github.com/wasimysaid/p
 | macOS-and-Linux action | [14-not-windows.png](evidence/macos/14-not-windows.png) |
 | Package for the other two systems | [15-no-compatible-package.png](evidence/macos/15-no-compatible-package.png) |
 
+## Root search (#23)
+
+Root search has a query field with focus ([root search](../root-search.md)).
+The smoke's last phase (screenshots 24 to 26) types "typescr" with System
+Events `keystroke`, opens the only match and runs "Wait briefly", which must
+look exactly like step 4, then types "zzz" and presses Return on no results.
+**It has not run on macOS yet**; typing into the query field through
+`NSTextInputClient` is therefore unverified here, as is any input method.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms now have a text field. The

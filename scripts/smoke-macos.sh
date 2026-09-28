@@ -219,4 +219,23 @@ capture 23-color-click.png
 check 23-color-click.png 1b5e20 3000   # dark green
 key 53; key 53; sleep 1
 stop_pane
+
+# Root search: typing narrows root to the matching commands and Enter opens
+# the best match. "typescr" matches only TypeScript sample, whose "Wait
+# briefly" answers exactly as in step 4. A query that matches nothing shows
+# no results, and Enter then opens nothing.
+start_pane
+type_text typescr; sleep 1
+capture 24-search.png
+key 36; sleep 3
+key 125; key 36; sleep 2
+capture 25-search-result.png
+check 25-search-result.png 9fd8a8   # the TypeScript guest's answer
+python3 "$(dirname "$0")/check_screenshot.py" --same "$out/4-result-2.png" "$out/25-search-result.png"
+key 53; sleep 1
+type_text zzz; sleep 1
+key 36; sleep 1
+capture 26-no-results.png
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{1-root,24-search,25-search-result,26-no-results}.png
+stop_pane
 echo "screenshots in $out"

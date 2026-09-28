@@ -227,4 +227,26 @@ Capture "23-color-click.png"
 Check "23-color-click.png" "1b5e20" 3000   # dark green
 Send "{ESC}{ESC}"; Start-Sleep -Seconds 1
 Stop-Pane $process
+
+# Root search: typing narrows root to the matching commands and Enter opens
+# the best match. "typescr" matches only TypeScript sample, whose "Wait
+# briefly" answers exactly as in step 4. A query that matches nothing shows
+# no results, and Enter then opens nothing.
+$process = Start-Pane "stderr-search.log"
+Send "typescr"; Start-Sleep -Seconds 1
+Capture "24-search.png"
+Send "{ENTER}"; Start-Sleep -Seconds 3
+Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2
+Capture "25-search-result.png"
+Check "25-search-result.png" "9fd8a8"   # the TypeScript guest's answer
+python "$PSScriptRoot/check_screenshot.py" --same (Join-Path $OutDir "4-result-2.png") (Join-Path $OutDir "25-search-result.png")
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the searched command is not the TypeScript sample" }
+Send "{ESC}"; Start-Sleep -Seconds 1
+Send "zzz"; Start-Sleep -Seconds 1
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Capture "26-no-results.png"
+$shots = "1-root", "24-search", "25-search-result", "26-no-results" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: root search showed the same window twice" }
+Stop-Pane $process
 Write-Output "screenshots in $OutDir"
