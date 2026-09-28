@@ -10,7 +10,7 @@
 //! packages.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use futures::executor::block_on;
 use pane_core::{Launcher, PackageIdentity, Runtime, SavedData, Status};
@@ -61,6 +61,13 @@ impl Dirs {
         )
     }
 
+    /// Where folder `name` is (it need not exist), spelled as Pane spells
+    /// an identity (macOS reports `/private/var/...` for `/var/...`).
+    fn resolved(&self, name: &str) -> PathBuf {
+        let sources = PackageIdentity::local(self.sources.path()).unwrap();
+        sources.local_folder().unwrap().join(name)
+    }
+
     fn identity(&self, name: &str) -> PackageIdentity {
         PackageIdentity::local(&self.folder(name)).unwrap()
     }
@@ -68,8 +75,14 @@ impl Dirs {
     /// Copies the assembled sample package `package` into source folder
     /// `package`.
     fn sample(&self, package: &str) -> PathBuf {
+        self.sample_in(package, package)
+    }
+
+    /// Copies the assembled sample package `package` into source folder
+    /// `name`.
+    fn sample_in(&self, package: &str, name: &str) -> PathBuf {
         let assembled = guest("packages").join(package);
-        let folder = self.folder(package);
+        let folder = self.folder(name);
         fs::create_dir_all(&folder).unwrap();
         for entry in fs::read_dir(assembled).unwrap() {
             let entry = entry.unwrap();
@@ -82,7 +95,13 @@ impl Dirs {
     /// operations sample's command and component, declaring
     /// `dependencies` (JSON array contents).
     fn caller(&self, dependencies: &str) -> PathBuf {
-        let folder = self.folder("caller");
+        self.caller_in("caller", dependencies)
+    }
+
+    /// Writes package "Caller" in source folder `name`, as
+    /// [`Dirs::caller`] does.
+    fn caller_in(&self, name: &str, dependencies: &str) -> PathBuf {
+        let folder = self.folder(name);
         fs::create_dir_all(&folder).unwrap();
         fs::copy(
             guest("sample_operations_js.wasm"),
@@ -214,19 +233,21 @@ fn the_preview_lists_required_and_optional_dependencies_and_installs_nothing() {
     let view = launcher.view();
     assert_eq!(view.title, "Caller");
     let details = details(&launcher);
+    // Sources as declared: the preview's Source line gives the folder they
+    // are relative to.
     assert!(
-        details.contains(&format!(
-            "Requires: Rust operations sample, installed with it from {}",
-            dirs.identity(RUST)
-        )),
+        details.contains(
+            &"Requires: Rust operations sample, installed with it from local:../sample-operations"
+                .into()
+        ),
         "{details:#?}"
     );
     assert!(
-        details.contains(&format!(
-            "Optional: `helper` from {}, not installed: Pane does not install it; install it \
-             yourself to use it",
-            dirs.identity(TYPESCRIPT)
-        )),
+        details.contains(
+            &"Optional: `helper` from local:../sample-operations-ts, not installed: Pane does \
+              not install it; install it yourself to use it"
+                .into()
+        ),
         "{details:#?}"
     );
     assert_eq!(titles(&launcher), ["Install"]);
@@ -379,7 +400,7 @@ fn an_installed_copy_that_is_not_compatible_is_kept_and_nothing_is_installed() {
     let expected = "Nothing was installed: Caller requires `greet` version 2 from Rust \
                     operations sample, which publishes version 1; Pane does not replace the \
                     installed copy of Rust operations sample while installing another \
-                    extension: update it from its folder first";
+                    extension: update it from its folder if a newer copy publishes it";
     block_on(launcher.preview_package(&caller));
     let view = launcher.view();
     assert_eq!(view.title, "Cannot install Caller");
@@ -424,7 +445,7 @@ type Setup = Box<dyn Fn(&Dirs) -> String>;
 #[test]
 fn a_required_dependency_that_cannot_be_installed_leaves_nothing_installed() {
     let [other, _] = platforms::other_systems();
-    let cases: [(&str, Setup); 6] = [
+    let cases: [(&str, Setup); 5] = [
         (
             "a missing folder",
             Box::new(|_| needs_echo("b", "missing", 1)),
@@ -460,14 +481,6 @@ fn a_required_dependency_that_cannot_be_installed_leaves_nothing_installed() {
                     .into()
             }),
         ),
-        (
-            "an npm source",
-            Box::new(|_| {
-                r#"{ "id": "b", "source": "npm:left-pad",
-                     "operations": [{ "id": "echo", "version": 1 }] }"#
-                    .into()
-            }),
-        ),
         ("itself", Box::new(|_| needs_echo("b", "a", 1))),
     ];
     for (case, dependency) in cases {
@@ -481,7 +494,7 @@ fn a_required_dependency_that_cannot_be_installed_leaves_nothing_installed() {
         let expected = match case {
             "a missing folder" => format!(
                 "Package a requires `b` from {}, which cannot be installed: Cannot open",
-                dirs.folder("missing").display()
+                dirs.resolved("missing").display()
             ),
             "a source-only package" => format!(
                 "Package a requires `b` from {}, which cannot be installed: Not ready to run",
@@ -495,9 +508,6 @@ fn a_required_dependency_that_cannot_be_installed_leaves_nothing_installed() {
             "an operation it does not publish" => {
                 "Package a requires Package b to publish `secret`, which it does not publish".into()
             }
-            "an npm source" => "Package a requires `b` from npm:left-pad: npm sources are not \
-                                supported yet; Pane installs only from local folders"
-                .into(),
             _ => "Package a names itself as its dependency `b`".into(),
         };
         block_on(launcher.install_package(&a));
@@ -537,10 +547,9 @@ fn required_dependencies_of_dependencies_are_installed_first() {
 
     block_on(launcher.preview_package(&a));
     assert!(
-        details(&launcher).contains(&format!(
-            "Requires (for Package b): Package c, installed with it from {}",
-            dirs.identity("c")
-        )),
+        details(&launcher).contains(
+            &"Requires (for Package b): Package c, installed with it from local:../c".into()
+        ),
         "{:#?}",
         details(&launcher)
     );
@@ -651,10 +660,6 @@ fn an_invalid_dependency_declaration_is_explained() {
             "dependency id `Greeter` must be lowercase letters, digits and `-`",
         ),
         (
-            r#"{ "id": "b", "source": "../b", "operations": [{ "id": "echo", "version": 1 }] }"#,
-            "the source `../b` of dependency `b` must be `local:` followed by a folder path",
-        ),
-        (
             r#"{ "id": "b", "source": "local:../b", "operations": [] }"#,
             "dependency `b` lists no `operations`; name those the package calls",
         ),
@@ -672,6 +677,125 @@ fn an_invalid_dependency_declaration_is_explained() {
             Status::Error(format!("Invalid pane.json: {reason}"))
         );
     }
+}
+
+#[test]
+fn a_source_that_is_not_a_local_folder_is_not_supported_yet() {
+    for source in ["../b", "npm:left-pad", "git:github.com/a/b", "local:"] {
+        let dirs = Dirs::new();
+        let a = dirs.fixture(
+            "a",
+            1,
+            &format!(
+                r#"{{ "id": "b", "source": "{source}", "operations": [{{ "id": "echo", "version": 1 }}] }}"#
+            ),
+        );
+        let launcher = dirs.launcher();
+        block_on(launcher.preview_package(&a));
+        let status = launcher.view().status;
+        assert!(
+            matches!(&status, Status::Error(text) if text.starts_with(&format!(
+                "Invalid pane.json: the source `{source}` of dependency `b` must be `local:` \
+                 followed by a folder path"
+            ))),
+            "{source}: {status:?}"
+        );
+    }
+}
+
+#[test]
+fn a_windows_style_source_is_refused_on_every_system() {
+    // As JSON text: `\\` is one backslash.
+    for source in [
+        r"local:..\\b",
+        "local:C:/extensions/b",
+        r"local:C:\\extensions\\b",
+        "local://server/share/b",
+        r"local:\\\\server\\share\\b",
+    ] {
+        let dirs = Dirs::new();
+        let a = dirs.fixture(
+            "a",
+            1,
+            &format!(
+                r#"{{ "id": "b", "source": "{source}", "operations": [{{ "id": "echo", "version": 1 }}] }}"#
+            ),
+        );
+        let launcher = dirs.launcher();
+        block_on(launcher.preview_package(&a));
+        let status = launcher.view().status;
+        assert!(
+            matches!(&status, Status::Error(text) if text.starts_with("Invalid pane.json: the source")
+            && text.ends_with(
+                "of dependency `b` must separate folders with `/`, without a drive letter, \
+                 `\\` or a `//server` share, so that every system reads it alike (such as \
+                 `local:../greeter`)"
+            )),
+            "{source}: {status:?}"
+        );
+    }
+}
+
+#[test]
+fn dot_dot_and_dot_resolve_like_the_folder_they_name() {
+    let dirs = Dirs::new();
+    dirs.fixture("b", 1, "");
+    fs::create_dir_all(dirs.folder("group/a")).unwrap();
+    // a is in group/a; b is two levels up from there.
+    let a = dirs.folder("group/a");
+    fs::copy(guest("operations_fixture.wasm"), a.join("fixture.wasm")).unwrap();
+    fs::write(
+        a.join("pane.json"),
+        r#"{ "manifestVersion": 1, "title": "Package a", "apiVersion": "0.1",
+             "operations": [{ "id": "echo", "version": 1, "component": "fixture.wasm" }],
+             "dependencies": [{ "id": "b", "source": "local:./../x/../../b",
+                                "operations": [{ "id": "echo", "version": 1 }] }] }"#,
+    )
+    .unwrap();
+    let launcher = dirs.launcher();
+
+    block_on(launcher.install_package(&a));
+
+    assert_eq!(
+        launcher.view().status,
+        result("Installed Package a with Package b, which it requires")
+    );
+    let identities: Vec<PackageIdentity> = launcher
+        .packages()
+        .into_iter()
+        .map(|p| p.identity)
+        .collect();
+    assert_eq!(identities, [dirs.identity("b"), dirs.identity("group/a")]);
+}
+
+#[test]
+fn more_than_sixteen_packages_to_install_with_it_are_refused() {
+    let dirs = Dirs::new();
+    // a requires p1 to p17, none installed.
+    let mut declarations = Vec::new();
+    for n in 1..=17 {
+        dirs.fixture(&format!("p{n}"), 1, "");
+        declarations.push(needs_echo(&format!("p{n}"), &format!("p{n}"), 1));
+    }
+    let a = dirs.fixture("a", 1, &declarations.join(", "));
+    let launcher = dirs.launcher();
+
+    block_on(launcher.install_package(&a));
+
+    assert_eq!(
+        launcher.view().status,
+        Status::Error(
+            "Nothing was installed: Installing Package a would install more than 16 other \
+             extensions with it; Pane installs at most 16 at once"
+                .into()
+        )
+    );
+    assert!(launcher.packages().is_empty());
+
+    // Sixteen are installed with it.
+    let a = dirs.fixture("a", 1, &declarations[..16].join(", "));
+    block_on(launcher.install_package(&a));
+    assert_eq!(launcher.packages().len(), 17);
 }
 
 /// From root search, opens the command titled `command` and runs its item
@@ -721,4 +845,298 @@ fn the_dependencies_sample_installs_its_required_greeter_and_uses_the_optional_o
         run(&launcher, command, "Greet through the optional greeter"),
         result("Hello, Pane, from Rust")
     );
+}
+
+/// Whether the installed package from source folder `name` is enabled;
+/// `None` if it is not installed.
+fn enabled(dirs: &Dirs, launcher: &Launcher, name: &str) -> Option<bool> {
+    launcher
+        .packages()
+        .into_iter()
+        .find(|p| p.identity == dirs.identity(name))
+        .map(|p| p.enabled)
+}
+
+#[test]
+fn a_required_dependency_cannot_be_changed_while_an_install_relies_on_it() {
+    let dirs = Dirs::new();
+    let rust = dirs.sample(RUST);
+    let caller = dirs.caller(GREETER);
+    let launcher = dirs.launcher();
+    block_on(launcher.install_package(&rust));
+    block_on(launcher.preview_package(&caller));
+
+    // Choosing Install claims what the preview relies on at once.
+    let installing = launcher.activate_selected();
+    let busy = Status::Error("Rust operations sample is part of an install in progress".into());
+    block_on(launcher.uninstall(&dirs.identity(RUST), SavedData::Delete));
+    assert_eq!(launcher.view().status, busy);
+    block_on(launcher.reload(&dirs.identity(RUST)));
+    assert_eq!(launcher.view().status, busy);
+    block_on(launcher.set_enabled(&dirs.identity(RUST), false));
+    assert_eq!(enabled(&dirs, &launcher, RUST), Some(true));
+
+    block_on(installing);
+    assert_eq!(launcher.view().status, result("Installed Caller"));
+    assert_eq!(greet(&launcher, "greeter"), result("Hello, Ada, from Rust"));
+
+    // Once the install is over, it can be uninstalled.
+    block_on(launcher.uninstall(&dirs.identity(RUST), SavedData::Delete));
+    assert_eq!(enabled(&dirs, &launcher, RUST), None);
+}
+
+#[test]
+fn data_kept_for_a_dependency_the_install_adds_cannot_be_deleted_meanwhile() {
+    let dirs = Dirs::new();
+    let rust = dirs.sample(RUST);
+    let caller = dirs.caller(GREETER);
+    // The Rust sample kept a setting, then was uninstalled keeping it.
+    fs::create_dir_all(dirs.data.path().join("extensions")).unwrap();
+    fs::write(
+        dirs.data.path().join("extensions/settings.json"),
+        serde_json::json!({
+            "version": 1,
+            "packages": { dirs.identity(RUST).key(): { "style": "formal" } }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let launcher = dirs.launcher();
+    block_on(launcher.install_package(&rust));
+    block_on(launcher.uninstall(&dirs.identity(RUST), SavedData::Keep));
+    assert_eq!(launcher.retained_data().len(), 1);
+    let busy = Status::Error("Rust operations sample is part of an install in progress".into());
+
+    block_on(launcher.preview_package(&caller));
+    let installing = launcher.activate_selected();
+    block_on(launcher.delete_retained_data(&dirs.identity(RUST)));
+    assert_eq!(launcher.view().status, busy);
+    block_on(installing);
+    assert_eq!(
+        launcher.view().status,
+        result("Installed Caller with Rust operations sample, which it requires")
+    );
+    assert!(launcher.retained_data().is_empty());
+}
+
+#[test]
+fn an_uninstall_begun_after_the_preview_stops_the_install_and_shows_the_new_plan() {
+    let dirs = Dirs::new();
+    let rust = dirs.sample(RUST);
+    let caller = dirs.caller(GREETER);
+    let launcher = dirs.launcher();
+    block_on(launcher.install_package(&rust));
+    block_on(launcher.preview_package(&caller));
+    assert!(
+        details(&launcher).contains(&"Requires: Rust operations sample, already installed".into())
+    );
+
+    let uninstalling = launcher.uninstall(&dirs.identity(RUST), SavedData::Delete);
+    block_on(launcher.activate_selected());
+
+    // Nothing is installed; the preview shows what installing needs now.
+    let view = launcher.view();
+    assert_eq!(
+        view.status,
+        Status::Error(
+            "What installing Caller needs changed since it was shown; check it again and \
+             choose Install once more"
+                .into()
+        )
+    );
+    assert!(
+        details(&launcher).contains(
+            &"Requires: Rust operations sample, installed with it from local:../sample-operations"
+                .into()
+        ),
+        "{:#?}",
+        details(&launcher)
+    );
+    block_on(uninstalling);
+    assert!(launcher.packages().is_empty());
+
+    // Choosing Install on the new plan installs both.
+    block_on(launcher.activate_selected());
+    assert_eq!(
+        launcher.view().status,
+        result("Installed Caller with Rust operations sample, which it requires")
+    );
+}
+
+#[test]
+fn installing_after_the_preview_changed_shows_the_new_plan_instead() {
+    let dirs = Dirs::new();
+    let rust = dirs.sample(RUST);
+    let caller = dirs.caller(GREETER);
+    let launcher = dirs.launcher();
+
+    block_on(launcher.preview_package(&caller));
+    let manifest = fs::read_to_string(rust.join("pane.json")).unwrap();
+    fs::write(
+        rust.join("pane.json"),
+        manifest.replace("Rust operations sample", "Renamed greeter"),
+    )
+    .unwrap();
+    block_on(launcher.activate_selected());
+
+    // Its folder changed after the preview: nothing is installed, and the
+    // preview shows the new copy.
+    assert_eq!(
+        launcher.view().status,
+        Status::Error(
+            "What installing Caller needs changed since it was shown; check it again and \
+             choose Install once more"
+                .into()
+        )
+    );
+    assert!(
+        details(&launcher).contains(
+            &"Requires: Renamed greeter, installed with it from local:../sample-operations".into()
+        ),
+        "{:#?}",
+        details(&launcher)
+    );
+    assert!(launcher.packages().is_empty());
+    block_on(launcher.activate_selected());
+    assert_eq!(installed(&launcher), ["Renamed greeter", "Caller"]);
+}
+
+#[test]
+fn a_paused_required_dependency_is_shown_as_paused_and_stays_paused() {
+    let dirs = Dirs::new();
+    let rust = dirs.sample(RUST);
+    let caller = dirs.caller(GREETER);
+    let launcher = dirs.launcher();
+    block_on(launcher.install_package(&rust));
+    drop(launcher);
+    // Pane paused it after it crashed, as recorded before a restart.
+    let registry = dirs.data.path().join("extensions/installed.json");
+    let mut record: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&registry).unwrap()).unwrap();
+    let dir = record["packages"][0]["dir"].clone();
+    record["packages"][0]["paused"] = serde_json::json!({
+        "after": "crashes", "why": "it crashed", "version": "0.1.0", "code": dir
+    });
+    fs::write(&registry, record.to_string()).unwrap();
+    let launcher = dirs.launcher();
+
+    block_on(launcher.preview_package(&caller));
+    assert!(
+        details(&launcher).contains(
+            &"Requires: Rust operations sample, installed but it is paused after an error; \
+              retry it in Manage extensions"
+                .into()
+        ),
+        "{:#?}",
+        details(&launcher)
+    );
+    block_on(launcher.activate_selected());
+
+    assert_eq!(
+        launcher.view().status,
+        result(
+            "Installed Caller; Rust operations sample stays paused after an error: retry it in \
+             Manage extensions for Caller to use it"
+        )
+    );
+}
+
+#[test]
+fn a_call_by_dependency_id_reaches_only_the_operations_declared_for_it() {
+    let dirs = Dirs::new();
+    dirs.sample(RUST);
+    let caller = dirs.caller(GREETER);
+    let launcher = dirs.launcher();
+    block_on(launcher.install_package(&caller));
+
+    // The sample's "wait" item calls `wait` version 1, which Caller does not
+    // declare for `greeter`.
+    launcher.back();
+    launcher.back();
+    select_title(&launcher, "Call from JavaScript");
+    block_on(launcher.activate_selected());
+    select_title(&launcher, "Wait in another extension");
+    block_on(launcher.activate_selected());
+    launcher.set_field_value("source", "greeter");
+    block_on(launcher.submit_form());
+
+    assert_eq!(
+        launcher.view().status,
+        error(
+            "refused: Caller declares that it calls `greet` version 1 through its dependency \
+             `greeter`, not `wait` version 1; declare it in its pane.json to call it"
+        )
+    );
+    // The operation it declares is reached.
+    assert_eq!(greet(&launcher, "greeter"), result("Hello, Ada, from Rust"));
+}
+
+/// Makes `link` a symbolic link to the folder `target`; `None` where the
+/// system does not allow it (Windows without the privilege).
+fn symlink_dir(target: &Path, link: &Path) -> Option<()> {
+    #[cfg(unix)]
+    let made = std::os::unix::fs::symlink(target, link);
+    #[cfg(windows)]
+    let made = std::os::windows::fs::symlink_dir(target, link);
+    made.ok()
+}
+
+#[test]
+fn a_dependency_folder_made_a_link_after_installing_is_still_reached() {
+    let dirs = Dirs::new();
+    // helper's folder does not exist when Caller is installed.
+    let caller = dirs.caller(
+        r#"{ "id": "helper", "source": "local:../ts-link", "optional": true,
+             "operations": [{ "id": "greet", "version": 1 }] }"#,
+    );
+    let launcher = dirs.launcher();
+    block_on(launcher.install_package(&caller));
+
+    // Then it becomes a link to the TypeScript sample, installed from where
+    // the link points.
+    let typescript = dirs.sample(TYPESCRIPT);
+    if symlink_dir(&typescript, &dirs.folder("ts-link")).is_none() {
+        eprintln!("skipped: this system does not allow a symbolic link");
+        return;
+    }
+    block_on(launcher.install_package(&typescript));
+
+    assert_eq!(
+        greet(&launcher, "helper"),
+        result("Hello, Ada, from TypeScript")
+    );
+}
+
+#[test]
+fn a_package_installed_through_a_link_resolves_sources_from_the_folder_it_points_to() {
+    let dirs = Dirs::new();
+    // real/caller and real/sample-operations; the link is beside real, where
+    // no sample-operations is.
+    dirs.sample_in(RUST, "real/sample-operations");
+    dirs.caller_in("real/caller", GREETER);
+    if symlink_dir(&dirs.folder("real/caller"), &dirs.folder("caller-link")).is_none() {
+        eprintln!("skipped: this system does not allow a symbolic link");
+        return;
+    }
+    let launcher = dirs.launcher();
+
+    block_on(launcher.install_package(&dirs.folder("caller-link")));
+
+    assert_eq!(
+        launcher.view().status,
+        result("Installed Caller with Rust operations sample, which it requires")
+    );
+    let identities: Vec<PackageIdentity> = launcher
+        .packages()
+        .into_iter()
+        .map(|p| p.identity)
+        .collect();
+    assert_eq!(
+        identities,
+        [
+            dirs.identity("real/sample-operations"),
+            dirs.identity("real/caller")
+        ]
+    );
+    assert_eq!(greet(&launcher, "greeter"), result("Hello, Ada, from Rust"));
 }

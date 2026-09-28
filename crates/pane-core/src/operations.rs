@@ -29,7 +29,9 @@ use tokio::sync::{mpsc, oneshot};
 use wasmtime::component::{Accessor, HasData};
 
 use crate::extension_data::{ExtensionData, PackageData};
-use crate::packages::{InstalledPackage, ManifestOperation, PackageIdentity, paused_reason};
+use crate::packages::{
+    InstalledPackage, ManifestOperation, PackageIdentity, installed_as, paused_reason,
+};
 use crate::platform;
 use crate::runtime::{CallError, GuestState, bindings};
 
@@ -167,7 +169,7 @@ impl Installed {
         let source = if source.contains(':') {
             source
         } else {
-            dependency = self.dependency(caller, source)?;
+            dependency = self.dependency(caller, source, operation, version)?;
             dependency.as_str()
         };
         let is_identity = source
@@ -251,7 +253,13 @@ impl Installed {
     /// The identity, as a source, of the dependency that the package of
     /// `caller`'s component declares with id `id`, if it is installed; else
     /// why the call cannot reach it.
-    fn dependency(&self, caller: &Path, id: &str) -> Result<String, OperationError> {
+    fn dependency(
+        &self,
+        caller: &Path,
+        id: &str,
+        operation: &str,
+        version: u32,
+    ) -> Result<String, OperationError> {
         use OperationErrorKind::*;
         let not_identity = || {
             OperationError::new(
@@ -288,36 +296,42 @@ impl Installed {
                 ),
             ));
         };
-        let Some(identity) = caller.dependency_identity(id) else {
-            let reason = caller
-                .identity
-                .dependency(&declared.source)
-                .err()
-                .unwrap_or_default();
+        // A dependency id reaches only what the caller declared it calls
+        // there, so the declaration is what installing checked.
+        if !declared.calls(operation, version) {
+            let declared_calls: Vec<String> = declared
+                .operations
+                .iter()
+                .map(|o| format!("`{}` version {}", o.id, o.version))
+                .collect();
+            return Err(OperationError::refused(format!(
+                "{title} declares that it calls {} through its dependency `{id}`, not \
+                 `{operation}` version {version}; declare it in its pane.json to call it",
+                platform::join(&declared_calls)
+            )));
+        }
+        let Some(recorded) = caller.dependency_identity(id) else {
             return Err(OperationError::new(
                 Unavailable,
                 format!(
-                    "{title}'s dependency `{id}` from {}: {reason}",
+                    "{title}'s dependency `{id}` from {} is not a folder Pane can name",
                     declared.source
                 ),
             ));
         };
-        if self.packages.iter().any(|p| p.identity == *identity) {
+        // Recorded before its folder existed, it may since resolve to
+        // another spelling, such as through a link.
+        let identity = std::iter::once(recorded.clone())
+            .chain(recorded.resolved_again())
+            .find(|identity| installed_as(&self.packages, identity).is_some());
+        if let Some(identity) = identity {
             return Ok(identity.key());
         }
-        let message = if !declared.needed_here() {
-            let systems: Vec<String> = declared
-                .platforms
-                .iter()
-                .flatten()
-                .map(ToString::to_string)
-                .collect();
+        let identity = recorded;
+        let message = if let Some(only_on) = declared.only_on() {
             return Err(OperationError::new(
                 Unavailable,
-                format!(
-                    "{title} uses its dependency `{id}` only on {}, and it is not installed",
-                    platform::join(&systems)
-                ),
+                format!("{title} uses its dependency `{id}` {only_on}, and it is not installed"),
             ));
         } else if declared.required {
             format!(

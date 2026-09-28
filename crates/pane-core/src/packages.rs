@@ -86,18 +86,20 @@ impl PackageIdentity {
     }
 
     /// The identity of the package that the package with this identity
-    /// names with the dependency source `source`, or why Pane cannot install
-    /// from it. A `local:` path is relative to this package's source folder,
-    /// or absolute, and is resolved like an installed folder; a folder that
-    /// does not exist (any more) is resolved from its spelling, `.` and `..`
-    /// removed.
-    pub(crate) fn dependency(&self, source: &str) -> Result<PackageIdentity, String> {
-        let Some(path) = source.strip_prefix("local:") else {
-            let scheme = source.split_once(':').map_or(source, |(scheme, _)| scheme);
-            return Err(format!(
-                "{scheme} sources are not supported yet; Pane installs only from local folders"
-            ));
-        };
+    /// names with the dependency source `source` (`local:` and a `/`-separated
+    /// path, as the manifest checked). The path is relative to this package's
+    /// source folder as Pane resolved it (a package installed through a
+    /// symbolic link resolves against the folder the link points to), or
+    /// absolute. An existing folder is resolved as an installed folder is.
+    /// For one that does not exist (yet, or any more), `.` and `..` are
+    /// removed from the spelling and its deepest existing parent is resolved
+    /// by the operating system, so that it matches the identity the folder
+    /// gets once it exists, unless the folder itself becomes a link, which
+    /// [`PackageIdentity::resolved_again`] covers when calls are matched.
+    /// Fails, with the path, only for a path that cannot be an identity (not
+    /// absolute or not Unicode).
+    pub(crate) fn dependency(&self, source: &str) -> Result<PackageIdentity, PathBuf> {
+        let path = source.strip_prefix("local:").unwrap_or(source);
         let folder = match self.local_folder() {
             Some(base) => base.join(path),
             None => PathBuf::from(path),
@@ -115,17 +117,53 @@ impl PackageIdentity {
                 other => spelled.push(other),
             }
         }
-        let spelled = without_verbatim_prefix(spelled);
-        match spelled.to_str() {
-            Some(text) if spelled.is_absolute() => {
+        let mut missing = Vec::new();
+        let mut existing = spelled.clone();
+        let resolved = loop {
+            if let Ok(resolved) = fs::canonicalize(&existing) {
+                break missing
+                    .iter()
+                    .rev()
+                    .fold(resolved, |path: PathBuf, part| path.join(part));
+            }
+            match (
+                existing.file_name().map(ToOwned::to_owned),
+                existing.parent(),
+            ) {
+                (Some(name), Some(parent)) => {
+                    missing.push(name);
+                    existing = parent.to_path_buf();
+                }
+                _ => break spelled.clone(),
+            }
+        };
+        let resolved = without_verbatim_prefix(resolved);
+        match resolved.to_str() {
+            Some(text) if resolved.is_absolute() => {
                 Ok(PackageIdentity(Source::Local(text.to_owned())))
             }
-            _ => Err(format!(
-                "{} is not a folder Pane can name",
-                spelled.display()
-            )),
+            _ => Err(resolved),
         }
     }
+
+    /// This local identity resolved by the operating system now, if its
+    /// folder exists and resolves to another spelling: a dependency recorded
+    /// before its folder existed, which became a symbolic link or was
+    /// created with another spelling on a file system that ignores case.
+    pub(crate) fn resolved_again(&self) -> Option<PackageIdentity> {
+        let resolved = PackageIdentity::local(self.local_folder()?).ok()?;
+        (resolved != *self).then_some(resolved)
+    }
+}
+
+/// The installed package with `identity` among `packages`.
+pub(crate) fn installed_as<'a>(
+    packages: &'a [InstalledPackage],
+    identity: &PackageIdentity,
+) -> Option<&'a InstalledPackage> {
+    packages
+        .iter()
+        .find(|package| package.identity == *identity)
 }
 
 impl fmt::Display for PackageIdentity {
@@ -193,9 +231,9 @@ pub struct ManifestDependency {
     /// The name the package's code calls it by in place of its package
     /// identity: unique in the package; lowercase letters, digits and `-`.
     pub id: String,
-    /// Where it is installed from, as written: `local:` and a folder path,
-    /// relative to the declaring package's folder or absolute. `npm:` and
-    /// `git:` sources are read but explained as not supported yet.
+    /// Where it is installed from, as written: `local:` and a folder path
+    /// separated by `/`, relative to the declaring package's folder or
+    /// absolute (`/…`). Other sources are not supported yet.
     pub source: String,
     /// Whether the package needs it (the default) or only uses it when it is
     /// installed (`"optional": true`).
@@ -211,7 +249,26 @@ pub struct ManifestDependency {
 impl ManifestDependency {
     /// Whether the declaring package needs this dependency on this system.
     pub fn needed_here(&self) -> bool {
-        platform::unavailable(self.platforms.as_deref(), "it").is_none()
+        self.only_on().is_none()
+    }
+
+    /// "only on Windows and Linux" when the package does not need it on
+    /// this system; `None` when it does.
+    pub(crate) fn only_on(&self) -> Option<String> {
+        platform::unavailable(self.platforms.as_deref(), "it")?;
+        let platforms = self.platforms.as_deref().unwrap_or_default();
+        Some(match platforms {
+            [] => "on no system".to_owned(),
+            platforms => format!("only on {}", platform::names(platforms)),
+        })
+    }
+
+    /// Whether the package declares that it calls `operation` at `version`
+    /// here.
+    pub(crate) fn calls(&self, operation: &str, version: u32) -> bool {
+        self.operations
+            .iter()
+            .any(|declared| declared.id == operation && declared.version == version)
     }
 }
 
@@ -510,9 +567,34 @@ impl Manifest {
     }
 }
 
-/// The source schemes a dependency may name. Only `local:` is installed so
-/// far; the others are explained as not supported yet.
-const DEPENDENCY_SCHEMES: [&str; 3] = ["local", "npm", "git"];
+/// Checks that `source`, of dependency `id`, is `local:` and a folder path
+/// written the same way on every system: `/` between folders, relative or
+/// absolute from `/`, never with `\`, a drive letter or a `//server` share,
+/// which one system would read differently from another.
+fn check_local_source(source: &str, id: &str) -> Result<(), PackageError> {
+    let invalid = |reason: &str| {
+        Err(PackageError::InvalidManifest(format!(
+            "the source `{source}` of dependency `{id}` {reason}"
+        )))
+    };
+    let Some(path) = source.strip_prefix("local:") else {
+        return invalid(
+            "must be `local:` followed by a folder path; other sources are not supported yet",
+        );
+    };
+    if path.is_empty() {
+        return invalid("must be `local:` followed by a folder path");
+    }
+    let drive =
+        path.len() >= 2 && path.as_bytes()[1] == b':' && path.as_bytes()[0].is_ascii_alphabetic();
+    if path.contains('\\') || drive || path.starts_with("//") {
+        return invalid(
+            "must separate folders with `/`, without a drive letter, `\\` or a `//server` \
+             share, so that every system reads it alike (such as `local:../greeter`)",
+        );
+    }
+    Ok(())
+}
 
 fn parse_dependencies(json: Vec<DependencyJson>) -> Result<Vec<ManifestDependency>, PackageError> {
     let invalid = |message: String| PackageError::InvalidManifest(message);
@@ -531,16 +613,7 @@ fn parse_dependencies(json: Vec<DependencyJson>) -> Result<Vec<ManifestDependenc
         if dependencies.iter().any(|seen| seen.id == id) {
             return Err(invalid(format!("dependency id `{id}` is repeated")));
         }
-        let known = dependency
-            .source
-            .split_once(':')
-            .is_some_and(|(scheme, rest)| DEPENDENCY_SCHEMES.contains(&scheme) && !rest.is_empty());
-        if !known {
-            return Err(invalid(format!(
-                "the source `{}` of dependency `{id}` must be `local:` followed by a folder path",
-                dependency.source
-            )));
-        }
+        check_local_source(&dependency.source, &id)?;
         let mut operations: Vec<RequiredOperation> = Vec::new();
         for operation in dependency.operations {
             if operation.id.is_empty() || operation.version == 0 {
@@ -746,6 +819,11 @@ impl SourcePackage {
             manifest,
             manifest_text,
         })
+    }
+
+    /// The `pane.json` text the manifest was read from.
+    pub(crate) fn manifest_text(&self) -> &str {
+        &self.manifest_text
     }
 }
 
@@ -1274,6 +1352,28 @@ impl Store {
         identity: &PackageIdentity,
         retain: Option<String>,
     ) -> Result<Leftover, PackageError> {
+        self.remove(identity, retain.map(|title| (title, None)))
+    }
+
+    /// Removes again the package with `identity` that an install added,
+    /// putting back, at its place among them, the record that Pane kept its
+    /// data under `title` if it had one (`(title, index)`).
+    pub(crate) fn undo_install(
+        &mut self,
+        identity: &PackageIdentity,
+        retained: Option<(String, usize)>,
+    ) -> Result<Leftover, PackageError> {
+        self.remove(identity, retained.map(|(title, at)| (title, Some(at))))
+    }
+
+    /// Uninstalls as [`Store::uninstall`] does, recording retained data
+    /// under a title, at a position among the retained records if given,
+    /// else last.
+    fn remove(
+        &mut self,
+        identity: &PackageIdentity,
+        retain: Option<(String, Option<usize>)>,
+    ) -> Result<Leftover, PackageError> {
         let registry = self
             .registry
             .as_mut()
@@ -1284,8 +1384,8 @@ impl Store {
             return Err(PackageError::NotInstalled(identity.clone()));
         };
         let record = updated.packages.remove(index);
-        if let Some(title) = retain {
-            put_retained(&mut updated, local, title);
+        if let Some((title, at)) = retain {
+            put_retained(&mut updated, local, title, at);
         }
         write_registry(&self.dir, &updated)
             .map_err(|error| PackageError::Storage(error.to_string()))?;
@@ -1342,7 +1442,7 @@ impl Store {
             .map_err(|reason| PackageError::Storage(reason.clone()))?;
         let PackageIdentity(Source::Local(local)) = identity;
         let mut updated = registry.clone();
-        put_retained(&mut updated, local, title);
+        put_retained(&mut updated, local, title, None);
         write_registry(&self.dir, &updated)
             .map_err(|error| PackageError::Storage(error.to_string()))?;
         *registry = updated;
@@ -1434,13 +1534,18 @@ impl Store {
 }
 
 /// Records in `registry` that data is kept for the local source `local`,
-/// last uninstalled as `title`.
-fn put_retained(registry: &mut RegistryJson, local: &str, title: String) {
+/// last uninstalled as `title`: at position `at` among the records if
+/// given, else last.
+fn put_retained(registry: &mut RegistryJson, local: &str, title: String, at: Option<usize>) {
     registry.retained.retain(|record| record.local != local);
-    registry.retained.push(RetainedJson {
+    let record = RetainedJson {
         local: local.to_owned(),
         title,
-    });
+    };
+    match at {
+        Some(at) if at <= registry.retained.len() => registry.retained.insert(at, record),
+        _ => registry.retained.push(record),
+    }
 }
 
 /// Writes the validated `pane.json` and copies the components it names,

@@ -44,6 +44,7 @@ use crate::runtime::{
 };
 use crate::search::{self, Keys, Query};
 
+mod install;
 mod pausing;
 mod reload;
 mod retained;
@@ -389,16 +390,21 @@ enum Changing {
     Uninstalling,
     /// It is not installed, and its retained data is being deleted.
     DeletingRetained,
+    /// It is being installed with another package, or an install relies on
+    /// it as a required dependency staying as it is.
+    Installing,
 }
 
 impl Changing {
-    /// Why installing the same source must wait, if it must: its data is
-    /// being removed.
-    fn refuses_install(self) -> Option<&'static str> {
+    /// What is happening, after the package's title: "is reloading".
+    fn doing(self) -> &'static str {
         match self {
-            Changing::Uninstalling => Some("is being uninstalled"),
-            Changing::DeletingRetained => Some("is having its retained data deleted"),
-            Changing::Recording | Changing::Reloading | Changing::Updating => None,
+            Changing::Recording => "is being enabled or disabled",
+            Changing::Reloading => "is reloading",
+            Changing::Updating => "is updating",
+            Changing::Uninstalling => "is being uninstalled",
+            Changing::DeletingRetained => "is having its retained data deleted",
+            Changing::Installing => "is part of an install in progress",
         }
     }
 }
@@ -442,10 +448,7 @@ impl State {
                 return true;
             }
             Some(Changing::Recording) => return false,
-            Some(Changing::Reloading) => "is reloading",
-            Some(Changing::Updating) => "is updating",
-            Some(Changing::Uninstalling) => "is being uninstalled",
-            Some(Changing::DeletingRetained) => "is having its retained data deleted",
+            Some(busy) => busy.doing(),
         };
         self.view.status = Status::Error(format!("{} {busy}", self.title_of(identity)));
         false
@@ -561,8 +564,8 @@ enum Entry {
     /// Open the custom view of the open command's item with this id.
     CustomView(String, CustomViewInfo),
     /// Install the previewed package from this folder, or replace its
-    /// installed copy.
-    Install(PathBuf, Mode),
+    /// installed copy, as the preview's plan assumed things to be.
+    Install(PathBuf, Mode, dependencies::Assumptions),
     /// Show the installed packages (root).
     Manage,
     /// Enable this installed package if it is disabled, else disable it.
@@ -1105,6 +1108,7 @@ impl Launcher {
         let mut hotkey_change = None;
         let mut uninstall = None;
         let mut delete_retained = None;
+        let mut install = None;
         let entry = match entry {
             Some(Entry::Broken(problem) | Entry::Unavailable(problem)) => {
                 state.view.status = Status::Error(problem);
@@ -1183,9 +1187,8 @@ impl Launcher {
                 reload = self.begin_reload(&mut state, identity, reload::Attempt::Retry);
                 None
             }
-            Some(Entry::Install(_, Mode::Update(identity)))
-                if !state.claim(&identity, Changing::Updating) =>
-            {
+            Some(Entry::Install(folder, mode, assumptions)) => {
+                install = self.begin_install(&mut state, folder, mode, assumptions);
                 None
             }
             Some(Entry::InstallFromFolder) | None => None,
@@ -1222,6 +1225,9 @@ impl Launcher {
             if let Some(retained) = delete_retained {
                 launcher.finish_delete_retained(epoch, retained).await;
             }
+            if let Some(install) = install {
+                launcher.finish_install(epoch, install).await;
+            }
             match entry {
                 Some(Entry::Open(component)) => launcher.open_command(epoch, component, data).await,
                 Some(Entry::OpenApplication { id, name }) => {
@@ -1232,7 +1238,6 @@ impl Launcher {
                         launcher.run_action(epoch, component, item_id, data).await
                     }
                 }
-                Some(Entry::Install(folder, mode)) => launcher.install(epoch, folder, mode).await,
                 Some(Entry::OpenUrl(url)) => launcher.open_url(epoch, url).await,
                 Some(Entry::ClearCache(identity)) => launcher.clear_cache(epoch, identity).await,
                 Some(Entry::CustomView(item_id, info)) => {
@@ -1247,6 +1252,7 @@ impl Launcher {
                     | Entry::Broken(_)
                     | Entry::Unavailable(_)
                     | Entry::InstallFromFolder
+                    | Entry::Install(..)
                     | Entry::Manage
                     | Entry::Toggle(_)
                     | Entry::Reload(_)
@@ -1284,28 +1290,37 @@ impl Launcher {
             if state.screen_epoch != epoch {
                 return;
             }
-            let installed = checked.as_ref().ok().and_then(|(package, _)| {
-                state
-                    .packages
-                    .iter()
-                    .find(|installed| installed.identity == package.identity)
-                    .cloned()
-            });
-            let (view, entries) = preview_view(&folder, checked, installed);
-            launcher.leave_command(&mut state);
-            state.view = view;
-            state.entries = entries;
+            launcher.show_preview(&mut state, &folder, checked);
         }
     }
 
-    /// Installs the package in `folder` as an explicit install request. A
-    /// package whose identity is already installed is rejected: replacing
-    /// it is an update.
+    /// Shows the package screen for `folder`, from its package and plan or
+    /// why it cannot be read.
+    fn show_preview(
+        &self,
+        state: &mut State,
+        folder: &Path,
+        checked: Result<(SourcePackage, dependencies::Plan), PackageError>,
+    ) {
+        let installed = checked
+            .as_ref()
+            .ok()
+            .and_then(|(package, _)| state.package(&package.identity).cloned());
+        let (view, entries) = preview_view(folder, checked, installed);
+        self.leave_command(state);
+        state.view = view;
+        state.entries = entries;
+    }
+
+    /// Installs the package in `folder` as an explicit install request, with
+    /// the required dependencies it is missing, as the preview would show
+    /// them. A package whose identity is already installed is rejected:
+    /// replacing it is an update.
     pub fn install_package(&self, folder: &Path) -> impl Future<Output = ()> + Send + 'static {
         let epoch = self.start_running();
         let launcher = self.clone();
-        let folder = folder.to_path_buf();
-        async move { launcher.install(epoch, folder, Mode::Install).await }
+        let install = install::Begun::unplanned(folder.to_path_buf());
+        async move { launcher.finish_install(epoch, install).await }
     }
 
     /// Enables or disables the installed package with `identity` and
@@ -1444,174 +1459,10 @@ impl Launcher {
         self.refresh(state);
     }
 
-    /// What is happening to the package with `identity`, if anything.
-    fn changing_as(&self, identity: &PackageIdentity) -> Option<Changing> {
-        self.lock().changing.get(identity).copied()
-    }
-
     fn start_running(&self) -> u64 {
         let mut state = self.lock();
         state.view.status = Status::Running;
         state.screen_epoch
-    }
-
-    /// Installs or updates the package in `folder` with the required
-    /// dependencies it is missing (see `dependencies`), or explains why not.
-    async fn install(&self, epoch: u64, folder: PathBuf, mode: Mode) {
-        let (result, disabled) = self.install_with_dependencies(folder, &mode).await;
-        let mut state = self.lock();
-        if let Mode::Update(identity) = &mode {
-            state.release(identity);
-        }
-        let current = state.screen_epoch == epoch;
-        match result {
-            Ok((dependencies, installed)) => {
-                let title = installed.title();
-                let mut message = match (mode, installed.version()) {
-                    (Mode::Install, _) => format!("Installed {title}"),
-                    (Mode::Update(_), Some(version)) => format!("Updated {title} to {version}"),
-                    (Mode::Update(_), None) => format!("Updated {title}"),
-                };
-                if !dependencies.is_empty() {
-                    let titles: Vec<String> =
-                        dependencies.iter().map(InstalledPackage::title).collect();
-                    message.push_str(&format!(
-                        " with {}, which it requires",
-                        platform::join(&titles)
-                    ));
-                }
-                if !disabled.is_empty() {
-                    message.push_str(&format!(
-                        "; {} stays disabled: enable it in Manage extensions for {title} to use it",
-                        platform::join(&disabled)
-                    ));
-                }
-                for dependency in dependencies {
-                    self.put_installed(&mut state, dependency);
-                }
-                let first = installed.commands().first().map(|c| c.component.clone());
-                let replaced_is_open = self.put_installed(&mut state, installed);
-                if current || replaced_is_open {
-                    self.show_root(&mut state, first);
-                    state.view.status = Status::Result(message);
-                } else {
-                    self.refresh(&mut state);
-                }
-            }
-            Err(failure) => {
-                let mut message = failure.error;
-                if !failure.kept.is_empty() {
-                    let kept: Vec<String> = failure
-                        .kept
-                        .iter()
-                        .map(|(package, why)| format!("{} ({why})", package.title()))
-                        .collect();
-                    message.push_str(&format!(
-                        ". Pane could not remove again what it had installed, which stays \
-                         installed: {}",
-                        platform::join(&kept)
-                    ));
-                    for (package, _) in failure.kept {
-                        self.put_installed(&mut state, package);
-                    }
-                    self.refresh(&mut state);
-                }
-                if current {
-                    state.view.status = Status::Error(message);
-                }
-            }
-        }
-    }
-
-    /// Reads and checks the package in `folder` and plans its dependencies,
-    /// then installs or updates it with those it is missing: all of them or,
-    /// removing again what it installed when one fails, none (see
-    /// `dependencies::install_all`). Returns the installed
-    /// packages, dependencies first, and the titles of required
-    /// dependencies the user disabled, which stay disabled.
-    async fn install_with_dependencies(
-        &self,
-        folder: PathBuf,
-        mode: &Mode,
-    ) -> (
-        Result<(Vec<InstalledPackage>, InstalledPackage), dependencies::Failure>,
-        Vec<String>,
-    ) {
-        let failed = |error: PackageError| dependencies::Failure {
-            error: error.to_string(),
-            kept: Vec::new(),
-        };
-        let Some(store) = self.installation.as_ref().map(|i| i.store.clone()) else {
-            let error = PackageError::Storage("this launcher does not install packages".into());
-            return (Err(failed(error)), Vec::new());
-        };
-        let package = match self.read_and_check(folder).await {
-            Ok(package) => package,
-            Err(error) => return (Err(failed(error)), Vec::new()),
-        };
-        let (package, plan) = self.plan_dependencies(package).await;
-        if !plan.problems.is_empty() {
-            let error = PackageError::Dependencies(plan.problems);
-            return (Err(failed(error)), Vec::new());
-        }
-        // Not installed again while the data it would find is being
-        // removed, nor is a dependency.
-        let busy = std::iter::once(&package)
-            .chain(&plan.install)
-            .find_map(|package| {
-                let busy = self
-                    .changing_as(&package.identity)
-                    .and_then(Changing::refuses_install)?;
-                Some((package, busy))
-            });
-        if let Some((package, busy)) = busy {
-            let error = PackageError::Storage(format!(
-                "{} {busy}; install it again once that is done",
-                package.manifest.title
-            ));
-            return (Err(failed(error)), Vec::new());
-        }
-        let disabled: Vec<String> = plan
-            .required
-            .iter()
-            .filter(|required| required.state == dependencies::RequiredState::Disabled)
-            .map(|required| required.title.clone())
-            .collect();
-        let mode = mode.clone();
-        let result = off_thread(move || {
-            let mut store = store.lock().unwrap_or_else(|p| p.into_inner());
-            dependencies::install_all(&mut store, &plan.install, |store| match mode {
-                Mode::Install => store.install(&package),
-                Mode::Update(_) => store.update(&package),
-            })
-        })
-        .await;
-        (result, disabled)
-    }
-
-    /// Works out what installing `package` means for its dependencies (see
-    /// `dependencies`) against the installed packages, reading the folders
-    /// of those it would install off the calling thread and having the
-    /// runtime check their components without running them.
-    async fn plan_dependencies(
-        &self,
-        package: SourcePackage,
-    ) -> (SourcePackage, dependencies::Plan) {
-        let installed = self.lock().packages.clone();
-        let (package, mut plan) = off_thread(move || {
-            let plan = dependencies::plan(&package, &installed, SourcePackage::read);
-            (package, plan)
-        })
-        .await;
-        for dependency in &plan.install {
-            if let Err(error) = self.check_components(dependency).await {
-                plan.problems.push(format!(
-                    "{} requires {}, which cannot be installed: {error}",
-                    package.manifest.title, dependency.manifest.title
-                ));
-            }
-        }
-        (package, plan)
     }
 
     /// Records `installed` as the managed copy of its package: added, or
@@ -2756,11 +2607,11 @@ fn preview_view(
             .collect();
         details.push(format!("Supported systems: {}", platform::join(&names)));
     }
-    details.extend(plan.lines(&manifest.title));
+    details.extend(plan.lines());
     if !plan.problems.is_empty() {
         // Nothing is offered: a required dependency cannot be installed.
         let view = LauncherView {
-            status: Status::Error(PackageError::Dependencies(plan.problems).to_string()),
+            status: Status::Error(install::problems(&plan).to_string()),
             ..LauncherView::new(
                 Screen::Package { details },
                 format!("Cannot install {}", manifest.title),
@@ -2791,7 +2642,10 @@ fn preview_view(
                 unavailable: None,
             };
             let mode = Mode::Update(installed.identity.clone());
-            (row, Entry::Install(package.folder.clone(), mode))
+            (
+                row,
+                Entry::Install(package.folder.clone(), mode, plan.assumptions.clone()),
+            )
         }
         None => {
             let row = Row {
@@ -2802,7 +2656,14 @@ fn preview_view(
                 )),
                 unavailable: None,
             };
-            (row, Entry::Install(package.folder.clone(), Mode::Install))
+            (
+                row,
+                Entry::Install(
+                    package.folder.clone(),
+                    Mode::Install,
+                    plan.assumptions.clone(),
+                ),
+            )
         }
     };
     let view =
