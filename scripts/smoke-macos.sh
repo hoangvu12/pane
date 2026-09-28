@@ -398,4 +398,42 @@ if grep -q 'Good day to you' "$out/data/extensions/cache.json"; then echo "cache
 grep -q '"greeting-style": "formal"' "$out/data/extensions/settings.json" || { echo "setting lost"; exit 1; }
 grep -q '"note": "Water the plants"' "$out/data/extensions/content.json" || { echo "note lost"; exit 1; }
 grep -q '"token": "sample-token"' "$out/data/extensions/credentials.json" || { echo "credential lost"; exit 1; }
+
+# Applications, a default extension: an installed application is found by
+# name in root search and Enter opens it. The application is a bundle the
+# smoke adds in ~/Applications of a HOME of its own (for Pane only), whose
+# program writes a marker file, so nothing else is started; Pane still
+# searches the system's applications too.
+apps=$(cd "$out" && pwd)/apps
+rm -rf "$apps"
+bundle="$apps/home/Applications/Pane Smoke App.app"
+mkdir -p "$bundle/Contents/MacOS"
+cat >"$bundle/Contents/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>smoke</string>
+<key>CFBundleIdentifier</key><string>dev.pane.smoke-app</string>
+<key>CFBundleName</key><string>Pane Smoke App</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+</dict></plist>
+EOF
+printf '#!/bin/sh\necho launched > "%s"\n' "$apps/launched" >"$bundle/Contents/MacOS/smoke"
+chmod +x "$bundle/Contents/MacOS/smoke"
+HOME=$apps/home "$pane" --install target/guests/packages/applications 2>>"$out/stderr.log" &
+pid=$!
+sleep 8
+focus_pane
+key 36; sleep 2   # Install
+type_text 'pane smoke'; sleep 3
+capture 44-application.png
+check 44-application.png 364355 3000   # the selected application row
+key 36; sleep 3
+focus_pane
+capture 45-opened.png
+check 45-opened.png 9fd8a8   # "Opened Pane Smoke App"
+for _ in $(seq 50); do [ -f "$apps/launched" ] && break; sleep 0.2; done
+[ -f "$apps/launched" ] || { echo "the application did not run"; exit 1; }
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{44-application,45-opened}.png
+stop_pane
 echo "screenshots in $out"

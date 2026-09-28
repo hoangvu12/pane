@@ -278,6 +278,28 @@ of the whole smoke passed.
 The macOS and Windows smokes run the same phase (screenshots 40 to 43); it
 has not run there yet.
 
+### Applications (#24, #25, #26)
+
+The last phase adds a desktop entry "Pane Smoke App" whose `Exec` writes a
+marker file, in an `XDG_DATA_HOME` given to Pane only (the system's
+`XDG_DATA_DIRS` entries are searched too), installs the
+[applications](../applications.md) package, types "pane smoke" with real
+X11 key events, checks the selected row, presses Return and checks "Opened
+Pane Smoke App" and that the marker was written. Run locally on 2026-09-28
+(Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64, same Xvfb/lavapipe
+setup): all checks of the whole smoke passed. The adapter tests also run a
+desktop entry's program natively and explain a missing program and a
+terminal application.
+
+| Step | Evidence |
+| --- | --- |
+| "pane smoke" typed: the application found by name, selected | [44-application.png](evidence/linux-x11/44-application.png) |
+| Return: "Opened Pane Smoke App"; its program wrote the marker | [45-opened.png](evidence/linux-x11/45-opened.png) |
+
+Only X11 (Xvfb, no desktop session) ran; Wayland and real desktops'
+`XDG_CURRENT_DESKTOP`, Flatpak and Snap folders are untested. Disabling is
+covered by the launcher tests, not natively.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms have a text field (GPUI CE's

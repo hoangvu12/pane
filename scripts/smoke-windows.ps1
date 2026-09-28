@@ -418,4 +418,38 @@ if (Select-String -Quiet -SimpleMatch 'Good day to you' (Join-Path $data "extens
 if (-not (Select-String -Quiet -SimpleMatch '"greeting-style": "formal"' (Join-Path $data "extensions/settings.json"))) { throw "setting lost" }
 if (-not (Select-String -Quiet -SimpleMatch '"note": "Water the plants"' (Join-Path $data "extensions/content.json"))) { throw "note lost" }
 if (-not (Select-String -Quiet -SimpleMatch '"token": "sample-token"' (Join-Path $data "extensions/credentials.json"))) { throw "credential lost" }
+
+# Applications, a default extension: an installed application is found by
+# name in root search and Enter opens it. The application is a Start menu
+# shortcut the smoke adds under an APPDATA of its own (for Pane only), to
+# cmd.exe writing a marker file, so nothing else is started; Pane still
+# searches the system's applications too.
+$apps = Join-Path (Resolve-Path $OutDir) "apps"
+if (Test-Path $apps) { Remove-Item -Recurse -Force $apps }
+$programs = Join-Path $apps "AppData\Microsoft\Windows\Start Menu\Programs"
+New-Item -ItemType Directory -Force -Path $programs | Out-Null
+$launched = Join-Path $apps "launched.txt"
+$shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $programs "Pane Smoke App.lnk"))
+$shortcut.TargetPath = "$env:SystemRoot\System32\cmd.exe"
+$shortcut.Arguments = "/c echo launched> `"$launched`""
+$shortcut.WindowStyle = 7   # minimized, so it does not cover Pane
+$shortcut.Save()
+$appData = $env:APPDATA
+$env:APPDATA = Join-Path $apps "AppData"
+$process = Start-Pane "stderr-applications.log" @("--install", "target/guests/packages/applications")
+$env:APPDATA = $appData
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install
+Send "pane smoke"; Start-Sleep -Seconds 3
+Capture "44-application.png"
+Check "44-application.png" "364355" 3000   # the selected application row
+Send "{ENTER}"; Start-Sleep -Seconds 3
+Focus-Pane $process
+Capture "45-opened.png"
+Check "45-opened.png" "9fd8a8"   # "Opened Pane Smoke App"
+for ($i = 0; $i -lt 50 -and -not (Test-Path $launched); $i++) { Start-Sleep -Milliseconds 200 }
+if (-not (Test-Path $launched)) { throw "the application did not run" }
+$shots = "44-application", "45-opened" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: opening the application changed nothing" }
+Stop-Pane $process
 Write-Output "screenshots in $OutDir"

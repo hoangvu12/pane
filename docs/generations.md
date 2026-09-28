@@ -66,7 +66,8 @@ generation ends:
 4. **Host imports refuse the stopped code**: saving any kind of extension
    data ("this code of the extension was replaced by a reload or an update;
    its settings are kept unchanged", or "the extension is disabled; …"),
-   and calling operations (`refused`). Reading data is still allowed.
+   calling operations (`refused`) and opening an application. Reading data
+   and listing applications are still allowed.
 5. **Other packages keep running**, with their instances and open views.
 6. Component checks (install, update, reload) run on threads of their own,
    so a reload's check does not wait behind the call it is about to stop.
