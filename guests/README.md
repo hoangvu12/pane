@@ -35,6 +35,15 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   ([Root results supplied ahead of the query](#root-results-supplied-ahead-of-the-query),
   [applications](../docs/applications.md)). Its package is
   `packages/applications`; held by `crates/pane-core/tests/applications.rs`.
+- `sample-helper`, `sample-helper-js`, `sample-helper-ts`: a command in
+  Rust, JavaScript and TypeScript running a [native helper](#native-helpers)
+  its package ships, `helpers/echo` (`pane-echo`, an ordinary program
+  `cargo xtask guests` builds for the system it runs on and puts in all
+  three packages): its answer, cancelling it, a failing and an undeclared
+  helper, and a slow run that disabling or reloading stops. Their packages
+  are `packages/sample-helper`, `packages/sample-helper-js` and
+  `packages/sample-helper-ts`; held alike by
+  `crates/pane-core/tests/helpers.rs`.
 - `sample-applications-js`, `sample-applications-ts`: the same host import
   and indexed results in JavaScript and TypeScript: "Launch <name>" for each
   installed application, and a command listing and opening them
@@ -45,6 +54,11 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   another's, Rust calling JavaScript and TypeScript and they calling Rust
   ([Operations](#operations)); held by
   `crates/pane-core/tests/operations.rs`.
+- `sample-dependencies`: a Rust package declaring the JavaScript operations
+  sample as a required dependency and the Rust one as an optional one, and
+  calling each by its dependency id; installing it installs the JavaScript
+  sample too ([Dependencies](#dependencies-on-other-extensions)); held by
+  `crates/pane-core/tests/dependencies.rs`.
 - `sample-query`, `sample-query-js`, `sample-query-ts`: Echo, the smallest
   command that takes a query, in Rust, JavaScript and TypeScript:
   it answers the text the user sends it from root search through its alias
@@ -780,9 +794,151 @@ try {
 
 `source` is the target's identity exactly as installed: `local:` and the
 absolute folder path it was installed from, the path Manage extensions shows
-after "local folder" (the samples ask for it in their form). Pane starts the target only when it is called, never enables a disabled one,
+after "local folder" (the samples ask for it in their form), or the id of a
+dependency your `pane.json` declares ([below](#dependencies-on-other-extensions)),
+which is how a package names the extensions it is written for. Pane starts the target only when it is called, never enables a disabled one,
 keeps each package's settings apart, and refuses a call back into a package
 already waiting in the same chain instead of deadlocking.
+
+### Dependencies on other extensions
+
+A package that calls other packages' operations declares them, so that
+installing it installs what it needs
+([details](../docs/dependencies.md)):
+
+```json
+"dependencies": [
+  {
+    "id": "greeter",
+    "source": "local:../sample-operations-js",
+    "operations": [{ "id": "greet", "version": 1 }]
+  },
+  {
+    "id": "rust-greeter",
+    "source": "local:../sample-operations",
+    "optional": true,
+    "operations": [{ "id": "greet", "version": 1 }]
+  }
+]
+```
+
+- `id`: the name your code calls it by, `call("greeter", "greet", 1, input)`,
+  in place of its identity; lowercase letters, digits and `-`.
+- `source`: `local:` and its folder, relative to your package's folder (the
+  folder a link to it points to) or absolute, with `/` between folders on
+  every system: `\`, drive letters and `//server` shares are refused. Pane
+  resolves it as it resolves an installed folder and keeps what it resolved
+  to, so moving your source folder later does not change it. Other sources
+  (npm, Git) are not supported yet.
+- `optional` (default `false`): a required dependency is installed with your
+  package when it is missing; an optional one never is, and a call to it
+  when it is not installed is `not-found` (the
+  [sample](sample-dependencies/src/lib.rs) answers how to get it instead).
+- `operations`: every operation you call, at the version you call. Pane
+  checks them before installing anything, and a call through the id reaches
+  only these.
+- `platforms` (optional): the systems you need it on; elsewhere it is
+  neither installed nor checked.
+
+The preview lists each dependency: "Requires: <title>, installed with it
+from <source>", "already installed", or disabled (it stays disabled), and
+the optional ones. A required dependency that cannot be installed (missing
+folder, source-only, other system, an operation it does not publish at that
+version, two packages needing different versions of one operation) is
+explained and nothing is installed. An installed dependency is never
+replaced by installing another package: update it yourself.
+
+## Native helpers
+
+For what a WASI guest cannot do (an operating-system API, a native
+library), a package can ship a **native helper**: an ordinary program built
+for each operating system and processor it supports, which its commands run
+through Pane. The command stays a WASI 0.3 component; Pane runs the helper's
+file for the system it runs on and compiles nothing. The contract, errors
+and limits are in [docs/helpers.md](../docs/helpers.md). The helper samples
+are a [Rust](sample-helper/src/lib.rs), a
+[JavaScript](sample-helper-js/src/index.js) and a
+[TypeScript](sample-helper-ts/src/index.ts) command with their packages
+([`packages/sample-helper`](packages/sample-helper/pane.json) and the
+`-js` and `-ts` ones) and one helper,
+[`helpers/echo`](helpers/echo/src/main.rs).
+
+1. **Write the helper** as a plain program: it reads its input from
+   standard input (closed after the input), writes its answer as UTF-8 text
+   to standard output and exits with code 0; on failure it exits with
+   another code and explains on standard error, which Pane shows. It may
+   take arguments. It runs in its own folder of the installed copy, with
+   Pane's environment, and must not leave processes behind: Pane ends the
+   helper's own process when the run is cancelled or the package stops, not
+   processes it started. It must be a native program: Pane refuses scripts
+   (`#!`) on every system, and a Windows helper must be an `.exe`.
+2. **Build it for each target** you support, on that system or with a
+   cross toolchain, for example with Cargo:
+   `cargo build --release --target aarch64-apple-darwin`. A target is
+   `<os>-<arch>`: `windows`, `macos` or `linux`, then `x86_64` or `aarch64`.
+   Link what it needs statically where you can: Pane does not check a
+   helper's library dependencies or minimum OS version.
+3. **Put the files in the package** (regular files, not symbolic links)
+   and declare them in `pane.json`; an `id` is lowercase letters, digits
+   and dashes:
+
+   ```json
+   "helpers": [
+     {
+       "id": "echo",
+       "targets": {
+         "linux-x86_64": "helpers/linux-x86_64/pane-echo",
+         "macos-aarch64": "helpers/macos-aarch64/pane-echo",
+         "windows-x86_64": "helpers/windows-x86_64/pane-echo.exe"
+       }
+     }
+   ]
+   ```
+
+   Installing checks this system's file (it must exist and be a program for
+   this system: 64-bit ELF on Linux, Mach-O on macOS, PE on Windows, for
+   the named processor) and copies only it, with mode 0755; a package without a file
+   for this system still installs, and running that helper explains the
+   targets it has. The preview lists each helper's targets. For the sample,
+   `cargo xtask guests` builds `pane-echo` for the system it runs on and puts
+   it in `target/guests/packages/sample-helper/helpers/<target>/`.
+4. **Run it from a command** by its `id`, with arguments and input:
+
+   ```rust
+   use pane_guest::helpers;
+
+   let answer = helpers::run("echo".into(), vec![], "hello".into())
+       .await
+       .map_err(|error| format!("{}: {}", error.kind.name(), error.message))?;
+   // "not-found: …", "unavailable: Not available on Linux arm64: …",
+   // "failed: helper `echo` failed (exit code 3): …", "refused: …"
+   ```
+
+   Dropping the future before it resolves cancels the run, and Pane ends
+   the process; the sample's "Echo within a second" races it against
+   `wasip3::clocks::monotonic_clock::wait_for`. A helper also ends when the
+   call that started it returns and when the package is disabled, reloaded,
+   updated, paused or uninstalled, and when Pane quits.
+
+   In JavaScript or TypeScript, import `run` from
+   `pane:extension/helpers@0.1.0` (declared in
+   [`js/helpers.d.ts`](js/helpers.d.ts)); a failed run rejects with the
+   error as `payload`:
+
+   ```ts
+   import { run, type HelperError } from "pane:extension/helpers@0.1.0";
+
+   try {
+     return await run("echo", [], "hello");
+   } catch (error) {
+     const { kind, message } = (error as { payload: HelperError }).payload;
+     throw new Error(`${kind}: ${message}`);
+   }
+   ```
+
+   A promise cannot be cancelled: a run the command stops awaiting (the
+   samples' `Promise.race` against `waitFor`) keeps its helper until the
+   Pane call returns, which ends it.
 
 ## Packaging and installing a local extension
 
@@ -833,6 +989,13 @@ and TypeScript: Pane sees only components.
   ([root search](../docs/root-search.md#matching-and-ranking)). Optional
   `rootResults: true` says the command also computes
   [root results from the query](#root-results-computed-from-the-query).
+- `operations` (optional): the [operations](#operations) the package
+  publishes; `commands` may then be empty.
+- `dependencies` (optional): the other packages whose operations it calls,
+  required or optional ([dependencies](#dependencies-on-other-extensions)).
+- `helpers` (optional): the [native helpers](#native-helpers) the package
+  ships, each an `id` and its file for each target (`"linux-x86_64":
+  "helpers/linux-x86_64/tool"`).
 
 Unknown fields are ignored. The component must exist when you install: a
 package whose component is not built is refused as source-only, with the
@@ -890,6 +1053,9 @@ What installing does:
   whatever its new title or version. Two different folders are two packages,
   even with identical contents, and nothing is merged or switched between
   them.
+- **Required dependencies.** Installing or updating also installs the
+  missing [required dependencies](#dependencies-on-other-extensions) the
+  manifest declares, first, or explains why it cannot and installs nothing.
 - **Listing.** Installed commands are listed from the manifests alone; no
   guest runs until you open a command or another extension calls one of the
   package's [operations](#operations). A damaged installed copy stays listed

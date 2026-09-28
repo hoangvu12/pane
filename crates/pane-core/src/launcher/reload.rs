@@ -280,9 +280,10 @@ impl Launcher {
             .expect("begin_reload checked there is an installation")
             .store
             .clone();
+        let retire = self.retire(identity);
         let installed = off_thread(move || {
             let mut store = store.lock().unwrap_or_else(|p| p.into_inner());
-            store.update(&package)
+            store.update(&package, retire)
         })
         .await
         .map_err(|error| error.to_string())?;
