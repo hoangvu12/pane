@@ -82,7 +82,23 @@ presentation" on stderr (expected under Xvfb); frames were still presented.
 ## Remaining limits
 
 - Wayland, a real desktop session and hardware GPU drivers are untested.
-- The GUI smoke asserts that the window appears and survives the key sequence;
-  whether each screenshot shows the right content was checked by inspection.
-- CI runs the same script on `ubuntu-24.04`, but the workflow has not run yet
-  (no GitHub Actions runner has been configured for this repository).
+- The GUI smoke now also asserts that text is drawn in the expected colors and
+  that the three result screens differ (`scripts/check_screenshot.py`). Which
+  command and guest each screenshot shows is still checked by inspection.
+
+## CI result
+
+The same script runs in GitHub Actions on the fork `wasimysaid/pane`. Run
+[36366760796](https://github.com/wasimysaid/pane/actions/runs/36366760796)
+(commit `572d629`) passed on the `ubuntu-24.04` runner:
+
+| | |
+| --- | --- |
+| OS | Ubuntu 24.04.5 LTS, kernel 6.17.0-1022-azure, x86_64 |
+| Runner image | `ubuntu-24.04` version 20260920.314.1 |
+| Display / GPU | Xvfb and Mesa lavapipe from the Ubuntu 24.04 archive (as above: X11 only, software Vulkan) |
+
+`cargo xtask ci` passed (13 window, 9 launcher-model, 1 runtime-cache and 25
+sample-contract tests). The smoke passed all of its screenshot checks, and the
+uploaded screenshots show the Rust, JavaScript and TypeScript results in turn.
+The upstream repository `hoangvu12/pane` still has no configured runner.
