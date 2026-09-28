@@ -602,8 +602,10 @@ Check "59-paused.png" "d6a36a"   # Greeting: "Settings sample is paused after an
 Stop-Pane $process
 if (-not (Select-String -Quiet -SimpleMatch '"paused"' (Join-Path $data "extensions/installed.json"))) { throw "pause not recorded" }
 $process = Start-Pane "stderr-pausing-restart.log"
+Send "greet"; Start-Sleep -Seconds 1
 Capture "60-paused-after-restart.png"
 Check "60-paused-after-restart.png" "d6a36a"   # Greeting is still paused
+Send "{ESC}"; Start-Sleep -Seconds 1   # clears the query
 Send "{DOWN 10}"   # Manage extensions…
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{DOWN 3}{ENTER}"; Start-Sleep -Seconds 1   # "Why Settings sample is paused"

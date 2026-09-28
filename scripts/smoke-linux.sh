@@ -633,8 +633,11 @@ check 59-paused.png d6a36a   # Greeting: "Settings sample is paused after an err
 stop_pane
 grep -q '"paused"' "$PANE_DATA_DIR/extensions/installed.json" || { echo "pause not recorded"; exit 1; }
 start_pane
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" type --delay 50 greet; sleep 1
 capture 60-paused-after-restart.png
 check 60-paused-after-restart.png d6a36a   # Greeting is still paused
+"$xdotool" key Escape; sleep 1   # clears the query
 for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
 "$xdotool" key Return; sleep 1
 "$xdotool" key Down Down Down Return; sleep 1   # "Why Settings sample is paused"
