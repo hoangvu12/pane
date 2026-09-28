@@ -468,6 +468,48 @@ fn arrow_keys_move_the_selection(cx: &mut TestAppContext) {
     assert_eq!(wait_for_answer(&window, cx).selected, Some(0));
 }
 
+/// Whether the element with debug selector `row` lies wholly inside the list.
+fn row_is_visible(cx: &mut VisualTestContext, row: &'static str) -> bool {
+    let list = cx.debug_bounds("rows").expect("the list is rendered");
+    let row = cx.debug_bounds(row).expect("the row is rendered");
+    row.top() >= list.top() && row.bottom() <= list.bottom()
+}
+
+#[gpui::test]
+fn the_list_scrolls_to_keep_the_selected_row_visible(cx: &mut TestAppContext) {
+    const TITLES: [&str; 12] = [
+        "Row 1", "Row 2", "Row 3", "Row 4", "Row 5", "Row 6", "Row 7", "Row 8", "Row 9", "Row 10",
+        "Row 11", "Row 12",
+    ];
+    let commands = TITLES
+        .iter()
+        .map(|title| command(title, "sample_rust"))
+        .collect();
+    let (window, cx) = open_with(cx, commands);
+    // The size of Pane's window: fewer than half of the rows fit.
+    cx.simulate_resize(gpui::size(gpui::px(640.), gpui::px(420.)));
+    cx.run_until_parked();
+    assert!(row_is_visible(cx, "row-Row 1"));
+    assert!(!row_is_visible(cx, "row-Row 12"), "the list overflows");
+
+    for _ in 1..TITLES.len() {
+        cx.simulate_keystrokes("down");
+    }
+    cx.run_until_parked();
+    assert_eq!(wait_for_answer(&window, cx).selected, Some(11));
+    assert!(
+        row_is_visible(cx, "row-Row 12"),
+        "the last row is scrolled into view"
+    );
+    assert!(!row_is_visible(cx, "row-Row 1"));
+
+    for _ in 1..TITLES.len() {
+        cx.simulate_keystrokes("up");
+    }
+    cx.run_until_parked();
+    assert!(row_is_visible(cx, "row-Row 1"), "and back to the first");
+}
+
 #[gpui::test]
 fn a_rejected_extension_shows_an_error_and_navigation_keeps_working(cx: &mut TestAppContext) {
     let (window, cx) = open_with(

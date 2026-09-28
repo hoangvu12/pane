@@ -7,8 +7,8 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 
 use gpui::{
-    App, Context, Div, FocusHandle, KeyBinding, PathPromptOptions, Role, SharedString, Stateful,
-    Window, actions, div, prelude::*, rgb,
+    App, Context, Div, FocusHandle, KeyBinding, PathPromptOptions, Role, ScrollHandle,
+    SharedString, Stateful, Window, actions, div, prelude::*, rgb,
 };
 use pane_core::{CommandRegistration, Launcher, Row, Screen, Status};
 
@@ -140,6 +140,11 @@ pub struct LauncherWindow {
     focus_handle: FocusHandle,
     /// The open form's controls; `Some` exactly on the form screen.
     form: Option<form::FormControls>,
+    /// The list's scroll position.
+    scroll: ScrollHandle,
+    /// The screen, title and selection the list was last scrolled for; when
+    /// they change, the list scrolls to keep the selected row visible.
+    scrolled_for: Option<(Screen, String, Option<usize>)>,
 }
 
 impl LauncherWindow {
@@ -150,6 +155,8 @@ impl LauncherWindow {
             launcher,
             focus_handle,
             form: None,
+            scroll: ScrollHandle::new(),
+            scrolled_for: None,
         }
     }
 
@@ -305,6 +312,13 @@ impl LauncherWindow {
 impl Render for LauncherWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let view = self.launcher.view();
+        let shown = (view.screen, view.title.clone(), view.selected);
+        if self.scrolled_for.as_ref() != Some(&shown) {
+            if let Some(selected) = view.selected {
+                self.scroll.scroll_to_item(selected);
+            }
+            self.scrolled_for = Some(shown);
+        }
         let (empty, hint) = match view.screen {
             Screen::Root => ("No commands are installed.", "↑↓ select · Enter open"),
             Screen::Command => (
@@ -342,6 +356,7 @@ impl Render for LauncherWindow {
             Some(form) => self.render_form(view.title.clone(), form, cx),
             None => div()
                 .id("rows")
+                .debug_selector(|| "rows".into())
                 // The list holds keyboard focus; the selected row is its
                 // active descendant, and key actions bubble to the root.
                 .track_focus(&self.focus_handle)
@@ -352,6 +367,7 @@ impl Render for LauncherWindow {
                 .flex_col()
                 .gap_1()
                 .overflow_y_scroll()
+                .track_scroll(&self.scroll)
                 .children(rows)
                 .when(view.selected.is_none(), |rows| {
                     rows.child(div().text_color(rgb(0x8a96a3)).child(empty))
