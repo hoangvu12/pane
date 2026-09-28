@@ -141,7 +141,9 @@ impl Guest for Greeting {
             }
             "count" => {
                 let count = match content::get(COUNT)? {
-                    Some(count) => count.parse::<u64>().map_err(|_| "the count is not a number")?,
+                    Some(count) => count
+                        .parse::<u64>()
+                        .map_err(|_| "the count is not a number")?,
                     None => 0,
                 } + 1;
                 content::set(COUNT, &format!("{count}"))?;
