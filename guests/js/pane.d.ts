@@ -221,7 +221,7 @@ export interface Command {
 }
 
 /** What invoking a root result does; Pane performs it. */
-export type RootAction = { tag: "copy"; val: string };
+export type RootAction = { tag: "copy"; val: string } | { tag: "open-url"; val: string };
 
 /**
  * One result computed from root search's query, listed above the results
@@ -233,7 +233,11 @@ export interface RootResult {
   title: string;
   /** A second line under the title; omitted or `null` for none. */
   subtitle?: string | null;
-  /** `{ tag: "copy", val: text }` copies `text` to the clipboard. */
+  /**
+   * `{ tag: "copy", val: text }` copies `text` to the clipboard;
+   * `{ tag: "open-url", val: url }` opens `url`, an `http://` or `https://`
+   * address, with the system's handler for web links (Pane refuses others).
+   */
   action: RootAction;
 }
 

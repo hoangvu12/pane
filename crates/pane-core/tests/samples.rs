@@ -561,6 +561,49 @@ fn reverse_typed_into_root_search_lists_the_reversed_text_to_copy(sample: &Sampl
     assert_eq!(launcher.view().rows, []);
 }
 
+/// Records the links it is asked to open, so that no browser opens.
+#[derive(Default)]
+struct RecordedLinks(std::sync::Mutex<Vec<String>>);
+
+impl pane_core::LinkOpener for RecordedLinks {
+    fn open(&self, url: &str) -> Result<(), String> {
+        self.0.lock().unwrap().push(url.into());
+        Ok(())
+    }
+}
+
+fn a_root_result_opens_a_web_link(sample: &Sample) {
+    let data = tempfile::tempdir().unwrap();
+    let links = std::sync::Arc::new(RecordedLinks::default());
+    let launcher =
+        Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"))
+            .with_link_opener(links.clone());
+    let folder = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/guests/packages")
+        .join(sample.component.replace('_', "-"));
+    block_on(launcher.install_package(&folder));
+    launcher.back();
+
+    block_on(launcher.set_query("pane website"));
+
+    let view = launcher.view();
+    assert_eq!(view.rows[0].title, "Pane's website");
+    assert_eq!(
+        view.rows[0].subtitle,
+        Some(format!("Opened by the {} guest", sample.language))
+    );
+    assert_eq!(launcher.selected_copy(), None, "it copies nothing");
+    block_on(launcher.activate_selected());
+    assert_eq!(
+        *links.0.lock().unwrap(),
+        ["https://github.com/hoangvu12/pane"]
+    );
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Opened https://github.com/hoangvu12/pane".into())
+    );
+}
+
 /// Declares one test per check for each sample.
 macro_rules! contract {
     ($($check:ident),* $(,)?) => {
@@ -598,6 +641,7 @@ contract!(
     views_open_at_once_keep_their_own_state,
     an_unknown_view_is_a_guest_error,
     reverse_typed_into_root_search_lists_the_reversed_text_to_copy,
+    a_root_result_opens_a_web_link,
 );
 
 /// The names of the component's imports.

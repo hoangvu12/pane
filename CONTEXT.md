@@ -64,6 +64,10 @@ _Avoid_: Index entry, cached result
 A program the operating system lists as installed where Pane looks for it (Start menu shortcuts, application bundles, desktop entries); Pane's host finds and opens it for an extension, which a WASI guest cannot do itself.
 _Avoid_: App (ambiguous with Pane itself), program
 
+**Quicklink**:
+A named web address the user saves through the Quicklinks default extension's form and finds in root search, where invoking it opens the address with the system's handler for web links; it is kept in that extension's content.
+_Avoid_: Bookmark, shortcut, alias
+
 **Search provider**:
 A source of matching results for a query, such as applications, files or an online service.
 _Avoid_: The entire search interface

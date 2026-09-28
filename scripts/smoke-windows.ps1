@@ -452,4 +452,30 @@ $shots = "44-application", "45-opened" | ForEach-Object { Join-Path $OutDir "$_.
 python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: opening the application changed nothing" }
 Stop-Pane $process
+
+# Quicklinks, a default extension: installed, its command's form saves a
+# quicklink (Quicklinks is selected once installed, and "Create quicklink" is
+# its first item). After a restart, typing part of its name lists it,
+# selected. Enter would open the default browser, so this smoke stops there
+# (the Linux smoke opens it through a recording handler).
+$process = Start-Pane "stderr-quicklinks.log" @("--install", "target/guests/packages/quicklinks")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install
+Send "{ENTER}"; Start-Sleep -Seconds 3   # open Quicklinks
+Send "{ENTER}"; Start-Sleep -Seconds 1   # Create quicklink
+Send "Pane issues"
+Send "{TAB}"
+Send "https://example.com/pane-issues"
+Send "{ENTER}"; Start-Sleep -Seconds 2
+Capture "46-quicklink-saved.png"
+Check "46-quicklink-saved.png" "9fd8a8"   # "Saved quicklink “Pane issues”"
+Send "{ESC}"; Send "{ESC}"; Start-Sleep -Seconds 1
+Stop-Pane $process
+$process = Start-Pane "stderr-quicklinks-restart.log"
+Send "pane iss"; Start-Sleep -Seconds 2
+Capture "47-quicklink-found.png"
+Check "47-quicklink-found.png" "364355" 3000   # the selected quicklink row
+$shots = "46-quicklink-saved", "47-quicklink-found" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the quicklink was not found" }
+Stop-Pane $process
 Write-Output "screenshots in $OutDir"

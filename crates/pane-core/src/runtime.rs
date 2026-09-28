@@ -100,6 +100,8 @@ pub(crate) struct RootResult {
 pub(crate) enum RootAction {
     /// Copy this text to the clipboard.
     Copy(String),
+    /// Open this web address with the system's link handler.
+    OpenUrl(String),
 }
 
 /// A root result a command supplies ahead of the query.
@@ -1373,6 +1375,7 @@ impl Host {
                 subtitle: result.subtitle,
                 action: match result.action {
                     root_results::RootAction::Copy(text) => RootAction::Copy(text),
+                    root_results::RootAction::OpenUrl(url) => RootAction::OpenUrl(url),
                 },
             })
             .collect())

@@ -159,6 +159,12 @@ impl pane_guest::root::Guest for Faulty {
     async fn results_for(query: String) -> Result<Vec<pane_guest::root::RootResult>, String> {
         match query.as_str() {
             "error" => Err("the guest refused the query".into()),
+            "file link" => Ok(vec![pane_guest::root::RootResult {
+                id: "file".into(),
+                title: "A local file".into(),
+                subtitle: None,
+                action: pane_guest::root::RootAction::OpenUrl("file:///etc/hosts".into()),
+            }]),
             "trap" => panic!("trap requested"),
             "0 + 0" => {
                 let mut sum = 0u64;
