@@ -156,6 +156,29 @@ A drag is not driven natively; it is covered by the window tests. The macOS
 and Windows smokes run the same phase (screenshots 21 to 23), with their own
 click helpers; it has not run there yet.
 
+### Root search (#23)
+
+Root search now has a query field with focus ([root search](../root-search.md));
+the earlier phases still reach each command with Down, which moves the
+selection while the field keeps focus, and the screenshots above predate the
+field. The last phase restarts Pane, types "typescr" with real X11 key
+events, presses Enter on the only match and runs "Wait briefly"; the screen
+must be pixel for pixel step 4's (`--same` with `4-result-2.png`). Escape
+clears the query, "zzz" and Enter show no results and open nothing, and root,
+the search, the result and the no-results screens must all differ. Run
+locally on 2026-09-28 (Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64,
+same Xvfb/lavapipe setup), all checks of the whole smoke passed.
+
+| Step | Evidence |
+| --- | --- |
+| "typescr" typed: only TypeScript sample, selected | [24-search.png](evidence/linux-x11/24-search.png) |
+| Enter, Down, Enter: "Waited 50 ms inside the TypeScript guest" | `25-search-result.png` (identical to [4-result-2.png](evidence/linux-x11/4-result-2.png)) |
+| "zzz" and Enter: "No results for “zzz”", still root, status idle | [26-no-results.png](evidence/linux-x11/26-no-results.png) |
+
+No input method (IBus, Fcitx) was used; composition in the field is covered
+only by the window tests. The macOS and Windows smokes run the same phase
+(screenshots 24 to 26); it has not run there yet.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms have a text field (GPUI CE's

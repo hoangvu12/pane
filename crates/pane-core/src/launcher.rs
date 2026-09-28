@@ -24,6 +24,7 @@ use crate::runtime::{
     CallError, CustomViewInfo, CustomViewRole, FieldKind, FieldValue, Form, Frame, Point, Runtime,
     ViewEvent, ViewId,
 };
+use crate::search::{self, Query};
 use crate::settings::{PackageSettings, Settings};
 
 /// The id of the root row that installs a package from a local folder.
@@ -45,7 +46,7 @@ pub struct CommandRegistration {
 /// Which screen the launcher shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
-    /// Root search: the installed commands.
+    /// Root search: the installed commands matching the query.
     Root,
     /// An opened command's list view.
     Command,
@@ -122,6 +123,10 @@ pub struct CustomViewSnapshot {
 pub struct LauncherView {
     pub screen: Screen,
     pub title: String,
+    /// The text typed into root search; `Some` exactly on root search.
+    /// The rows are the root results matching it, best match first, or
+    /// every root result when it is empty.
+    pub query: Option<String>,
     /// Lines of information under the title, such as a package's source and
     /// compatibility.
     pub details: Vec<String>,
@@ -316,6 +321,7 @@ impl Launcher {
                 rows: Vec::new(),
                 selected: None,
                 status: Status::Idle,
+                query: None,
                 form: None,
                 custom_view: None,
             },
@@ -371,6 +377,22 @@ impl Launcher {
         }
     }
 
+    /// Searches root search for `query`: the rows become the root results
+    /// that match it, best match first, and the best match is selected. An
+    /// empty query lists every root result. Only metadata is searched: no
+    /// guest runs until the user invokes a result. Ignored on other screens.
+    pub fn set_query(&self, query: &str) {
+        let mut state = self.lock();
+        if state.view.screen != Screen::Root {
+            return;
+        }
+        let (rows, entries) = self.root_rows(&state, query);
+        state.view.query = Some(query.to_owned());
+        state.view.selected = first_index(&rows);
+        state.view.rows = rows;
+        state.entries = entries;
+    }
+
     /// Selects the row at `index`, if there is one.
     pub fn select(&self, index: usize) {
         let mut state = self.lock();
@@ -393,7 +415,7 @@ impl Launcher {
 
     /// Leaves an open form or custom view for its command's list, or an open
     /// command, package preview or the extension list for root search. A
-    /// custom view is closed.
+    /// custom view is closed. On root search it clears the query.
     pub fn back(&self) {
         let mut state = self.lock();
         match state.view.screen {
@@ -409,7 +431,12 @@ impl Launcher {
             Screen::Command | Screen::Package | Screen::Extensions => {
                 self.show_root(&mut state, None)
             }
-            Screen::Root => {}
+            Screen::Root => {
+                if state.view.query.as_ref().is_some_and(|q| !q.is_empty()) {
+                    drop(state);
+                    self.set_query("");
+                }
+            }
         }
     }
 
@@ -772,11 +799,11 @@ impl Launcher {
         Ok(package)
     }
 
-    /// Shows root search: this build's commands, then the installed
-    /// packages' commands, then the install row. Selects the command with
-    /// component `select` if given, else the first row.
+    /// Shows root search with an empty query: this build's commands, then
+    /// the installed packages' commands, then the install row. Selects the
+    /// command with component `select` if given, else the first row.
     fn show_root(&self, state: &mut State, select: Option<PathBuf>) {
-        let (rows, entries) = self.root_rows(state);
+        let (rows, entries) = self.root_rows(state, "");
         let selected = select
             .and_then(|component| {
                 entries
@@ -796,6 +823,7 @@ impl Launcher {
                 Some(problem) => Status::Error(problem.clone()),
                 None => Status::Idle,
             },
+            query: Some(String::new()),
             form: None,
             custom_view: None,
         };
@@ -804,14 +832,15 @@ impl Launcher {
     /// Updates the rows of the root search on screen after the installed
     /// packages changed in the background. Unlike navigating, it keeps the
     /// screen generation, so an action the user started from root still
-    /// applies, and it keeps the selection on the same row.
+    /// applies, and it keeps the query and the selection on the same row.
     fn refresh_root(&self, state: &mut State) {
         let selected_id = state
             .view
             .selected
             .and_then(|index| state.view.rows.get(index))
             .map(|row| row.id.clone());
-        let (rows, entries) = self.root_rows(state);
+        let query = state.view.query.clone().unwrap_or_default();
+        let (rows, entries) = self.root_rows(state, &query);
         let selected = selected_id
             .and_then(|id| rows.iter().position(|row| row.id == id))
             .or_else(|| first_index(&rows));
@@ -820,8 +849,24 @@ impl Launcher {
         state.view.selected = selected;
     }
 
-    /// The rows of root search and what activating each does.
-    fn root_rows(&self, state: &State) -> (Vec<Row>, Vec<Entry>) {
+    /// The root results matching `query`, best match first, and what
+    /// activating each does.
+    fn root_rows(&self, state: &State, query: &str) -> (Vec<Row>, Vec<Entry>) {
+        let (rows, entries) = self.root_results(state);
+        let ranked = search::rank(
+            &Query::new(query),
+            rows.iter()
+                .map(|row| (row.title.as_str(), row.subtitle.as_deref())),
+        );
+        ranked
+            .into_iter()
+            .map(|index| (rows[index].clone(), entries[index].clone()))
+            .unzip()
+    }
+
+    /// Every root result, in root search order, and what activating each
+    /// does.
+    fn root_results(&self, state: &State) -> (Vec<Row>, Vec<Entry>) {
         let mut rows = Vec::new();
         let mut entries = Vec::new();
         let mut add = |row: Row, entry: Entry| {
@@ -1014,6 +1059,7 @@ impl Launcher {
             selected: first_index(&rows),
             rows,
             status: Status::Idle,
+            query: None,
             form: None,
             custom_view: None,
         };
@@ -1064,6 +1110,7 @@ impl Launcher {
                     rows: Vec::new(),
                     selected: None,
                     status: Status::Idle,
+                    query: None,
                     form: None,
                     custom_view: Some(CustomViewSnapshot {
                         id,
@@ -1301,6 +1348,7 @@ impl Launcher {
                     selected: first_index(&rows),
                     rows,
                     status: Status::Idle,
+                    query: None,
                     form: None,
                     custom_view: None,
                 };
@@ -1392,6 +1440,7 @@ fn preview_view(
                 rows: Vec::new(),
                 selected: None,
                 status: Status::Error(error.to_string()),
+                query: None,
                 form: None,
                 custom_view: None,
             };
@@ -1457,6 +1506,7 @@ fn preview_view(
         rows: vec![row],
         selected: Some(0),
         status: Status::Idle,
+        query: None,
         form: None,
         custom_view: None,
     };
@@ -1493,6 +1543,7 @@ fn open_form(state: &mut State, item_id: String, form: Form) {
         rows: Vec::new(),
         selected: None,
         status: Status::Idle,
+        query: None,
         form: Some(FormView {
             fields,
             submit_label: form.submit_label,

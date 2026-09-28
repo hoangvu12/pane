@@ -482,7 +482,11 @@ and TypeScript: Pane sees only components.
   optional `subtitle`, optional `platforms` (the same list, for this command
   alone: elsewhere its root row is listed with the reason and does not
   open), and `component`, a relative path inside the package folder (no
-  `..`, no absolute path) to a built component.
+  `..`, no absolute path) to a built component. Users find a command in
+  root search by its `title` and its `subtitle` (the package `title` when it
+  has none), so put the words people will type there; Pane searches this
+  metadata without running the command
+  ([root search](../docs/root-search.md#matching-and-ranking)).
 
 Unknown fields are ignored. The component must exist when you install: a
 package whose component is not built is refused as source-only, with the

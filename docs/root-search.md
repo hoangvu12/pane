@@ -1,0 +1,176 @@
+# Root search
+
+Added for [#23](https://github.com/hoangvu12/pane/issues/23) (US09, US14, T01,
+T02, T03, G2, G4). Root search now has a query field: typing narrows root to
+the matching commands, best match first, and Enter invokes the selected one.
+Only command metadata from `pane.json` (and the commands built into Pane) is
+searched; no extension runs until the user invokes one of its commands. This
+is a first matching and ranking, not tuned relevance. App launching,
+calculator, quicklinks, file search, aliases, fallback actions and hotkeys
+(#24 to #34) are not part of it.
+
+## What is searched
+
+Root search lists **root results**, in this order when the query is empty:
+
+1. the commands built into this Pane build (the three samples);
+2. the commands of each enabled installed package, in install order;
+3. an enabled installed package whose managed copy cannot be read, as one row
+   explaining the problem;
+4. Pane's own rows: "Install extension from folder…" and "Manage
+   extensions…".
+
+A **disabled** package contributes nothing ([#10](https://github.com/hoangvu12/pane/issues/10)):
+its commands leave the results at once, even while the choice is being
+recorded, and come back when it is enabled again. A command
+[unavailable](platform-availability.md) on this system is still found, with
+its reason; invoking it shows the reason and runs nothing. When an install,
+update or enable/disable finishes while the user is searching, the results
+are rebuilt for the same query and the selection stays on the same row if
+it still matches.
+
+## Matching and ranking
+
+Implemented in [`crates/pane-core/src/search.rs`](../crates/pane-core/src/search.rs).
+The query and each result's title and subtitle are compared in lowercase
+(Unicode `to_lowercase`), and the query is split into words at whitespace. A
+result matches when **every word** of the query appears in its title or
+subtitle. An installed command without its own subtitle shows its package
+title as the subtitle, so a package's title finds its commands. Matches are
+ranked by how well the title matches:
+
+| Rank | The title… | Query "download" |
+| --- | --- | --- |
+| 1 | is the query | Download |
+| 2 | starts with the query | Downloader |
+| 3 | has a word starting with each query word | Recent downloads |
+| 4 | contains each query word | Undownloadable files |
+| 5 | (a word is only in the subtitle) | Clear cache, "Delete downloaded files" |
+
+Results of the same rank keep root search order. A blank query lists every
+root result. The best match is selected after every change of the query.
+
+Not done, deliberately: typo tolerance, abbreviations ("ts" for TypeScript
+sample), accent folding, frequency or recency, per-user ranking, keywords or
+aliases in the manifest, and ranking results of different kinds (apps,
+files) against each other.
+
+## Host behavior
+
+The public host interface is [`pane_core::Launcher`](../crates/pane-core/src/launcher.rs):
+`LauncherView::query` (`Some` exactly on root search), `set_query`,
+`move_selection`, `activate_selected` and `back`. The window renders that
+state and maps input to those calls.
+
+| Input | On root search |
+| --- | --- |
+| Typing, editing keys, clipboard, undo, input-method composition | Edit the query (GPUI CE's single-line editable text element); every change searches again |
+| Up / Down | Previous / next result (not the caret) |
+| Enter, or a click on a result | Invoke the selected result: open the command, explain an unavailable or unreadable one, or open Pane's own screen |
+| Escape | Clear the query; with an empty query, nothing |
+
+The query field has keyboard focus whenever root search is on screen: when
+Pane starts and whenever the user returns to root search. Returning to root
+search (Escape from a command, after an install or update) starts with an
+empty query. Opening a command moves focus to its list.
+
+A **missing result is not a failed action**: a query that matches nothing
+shows "No results for “…”", selects nothing, and Enter then does nothing;
+the status line stays idle. A result that matches but fails when invoked
+(its component is missing, the runtime is unavailable, the guest reports an
+error) shows the failure as the status error, as before this slice.
+
+## Activation
+
+Searching reads only what the launcher already holds: built-in command
+registrations and the installed packages' managed manifests, read at start
+and after installs. It never compiles or starts a component. Invoking a
+result starts only that command's guest instance (lazy activation, ADR
+0005). `Runtime::running` is a diagnostic listing the components with a live
+instance; the tests use it to show that twelve installed packages can be
+listed and searched with none running, and that invoking one starts only
+that one. Background work declared by an extension does not exist yet
+(no services, timers or hotkeys), so there is nothing to keep distinct from
+it beyond this.
+
+## Minimum search-provider contract
+
+Per [ADR 0006](adr/0006-raycast-style-search-with-extension-providers.md) the
+core owns the search interface, matching and ranking, aggregation,
+navigation and dispatch; features supply entries. This slice has one kind of
+provider, **command metadata**: contributions indexed from package
+manifests and built-in registrations without running anything. The minimum
+a root result needs, which later default features (#24 onwards) must supply
+to plug in:
+
+- an **id**, stable and unique among root results, so a refresh keeps the
+  selection (installed commands use `<package identity>#<command id>`);
+- a **title** and optional **subtitle**, which are what the query matches;
+- an optional **unavailability reason**, which keeps the result listed and
+  searchable but stops it from running;
+- an **action** the core dispatches when it is invoked (today: open a
+  command, explain, or open one of Pane's screens).
+
+What is *not* settled here, and is left to the tickets that need it: results
+computed from the query itself (a calculator answer, which matches no title),
+results from a provider that must run to answer (files, applications),
+provider-supplied ranks and how they mix with title matching, asynchronous or
+cancellable providers, and online providers, which stay inside their own
+command (US11, T03): nothing in root search queries an online service.
+
+## Accessibility
+
+Checked through GPUI's accessibility tree
+(`Window::debug_a11y_tree_json`) in the window tests:
+
+- The query field and the results form one `EditableComboBox` node labelled
+  "Search", with the query as its value and "Search commands" as its
+  placeholder. It tracks the field's keyboard focus.
+- The results are a `ListBox` labelled "Results" inside it, of
+  `ListBoxOption`s with label, description (subtitle, and the reason when
+  unavailable) and selected state.
+- The selected result is the combo box's active descendant, so it is
+  reported as focused while the caret stays in the field; with no result, the
+  combo box itself is reported as focused.
+
+GPUI CE implements the active descendant by reporting the descendant as the
+focused node, not through AccessKit's `active_descendant` property on the
+field. A screen reader may therefore announce the selected result rather
+than echo typed characters. **No screen reader was run** on any platform;
+announcements, echo and the combo box pattern's behaviour with
+Narrator/NVDA, VoiceOver and Orca are unverified. The limits listed for
+[form text fields](forms.md#accessibility) (no text details, actions or
+invalid state) apply to the query field too.
+
+## Checks
+
+Through the launcher's public interface
+([`crates/pane-core/tests/search.rs`](../crates/pane-core/tests/search.rs)):
+the empty query, each rank in order, letter case and blank queries, every
+word having to match, ties keeping order, selection and invocation among the
+matches, no match with Enter doing nothing versus a match that fails,
+Escape clearing the query, a new search after returning to root, installed
+commands found by title or package title and Pane's own rows, disabling and
+re-enabling a package under a query, an update finishing while the user
+searches, an unavailable command found and explained without running, and
+twelve installed packages searched with no guest running and only the
+invoked one started.
+
+Window checks through GPUI's test platform with real key events
+([`crates/pane/tests/window.rs`](../crates/pane/tests/window.rs)): typing
+narrows the results and Enter opens the best match; Up/Down move through the
+matches while the field keeps focus and editing keys still edit it; the
+no-results state and Escape clearing the field; focus on the field at start
+and after returning from a command, and typing in a command not searching
+root; input-method composition searching as it composes (driven on the
+field's editing state, with the limits described for
+[forms](forms.md#checks)); and the accessibility nodes above.
+
+Native checks: the GUI smoke scripts' last phase types "typescr", presses
+Enter, runs "Wait briefly" and asserts the screen is pixel for pixel the one
+step 4 reached by Down; then it types a query that matches nothing, presses
+Enter, and asserts root, the search and the no-results screens all differ.
+The earlier phases still navigate root with Down, which moves the selection
+while the field has focus. On Linux X11 this ran on 2026-09-28
+([evidence](platforms/linux.md#root-search-23)); the macOS and Windows steps
+are written but have not run yet. No real input method was used.
