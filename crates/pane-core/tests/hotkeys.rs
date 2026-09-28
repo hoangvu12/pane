@@ -54,7 +54,10 @@ impl FakeSystem {
         if !self.registered.lock().unwrap().contains(&shortcut) {
             return false;
         }
-        block_on(launcher.press_hotkey(&shortcut));
+        let opening = launcher
+            .press_hotkey(&shortcut)
+            .expect("a registered hotkey opens its command");
+        block_on(opening);
         true
     }
 }
@@ -560,4 +563,72 @@ fn an_update_keeps_the_hotkey_and_one_that_drops_the_command_releases_it() {
     .unwrap();
     update(&launcher);
     assert!(system.registered().is_empty());
+}
+
+#[test]
+fn a_press_that_opens_nothing_leaves_pane_as_it_was() {
+    let dirs = Dirs::new();
+    let system = FakeSystem::new();
+    let launcher = dirs.launcher(&system);
+    let folder = dirs.install(&launcher, "sample-settings");
+    assign(&launcher, "Greeting", "ctrl+alt+g");
+    let before = launcher.view();
+    // Not a hotkey, and one released by disabling its extension (the press
+    // was on its way): nothing opens, so the window is not raised either.
+    assert!(launcher.press_hotkey(&key("ctrl+alt+h")).is_none());
+    block_on(launcher.set_enabled(&PackageIdentity::local(&folder).unwrap(), false));
+    let before_disabled = launcher.view();
+    assert!(launcher.press_hotkey(&key("ctrl+alt+g")).is_none());
+    assert_eq!(launcher.view(), before_disabled);
+    assert_ne!(before, before_disabled);
+}
+
+#[test]
+fn a_hotkey_removed_right_after_it_was_assigned_stays_removed_after_a_restart() {
+    let dirs = Dirs::new();
+    let system = FakeSystem::new();
+    let launcher = dirs.launcher(&system);
+    dirs.install(&launcher, "sample-settings");
+    manage(&launcher);
+    activate(&launcher, "Hotkey for Greeting");
+    // Assigned, then removed before the assignment has been recorded; the
+    // removal's record is written first.
+    let assigned = launcher.record_hotkey(key("ctrl+alt+g"));
+    activate(&launcher, "Hotkey for Greeting");
+    select_title(&launcher, "Remove hotkey");
+    let removed = launcher.activate_selected();
+    block_on(removed);
+    block_on(assigned);
+    assert!(system.registered().is_empty());
+
+    let restarted_system = FakeSystem::new();
+    dirs.launcher(&restarted_system);
+    assert!(restarted_system.registered().is_empty());
+}
+
+#[test]
+fn a_hotkey_that_cannot_be_recorded_is_undone_in_pane_and_on_disk() {
+    let dirs = Dirs::new();
+    let system = FakeSystem::new();
+    let launcher = dirs.launcher(&system);
+    dirs.install(&launcher, "sample-settings");
+    assign(&launcher, "Greeting", "ctrl+alt+g");
+    // The record can no longer be replaced: a folder stands in its place.
+    let record = dirs.packages_dir().join("hotkeys.json");
+    fs::remove_file(&record).unwrap();
+    fs::create_dir(&record).unwrap();
+
+    assign(&launcher, "Greeting", "ctrl+alt+h");
+    assert!(
+        error(&launcher).starts_with("Could not keep the hotkey"),
+        "{}",
+        error(&launcher)
+    );
+    // Pane's memory matches what was last recorded: Ctrl+Alt+G.
+    assert_eq!(system.registered(), ["ctrl+alt+g"]);
+    assert!(system.press(&launcher, "ctrl+alt+g"));
+    manage(&launcher);
+    assert!(
+        row_subtitle(&launcher, "Hotkey for Greeting").starts_with(&key("ctrl+alt+g").to_string())
+    );
 }
