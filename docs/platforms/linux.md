@@ -281,7 +281,7 @@ has not run there yet.
 
 ### Applications (#24, #25, #26)
 
-The last phase adds a desktop entry "Pane Smoke App" whose `Exec` writes a
+The applications phase adds a desktop entry "Pane Smoke App" whose `Exec` writes a
 marker file, in an `XDG_DATA_HOME` given to Pane only (the system's
 `XDG_DATA_DIRS` entries are searched too), installs the
 [applications](../applications.md) package, types "pane smoke" with real
@@ -303,7 +303,7 @@ covered by the launcher tests, not natively.
 
 ### Quicklinks (#28)
 
-The last phase, after the applications phase, installs the Quicklinks package
+The quicklinks phase, after the applications phase, installs the Quicklinks package
 (`--install target/guests/packages/quicklinks`), opens its command, and in
 "Create quicklink" types "Pane issues", Tab and
 "https://example.com/pane-issues" with real X11 key events, then Return.
@@ -324,6 +324,35 @@ setup): all checks of the whole smoke passed.
 A real desktop's handler (GNOME's `gio open`, a browser chosen in the
 desktop settings) was not run. The macOS and Windows smokes run the phase up
 to screenshot 47; it has not run there yet.
+
+### Uninstalling an extension (#40)
+
+The last phase, after the quicklinks phase, restarts Pane, chooses "Uninstall Settings sample" in
+**Manage extensions…** and the first choice, "Uninstall and keep saved
+data". It then checks that `installed.json` records the retained data, that
+the token is gone from `credentials.json` and that the style and note are
+still in `settings.json` and `content.json`; installs the same folder again
+and shows what Pane keeps, which must differ from screenshot 43 (signed out
+now), and checks that the retained record was dropped. Run locally on
+2026-09-28 (Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64, same
+Xvfb/lavapipe setup): all checks of the whole smoke passed.
+
+| Step | Evidence |
+| --- | --- |
+| "Uninstall Settings sample?", its source, what is removed, "Saved data: 1 setting and 1 content record", the source folder kept; the three choices | `49-confirm-uninstall.png` (not committed: it shows the local checkout path) |
+| "Uninstalled Settings sample; its settings and content are kept" | `50-uninstalled.png` (not committed: the list's rows show the local checkout path) |
+| Reinstalled: "Style: formal · Note: Water the plants · Signed in: no · Cached greeting: none" | [51-reinstalled.png](evidence/linux-x11/51-reinstalled.png) |
+
+In the last run the confirmation's list showed the second and third choices,
+with the selected first one scrolled out of view above them (the list keeps
+its scroll position from the long extension list; an earlier run, with fewer
+packages, showed the first choice). Enter still chose it. The window's
+scrolling between screens is an open item, not specific to this phase.
+
+The macOS and Windows smokes run the same phase (screenshots 49 to 51); it
+has not run there yet. A managed folder that Windows keeps in use is covered
+only by the leftover mechanism's Unix test (a read-only folder), not
+natively.
 
 ## Text input and accessibility findings
 

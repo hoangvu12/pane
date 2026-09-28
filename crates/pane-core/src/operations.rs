@@ -81,6 +81,10 @@ impl OperationError {
                 Unavailable,
                 format!("{title} was reloaded or updated while serving the call; call it again"),
             ),
+            CallError::Uninstalled => (
+                Unavailable,
+                format!("{title} was uninstalled while serving the call"),
+            ),
             CallError::Trap(reason) => (Crashed, format!("{title} crashed: {reason}")),
             CallError::RuntimeUnavailable(_) => (Unavailable, format!("{title}: {error}")),
             CallError::Load(_)

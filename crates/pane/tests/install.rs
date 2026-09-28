@@ -172,7 +172,12 @@ fn an_installed_package_is_disabled_and_enabled_from_the_extension_list(cx: &mut
     assert_eq!(view.title, "Extensions");
     assert_eq!(
         titles(&view),
-        ["Hello", "Reload Hello", "Clear cache of Hello"]
+        [
+            "Hello",
+            "Reload Hello",
+            "Clear cache of Hello",
+            "Uninstall Hello"
+        ]
     );
     assert!(
         cx.debug_bounds("row-Hello").is_some(),
@@ -280,7 +285,8 @@ fn a_reload_that_fails_to_start_offers_retry(cx: &mut TestAppContext) {
             "Hello",
             "Reload Hello",
             "Retry starting Hello",
-            "Clear cache of Hello"
+            "Clear cache of Hello",
+            "Uninstall Hello"
         ]
     );
 
@@ -290,7 +296,12 @@ fn a_reload_that_fails_to_start_offers_retry(cx: &mut TestAppContext) {
     assert_eq!(view.status, Status::Result("Started Hello".into()));
     assert_eq!(
         titles(&view),
-        ["Hello", "Reload Hello", "Clear cache of Hello"]
+        [
+            "Hello",
+            "Reload Hello",
+            "Clear cache of Hello",
+            "Uninstall Hello"
+        ]
     );
 }
 
@@ -305,7 +316,12 @@ fn an_installed_package_cache_is_cleared_after_confirming(cx: &mut TestAppContex
     assert!(matches!(view.screen, Screen::Extensions { .. }));
     assert_eq!(
         titles(&view),
-        ["Hello", "Reload Hello", "Clear cache of Hello"]
+        [
+            "Hello",
+            "Reload Hello",
+            "Clear cache of Hello",
+            "Uninstall Hello"
+        ]
     );
 
     // The third row asks first, saying what is kept; Escape keeps the cache
@@ -337,4 +353,58 @@ fn an_installed_package_cache_is_cleared_after_confirming(cx: &mut TestAppContex
         (Status::Result("Cleared the cache of Hello".into()), Some(2))
     );
     assert!(cx.debug_bounds("status-result").is_some());
+}
+
+#[gpui::test]
+fn an_installed_package_is_uninstalled_after_choosing_what_to_keep(cx: &mut TestAppContext) {
+    let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let folder = package(&sources.path().join("hello"));
+    let (window, cx) = open(cx, &data);
+    install(&window, cx, &folder);
+    cx.simulate_keystrokes("down down enter");
+    settle(&window, cx);
+
+    // The fourth row asks first, with a choice about the saved data; Escape
+    // keeps it installed and returns to that row.
+    cx.simulate_keystrokes("down down down enter");
+    let view = settle(&window, cx);
+    assert!(
+        matches!(view.screen, Screen::Confirm { .. }),
+        "{:?}",
+        view.screen
+    );
+    assert_eq!(view.title, "Uninstall Hello?");
+    assert_eq!(
+        titles(&view),
+        [
+            "Uninstall and keep saved data",
+            "Uninstall and delete saved data",
+            "Cancel"
+        ]
+    );
+    assert!(
+        cx.debug_bounds("detail-Saved data: none").is_some(),
+        "the saved data is rendered"
+    );
+    cx.simulate_keystrokes("escape");
+    let view = settle(&window, cx);
+    assert!(matches!(view.screen, Screen::Extensions { .. }));
+    assert_eq!((view.status, view.selected), (Status::Idle, Some(3)));
+
+    cx.simulate_keystrokes("enter");
+    settle(&window, cx);
+    cx.simulate_keystrokes("down enter");
+    let view = settle(&window, cx);
+    assert!(matches!(view.screen, Screen::Extensions { .. }));
+    assert_eq!(
+        view.status,
+        Status::Result("Uninstalled Hello and deleted its saved data".into())
+    );
+    assert!(view.rows.is_empty());
+    assert!(cx.debug_bounds("status-result").is_some());
+
+    // Root search no longer offers its command, nor the extension list.
+    cx.simulate_keystrokes("escape");
+    assert_eq!(titles(&settle(&window, cx)), [INSTALL_ROW]);
+    assert!(folder.join("pane.json").exists(), "the source is kept");
 }

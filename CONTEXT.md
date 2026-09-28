@@ -40,6 +40,18 @@ _Avoid_: Documents (the user's external files), cache
 Extension data the extension can compute or download again, which the user can clear at any time without affecting its settings, content or credentials. Distinct from Pane's own compile cache of components.
 _Avoid_: Temporary files, managed copy
 
+**Saved data**:
+An extension's settings and content: the extension data a user chooses to keep or delete when uninstalling it. Its cache and local credentials are removed either way.
+_Avoid_: All extension data, durable data (in UI text)
+
+**Uninstall**:
+Removing an installed package's managed copy, cache and local credentials, and its saved data if the user chooses, without running it; its source folder and files it saved elsewhere are kept.
+_Avoid_: Disable, delete source
+
+**Retained data**:
+Extension data Pane keeps for a package identity that is not installed, recorded with the title it had; installing the same source again makes it that package's data again.
+_Avoid_: Orphaned data, leftovers (a leftover is a managed folder awaiting removal)
+
 **Local credential**:
 A secret an extension keeps on this computer through Pane, such as a sign-in token. Deleting it does not revoke a remote session.
 _Avoid_: Account, session
