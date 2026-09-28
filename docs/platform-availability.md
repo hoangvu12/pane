@@ -134,8 +134,8 @@ from the Rust sample with the two other systems in `platforms`.
   surfaces do not exist yet.
 - `platforms` on `item` was added to extension API 0.1 without a version
   bump ([current decisions](current-decisions.md#explicitly-unresolved-or-deferred),
-  item 5); a component built against the older shape is refused when its
-  command opens.
+  item 5); a component built against the older shape is refused when it is
+  installed, and when a built-in command of it loads.
 - Other runtime availability (a missing app or setting) is not modelled; a
   command reports that as an error from its action.
 - Whether an unavailable item should be hidden instead is left open by Q34;

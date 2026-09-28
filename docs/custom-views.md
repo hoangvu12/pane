@@ -213,4 +213,6 @@ not run yet.
 - The contract adds required exports (`open-view` and the `custom-view`
   resource) without changing the extension API version (0.1), as #20 did for
   `submit-form`: components built against the earlier contract must be
-  rebuilt.
+  rebuilt. Pane refuses them at install as built for an older extension API
+  shape ([current decisions](current-decisions.md#explicitly-unresolved-or-deferred),
+  item 5).

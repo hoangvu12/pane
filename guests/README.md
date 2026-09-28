@@ -32,8 +32,10 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
 - `fixtures/mixed-p2`: negative control that imports WASI 0.2 and must be rejected.
 - `fixtures/old-api`: negative control built against extension API 0.1 as it
   was before `item` gained `platforms` and custom views, with its own copy of
-  that WIT; Pane's
-  type check refuses it when its command opens.
+  that WIT; Pane's type check refuses it at install and when it loads.
+- `fixtures/mismatched-api`: negative control whose exports all have the
+  names Pane looks for while `item` lacks one field, so only the type check
+  can refuse it.
 
 ## Writing a Rust command
 
@@ -485,13 +487,14 @@ and TypeScript: Pane sees only components.
 Unknown fields are ignored. The component must exist when you install: a
 package whose component is not built is refused as source-only, with the
 missing path. Pane then checks each component without running it: it must
-compile, import only WASI 0.3 and export the extension interface by name.
-The exported functions' types are checked when the command opens, so a
-component built against an older shape of the same `apiVersion` (the
-pre-release API 0.1 changes between slices) installs but is refused then,
-naming the mismatch (a component from before custom views: "does not have
-export `[method]custom-view.render`"); rebuild
-it against the current [`wit/extension.wit`](../wit/extension.wit).
+compile, import only WASI 0.3 and export the extension interface, each
+function Pane calls with the types it calls it with.
+A component built against an older shape of the same `apiVersion` (the
+pre-release API 0.1 changes between slices) is therefore refused at install,
+naming the first mismatch ("it was built for an older extension API shape:
+rebuild it against Pane's current extension API 0.1 (`get-view`: type
+mismatch for field items: expected record of 6 fields, found 4 fields)");
+rebuild it against the current [`wit/extension.wit`](../wit/extension.wit).
 
 Where the component comes from is up to your build. A standalone Rust crate
 can point `component` at `target/wasm32-wasip2/release/<name>.wasm` inside

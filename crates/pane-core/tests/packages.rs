@@ -349,7 +349,10 @@ fn with_manifest(folder: &Path, manifest: &str) {
 }
 
 /// (case, how to build it, what the explanation must say)
-const UNSUPPORTED: [(&str, Unsupported, &str); 9] = [
+/// Explains a component built for another shape of extension API 0.1.
+const OLDER_SHAPE: &str = "it was built for an older extension API shape: rebuild it against Pane's current extension API 0.1";
+
+const UNSUPPORTED: [(&str, Unsupported, &str); 11] = [
     ("no folder", |_| {}, "Cannot open"),
     (
         "no manifest",
@@ -391,6 +394,22 @@ const UNSUPPORTED: [(&str, Unsupported, &str); 9] = [
             package(folder, "Hello", "1.0.0", "mixed_p2");
         },
         "Pane supports only WASI 0.3, but it imports wasi:io/poll@0.2",
+    ),
+    (
+        // From before #19 and #21: exports are missing.
+        "older API shape",
+        |folder| {
+            package(folder, "Hello", "1.0.0", "old_api");
+        },
+        OLDER_SHAPE,
+    ),
+    (
+        // Every export is there by name, but a record differs in type.
+        "mismatched API shape",
+        |folder| {
+            package(folder, "Hello", "1.0.0", "mismatched_api");
+        },
+        OLDER_SHAPE,
     ),
     (
         "not a component",

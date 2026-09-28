@@ -27,10 +27,14 @@ mod bindings {
 use bindings::exports::pane::extension::command;
 use bindings::pane::extension::settings;
 
+use crate::packages::EXTENSION_API;
 use crate::settings::PackageSettings;
 
 /// Interface-version prefix every imported WASI interface must carry.
 const WASI_VERSION: &str = "@0.3.";
+
+/// The interface an extension command exports.
+const COMMAND_INTERFACE: &str = "pane:extension/command@0.1.0";
 
 /// One entry in a command's list view, as produced by the guest.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -236,6 +240,10 @@ pub enum CallError {
     Incompatible(Vec<String>),
     /// The component does not implement Pane's extension interface.
     Interface(String),
+    /// The component exports Pane's extension interface, but with functions
+    /// or types of another shape of the same API version: it was built
+    /// against an older contract, and must be rebuilt.
+    OlderApiShape(String),
     /// The guest ran and reported an error.
     Guest(String),
     /// The guest did not accept a submitted form.
@@ -265,6 +273,12 @@ impl fmt::Display for CallError {
             CallError::Interface(reason) => write!(
                 f,
                 "Incompatible extension: it does not implement Pane's extension interface: {reason}"
+            ),
+            CallError::OlderApiShape(reason) => write!(
+                f,
+                "Incompatible extension: it was built for an older extension API shape: \
+                 rebuild it against Pane's current extension API {}.{} ({reason})",
+                EXTENSION_API.0, EXTENSION_API.1
             ),
             CallError::Guest(message) => write!(f, "The extension reported an error: {message}"),
             CallError::Form(error) => f.write_str(&error.message),
@@ -413,7 +427,9 @@ impl Runtime {
 
     /// Checks, without running any guest code, that `component` is a
     /// component Pane can run: it compiles, imports only WASI 0.3 and exports
-    /// the extension interface. The check keeps nothing loaded.
+    /// the extension interface, with the function types of the current
+    /// contract ([`CallError::OlderApiShape`] otherwise). The check keeps
+    /// nothing loaded.
     pub async fn check(&self, component: &Path) -> Result<(), CallError> {
         let (reply, response) = oneshot::channel();
         self.send(Request::Check {
@@ -915,7 +931,57 @@ impl Host {
         if !unsupported.is_empty() {
             return Err(CallError::Incompatible(unsupported));
         }
+        self.check_exports(&component)?;
         Ok(component)
+    }
+
+    /// Type-checks the functions of the component's command interface
+    /// against those Pane calls, from the component's type alone, so no
+    /// guest code runs. Instantiating checks the same, but only when a
+    /// command opens; a component built for an older shape of the same API
+    /// version is refused here instead. A component without the interface
+    /// is left to [`Host::check`], which says so.
+    fn check_exports(&self, component: &Component) -> Result<(), CallError> {
+        use wasmtime::component::types::{ComponentFunc, ComponentItem};
+        use wasmtime::component::{ComponentNamedList, Lift, Lower, ResourceAny};
+
+        let ty = component.component_type();
+        let Some(ComponentItem::ComponentInstance(interface)) = ty
+            .get_export(&self.engine, COMMAND_INTERFACE)
+            .map(|export| export.ty)
+        else {
+            return Ok(());
+        };
+        let cx = ty.instance_type();
+        let older = |problem: String| CallError::OlderApiShape(problem);
+        let func = |name: &str| match interface.get_export(&self.engine, name).map(|e| e.ty) {
+            Some(ComponentItem::ComponentFunc(func)) => Ok(func),
+            _ => Err(older(format!("it has no function `{name}`"))),
+        };
+        fn check<P: ComponentNamedList + Lower, R: ComponentNamedList + Lift>(
+            name: &str,
+            func: ComponentFunc,
+            cx: &wasmtime::component::__internal::InstanceType<'_>,
+        ) -> Result<(), CallError> {
+            func.typecheck::<P, R>(cx)
+                .map_err(|error| CallError::OlderApiShape(format!("`{name}`: {error:#}")))
+        }
+        check::<(), (Result<command::View, String>,)>("get-view", func("get-view")?, &cx)?;
+        check::<(String,), (Result<String, String>,)>("run-action", func("run-action")?, &cx)?;
+        check::<(String, Vec<command::FieldValue>), (Result<String, command::FormError>,)>(
+            "submit-form",
+            func("submit-form")?,
+            &cx,
+        )?;
+        check::<(String,), (Result<ResourceAny, String>,)>("open-view", func("open-view")?, &cx)?;
+        let render = "[method]custom-view.render";
+        check::<(ResourceAny,), (command::Frame,)>(render, func(render)?, &cx)?;
+        let handle_event = "[method]custom-view.handle-event";
+        check::<(ResourceAny, command::ViewEvent), (Result<(), String>,)>(
+            handle_event,
+            func(handle_event)?,
+            &cx,
+        )
     }
 
     /// Type-checks `path` against the linker and the extension world without

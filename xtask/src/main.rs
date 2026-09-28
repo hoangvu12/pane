@@ -70,7 +70,13 @@ fn guests() -> Result<(), String> {
     let workspaces: [(&str, &[&str]); 2] = [
         (
             "guests",
-            &["sample_rust", "sample_settings", "faulty", "old_api"],
+            &[
+                "sample_rust",
+                "sample_settings",
+                "faulty",
+                "old_api",
+                "mismatched_api",
+            ],
         ),
         ("guests/fixtures/mixed-p2", &["mixed_p2"]),
     ];

@@ -576,8 +576,9 @@ fn a_crash_in_a_view_closes_it_and_the_command_keeps_working() {
 /// The pre-release extension API 0.1 changes shape between slices without a
 /// version bump: `item` gained `platforms` in #19, and the command gained
 /// custom views in #21. A component built against an older shape declares
-/// the same API version, and the check at instantiation refuses it when its
-/// command opens, naming what is missing.
+/// the same API version; its exports' types are checked when it loads, here
+/// for a command built into Pane (installing checks the same, see
+/// `packages.rs`), and the first mismatch is named.
 #[test]
 fn a_component_of_an_older_api_shape_is_refused_when_it_loads() {
     let launcher = launcher(vec![command("old", guest("old_api"))]);
@@ -587,11 +588,16 @@ fn a_component_of_an_older_api_shape_is_refused_when_it_loads() {
     assert_eq!(launcher.view().screen, Screen::Root);
     let message = error(&launcher);
     assert!(
-        message.starts_with("Could not load the extension: "),
+        message.starts_with(
+            "Incompatible extension: it was built for an older extension API shape: \
+             rebuild it against Pane's current extension API 0.1"
+        ),
         "{message}"
     );
     assert!(
-        message.contains("does not have export `[method]custom-view.render`"),
+        message.contains(
+            "`get-view`: type mismatch for field items: expected record of 6 fields, found 4 fields"
+        ),
         "{message}"
     );
 }
