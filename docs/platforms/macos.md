@@ -266,6 +266,16 @@ uninstall; a folder still in use is listed and removed at the next start,
 reported against its own package. Nothing else in it is specific to
 macOS; **not run on macOS yet**.
 
+## Clipboard history (#35)
+
+Pane has no clipboard adapter on macOS yet (#37). The smoke's clipboard
+phase (screenshots 280 and 281), with a data folder of its own, installs
+Clipboard History, whose command is then listed in root search as "Not
+available on macOS: this command supports only Windows" (the unavailable
+color); Enter shows that as the error and does not open it, and no
+`clipboard-history.json` appears. No clipboard is read. **Not run on macOS
+yet.**
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms now have a text field. The

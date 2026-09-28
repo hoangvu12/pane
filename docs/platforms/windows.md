@@ -252,6 +252,28 @@ uninstall; a folder still in use (a file open on Windows) is listed and removed 
 reported against its own package. Nothing else in it is specific to
 Windows; **not run on Windows yet**.
 
+## Clipboard history (#35)
+
+The smoke's clipboard phase (screenshots 280 to 285, [clipboard history](../clipboard-history.md#checks)),
+with a data folder of its own, installs Clipboard History and checks
+`clipboard-history.json` at each step: text copied before it is turned on is
+not kept; once turned on (its first row) plain text is kept, while text
+carrying `ExcludeClipboardContentFromMonitorProcessing`,
+`CanIncludeInClipboardHistory` = 0 or `CanUploadToCloudClipboard` = 0 is
+not; nothing is kept while paused, or while disabled, also after a restart;
+Enter on a kept item puts it on the clipboard again and moves it to the
+front; enabled again, text is kept, also after a restart, before the command
+is opened. The smoke copies only its own `pane-smoke-...` text, through the
+clipboard API from PowerShell, and saves what was on the clipboard (every
+format held in global memory) in memory only, putting it back at the end.
+`clipboard_adapter.rs` does the same for the adapter alone: plain text
+reported with its owner (the test's process), each marker withholding the
+text, a written text reported, and nothing once the watch is dropped. The
+adapter and the test were only compile- and lint-checked for
+`x86_64-pc-windows-gnu` from Linux; **not run on Windows yet**, so the
+listener's delivery, the markers as real password managers set them and the
+owner lookup are unverified natively.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** the smoke now also opens the Rust command's

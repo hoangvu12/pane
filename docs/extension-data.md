@@ -27,6 +27,14 @@ actions do with a value.
 | Content | The extension's own durable records, such as notes or history | `content.json` | kept | the user's choice |
 | Cache | Values the extension can compute or download again | `cache.json` | removed | removed |
 | Local credentials (`credentials`) | Secrets kept on this computer, such as a sign-in token | `credentials.json`, readable only by the user on macOS and Linux (mode 0600) | kept | removed |
+| Clipboard history (`clipboard-history`, since #35) | The text the user copied while the package kept [clipboard history](clipboard-history.md), and whether it keeps it; written by Pane only | `clipboard-history.json`, readable only by the user on macOS and Linux (mode 0600) | kept | the user's choice |
+
+Clipboard history is not a `get`/`set` interface: Pane itself watches the
+clipboard and writes the items for the package, which reads and controls
+them through `pane:extension/clipboard-history`
+([`wit/clipboard.wit`](../wit/clipboard.wit)). It counts as saved data with
+settings and content ("Saved data: 1 setting and 12 clipboard history
+items").
 
 The settings sample in [Rust](../guests/sample-settings/src/lib.rs),
 [JavaScript](../guests/sample-settings-js/src/index.js) and
@@ -111,7 +119,8 @@ first, "Uninstall <title>?", with:
   computer, and the extension does not run. Deleting a credential does not
   sign you out of an online service.";
 - "Saved data: 1 setting and 1 content record" (or "none"): the package's
-  **saved data**, its settings and content, which is what the choice is
+  **saved data**, its settings and content (and its [clipboard
+  history](clipboard-history.md), since #35), which is what the choice is
   about;
 - "Its source folder <path> and files it saved elsewhere are not touched."
 

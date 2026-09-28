@@ -604,6 +604,37 @@ The [JavaScript](sample-applications-js) and
 their commands list the applications and open one with `open(id)`; their
 packages in [`packages/`](packages) set `indexedResults`.
 
+## Clipboard history
+
+A Rust command can keep clipboard history through Pane
+(`pane_guest::clipboard_history`, the `pane:extension/clipboard-history`
+import, [`wit/clipboard.wit`](../wit/clipboard.wit)): Pane itself watches
+the clipboard and keeps the text the user copies for the command's package,
+once the command turned it on, and only while the package runs and the
+history is not paused. The package does not run while text is copied; it
+reads what Pane kept:
+
+```rust
+use pane_guest::clipboard_history::{self as history, Capture};
+
+// From an action the user chose, never on its own: history starts off.
+history::set_capture(Capture::On)?;
+for entry in history::entries()? {
+    // entry.text, entry.age_seconds, entry.source ("notepad.exe")
+}
+```
+
+`status()` says whether it is on, why Pane cannot watch the clipboard (such
+as on a system without an adapter), the excluded programs and the count;
+`set-excluded` replaces the excluded programs, `copy(id)` puts an item on the
+clipboard again and `clear()` deletes every item. Pane keeps plain text
+only, never text marked by its application as not to be kept, and nothing
+while the package is disabled. The [Clipboard History](clipboard-history)
+default extension is the example; see [clipboard history](../docs/clipboard-history.md).
+Only Windows has a clipboard adapter so far, so its package declares
+`"platforms": ["windows"]`. JavaScript and TypeScript commands cannot use it
+yet.
+
 ## A command that takes a query
 
 The user can give any installed command an alias in Manage extensions, and
