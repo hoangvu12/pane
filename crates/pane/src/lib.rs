@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use gpui::{
     App, ClipboardItem, Context, Div, FocusHandle, KeyBinding, KeyDownEvent, PathPromptOptions,
     Pixels, Role, ScrollHandle, SharedString, Size, Stateful, Window, actions, div, prelude::*,
-    rgb,
+    relative, rgb,
 };
 use pane_core::changes::Changes;
 use pane_core::hotkeys::Shortcut;
@@ -531,6 +531,7 @@ impl Render for LauncherWindow {
             Screen::RuntimeDetails { .. } => ("", "Enter restart · Esc back"),
             Screen::BuildDetails { .. } => ("", "Enter build again · Esc back"),
         };
+        let confirm = matches!(view.screen, Screen::Confirm { .. });
         let details: Vec<_> = view
             .details()
             .iter()
@@ -615,7 +616,24 @@ impl Render for LauncherWindow {
             .bg(rgb(0x20252d))
             .text_color(rgb(0xf1f3f5))
             .child(div().text_xl().child(view.title.clone()))
-            .children(details)
+            // A confirmation's long details scroll within 40% of the
+            // window, leaving the rest to its choices, which stay visible.
+            .when(!details.is_empty(), |root| {
+                root.child(
+                    div()
+                        .id("details")
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .when(confirm, |details| {
+                            details
+                                .flex_shrink(1.)
+                                .max_h(relative(0.4))
+                                .overflow_y_scroll()
+                        })
+                        .children(details),
+                )
+            })
             .child(body)
             .child(
                 div()
