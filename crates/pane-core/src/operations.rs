@@ -85,6 +85,10 @@ impl OperationError {
                 Unavailable,
                 format!("{title} was uninstalled while serving the call"),
             ),
+            CallError::Paused => (
+                Unavailable,
+                format!("{title} is paused after an error; retry it in Manage extensions"),
+            ),
             CallError::Trap(reason) => (Crashed, format!("{title} crashed: {reason}")),
             CallError::RuntimeUnavailable(_) => (Unavailable, format!("{title}: {error}")),
             CallError::Load(_)

@@ -408,3 +408,53 @@ fn an_installed_package_is_uninstalled_after_choosing_what_to_keep(cx: &mut Test
     assert_eq!(titles(&settle(&window, cx)), [INSTALL_ROW]);
     assert!(folder.join("pane.json").exists(), "the source is kept");
 }
+
+#[gpui::test]
+fn a_package_that_keeps_crashing_is_paused_and_retried(cx: &mut TestAppContext) {
+    let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    // A package titled Hello whose command is the faulty fixture: its third
+    // item traps.
+    let folder = package(&sources.path().join("hello"));
+    rebuild(&folder, "faulty");
+    let (window, cx) = open(cx, &data);
+    install(&window, cx, &folder);
+
+    cx.simulate_keystrokes("enter");
+    assert_eq!(settle(&window, cx).screen, Screen::Command);
+    cx.simulate_keystrokes("down down enter");
+    for _ in 0..2 {
+        let view = settle(&window, cx);
+        assert!(
+            matches!(&view.status, Status::Error(text) if text.starts_with("The extension crashed")),
+            "{:?}",
+            view.status
+        );
+        cx.simulate_keystrokes("enter");
+    }
+
+    // The third crash pauses it: the toast says so, and root search lists
+    // its command with why it does not run.
+    let view = settle(&window, cx);
+    assert!(matches!(view.screen, Screen::Root { .. }));
+    let Status::Error(toast) = &view.status else {
+        panic!("expected the toast, got {:?}", view.status);
+    };
+    assert!(
+        toast.starts_with("Hello crashed 3 times within 5 minutes and is paused"),
+        "{toast}"
+    );
+    assert!(cx.debug_bounds("status-error").is_some());
+    assert!(
+        cx.debug_bounds("unavailable-reason-Say hello").is_some(),
+        "the paused command's reason is rendered"
+    );
+
+    // The extension list shows it paused, with Retry; Retry starts it.
+    let view = click_in_extension_list(&window, cx, "row-Retry starting Hello");
+    assert_eq!(view.status, Status::Result("Started Hello".into()));
+    cx.simulate_keystrokes("escape");
+    let view = settle(&window, cx);
+    assert_eq!(view.rows[0].unavailable, None);
+    cx.simulate_keystrokes("enter");
+    assert_eq!(settle(&window, cx).screen, Screen::Command);
+}

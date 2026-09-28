@@ -7,7 +7,8 @@
 // Rust settings sample (guests/sample-settings) and the JavaScript one.
 // "Save after waiting" notes in its settings that it started, waits ten
 // seconds, then notes that it finished: disabling or reloading the package
-// meanwhile stops the call, so it never finishes.
+// meanwhile stops the call, so it never finishes. "Crash" crashes on purpose:
+// three crashes in a row pause the package until the user retries it.
 import type { Command, CustomView, FormError, Item, View } from "@pane/extension";
 import { get, set } from "pane:extension/settings@0.1.0";
 import * as cache from "pane:extension/cache@0.1.0";
@@ -55,6 +56,7 @@ async function getView(): Promise<View> {
       item("sign-in", "Sign in", "Keeps a token as a local credential"),
       item("kept", "Show what Pane keeps", "Settings, content, cache and credential"),
       item("slow", "Save after waiting", "Waits 10 seconds, then saves; disabling or reloading stops it"),
+      item("crash", "Crash", "Crashes on purpose; three crashes in a row pause the extension"),
     ],
   };
 }
@@ -90,6 +92,10 @@ async function runAction(itemId: string): Promise<string> {
       await waitFor(SLOW_WAIT);
       set(SLOW_SAVE, "finished");
       return "Saved after waiting 10 seconds";
+    case "crash":
+      // Resolving with something other than a string is a crash, unlike
+      // throwing, which is an error the extension answers with.
+      return undefined as unknown as string;
     default:
       throw new Error(`unknown item: ${itemId}`);
   }

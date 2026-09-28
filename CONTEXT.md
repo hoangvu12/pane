@@ -113,11 +113,15 @@ Replacing an installed package's code from its source folder while Pane and othe
 _Avoid_: Restart, hot swap, update (an update does not start the new code)
 
 **Startup failure**:
-A reload whose checked replacement was installed but could not start: a command trapped, or its component could not load or be instantiated (an error the command returns for its view is not one); Pane stops its instances, reports it with Retry and diagnostics and does not restore the earlier code. Distinct from a replacement that fails its checks, which leaves the working code in place.
+A reload whose checked replacement was installed but could not start: a command trapped, or its component could not load or be instantiated (an error the command returns for its view is not one); Pane pauses the package, reporting it with Retry and diagnostics, and does not restore the earlier code. Distinct from a replacement that fails its checks, which leaves the working code in place.
 _Avoid_: Build failure, rollback
 
+**Paused extension**:
+An enabled extension Pane stopped running after a failure attributable to it: it could not start, or it crashed three times within five minutes (an error it answers with is not a failure, nor a call stopped because a generation ended). Its commands stay listed, saying why they do not run; its saved data is kept, and the pause holds across restarts until the user retries, reloads, updates or disables it. Distinct from a disabled extension, which is the user's choice.
+_Avoid_: Crashed extension, quarantined, disabled (by Pane)
+
 **Generation**:
-One run of an installed package's code, from when it is installed, enabled or Pane starts until it is disabled or its code is replaced by a reload or an update. Every call into the package belongs to the generation current when it was asked for, and is stopped when that generation ends; its late result is discarded.
+One run of an installed package's code, from when it is installed, enabled or Pane starts until it is disabled, paused or its code is replaced by a reload or an update. Every call into the package belongs to the generation current when it was asked for, and is stopped when that generation ends; its late result is discarded.
 _Avoid_: Version (a package's version is its manifest's), session, instance (one generation can start several), screen or search epoch (the launcher's counters of screens and searches, which only decide whether an answer is shown)
 
 **Supported platforms**:

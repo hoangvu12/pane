@@ -11,48 +11,25 @@
 //!    replacement starts: each of its commands available here is started
 //!    and asked for its view. If one fails to initialize (a trap, or a
 //!    component that cannot load or be instantiated; not an error the guest
-//!    answers with, #16), its instances are stopped again and the package
-//!    is reported as failed to start, with Retry; the older code is not
-//!    restored.
+//!    answers with), its instances are stopped again and the package is
+//!    paused as failed to start (see `pausing`), with Retry; the older code
+//!    is not restored.
 //!
 //! Settings belong to the package identity, so they are kept throughout.
 
-use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 
 use super::{Changing, Launcher, State, Status, off_thread};
-use crate::packages::{PackageError, PackageIdentity};
+use crate::packages::{PackageError, PackageIdentity, Pause, PauseCause};
 use crate::runtime::CallError;
-
-/// Why each package whose reloaded code failed to start failed. Such a
-/// package stays installed with that code, offering Retry; nothing older is
-/// restored. The mark lasts until the package starts, is replaced or is
-/// disabled.
-#[derive(Default)]
-pub(super) struct StartFailures(HashMap<PackageIdentity, String>);
-
-impl StartFailures {
-    pub(super) fn record(&mut self, identity: PackageIdentity, why: String) {
-        self.0.insert(identity, why);
-    }
-
-    pub(super) fn forget(&mut self, identity: &PackageIdentity) {
-        self.0.remove(identity);
-    }
-
-    /// Why the package with `identity` failed to start, if it did.
-    pub(super) fn of(&self, identity: &PackageIdentity) -> Option<&str> {
-        self.0.get(identity).map(String::as_str)
-    }
-}
 
 /// What a reload does.
 #[derive(Clone, Copy)]
 pub(super) enum Attempt {
     /// Replace the package's code from its source folder, then start it.
     Reload,
-    /// Start again the package's code, whose start failed.
+    /// Start again the package's code, which Pane paused after it failed.
     Retry,
 }
 
@@ -76,8 +53,9 @@ impl Launcher {
         self.reload_as(identity, Attempt::Reload)
     }
 
-    /// Starts again the package with `identity`, whose reloaded code failed
-    /// to start, without reading its source folder again.
+    /// Starts again the package with `identity`, which Pane paused after it
+    /// failed (see `pausing`), without reading its source folder again. Its
+    /// crashes are counted afresh.
     pub fn retry_start(
         &self,
         identity: &PackageIdentity,
@@ -141,7 +119,8 @@ impl Launcher {
         let title = self.title_of(&identity);
         let epoch = match attempt {
             Attempt::Retry => {
-                self.lock().failed.forget(&identity);
+                self.unpause(&mut self.lock(), &identity);
+                self.record_pause_off_thread(&identity).await;
                 epoch
             }
             Attempt::Reload => match self.replace(epoch, &identity).await {
@@ -161,12 +140,20 @@ impl Launcher {
             (Ok(()), Attempt::Reload) => Status::Result(format!("Reloaded {title}")),
             (Ok(()), Attempt::Retry) => Status::Result(format!("Started {title}")),
             (Err(error), _) => {
-                let mut state = self.lock();
                 let message = error.to_string();
                 // The log: the diagnostics, such as a trap's backtrace, also
                 // go to Pane's standard error.
                 eprintln!("pane: {title} failed to start: {message}");
-                state.failed.record(identity.clone(), message);
+                {
+                    let mut state = self.lock();
+                    let pause = Pause {
+                        after: PauseCause::FailedToStart,
+                        why: message,
+                        version: state.package(&identity).and_then(|p| p.version()),
+                    };
+                    self.pause(&mut state, &identity, pause);
+                }
+                self.record_pause_off_thread(&identity).await;
                 let failed = match attempt {
                     Attempt::Reload => format!("Reloaded {title}, but it failed to start"),
                     Attempt::Retry => format!("{title} failed to start again"),
@@ -222,7 +209,8 @@ impl Launcher {
     /// cannot load or be instantiated), the package's instances are stopped
     /// again, so a retry starts afresh; a view the guest refuses with an
     /// error of its own is not a failure. A package disabled meanwhile
-    /// is not started, and that is not a failure.
+    /// is not started, and that is not a failure; nor is one paused
+    /// meanwhile, which says so itself.
     async fn start(&self, identity: &PackageIdentity) -> Result<(), CallError> {
         let components: Vec<PathBuf> = {
             let state = self.lock();

@@ -15,7 +15,8 @@
 //! disabling, reloading or updating the package ends it, which stops the call
 //! in the runtime, and its answer is never shown, even on a screen that is
 //! still current. Leaving a screen only discards its replies; it does not
-//! stop the call.
+//! stop the call. So does pausing a package that keeps failing (see
+//! `pausing`).
 
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
@@ -30,7 +31,8 @@ use crate::generation::End;
 use crate::links::{self, LinkOpener, NoOpener};
 use crate::operations::{self, Installed};
 use crate::packages::{
-    InstalledPackage, PackageError, PackageIdentity, SavedData, SourcePackage, Store, folder_name,
+    InstalledPackage, PackageError, PackageIdentity, PauseCause, SavedData, SourcePackage, Store,
+    folder_name,
 };
 use crate::platform::{self, Platform};
 use crate::runtime::{
@@ -39,10 +41,11 @@ use crate::runtime::{
 };
 use crate::search::{self, Keys, Query};
 
+mod pausing;
 mod reload;
 mod uninstall;
 
-use reload::StartFailures;
+use pausing::Failures;
 
 /// The id of the root row that installs a package from a local folder.
 const INSTALL_FROM_FOLDER: &str = "pane.install-from-folder";
@@ -105,9 +108,10 @@ pub struct Row {
     pub id: String,
     pub title: String,
     pub subtitle: Option<String>,
-    /// Why the row's action cannot be used on this system; `None` when it
-    /// can. An unavailable row stays listed and selectable, and activating
-    /// it shows this reason instead of calling the extension.
+    /// Why the row's action cannot be used: not on this system, or not while
+    /// its package is paused; `None` when it can. An unavailable row stays
+    /// listed and selectable, and activating it shows this reason instead of
+    /// calling the extension.
     pub unavailable: Option<String>,
 }
 
@@ -283,8 +287,9 @@ struct State {
     changing: HashMap<PackageIdentity, Changing>,
     /// Why the installed packages could not be read, if they could not.
     store_problem: Option<String>,
-    /// Packages whose reloaded code failed to start, each with why.
-    failed: StartFailures,
+    /// The packages Pane paused after they failed, each with why, and the
+    /// crashes counted towards pausing a package (see `pausing`).
+    failed: Failures,
 }
 
 /// What is happening to a package, which stops another change to it
@@ -307,6 +312,11 @@ impl State {
         self.packages
             .iter()
             .find(|package| package.identity == *identity)
+    }
+
+    /// Whether `package`'s code may run: it is enabled and not paused.
+    fn runs(&self, package: &InstalledPackage) -> bool {
+        package.enabled && !self.failed.is_paused(&package.identity)
     }
 
     /// The title of the installed package with `identity`, or its identity if
@@ -435,7 +445,7 @@ enum Entry {
     /// Explain why this installed package cannot load (root).
     Broken(String),
     /// Explain why this command (root) or this item's action (command view)
-    /// is unavailable on this system; the extension is not called.
+    /// is unavailable on this system, or paused; the extension is not called.
     Unavailable(String),
     /// Nothing in the launcher: the window asks for a folder (root).
     InstallFromFolder,
@@ -454,7 +464,7 @@ enum Entry {
     Toggle(PackageIdentity),
     /// Reload this installed package from its source folder.
     Reload(PackageIdentity),
-    /// Start again this package, whose reloaded code failed to start.
+    /// Start again this package, which Pane paused after it failed.
     Retry(PackageIdentity),
     /// Ask whether to clear this installed package's cache (extension list).
     AskClearCache(PackageIdentity),
@@ -504,14 +514,14 @@ impl Launcher {
         commands: Vec<CommandRegistration>,
         installation: Option<Installation>,
     ) -> Self {
-        let (packages, store_problem) = match &installation {
+        let (packages, store_problem, paused) = match &installation {
             Some(installation) => {
                 let store = installation.store.lock().unwrap_or_else(|p| p.into_inner());
-                (store.installed(), store.problem())
+                (store.installed(), store.problem(), store.paused())
             }
-            None => (Vec::new(), None),
+            None => (Vec::new(), None, Vec::new()),
         };
-        let state = State {
+        let mut state = State {
             // Replaced by root search below.
             view: LauncherView::new(Screen::Command, ""),
             entries: Vec::new(),
@@ -526,13 +536,20 @@ impl Launcher {
             packages,
             changing: HashMap::new(),
             store_problem,
-            failed: StartFailures::default(),
+            failed: Failures::default(),
         };
         if let Some(installation) = &installation {
             for package in &state.packages {
                 installation
                     .data
                     .set_enabled(&package.identity, package.enabled);
+            }
+            // A package paused before Pane stopped stays paused.
+            for (identity, pause) in paused {
+                if state.package(&identity).is_some_and(|p| p.enabled) {
+                    installation.data.pause(&identity);
+                    state.failed.restore(identity, pause);
+                }
             }
         }
         let launcher = Launcher {
@@ -552,6 +569,29 @@ impl Launcher {
                     state.packages.clone()
                 }),
                 data: Some(data.clone()),
+            }));
+            // A package that keeps failing is paused. The report holds no
+            // runtime, which would keep the runtime thread alive, and needs
+            // none: a paused package's generation ends, which drops its
+            // instances and views.
+            let state = Arc::downgrade(&launcher.state);
+            let commands = launcher.commands.clone();
+            let installation = launcher.installation.clone();
+            let links = launcher.links.clone();
+            runtime.set_health(Arc::new(move |component, data, health| {
+                let Some(state) = state.upgrade() else {
+                    return;
+                };
+                let launcher = Launcher {
+                    runtime: Err(CallError::RuntimeUnavailable(
+                        "not needed to pause a package".into(),
+                    )),
+                    commands: commands.clone(),
+                    installation: installation.clone(),
+                    links: links.clone(),
+                    state,
+                };
+                launcher.note_health(component, data, health);
             }));
         }
         launcher.show_root(&mut launcher.lock(), None);
@@ -650,7 +690,7 @@ impl Launcher {
         let commands = state
             .packages
             .iter()
-            .filter(|package| package.enabled)
+            .filter(|package| state.runs(package))
             .flat_map(|package| {
                 let data = self
                     .installation
@@ -695,12 +735,12 @@ impl Launcher {
     }
 
     /// Forgets the results supplied ahead of the query by commands that are
-    /// no longer enabled, or were replaced.
+    /// no longer enabled, are paused, or were replaced.
     fn forget_indexes(state: &mut State) {
         let indexing: Vec<PathBuf> = state
             .packages
             .iter()
-            .filter(|package| package.enabled)
+            .filter(|package| state.runs(package))
             .flat_map(|package| package.indexed_result_commands())
             .map(|command| command.component)
             .collect();
@@ -756,7 +796,7 @@ impl Launcher {
         state
             .packages
             .iter()
-            .filter(|package| package.enabled)
+            .filter(|package| state.runs(package))
             .flat_map(|package| {
                 let data = self
                     .installation
@@ -1175,7 +1215,7 @@ impl Launcher {
             // from it being awaited.
             Launcher::forget_indexes(state);
             // Its instances stop; enabling it again starts fresh ones, so a
-            // failure to start no longer describes it.
+            // pause no longer describes it (recording the choice forgets it).
             if let Ok(runtime) = self.runtime() {
                 runtime.forget(components.iter().cloned());
             }
@@ -1383,12 +1423,13 @@ impl Launcher {
             .and_then(|index| state.view.rows.get(index))
             .map(|row| row.id.clone());
         state.root = self.root_results(state);
-        // A command that was disabled or replaced contributes nothing more;
-        // one enabled again answers from the next change of the query.
+        // A command that was disabled, paused or replaced contributes
+        // nothing more; one enabled again answers from the next change of the
+        // query.
         let computing: Vec<PathBuf> = state
             .packages
             .iter()
-            .filter(|package| package.enabled)
+            .filter(|package| state.runs(package))
             .flat_map(|package| package.root_result_commands())
             .map(|command| command.component)
             .collect();
@@ -1438,8 +1479,13 @@ impl Launcher {
             // Its commands are found by its title too, even those that show
             // a subtitle of their own.
             let title = package.title();
-            for available in package.available_commands() {
-                let (row, entry) = command(available);
+            // A paused package's commands stay listed, saying why they do
+            // not run.
+            let paused = state.failed.is_paused(&package.identity).then(|| {
+                format!("{title} is paused after an error; retry it in Manage extensions")
+            });
+            for (registration, unavailable) in package.available_commands() {
+                let (row, entry) = command((registration, paused.clone().or(unavailable)));
                 add(row, entry, Some(&title));
             }
         }
@@ -1615,6 +1661,11 @@ impl Launcher {
                 .into(),
             "Clearing an extension's cache keeps its settings, content and credentials.".into(),
             "Uninstalling an extension asks whether to keep its settings and content.".into(),
+            format!(
+                "An extension that cannot start, or crashes {} times in a row, is paused until \
+                 you retry it; it keeps its settings.",
+                pausing::CRASHES_BEFORE_PAUSE
+            ),
         ];
         state.view =
             LauncherView::new(Screen::Extensions { details }, "Extensions").with_rows(rows);
@@ -2017,18 +2068,12 @@ impl Launcher {
             }
             return;
         }
-        if end == Some(End::Uninstalled) {
-            // Uninstalled while it was opening: the uninstall reports its
-            // own outcome.
+        if matches!(end, Some(End::Uninstalled | End::Paused)) {
+            // Uninstalled while it was opening, or paused (this opening
+            // crashed or could not start): that reports its own outcome.
             return;
         }
         let state = &mut *state;
-        if let (Ok(_) | Err(CallError::Guest(_)), Some(package)) =
-            (&result, owner(&state.packages, &component))
-        {
-            // It started, even if it refused to show its view.
-            state.failed.forget(&package.identity);
-        }
         match result {
             Ok(view) => {
                 let (rows, entries): (Vec<Row>, Vec<Entry>) = view
@@ -2099,13 +2144,14 @@ fn owner<'a>(packages: &'a [InstalledPackage], component: &Path) -> Option<&'a I
 
 /// Why the answer of a call into `component` made with `data` is not shown:
 /// the generation it belonged to has ended, since its package was disabled
-/// ("<title> is disabled"), its code replaced or it was uninstalled. `None`
-/// while it lasts, and for a command built into Pane.
+/// ("<title> is disabled"), its code replaced, it was uninstalled or Pane
+/// paused it. `None` while it lasts, and for a command built into Pane.
 fn stopped(state: &State, component: &Path, data: &Option<PackageData>) -> Option<String> {
     match data.as_ref()?.stopped()? {
         End::Disabled => Some(disabled(state, component)),
         End::Replaced => Some(CallError::Replaced.to_string()),
         End::Uninstalled => Some(CallError::Uninstalled.to_string()),
+        End::Paused => Some(CallError::Paused.to_string()),
     }
 }
 
@@ -2117,18 +2163,19 @@ fn disabled(state: &State, component: &Path) -> String {
     }
 }
 
-/// One row per installed package, saying whether it is enabled and which
-/// source it is, so copies with the same title can be told apart; then the
-/// rows that reload each enabled package, each followed by a Retry row if
-/// its reloaded code failed to start; then one row per package to clear its
-/// cache, and one to uninstall it, in the same order.
-fn extension_rows(packages: &[InstalledPackage], failed: &StartFailures) -> (Vec<Row>, Vec<Entry>) {
-    let failure = |package: &InstalledPackage| failed.of(&package.identity).map(str::to_owned);
+/// One row per installed package, saying whether it is enabled or paused
+/// and which source it is, so copies with the same title can be told apart;
+/// then the rows that reload each enabled package, each followed by a Retry
+/// row, with the details, if Pane paused it; then one row per package to
+/// clear its cache, and one to uninstall it, in the same order.
+fn extension_rows(packages: &[InstalledPackage], failed: &Failures) -> (Vec<Row>, Vec<Entry>) {
+    let failure = |package: &InstalledPackage| failed.of(&package.identity).cloned();
     let toggles = packages.iter().map(|package| {
-        let state = match (package.enabled, failure(package)) {
+        let state = match (package.enabled, failure(package).map(|pause| pause.after)) {
             (false, _) => "Disabled",
             (true, None) => "Enabled",
-            (true, Some(_)) => "Enabled · Failed to start",
+            (true, Some(PauseCause::FailedToStart)) => "Enabled · Failed to start",
+            (true, Some(PauseCause::Crashes)) => "Enabled · Paused after crashing",
         };
         let row = Row {
             id: package.identity.key(),
@@ -2155,11 +2202,11 @@ fn extension_rows(packages: &[InstalledPackage], failed: &StartFailures) -> (Vec
                 )),
                 unavailable: None,
             };
-            let retry = failure(package).map(|problem| {
+            let retry = failure(package).map(|pause| {
                 let row = Row {
                     id: format!("retry:{}", package.identity.key()),
                     title: format!("Retry starting {title}"),
-                    subtitle: Some(problem),
+                    subtitle: Some(pause.why),
                     unavailable: None,
                 };
                 (row, Entry::Retry(package.identity.clone()))
