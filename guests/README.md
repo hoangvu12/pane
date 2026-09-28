@@ -68,6 +68,11 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   `packages/sample-query-js` and `packages/sample-query-ts`; held alike by
   `crates/pane-core/tests/aliases.rs`, and the Rust one by
   `crates/pane/tests/aliases.rs`.
+- `hello-rust`, `hello-js`, `hello-ts`: one "Say hello" command each, a
+  package built in its own folder, as an author's would be, for
+  [development mode](../docs/development-mode.md): Pane builds and reloads
+  it after each save ([Developing a package](#developing-a-package-build-and-reload-on-save));
+  held by `crates/pane-core/tests/develop_builds.rs`.
 - `js`: `@pane/extension`, TypeScript declarations for the contract
   (`pane.d.ts`) and the WIT world JS/TS commands are built against.
 - `prebuilt`: the JS and TS sample components (both samples in each
@@ -1124,9 +1129,50 @@ What a reload keeps and what it does not:
   code that arrives after the reload (for example a command that was
   opening) is not shown.
 - A disabled package has no Reload row and is not reloaded; enable it first.
-- Reload is manual. Rebuilding and reloading on save (#12, #13) come later;
-  the Update in the install screen still replaces the copy too, without the
-  start stage.
+- Reload is also what [development mode](#developing-a-package-build-and-reload-on-save)
+  does after each save that builds. The Update in the install screen still
+  replaces the copy too, without the start stage.
+
+### Developing a package: build and reload on save
+
+Instead of rebuilding and pressing Reload after each change, choose
+**Develop <title>** in **Manage extensions…** (the last rows, one per
+enabled package). Pane then watches the package's source folder and, after
+each save, runs its build there and reloads the package when the build
+succeeds:
+
+- A folder with `Cargo.toml` is built with `cargo build --release --target
+  wasm32-wasip2` (with cargo's JSON messages, which say where it built the
+  component), so `pane.json` names its component under
+  `target/wasm32-wasip2/release/`; Pane takes the file of that name cargo
+  built this time, even with another target folder.
+- A folder with `package.json` is built with
+  `python3 tools/componentize-js/pane_js.py build <folder> <out>` for each
+  component `pane.json` names, such as `dist/<name>.wasm` (a Pane run from a
+  checkout knows where `pane_js.py` is; otherwise set
+  `PANE_COMPONENTIZE_JS`; `PANE_PYTHON` names the interpreter).
+
+Each build puts the components in a staging folder under Pane's data
+folder, and runs with Pane's environment (less what `cargo run` set for
+Pane itself). Once development is on, any write to the folder, such as
+`git pull` or an autosave, runs the build, `build.rs` included.
+
+A build that fails replaces nothing: the command keeps running its installed
+code, the status line shows the first error, and **Why <title> did not
+build** shows the end of the build's output and the path of a log file with
+all of it. A build that succeeds is reloaded from its staging folder as
+**Reload <title>** does, including a failure to start, which pauses the
+package with Retry and does not restore the earlier code; the next save that
+builds recovers it; its components are then copied where `pane.json` names
+them. Saving again while a build runs makes that build obsolete: it is never
+reloaded, and the folder is built again (after three in a row, Pane waits
+for the next save). **Stop developing <title>**, disabling or uninstalling
+the package, or quitting Pane ends it and kills a running build with the
+processes it started. Only that installation is
+affected: a copy of the package installed from another folder keeps its own
+code. The `hello-rust`, `hello-js` and `hello-ts` samples are ready to try;
+[development mode](../docs/development-mode.md) has the steps, what is
+watched and the limits.
 
 Uninstalling is not implemented yet.
 

@@ -486,9 +486,47 @@ and TypeScript samples, and check each ended helper by its heartbeat file,
 not its process id. Only Linux x86-64 ran a helper; `linux-aarch64` was
 not built or run.
 
+### Development mode (#12, #13)
+
+The last phase ([development mode](../development-mode.md#checks)) takes a
+copy of each development sample in `<output-dir>/develop-<sample>`, builds
+it once with its documented command, installs it with a data folder of its
+own and chooses **Develop <title>** in Manage extensions. It then edits the
+greeting in the copy's source as an editor would save it and waits until
+the managed copy holds the new build, and checks the answer; saves a
+greeting that does not compile or type-check and checks the error and that
+the old answer stays, pixel for pixel; saves twice in a row (the second
+while the first builds) and checks the newer greeting; and after **Stop
+developing** saves again and checks that nothing was built. The Rust sample
+builds with `cargo build --release --target wasm32-wasip2` (with cargo's
+JSON messages), the TypeScript and JavaScript samples with `pane_js.py`, each
+into a staging folder under the phase's data folder, and the latter only
+where the JS toolchain is built (not in CI's smoke, which skips them). Run
+locally on 2026-09-28, after the review fixes (Ubuntu 26.04.1 LTS, kernel
+7.0.0-31-generic, x86_64, same Xvfb/lavapipe setup, with the JS toolchain):
+all checks of the whole smoke passed.
+
+| Step | Evidence |
+| --- | --- |
+| Hello Rust as installed | [111-hello-rust-greeting-before.png](evidence/linux-x11/111-hello-rust-greeting-before.png) |
+| Its source saved: "Reloaded Hello Rust", with Pane open | [112-hello-rust-rebuilt.png](evidence/linux-x11/112-hello-rust-rebuilt.png) |
+| The new greeting (`--distinct` from 111) | [113-hello-rust-greeting-after.png](evidence/linux-x11/113-hello-rust-greeting-after.png) |
+| A save that does not compile: "Hello Rust did not build: error[E0308]: mismatched types. It keeps running its installed code; …" | [114-hello-rust-build-failed.png](evidence/linux-x11/114-hello-rust-build-failed.png) |
+| The working code still answers (`--same` as 113) | [115-hello-rust-kept.png](evidence/linux-x11/115-hello-rust-kept.png) |
+| Two saves, the second during the build: the newer greeting | [117-hello-rust-greeting-fixed.png](evidence/linux-x11/117-hello-rust-greeting-fixed.png) |
+| TypeScript: "Hello TypeScript did not build: src/index.ts(12,7): error TS2322: …" | [123-hello-ts-build-failed.png](evidence/linux-x11/123-hello-ts-build-failed.png) |
+| TypeScript after the two saves | [126-hello-ts-greeting-fixed.png](evidence/linux-x11/126-hello-ts-greeting-fixed.png) |
+| JavaScript (checked through JSDoc): "Hello JavaScript did not build: src/index.js(15,7): error TS2322: …" | [132-hello-js-build-failed.png](evidence/linux-x11/132-hello-js-build-failed.png) |
+| JavaScript after the two saves | [135-hello-js-greeting-fixed.png](evidence/linux-x11/135-hello-js-greeting-fixed.png) |
+
+Screenshots 110, 118, 119, 127, 128 and 136 (developing started and stopped, on
+the extension list) are checked but not kept here: they show local package
+paths; the other steps of each language (116, 120 to 122, 124, 125, 129 to 131, 133,
+134) match those above.
+
 ### Disabling required dependents (#43)
 
-A phase of its own, after the native-helper phases, with its own data folder
+A phase of its own, after the development-mode phase, with its own data folder
 ([disabling a required dependency](../dependencies.md#disabling-a-required-dependency)),
 installs the dependencies sample with the JavaScript operations sample,
 opens Manage extensions and presses Enter on the JavaScript operations

@@ -358,7 +358,9 @@ def build(package: Path, out: Path, toolchain: Toolchain) -> dict:
     modules = toolchain.node / "node_modules"
     if (staged / "tsconfig.json").exists():
         log(f"type-checking {package.name}")
-        run([node, modules / "typescript" / "bin" / "tsc", "-p", staged / "tsconfig.json"])
+        # From the staged package, so errors name its files as the author
+        # does ("src/index.ts(3,7): error ...").
+        run([node, modules / "typescript" / "bin" / "tsc", "-p", staged / "tsconfig.json"], cwd=staged)
     bundle = work / "bundle.mjs"
     adapted = work / "pane-entry.mjs"
     adapted.write_text(adapted_entry(staged / entry, types / "adapt.js", manifest.get("pane", {})),
@@ -501,4 +503,13 @@ def main(argv: list[str]) -> None:
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    try:
+        main(sys.argv[1:])
+    except SystemExit as failure:
+        # A failure is one line starting "pane-js: error:" on standard error,
+        # which Pane's development mode shows as a build's first error.
+        message = failure.code
+        if isinstance(message, str) and message.startswith("pane-js: "):
+            print("pane-js: error: " + message.removeprefix("pane-js: "), file=sys.stderr, flush=True)
+            raise SystemExit(1) from None
+        raise

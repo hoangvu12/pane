@@ -187,6 +187,12 @@ pub(crate) fn folder_name(folder: &Path) -> String {
         .unwrap_or_else(|| folder.display().to_string())
 }
 
+/// `path` resolved as a package identity's folder is: canonical, in the
+/// ordinary spelling on Windows.
+pub(crate) fn canonical(path: &Path) -> io::Result<PathBuf> {
+    fs::canonicalize(path).map(without_verbatim_prefix)
+}
+
 /// Windows' canonical paths carry a `\\?\` prefix; the identity uses the
 /// ordinary spelling (`C:\…`, `\\server\share\…`) that users recognise.
 fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
@@ -446,8 +452,9 @@ impl Manifest {
         Ok(manifest)
     }
 
-    /// Reads and parses `pane.json` in `folder`.
-    fn read_parsed(folder: &Path) -> Result<(Manifest, String), PackageError> {
+    /// Reads and parses `pane.json` in `folder`, without checking that its
+    /// components exist (a development build is about to make them).
+    pub(crate) fn read_parsed(folder: &Path) -> Result<(Manifest, String), PackageError> {
         let path = folder.join(MANIFEST_FILE);
         let text = match fs::read_to_string(&path) {
             Ok(text) => text,
@@ -927,6 +934,21 @@ pub(crate) struct SourcePackage {
 }
 
 impl SourcePackage {
+    /// Reads the package staged in `folder`, such as a development build,
+    /// as the package with the source `identity`.
+    pub fn read_staged(
+        folder: &Path,
+        identity: PackageIdentity,
+    ) -> Result<SourcePackage, PackageError> {
+        let (manifest, manifest_text) = Manifest::read_text(folder)?;
+        Ok(SourcePackage {
+            identity,
+            folder: folder.to_path_buf(),
+            manifest,
+            manifest_text,
+        })
+    }
+
     pub fn read(folder: &Path) -> Result<SourcePackage, PackageError> {
         let identity = PackageIdentity::local(folder)?;
         let folder = identity

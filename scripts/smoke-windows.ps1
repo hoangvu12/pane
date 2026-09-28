@@ -845,6 +845,159 @@ if (Helpers-Running) { throw "a helper outlived Pane quitting" }
 $beats = (Get-Item $alive.FullName).Length; Start-Sleep -Milliseconds 500
 if ((Get-Item $alive.FullName).Length -ne $beats) { throw "the helper still beats after Pane quit" }
 
+# Development mode (#12, #13): a copy of each development sample
+# (guests/hello-rust, hello-ts, hello-js) is built once, installed and
+# developed from Manage extensions ("Develop <title>", its last row). Saving
+# an edit of its greeting builds it with the documented command and reloads
+# it while Pane keeps running; a save that does not build keeps the working
+# code and shows the error; two saves in a row (the second while the first
+# builds) end with the newer greeting; after "Stop developing", a save builds
+# nothing. Each sample has a data folder of its own, so root lists the three
+# built-in samples, then its command, the install and Manage extensions
+# rows. The JavaScript and TypeScript samples need the JS toolchain
+# (guests/README.md) and are skipped without it.
+function Set-Greeting($path, $line) {
+    $text = [IO.File]::ReadAllText($path)
+    $evaluator = [Text.RegularExpressions.MatchEvaluator] { param($match) $line }
+    $text = ([regex]'(?m)^const GREETING[^\r\n]*').Replace($text, $evaluator, 1)
+    [IO.File]::WriteAllText($path, $text)
+}
+function Same-File($a, $b) {
+    (Test-Path $a) -and (Test-Path $b) -and ((Get-FileHash $a).Hash -eq (Get-FileHash $b).Hash)
+}
+# Waits until Pane has reloaded a new build: the component built in the
+# copy differs from $before (the one before the save) and the managed copy is it.
+function Wait-Reloaded($built, $before) {
+    for ($i = 0; $i -lt 600; $i++) {
+        $managed = Get-ChildItem -Recurse -File -Filter (Split-Path -Leaf $built) (Join-Path $env:PANE_DATA_DIR "extensions/packages") -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($managed -and -not (Same-File $built $before) -and (Same-File $built $managed.FullName)) {
+            Start-Sleep -Seconds 3; return
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    throw "Pane did not reload $built"
+}
+function Failures($log) {
+    @(Select-String -SimpleMatch "did not build" (Join-Path $OutDir $log) -ErrorAction SilentlyContinue).Count
+}
+# Waits until Pane has reported one more build that did not build.
+function Wait-Failed($log, $before) {
+    for ($i = 0; $i -lt 600; $i++) {
+        if ((Failures $log) -gt $before) { Start-Sleep -Seconds 1; return }
+        Start-Sleep -Milliseconds 500
+    }
+    throw "Pane did not report the failed build"
+}
+# From root: open the developed command, the 4th row, and run its item.
+function Say-Hello {
+    Send "{DOWN 3}{ENTER}"; Start-Sleep -Seconds 3
+    Send "{ENTER}"; Start-Sleep -Seconds 2
+}
+function Shots-Differ($first, $second, $what) {
+    python "$PSScriptRoot/check_screenshot.py" --distinct (Join-Path $OutDir $first) (Join-Path $OutDir $second)
+    if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: $what" }
+}
+function Develop-Sample($sample, $title, $component, $source, $n, $greeting, $broken) {
+    $data = Join-Path $OutDir "develop-$sample-data"
+    if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+    $env:PANE_DATA_DIR = $data
+    $copy = Join-Path $OutDir "develop-$sample"
+    if (Test-Path $copy) { Remove-Item -Recurse -Force $copy }
+    New-Item -ItemType Directory -Force -Path $copy | Out-Null
+    Get-ChildItem "guests/$sample" -Exclude target, dist, node_modules | Copy-Item -Destination $copy -Recurse
+    if (Test-Path (Join-Path $copy "Cargo.toml")) {
+        Copy-Item rust-toolchain.toml $copy
+        $guest = (Resolve-Path "guests/pane-guest").Path -replace '\\', '/'
+        $manifest = Join-Path $copy "Cargo.toml"
+        $text = [IO.File]::ReadAllText($manifest).Replace('path = "../pane-guest"', "path = '$guest'")
+        [IO.File]::WriteAllText($manifest, $text)
+        Push-Location $copy
+        cargo build --release --target wasm32-wasip2 --quiet
+        $built = $LASTEXITCODE
+        Pop-Location
+        if ($built -ne 0) { throw "$title did not build" }
+    } else {
+        python tools/componentize-js/pane_js.py build $copy (Join-Path $copy $component) | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "$title did not build" }
+    }
+    $built = Join-Path $copy $component
+    $before = Join-Path $OutDir "develop-$sample-before.wasm"
+    $log = "stderr-develop-$sample.log"
+    $process = Start-Pane $log @("--install", $copy)
+    Send "{ENTER}"; Start-Sleep -Seconds 2   # Install
+    Send "{DOWN 10}{ENTER}"; Start-Sleep -Seconds 1   # Manage extensions
+    Send "{DOWN 10}{ENTER}"; Start-Sleep -Seconds 2   # Develop <title>
+    Capture "$n-$sample-develop-started.png"
+    Check "$n-$sample-develop-started.png" "9fd8a8"   # "Developing <title>: each save in ..."
+    Send "{ESC}"; Start-Sleep -Seconds 1
+    Say-Hello
+    Capture "$($n + 1)-$sample-greeting-before.png"
+    Check "$($n + 1)-$sample-greeting-before.png" "9fd8a8"   # "Hello from ..."
+    Send "{ESC}"; Start-Sleep -Seconds 1
+
+    # An edit, saved: built and reloaded.
+    Copy-Item -Force $built $before
+    Set-Greeting (Join-Path $copy $source) ($greeting -f "Hello again")
+    Wait-Reloaded $built $before
+    Capture "$($n + 2)-$sample-rebuilt.png"
+    Check "$($n + 2)-$sample-rebuilt.png" "9fd8a8"   # "Reloaded <title>"
+    Say-Hello
+    Capture "$($n + 3)-$sample-greeting-after.png"
+    Check "$($n + 3)-$sample-greeting-after.png" "9fd8a8"   # "Hello again"
+    Shots-Differ "$($n + 1)-$sample-greeting-before.png" "$($n + 3)-$sample-greeting-after.png" "the edit changed nothing"
+    Send "{ESC}"; Start-Sleep -Seconds 1
+
+    # A save that does not build: the working code stays.
+    $failures = Failures $log
+    Set-Greeting (Join-Path $copy $source) $broken
+    Wait-Failed $log $failures
+    Capture "$($n + 4)-$sample-build-failed.png"
+    Check "$($n + 4)-$sample-build-failed.png" "f08c8c"   # "<title> did not build: ..."
+    Say-Hello
+    Capture "$($n + 5)-$sample-kept.png"
+    Check "$($n + 5)-$sample-kept.png" "9fd8a8"   # still "Hello again"
+    $shots = "$($n + 3)-$sample-greeting-after", "$($n + 5)-$sample-kept" | ForEach-Object { Join-Path $OutDir "$_.png" }
+    python "$PSScriptRoot/check_screenshot.py" --same @shots
+    if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the failed build replaced the code" }
+    Send "{ESC}"; Start-Sleep -Seconds 1
+
+    # Two saves, the second while the first builds: the newer one is reloaded.
+    Copy-Item -Force $built $before
+    Set-Greeting (Join-Path $copy $source) ($greeting -f "Hello once more")
+    Start-Sleep -Milliseconds 500
+    Set-Greeting (Join-Path $copy $source) ($greeting -f "Hello at last")
+    Wait-Reloaded $built $before
+    Capture "$($n + 6)-$sample-rebuilt-again.png"
+    Check "$($n + 6)-$sample-rebuilt-again.png" "9fd8a8"   # "Reloaded <title>"
+    Say-Hello
+    Capture "$($n + 7)-$sample-greeting-fixed.png"
+    Check "$($n + 7)-$sample-greeting-fixed.png" "9fd8a8"   # "Hello at last"
+    Shots-Differ "$($n + 3)-$sample-greeting-after.png" "$($n + 7)-$sample-greeting-fixed.png" "the fix changed nothing"
+    Send "{ESC}"; Start-Sleep -Seconds 1
+
+    # Stopped: a save builds nothing.
+    Send "{DOWN 10}{ENTER}"; Start-Sleep -Seconds 1   # Manage extensions
+    Send "{DOWN 10}{ENTER}"; Start-Sleep -Seconds 2   # Stop developing <title>
+    Capture "$($n + 8)-$sample-stopped.png"
+    Check "$($n + 8)-$sample-stopped.png" "9fd8a8"   # "Stopped developing <title>"
+    Copy-Item -Force $built $before
+    Set-Greeting (Join-Path $copy $source) ($greeting -f "Hello unseen")
+    Start-Sleep -Seconds 8
+    if (-not (Same-File $built $before)) { throw "$title was built after development stopped" }
+    Stop-Pane $process
+}
+Develop-Sample "hello-rust" "Hello Rust" "target/wasm32-wasip2/release/hello_rust.wasm" "src/lib.rs" 110 `
+    'const GREETING: &str = "{0} from Rust";' 'const GREETING: &str = 42;'
+$jsToolchain = if ($env:PANE_JS_TOOLCHAIN_DIR) { $env:PANE_JS_TOOLCHAIN_DIR } else { Join-Path $env:LOCALAPPDATA "pane/componentize-js" }
+if ((Test-Path (Join-Path $jsToolchain "bin/*/toolchain.json")) -and (Get-Command node -ErrorAction SilentlyContinue)) {
+    Develop-Sample "hello-ts" "Hello TypeScript" "dist/hello_ts.wasm" "src/index.ts" 119 `
+        'const GREETING: string = "{0} from TypeScript";' 'const GREETING: string = 42;'
+    Develop-Sample "hello-js" "Hello JavaScript" "dist/hello_js.wasm" "src/index.js" 128 `
+        'const GREETING = "{0} from JavaScript";' 'const GREETING = 42;'
+} else {
+    Write-Output "skipped the JavaScript and TypeScript development smoke: no JS toolchain in $jsToolchain"
+}
+
 # Disabling a required dependency: installed with the dependencies sample
 # (whose install and data folder are this phase's own), the JavaScript
 # operations sample is the first row of Manage extensions. Enter asks first,

@@ -18,7 +18,7 @@
 //! Settings belong to the package identity, so they are kept throughout.
 
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::{Changing, Launcher, State, Status, off_thread, pausing};
 use crate::packages::{PackageError, PackageIdentity, Pause, PauseCause};
@@ -37,6 +37,31 @@ pub(super) enum Attempt {
 pub(super) struct Reload {
     identity: PackageIdentity,
     attempt: Attempt,
+    /// Where the replacement is, if not in the package's source folder: a
+    /// development build's staging folder.
+    staged: Option<PathBuf>,
+}
+
+impl Reload {
+    /// A reload of the package with `identity` from the package in
+    /// `staged`, for which the caller has claimed the package.
+    pub(super) fn staged(identity: PackageIdentity, staged: PathBuf) -> Reload {
+        Reload {
+            identity,
+            attempt: Attempt::Reload,
+            staged: Some(staged),
+        }
+    }
+}
+
+/// How a reload ended.
+pub(super) struct Reloaded {
+    /// The screen epoch the outcome belongs to.
+    pub epoch: u64,
+    pub status: Status,
+    /// Whether the replacement became the installed copy (it may then have
+    /// failed to start); not when it failed its checks.
+    pub replaced: bool,
 }
 
 impl Launcher {
@@ -88,34 +113,63 @@ impl Launcher {
         identity: PackageIdentity,
         attempt: Attempt,
     ) -> Option<Reload> {
-        if self.installation.is_none() {
-            let error = PackageError::Storage("this launcher does not install packages".into());
-            state.view.status = Status::Error(error.to_string());
-            return None;
-        }
-        let Some(package) = state.package(&identity) else {
-            state.view.status = Status::Error(PackageError::NotInstalled(identity).to_string());
-            return None;
-        };
-        if !package.enabled {
-            state.view.status = Status::Error(format!(
-                "{} is disabled; enable it to reload it",
-                package.title()
-            ));
+        if let Err(problem) = self.changeable(state, &identity, "reload") {
+            state.view.status = Status::Error(problem);
             return None;
         }
         if !state.claim(&identity, Changing::Reloading) {
             return None;
         }
         state.view.status = Status::Running;
-        Some(Reload { identity, attempt })
+        Some(Reload {
+            identity,
+            attempt,
+            staged: None,
+        })
+    }
+
+    /// Why the package with `identity` cannot be changed by `verb` (reload,
+    /// develop) now: this launcher installs nothing, it is not installed, or
+    /// it is disabled.
+    pub(super) fn changeable(
+        &self,
+        state: &State,
+        identity: &PackageIdentity,
+        verb: &str,
+    ) -> Result<(), String> {
+        if self.installation.is_none() {
+            let error = PackageError::Storage("this launcher does not install packages".into());
+            return Err(error.to_string());
+        }
+        let Some(package) = state.package(identity) else {
+            return Err(PackageError::NotInstalled(identity.clone()).to_string());
+        };
+        if !package.enabled {
+            return Err(format!(
+                "{} is disabled; enable it to {verb} it",
+                package.title()
+            ));
+        }
+        Ok(())
     }
 
     /// Carries out a reload begun by [`Launcher::begin_reload`]. The outcome
     /// is shown if the user is still on the screen it started from, or was
     /// taken to root search because a command of the package closed.
     pub(super) async fn finish_reload(&self, epoch: u64, reload: Reload) {
-        let Reload { identity, attempt } = reload;
+        let identity = reload.identity.clone();
+        let reloaded = self.carry_out(epoch, reload).await;
+        self.end_reload(reloaded.epoch, &identity, reloaded.status);
+    }
+
+    /// Carries out a reload, returning how it ended without showing it or
+    /// releasing the package.
+    pub(super) async fn carry_out(&self, epoch: u64, reload: Reload) -> Reloaded {
+        let Reload {
+            identity,
+            attempt,
+            staged,
+        } = reload;
         let title = self.title_of(&identity);
         // A Retry ends the pause, remembering it in case the runtime
         // cannot start the package.
@@ -125,14 +179,17 @@ impl Launcher {
                 before = self.unpause(&mut self.lock(), &identity);
                 epoch
             }
-            Attempt::Reload => match self.replace(epoch, &identity).await {
+            Attempt::Reload => match self.replace(epoch, &identity, staged.as_deref()).await {
                 Ok(epoch) => epoch,
                 Err(error) => {
                     let message = format!(
                         "{title} was not reloaded: {error}. It keeps running its installed code."
                     );
-                    self.end_reload(epoch, &identity, Status::Error(message));
-                    return;
+                    return Reloaded {
+                        epoch,
+                        status: Status::Error(message),
+                        replaced: false,
+                    };
                 }
             },
         };
@@ -187,22 +244,36 @@ impl Launcher {
                 ))
             }
         };
-        self.end_reload(epoch, &identity, status);
+        Reloaded {
+            epoch,
+            status,
+            replaced: matches!(attempt, Attempt::Reload),
+        }
     }
 
-    /// Checks the package in its source folder and makes it the installed
-    /// copy, stopping the old instances. Returns the screen epoch the
-    /// outcome belongs to: a new one if an open command of the package
-    /// closed for root search.
-    async fn replace(&self, epoch: u64, identity: &PackageIdentity) -> Result<u64, String> {
-        let Some(folder) = identity.local_folder() else {
-            return Err("it has no local source folder to reload from".into());
-        };
-        let folder = folder.to_path_buf();
-        let package = self
-            .read_and_check(folder)
-            .await
-            .map_err(|error| error.to_string())?;
+    /// Checks the package in its source folder (or in `staged`, keeping
+    /// the source's identity) and makes it the installed copy, stopping the
+    /// old instances. Returns the screen epoch the outcome belongs to: a
+    /// new one if an open command of the package closed for root search.
+    async fn replace(
+        &self,
+        epoch: u64,
+        identity: &PackageIdentity,
+        staged: Option<&Path>,
+    ) -> Result<u64, String> {
+        let package = match staged {
+            Some(staged) => {
+                self.read_and_check_staged(staged.to_path_buf(), identity.clone())
+                    .await
+            }
+            None => {
+                let Some(folder) = identity.local_folder() else {
+                    return Err("it has no local source folder to reload from".into());
+                };
+                self.read_and_check(folder.to_path_buf()).await
+            }
+        }
+        .map_err(|error| error.to_string())?;
         let store = self
             .installation
             .as_ref()
@@ -276,7 +347,7 @@ impl Launcher {
         }
     }
 
-    fn title_of(&self, identity: &PackageIdentity) -> String {
+    pub(super) fn title_of(&self, identity: &PackageIdentity) -> String {
         self.lock().title_of(identity)
     }
 }

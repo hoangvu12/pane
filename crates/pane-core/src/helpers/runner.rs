@@ -514,8 +514,8 @@ impl Helpers {
         {
             use std::os::windows::process::CommandExt;
             // No console window flashes up for a helper of a GUI launcher.
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            command.creation_flags(CREATE_NO_WINDOW);
+            use windows::Win32::System::Threading::CREATE_NO_WINDOW;
+            command.creation_flags(CREATE_NO_WINDOW.0);
         }
         // Registered under the lock, so that quitting either sees this run
         // or keeps it from starting.

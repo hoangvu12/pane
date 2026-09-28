@@ -208,6 +208,22 @@ ending and reaping a helper natively, and the executable permission of the
 copied file, are unverified there, and whether GPUI runs Pane's quit
 handler for a quit Apple event is unverified until the smoke runs. No macOS x86-64 build was made.
 
+## Development mode (#12, #13)
+
+The smoke's last phase (screenshots 110 to 136, [development
+mode](../development-mode.md#checks)) builds a copy of each development
+sample, develops it from Manage extensions, saves an edit, a change that
+does not build, two saves in a row and, after stopping, one more, checking
+the answers, the error and that nothing is built after stopping. The
+TypeScript and JavaScript samples run only where the JS toolchain is built,
+so CI's smoke runs the Rust one. The platform code (FSEvents through notify, with the folder and event
+paths made canonical, and a process group killed with `SIGKILL`) was only
+compile- and lint-checked for `x86_64-apple-darwin` from Linux; **not run on
+macOS yet**, so the file watcher's events, the build's processes being
+killed and the whole phase are unverified natively. macOS has no parent
+death signal, so a build outlives a Pane that is killed or crashes (one
+that quits kills it).
+
 ## Disabling required dependents (#43)
 
 The disable-dependents phase (screenshots 140 to 143, [disabling a required dependency](../dependencies.md#disabling-a-required-dependency)),

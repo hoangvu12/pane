@@ -7,7 +7,8 @@
 //! and every package the plan relies on ([`Changing::Installing`]), after
 //! checking that they are still as the plan found them: until the install
 //! ends, uninstalling, deleting the retained data of, reloading, updating,
-//! enabling or disabling any of them is refused. The install then reads the
+//! enabling, disabling or starting to develop any of them is refused, and a
+//! development build of one waits to reload it. The install then reads the
 //! folders and works the plan out again; if it differs from the preview's
 //! (a folder changed, or a package was installed or changed meanwhile),
 //! nothing is installed and the new plan is shown. An install without a

@@ -15,6 +15,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -761,4 +762,71 @@ fn a_helper_declaration_pane_cannot_use_is_an_invalid_manifest() {
         assert!(message.starts_with("Invalid pane.json: "), "{message}");
         assert!(message.contains(explanation), "{helpers}: {message}");
     }
+}
+
+/// Development builds that stage the component already in the folder.
+struct StagingBuilder(&'static str);
+
+struct StageAsIs {
+    folder: PathBuf,
+    component: &'static str,
+}
+
+impl pane_core::develop::Builder for StagingBuilder {
+    fn build_for(&self, folder: &Path) -> Result<Arc<dyn pane_core::develop::Build>, String> {
+        Ok(Arc::new(StageAsIs {
+            folder: folder.to_path_buf(),
+            component: self.0,
+        }))
+    }
+}
+
+impl pane_core::develop::Build for StageAsIs {
+    fn command(&self) -> String {
+        "stage as is".into()
+    }
+
+    fn ignores(&self, _: &Path) -> bool {
+        false
+    }
+
+    fn run(&self, job: &pane_core::develop::BuildJob) -> pane_core::develop::BuildOutcome {
+        fs::copy(
+            self.folder.join(self.component),
+            job.staging().join(self.component),
+        )
+        .unwrap();
+        pane_core::develop::BuildOutcome::Built
+    }
+}
+
+#[test]
+fn a_development_build_reloaded_while_the_helper_runs_ends_its_process() {
+    let mut installed = Installed::new(&RUST);
+    let (changes, _) = pane_core::changes::channel();
+    installed.launcher = installed
+        .launcher
+        .clone()
+        .with_development(Arc::new(StagingBuilder(RUST.component)), changes);
+    block_on(installed.launcher.start_developing(&installed.identity));
+    let pending = installed.start("Echo after waiting");
+
+    // A save: the build is staged with this system's helper file, and
+    // reloading it stops the running helper before its copy is replaced.
+    fs::write(installed.folder.join("notes.txt"), "saved").unwrap();
+    pending.assert_stopped(&installed.runtime);
+    let started = Instant::now();
+    while installed
+        .launcher
+        .development(&installed.identity)
+        .is_none_or(|development| development.finished == 0)
+    {
+        assert!(started.elapsed() < STOPPED_WITHIN, "not reloaded");
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        installed.launcher.view().status,
+        Status::Result("Reloaded Helper sample".into())
+    );
+    assert_eq!(installed.run("Echo through the helper"), echoed());
 }

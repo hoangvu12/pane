@@ -195,6 +195,21 @@ update ends the old copy's helpers before removing its folder, so the
 folder is not in use; the removal at the next start remains a fallback.
 No Windows arm64 build was made.
 
+## Development mode (#12, #13)
+
+The smoke's last phase (screenshots 110 to 136, [development
+mode](../development-mode.md#checks)) builds a copy of each development
+sample, develops it from Manage extensions, saves an edit, a change that
+does not build, two saves in a row and, after stopping, one more, checking
+the answers, the error and that nothing is built after stopping. The
+TypeScript and JavaScript samples run only where the JS toolchain is built,
+so CI's smoke runs the Rust one. The platform code (`ReadDirectoryChangesW` through notify, a Job Object
+with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, `CREATE_NEW_PROCESS_GROUP` and
+builds without a console window) was only compile- and lint-checked for
+`x86_64-pc-windows-gnu` from Linux; **not run on Windows yet**, so the file
+watcher's events, the build's processes being killed and the whole phase
+are unverified natively.
+
 ## Disabling required dependents (#43)
 
 The disable-dependents phase (screenshots 140 to 143, [disabling a required dependency](../dependencies.md#disabling-a-required-dependency)),

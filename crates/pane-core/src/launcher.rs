@@ -48,6 +48,7 @@ use crate::runtime::{
 use crate::search::{self, Keys, Query};
 
 mod dependents;
+mod developing;
 mod install;
 mod pausing;
 mod reload;
@@ -56,6 +57,8 @@ mod uninstall;
 
 use aliases::AliasChoices;
 use choices::Record;
+use developing::Developing;
+pub use developing::{BuildFailure, Development};
 use hotkeys::Bindings;
 use pausing::{Pauses, Recorder};
 
@@ -109,6 +112,13 @@ pub enum Screen {
     /// Why Pane paused an installed package, as lines of information under
     /// the title, with a row that retries it.
     PauseDetails {
+        identity: PackageIdentity,
+        details: Vec<String>,
+    },
+    /// Why the last development build of an installed package failed, as
+    /// lines of information under the title (its command and output), with
+    /// a row that builds it again.
+    BuildDetails {
         identity: PackageIdentity,
         details: Vec<String>,
     },
@@ -183,6 +193,9 @@ pub enum Status {
     Idle,
     /// An extension call or package operation is in progress.
     Running,
+    /// Work Pane does in the background is in progress, saying what, such
+    /// as building a package being developed.
+    Progress(String),
     /// The outcome of the most recent action, such as the extension's answer.
     Result(String),
     /// Why the most recent action failed. For a rejected form field this is
@@ -272,6 +285,7 @@ impl LauncherView {
             | Screen::Extensions { details }
             | Screen::Confirm { details, .. }
             | Screen::PauseDetails { details, .. }
+            | Screen::BuildDetails { details, .. }
             | Screen::Hotkey { details, .. } => details,
             _ => &[],
         }
@@ -306,6 +320,8 @@ pub struct Launcher {
     links: Arc<dyn LinkOpener>,
     /// Registers the global hotkeys the user assigns with the system.
     hotkeys: Arc<dyn Hotkeys>,
+    /// The packages being developed: built and reloaded on save.
+    developing: Arc<Developing>,
     state: Arc<Mutex<State>>,
 }
 
@@ -317,6 +333,7 @@ struct WeakLauncher {
     installation: Option<Installation>,
     links: Arc<dyn LinkOpener>,
     hotkeys: Arc<dyn Hotkeys>,
+    developing: std::sync::Weak<Developing>,
     state: std::sync::Weak<Mutex<State>>,
 }
 
@@ -333,6 +350,7 @@ impl WeakLauncher {
             installation: self.installation.clone(),
             links: self.links.clone(),
             hotkeys: self.hotkeys.clone(),
+            developing: self.developing.upgrade()?,
             state: self.state.upgrade()?,
         })
     }
@@ -400,6 +418,9 @@ struct State {
     /// command's answer to a query sent from it (or its sending), so that
     /// changing the query clears it.
     sent_from: Option<String>,
+    /// The newest status of a developed package's builds, kept while
+    /// another screen is shown (see `developing`).
+    development_status: Option<(PackageIdentity, Status)>,
 }
 
 /// What is happening to a package, which stops another change to it
@@ -639,6 +660,16 @@ enum Entry {
     Retry(PackageIdentity),
     /// Show why Pane paused this package (extension list).
     PauseDetails(PackageIdentity),
+    /// Build and reload this package after each save in its source folder
+    /// (extension list).
+    Develop(PackageIdentity),
+    /// Stop developing this package (extension list).
+    StopDeveloping(PackageIdentity),
+    /// Show why this developed package's last build failed (extension
+    /// list).
+    BuildDetails(PackageIdentity),
+    /// Build this developed package now (build details).
+    BuildAgain(PackageIdentity),
     /// Ask whether to clear this installed package's cache (extension list).
     AskClearCache(PackageIdentity),
     /// Clear this installed package's cache (confirmation).
@@ -747,6 +778,7 @@ impl Launcher {
             packages,
             retained,
             changing: HashMap::new(),
+            development_status: None,
             store_problem,
             paused: Pauses::default(),
             bindings,
@@ -777,6 +809,7 @@ impl Launcher {
             installation,
             links: Arc::new(NoOpener),
             hotkeys: system_hotkeys::none(),
+            developing: Arc::new(Developing::new(None, None)),
             state: Arc::new(Mutex::new(state)),
         };
         if let (Ok(runtime), Some(installation)) = (&launcher.runtime, &launcher.installation) {
@@ -843,6 +876,7 @@ impl Launcher {
             installation: self.installation.clone(),
             links: self.links.clone(),
             hotkeys: self.hotkeys.clone(),
+            developing: Arc::downgrade(&self.developing),
             state: Arc::downgrade(&self.state),
         }
     }
@@ -1167,6 +1201,13 @@ impl Launcher {
                     |entry| matches!(entry, Entry::PauseDetails(shown) if *shown == identity),
                 );
             }
+            Screen::BuildDetails { identity, .. } => {
+                let identity = identity.clone();
+                self.show_extensions_at(
+                    &mut state,
+                    |entry| matches!(entry, Entry::BuildDetails(shown) if *shown == identity),
+                );
+            }
             Screen::Command | Screen::Package { .. } | Screen::Extensions { .. } => {
                 self.show_root(&mut state, None)
             }
@@ -1196,6 +1237,7 @@ impl Launcher {
         let mut hotkey_change = None;
         let mut choice_change = None;
         let mut uninstall = None;
+        let mut develop = None;
         let mut delete_retained = None;
         let mut install = None;
         // The status line is about this action from now on.
@@ -1244,6 +1286,25 @@ impl Launcher {
             }
             Some(Entry::PauseDetails(identity)) => {
                 self.show_pause_details(&mut state, &identity);
+                None
+            }
+            Some(Entry::Develop(identity)) => {
+                develop = self
+                    .begin_developing(&mut state, &identity)
+                    .map(|start| (identity, start));
+                None
+            }
+            Some(Entry::StopDeveloping(identity)) => {
+                self.end_developing(&mut state, &identity);
+                self.refresh(&mut state);
+                None
+            }
+            Some(Entry::BuildDetails(identity)) => {
+                self.show_build_details(&mut state, &identity);
+                None
+            }
+            Some(Entry::BuildAgain(identity)) => {
+                self.build_again(&mut state, &identity);
                 None
             }
             Some(Entry::AskUninstall(identity)) => {
@@ -1338,6 +1399,9 @@ impl Launcher {
         drop(state);
         let launcher = self.clone();
         async move {
+            if let Some((identity, start)) = develop {
+                launcher.finish_developing(identity, start).await;
+            }
             if let Some(change) = change {
                 launcher.finish_change(epoch, change).await;
             }
@@ -1391,6 +1455,10 @@ impl Launcher {
                     | Entry::Reload(_)
                     | Entry::Retry(_)
                     | Entry::PauseDetails(_)
+                    | Entry::Develop(_)
+                    | Entry::StopDeveloping(_)
+                    | Entry::BuildDetails(_)
+                    | Entry::BuildAgain(_)
                     | Entry::AskClearCache(_)
                     | Entry::AskHotkey(_)
                     | Entry::RemoveHotkey(_)
@@ -1605,6 +1673,8 @@ impl Launcher {
         // Its hotkeys are released while it is disabled.
         self.sync_hotkeys(state);
         if !enabled {
+            // Its development ends, with a build that is running.
+            self.developing.end(Some(identity));
             // Its results kept for root search go, and so does an answer
             // from it being awaited.
             Launcher::forget_indexes(state);
@@ -1687,6 +1757,18 @@ impl Launcher {
         Ok(package)
     }
 
+    /// Like [`Launcher::read_and_check`], for a package staged in `folder`
+    /// (a development build) that belongs to the source `identity`.
+    async fn read_and_check_staged(
+        &self,
+        folder: PathBuf,
+        identity: PackageIdentity,
+    ) -> Result<SourcePackage, PackageError> {
+        let package = off_thread(move || SourcePackage::read_staged(&folder, identity)).await?;
+        self.check_components(&package).await?;
+        Ok(package)
+    }
+
     /// Has the runtime check each component of `package` without running
     /// it.
     async fn check_components(&self, package: &SourcePackage) -> Result<(), PackageError> {
@@ -1744,6 +1826,7 @@ impl Launcher {
                 "Pane",
             )
         };
+        self.show_kept_development_status(state);
     }
 
     /// Updates root search or the extension list on screen after a package
@@ -1758,6 +1841,14 @@ impl Launcher {
             | Screen::CustomView(_)
             | Screen::Confirm { .. }
             | Screen::Hotkey { .. } => {}
+            // Once the build succeeded or development ended, the extension
+            // list; else the latest failure. The screen epoch is kept.
+            Screen::BuildDetails { identity, .. } => {
+                let identity = identity.clone();
+                let epoch = state.screen_epoch;
+                self.show_build_details(state, &identity);
+                state.screen_epoch = epoch;
+            }
             // Once the package is no longer paused (retried, reloaded,
             // disabled), the extension list, keeping the screen epoch as
             // refreshing does.
@@ -2087,17 +2178,21 @@ impl Launcher {
         }
         state.view =
             LauncherView::new(Screen::Extensions { details }, "Extensions").with_rows(rows);
+        self.show_kept_development_status(state);
     }
 
     /// The extension list's rows: each package's state, reload and cache
     /// rows, then the hotkey of each command of the enabled packages, then
     /// one row per identity with retained data.
     fn extension_rows(&self, state: &State) -> (Vec<Row>, Vec<Entry>) {
-        let (mut rows, mut entries) = extension_rows(&state.packages, &state.paused);
+        let developed = |identity: &PackageIdentity| self.is_developed(identity);
+        let (mut rows, mut entries) = extension_rows(&state.packages, &state.paused, developed);
+        let development = self.development_rows(&state.packages);
         for (row, entry) in self
             .hotkey_rows(state)
             .into_iter()
             .chain(self.choice_rows(state))
+            .chain(development)
         {
             rows.push(row);
             entries.push(entry);
@@ -2739,7 +2834,11 @@ fn disabled(state: &State, component: &Path) -> String {
 /// paused it, by a row that retries it and one that shows why it is paused;
 /// then one row per package to clear its cache, and one to uninstall it, in
 /// the same order.
-fn extension_rows(packages: &[InstalledPackage], paused: &Pauses) -> (Vec<Row>, Vec<Entry>) {
+fn extension_rows(
+    packages: &[InstalledPackage],
+    paused: &Pauses,
+    developed: impl Fn(&PackageIdentity) -> bool,
+) -> (Vec<Row>, Vec<Entry>) {
     let failure = |package: &InstalledPackage| paused.of(&package.identity).cloned();
     let toggles = packages.iter().map(|package| {
         let state = match (package.enabled, failure(package).map(|pause| pause.after)) {
@@ -2748,10 +2847,15 @@ fn extension_rows(packages: &[InstalledPackage], paused: &Pauses) -> (Vec<Row>, 
             (true, Some(PauseCause::FailedToStart)) => "Enabled · Failed to start",
             (true, Some(PauseCause::Crashes)) => "Enabled · Paused after crashing",
         };
+        let developing = if developed(&package.identity) {
+            " · Developing"
+        } else {
+            ""
+        };
         let row = Row {
             id: package.identity.key(),
             title: package.title(),
-            subtitle: Some(format!("{state} · {}", package.identity)),
+            subtitle: Some(format!("{state}{developing} · {}", package.identity)),
             unavailable: None,
         };
         (row, Entry::Toggle(package.identity.clone()))

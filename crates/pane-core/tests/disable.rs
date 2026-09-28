@@ -176,6 +176,7 @@ fn a_disabled_package_leaves_root_search_and_stays_disabled_after_a_restart(fixt
             "Uninstall Settings sample",
             "Hotkey for Greeting",
             "Alias for Greeting",
+            "Develop Settings sample"
         ]
     );
     assert_eq!(launcher.view().rows[0].id, identity.key());
@@ -270,6 +271,8 @@ fn copies_with_the_same_title_are_enabled_and_keep_settings_by_identity(fixture:
             "Hotkey for Greeting",
             "Alias for Greeting",
             "Alias for Greeting",
+            "Develop Greeter",
+            "Develop Greeter"
         ]
     );
     let published_id = PackageIdentity::local(&published).unwrap();
