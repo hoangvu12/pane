@@ -17,18 +17,42 @@ rm -rf "$out/data"
 export PANE_DATA_DIR=$out/data
 { grep PRETTY_NAME /etc/os-release; uname -srm; } >"$out/system.txt"   # the tested OS and architecture
 
-display=:$((90 + RANDOM % 100))
-"$xvfb" "$display" -screen 0 1280x800x24 -nolisten tcp 2>"$out/xvfb.log" &
-xvfb_pid=$!
+# Starts Xvfb on a display no other server uses, and uses it only once it
+# is up: its socket appeared after it started and it is still running. A
+# display another server has (the developer's own session, a parallel
+# smoke) is never used: Xvfb exits there, and another number is tried.
+xvfb_pid=
 pane_pid=
 cleanup() {
   [ -n "$pane_pid" ] && kill "$pane_pid" 2>/dev/null || true
-  kill "$xvfb_pid" 2>/dev/null || true
+  [ -n "$xvfb_pid" ] && kill "$xvfb_pid" 2>/dev/null || true
 }
 trap cleanup EXIT
+display=
+for _ in $(seq 10); do
+  number=$((90 + RANDOM % 100))
+  socket=/tmp/.X11-unix/X$number
+  [ -e "$socket" ] || [ -e "/tmp/.X$number-lock" ] && continue
+  "$xvfb" ":$number" -screen 0 1280x800x24 -nolisten tcp 2>"$out/xvfb.log" &
+  xvfb_pid=$!
+  for _ in $(seq 50); do
+    kill -0 "$xvfb_pid" 2>/dev/null || break
+    [ -S "$socket" ] && break
+    sleep 0.1
+  done
+  if kill -0 "$xvfb_pid" 2>/dev/null && [ -S "$socket" ]; then
+    display=:$number
+    break
+  fi
+  kill "$xvfb_pid" 2>/dev/null || true
+  xvfb_pid=
+done
+[ -n "$display" ] || { echo "Xvfb did not start (see $out/xvfb.log)"; exit 1; }
 export DISPLAY=$display
 unset WAYLAND_DISPLAY
-sleep 1
+if command -v xdpyinfo >/dev/null; then
+  xdpyinfo >/dev/null || { echo "Xvfb on $display does not answer"; exit 1; }
+fi
 
 capture() {
   if command -v import >/dev/null; then
