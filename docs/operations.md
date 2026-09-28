@@ -152,7 +152,10 @@ that rejects with an object whose `payload` is `{ kind, message }`
   [JavaScript](../guests/sample-operations-js/src/index.js) and
   [TypeScript](../guests/sample-operations-ts/src/index.ts). They answer
   "Hello, Rust, from JavaScript" and so on, show the target's own error
-  ("failed: a name is needed") and a missing package (`not-found`).
+  ("failed: a name is needed") and a missing package (`not-found`). They
+  also publish `wait` version 1, which waits ten seconds, and a second item,
+  "Wait in another extension", calls it: disabling or reloading either
+  package meanwhile stops the call ([generations](generations.md)).
 - [`guests/fixtures/operations`](../guests/fixtures/operations/src/lib.rs):
   a Rust fixture the tests install as several packages to drive every error
   kind, cycles, the depth limit and settings isolation.

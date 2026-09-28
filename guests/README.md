@@ -860,7 +860,8 @@ Known limits of local packages so far:
   meanwhile prevents. So save what must survive before awaiting, and do
   not count on code after an `await` running. A command computing without
   awaiting is not interrupted: it runs until it awaits or returns, and
-  meanwhile its saves and operation calls are refused (#18 owns hangs).
+  meanwhile Pane refuses it data, operation calls and applications (#18
+  owns hangs).
 - Background services, timers and hotkeys are not part of the extension
   API yet and come with their own tickets. Disabling does not yet consider
   packages that depend on the disabled one (#43).

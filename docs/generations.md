@@ -63,19 +63,43 @@ generation ends:
    (the next call starts it afresh, as after a crash).
 3. **A result that completes anyway** (the guest returned in the same turn
    the generation ended) is discarded the same way.
-4. **Host imports refuse the stopped code**: saving any kind of extension
-   data ("this code of the extension was replaced by a reload or an update;
-   its settings are kept unchanged", or "the extension is disabled; …"),
-   calling operations (`refused`) and opening an application. Reading data
-   and listing applications are still allowed.
+4. **Host imports refuse the stopped code**, so it starts no host work of
+   any kind: reading or saving any kind of extension data ("this code of
+   the extension was replaced by a reload or an update; its settings are
+   kept unchanged", or "the extension is disabled; …"), calling operations
+   (`refused`), and listing or opening applications. This matters only for
+   code still running because it did not yield (below): code stopped at an
+   `await` never runs again.
 5. **Other packages keep running**, with their instances and open views.
-6. Component checks (install, update, reload) run on threads of their own,
-   so a reload's check does not wait behind the call it is about to stop.
+6. Component checks (install, update, reload) run on a checker thread of
+   their own, one at a time, so a reload's check does not wait behind the
+   call it is about to stop.
 
 The launcher then shows what the disable, reload or update says ("Disabled
 <title>", "Reloaded <title>", "Updated <title> to <version>"); a command,
 form or view of the package that was open has closed, and no answer of the
 stopped code appears, on the old screen or on the new code's.
+
+## What stopping costs
+
+Stopping a call drops its whole instance, never just the call: Wasmtime 49
+cannot cancel a guest task the host called, and a dropped call's task would
+resume in the store. So:
+
+- **The instance's in-memory state is lost** with it: an open view of the
+  same instance, caches kept in guest memory, and so on. For disable,
+  reload and update that is intended, since the code stops anyway. Later
+  owners that stop calls while the package keeps running pay this cost
+  too: cancelling a search's pending provider calls (#29, #30) would drop
+  the provider's instance, losing what it keeps in memory between queries,
+  and stopping a native helper's call (#15) the same way would restart the
+  component that drove it. Such owners may prefer discarding answers to
+  stopping calls, or waiting for component-model cancellation of a task
+  the host called (`task.cancel` from the host) in a later Wasmtime.
+- **A package serving an operation for a stopped caller restarts fresh**
+  on its next call, although it was not disabled, as after a crash. For
+  #16's detection of repeated failed activations, such a restart is not a
+  failure of that package and must not count as one.
 
 ## What stopping cannot do yet
 
@@ -108,6 +132,12 @@ stopped code appears, on the old screen or on the new code's.
 
 ## Examples and tests
 
+- The operations samples ([Rust](../guests/sample-operations/src/lib.rs),
+  [JavaScript](../guests/sample-operations-js/src/index.js),
+  [TypeScript](../guests/sample-operations-ts/src/index.ts)) publish
+  `wait`, which saves `waiting` as "started", waits ten seconds and saves
+  "finished"; their "Wait in another extension" item calls it in another
+  package.
 - The settings samples' **Save after waiting**
   ([Rust](../guests/sample-settings/src/lib.rs),
   [JavaScript](../guests/sample-settings-js/src/index.js),
@@ -126,7 +156,17 @@ stopped code appears, on the old screen or on the new code's.
   stops a chain from both ends with the operations fixture's `wait`:
   disabling or reloading the target while it serves (the caller is told at
   once), and disabling the caller (the target's instance goes, the target
-  itself stays enabled and serves the next call).
+  itself stays enabled and serves the next call); and with the samples'
+  `wait` from Rust to JavaScript, JavaScript to TypeScript and TypeScript
+  to Rust, from both ends. The fixture's spinning items compute without
+  yielding while the test disables or reloads `a`: what they try
+  afterwards (saving, calling `b`) is refused, and their answer, or their
+  error, completing in the same turn is discarded.
+- Runtime tests (`runtime.rs`): stopping a call whose instance holds a
+  stream open to the host (stdout), the pending future of that write and
+  an open custom view releases them all (the faulty fixture's `hold`); and
+  a stale call of an ended generation, served after the next generation
+  opened a view at the same component, is refused without touching it.
 - These run in `cargo xtask ci`, which CI runs on Windows, macOS and Linux;
   when this was written they had run on Linux only. The earlier 20 sequential calls in one QuickJS
   instance are not concurrency evidence; the overlapping calls here are

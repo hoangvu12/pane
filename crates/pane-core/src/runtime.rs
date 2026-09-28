@@ -7,7 +7,8 @@
 //! Calls are served one at a time. A call into an installed package belongs
 //! to the package's generation (see `generation`): when it ends, a pending
 //! call of it stops where the guest waits, and one queued behind is never
-//! started. Component checks run on threads of their own.
+//! started. Component checks run on a checker thread of their own, so a
+//! reload's check never waits behind the call it is about to stop.
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
@@ -403,9 +404,17 @@ impl std::error::Error for CallError {}
 pub struct Runtime {
     requests: mpsc::UnboundedSender<Request>,
     applications: SharedApplications,
-    /// Checks components on their own threads, so a check never waits
-    /// behind a guest call.
-    code: Arc<Code>,
+    /// Component checks, served one at a time by the checker thread, apart
+    /// from the runtime thread: a reload's check must not wait behind the
+    /// guest call the reload is about to stop.
+    checks: std::sync::mpsc::Sender<Check>,
+}
+
+/// A component check for the checker thread.
+struct Check {
+    component: PathBuf,
+    exports: Exports,
+    reply: oneshot::Sender<Result<(), CallError>>,
 }
 
 enum Request {
@@ -501,6 +510,17 @@ impl Runtime {
         let applications: SharedApplications = Arc::new(Mutex::new(crate::applications::native()));
         let code = Arc::new(Code::new(engine));
         let host = Host::new(code.clone(), applications.clone());
+        let (checks, pending_checks) = std::sync::mpsc::channel::<Check>();
+        std::thread::Builder::new()
+            .name("pane-extension-check".into())
+            .spawn(move || {
+                for check in pending_checks {
+                    let _ = check
+                        .reply
+                        .send(code.check(&check.component, check.exports));
+                }
+            })
+            .map_err(|error| unavailable(&error))?;
         std::thread::Builder::new()
             .name("pane-extension-runtime".into())
             .spawn(move || executor.block_on(host.serve(receiver)))
@@ -508,7 +528,7 @@ impl Runtime {
         Ok(Runtime {
             requests,
             applications,
-            code,
+            checks,
         })
     }
 
@@ -561,8 +581,9 @@ impl Runtime {
     /// component Pane can run: it compiles, imports only WASI 0.3 and exports
     /// the extension interface, with the function types of the current
     /// contract ([`CallError::OlderApiShape`] otherwise). The check keeps
-    /// nothing loaded, and runs on its own thread: it does not wait for
-    /// guest calls in progress, such as one a reload is about to stop.
+    /// nothing loaded, and runs on Pane's checker thread, one check at a
+    /// time: it does not wait for guest calls in progress, such as one a
+    /// reload is about to stop.
     pub async fn check(&self, component: &Path) -> Result<(), CallError> {
         self.check_with(component, Exports::default()).await
     }
@@ -575,14 +596,13 @@ impl Runtime {
         exports: Exports,
     ) -> Result<(), CallError> {
         let (reply, response) = oneshot::channel();
-        let code = self.code.clone();
-        let component = component.to_path_buf();
-        std::thread::Builder::new()
-            .name("pane-extension-check".into())
-            .spawn(move || {
-                let _ = reply.send(code.check(&component, exports));
+        self.checks
+            .send(Check {
+                component: component.to_path_buf(),
+                exports,
+                reply,
             })
-            .map_err(|error| CallError::RuntimeUnavailable(error.to_string()))?;
+            .map_err(|_| stopped())?;
         response.await.unwrap_or_else(|_| Err(stopped()))
     }
 
@@ -917,7 +937,7 @@ struct LiveView {
 }
 
 /// The engine and the host interfaces guests link against, shared by the
-/// runtime thread and the threads checking components.
+/// runtime thread and the checker thread.
 struct Code {
     engine: Engine,
     linker: Linker<GuestState>,
