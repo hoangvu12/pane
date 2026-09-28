@@ -224,6 +224,18 @@ killed and the whole phase are unverified natively. macOS has no parent
 death signal, so a build outlives a Pane that is killed or crashes (one
 that quits kills it).
 
+## Disabling required dependents (#43)
+
+The disable-dependents phase (screenshots 140 to 143, [disabling a required dependency](../dependencies.md#disabling-a-required-dependency)),
+with a data folder of its own, installs the dependencies sample, presses
+Enter on the JavaScript operations sample in Manage extensions, which must
+ask first (the details color), cancels, then chooses Disable all (the
+result color) and enables the JavaScript sample again alone (the result
+color); `installed.json` must then record exactly one disabled package.
+Nothing in it is specific to macOS (no system API is involved; the
+closure reuses the dependency identities recorded at install); **not run on
+macOS yet**.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms now have a text field. The

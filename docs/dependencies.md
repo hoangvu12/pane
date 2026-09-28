@@ -7,10 +7,12 @@ A package that calls other packages' [operations](operations.md) declares
 them in its `pane.json`, required or optional. Installing it from a local
 folder shows them first and installs the missing required ones with it;
 optional, disabled, paused and already installed dependencies are left as
-they are. Disabling or uninstalling a required dependency together with its
-dependents is [#43](https://github.com/hoangvu12/pane/issues/43) and
-[#44](https://github.com/hoangvu12/pane/issues/44); npm sources are
-[#45](https://github.com/hoangvu12/pane/issues/45).
+they are. Disabling a required dependency first shows the packages that
+require it, with Disable all and Cancel
+([#43](https://github.com/hoangvu12/pane/issues/43),
+[below](#disabling-a-required-dependency)). Uninstalling one together with
+its dependents is [#44](https://github.com/hoangvu12/pane/issues/44); npm
+sources are [#45](https://github.com/hoangvu12/pane/issues/45).
 
 ## Declaring
 
@@ -190,6 +192,67 @@ if removing one again fails does it stay installed, and the status says so
 ("Pane could not remove again what it had installed, which stays installed:
 B (…)"). None of the packages ran meanwhile, so none has data to lose.
 
+## Disabling a required dependency
+
+Added for [#43](https://github.com/hoangvu12/pane/issues/43) (US30, US31,
+T13). Pressing the row of an enabled package in **Manage extensions** that
+enabled packages require does not disable it yet. Pane shows "Disable
+<title> and the extensions that require it?" with:
+
+- its source, then every enabled package in its **required dependent
+  closure**, each as "<title>, which requires <what brought it in> ·
+  <identity>", nearest first, and those in it the user disabled already as
+  "Already disabled: …" (they are not changed);
+- "Each keeps its settings and saved data. Enabling <title> again does not
+  enable them: enable each in Manage extensions.";
+- the rows **Disable all N** (N counts the package itself; first and
+  selected) and **Cancel** ("Keep them all enabled").
+
+Cancel, or Back, returns to the extension list with the package's row
+selected; nothing was changed, recorded or stopped. Disable all disables
+the package and exactly the dependents shown, recorded in one write of
+`installed.json` (all of them or, if it cannot be written, none: each is
+enabled again and the error is shown), and says "Disabled Greeter and
+Caller, which requires it" or "Disabled Greeter and the 2 extensions that
+require it: Caller and Other". Each is disabled as an ordinary
+[disable](../guests/README.md#keeping-settings) is: its commands leave root
+search, an open one closes, its instances stop and its generation ends
+([generations](generations.md)), its hotkeys are released, and its
+settings, content, cache and credentials are kept. A package with no enabled
+required dependents is disabled at once, as before.
+
+If, when Disable all is chosen, an enabled package requires it that was not
+shown (one was installed or enabled meanwhile), nothing is disabled and the
+question is shown again with "What disabling <title> affects changed since
+it was shown; check it again and choose Disable all once more". A dependent
+disabled or uninstalled meanwhile is simply not disabled again. If the
+package itself was disabled meanwhile, nothing is disabled and nothing is
+asked again, even if a new dependent appeared too.
+
+**The closure.** A package is in it when it requires the package asked
+about, or another package in it, on this system, as its dependencies were
+recorded when it was installed (`InstalledPackage::dependency_identity`,
+reaching an installed package as a call by id does, including a folder
+that became a link). Optional dependencies, and required ones declared only
+for other systems, never bring a package in. Cycles are allowed: each
+package is listed once and the package asked about never is. A disabled
+package is followed (what requires it requires the package asked about
+too), though not disabled again.
+
+**Enabling again** enables only the package pressed: its dependents stay
+disabled, across restarts too, until the user enables each. Enabling a
+dependent whose required dependency is still disabled is allowed; its calls
+to it answer `disabled`, as before.
+
+**Pausing is not disabling.** When Pane [pauses](pausing.md) a required
+dependency after it failed, nothing else changes and nothing is asked:
+its dependents stay enabled, and their calls to it are refused while it is
+paused. The user disabling a paused package still asks about its
+dependents (and ends the pause, as disabling does).
+
+`Launcher::set_enabled` remains the single-package switch it was: it
+disables only the package given, without asking.
+
 ## For later slices
 
 A plan (`crates/pane-core/src/dependencies.rs`) is data: its required edges
@@ -197,7 +260,10 @@ name the dependent and the target by identity with the target's state, its
 problems are a kind with identities, and its wording is only in `Display`
 and `Plan::lines`, so the dependent traversal of #43 and #44 can reuse the
 recorded graph (`InstalledPackage::dependency_identity`) without the
-wording.
+wording. `dependencies::required_dependents` is that traversal: every
+installed package in the required dependent closure, disabled ones included
+(each with `enabled` and the package that brought it in), which #43 filters
+to the enabled ones and #44 can use whole for Uninstall all.
 
 ## Checks
 
@@ -218,13 +284,32 @@ wording.
 - The native smokes install the [dependencies sample](../guests/sample-dependencies/src/lib.rs)
   and show "Hello, Pane, from JavaScript" in the real window (frames 75 to
   77; [Linux](platforms/linux.md#dependencies-42)).
+- [`crates/pane-core/tests/disable_dependents.rs`](../crates/pane-core/tests/disable_dependents.rs)
+  drives disabling a required dependency through the extension list: the
+  question listing the closure (through a dependent of a dependent) before
+  anything changes, Cancel and Back changing nothing, Disable all disabling
+  the shown set, stopping a dependent's running instance and keeping its
+  settings, enabling the dependency alone (also after a restart), an
+  optional user disabled at once, cycles, a dependent enabled or disabled
+  while the question is shown, a record that cannot be written, and Pane
+  pausing a dependency disabling nothing else. Unit tests in
+  [`dependencies.rs`](../crates/pane-core/src/dependencies.rs) cover the
+  closure itself.
+- The native smokes' own phase (frames 140 to 143;
+  [Linux](platforms/linux.md#disabling-required-dependents-43)) asks,
+  cancels, disables both with Disable all and enables the dependency alone.
 
 ## Limits
 
 - Local folders only; npm and Git (#45 and later) keep these semantics.
 - One copy per source, no version ranges and no multi-version solving.
 - No Pane-side view yet of installed packages whose required dependency was
-  disabled or removed later; their calls explain it (#43, #44).
+  disabled (other than through Disable all) or removed later; their calls
+  explain it (#44).
+- Only the extension list asks about dependents; `Launcher::set_enabled`
+  (used by tests and internal callers) disables one package. The extension
+  list offers no way to disable a required dependency while keeping its
+  dependents enabled.
 - A second install relying on a package an install in progress has claimed
   is refused rather than waiting.
 - The symbolic-link tests are skipped where the system does not allow

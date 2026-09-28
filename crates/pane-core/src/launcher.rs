@@ -47,6 +47,7 @@ use crate::runtime::{
 };
 use crate::search::{self, Keys, Query};
 
+mod dependents;
 mod developing;
 mod install;
 mod pausing;
@@ -149,6 +150,9 @@ pub enum Question {
     /// Whether to delete the retained data of this identity, which is not
     /// installed.
     DeleteRetained(PackageIdentity),
+    /// Whether to disable the installed package with this identity together
+    /// with the enabled packages that require it.
+    DisableDependents(PackageIdentity),
 }
 
 /// A selectable row.
@@ -497,6 +501,24 @@ impl State {
         false
     }
 
+    /// Notes that each `(identity, what)` of `claims` begins, all of them or
+    /// none: if something is already happening to one of them, claims
+    /// nothing and returns that identity with what is happening to it.
+    fn claim_all(
+        &mut self,
+        claims: &[(PackageIdentity, Changing)],
+    ) -> Result<(), (PackageIdentity, Changing)> {
+        for (identity, _) in claims {
+            if let Some(&busy) = self.changing.get(identity) {
+                return Err((identity.clone(), busy));
+            }
+        }
+        for (identity, what) in claims {
+            self.changing.insert(identity.clone(), *what);
+        }
+        Ok(())
+    }
+
     /// Notes that what began with [`State::claim`] on the package with
     /// `identity` has ended.
     fn release(&mut self, identity: &PackageIdentity) {
@@ -504,9 +526,11 @@ impl State {
     }
 }
 
-/// An enabling or disabling that has taken effect and is being recorded.
+/// An enabling or disabling that has taken effect and is being recorded:
+/// of one package, or of a package and the packages that require it, the
+/// package asked about first.
 struct Change {
-    identity: PackageIdentity,
+    identities: Vec<PackageIdentity>,
     enabled: bool,
 }
 
@@ -624,8 +648,12 @@ enum Entry {
     Install(PathBuf, Mode, dependencies::Assumptions),
     /// Show the installed packages (root).
     Manage,
-    /// Enable this installed package if it is disabled, else disable it.
+    /// Enable this installed package if it is disabled, else disable it, or
+    /// first ask about the enabled packages that require it.
     Toggle(PackageIdentity),
+    /// Disable this installed package and the packages that require it,
+    /// which the confirmation showed (confirmation).
+    DisableAll(PackageIdentity, Vec<PackageIdentity>),
     /// Reload this installed package from its source folder.
     Reload(PackageIdentity),
     /// Start again this package, which Pane paused after it failed.
@@ -1323,7 +1351,19 @@ impl Launcher {
                 // The package's state when the user pressed, not when the
                 // future runs.
                 let enable = state.package(&identity).is_some_and(|p| !p.enabled);
-                change = self.begin_change(&mut state, identity, enable);
+                let closure = match enable {
+                    true => Vec::new(),
+                    false => dependencies::required_dependents(&state.packages, &identity),
+                };
+                if closure.iter().any(|dependent| dependent.enabled) {
+                    self.show_disable_dependents(&mut state, &identity, closure);
+                } else {
+                    change = self.begin_change(&mut state, vec![identity], enable);
+                }
+                None
+            }
+            Some(Entry::DisableAll(identity, shown)) => {
+                change = self.begin_disable_all(&mut state, identity, &shown);
                 None
             }
             Some(Entry::Reload(identity)) => {
@@ -1411,6 +1451,7 @@ impl Launcher {
                     | Entry::Install(..)
                     | Entry::Manage
                     | Entry::Toggle(_)
+                    | Entry::DisableAll(..)
                     | Entry::Reload(_)
                     | Entry::Retry(_)
                     | Entry::PauseDetails(_)
@@ -1503,7 +1544,7 @@ impl Launcher {
         enabled: bool,
     ) -> impl Future<Output = ()> + Send + 'static {
         let mut state = self.lock();
-        let change = self.begin_change(&mut state, identity.clone(), enabled);
+        let change = self.begin_change(&mut state, vec![identity.clone()], enabled);
         let epoch = state.screen_epoch;
         drop(state);
         let launcher = self.clone();
@@ -1514,15 +1555,16 @@ impl Launcher {
         }
     }
 
-    /// Applies the user's choice to enable or disable a package, to be
-    /// recorded by [`Launcher::finish_change`]. Explains why not and returns
-    /// `None` if there is no such package or it is being reloaded or updated;
-    /// returns `None` without a word while another change to it is being
-    /// recorded.
+    /// Applies the user's choice to enable or disable the packages with
+    /// `identities` (the one asked about first), to be recorded together by
+    /// [`Launcher::finish_change`]. Changes none of them, explains why and
+    /// returns `None` if one is not installed or something else is happening
+    /// to it; returns `None` without a word while another change to one is
+    /// being recorded.
     fn begin_change(
         &self,
         state: &mut State,
-        identity: PackageIdentity,
+        identities: Vec<PackageIdentity>,
         enabled: bool,
     ) -> Option<Change> {
         if self.installation.is_none() {
@@ -1530,22 +1572,43 @@ impl Launcher {
             state.view.status = Status::Error(error.to_string());
             return None;
         }
-        if state.package(&identity).is_none() {
-            state.view.status = Status::Error(PackageError::NotInstalled(identity).to_string());
+        if let Some(missing) = identities.iter().find(|i| state.package(i).is_none()) {
+            let error = PackageError::NotInstalled(missing.clone());
+            state.view.status = Status::Error(error.to_string());
             return None;
         }
-        if !state.claim(&identity, Changing::Recording) {
-            return None;
+        let claims: Vec<(PackageIdentity, Changing)> = identities
+            .iter()
+            .map(|identity| (identity.clone(), Changing::Recording))
+            .collect();
+        match state.claim_all(&claims) {
+            Ok(()) => {}
+            // A second enabling or disabling while one is recorded is
+            // ignored without a word, as pressing Enter twice would do.
+            Err((_, Changing::Recording)) => return None,
+            Err((identity, busy)) => {
+                let message = format!("{} {}", state.title_of(&identity), busy.doing());
+                state.view.status = Status::Error(message);
+                return None;
+            }
         }
-        self.apply_enabled(state, &identity, enabled);
+        for identity in &identities {
+            self.apply_enabled(state, identity, enabled);
+        }
         state.view.status = Status::Running;
-        Some(Change { identity, enabled })
+        Some(Change {
+            identities,
+            enabled,
+        })
     }
 
-    /// Records a change begun by [`Launcher::begin_change`], undoing it if
-    /// it cannot be recorded.
+    /// Records a change begun by [`Launcher::begin_change`] in one write,
+    /// undoing all of it if it cannot be recorded.
     async fn finish_change(&self, epoch: u64, change: Change) {
-        let Change { identity, enabled } = change;
+        let Change {
+            identities,
+            enabled,
+        } = change;
         let store = self
             .installation
             .as_ref()
@@ -1553,26 +1616,33 @@ impl Launcher {
             .store
             .clone();
         let recorded = {
-            let identity = identity.clone();
+            let identities = identities.clone();
             off_thread(move || {
                 let mut store = store.lock().unwrap_or_else(|p| p.into_inner());
-                store.set_enabled(&identity, enabled)
+                store.set_enabled_all(&identities, enabled)
             })
             .await
         };
         let mut state = self.lock();
-        state.release(&identity);
+        for identity in &identities {
+            state.release(identity);
+        }
         let status = match recorded {
             Ok(()) => {
-                let title = state.title_of(&identity);
-                if enabled {
-                    Status::Result(format!("Enabled {title}"))
-                } else {
-                    Status::Result(format!("Disabled {title}"))
+                let titles: Vec<String> = identities.iter().map(|i| state.title_of(i)).collect();
+                match (enabled, titles.as_slice()) {
+                    (true, _) => Status::Result(format!("Enabled {}", platform::join(&titles))),
+                    (false, [title]) => Status::Result(format!("Disabled {title}")),
+                    (false, [title, dependents @ ..]) => {
+                        Status::Result(dependents::disabled(title, dependents))
+                    }
+                    (false, []) => Status::Idle,
                 }
             }
             Err(error) => {
-                self.apply_enabled(&mut state, &identity, !enabled);
+                for identity in &identities {
+                    self.apply_enabled(&mut state, identity, !enabled);
+                }
                 Status::Error(error.to_string())
             }
         };
@@ -2270,6 +2340,10 @@ impl Launcher {
             Question::DeleteRetained(identity) => self.show_extensions_at(
                 state,
                 |entry| matches!(entry, Entry::AskDeleteRetained(asked) if *asked == identity),
+            ),
+            Question::DisableDependents(identity) => self.show_extensions_at(
+                state,
+                |entry| matches!(entry, Entry::Toggle(asked) if *asked == identity),
             ),
         }
     }
