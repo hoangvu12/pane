@@ -32,6 +32,56 @@ pub struct Item {
     pub id: String,
     pub title: String,
     pub subtitle: Option<String>,
+    /// When set, activating the item opens this form instead of running its
+    /// action.
+    pub form: Option<Form>,
+}
+
+/// A form an item opens, as produced by the guest.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Form {
+    pub title: String,
+    pub fields: Vec<Field>,
+    pub submit_label: String,
+}
+
+/// One field of a [`Form`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Field {
+    pub id: String,
+    pub label: String,
+    pub kind: FieldKind,
+}
+
+/// What a field holds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FieldKind {
+    /// A single-line text field, which starts empty.
+    Text { placeholder: Option<String> },
+    /// Exactly one of these options; the first starts chosen.
+    Choice(Vec<Choice>),
+}
+
+/// An option of a choice field.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Choice {
+    pub id: String,
+    pub label: String,
+}
+
+/// A field's submitted value: its text, or the chosen option's id.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FieldValue {
+    pub id: String,
+    pub value: String,
+}
+
+/// Why the guest did not accept a submitted form.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FormError {
+    /// The field the message is about; `None` for the form as a whole.
+    pub field: Option<String>,
+    pub message: String,
 }
 
 /// A command's list view, as produced by the guest.
@@ -54,6 +104,8 @@ pub enum CallError {
     Interface(String),
     /// The guest ran and reported an error.
     Guest(String),
+    /// The guest did not accept a submitted form.
+    Form(FormError),
     /// The guest trapped or otherwise failed while running.
     Trap(String),
 }
@@ -75,6 +127,7 @@ impl fmt::Display for CallError {
                 "Incompatible extension: it does not implement Pane's extension interface: {reason}"
             ),
             CallError::Guest(message) => write!(f, "The extension reported an error: {message}"),
+            CallError::Form(error) => f.write_str(&error.message),
             CallError::Trap(reason) => write!(f, "The extension crashed: {reason}"),
         }
     }
@@ -104,6 +157,12 @@ enum Request {
     },
     Forget {
         components: Vec<PathBuf>,
+    },
+    SubmitForm {
+        component: PathBuf,
+        item_id: String,
+        values: Vec<FieldValue>,
+        reply: oneshot::Sender<Result<String, CallError>>,
     },
 }
 
@@ -174,6 +233,24 @@ impl Runtime {
         let (reply, response) = oneshot::channel();
         self.send(Request::Check {
             component: component.to_path_buf(),
+            reply,
+        })?;
+        response.await.unwrap_or_else(|_| Err(stopped()))
+    }
+
+    /// Submits the form of `item_id` in the command in `component`. A
+    /// rejection by the guest is [`CallError::Form`].
+    pub async fn submit_form(
+        &self,
+        component: &Path,
+        item_id: &str,
+        values: Vec<FieldValue>,
+    ) -> Result<String, CallError> {
+        let (reply, response) = oneshot::channel();
+        self.send(Request::SubmitForm {
+            component: component.to_path_buf(),
+            item_id: item_id.to_owned(),
+            values,
             reply,
         })?;
         response.await.unwrap_or_else(|_| Err(stopped()))
@@ -266,6 +343,15 @@ impl Host {
                         self.instances.remove(component);
                     }
                 }
+                Request::SubmitForm {
+                    component,
+                    item_id,
+                    values,
+                    reply,
+                } => {
+                    let result = self.submit_form(&component, item_id, values).await;
+                    let _ = reply.send(result);
+                }
             }
         }
     }
@@ -277,10 +363,34 @@ impl Host {
             .store
             .run_concurrent(async |store| command.call_get_view(store).await)
             .await;
-        let view = self.settle(path, result)?;
+        let view = self.settle(path, result, CallError::Guest)?;
         Ok(View {
             title: view.title,
             items: view.items.into_iter().map(Item::from).collect(),
+        })
+    }
+
+    async fn submit_form(
+        &mut self,
+        path: &Path,
+        item_id: String,
+        values: Vec<FieldValue>,
+    ) -> Result<String, CallError> {
+        let instance = self.instance(path).await?;
+        let command = instance.bindings.pane_extension_command();
+        let values = values
+            .into_iter()
+            .map(|FieldValue { id, value }| command::FieldValue { id, value })
+            .collect();
+        let result = instance
+            .store
+            .run_concurrent(async |store| command.call_submit_form(store, item_id, values).await)
+            .await;
+        self.settle(path, result, |error: command::FormError| {
+            CallError::Form(FormError {
+                field: error.field,
+                message: error.message,
+            })
         })
     }
 
@@ -291,18 +401,20 @@ impl Host {
             .store
             .run_concurrent(async |store| command.call_run_action(store, item_id).await)
             .await;
-        self.settle(path, result)
+        self.settle(path, result, CallError::Guest)
     }
 
-    /// Maps a call outcome to the caller's result. A trapped instance cannot
-    /// be re-entered, so it is dropped and the next call starts a fresh one.
-    fn settle<T>(
+    /// Maps a call outcome to the caller's result, turning the guest's own
+    /// error with `guest_error`. A trapped instance cannot be re-entered, so
+    /// it is dropped and the next call starts a fresh one.
+    fn settle<T, E>(
         &mut self,
         path: &Path,
-        outcome: wasmtime::Result<wasmtime::Result<Result<T, String>>>,
+        outcome: wasmtime::Result<wasmtime::Result<Result<T, E>>>,
+        guest_error: impl FnOnce(E) -> CallError,
     ) -> Result<T, CallError> {
         match outcome.and_then(|inner| inner) {
-            Ok(result) => result.map_err(CallError::Guest),
+            Ok(result) => result.map_err(guest_error),
             Err(trap) => {
                 self.instances.remove(path);
                 Err(CallError::Trap(format!("{trap:#}")))
@@ -372,6 +484,39 @@ impl From<command::Item> for Item {
             id: item.id,
             title: item.title,
             subtitle: item.subtitle,
+            form: item.form.map(Form::from),
+        }
+    }
+}
+
+impl From<command::Form> for Form {
+    fn from(form: command::Form) -> Form {
+        let fields = form
+            .fields
+            .into_iter()
+            .map(|field| Field {
+                id: field.id,
+                label: field.label,
+                kind: match field.kind {
+                    command::FieldKind::Text(text) => FieldKind::Text {
+                        placeholder: text.placeholder,
+                    },
+                    command::FieldKind::Choice(choices) => FieldKind::Choice(
+                        choices
+                            .into_iter()
+                            .map(|choice| Choice {
+                                id: choice.id,
+                                label: choice.label,
+                            })
+                            .collect(),
+                    ),
+                },
+            })
+            .collect();
+        Form {
+            title: form.title,
+            fields,
+            submit_label: form.submit_label,
         }
     }
 }

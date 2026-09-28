@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::packages::{InstalledPackage, PackageError, SourcePackage, Store, folder_name};
-use crate::runtime::{CallError, Runtime};
+use crate::runtime::{CallError, FieldKind, FieldValue, Form, Runtime};
 
 /// The id of the root row that installs a package from a local folder.
 const INSTALL_FROM_FOLDER: &str = "pane.install-from-folder";
@@ -34,6 +34,8 @@ pub enum Screen {
     Command,
     /// A package folder's identity and compatibility, before installing it.
     Package,
+    /// A form opened from an item of the command's list view.
+    Form,
 }
 
 /// A selectable row.
@@ -52,8 +54,28 @@ pub enum Status {
     Running,
     /// The outcome of the most recent action, such as the extension's answer.
     Result(String),
-    /// Why the most recent action failed.
+    /// Why the most recent action failed. For a rejected form field this is
+    /// "<field label>: <message>".
     Error(String),
+}
+
+/// An open form, as the user is filling it in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FormView {
+    pub fields: Vec<FormField>,
+    pub submit_label: String,
+}
+
+/// One field of an open form with its current value.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FormField {
+    pub id: String,
+    pub label: String,
+    pub kind: FieldKind,
+    /// The text of a text field, or the id of the chosen option.
+    pub value: String,
+    /// Why the extension rejected this field on the last submission.
+    pub error: Option<String>,
 }
 
 /// A snapshot of what the launcher shows.
@@ -64,10 +86,13 @@ pub struct LauncherView {
     /// Lines of information under the title, such as a package's source and
     /// compatibility.
     pub details: Vec<String>,
+    /// Empty on the form screen.
     pub rows: Vec<Row>,
     /// Index into `rows`; `None` when there are no rows.
     pub selected: Option<usize>,
     pub status: Status,
+    /// The open form; `Some` exactly on the form screen.
+    pub form: Option<FormView>,
 }
 
 /// The launcher. Cloning shares the same state.
@@ -87,6 +112,9 @@ struct State {
     entries: Vec<Entry>,
     /// The component of the command whose view is open.
     open: Option<PathBuf>,
+    /// While a form is open: the item it belongs to and the command view to
+    /// return to.
+    form: Option<(String, LauncherView)>,
     /// Incremented on every navigation, so a reply that arrives after the
     /// user has left the screen it was requested from is discarded.
     screen_generation: u64,
@@ -106,6 +134,8 @@ enum Entry {
     InstallFromFolder,
     /// Run the open command's item with this id.
     Run(String),
+    /// Open this form of the open command's item with this id.
+    Form(String, Form),
     /// Install the previewed package from this folder, or replace its
     /// installed copy.
     Install(PathBuf, Mode),
@@ -148,9 +178,11 @@ impl Launcher {
                 rows: Vec::new(),
                 selected: None,
                 status: Status::Idle,
+                form: None,
             },
             entries: Vec::new(),
             open: None,
+            form: None,
             screen_generation: 0,
             packages: store.as_ref().map(Store::installed).unwrap_or_default(),
             store_problem: store.as_ref().and_then(Store::problem),
@@ -211,17 +243,27 @@ impl Launcher {
         matches!(entry, Some(Entry::InstallFromFolder))
     }
 
-    /// Leaves an open command or package preview for root search.
+    /// Leaves an open form for its command's list, or an open command or
+    /// package preview for root search.
     pub fn back(&self) {
         let mut state = self.lock();
-        if state.view.screen != Screen::Root {
-            self.show_root(&mut state, None);
+        match state.view.screen {
+            Screen::Form => {
+                let (_, command_view) = state.form.take().expect("a form is open");
+                state.screen_generation += 1;
+                state.view = LauncherView {
+                    status: Status::Idle,
+                    ..command_view
+                };
+            }
+            Screen::Command | Screen::Package => self.show_root(&mut state, None),
+            Screen::Root => {}
         }
     }
 
-    /// Opens the selected command (root), runs the selected item's action
-    /// (command view) or installs or updates the previewed package. Await
-    /// the returned future to apply the reply.
+    /// Opens the selected command (root), opens the selected item's form or
+    /// runs its action (command view), or installs or updates the previewed
+    /// package. Await the returned future to apply the reply.
     ///
     /// A row that [asks for a folder](Launcher::selected_asks_for_folder)
     /// does nothing here.
@@ -234,6 +276,10 @@ impl Launcher {
         let entry = match entry {
             Some(Entry::Broken(problem)) => {
                 state.view.status = Status::Error(problem);
+                None
+            }
+            Some(Entry::Form(item_id, form)) => {
+                open_form(&mut state, item_id, form);
                 None
             }
             Some(Entry::InstallFromFolder) | None => None,
@@ -257,7 +303,7 @@ impl Launcher {
                 Some(Entry::Install(folder, mode)) => {
                     launcher.install(generation, folder, mode).await
                 }
-                Some(Entry::Broken(_) | Entry::InstallFromFolder) | None => {}
+                Some(Entry::Broken(_) | Entry::InstallFromFolder | Entry::Form(..)) | None => {}
             }
         }
     }
@@ -286,6 +332,7 @@ impl Launcher {
             let (view, entries) = preview_view(&folder, checked, installed);
             state.screen_generation += 1;
             state.open = None;
+            state.form = None;
             state.view = view;
             state.entries = entries;
         }
@@ -396,6 +443,7 @@ impl Launcher {
             })
             .or_else(|| first_index(&rows));
         state.open = None;
+        state.form = None;
         state.screen_generation += 1;
         state.entries = entries;
         state.view = LauncherView {
@@ -408,6 +456,7 @@ impl Launcher {
                 Some(problem) => Status::Error(problem.clone()),
                 None => Status::Idle,
             },
+            form: None,
         };
     }
 
@@ -474,6 +523,99 @@ impl Launcher {
         (rows, entries)
     }
 
+    /// Sets the value of the open form's field `field_id`: a text field's
+    /// text, or the id of an option of a choice field. Unknown fields and
+    /// options are ignored. Editing a field clears its error.
+    pub fn set_field_value(&self, field_id: &str, value: &str) {
+        let mut state = self.lock();
+        let Some(form) = state.view.form.as_mut() else {
+            return;
+        };
+        let Some(field) = form.fields.iter_mut().find(|field| field.id == field_id) else {
+            return;
+        };
+        if let FieldKind::Choice(choices) = &field.kind
+            && !choices.iter().any(|choice| choice.id == value)
+        {
+            return;
+        }
+        field.value = value.to_owned();
+        field.error = None;
+    }
+
+    /// Submits the open form to its extension. Await the returned future to
+    /// apply the reply: the answer as the result, or the extension's
+    /// rejection next to its field.
+    pub fn submit_form(&self) -> impl Future<Output = ()> + Send + 'static {
+        let mut state = self.lock();
+        let submission = match (&state.view.form, &state.form, &state.open) {
+            (Some(form), Some((item_id, _)), Some(component)) => {
+                let values: Vec<FieldValue> = form
+                    .fields
+                    .iter()
+                    .map(|field| FieldValue {
+                        id: field.id.clone(),
+                        value: field.value.clone(),
+                    })
+                    .collect();
+                Some((component.clone(), item_id.clone(), values))
+            }
+            _ => None,
+        };
+        if submission.is_some() {
+            state.view.status = Status::Running;
+        }
+        let generation = state.screen_generation;
+        drop(state);
+        let launcher = self.clone();
+        async move {
+            if let Some((component, item_id, values)) = submission {
+                launcher
+                    .submit(generation, component, item_id, values)
+                    .await
+            }
+        }
+    }
+
+    async fn submit(
+        &self,
+        generation: u64,
+        component: PathBuf,
+        item_id: String,
+        values: Vec<FieldValue>,
+    ) {
+        let result = match self.runtime() {
+            Ok(runtime) => runtime.submit_form(&component, &item_id, values).await,
+            Err(error) => Err(error),
+        };
+        let Some(mut state) = self.lock_if_current(generation) else {
+            return;
+        };
+        let view = &mut state.view;
+        let fields = &mut view.form.as_mut().expect("a form is open").fields;
+        for field in fields.iter_mut() {
+            field.error = None;
+        }
+        view.status = match result {
+            Ok(answer) => Status::Result(answer),
+            Err(CallError::Form(error)) => {
+                let field = error
+                    .field
+                    .as_deref()
+                    .and_then(|id| fields.iter_mut().find(|field| field.id == id));
+                match field {
+                    Some(field) => {
+                        let status = format!("{}: {}", field.label, error.message);
+                        field.error = Some(error.message);
+                        Status::Error(status)
+                    }
+                    None => Status::Error(error.message),
+                }
+            }
+            Err(error) => Status::Error(error.to_string()),
+        };
+    }
+
     async fn run_action(&self, generation: u64, component: PathBuf, item_id: String) {
         let result = match self.runtime() {
             Ok(runtime) => runtime.run_action(&component, &item_id).await,
@@ -498,16 +640,23 @@ impl Launcher {
         };
         match result {
             Ok(view) => {
-                let rows: Vec<Row> = view
+                let (rows, entries): (Vec<Row>, Vec<Entry>) = view
                     .items
                     .into_iter()
-                    .map(|item| Row {
-                        id: item.id,
-                        title: item.title,
-                        subtitle: item.subtitle,
+                    .map(|item| {
+                        let entry = match item.form {
+                            Some(form) => Entry::Form(item.id.clone(), form),
+                            None => Entry::Run(item.id.clone()),
+                        };
+                        let row = Row {
+                            id: item.id,
+                            title: item.title,
+                            subtitle: item.subtitle,
+                        };
+                        (row, entry)
                     })
-                    .collect();
-                state.entries = rows.iter().map(|row| Entry::Run(row.id.clone())).collect();
+                    .unzip();
+                state.entries = entries;
                 state.open = Some(component);
                 state.screen_generation += 1;
                 state.view = LauncherView {
@@ -517,6 +666,7 @@ impl Launcher {
                     selected: first_index(&rows),
                     rows,
                     status: Status::Idle,
+                    form: None,
                 };
             }
             Err(error) => state.view.status = Status::Error(error.to_string()),
@@ -557,6 +707,7 @@ fn preview_view(
                 rows: Vec::new(),
                 selected: None,
                 status: Status::Error(error.to_string()),
+                form: None,
             };
             return (view, Vec::new());
         }
@@ -601,8 +752,49 @@ fn preview_view(
         rows: vec![row],
         selected: Some(0),
         status: Status::Idle,
+        form: None,
     };
     (view, vec![entry])
+}
+
+/// Replaces the command view with `form`, which belongs to item `item_id`.
+/// The command's row entries stay, for when the form closes.
+fn open_form(state: &mut State, item_id: String, form: Form) {
+    let fields = form
+        .fields
+        .into_iter()
+        .map(|field| {
+            let value = match &field.kind {
+                FieldKind::Text { .. } => String::new(),
+                FieldKind::Choice(choices) => choices
+                    .first()
+                    .map(|choice| choice.id.clone())
+                    .unwrap_or_default(),
+            };
+            FormField {
+                id: field.id,
+                label: field.label,
+                kind: field.kind,
+                value,
+                error: None,
+            }
+        })
+        .collect();
+    let form_view = LauncherView {
+        screen: Screen::Form,
+        title: form.title,
+        details: Vec::new(),
+        rows: Vec::new(),
+        selected: None,
+        status: Status::Idle,
+        form: Some(FormView {
+            fields,
+            submit_label: form.submit_label,
+        }),
+    };
+    let command_view = std::mem::replace(&mut state.view, form_view);
+    state.form = Some((item_id, command_view));
+    state.screen_generation += 1;
 }
 
 /// Runs blocking file work on its own thread, so the caller's thread (the

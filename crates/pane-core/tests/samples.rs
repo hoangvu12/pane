@@ -1,7 +1,8 @@
 //! Contract checks every sample command passes alike, whether it is written
 //! in Rust, JavaScript or TypeScript: the same items, answers and errors
 //! through the launcher's public interface, a native WASI 0.3 async wait,
-//! fresh state per instance, and WASI 0.3-only imports.
+//! fresh state per instance, a form the guest validates, and WASI 0.3-only
+//! imports.
 //!
 //! Components come from `cargo xtask guests`; the JavaScript and TypeScript
 //! ones are the prebuilt components in `guests/prebuilt/`.
@@ -9,7 +10,10 @@
 use std::path::PathBuf;
 
 use futures::executor::block_on;
-use pane_core::{CallError, CommandRegistration, Launcher, Runtime, Screen, Status};
+use pane_core::{
+    CallError, Choice, CommandRegistration, FieldKind, FieldValue, FormError, FormField, Launcher,
+    Runtime, Screen, Status,
+};
 use wasmtime::component::Component;
 use wasmtime::{Config, Engine};
 
@@ -32,11 +36,12 @@ const TYPESCRIPT: Sample = Sample {
 };
 
 /// (item id, title) of every sample, in order.
-const ITEMS: [(&str, &str); 4] = [
+const ITEMS: [(&str, &str); 5] = [
     ("greet", "Say hello"),
     ("wait", "Wait briefly"),
     ("validate", "Validate settings"),
     ("random", "Roll a number"),
+    ("form", "Greet someone"),
 ];
 
 fn guest(name: &str) -> PathBuf {
@@ -82,6 +87,22 @@ impl Sample {
             .unwrap_or_else(|| panic!("the {} sample has no {id} item", self.language));
         launcher.select(index);
         block_on(launcher.activate_selected());
+        launcher.view().status
+    }
+
+    /// A launcher with this sample's form opened.
+    fn open_form(&self) -> Launcher {
+        let launcher = self.open();
+        assert_eq!(self.run(&launcher, "form"), Status::Idle);
+        assert_eq!(launcher.view().screen, Screen::Form);
+        launcher
+    }
+
+    /// Fills in the form's name and greeting, submits it and returns the status.
+    fn submit(&self, launcher: &Launcher, name: &str, greeting: &str) -> Status {
+        launcher.set_field_value("name", name);
+        launcher.set_field_value("greeting", greeting);
+        block_on(launcher.submit_form());
         launcher.view().status
     }
 
@@ -183,6 +204,113 @@ fn the_component_imports_only_wasi_0_3(sample: &Sample) {
     assert!(other.is_empty(), "non-WASI 0.3 imports: {other:?}");
 }
 
+fn opening_the_form_shows_its_fields(sample: &Sample) {
+    let view = sample.open_form().view();
+
+    assert_eq!(view.title, "Greet someone");
+    let form = view.form.expect("a form");
+    assert_eq!(form.submit_label, "Greet");
+    let choice = |id: &str, label: &str| Choice {
+        id: id.into(),
+        label: label.into(),
+    };
+    assert_eq!(
+        form.fields,
+        [
+            FormField {
+                id: "name".into(),
+                label: "Name".into(),
+                kind: FieldKind::Text {
+                    placeholder: Some("Ada Lovelace".into())
+                },
+                value: String::new(),
+                error: None,
+            },
+            FormField {
+                id: "greeting".into(),
+                label: "Greeting".into(),
+                kind: FieldKind::Choice(vec![
+                    choice("hello", "Hello"),
+                    choice("morning", "Good morning"),
+                    choice("welcome", "Welcome"),
+                ]),
+                value: "hello".into(),
+                error: None,
+            },
+        ]
+    );
+}
+
+fn a_valid_form_shows_the_guests_answer(sample: &Sample) {
+    let launcher = sample.open_form();
+
+    assert_eq!(
+        sample.submit(&launcher, "Ada", "morning"),
+        Status::Result(format!(
+            "Good morning, Ada, from the {} guest",
+            sample.language
+        ))
+    );
+    assert_eq!(launcher.view().screen, Screen::Form);
+}
+
+fn an_invalid_field_is_marked_and_the_form_stays_open(sample: &Sample) {
+    let launcher = sample.open_form();
+
+    let status = sample.submit(&launcher, "   ", "welcome");
+
+    assert_eq!(status, Status::Error("Name: Enter a name".into()));
+    let view = launcher.view();
+    assert_eq!(view.screen, Screen::Form);
+    let fields = view.form.unwrap().fields;
+    assert_eq!(fields[0].error.as_deref(), Some("Enter a name"));
+    assert_eq!(fields[1].error, None);
+    // The values survive the rejection, and a corrected form is accepted.
+    assert_eq!(
+        (fields[0].value.as_str(), fields[1].value.as_str()),
+        ("   ", "welcome")
+    );
+    assert_eq!(
+        sample.submit(&launcher, "Grace", "welcome"),
+        Status::Result(format!(
+            "Welcome, Grace, from the {} guest",
+            sample.language
+        ))
+    );
+}
+
+fn a_too_long_name_is_rejected_by_the_guest(sample: &Sample) {
+    let launcher = sample.open_form();
+
+    let status = sample.submit(&launcher, &"x".repeat(41), "hello");
+
+    assert_eq!(
+        status,
+        Status::Error("Name: Use at most 40 characters".into())
+    );
+}
+
+fn an_unknown_choice_is_a_field_error_from_the_guest(sample: &Sample) {
+    // The launcher only submits offered choices, so call the guest directly.
+    let runtime = Runtime::start().unwrap();
+    let values = [("name", "Ada"), ("greeting", "howdy")]
+        .map(|(id, value)| FieldValue {
+            id: id.into(),
+            value: value.into(),
+        })
+        .to_vec();
+
+    let answer = block_on(runtime.submit_form(&sample.path(), "form", values));
+
+    assert_eq!(
+        answer,
+        Err(CallError::Form(FormError {
+            field: Some("greeting".into()),
+            message: "Choose a greeting".into(),
+        }))
+    );
+}
+
 /// Declares one test per check for each sample.
 macro_rules! contract {
     ($($check:ident),* $(,)?) => {
@@ -207,6 +335,11 @@ contract!(
     separately_started_runtimes_roll_different_numbers,
     one_instance_rolls_a_new_number_each_time,
     the_component_imports_only_wasi_0_3,
+    opening_the_form_shows_its_fields,
+    a_valid_form_shows_the_guests_answer,
+    an_invalid_field_is_marked_and_the_form_stays_open,
+    a_too_long_name_is_rejected_by_the_guest,
+    an_unknown_choice_is_a_field_error_from_the_guest,
 );
 
 /// The names of the component's imports.
