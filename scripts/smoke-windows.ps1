@@ -616,4 +616,50 @@ python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: Retry changed nothing" }
 Stop-Pane $process
 if (Select-String -Quiet -SimpleMatch '"paused"' (Join-Path $data "extensions/installed.json")) { throw "pause not cleared" }
+
+# Native helpers: the helper sample's command runs pane-echo, the file its
+# package ships for this system (built by `cargo xtask guests`). Its first
+# item shows the helper's answer, naming the system; its third races the
+# helper against a one-second timer and cancels it. Its second has the
+# helper wait ten seconds: disabling the package meanwhile (its row is the
+# first in Manage extensions) ends the helper's process at once, and the
+# note it saved before is kept. A data folder of its own keeps the rows in a
+# known order; the helper runs from its managed copy there.
+$data = Join-Path $OutDir "helper-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+$packages = [System.IO.Path]::GetFullPath((Join-Path $data "extensions/packages"))
+# Pane's helper processes: pane-echo run from this data folder.
+function Helpers-Running {
+    [bool](Get-Process -Name "pane-echo" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -and $_.Path.StartsWith($packages, [System.StringComparison]::OrdinalIgnoreCase) })
+}
+$process = Start-Pane "stderr-helper.log" @("--install", "target/guests/packages/sample-helper")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Helper sample is selected
+Send "{ENTER}"; Start-Sleep -Seconds 2   # open Helper sample
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Echo through the helper
+Capture "63-helper-echoed.png"
+Check "63-helper-echoed.png" "9fd8a8"   # 'Echoed "hello from Pane" on Windows x86-64'
+Send "{DOWN 2}{ENTER}"; Start-Sleep -Seconds 3   # Echo within a second
+Capture "64-helper-cancelled.png"
+Check "64-helper-cancelled.png" "9fd8a8"   # "Stopped the helper after one second"
+$shots = "63-helper-echoed", "64-helper-cancelled" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the helper's answers look the same" }
+if (Helpers-Running) { throw "a cancelled helper is still running" }
+Send "{UP}{ENTER}"; Start-Sleep -Seconds 2   # Echo after waiting
+if (-not (Helpers-Running)) { throw "the waiting helper is not running" }
+Capture "65-helper-waiting.png"
+Send "{ESC}"; Start-Sleep -Seconds 1   # root search; the helper keeps running
+Send "{DOWN 10}"   # Manage extensions…
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Send "{ENTER}"; Start-Sleep -Seconds 2   # disable Helper sample
+Capture "66-helper-disabled.png"
+Check "66-helper-disabled.png" "9fd8a8"   # "Disabled Helper sample"
+if (Helpers-Running) { throw "the helper outlived its disabled package" }
+$settings = Join-Path $data "extensions/settings.json"
+if (-not (Select-String -Quiet -SimpleMatch '"helper-wait": "started"' $settings)) { throw "saved note lost" }
+if (Select-String -Quiet -SimpleMatch '"helper-wait": "finished"' $settings) { throw "the stopped call finished" }
+Stop-Pane $process
+if (Helpers-Running) { throw "a helper outlived Pane" }
 Write-Output "screenshots in $OutDir"

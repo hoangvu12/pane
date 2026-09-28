@@ -1,0 +1,172 @@
+# Native helpers
+
+Added for [#15](https://github.com/hoangvu12/pane/issues/15) (US40, US41,
+US42, US64; T09, T22; contributions to G2 and G3, not claims that they
+pass). A command can run a **native helper**
+([glossary](../CONTEXT.md)): a prebuilt program its package ships for each
+operating system and processor it supports, for functionality a WASI 0.3
+guest cannot reach itself ([ADR 0014](adr/0014-optional-native-extension-helpers.md)).
+Pane runs the file for the system it runs on, passes its input and output,
+explains a helper it cannot run, and ends the helper's process when the
+command cancels the run and when the package is disabled, reloaded,
+updated, paused or uninstalled. The command itself stays a WASI 0.3
+component; Pane never compiles a helper.
+
+## The contract
+
+- **Host import** `pane:extension/helpers` ([`wit/helpers.wit`](../wit/helpers.wit)),
+  in the world Pane hosts, `extension-with-helpers`: one function,
+  `run(helper, args, input) -> result<string, helper-error>`. Pane starts the
+  package's helper `helper` with `args`, writes `input` to its standard input
+  and closes it, and answers with what it wrote to its standard output once
+  it exits with success. Rust commands call it as
+  `pane_guest::helpers::run` ([pane-guest](../guests/pane-guest/src/lib.rs)).
+- **Package declaration**, under `helpers` in `pane.json`: each helper's
+  `id` and its file for each **target** it is built for, `<os>-<arch>` with
+  `windows`, `macos` or `linux` and `x86_64` or `aarch64`:
+
+  ```json
+  "helpers": [
+    {
+      "id": "echo",
+      "targets": {
+        "linux-x86_64": "helpers/linux-x86_64/pane-echo",
+        "macos-aarch64": "helpers/macos-aarch64/pane-echo",
+        "windows-x86_64": "helpers/windows-x86_64/pane-echo.exe"
+      }
+    }
+  ]
+  ```
+
+  Files are relative paths inside the package folder. A target Pane does not
+  know, a path outside the package, a helper without targets or a repeated
+  id makes the manifest invalid.
+- **Errors** carry a kind and a message for people:
+
+  | Kind | When |
+  | --- | --- |
+  | `not-found` | The package's `pane.json` declares no helper by that name ("Helper sample declares no helper `absent` in its pane.json; it declares `echo`"). |
+  | `unavailable` | No file for this target ("Not available on Linux arm64: helper `echo` is built only for Linux x86-64, macOS arm64 and Windows x86-64"), the file is missing or is a program for another system, or the system would not start it. |
+  | `failed` | The helper exited unsuccessfully ("helper `echo` failed (exit code 3): pane-echo was asked to fail", with the last 2 KB of its standard error), or its output is not UTF-8 text. |
+  | `refused` | The command's code was stopped (disabled, reloaded, updated, paused, uninstalled), the command is built into Pane rather than an installed package's, the input (1 MiB), arguments (64, 64 KiB) or output (1 MiB) are over Pane's limits, or Pane stopped the run. |
+
+## Installing and choosing the file
+
+- **Install and update** check this system's file, where the package ships
+  one: it must be there, and its header must be a program for this target
+  (ELF on Linux, Mach-O, including universal, on macOS, PE on Windows, each
+  with the target's processor; a `#!` script is accepted on macOS and
+  Linux). Otherwise the package is refused: "Not ready to run: the package
+  ships helper `echo` for Linux x86-64, but its file helpers/linux-x86_64/pane-echo
+  is a program for Windows x86-64, not Linux x86-64", or "... is missing".
+- A package that ships a helper only for **other targets** installs: its
+  other commands and items work, and running the helper explains which
+  targets it is built for.
+- Only **this system's file** is copied into the managed copy, and it is
+  made executable on macOS and Linux (a package fetched as an archive may
+  have lost the permission). Other targets' files are not copied.
+- The **package preview** lists each helper's targets, marking this
+  system's: "Helpers: echo for Linux x86-64 (this system), macOS arm64 and
+  Windows x86-64", or "... (none for this system)".
+- Running re-checks the file in the managed copy, so a file replaced or
+  removed after installing is explained, not started.
+- Pane compiles nothing on the user's machine: the package author builds a
+  helper for each target they support and puts the files in the package.
+
+## Running and stopping
+
+A helper's process belongs to Pane. Its standard input receives the input
+and is closed; its standard output and error are read by Pane; it runs in
+its own folder of the installed package, with Pane's environment, and on
+Windows without a console window. One supervising thread per run owns the
+process: it ends it (`kill`: SIGKILL on macOS and Linux, `TerminateProcess`
+on Windows) and reaps it when the first of these happens:
+
+| Event | How it reaches the helper |
+| --- | --- |
+| The command **cancels** the run: it drops the call's future, for example when a timer wins a race with it | Wasmtime cancels the host task (`subtask.cancel`) and drops its future; dropping ends the process. |
+| The **Pane call** that started it returns while it still runs | The runtime ends the helpers the instance started when the call ends: a helper runs no longer than the call that started it. |
+| The package is **disabled, reloaded, updated, paused or uninstalled** | Its [generation](generations.md) ends. The supervising thread checks the generation itself, every 10 ms, so this holds even while the runtime thread is busy in another guest that does not yield; the call is also stopped and its instance dropped as for any call. |
+| The guest **instance** goes (it crashed, was forgotten, the runtime stopped) | Dropping the instance's state ends the helpers it started. |
+| **Pane quits** | The window's quit handler ends every helper. |
+
+A helper that writes more than 1 MiB of output is ended too. Saved data is
+untouched: what the command saved before the helper was stopped is kept
+("started" in the sample), and nothing after its `await` runs.
+
+## Limits
+
+- **Descendants are not contained.** Pane ends the helper's own process,
+  not processes it starts: those are the helper's to end. A detached or
+  daemonized descendant keeps running on every system; a child still
+  holding the helper's output open makes the run fail with "a process it
+  started still holds its output open" after a one-second grace. Process
+  groups, Windows job objects and PR_SET_PDEATHSIG are not used.
+- **Pane ended from outside** (a signal such as SIGTERM or SIGKILL, a
+  crash, Task Manager's End task) ends no helper: a running helper keeps
+  going until it exits by itself (its input is closed and its output goes
+  nowhere). Quitting Pane (closing its window) ends them; the smokes end
+  Pane with a signal only once no helper runs.
+- **Update on Windows while a helper runs:** the old managed copy is removed
+  before the old code's generation ends, so Windows may refuse to remove the
+  running program's folder; it is then left over and removed at the next
+  start, as for any folder in use. The helper itself is still ended.
+- No timeout: a helper runs until it exits, the command cancels it or the
+  package stops. No user-facing cancel of a running action exists yet
+  (generations: [no user cancellation](generations.md#what-stopping-cannot-do-yet)); hangs are #18.
+- Text only: input and output are UTF-8 strings, not binary data or
+  streams, and a run answers once, when the helper exits. The helper's
+  environment and working folder are fixed as above, and standard error is
+  shown only for a failure.
+- Targets: `x86_64` and `aarch64` on the three systems; 32-bit, musl versus
+  glibc, minimum OS versions and library dependencies of a helper are not
+  checked or claimed. A Linux helper linked against libraries the user's
+  system lacks fails when started.
+- **Rust only for now.** The helper sample is Rust; JavaScript and
+  TypeScript commands cannot import `pane:extension/helpers` until the JS
+  world (`guests/js/wit/world.wit`) includes it, which rebuilds every
+  prebuilt JS/TS component.
+- Stopping a call that awaits a helper still drops its instance, like any
+  stopped call ([what stopping costs](generations.md#what-stopping-costs));
+  cancelling a run from inside the guest does not.
+
+## Author instructions
+
+See [Native helpers](../guests/README.md#native-helpers) in the guests
+README: writing the helper, building it for each target, declaring it in
+`pane.json` and calling it from a command.
+
+## Checks
+
+- Runner ([`crates/pane-core/src/helpers/runner.rs`](../crates/pane-core/src/helpers/runner.rs)),
+  with the real `pane-echo`: the answer; dropping a run ends its process; a
+  generation ending ends it with nobody polling; stopping one instance's
+  helpers leaves another's; stopping all; a flood of output ends it; a
+  program that cannot start; reading each system's program headers (ELF,
+  Mach-O thin and universal, PE, scripts) and explaining a file for another
+  target, on every system; the targets; the limits.
+- Launcher public interface ([`crates/pane-core/tests/helpers.rs`](../crates/pane-core/tests/helpers.rs)),
+  with the helper sample and the real helper: its answer names this system;
+  installing copies only this system's file, executable; the preview lists
+  the targets; a failing helper's exit code and standard error; an
+  undeclared helper; a helper not built for this system, while the rest of
+  the command works; a file for another system or missing, refused at
+  install; a file replaced after install, explained when run; cancelling a
+  run; disabling, reloading, updating and uninstalling while the helper
+  runs, each ending the process (Pane lists none, and the system has no
+  process with its id: `kill -0` on macOS and Linux, `tasklist` on
+  Windows), keeping the saved "started" note, and the new code running the
+  helper again; three cycles of disable, reload and cancel; and invalid
+  helper declarations.
+- Native GUI smokes, one identical phase on all three systems (screenshots
+  63 to 66, data folder `helper-data`): install the helper sample, run the
+  helper (its answer names the system), cancel one after a second, start
+  the waiting one, check with the system (`pgrep`, `Get-Process`) that it
+  runs, disable the package and check that the process is gone, the note is
+  kept, and no helper outlives Pane. See the
+  [Linux](platforms/linux.md#native-helpers-15), [macOS](platforms/macos.md#native-helpers-15)
+  and [Windows](platforms/windows.md#native-helpers-15) notes for where it
+  has run.
+- These run in `cargo xtask ci`, which builds `pane-echo` for the system it
+  runs on (CI: Windows Server 2025 x86-64, macOS 15 arm64, Ubuntu 24.04
+  x86-64). When this was written they had run on Linux x86-64 only.

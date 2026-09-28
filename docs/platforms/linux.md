@@ -384,6 +384,31 @@ window manager, so raising and focusing Pane's window
 (`_NET_ACTIVE_WINDOW`) is not verified; Wayland is explained as unavailable
 (tested with a fake, not natively), and no real desktop session ran.
 
+### Native helpers (#15)
+
+The last phase, after the pausing phase ([native helpers](../helpers.md#checks)),
+with a data folder of its own (`helper-data`), installs the helper sample,
+whose `pane-echo` `cargo xtask guests` built for `linux-x86_64`, and runs
+it with real X11 key events: the answer names Linux x86-64; "Echo within a
+second" cancels the slow run after one second; "Echo after waiting" starts
+the ten-second run, which `pgrep -f` finds running from the managed copy in
+the data folder; Escape, then disabling the package in Manage extensions,
+ends it: `pgrep` finds no helper, `settings.json` keeps "started" and never
+gets "finished", and no helper outlives Pane. Run locally on 2026-09-28
+(Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64, same Xvfb/lavapipe
+setup): all checks of the whole smoke passed.
+
+| Step | Evidence |
+| --- | --- |
+| "Echo through the helper": 'Echoed "hello from Pane" on Linux x86-64' | [63-helper-echoed.png](evidence/linux-x11/63-helper-echoed.png) |
+| "Echo within a second": "Stopped the helper after one second"; no helper runs | [64-helper-cancelled.png](evidence/linux-x11/64-helper-cancelled.png) |
+| "Echo after waiting" running; the helper process runs | [65-helper-waiting.png](evidence/linux-x11/65-helper-waiting.png) |
+| "Disabled Helper sample"; the helper process is gone, the note kept | `66-helper-disabled.png` (not committed: the list's rows show the local checkout path) |
+
+The tests in `crates/pane-core/tests/helpers.rs` also end the helper by
+reloading, updating and uninstalling, and check each process with `kill
+-0`. Only Linux x86-64 ran a helper; `linux-aarch64` was not built or run.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms have a text field (GPUI CE's

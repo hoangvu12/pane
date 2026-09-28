@@ -156,6 +156,22 @@ compile- and lint-checked for `x86_64-apple-darwin` from Linux; **not run
 on macOS yet**, so registration, delivery on the main run loop and the
 focus transition are unverified natively.
 
+## Native helpers (#15)
+
+The smoke's last phase (screenshots 63 to 66, data folder `helper-data`,
+[native helpers](../helpers.md#checks)) installs the helper sample, whose
+`pane-echo` `cargo xtask guests` builds for the runner (`macos-aarch64` on
+`macos-15`), runs it (the answer must name macOS arm64), cancels a slow run
+after a second, starts the ten-second run, checks with `pgrep` that the
+helper runs from the managed copy, disables the package and checks that the
+process is gone, that the saved "started" note is kept, and that no helper
+outlives Pane. The tests in `crates/pane-core/tests/helpers.rs` and the
+runner's unit tests (a Mach-O header, `kill -0`) run in `cargo xtask ci`
+there. The runner was only compile- and lint-checked for
+`x86_64-apple-darwin` from Linux; **not run on macOS yet**, so starting,
+ending and reaping a helper natively, and the executable permission of the
+copied file, are unverified there. No macOS x86-64 build was made.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms now have a text field. The

@@ -645,4 +645,43 @@ check 62-pause-retried.png 9fd8a8   # "Started Settings sample"
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{61-pause-details,62-pause-retried}.png
 stop_pane
 if grep -q '"paused"' "$PANE_DATA_DIR/extensions/installed.json"; then echo "pause not cleared"; exit 1; fi
+
+# Native helpers: the helper sample's command runs pane-echo, the file its
+# package ships for this system (built by `cargo xtask guests`). Its first
+# item shows the helper's answer, naming the system; its third races the
+# helper against a one-second timer and cancels it. Its second has the
+# helper wait ten seconds: disabling the package meanwhile (its row is the
+# first in Manage extensions) ends the helper's process at once, and the
+# note it saved before is kept. A data folder of its own keeps the rows in a
+# known order; the helper runs from its managed copy there.
+export PANE_DATA_DIR=$out/helper-data
+rm -rf "$PANE_DATA_DIR"
+# Pane's helper processes: pane-echo run from this data folder.
+helpers_running() { pgrep -f "$PANE_DATA_DIR/extensions/packages/.*/pane-echo" >/dev/null; }
+start_pane --install target/guests/packages/sample-helper
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 2   # Install; Helper sample is selected
+"$xdotool" key Return; sleep 2   # open Helper sample
+"$xdotool" key Return; sleep 2   # Echo through the helper
+capture 63-helper-echoed.png
+check 63-helper-echoed.png 9fd8a8   # 'Echoed "hello from Pane" on Linux x86-64'
+"$xdotool" key Down Down Return; sleep 3   # Echo within a second
+capture 64-helper-cancelled.png
+check 64-helper-cancelled.png 9fd8a8   # "Stopped the helper after one second"
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{63-helper-echoed,64-helper-cancelled}.png
+if helpers_running; then echo "a cancelled helper is still running"; exit 1; fi
+"$xdotool" key Up Return; sleep 2   # Echo after waiting
+helpers_running || { echo "the waiting helper is not running"; exit 1; }
+capture 65-helper-waiting.png
+"$xdotool" key Escape; sleep 1   # root search; the helper keeps running
+for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+"$xdotool" key Return; sleep 1
+"$xdotool" key Return; sleep 2   # disable Helper sample
+capture 66-helper-disabled.png
+check 66-helper-disabled.png 9fd8a8   # "Disabled Helper sample"
+if helpers_running; then echo "the helper outlived its disabled package"; exit 1; fi
+grep -q '"helper-wait": "started"' "$PANE_DATA_DIR/extensions/settings.json" || { echo "saved note lost"; exit 1; }
+if grep -q '"helper-wait": "finished"' "$PANE_DATA_DIR/extensions/settings.json"; then echo "the stopped call finished"; exit 1; fi
+stop_pane
+if helpers_running; then echo "a helper outlived Pane"; exit 1; fi
 echo "screenshots in $out"

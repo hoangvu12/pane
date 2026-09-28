@@ -144,6 +144,14 @@ _Avoid_: API, command (a command is what the user opens), endpoint
 The operation calls waiting on one another at one moment, from the command that made the first; each package in it is busy until its call returns, so a call back into one is refused rather than waited on.
 _Avoid_: Call stack (of one guest), workflow
 
+**Native helper**:
+A prebuilt program an installed package ships for each target (operating system and processor) it supports, which its commands run through Pane for what a WASI guest cannot do; Pane runs this system's file, never compiles one, and ends its process when the command cancels the run, the call that started it returns or the package's generation ends. Processes the helper starts itself are its own.
+_Avoid_: Plugin binary, native extension (the extension's entry point stays a WASI component), sidecar
+
+**Helper target**:
+The operating system and processor a native helper's file is built for, written `<os>-<arch>` in the package manifest, such as `linux-x86_64` or `macos-aarch64`; Pane runs only the file for its own target.
+_Avoid_: Platform (a supported platform is an operating system alone), triple
+
 **Form**:
 A set of fields an extension command asks the user to fill in and submit; the launcher renders its standard controls and the extension validates the submitted values.
 _Avoid_: Dialog, custom view

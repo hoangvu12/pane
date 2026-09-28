@@ -134,6 +134,27 @@ adapter was only compile- and lint-checked for `x86_64-pc-windows-gnu` from
 Linux; **not run on Windows yet**, so registration, delivery and the focus
 transition (foreground rules) are unverified natively.
 
+## Native helpers (#15)
+
+The smoke's last phase (screenshots 63 to 66, data folder `helper-data`,
+[native helpers](../helpers.md#checks)) installs the helper sample, whose
+`pane-echo.exe` `cargo xtask guests` builds for the runner
+(`windows-x86_64` on `windows-2025`), runs it (the answer must name Windows
+x86-64), cancels a slow run after a second, starts the ten-second run,
+checks with `Get-Process` that the helper runs from the managed copy,
+disables the package and checks that the process is gone, that the saved
+"started" note is kept, and that no helper outlives Pane. The tests in
+`crates/pane-core/tests/helpers.rs` (a PE header, `tasklist` for the
+process) and the runner's unit tests run in `cargo xtask ci` there. Pane
+starts a helper without a console window (`CREATE_NO_WINDOW`) and ends it
+with `TerminateProcess`; a helper's own children are not in a job object.
+The runner was only compile- and lint-checked for `x86_64-pc-windows-gnu`
+from Linux; **not run on Windows yet**, so starting, ending and reaping a
+helper natively, and the smoke's process check, are unverified there. An
+update while a helper runs may leave the old managed copy for removal at
+the next start (Windows keeps a running program's folder in use). No
+Windows arm64 build was made.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** the smoke now also opens the Rust command's

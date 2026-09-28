@@ -128,7 +128,8 @@ from the Rust sample with the two other systems in `platforms`.
 ## Limits
 
 - No architecture declaration: components are architecture-independent WASI.
-  Native helper artifacts matching OS/architecture belong to #15.
+  Native helpers are the exception: a package names one file per operating
+  system and processor, and Pane runs only this system's ([helpers](helpers.md), #15).
 - The commands this build supplies (the samples) declare no platforms; only
   packages, their commands and list items can. Aliases, fallbacks and other
   surfaces do not exist yet.
