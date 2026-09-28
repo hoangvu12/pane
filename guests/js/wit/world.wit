@@ -9,8 +9,8 @@
 //
 // A command whose package.json sets `"pane": { ... }` options also exports
 // the interfaces they name: `rootResults` (wit/root-results.wit),
-// `indexedResults` (wit/applications.wit) and `operations`
-// (wit/operations.wit). The build writes a world `js-command` including
+// `indexedResults` (wit/applications.wit), `operations`
+// (wit/operations.wit) and `takesQuery` (wit/query.wit). The build writes a world `js-command` including
 // this one with those exports (tools/componentize-js/pane_js.py).
 package pane:js-guest@0.1.0;
 

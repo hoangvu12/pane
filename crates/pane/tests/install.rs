@@ -178,6 +178,7 @@ fn an_installed_package_is_disabled_and_enabled_from_the_extension_list(cx: &mut
             "Clear cache of Hello",
             "Uninstall Hello",
             "Hotkey for Say hello",
+            "Alias for Say hello",
             "Develop Hello"
         ]
     );
@@ -308,6 +309,7 @@ fn a_reload_that_fails_to_start_offers_retry(cx: &mut TestAppContext) {
             "Clear cache of Hello",
             "Uninstall Hello",
             "Hotkey for Say hello",
+            "Alias for Say hello",
             "Develop Hello"
         ]
     );
@@ -335,6 +337,7 @@ fn a_reload_that_fails_to_start_offers_retry(cx: &mut TestAppContext) {
             "Clear cache of Hello",
             "Uninstall Hello",
             "Hotkey for Say hello",
+            "Alias for Say hello",
             "Develop Hello"
         ]
     );
@@ -357,6 +360,7 @@ fn an_installed_package_cache_is_cleared_after_confirming(cx: &mut TestAppContex
             "Clear cache of Hello",
             "Uninstall Hello",
             "Hotkey for Say hello",
+            "Alias for Say hello",
             "Develop Hello"
         ]
     );

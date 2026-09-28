@@ -308,6 +308,7 @@ fn uninstalling_and_keeping_saved_data_restores_it_on_reinstall(fixture: &Fixtur
             "Clear cache of Settings sample",
             "Uninstall Settings sample",
             "Hotkey for Greeting",
+            "Alias for Greeting",
             "Develop Settings sample",
         ]
     );

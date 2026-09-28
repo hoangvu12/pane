@@ -24,6 +24,8 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+mod aliases;
+mod choices;
 mod hotkeys;
 mod indexed;
 
@@ -49,6 +51,8 @@ mod reload;
 mod retained;
 mod uninstall;
 
+use aliases::AliasChoices;
+use choices::Record;
 use develop::Developing;
 pub use develop::Development;
 use hotkeys::Bindings;
@@ -68,6 +72,17 @@ pub struct CommandRegistration {
     pub title: String,
     pub subtitle: Option<String>,
     pub component: PathBuf,
+    /// Whether the command takes a query (`"takesQuery": true`): text typed
+    /// into root search, sent to it through its alias or as a fallback.
+    pub takes_query: bool,
+}
+
+impl CommandRegistration {
+    /// The command's id in its package manifest: the part of [`Self::id`]
+    /// after the package identity's key, for an installed command.
+    pub fn manifest_id(&self) -> &str {
+        choices::split(&self.id).1
+    }
 }
 
 /// Which screen the launcher shows, with what only that screen has.
@@ -390,6 +405,12 @@ struct State {
     paused: Pauses,
     /// The global hotkeys the user assigned to commands.
     bindings: Bindings,
+    /// The aliases and fallbacks the user gave commands.
+    aliases: Record<AliasChoices>,
+    /// The query root search showed when the status line began showing a
+    /// command's answer to a query sent from it (or its sending), so that
+    /// changing the query clears it.
+    sent_from: Option<String>,
 }
 
 /// What is happening to a package, which stops another change to it
@@ -483,13 +504,21 @@ struct Change {
 
 /// What the launcher keeps about the open form besides its view.
 struct OpenForm {
-    /// The item of the open command that the form belongs to.
-    item_id: String,
+    /// What submitting the form does.
+    purpose: FormPurpose,
     /// The command view that Back returns to.
     return_to: LauncherView,
     /// Whether a submission is waiting for the extension's reply; further
     /// submissions are ignored meanwhile.
     submitting: bool,
+}
+
+/// What submitting a form does.
+enum FormPurpose {
+    /// Sends it to the open command, for its item with this id.
+    Item(String),
+    /// Sets the alias of the installed command with this id (Pane's own).
+    Alias(String),
 }
 
 /// What the launcher keeps about the open custom view besides its snapshot.
@@ -543,6 +572,8 @@ struct RootResult {
     row: Row,
     entry: Entry,
     keys: Keys,
+    /// The installed command it opens, for its alias and fallback.
+    target: Option<aliases::Target>,
 }
 
 /// A root result a command computed from the current query.
@@ -564,6 +595,9 @@ enum Entry {
     OpenApplication { id: String, name: String },
     /// Open the command with this component (root).
     Open(PathBuf),
+    /// Send a query to a command that takes one, and show its answer
+    /// (root: an alias or fallback).
+    Send(aliases::Sending),
     /// Explain why this installed package cannot load (root).
     Broken(String),
     /// Explain why this command (root) or this item's action (command view)
@@ -609,6 +643,15 @@ enum Entry {
     AskHotkey(String),
     /// Remove the hotkey of the command with this id (hotkey screen).
     RemoveHotkey(String),
+    /// Show the form setting the alias of the command with this id
+    /// (extension list).
+    AskAlias(String),
+    /// Make the command with this id a fallback, or no longer one
+    /// (extension list).
+    ToggleFallback(String),
+    /// Forget the alias and fallback of the command with this id, which
+    /// cannot be listed (extension list).
+    ForgetChoices(String),
     /// Ask whether to uninstall this installed package, and whether to keep
     /// its saved data (extension list).
     AskUninstall(PackageIdentity),
@@ -661,16 +704,18 @@ impl Launcher {
         commands: Vec<CommandRegistration>,
         installation: Option<Installation>,
     ) -> Self {
-        let (packages, retained, store_problem, paused, bindings) = match &installation {
+        let (packages, retained, store_problem, paused, bindings, aliases) = match &installation {
             Some(installation) => {
                 let store = installation.store.lock().unwrap_or_else(|p| p.into_inner());
                 let bindings = Bindings::open(&installation.dir);
+                let aliases = Record::open(&installation.dir);
                 (
                     store.installed(),
                     store.retained(),
                     store.problem(),
                     store.paused(),
                     bindings,
+                    aliases,
                 )
             }
             None => (
@@ -679,6 +724,7 @@ impl Launcher {
                 None,
                 Vec::new(),
                 Bindings::default(),
+                Record::default(),
             ),
         };
         let mut state = State {
@@ -699,6 +745,8 @@ impl Launcher {
             store_problem,
             paused: Pauses::default(),
             bindings,
+            aliases,
+            sent_from: None,
         };
         if let Some(installation) = &installation {
             for package in &state.packages {
@@ -816,9 +864,16 @@ impl Launcher {
     pub fn move_selection(&self, delta: isize) {
         let mut state = self.lock();
         let view = &mut state.view;
-        if let Some(selected) = view.selected {
-            let last = view.rows.len() - 1;
-            view.selected = Some(selected.saturating_add_signed(delta).min(last));
+        match view.selected {
+            Some(selected) => {
+                let last = view.rows.len() - 1;
+                view.selected = Some(selected.saturating_add_signed(delta).min(last));
+            }
+            // Only root search's fallbacks are listed with none selected:
+            // Down chooses the first, Up the last.
+            None if view.rows.is_empty() => {}
+            None if delta > 0 => view.selected = Some(0),
+            None => view.selected = Some(view.rows.len() - 1),
         }
     }
 
@@ -964,11 +1019,15 @@ impl Launcher {
     fn search(&self, state: &mut State, query: &str) {
         state.search_epoch += 1;
         state.computed.clear();
+        // A command's answer to the query sent is not an answer to this one.
+        if state.sent_from.take().is_some_and(|sent| sent != query) {
+            state.view.status = Status::Idle;
+        }
         let (rows, entries) = root_rows(state, query);
         state.view.screen = Screen::Root {
             query: query.to_owned(),
         };
-        state.view.selected = first_index(&rows);
+        state.view.selected = aliases::first_choice(&entries);
         state.view.rows = rows;
         state.entries = entries;
     }
@@ -1139,10 +1198,24 @@ impl Launcher {
         let mut change = None;
         let mut reload = None;
         let mut hotkey_change = None;
+        let mut choice_change = None;
         let mut uninstall = None;
         let mut develop = None;
         let mut delete_retained = None;
+        // The status line is about this action from now on.
+        state.sent_from = None;
         let entry = match entry {
+            Some(Entry::Send(sending)) => match &sending.unavailable {
+                Some(reason) => {
+                    state.view.status = Status::Error(reason.clone());
+                    None
+                }
+                None => {
+                    state.sent_from = state.view.query().map(str::to_owned);
+                    state.view.status = Status::Running;
+                    Some(Entry::Send(sending))
+                }
+            },
             Some(Entry::Broken(problem) | Entry::Unavailable(problem)) => {
                 state.view.status = Status::Error(problem);
                 None
@@ -1224,6 +1297,18 @@ impl Launcher {
                 hotkey_change = self.remove_hotkey(&mut state, &command);
                 None
             }
+            Some(Entry::AskAlias(command)) => {
+                self.show_alias_form(&mut state, &command);
+                None
+            }
+            Some(Entry::ToggleFallback(command)) => {
+                choice_change = Some(self.toggle_fallback(&mut state, &command));
+                None
+            }
+            Some(Entry::ForgetChoices(command)) => {
+                choice_change = Some(self.forget_choices(&mut state, &command));
+                None
+            }
             Some(Entry::Toggle(identity)) => {
                 // The package's state when the user pressed, not when the
                 // future runs.
@@ -1255,7 +1340,9 @@ impl Launcher {
         // A call into the package belongs to its generation as of now, not
         // as of when the returned future first runs.
         let called = match &entry {
-            Some(Entry::Open(component)) => Some(component),
+            Some(Entry::Open(component) | Entry::Send(aliases::Sending { component, .. })) => {
+                Some(component)
+            }
             Some(Entry::Run(_) | Entry::CustomView(..)) => open.as_ref(),
             _ => None,
         };
@@ -1275,6 +1362,9 @@ impl Launcher {
             if let Some(hotkey_change) = hotkey_change {
                 launcher.finish_hotkey_change(hotkey_change).await;
             }
+            if let Some(choice_change) = choice_change {
+                launcher.finish_choice_change(choice_change).await;
+            }
             if let Some(uninstall) = uninstall {
                 launcher.finish_uninstall(epoch, uninstall).await;
             }
@@ -1283,6 +1373,7 @@ impl Launcher {
             }
             match entry {
                 Some(Entry::Open(component)) => launcher.open_command(epoch, component, data).await,
+                Some(Entry::Send(sending)) => launcher.run_query(epoch, sending, data).await,
                 Some(Entry::OpenApplication { id, name }) => {
                     launcher.open_application(epoch, id, name).await
                 }
@@ -1318,6 +1409,9 @@ impl Launcher {
                     | Entry::AskClearCache(_)
                     | Entry::AskHotkey(_)
                     | Entry::RemoveHotkey(_)
+                    | Entry::AskAlias(_)
+                    | Entry::ToggleFallback(_)
+                    | Entry::ForgetChoices(_)
                     | Entry::AskUninstall(_)
                     | Entry::Uninstall(..)
                     | Entry::AskDeleteRetained(_)
@@ -1661,6 +1755,7 @@ impl Launcher {
     /// command with component `select` if given, else the first row.
     fn show_root(&self, state: &mut State, select: Option<PathBuf>) {
         state.root = self.root_results(state);
+        state.sent_from = None;
         state.computed.clear();
         state.indexes.stale();
         let (rows, entries) = root_rows(state, "");
@@ -1670,7 +1765,7 @@ impl Launcher {
                     .iter()
                     .position(|entry| matches!(entry, Entry::Open(c) if *c == component))
             })
-            .or_else(|| first_index(&rows));
+            .or_else(|| aliases::first_choice(&entries));
         self.leave_command(state);
         state.entries = entries;
         state.view = LauncherView {
@@ -1754,7 +1849,7 @@ impl Launcher {
         let (rows, entries) = root_rows(state, query);
         let selected = selected_id
             .and_then(|id| rows.iter().position(|row| row.id == id))
-            .or_else(|| first_index(&rows));
+            .or_else(|| aliases::first_choice(&entries));
         state.entries = entries;
         state.view.rows = rows;
         state.view.selected = selected;
@@ -1765,9 +1860,15 @@ impl Launcher {
     /// Pane's own rows.
     fn root_results(&self, state: &State) -> Vec<RootResult> {
         let mut results = Vec::new();
-        let mut add = |row: Row, entry: Entry, package: Option<&str>| {
-            let keys = Keys::new(&row.title, row.subtitle.as_deref(), package);
-            results.push(RootResult { row, entry, keys });
+        let mut add = |row: Row, entry: Entry, package: Option<&str>, target| {
+            let alias = state.aliases.chosen.active_alias(&row.id);
+            let keys = Keys::new(&row.title, row.subtitle.as_deref(), package).with_alias(alias);
+            results.push(RootResult {
+                row,
+                entry,
+                keys,
+                target,
+            });
         };
         let command = |(command, unavailable): (CommandRegistration, Option<Unavailable>)| {
             let entry = match &unavailable {
@@ -1786,7 +1887,7 @@ impl Launcher {
         let enabled = || state.packages.iter().filter(|package| package.enabled);
         for built in self.commands.iter().cloned() {
             let (row, entry) = command((built, None));
-            add(row, entry, None);
+            add(row, entry, None, None);
         }
         for package in enabled() {
             // Its commands are found by its title too, even those that show
@@ -1802,8 +1903,13 @@ impl Launcher {
                 let unavailable = paused
                     .clone()
                     .or(unavailable.map(Unavailable::OnThisSystem));
+                let target = aliases::Target {
+                    registration: registration.clone(),
+                    identity: package.identity.clone(),
+                    unavailable: unavailable.clone(),
+                };
                 let (row, entry) = command((registration, unavailable));
-                add(row, entry, Some(&title));
+                add(row, entry, Some(&title), Some(target));
             }
         }
         for package in enabled() {
@@ -1819,7 +1925,7 @@ impl Launcher {
                     package.title(),
                     package.location.display()
                 );
-                add(row, Entry::Broken(problem), None);
+                add(row, Entry::Broken(problem), None, None);
             }
         }
         if self.installation.is_some() {
@@ -1829,7 +1935,7 @@ impl Launcher {
                 subtitle: Some("Choose a local extension package to install".into()),
                 unavailable: None,
             };
-            add(row, Entry::InstallFromFolder, None);
+            add(row, Entry::InstallFromFolder, None, None);
         }
         // Retained data is managed there too, while nothing is installed.
         if self.installation.is_some() && !(state.packages.is_empty() && state.retained.is_empty())
@@ -1840,7 +1946,7 @@ impl Launcher {
                 subtitle: Some("Enable or disable installed extensions".into()),
                 unavailable: None,
             };
-            add(row, Entry::Manage, None);
+            add(row, Entry::Manage, None, None);
         }
         results
     }
@@ -1869,11 +1975,40 @@ impl Launcher {
     /// apply the reply: the answer as the result, or the extension's
     /// rejection next to its field. While a submission is waiting for its
     /// reply, submitting again does nothing.
+    ///
+    /// Pane's own alias form is applied at once instead (see `aliases`);
+    /// the future records it.
     pub fn submit_form(&self) -> impl Future<Output = ()> + Send + 'static {
         let mut state = self.lock();
         let state = &mut *state;
+        let alias_change = match (&state.view.screen, &state.form) {
+            (
+                Screen::Form(_),
+                Some(OpenForm {
+                    purpose: FormPurpose::Alias(command),
+                    ..
+                }),
+            ) => {
+                let command = command.clone();
+                self.submit_alias(state, &command)
+            }
+            _ => None,
+        };
         let submission = match (&state.view.screen, &mut state.form, &state.open) {
-            (Screen::Form(form), Some(open), Some(component)) if !open.submitting => {
+            (
+                Screen::Form(form),
+                Some(
+                    open @ OpenForm {
+                        purpose: FormPurpose::Item(_),
+                        ..
+                    },
+                ),
+                Some(component),
+            ) if !open.submitting => {
+                let FormPurpose::Item(item_id) = &open.purpose else {
+                    unreachable!("matched above");
+                };
+                let item_id = item_id.clone();
                 open.submitting = true;
                 let values: Vec<FieldValue> = form
                     .fields
@@ -1883,7 +2018,7 @@ impl Launcher {
                         value: field.value.clone(),
                     })
                     .collect();
-                Some((component.clone(), open.item_id.clone(), values))
+                Some((component.clone(), item_id, values))
             }
             _ => None,
         };
@@ -1896,6 +2031,9 @@ impl Launcher {
             .and_then(|(component, ..)| self.data_in(state, component));
         let launcher = self.clone();
         async move {
+            if let Some(change) = alias_change {
+                launcher.finish_choice_change(change).await;
+            }
             if let Some((component, item_id, values)) = submission {
                 launcher
                     .submit(epoch, component, item_id, values, data)
@@ -2003,9 +2141,13 @@ impl Launcher {
     fn extension_rows(&self, state: &State) -> (Vec<Row>, Vec<Entry>) {
         let developed = |identity: &PackageIdentity| self.is_developed(identity);
         let (mut rows, mut entries) = extension_rows(&state.packages, &state.paused, developed);
-        let hotkeys = self.hotkey_rows(state);
         let development = self.development_rows(&state.packages);
-        for (row, entry) in hotkeys.into_iter().chain(development) {
+        for (row, entry) in self
+            .hotkey_rows(state)
+            .into_iter()
+            .chain(self.choice_rows(state))
+            .chain(development)
+        {
             rows.push(row);
             entries.push(entry);
         }
@@ -2413,6 +2555,43 @@ impl Launcher {
         };
     }
 
+    /// Sends the query of `sending` to its command, which takes a query,
+    /// and shows its answer while root search still shows the query it was
+    /// sent from; root search stays as it was. The answer to a query the
+    /// user has changed since is not shown.
+    async fn run_query(&self, epoch: u64, sending: aliases::Sending, data: Option<PackageData>) {
+        let aliases::Sending {
+            component,
+            command,
+            query,
+            ..
+        } = sending;
+        let result = match self.runtime() {
+            Ok(runtime) => {
+                runtime
+                    .run_query_with(&component, &command, &query, data.clone())
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        let Some(mut state) = self.lock_if_current(epoch) else {
+            return;
+        };
+        let Some(sent) = state.sent_from.clone() else {
+            // The query changed meanwhile, which cleared the status.
+            return;
+        };
+        if state.view.query() != Some(sent.as_str()) {
+            return;
+        }
+        state.view.status = match (stopped(&state, &component, &data), result) {
+            // Stopped while it was running: its answer is not shown.
+            (Some(problem), _) => Status::Error(problem),
+            (None, Ok(answer)) => Status::Result(answer),
+            (None, Err(error)) => Status::Error(error.to_string()),
+        };
+    }
+
     async fn run_action(
         &self,
         epoch: u64,
@@ -2798,7 +2977,7 @@ fn open_form(state: &mut State, item_id: String, form: Form) {
     );
     let return_to = std::mem::replace(&mut state.view, form_view);
     state.form = Some(OpenForm {
-        item_id,
+        purpose: FormPurpose::Item(item_id),
         return_to,
         submitting: false,
     });
@@ -2818,21 +2997,38 @@ fn root_rows(state: &State, query: &str) -> (Vec<Row>, Vec<Entry>) {
         .chain(state.indexes.results().filter(|_| !blank))
         .collect();
     let keys: Vec<&Keys> = candidates.iter().map(|result| &result.keys).collect();
-    let matches = search::ranked_matches(&Query::new(query), keys.into_iter())
+    let parsed = Query::new(query);
+    let named = |index: &usize| parsed.is_alias_of(&candidates[*index].keys);
+    let by_alias: Vec<usize> = (0..candidates.len()).filter(named).collect();
+    let matches: Vec<usize> = search::ranked_matches(&parsed, keys.into_iter())
         .into_iter()
-        .map(|index| (&candidates[index].row, &candidates[index].entry));
+        .filter(|index| !named(index))
+        .collect();
+    let found = |index: usize| {
+        (
+            candidates[index].row.clone(),
+            candidates[index].entry.clone(),
+        )
+    };
     let failures = state
         .indexes
         .failures()
         .filter(|_| !blank)
-        .map(|(row, entry)| (row, entry));
-    state
-        .computed
-        .iter()
-        .map(|computed| (&computed.row, &computed.entry))
-        .chain(matches)
+        .map(|(row, entry)| (row.clone(), entry.clone()));
+    // What the user's alias names comes first, even before computed
+    // results; the fallbacks, which the user must choose, come last.
+    aliases::rows_sending_after_alias(state, query)
+        .into_iter()
+        .chain(by_alias.into_iter().map(found))
+        .chain(
+            state
+                .computed
+                .iter()
+                .map(|computed| (computed.row.clone(), computed.entry.clone())),
+        )
+        .chain(matches.into_iter().map(found))
         .chain(failures)
-        .map(|(row, entry)| (row.clone(), entry.clone()))
+        .chain(aliases::fallback_rows(state, query))
         .unzip()
 }
 
@@ -2849,7 +3045,7 @@ fn relist_root(state: &mut State, query: &str) {
     let (rows, entries) = root_rows(state, query);
     state.view.selected = keep
         .and_then(|id| rows.iter().position(|row| row.id == id))
-        .or_else(|| first_index(&rows));
+        .or_else(|| aliases::first_choice(&entries));
     state.view.rows = rows;
     state.entries = entries;
 }

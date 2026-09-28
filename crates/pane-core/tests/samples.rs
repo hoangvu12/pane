@@ -77,6 +77,7 @@ impl Sample {
                 title: format!("{} sample", self.language),
                 subtitle: None,
                 component: self.path(),
+                takes_query: false,
             }],
         );
         block_on(launcher.activate_selected());
