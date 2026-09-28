@@ -770,7 +770,7 @@ pub(crate) enum PauseCause {
     /// Its code could not start: a component could not be loaded or
     /// instantiated, or its reloaded code trapped as it started.
     FailedToStart,
-    /// It crashed (trapped) several times in a row.
+    /// It crashed (trapped) too often.
     Crashes,
 }
 

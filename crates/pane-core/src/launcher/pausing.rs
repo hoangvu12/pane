@@ -45,13 +45,13 @@ use crate::runtime::Health;
 /// How many crashes within [`CRASH_WINDOW`] pause a package. Small, so
 /// that a broken command stops failing soon, and more than one, so that one
 /// bad input does not stop an extension that otherwise works.
-pub(super) const CRASHES_BEFORE_PAUSE: usize = 3;
+const CRASHES_BEFORE_PAUSE: usize = 3;
 
 /// How close together crashes count towards pausing a package: long enough
 /// to catch a user trying a broken command again, or root search asking a
 /// broken provider on each key, and short enough that rare crashes of a
 /// long-running Pane never add up to a pause.
-pub(super) const CRASH_WINDOW: Duration = Duration::from_secs(5 * 60);
+const CRASH_WINDOW: Duration = Duration::from_secs(5 * 60);
 
 /// The installed packages Pane paused, each with why, and when each
 /// package's current generation last crashed, within [`CRASH_WINDOW`].
@@ -211,7 +211,7 @@ impl Launcher {
 
 /// "3 times within 5 minutes": how often a package crashes before Pane
 /// pauses it.
-fn within() -> String {
+pub(super) fn within() -> String {
     format!(
         "{CRASHES_BEFORE_PAUSE} times within {} minutes",
         CRASH_WINDOW.as_secs() / 60

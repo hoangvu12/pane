@@ -82,7 +82,7 @@ impl Guest for Greeting {
                 item(
                     "crash",
                     "Crash",
-                    "Crashes on purpose; three crashes in a row pause the extension",
+                    "Crashes on purpose; three crashes within five minutes pause the extension",
                 ),
             ],
         })

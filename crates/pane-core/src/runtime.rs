@@ -361,7 +361,7 @@ pub enum CallError {
     /// the call was stopped and its answer discarded.
     Uninstalled,
     /// Pane paused the command's package after it failed (it could not
-    /// start, or crashed too many times in a row), so none of its code runs
+    /// start, or crashed too often), so none of its code runs
     /// until the user retries it. A call pending when it was paused is
     /// stopped with this.
     Paused,

@@ -32,7 +32,7 @@ pub(crate) enum End {
     /// The user uninstalled the package.
     Uninstalled,
     /// Pane paused the package after it failed: it could not start, or it
-    /// crashed too many times in a row. Retry, a reload or an update runs
+    /// crashed too often. Retry, a reload or an update runs
     /// it in a new generation.
     Paused,
 }
