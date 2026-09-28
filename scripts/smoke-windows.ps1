@@ -41,5 +41,8 @@ foreach ($index in 0..2) {
     [System.Windows.Forms.SendKeys]::SendWait("{ESC}"); Start-Sleep -Seconds 1
 }
 Capture "5-back-to-root.png"
+# Each command must have answered from its own guest, not the same view twice.
+python "$PSScriptRoot/check_screenshot.py" --distinct @(2..4 | ForEach-Object { Join-Path $OutDir "$_-result-$($_ - 2).png" })
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: result screenshots are not distinct" }
 if ($process.HasExited) { throw "Pane exited during the smoke" }
 Stop-Process -Id $process.Id

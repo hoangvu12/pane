@@ -51,7 +51,7 @@ check 1-root.png 8a96a3   # the hint line: text renders
 
 # Open each sample command (Rust, JavaScript, TypeScript) and run an item.
 for index in 0 1 2; do
-  for _ in $(seq "$index"); do "$xdotool" key Down; done
+  for ((i = 0; i < index; i++)); do "$xdotool" key Down; done
   "$xdotool" key Return; sleep 3
   capture "$((index + 2))-command-$index.png"
   "$xdotool" key Down key Return; sleep 2
@@ -60,6 +60,8 @@ for index in 0 1 2; do
   "$xdotool" key Escape; sleep 1
 done
 capture 5-back-to-root.png
+# Each command must have answered from its own guest, not the same view twice.
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{2,3,4}-result-*.png
 
 kill -0 "$pane_pid" || { echo "Pane exited during the smoke"; exit 1; }
 echo "screenshots in $out"

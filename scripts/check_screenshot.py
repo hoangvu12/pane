@@ -7,7 +7,12 @@ without a text system shows only its backgrounds. Antialiasing blends glyph
 edges, so a pixel counts when it is near the target and closer to it than to
 any other color Pane draws. Requires Pillow.
 
+With --distinct, asserts instead that the Pane window looks different in every
+given screenshot, so steps that should show different content (each guest's
+answer) cannot silently show the same view.
+
 Usage: python3 scripts/check_screenshot.py <png> <hex color> [min pixels]
+       python3 scripts/check_screenshot.py --distinct <png> <png>...
 """
 import sys
 
@@ -28,7 +33,8 @@ def near(a, b, tolerance: float) -> bool:
     return sum((x - y) ** 2 for x, y in zip(a, b)) <= tolerance ** 2
 
 
-def main(path: str, color: str, minimum: int = 20) -> None:
+def pane_window(path: str) -> Image.Image:
+    """The screenshot cropped to the Pane window, found by its background color."""
     image = Image.open(path).convert("RGB")
     width = image.width
     flattened = getattr(image, "get_flattened_data", image.getdata)  # Pillow 12 renamed it
@@ -38,7 +44,20 @@ def main(path: str, color: str, minimum: int = 20) -> None:
         raise SystemExit(f"{path}: the Pane window is not visible")
     rows = [i // width for i in background]
     columns = [i % width for i in background]
-    window = image.crop((min(columns), min(rows), max(columns) + 1, max(rows) + 1))
+    return image.crop((min(columns), min(rows), max(columns) + 1, max(rows) + 1))
+
+
+def distinct(paths: list[str]) -> None:
+    windows = [(path, pane_window(path).tobytes()) for path in paths]
+    for i, (first, pixels) in enumerate(windows):
+        for second, other in windows[i + 1:]:
+            if pixels == other:
+                raise SystemExit(f"{first} and {second} show the same Pane window")
+    print(f"{len(paths)} screenshots show different Pane windows")
+
+
+def main(path: str, color: str, minimum: int = 20) -> None:
+    window = pane_window(path)
     target = rgb(color)
     palette = [rgb(c) for c in PALETTE] + [target]
 
@@ -55,4 +74,7 @@ def main(path: str, color: str, minimum: int = 20) -> None:
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2], *(int(n) for n in sys.argv[3:4]))
+    if sys.argv[1] == "--distinct":
+        distinct(sys.argv[2:])
+    else:
+        main(sys.argv[1], sys.argv[2], *(int(n) for n in sys.argv[3:4]))
