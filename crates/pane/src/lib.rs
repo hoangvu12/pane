@@ -515,6 +515,12 @@ impl Render for LauncherWindow {
                     .child(line.clone())
             })
             .collect();
+        // A command's search that failed lists nothing; its error says why,
+        // not "No results".
+        let search_failed = matches!(
+            (&view.screen, &view.status),
+            (Screen::CommandSearch { .. }, Status::Error(_))
+        );
         let (status_selector, status_text, status_color): (&str, SharedString, u32) =
             match view.status {
                 Status::Idle => ("status-idle", hint.into(), 0x8a96a3),
@@ -532,6 +538,7 @@ impl Render for LauncherWindow {
             })
             .collect();
         let empty = match &view.screen {
+            Screen::CommandSearch { .. } if search_failed => div().id("empty"),
             Screen::Root { query } | Screen::CommandSearch { query }
                 if !query.trim().is_empty() =>
             {

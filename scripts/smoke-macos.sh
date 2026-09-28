@@ -760,7 +760,7 @@ start_service() {
   echo "the fixture service did not start (see $service_log)"; exit 1
 }
 stop_service() { kill "$service_pid"; wait "$service_pid" 2>/dev/null || true; service_pid=; }
-trap '[ -n "$service_pid" ] && kill "$service_pid" 2>/dev/null; [ -n "$pid" ] && kill "$pid" 2>/dev/null || true' EXIT
+trap '[ -z "$service_pid" ] || kill "$service_pid" 2>/dev/null || true; [ -n "$pid" ] && kill "$pid" 2>/dev/null || true' EXIT
 rm -f "$service_log"
 start_service 1
 start_pane --install target/guests/packages/sample-search
