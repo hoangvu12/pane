@@ -17,6 +17,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::{mpsc, oneshot};
+
+use crate::packages::paused_reason;
 use wasmtime::component::{Component, Linker, ResourceAny, ResourceTable};
 use wasmtime::{Cache, CacheConfig, Config, Engine, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
@@ -379,10 +381,7 @@ impl fmt::Display for CallError {
                 "The extension was reloaded or updated while this was running; try again"
             ),
             CallError::Uninstalled => write!(f, "The extension was uninstalled"),
-            CallError::Paused => write!(
-                f,
-                "The extension is paused after an error; retry it in Manage extensions"
-            ),
+            CallError::Paused => f.write_str(&paused_reason("The extension")),
             CallError::RuntimeUnavailable(reason) => {
                 write!(f, "Extension runtime unavailable: {reason}")
             }
@@ -421,6 +420,27 @@ pub struct Runtime {
     /// from the runtime thread: a reload's check must not wait behind the
     /// guest call the reload is about to stop.
     checks: std::sync::mpsc::Sender<Check>,
+}
+
+/// A handle to the runtime thread that does not keep it running: the
+/// thread stops once every [`Runtime`] is dropped, even while something it
+/// holds (such as its health report) holds one of these.
+#[derive(Clone)]
+pub(crate) struct WeakRuntime {
+    requests: mpsc::WeakUnboundedSender<Request>,
+    applications: SharedApplications,
+    checks: std::sync::mpsc::Sender<Check>,
+}
+
+impl WeakRuntime {
+    /// The runtime, unless it has stopped.
+    pub(crate) fn upgrade(&self) -> Option<Runtime> {
+        Some(Runtime {
+            requests: self.requests.upgrade()?,
+            applications: self.applications.clone(),
+            checks: self.checks.clone(),
+        })
+    }
 }
 
 /// A component check for the checker thread.
@@ -511,6 +531,15 @@ pub(crate) enum Health {
 pub(crate) type HealthReport = Arc<dyn Fn(&Path, &PackageData, Health) + Send + Sync>;
 
 impl Runtime {
+    /// A handle that does not keep the runtime thread running.
+    pub(crate) fn downgrade(&self) -> WeakRuntime {
+        WeakRuntime {
+            requests: self.requests.downgrade(),
+            applications: self.applications.clone(),
+            checks: self.checks.clone(),
+        }
+    }
+
     /// Starts the runtime thread. Extensions are compiled on every start.
     pub fn start() -> Result<Runtime, CallError> {
         Runtime::start_with(None)
@@ -1385,15 +1414,18 @@ impl Host {
         let Some(open) = self.views.remove(&view) else {
             return;
         };
-        if let Some(instance) = self.instances.get_mut(&open.component)
-            && open
-                .resource
-                .resource_drop_async(&mut instance.store)
-                .await
-                .is_err()
-        {
-            // The destructor trapped: the instance cannot be re-entered.
+        let Some(instance) = self.instances.get_mut(&open.component) else {
+            return;
+        };
+        let data = instance.store.data().data.clone();
+        if let Err(trap) = open.resource.resource_drop_async(&mut instance.store).await {
+            // The destructor trapped: the instance cannot be re-entered. It
+            // is a crash of the package, reported as any other.
             self.drop_instance(&open.component);
+            let error = CallError::Trap(format!("{trap:#}"));
+            if data.as_ref().is_some_and(|data| data.stopped().is_none()) {
+                self.report(&open.component, data.as_ref(), Health::Crashed(error));
+            }
         }
     }
 

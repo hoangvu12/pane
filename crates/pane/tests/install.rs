@@ -286,14 +286,26 @@ fn a_reload_that_fails_to_start_offers_retry(cx: &mut TestAppContext) {
             "Hello",
             "Reload Hello",
             "Retry starting Hello",
+            "Why Hello is paused",
             "Clear cache of Hello",
             "Uninstall Hello",
             "Hotkey for Say hello"
         ]
     );
 
-    // The Reload row stays selected; Retry is next.
-    cx.simulate_keystrokes("down enter");
+    // The details are a screen of their own, with Retry.
+    cx.simulate_keystrokes("down down enter");
+    let view = settle(&window, cx);
+    assert_eq!(view.title, "Why Hello is paused");
+    assert!(
+        cx.debug_bounds("detail-Hello could not start.").is_some(),
+        "the details are rendered"
+    );
+    assert_eq!(titles(&view), ["Retry starting Hello"]);
+    // Escape returns to the details row; Retry is just above it.
+    cx.simulate_keystrokes("escape");
+    settle(&window, cx);
+    cx.simulate_keystrokes("up enter");
     let view = settle(&window, cx);
     assert_eq!(view.status, Status::Result("Started Hello".into()));
     assert_eq!(
@@ -539,7 +551,7 @@ fn a_package_that_keeps_crashing_is_paused_and_retried(cx: &mut TestAppContext) 
     );
 
     // The extension list shows it paused, with Retry; Retry starts it.
-    let view = click_in_extension_list(&window, cx, "row-Retry starting Hello");
+    let view = click_in_extension_list(&window, cx, "row-Retry Hello");
     assert_eq!(view.status, Status::Result("Started Hello".into()));
     cx.simulate_keystrokes("escape");
     let view = settle(&window, cx);

@@ -993,10 +993,11 @@ fn a_target_stopped_with_its_caller_again_and_again_is_not_paused() {
     // afresh on the next call, as after a crash; that is not a crash of
     // `b`'s.
     for _ in 0..3 {
+        // `b` saves "started" as it begins waiting; Pane writes the file
+        // afresh from its own copy then, so removing it makes the next
+        // "started" a sign of this iteration's wait.
+        let _ = fs::remove_file(dirs.extensions().join("settings.json"));
         let (calling, _) = start_waiting(&dirs, &launcher);
-        // `b` saved "started" the first time; later it is asked to wait
-        // again shortly after.
-        thread::sleep(Duration::from_millis(200));
         block_on(launcher.set_enabled(&dirs.identity("a"), false));
         calling.join().unwrap();
         block_on(launcher.set_enabled(&dirs.identity("a"), true));

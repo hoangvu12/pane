@@ -29,7 +29,7 @@ use tokio::sync::{mpsc, oneshot};
 use wasmtime::component::{Accessor, HasData};
 
 use crate::extension_data::{ExtensionData, PackageData};
-use crate::packages::{InstalledPackage, ManifestOperation, PackageIdentity};
+use crate::packages::{InstalledPackage, ManifestOperation, PackageIdentity, paused_reason};
 use crate::platform;
 use crate::runtime::{CallError, GuestState, bindings};
 
@@ -85,10 +85,7 @@ impl OperationError {
                 Unavailable,
                 format!("{title} was uninstalled while serving the call"),
             ),
-            CallError::Paused => (
-                Unavailable,
-                format!("{title} is paused after an error; retry it in Manage extensions"),
-            ),
+            CallError::Paused => (Unavailable, paused_reason(title)),
             CallError::Trap(reason) => (Crashed, format!("{title} crashed: {reason}")),
             CallError::RuntimeUnavailable(_) => (Unavailable, format!("{title}: {error}")),
             CallError::Load(_)

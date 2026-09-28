@@ -10,7 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use futures::executor::block_on;
-use pane_core::{Launcher, PackageIdentity, Row, Runtime, Screen, Status};
+use pane_core::{CallError, Launcher, PackageIdentity, Row, Runtime, Screen, Status, Unavailable};
 use tempfile::TempDir;
 
 const MANAGE_ROW: &str = "Manage extensions…";
@@ -225,7 +225,7 @@ fn three_crashes_pause_the_package_until_retry(fixture: &Fixture) {
         "{toast}"
     );
     assert!(
-        toast.contains(&format!("\"Retry starting {title}\"")),
+        toast.ends_with("Retry it, or see why, in Manage extensions."),
         "{toast}"
     );
     // Its open command closed, and none of its code runs.
@@ -235,9 +235,12 @@ fn three_crashes_pause_the_package_until_retry(fixture: &Fixture) {
     // Its command stays listed, saying why it does not run.
     let command = row(&launcher, COMMAND);
     let reason = command.unavailable.expect("the command says it is paused");
-    assert!(
-        reason.starts_with(&format!("{title} is paused after an error")),
-        "{reason}"
+    let Unavailable::Paused(reason) = reason else {
+        panic!("expected a pause, got {reason:?}");
+    };
+    assert_eq!(
+        reason,
+        format!("{title} is paused after an error; retry it in Manage extensions")
     );
     select_title(&launcher, COMMAND);
     block_on(launcher.activate_selected());
@@ -252,33 +255,63 @@ fn three_crashes_pause_the_package_until_retry(fixture: &Fixture) {
         subtitle.starts_with("Enabled · Paused after crashing"),
         "{subtitle}"
     );
-    let details = row(&launcher, &format!("Retry starting {title}"))
-        .subtitle
-        .unwrap();
+    assert_eq!(
+        row(&launcher, &format!("Retry {title}"))
+            .subtitle
+            .as_deref(),
+        Some("Paused: it crashed 3 times within 5 minutes; start it again")
+    );
+    press(&launcher, &format!("Why {title} is paused"));
+    let view = launcher.view();
+    assert!(matches!(view.screen, Screen::PauseDetails { .. }));
+    assert_eq!(view.title, format!("Why {title} is paused"));
+    let details = view.details();
+    assert_eq!(
+        details[0],
+        format!("{title} crashed 3 times within 5 minutes.")
+    );
     assert!(
-        details.starts_with(
+        details.contains(&"Version: 0.1.0".to_string()),
+        "{details:?}"
+    );
+    assert!(
+        details.iter().any(|line| line.starts_with(
             "Crashed 3 times within 5 minutes; the last time: The extension crashed: "
-        ),
-        "{details}"
+        )),
+        "{details:?}"
+    );
+    assert_eq!(titles(&launcher), [format!("Retry {title}")]);
+    // Escape returns to the extension list, on that row.
+    launcher.back();
+    let view = launcher.view();
+    assert!(matches!(view.screen, Screen::Extensions { .. }));
+    assert_eq!(
+        view.rows[view.selected.unwrap()].title,
+        format!("Why {title} is paused")
     );
 
     // The pause holds after a restart.
+    block_on(launcher.records_written());
     let restarted = dirs.launcher();
     assert!(is_paused(&restarted));
     manage(&restarted);
-    assert!(titles(&restarted).contains(&format!("Retry starting {title}")));
+    assert!(titles(&restarted).contains(&format!("Retry {title}")));
 
-    // Retry starts it again, with its saved data kept.
+    // Retry, from the details, starts it again, with its saved data kept.
+    press(&restarted, &format!("Why {title} is paused"));
+    block_on(restarted.activate_selected());
     assert_eq!(
-        press(&restarted, &format!("Retry starting {title}")),
+        restarted.view().status,
         Status::Result(format!("Started {title}"))
     );
+    assert!(matches!(restarted.view().screen, Screen::Extensions { .. }));
     assert!(!is_paused(&restarted));
     assert_eq!(
         run(&restarted, "Greet me"),
         Status::Result("Good day to you".into())
     );
     // And it is no longer paused after another restart.
+    block_on(restarted.records_written());
     assert!(!is_paused(&dirs.launcher()));
 }
 
@@ -372,6 +405,7 @@ fn disabling_a_paused_package_ends_the_pause() {
     block_on(launcher.set_enabled(&identity, false));
     block_on(launcher.set_enabled(&identity, true));
     assert!(!is_paused(&launcher));
+    block_on(launcher.records_written());
     assert!(!is_paused(&dirs.launcher()));
     assert_eq!(
         run(&launcher, "Use a casual greeting"),
@@ -391,6 +425,7 @@ fn reloading_a_paused_package_ends_the_pause() {
         Status::Result("Reloaded Settings sample".into())
     );
     assert!(!is_paused(&launcher));
+    block_on(launcher.records_written());
     assert!(!is_paused(&dirs.launcher()));
 }
 
@@ -477,4 +512,148 @@ fn a_root_result_provider_that_keeps_crashing_is_paused_and_asked_no_more() {
     let rows = launcher.view().rows;
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert!(rows[0].unavailable.is_some(), "{rows:?}");
+}
+
+/// Pauses the Rust settings sample of a new launcher with three crashes,
+/// with the pause on record.
+fn paused(dirs: &Dirs) -> (Launcher, PackageIdentity, PathBuf) {
+    let (launcher, identity, folder) = dirs.installed(&RUST);
+    crash(&launcher, 2);
+    error(run(&launcher, "Crash"));
+    assert!(is_paused(&launcher));
+    block_on(launcher.records_written());
+    (launcher, identity, folder)
+}
+
+#[test]
+fn enabling_a_package_ends_a_pause_on_record() {
+    let dirs = Dirs::new();
+    let (launcher, identity, _) = paused(&dirs);
+    drop(launcher);
+    // As if a pause had been recorded as the user disabled the package.
+    let registry = dirs.data.path().join("extensions/installed.json");
+    let text = fs::read_to_string(&registry).unwrap();
+    assert!(text.contains("\"paused\""), "{text}");
+    let disabled = text.replacen("\"dir\"", "\"disabled\": true,\n      \"dir\"", 1);
+    fs::write(&registry, disabled).unwrap();
+
+    let restarted = dirs.launcher();
+    block_on(restarted.set_enabled(&identity, true));
+    assert!(!is_paused(&restarted));
+    block_on(restarted.records_written());
+    assert!(
+        !fs::read_to_string(&registry)
+            .unwrap()
+            .contains("\"paused\"")
+    );
+    assert!(!is_paused(&dirs.launcher()));
+}
+
+#[test]
+fn a_pause_recorded_for_another_version_does_not_hold() {
+    let dirs = Dirs::new();
+    let (launcher, _, _) = paused(&dirs);
+    drop(launcher);
+    let registry = dirs.data.path().join("extensions/installed.json");
+    let text = fs::read_to_string(&registry).unwrap();
+    assert!(text.contains("\"version\": \"0.1.0\""), "{text}");
+    fs::write(
+        &registry,
+        text.replace("\"version\": \"0.1.0\"", "\"version\": \"0.0.9\""),
+    )
+    .unwrap();
+    assert!(!is_paused(&dirs.launcher()));
+}
+
+#[test]
+fn retrying_without_a_runtime_keeps_the_pause() {
+    let dirs = Dirs::new();
+    let (launcher, _, _) = paused(&dirs);
+    drop(launcher);
+    let unavailable = Launcher::with_packages(
+        Err(CallError::RuntimeUnavailable("no engine".into())),
+        vec![],
+        dirs.data.path().join("extensions"),
+    );
+    // Pane's runtime failing is not the package's failure: it stays paused,
+    // as it was, on record too.
+    assert_eq!(
+        press(&unavailable, "Retry Settings sample"),
+        Status::Error(
+            "Settings sample was not started: Extension runtime unavailable: no engine; it \
+             stays paused."
+                .into()
+        )
+    );
+    assert!(is_paused(&unavailable));
+    manage(&unavailable);
+    assert!(titles(&unavailable).contains(&"Retry Settings sample".to_string()));
+    press(&unavailable, "Why Settings sample is paused");
+    assert_eq!(
+        unavailable.view().details()[0],
+        "Settings sample crashed 3 times within 5 minutes."
+    );
+    block_on(unavailable.records_written());
+    assert!(is_paused(&dirs.launcher()));
+}
+
+#[test]
+fn a_component_that_cannot_load_is_paused_at_once() {
+    let dirs = Dirs::new();
+    let (launcher, identity, _) = dirs.installed(&RUST);
+    let location = launcher
+        .packages()
+        .into_iter()
+        .find(|package| package.identity == identity)
+        .unwrap()
+        .location;
+    drop(launcher);
+    // Its managed copy was damaged behind Pane's back; a new runtime loads
+    // it afresh.
+    fs::write(location.join(RUST.component), b"not a component").unwrap();
+    let restarted = Launcher::with_packages(
+        Runtime::start(),
+        vec![],
+        dirs.data.path().join("extensions"),
+    );
+    to_root(&restarted);
+    select_title(&restarted, COMMAND);
+    block_on(restarted.activate_selected());
+    let toast = error(restarted.view().status);
+    assert!(
+        toast.starts_with("Settings sample could not start and is paused"),
+        "{toast}"
+    );
+    assert!(is_paused(&restarted));
+    manage(&restarted);
+    assert!(
+        titles(&restarted).contains(&"Retry starting Settings sample".to_string()),
+        "{:?}",
+        titles(&restarted)
+    );
+}
+
+#[test]
+fn an_uninstall_that_cannot_be_recorded_keeps_the_pause() {
+    let dirs = Dirs::new();
+    let (launcher, _, _) = paused(&dirs);
+    // `installed.json` cannot be replaced by a file while a folder is there.
+    let registry = dirs.data.path().join("extensions/installed.json");
+    let text = fs::read(&registry).unwrap();
+    fs::remove_file(&registry).unwrap();
+    fs::create_dir(&registry).unwrap();
+    fs::write(registry.join("blocker"), "").unwrap();
+
+    manage(&launcher);
+    select_title(&launcher, "Uninstall Settings sample");
+    block_on(launcher.activate_selected());
+    select_title(&launcher, "Uninstall and keep saved data");
+    block_on(launcher.activate_selected());
+    let message = error(launcher.view().status);
+    assert!(message.starts_with("Could not uninstall"), "{message}");
+    // Still installed and still paused, as `installed.json` records it.
+    assert!(is_paused(&launcher));
+    fs::remove_dir_all(&registry).unwrap();
+    fs::write(&registry, text).unwrap();
+    assert!(is_paused(&dirs.launcher()));
 }

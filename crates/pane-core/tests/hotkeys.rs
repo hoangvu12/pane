@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 
 use futures::executor::block_on;
 use pane_core::hotkeys::{HotkeyError, Hotkeys, Shortcut};
-use pane_core::{Launcher, PackageIdentity, Runtime, SavedData, Screen, Status};
+use pane_core::{Launcher, PackageIdentity, Runtime, SavedData, Screen, Status, Unavailable};
 use tempfile::TempDir;
 
 const MANAGE_ROW: &str = "Manage extensions…";
@@ -466,7 +466,10 @@ fn where_global_hotkeys_are_unavailable_the_rows_say_why_and_nothing_else_change
         .iter()
         .find(|row| row.title == "Hotkey for Greeting")
         .unwrap();
-    assert_eq!(row.unavailable, Some(reason.clone()));
+    assert_eq!(
+        row.unavailable,
+        Some(Unavailable::OnThisSystem(reason.clone()))
+    );
     activate(&launcher, "Hotkey for Greeting");
     assert!(matches!(launcher.view().screen, Screen::Extensions { .. }));
     assert_eq!(launcher.view().status, Status::Error(reason));

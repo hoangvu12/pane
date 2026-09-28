@@ -34,12 +34,12 @@ use crate::links::{self, LinkOpener, NoOpener};
 use crate::operations::{self, Installed};
 use crate::packages::{
     InstalledPackage, PackageError, PackageIdentity, PauseCause, SavedData, SourcePackage, Store,
-    folder_name,
+    folder_name, paused_reason,
 };
 use crate::platform::{self, Platform};
 use crate::runtime::{
     CallError, CustomViewInfo, CustomViewRole, FieldKind, FieldValue, Form, Frame, Point,
-    RootAction, RootResult as ComputedResult, Runtime, ViewEvent, ViewId,
+    RootAction, RootResult as ComputedResult, Runtime, ViewEvent, ViewId, WeakRuntime,
 };
 use crate::search::{self, Keys, Query};
 
@@ -48,7 +48,7 @@ mod reload;
 mod uninstall;
 
 use hotkeys::Bindings;
-use pausing::Failures;
+use pausing::{Pauses, Recorder};
 
 /// The id of the root row that installs a package from a local folder.
 const INSTALL_FROM_FOLDER: &str = "pane.install-from-folder";
@@ -86,6 +86,12 @@ pub enum Screen {
     /// A custom view opened from an item of the command's list view. It has
     /// no rows.
     CustomView(CustomViewSnapshot),
+    /// Why Pane paused an installed package, as lines of information under
+    /// the title, with a row that retries it.
+    PauseDetails {
+        identity: PackageIdentity,
+        details: Vec<String>,
+    },
     /// `question` about an installed package before Pane acts on it, with
     /// lines of information under the title, answered by choosing a row.
     Confirm {
@@ -119,11 +125,30 @@ pub struct Row {
     pub id: String,
     pub title: String,
     pub subtitle: Option<String>,
-    /// Why the row's action cannot be used: not on this system, or not while
-    /// its package is paused; `None` when it can. An unavailable row stays
-    /// listed and selectable, and activating it shows this reason instead of
-    /// calling the extension.
-    pub unavailable: Option<String>,
+    /// Why the row's action cannot be used; `None` when it can. An
+    /// unavailable row stays listed and selectable, and activating it shows
+    /// the reason instead of calling the extension.
+    pub unavailable: Option<Unavailable>,
+}
+
+/// Why a row's action cannot be used, with the reason to show.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Unavailable {
+    /// It does not work on this system: the command, action or package does
+    /// not support it, or the system lacks what it needs (such as global
+    /// hotkeys).
+    OnThisSystem(String),
+    /// Its package is paused after an error until the user retries it.
+    Paused(String),
+}
+
+impl Unavailable {
+    /// The reason, as shown to the user.
+    pub fn reason(&self) -> &str {
+        match self {
+            Unavailable::OnThisSystem(reason) | Unavailable::Paused(reason) => reason,
+        }
+    }
 }
 
 /// Feedback about the most recent action.
@@ -220,6 +245,7 @@ impl LauncherView {
             Screen::Package { details }
             | Screen::Extensions { details }
             | Screen::Confirm { details, .. }
+            | Screen::PauseDetails { details, .. }
             | Screen::Hotkey { details, .. } => details,
             _ => &[],
         }
@@ -257,6 +283,35 @@ pub struct Launcher {
     state: Arc<Mutex<State>>,
 }
 
+/// A launcher that does not keep itself or its runtime running, for the
+/// runtime to hold.
+struct WeakLauncher {
+    runtime: Result<WeakRuntime, CallError>,
+    commands: Arc<[CommandRegistration]>,
+    installation: Option<Installation>,
+    links: Arc<dyn LinkOpener>,
+    hotkeys: Arc<dyn Hotkeys>,
+    state: std::sync::Weak<Mutex<State>>,
+}
+
+impl WeakLauncher {
+    /// The launcher, unless it or its runtime has stopped.
+    fn upgrade(&self) -> Option<Launcher> {
+        let runtime = match &self.runtime {
+            Ok(runtime) => Ok(runtime.upgrade()?),
+            Err(error) => Err(error.clone()),
+        };
+        Some(Launcher {
+            runtime,
+            commands: self.commands.clone(),
+            installation: self.installation.clone(),
+            links: self.links.clone(),
+            hotkeys: self.hotkeys.clone(),
+            state: self.state.upgrade()?,
+        })
+    }
+}
+
 /// Pane's managed package location and the installed packages' extension
 /// data,
 /// kept beside it.
@@ -266,6 +321,8 @@ struct Installation {
     data: ExtensionData,
     /// Where they are kept, with Pane's other records such as the hotkeys.
     dir: PathBuf,
+    /// Writes which packages are paused, in the background.
+    records: Recorder,
 }
 
 struct State {
@@ -305,7 +362,7 @@ struct State {
     store_problem: Option<String>,
     /// The packages Pane paused after they failed, each with why, and the
     /// crashes counted towards pausing a package (see `pausing`).
-    failed: Failures,
+    paused: Pauses,
     /// The global hotkeys the user assigned to commands.
     bindings: Bindings,
 }
@@ -334,7 +391,7 @@ impl State {
 
     /// Whether `package`'s code may run: it is enabled and not paused.
     fn runs(&self, package: &InstalledPackage) -> bool {
-        package.enabled && !self.failed.is_paused(&package.identity)
+        package.enabled && !self.paused.is_paused(&package.identity)
     }
 
     /// The title of the installed package with `identity`, or its identity if
@@ -484,6 +541,8 @@ enum Entry {
     Reload(PackageIdentity),
     /// Start again this package, which Pane paused after it failed.
     Retry(PackageIdentity),
+    /// Show why Pane paused this package (extension list).
+    PauseDetails(PackageIdentity),
     /// Ask whether to clear this installed package's cache (extension list).
     AskClearCache(PackageIdentity),
     /// Clear this installed package's cache (confirmation).
@@ -525,10 +584,12 @@ impl Launcher {
         commands: Vec<CommandRegistration>,
         packages_dir: PathBuf,
     ) -> Self {
+        let store = Arc::new(Mutex::new(Store::open(packages_dir.clone())));
         let installation = Installation {
             data: ExtensionData::open(&packages_dir),
-            dir: packages_dir.clone(),
-            store: Arc::new(Mutex::new(Store::open(packages_dir))),
+            dir: packages_dir,
+            records: Recorder::start(store.clone()),
+            store,
         };
         Launcher::create(runtime, commands, Some(installation))
     }
@@ -561,7 +622,7 @@ impl Launcher {
             packages,
             changing: HashMap::new(),
             store_problem,
-            failed: Failures::default(),
+            paused: Pauses::default(),
             bindings,
         };
         if let Some(installation) = &installation {
@@ -570,11 +631,15 @@ impl Launcher {
                     .data
                     .set_enabled(&package.identity, package.enabled);
             }
-            // A package paused before Pane stopped stays paused.
+            // A package paused before Pane stopped stays paused, if its
+            // code is still the one that failed.
             for (identity, pause) in paused {
-                if state.package(&identity).is_some_and(|p| p.enabled) {
+                let same = state
+                    .package(&identity)
+                    .is_some_and(|p| p.enabled && p.version() == pause.version);
+                if same {
                     installation.data.pause(&identity);
-                    state.failed.restore(identity, pause);
+                    state.paused.restore(identity, pause);
                 }
             }
         }
@@ -597,33 +662,8 @@ impl Launcher {
                 }),
                 data: Some(data.clone()),
             }));
-            // A package that keeps failing is paused. The report holds no
-            // runtime, which would keep the runtime thread alive, and needs
-            // none: a paused package's generation ends, which drops its
-            // instances and views. Nor does it touch hotkeys: a paused
-            // command's hotkey stays registered, and pressing it explains
-            // the pause.
-            let state = Arc::downgrade(&launcher.state);
-            let commands = launcher.commands.clone();
-            let installation = launcher.installation.clone();
-            let links = launcher.links.clone();
-            runtime.set_health(Arc::new(move |component, data, health| {
-                let Some(state) = state.upgrade() else {
-                    return;
-                };
-                let launcher = Launcher {
-                    runtime: Err(CallError::RuntimeUnavailable(
-                        "not needed to pause a package".into(),
-                    )),
-                    commands: commands.clone(),
-                    installation: installation.clone(),
-                    links: links.clone(),
-                    hotkeys: system_hotkeys::none(),
-                    state,
-                };
-                launcher.note_health(component, data, health);
-            }));
         }
+        launcher.report_failures();
         launcher.show_root(&mut launcher.lock(), None);
         launcher
     }
@@ -632,7 +672,9 @@ impl Launcher {
     /// normally the system's handler. Without one, opening a link explains
     /// that this Pane has no link handler.
     pub fn with_link_opener(self, links: Arc<dyn LinkOpener>) -> Self {
-        Launcher { links, ..self }
+        let launcher = Launcher { links, ..self };
+        launcher.report_failures();
+        launcher
     }
 
     /// This launcher registering the global hotkeys the user assigns with
@@ -642,7 +684,39 @@ impl Launcher {
     pub fn with_hotkeys(self, hotkeys: Arc<dyn Hotkeys>) -> Self {
         let launcher = Launcher { hotkeys, ..self };
         launcher.sync_hotkeys(&mut launcher.lock());
+        launcher.report_failures();
         launcher
+    }
+
+    /// Has the runtime tell this launcher of each failure of an installed
+    /// package's code, which may pause the package (see `pausing`). The
+    /// runtime holds it weakly: it does not keep this launcher, or itself,
+    /// running.
+    fn report_failures(&self) {
+        let (Ok(runtime), Some(_)) = (&self.runtime, &self.installation) else {
+            return;
+        };
+        let launcher = self.downgrade();
+        runtime.set_health(Arc::new(move |component, data, health| {
+            if let Some(launcher) = launcher.upgrade() {
+                launcher.note_health(component, data, health);
+            }
+        }));
+    }
+
+    fn downgrade(&self) -> WeakLauncher {
+        WeakLauncher {
+            runtime: self
+                .runtime
+                .as_ref()
+                .map(Runtime::downgrade)
+                .map_err(Clone::clone),
+            commands: self.commands.clone(),
+            installation: self.installation.clone(),
+            links: self.links.clone(),
+            hotkeys: self.hotkeys.clone(),
+            state: Arc::downgrade(&self.state),
+        }
     }
 
     pub fn view(&self) -> LauncherView {
@@ -947,6 +1021,13 @@ impl Launcher {
                 let command = command.clone();
                 self.show_extensions_at_hotkey(&mut state, &command);
             }
+            Screen::PauseDetails { identity, .. } => {
+                let identity = identity.clone();
+                self.show_extensions_at(
+                    &mut state,
+                    |entry| matches!(entry, Entry::PauseDetails(shown) if *shown == identity),
+                );
+            }
             Screen::Command | Screen::Package { .. } | Screen::Extensions { .. } => {
                 self.show_root(&mut state, None)
             }
@@ -1004,6 +1085,10 @@ impl Launcher {
             }
             Some(Entry::AskClearCache(identity)) => {
                 self.show_clear_cache(&mut state, &identity);
+                None
+            }
+            Some(Entry::PauseDetails(identity)) => {
+                self.show_pause_details(&mut state, &identity);
                 None
             }
             Some(Entry::AskUninstall(identity)) => {
@@ -1106,6 +1191,7 @@ impl Launcher {
                     | Entry::Toggle(_)
                     | Entry::Reload(_)
                     | Entry::Retry(_)
+                    | Entry::PauseDetails(_)
                     | Entry::AskClearCache(_)
                     | Entry::AskHotkey(_)
                     | Entry::RemoveHotkey(_)
@@ -1260,26 +1346,27 @@ impl Launcher {
             return;
         };
         package.enabled = enabled;
-        if let Some(installation) = &self.installation {
-            installation.data.set_enabled(identity, enabled);
-        }
         let components: Vec<PathBuf> = package
             .commands()
             .into_iter()
             .map(|command| command.component)
             .collect();
+        if let Some(installation) = &self.installation {
+            installation.data.set_enabled(identity, enabled);
+        }
+        // Disabling or enabling ends a pause: the package starts afresh
+        // (recording the choice forgets it too).
+        self.unpause(state, identity);
         // Its hotkeys are released while it is disabled.
         self.sync_hotkeys(state);
         if !enabled {
             // Its results kept for root search go, and so does an answer
             // from it being awaited.
             Launcher::forget_indexes(state);
-            // Its instances stop; enabling it again starts fresh ones, so a
-            // pause no longer describes it (recording the choice forgets it).
+            // Its instances stop; enabling it again starts fresh ones.
             if let Ok(runtime) = self.runtime() {
                 runtime.forget(components.iter().cloned());
             }
-            state.failed.forget(identity);
             if state
                 .open
                 .as_ref()
@@ -1359,7 +1446,8 @@ impl Launcher {
     /// command of the replaced copy is open; the caller leaves it, since its
     /// state is not carried over to the new code.
     fn put_installed(&self, state: &mut State, installed: InstalledPackage) -> bool {
-        state.failed.forget(&installed.identity);
+        // New code has not failed.
+        self.unpause(state, &installed.identity);
         let Some(package) = state
             .packages
             .iter_mut()
@@ -1473,6 +1561,19 @@ impl Launcher {
             | Screen::CustomView(_)
             | Screen::Confirm { .. }
             | Screen::Hotkey { .. } => {}
+            // Once the package is no longer paused (retried, reloaded,
+            // disabled), the extension list, keeping the screen epoch as
+            // refreshing does.
+            Screen::PauseDetails { identity, .. } if !state.paused.is_paused(identity) => {
+                let identity = identity.clone();
+                let epoch = state.screen_epoch;
+                self.show_extensions_at(
+                    state,
+                    |entry| matches!(entry, Entry::Reload(shown) if *shown == identity),
+                );
+                state.screen_epoch = epoch;
+            }
+            Screen::PauseDetails { .. } => {}
         }
     }
 
@@ -1520,9 +1621,9 @@ impl Launcher {
             let keys = Keys::new(&row.title, row.subtitle.as_deref(), package);
             results.push(RootResult { row, entry, keys });
         };
-        let command = |(command, unavailable): (CommandRegistration, Option<String>)| {
+        let command = |(command, unavailable): (CommandRegistration, Option<Unavailable>)| {
             let entry = match &unavailable {
-                Some(reason) => Entry::Unavailable(reason.clone()),
+                Some(reason) => Entry::Unavailable(reason.reason().to_owned()),
                 None => Entry::Open(command.component),
             };
             let row = Row {
@@ -1546,11 +1647,14 @@ impl Launcher {
             // A paused package's commands stay listed, saying why they do
             // not run.
             let paused = state
-                .failed
+                .paused
                 .is_paused(&package.identity)
-                .then(|| paused_reason(&title));
+                .then(|| Unavailable::Paused(paused_reason(&title)));
             for (registration, unavailable) in package.available_commands() {
-                let (row, entry) = command((registration, paused.clone().or(unavailable)));
+                let unavailable = paused
+                    .clone()
+                    .or(unavailable.map(Unavailable::OnThisSystem));
+                let (row, entry) = command((registration, unavailable));
                 add(row, entry, Some(&title));
             }
         }
@@ -1739,12 +1843,59 @@ impl Launcher {
     /// The extension list's rows: each package's state, reload and cache
     /// rows, then the hotkey of each command of the enabled packages.
     fn extension_rows(&self, state: &State) -> (Vec<Row>, Vec<Entry>) {
-        let (mut rows, mut entries) = extension_rows(&state.packages, &state.failed);
+        let (mut rows, mut entries) = extension_rows(&state.packages, &state.paused);
         for (row, entry) in self.hotkey_rows(state) {
             rows.push(row);
             entries.push(entry);
         }
         (rows, entries)
+    }
+
+    /// Shows why Pane paused the installed package with `identity`: how it
+    /// failed, its version and the full diagnostics, with a row that retries
+    /// it. A package that is not paused (it was retried meanwhile) shows the
+    /// extension list instead.
+    fn show_pause_details(&self, state: &mut State, identity: &PackageIdentity) {
+        let (Some(package), Some(pause)) = (state.package(identity), state.paused.of(identity))
+        else {
+            self.show_extensions(state);
+            return;
+        };
+        let title = package.title();
+        let mut details = vec![
+            format!("{}.", pausing::failure(&title, pause.after)),
+            format!("From {identity}"),
+        ];
+        if let Some(version) = &pause.version {
+            details.push(format!("Version: {version}"));
+        }
+        details.push(
+            "Pane runs none of its code until you retry it, reload or update it, or disable and \
+             enable it. Its settings and saved data are kept."
+                .into(),
+        );
+        details.extend(
+            pause
+                .why
+                .lines()
+                .map(str::trim_end)
+                .filter(|line| !line.is_empty())
+                .map(str::to_owned),
+        );
+        let retry = Row {
+            id: format!("retry:{}", identity.key()),
+            title: pausing::retry_title(&title, pause.after),
+            subtitle: Some("Start it again".into()),
+            unavailable: None,
+        };
+        state.screen_epoch += 1;
+        state.entries = vec![Entry::Retry(identity.clone())];
+        let screen = Screen::PauseDetails {
+            identity: identity.clone(),
+            details,
+        };
+        state.view =
+            LauncherView::new(screen, pausing::details_title(&title)).with_rows(vec![retry]);
     }
 
     /// Asks whether to clear the cache of the installed package with
@@ -2177,7 +2328,7 @@ impl Launcher {
                             id: item.id,
                             title: item.title,
                             subtitle: item.subtitle,
-                            unavailable,
+                            unavailable: unavailable.map(Unavailable::OnThisSystem),
                         };
                         (row, entry)
                     })
@@ -2249,11 +2400,6 @@ fn paused(state: &State, component: &Path) -> String {
     }
 }
 
-/// Why a command of the paused package titled `title` does not run.
-fn paused_reason(title: &str) -> String {
-    format!("{title} is paused after an error; retry it in Manage extensions")
-}
-
 /// "<title> is disabled", for the package `component` belongs to.
 fn disabled(state: &State, component: &Path) -> String {
     match owner(&state.packages, component) {
@@ -2264,11 +2410,12 @@ fn disabled(state: &State, component: &Path) -> String {
 
 /// One row per installed package, saying whether it is enabled or paused
 /// and which source it is, so copies with the same title can be told apart;
-/// then the rows that reload each enabled package, each followed by a Retry
-/// row, with the details, if Pane paused it; then one row per package to
-/// clear its cache, and one to uninstall it, in the same order.
-fn extension_rows(packages: &[InstalledPackage], failed: &Failures) -> (Vec<Row>, Vec<Entry>) {
-    let failure = |package: &InstalledPackage| failed.of(&package.identity).cloned();
+/// then the rows that reload each enabled package, each followed, if Pane
+/// paused it, by a row that retries it and one that shows why it is paused;
+/// then one row per package to clear its cache, and one to uninstall it, in
+/// the same order.
+fn extension_rows(packages: &[InstalledPackage], paused: &Pauses) -> (Vec<Row>, Vec<Entry>) {
+    let failure = |package: &InstalledPackage| paused.of(&package.identity).cloned();
     let toggles = packages.iter().map(|package| {
         let state = match (package.enabled, failure(package).map(|pause| pause.after)) {
             (false, _) => "Disabled",
@@ -2301,16 +2448,28 @@ fn extension_rows(packages: &[InstalledPackage], failed: &Failures) -> (Vec<Row>
                 )),
                 unavailable: None,
             };
-            let retry = failure(package).map(|pause| {
-                let row = Row {
+            let paused = failure(package).into_iter().flat_map(move |pause| {
+                let retry = Row {
                     id: format!("retry:{}", package.identity.key()),
-                    title: format!("Retry starting {title}"),
-                    subtitle: Some(pause.why),
+                    title: pausing::retry_title(&title, pause.after),
+                    subtitle: Some(format!(
+                        "Paused: {}; start it again",
+                        pausing::failure("it", pause.after)
+                    )),
                     unavailable: None,
                 };
-                (row, Entry::Retry(package.identity.clone()))
+                let details = Row {
+                    id: format!("paused:{}", package.identity.key()),
+                    title: pausing::details_title(&title),
+                    subtitle: Some("The error and its diagnostics".into()),
+                    unavailable: None,
+                };
+                [
+                    (retry, Entry::Retry(package.identity.clone())),
+                    (details, Entry::PauseDetails(package.identity.clone())),
+                ]
             });
-            std::iter::once((reload, Entry::Reload(package.identity.clone()))).chain(retry)
+            std::iter::once((reload, Entry::Reload(package.identity.clone()))).chain(paused)
         });
     let clear_cache = packages.iter().map(|package| {
         let row = Row {

@@ -20,7 +20,7 @@
 use std::future::Future;
 use std::path::PathBuf;
 
-use super::{Changing, Launcher, State, Status, off_thread};
+use super::{Changing, Launcher, State, Status, off_thread, pausing};
 use crate::packages::{PackageError, PackageIdentity, Pause, PauseCause};
 use crate::runtime::CallError;
 
@@ -117,10 +117,12 @@ impl Launcher {
     pub(super) async fn finish_reload(&self, epoch: u64, reload: Reload) {
         let Reload { identity, attempt } = reload;
         let title = self.title_of(&identity);
+        // A Retry ends the pause, remembering it in case the runtime
+        // cannot start the package.
+        let mut before = None;
         let epoch = match attempt {
             Attempt::Retry => {
-                self.unpause(&mut self.lock(), &identity);
-                self.record_pause_off_thread(&identity).await;
+                before = self.unpause(&mut self.lock(), &identity);
                 epoch
             }
             Attempt::Reload => match self.replace(epoch, &identity).await {
@@ -139,6 +141,19 @@ impl Launcher {
         let status = match (self.start(&identity).await, attempt) {
             (Ok(()), Attempt::Reload) => Status::Result(format!("Reloaded {title}")),
             (Ok(()), Attempt::Retry) => Status::Result(format!("Started {title}")),
+            // Pane's runtime, not the package, failed: nothing is paused for
+            // it, and a Retry leaves the pause as it was.
+            (Err(error @ CallError::RuntimeUnavailable(_)), _) => {
+                let mut state = self.lock();
+                let kept = match before {
+                    Some(pause) => {
+                        self.pause(&mut state, &identity, pause);
+                        "it stays paused"
+                    }
+                    None => "it is not paused",
+                };
+                Status::Error(format!("{title} was not started: {error}; {kept}."))
+            }
             (Err(error), _) => {
                 let message = error.to_string();
                 // The log: the diagnostics, such as a trap's backtrace, also
@@ -146,26 +161,32 @@ impl Launcher {
                 eprintln!("pane: {title} failed to start: {message}");
                 {
                     let mut state = self.lock();
-                    let pause = Pause {
-                        after: PauseCause::FailedToStart,
-                        why: message,
-                        version: state.package(&identity).and_then(|p| p.version()),
-                    };
-                    self.pause(&mut state, &identity, pause);
+                    // Already paused by its own failure (it could not load)
+                    // or meanwhile: those details are kept.
+                    if !state.paused.is_paused(&identity) {
+                        let pause = Pause {
+                            after: PauseCause::FailedToStart,
+                            why: message,
+                            version: state.package(&identity).and_then(|p| p.version()),
+                        };
+                        self.pause(&mut state, &identity, pause);
+                    }
                 }
-                self.record_pause_off_thread(&identity).await;
                 let failed = match attempt {
                     Attempt::Reload => format!("Reloaded {title}, but it failed to start"),
                     Attempt::Retry => format!("{title} failed to start again"),
                 };
-                // The diagnostics can be long, so they are shown under Retry
-                // in the extension list rather than here.
+                // The diagnostics can be long, so they are shown on their own
+                // screen rather than here.
                 Status::Error(format!(
                     "{failed}; its earlier code is not restored. Retry, or fix it and reload \
-                     it; the diagnostics are under \"Retry starting {title}\"."
+                     it; the diagnostics are under \"{}\".",
+                    pausing::details_title(&title)
                 ))
             }
         };
+        // Whether it is paused is on record before the outcome is shown.
+        self.records_written().await;
         self.end_reload(epoch, &identity, status);
     }
 

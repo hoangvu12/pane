@@ -763,6 +763,12 @@ pub(crate) struct Pause {
     pub version: Option<String>,
 }
 
+/// Why a command of the paused package titled `title` does not run, or why
+/// a call to it is refused; "The extension" when the title is not known.
+pub(crate) fn paused_reason(title: &str) -> String {
+    format!("{title} is paused after an error; retry it in Manage extensions")
+}
+
 /// What made Pane pause a package.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -923,10 +929,8 @@ impl Store {
             return Err(PackageError::NotInstalled(identity.clone()));
         };
         record.disabled = !enabled;
-        // Disabling ends a pause: enabled again, the package starts afresh.
-        if !enabled {
-            record.paused = None;
-        }
+        // Disabling or enabling ends a pause: the package starts afresh.
+        record.paused = None;
         write_registry(&self.dir, &updated)
             .map_err(|error| PackageError::Storage(error.to_string()))?;
         *registry = updated;
