@@ -106,7 +106,7 @@ _Avoid_: Build failure, rollback
 
 **Generation**:
 One run of an installed package's code, from when it is installed, enabled or Pane starts until it is disabled or its code is replaced by a reload or an update. Every call into the package belongs to the generation current when it was asked for, and is stopped when that generation ends; its late result is discarded.
-_Avoid_: Version (a package's version is its manifest's), session, instance (one generation can start several)
+_Avoid_: Version (a package's version is its manifest's), session, instance (one generation can start several), screen or search epoch (the launcher's counters of screens and searches, which only decide whether an answer is shown)
 
 **Supported platforms**:
 The operating systems a package, a command or an action declares it works on: a plain list, not a rule language. A declaration is not evidence of native support.

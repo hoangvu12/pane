@@ -92,12 +92,12 @@ impl Launcher {
     ) -> impl Future<Output = ()> + Send + 'static {
         let mut state = self.lock();
         let reload = self.begin_reload(&mut state, identity.clone(), attempt);
-        let generation = state.screen_generation;
+        let epoch = state.screen_epoch;
         drop(state);
         let launcher = self.clone();
         async move {
             if let Some(reload) = reload {
-                launcher.finish_reload(generation, reload).await;
+                launcher.finish_reload(epoch, reload).await;
             }
         }
     }
@@ -136,21 +136,21 @@ impl Launcher {
     /// Carries out a reload begun by [`Launcher::begin_reload`]. The outcome
     /// is shown if the user is still on the screen it started from, or was
     /// taken to root search because a command of the package closed.
-    pub(super) async fn finish_reload(&self, generation: u64, reload: Reload) {
+    pub(super) async fn finish_reload(&self, epoch: u64, reload: Reload) {
         let Reload { identity, attempt } = reload;
         let title = self.title_of(&identity);
-        let generation = match attempt {
+        let epoch = match attempt {
             Attempt::Retry => {
                 self.lock().failed.forget(&identity);
-                generation
+                epoch
             }
-            Attempt::Reload => match self.replace(generation, &identity).await {
-                Ok(generation) => generation,
+            Attempt::Reload => match self.replace(epoch, &identity).await {
+                Ok(epoch) => epoch,
                 Err(error) => {
                     let message = format!(
                         "{title} was not reloaded: {error}. It keeps running its installed code."
                     );
-                    self.end_reload(generation, &identity, Status::Error(message));
+                    self.end_reload(epoch, &identity, Status::Error(message));
                     return;
                 }
             },
@@ -179,14 +179,14 @@ impl Launcher {
                 ))
             }
         };
-        self.end_reload(generation, &identity, status);
+        self.end_reload(epoch, &identity, status);
     }
 
     /// Checks the package in its source folder and makes it the installed
-    /// copy, stopping the old instances. Returns the screen generation the
+    /// copy, stopping the old instances. Returns the screen epoch the
     /// outcome belongs to: a new one if an open command of the package
     /// closed for root search.
-    async fn replace(&self, generation: u64, identity: &PackageIdentity) -> Result<u64, String> {
+    async fn replace(&self, epoch: u64, identity: &PackageIdentity) -> Result<u64, String> {
         let Some(folder) = identity.local_folder() else {
             return Err("it has no local source folder to reload from".into());
         };
@@ -211,10 +211,10 @@ impl Launcher {
         let first = installed.commands().first().map(|c| c.component.clone());
         if self.put_installed(&mut state, installed) {
             self.show_root(&mut state, first);
-            return Ok(state.screen_generation);
+            return Ok(state.screen_epoch);
         }
         self.refresh(&mut state);
-        Ok(generation)
+        Ok(epoch)
     }
 
     /// Starts each command of the package that is available on this system
@@ -256,12 +256,12 @@ impl Launcher {
     }
 
     /// Ends a reload with `status`, shown if the screen is still the one of
-    /// `generation`.
-    fn end_reload(&self, generation: u64, identity: &PackageIdentity, status: Status) {
+    /// `epoch`.
+    fn end_reload(&self, epoch: u64, identity: &PackageIdentity, status: Status) {
         let mut state = self.lock();
         state.release(identity);
         self.refresh(&mut state);
-        if state.screen_generation == generation {
+        if state.screen_epoch == epoch {
             state.view.status = status;
         }
     }
