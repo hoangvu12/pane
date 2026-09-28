@@ -108,9 +108,11 @@ when no style is saved. Run locally on 2026-09-28 (Ubuntu 26.04.1 LTS, kernel
 | Enabled again: "Enabled Settings sample" | `16-enabled.png` (not committed: it shows the local checkout path) |
 | Greeting is back, titled "Greeting: formal", and "Greet me" answers "Good day to you" | [17-greeted.png](evidence/linux-x11/17-greeted.png) |
 
-The root screenshot after the restart is inspected, not machine-asserted: the
-smoke's checks are colors and files, so Greeting's absence is asserted by the
-launcher tests (`crates/pane-core/tests/disable.rs`) rather than the smoke.
+The smoke asserts Greeting's absence after the restart by comparing the
+root screenshot with the one taken before the settings sample was installed
+(`check_screenshot.py --same`, pixel for pixel): Greeting would take the fifth
+visible row. The launcher tests (`crates/pane-core/tests/disable.rs`) assert it
+row by row, for the Rust, JavaScript and TypeScript settings samples.
 The macOS and Windows smokes run the same phase (screenshots 13 to 17); they
 have not been run for this change.
 

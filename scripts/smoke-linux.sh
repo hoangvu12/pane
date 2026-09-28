@@ -140,13 +140,15 @@ stop_pane
 grep -q '"disabled": true' "$out/data/extensions/installed.json" || { echo "disabled state not recorded"; exit 1; }
 grep -q '"greeting-style": "formal"' "$out/data/extensions/settings.json" || { echo "setting not saved"; exit 1; }
 
-# After a restart Greeting is no longer in root search. Enabling the package
-# again brings it back with its setting: "Greet me" answers in the saved
-# formal style, where without a saved style it reports an error.
+# After a restart Greeting is no longer in root search: root looks exactly as
+# it did before the settings sample was installed. Enabling the package again
+# brings it back with its setting: "Greet me" answers in the saved formal
+# style, where without a saved style it reports an error.
 start_pane
 "$xdotool" windowfocus --sync "$window"
 capture 15-restarted-disabled.png
 check 15-restarted-disabled.png 8a96a3
+python3 "$(dirname "$0")/check_screenshot.py" --same "$out/12-restarted.png" "$out/15-restarted-disabled.png"
 for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done
 "$xdotool" key Return; sleep 1
 "$xdotool" key Down key Return; sleep 2

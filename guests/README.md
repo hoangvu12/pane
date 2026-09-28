@@ -122,7 +122,10 @@ const style: string | null = get("greeting-style");
   finishing from before cannot save: `set` fails instead of writing.
 - Pane keeps them in `extensions/settings.json` in its data folder. If that
   file cannot be read, `get` and `set` return the reason and Pane does not
-  overwrite the file.
+  overwrite the file. Each `set` replaces the file whole (a crash leaves the
+  old or the new file), but it is not locked: two Pane processes using the
+  same data folder can lose each other's last write. Keeping to one running
+  Pane is a later concern.
 - A command built into Pane rather than installed from a package has no
   settings: `get` and `set` return an error.
 - A component that does not import `settings` is unaffected; it is built for
@@ -390,8 +393,12 @@ What installing does:
   enabled and its source, so copies with the same title can be told apart.
   Enter disables or enables the selected one; only that installation
   changes. A disabled package's commands leave root search (they are not
-  shown greyed out), an open command of it closes, and its running
-  instances are dropped, so none of its code runs. The choice is recorded in
+  shown greyed out), an open command of it closes, its running instances are
+  dropped and it can no longer save settings, so none of its code runs. This
+  happens as soon as you press Enter, before the choice is written; if it
+  cannot be written, the package is enabled again with the reason. Pressing
+  Enter again while the choice is being written does nothing. The choice is
+  recorded in
   `installed.json` (`"disabled": true`) and holds after restarting Pane and
   after an Update. Its settings are kept, and enabling it brings its
   commands back with them. The package stays installed at the same identity;
@@ -410,8 +417,8 @@ Known limits of local packages so far:
   its state and may fail until you open it again from root search. Staged
   activation that waits for running commands comes with reload (#11, #14).
 - Disabling does not cancel a call already running in the package: it
-  finishes (its answer is discarded once its screen is gone, and it cannot
-  save settings), then its instance is dropped. Cancelling async work,
+  finishes (its answer is not shown, and it cannot save settings), then its
+  instance is dropped; a call that had not started is refused. Cancelling async work,
   background services, timers and hotkeys are not part of the extension API
   yet and come with their own tickets. Disabling does not yet consider
   packages that depend on the disabled one (#43).

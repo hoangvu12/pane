@@ -126,12 +126,15 @@ Stop-Pane $process
 if (-not (Select-String -Quiet -SimpleMatch '"disabled": true' (Join-Path $data "extensions/installed.json"))) { throw "disabled state not recorded" }
 if (-not (Select-String -Quiet -SimpleMatch '"greeting-style": "formal"' (Join-Path $data "extensions/settings.json"))) { throw "setting not saved" }
 
-# After a restart Greeting is no longer in root search. Enabling the package
-# again brings it back with its setting: "Greet me" answers in the saved
-# formal style, where without a saved style it reports an error.
+# After a restart Greeting is no longer in root search: root looks exactly as
+# it did before the settings sample was installed. Enabling the package again
+# brings it back with its setting: "Greet me" answers in the saved formal
+# style, where without a saved style it reports an error.
 $process = Start-Pane "stderr-reenable.log"
 Capture "15-restarted-disabled.png"
 Check "15-restarted-disabled.png" "8a96a3"
+python "$PSScriptRoot/check_screenshot.py" --same (Join-Path $OutDir "12-restarted.png") (Join-Path $OutDir "15-restarted-disabled.png")
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: root after the restart lists the disabled package" }
 Send "{DOWN 10}"
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2

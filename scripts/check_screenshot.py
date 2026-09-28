@@ -9,10 +9,14 @@ any other color Pane draws. Requires Pillow.
 
 With --distinct, asserts instead that the Pane window looks different in every
 given screenshot, so steps that should show different content (each guest's
-answer) cannot silently show the same view.
+answer) cannot silently show the same view. With --same, asserts that two
+screenshots show the same Pane window, pixel for pixel: a screen that should
+list the same rows as an earlier one (after a restart, a disabled package's
+command is gone again) cannot silently list another.
 
 Usage: python3 scripts/check_screenshot.py <png> <hex color> [min pixels]
        python3 scripts/check_screenshot.py --distinct <png> <png>...
+       python3 scripts/check_screenshot.py --same <png> <png>
 """
 import sys
 
@@ -56,6 +60,12 @@ def distinct(paths: list[str]) -> None:
     print(f"{len(paths)} screenshots show different Pane windows")
 
 
+def same(first: str, second: str) -> None:
+    if pane_window(first).tobytes() != pane_window(second).tobytes():
+        raise SystemExit(f"{first} and {second} show different Pane windows")
+    print(f"{first} and {second} show the same Pane window")
+
+
 def main(path: str, color: str, minimum: int = 20) -> None:
     window = pane_window(path)
     target = rgb(color)
@@ -76,5 +86,7 @@ def main(path: str, color: str, minimum: int = 20) -> None:
 if __name__ == "__main__":
     if sys.argv[1] == "--distinct":
         distinct(sys.argv[2:])
+    elif sys.argv[1] == "--same":
+        same(sys.argv[2], sys.argv[3])
     else:
         main(sys.argv[1], sys.argv[2], *(int(n) for n in sys.argv[3:4]))
