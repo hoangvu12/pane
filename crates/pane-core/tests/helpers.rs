@@ -33,6 +33,13 @@ fn assembled() -> PathBuf {
         "{} is missing; run `cargo xtask guests`",
         path.display()
     );
+    let manifest = fs::read_to_string(path.join("pane.json")).unwrap();
+    assert!(
+        manifest.contains(&format!("\"{}\"", current_target())),
+        "the helper sample ships no helper for {}: it is built for the contributor \
+         baselines (linux-x86_64, macos-aarch64, windows-x86_64) only",
+        current_target()
+    );
     path
 }
 

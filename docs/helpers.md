@@ -121,7 +121,11 @@ untouched: what the command saved before the helper was stopped is kept
 - Targets: `x86_64` and `aarch64` on the three systems; 32-bit, musl versus
   glibc, minimum OS versions and library dependencies of a helper are not
   checked or claimed. A Linux helper linked against libraries the user's
-  system lacks fails when started.
+  system lacks fails when started. The helper sample declares only the
+  contributor baselines (`linux-x86_64`, `macos-aarch64`,
+  `windows-x86_64`); on another machine, such as an Intel Mac or Linux on
+  arm64, its helper is explained as unavailable and the helper tests stop
+  saying so.
 - **Rust only for now.** The helper sample is Rust; JavaScript and
   TypeScript commands cannot import `pane:extension/helpers` until the JS
   world (`guests/js/wit/world.wit`) includes it, which rebuilds every
