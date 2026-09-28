@@ -4,9 +4,11 @@
 pub mod applications;
 mod atomic;
 pub mod changes;
+mod dependencies;
 pub mod develop;
 mod extension_data;
 mod generation;
+mod helpers;
 pub mod hotkeys;
 mod launcher;
 mod links;
@@ -16,6 +18,7 @@ mod platform;
 mod runtime;
 mod search;
 
+pub use helpers::runner::{MAX_HELPER_INPUT, MAX_HELPER_OUTPUT};
 pub use launcher::{
     BuildFailure, CommandRegistration, CustomViewSnapshot, Development, FormField, FormView,
     Launcher, LauncherView, Question, Row, Screen, Status, Unavailable,
@@ -24,8 +27,9 @@ pub use links::LinkOpener;
 pub use operations::{MAX_CALL_DEPTH, MAX_OPERATION_JSON};
 pub use packages::{
     EXTENSION_API, InstalledPackage, MANIFEST_FILE, MANIFEST_VERSION, Manifest, ManifestCommand,
-    ManifestOperation, PackageError, PackageIdentity, RetainedData, SavedData,
+    ManifestHelper, ManifestOperation, PackageError, PackageIdentity, RetainedData, SavedData,
 };
+pub use pane_target::{Arch, Target};
 pub use platform::Platform;
 pub use runtime::{
     CallError, Choice, CustomViewInfo, CustomViewRole, Field, FieldKind, FieldValue, Form,

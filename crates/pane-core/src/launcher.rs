@@ -29,8 +29,10 @@ mod choices;
 mod hotkeys;
 mod indexed;
 
+use crate::dependencies;
 use crate::extension_data::{ExtensionData, PackageData};
 use crate::generation::End;
+use crate::helpers;
 use crate::hotkeys::{self as system_hotkeys, Hotkeys};
 use crate::links::{self, LinkOpener, NoOpener};
 use crate::operations::{self, Installed};
@@ -46,6 +48,7 @@ use crate::runtime::{
 use crate::search::{self, Keys, Query};
 
 mod developing;
+mod install;
 mod pausing;
 mod reload;
 mod retained;
@@ -430,16 +433,21 @@ enum Changing {
     Uninstalling,
     /// It is not installed, and its retained data is being deleted.
     DeletingRetained,
+    /// It is being installed with another package, or an install relies on
+    /// it as a required dependency staying as it is.
+    Installing,
 }
 
 impl Changing {
-    /// Why installing the same source must wait, if it must: its data is
-    /// being removed.
-    fn refuses_install(self) -> Option<&'static str> {
+    /// What is happening, after the package's title: "is reloading".
+    fn doing(self) -> &'static str {
         match self {
-            Changing::Uninstalling => Some("is being uninstalled"),
-            Changing::DeletingRetained => Some("is having its retained data deleted"),
-            Changing::Recording | Changing::Reloading | Changing::Updating => None,
+            Changing::Recording => "is being enabled or disabled",
+            Changing::Reloading => "is reloading",
+            Changing::Updating => "is updating",
+            Changing::Uninstalling => "is being uninstalled",
+            Changing::DeletingRetained => "is having its retained data deleted",
+            Changing::Installing => "is part of an install in progress",
         }
     }
 }
@@ -483,10 +491,7 @@ impl State {
                 return true;
             }
             Some(Changing::Recording) => return false,
-            Some(Changing::Reloading) => "is reloading",
-            Some(Changing::Updating) => "is updating",
-            Some(Changing::Uninstalling) => "is being uninstalled",
-            Some(Changing::DeletingRetained) => "is having its retained data deleted",
+            Some(busy) => busy.doing(),
         };
         self.view.status = Status::Error(format!("{} {busy}", self.title_of(identity)));
         false
@@ -615,8 +620,8 @@ enum Entry {
     /// Open the custom view of the open command's item with this id.
     CustomView(String, CustomViewInfo),
     /// Install the previewed package from this folder, or replace its
-    /// installed copy.
-    Install(PathBuf, Mode),
+    /// installed copy, as the preview's plan assumed things to be.
+    Install(PathBuf, Mode, dependencies::Assumptions),
     /// Show the installed packages (root).
     Manage,
     /// Enable this installed package if it is disabled, else disable it.
@@ -1206,6 +1211,7 @@ impl Launcher {
         let mut uninstall = None;
         let mut develop = None;
         let mut delete_retained = None;
+        let mut install = None;
         // The status line is about this action from now on.
         state.sent_from = None;
         let entry = match entry {
@@ -1328,9 +1334,8 @@ impl Launcher {
                 reload = self.begin_reload(&mut state, identity, reload::Attempt::Retry);
                 None
             }
-            Some(Entry::Install(_, Mode::Update(identity)))
-                if !state.claim(&identity, Changing::Updating) =>
-            {
+            Some(Entry::Install(folder, mode, assumptions)) => {
+                install = self.begin_install(&mut state, folder, mode, assumptions);
                 None
             }
             Some(Entry::InstallFromFolder) | None => None,
@@ -1375,6 +1380,9 @@ impl Launcher {
             if let Some(retained) = delete_retained {
                 launcher.finish_delete_retained(epoch, retained).await;
             }
+            if let Some(install) = install {
+                launcher.finish_install(epoch, install).await;
+            }
             match entry {
                 Some(Entry::Open(component)) => launcher.open_command(epoch, component, data).await,
                 Some(Entry::Send(sending)) => launcher.run_query(epoch, sending, data).await,
@@ -1386,7 +1394,6 @@ impl Launcher {
                         launcher.run_action(epoch, component, item_id, data).await
                     }
                 }
-                Some(Entry::Install(folder, mode)) => launcher.install(epoch, folder, mode).await,
                 Some(Entry::OpenUrl(url)) => launcher.open_url(epoch, url).await,
                 Some(Entry::ClearCache(identity)) => launcher.clear_cache(epoch, identity).await,
                 Some(Entry::CustomView(item_id, info)) => {
@@ -1401,6 +1408,7 @@ impl Launcher {
                     | Entry::Broken(_)
                     | Entry::Unavailable(_)
                     | Entry::InstallFromFolder
+                    | Entry::Install(..)
                     | Entry::Manage
                     | Entry::Toggle(_)
                     | Entry::Reload(_)
@@ -1437,33 +1445,45 @@ impl Launcher {
         let launcher = self.clone();
         let folder = folder.to_path_buf();
         async move {
-            let checked = launcher.read_and_check(folder.clone()).await;
+            let checked = match launcher.read_and_check(folder.clone()).await {
+                Ok(package) => Ok(launcher.plan_dependencies(package).await),
+                Err(error) => Err(error),
+            };
             let mut state = launcher.lock();
             if state.screen_epoch != epoch {
                 return;
             }
-            let installed = checked.as_ref().ok().and_then(|package| {
-                state
-                    .packages
-                    .iter()
-                    .find(|installed| installed.identity == package.identity)
-                    .cloned()
-            });
-            let (view, entries) = preview_view(&folder, checked, installed);
-            launcher.leave_command(&mut state);
-            state.view = view;
-            state.entries = entries;
+            launcher.show_preview(&mut state, &folder, checked);
         }
     }
 
-    /// Installs the package in `folder` as an explicit install request. A
-    /// package whose identity is already installed is rejected: replacing
-    /// it is an update.
+    /// Shows the package screen for `folder`, from its package and plan or
+    /// why it cannot be read.
+    fn show_preview(
+        &self,
+        state: &mut State,
+        folder: &Path,
+        checked: Result<(SourcePackage, dependencies::Plan), PackageError>,
+    ) {
+        let installed = checked
+            .as_ref()
+            .ok()
+            .and_then(|(package, _)| state.package(&package.identity).cloned());
+        let (view, entries) = preview_view(folder, checked, installed);
+        self.leave_command(state);
+        state.view = view;
+        state.entries = entries;
+    }
+
+    /// Installs the package in `folder` as an explicit install request, with
+    /// the required dependencies it is missing, as the preview would show
+    /// them. A package whose identity is already installed is rejected:
+    /// replacing it is an update.
     pub fn install_package(&self, folder: &Path) -> impl Future<Output = ()> + Send + 'static {
         let epoch = self.start_running();
         let launcher = self.clone();
-        let folder = folder.to_path_buf();
-        async move { launcher.install(epoch, folder, Mode::Install).await }
+        let install = install::Begun::unplanned(folder.to_path_buf());
+        async move { launcher.finish_install(epoch, install).await }
     }
 
     /// Enables or disables the installed package with `identity` and
@@ -1604,76 +1624,10 @@ impl Launcher {
         self.refresh(state);
     }
 
-    /// What is happening to the package with `identity`, if anything.
-    fn changing_as(&self, identity: &PackageIdentity) -> Option<Changing> {
-        self.lock().changing.get(identity).copied()
-    }
-
     fn start_running(&self) -> u64 {
         let mut state = self.lock();
         state.view.status = Status::Running;
         state.screen_epoch
-    }
-
-    async fn install(&self, epoch: u64, folder: PathBuf, mode: Mode) {
-        let result = match self.installation.as_ref().map(|i| &i.store) {
-            None => Err(PackageError::Storage(
-                "this launcher does not install packages".into(),
-            )),
-            Some(store) => match self.read_and_check(folder).await {
-                // Not installed again while the data it would find is being
-                // removed.
-                Ok(package)
-                    if let Some(busy) = self
-                        .changing_as(&package.identity)
-                        .and_then(Changing::refuses_install) =>
-                {
-                    Err(PackageError::Storage(format!(
-                        "{} {busy}; install it again once that is done",
-                        package.manifest.title
-                    )))
-                }
-                Ok(package) => {
-                    let store = store.clone();
-                    let mode = mode.clone();
-                    off_thread(move || {
-                        let mut store = store.lock().unwrap_or_else(|p| p.into_inner());
-                        match mode {
-                            Mode::Install => store.install(&package),
-                            Mode::Update(_) => store.update(&package),
-                        }
-                    })
-                    .await
-                }
-                Err(error) => Err(error),
-            },
-        };
-        let mut state = self.lock();
-        if let Mode::Update(identity) = &mode {
-            state.release(identity);
-        }
-        let current = state.screen_epoch == epoch;
-        match result {
-            Ok(installed) => {
-                let message = match (mode, installed.version()) {
-                    (Mode::Install, _) => format!("Installed {}", installed.title()),
-                    (Mode::Update(_), Some(version)) => {
-                        format!("Updated {} to {version}", installed.title())
-                    }
-                    (Mode::Update(_), None) => format!("Updated {}", installed.title()),
-                };
-                let first = installed.commands().first().map(|c| c.component.clone());
-                let replaced_is_open = self.put_installed(&mut state, installed);
-                if current || replaced_is_open {
-                    self.show_root(&mut state, first);
-                    state.view.status = Status::Result(message);
-                } else {
-                    self.refresh(&mut state);
-                }
-            }
-            Err(error) if current => state.view.status = Status::Error(error.to_string()),
-            Err(_) => {}
-        }
     }
 
     /// Records `installed` as the managed copy of its package: added, or
@@ -1702,11 +1656,8 @@ impl Launcher {
             self.sync_hotkeys(state);
             return false;
         };
-        // The replaced copy's code is not run again: its generation ends,
-        // which stops its pending calls, and the new code runs in a new one.
-        if let Some(installation) = &self.installation {
-            installation.data.replace_code(&installed.identity);
-        }
+        // The replaced copy's code no longer runs: its generation ended
+        // before its folder was removed ([`Launcher::retire`]).
         let replaced: Vec<PathBuf> = package
             .commands()
             .into_iter()
@@ -1732,7 +1683,8 @@ impl Launcher {
     /// runtime check each component without running it.
     async fn read_and_check(&self, folder: PathBuf) -> Result<SourcePackage, PackageError> {
         let package = off_thread(move || SourcePackage::read(&folder)).await?;
-        self.check_components(package).await
+        self.check_components(&package).await?;
+        Ok(package)
     }
 
     /// Like [`Launcher::read_and_check`], for a package staged in `folder`
@@ -1743,14 +1695,13 @@ impl Launcher {
         identity: PackageIdentity,
     ) -> Result<SourcePackage, PackageError> {
         let package = off_thread(move || SourcePackage::read_staged(&folder, identity)).await?;
-        self.check_components(package).await
+        self.check_components(&package).await?;
+        Ok(package)
     }
 
-    /// Checks each component of `package` without running it.
-    async fn check_components(
-        &self,
-        package: SourcePackage,
-    ) -> Result<SourcePackage, PackageError> {
+    /// Has the runtime check each component of `package` without running
+    /// it.
+    async fn check_components(&self, package: &SourcePackage) -> Result<(), PackageError> {
         let mut checked_components = Vec::new();
         for (name, component) in package.manifest.components() {
             // A component serving several commands or operations is checked
@@ -1770,7 +1721,7 @@ impl Launcher {
                 error,
             })?;
         }
-        Ok(package)
+        Ok(())
     }
 
     /// Shows root search with an empty query: this build's commands, then
@@ -2729,6 +2680,26 @@ impl Launcher {
         Some(self.installation.as_ref()?.data.owned_by(&package.identity))
     }
 
+    /// What an update or reload of the package with `identity` does to the
+    /// old code once the new copy is recorded, before the old copy's folder
+    /// is removed: its generation ends, which stops its pending calls (the
+    /// new code runs in a new one), and its helpers are ended and reaped, so
+    /// no running program keeps the folder in use (Windows would refuse to
+    /// remove it).
+    fn retire(&self, identity: &PackageIdentity) -> impl FnOnce(&Path) + Send + 'static {
+        let data = self.installation.as_ref().map(|i| i.data.clone());
+        let runtime = self.runtime().ok().cloned();
+        let identity = identity.clone();
+        move |old: &Path| {
+            if let Some(data) = data {
+                data.replace_code(&identity);
+            }
+            if let Some(runtime) = runtime {
+                runtime.stop_helpers_in(old);
+            }
+        }
+    }
+
     fn runtime(&self) -> Result<&Runtime, CallError> {
         self.runtime.as_ref().map_err(Clone::clone)
     }
@@ -2890,11 +2861,11 @@ fn extension_rows(
 /// be installed, or why it cannot.
 fn preview_view(
     folder: &Path,
-    checked: Result<SourcePackage, PackageError>,
+    checked: Result<(SourcePackage, dependencies::Plan), PackageError>,
     installed: Option<InstalledPackage>,
 ) -> (LauncherView, Vec<Entry>) {
-    let package = match checked {
-        Ok(package) => package,
+    let (package, plan) = match checked {
+        Ok(checked) => checked,
         Err(error) => {
             let details = vec![format!("Folder: {}", folder.display())];
             let view = LauncherView {
@@ -2919,6 +2890,9 @@ fn preview_view(
     if let Some(operations) = operations::describe(&manifest.operations) {
         details.push(operations);
     }
+    if let Some(helpers) = helpers::describe(&manifest.helpers) {
+        details.push(helpers);
+    }
     details.push(format!(
         "Compatible: needs extension API {}, and its components import only WASI 0.3",
         manifest.api_version
@@ -2937,6 +2911,23 @@ fn preview_view(
             .collect();
         details.push(format!("Supported systems: {}", platform::join(&names)));
     }
+    details.extend(plan.lines());
+    if !plan.problems.is_empty() {
+        // Nothing is offered: a required dependency cannot be installed.
+        let view = LauncherView {
+            status: Status::Error(install::problems(&plan).to_string()),
+            ..LauncherView::new(
+                Screen::Package { details },
+                format!("Cannot install {}", manifest.title),
+            )
+        };
+        return (view, Vec::new());
+    }
+    let with = match plan.installed_with().as_slice() {
+        [] => String::new(),
+        [one] => format!(", and install {one}, which it requires"),
+        titles => format!(", and install the {} extensions it requires", titles.len()),
+    };
     let (row, entry) = match installed {
         Some(installed) => {
             details.push(match installed.version() {
@@ -2949,20 +2940,34 @@ fn preview_view(
             let row = Row {
                 id: "update".into(),
                 title: "Update".into(),
-                subtitle: Some("Replace the installed copy with this folder's contents".into()),
+                subtitle: Some(format!(
+                    "Replace the installed copy with this folder's contents{with}"
+                )),
                 unavailable: None,
             };
             let mode = Mode::Update(installed.identity.clone());
-            (row, Entry::Install(package.folder.clone(), mode))
+            (
+                row,
+                Entry::Install(package.folder.clone(), mode, plan.assumptions.clone()),
+            )
         }
         None => {
             let row = Row {
                 id: "install".into(),
                 title: "Install".into(),
-                subtitle: Some("Copy the package into Pane and add its commands".into()),
+                subtitle: Some(format!(
+                    "Copy the package into Pane and add its commands{with}"
+                )),
                 unavailable: None,
             };
-            (row, Entry::Install(package.folder.clone(), Mode::Install))
+            (
+                row,
+                Entry::Install(
+                    package.folder.clone(),
+                    Mode::Install,
+                    plan.assumptions.clone(),
+                ),
+            )
         }
     };
     let view =

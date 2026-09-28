@@ -576,8 +576,10 @@ check 59-paused.png d6a36a   # Greeting: "Settings sample is paused after an err
 stop_pane
 grep -q '"paused"' "$PANE_DATA_DIR/extensions/installed.json" || { echo "pause not recorded"; exit 1; }
 start_pane
+type_text greet; sleep 1
 capture 60-paused-after-restart.png
 check 60-paused-after-restart.png d6a36a   # Greeting is still paused
+key 53; sleep 1   # Escape clears the query
 for ((i = 0; i < 10; i++)); do key 125; done   # Manage extensions…
 key 36; sleep 1
 key 125; key 125; key 125; key 36; sleep 1   # "Why Settings sample is paused"
@@ -706,6 +708,109 @@ type_text 'ec hello'; sleep 1
 capture 74-nothing-installed.png   # "No results for “ec hello”"
 python3 "$(dirname "$0")/check_screenshot.py" --same "$out"/{73-alias-disabled,74-nothing-installed}.png
 stop_pane
+
+# Dependencies: the dependencies sample requires the JavaScript operations
+# sample (from ../sample-operations-js) and can use the Rust one, which is
+# optional. Its preview lists both; Install installs it with the JavaScript
+# sample only, and its command (selected once installed) calls that
+# package's greet operation by its dependency id: "Hello, Pane, from
+# JavaScript" comes from the other package's guest. A data folder of its own
+# starts with nothing installed.
+export PANE_DATA_DIR=$out/dependencies-data
+rm -rf "$PANE_DATA_DIR"
+start_pane --install target/guests/packages/sample-dependencies
+capture 75-dependencies-preview.png
+check 75-dependencies-preview.png aab4c0   # "Requires: JavaScript operations sample, installed with it ..."
+key 36; sleep 3   # Install; Greet through dependencies is selected
+capture 76-dependencies-installed.png
+check 76-dependencies-installed.png 9fd8a8   # "Installed Dependencies sample with JavaScript operations sample, which it requires"
+key 36; sleep 3   # open Greet through dependencies
+key 36; sleep 5   # Greet through the required greeter
+capture 77-dependency-answer.png
+check 77-dependency-answer.png 9fd8a8   # the JavaScript guest's answer
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{75-dependencies-preview,76-dependencies-installed,77-dependency-answer}.png
+stop_pane
+grep -q '"id": "greeter"' "$PANE_DATA_DIR/extensions/installed.json" || { echo "dependency not recorded"; exit 1; }
+[ "$(grep -c '"dir"' "$PANE_DATA_DIR/extensions/installed.json")" = 2 ] || { echo "not exactly two packages installed"; exit 1; }
+
+# Native helpers: the helper sample's command runs pane-echo, the file its
+# package ships for this system (built by `cargo xtask guests`). Its first
+# item shows the helper's answer, naming the system; its third races the
+# helper against a one-second timer and cancels it. Its second has the
+# helper wait ten seconds: disabling the package meanwhile (its row is the
+# first in Manage extensions) ends the helper's process at once, and the
+# note it saved before is kept. A data folder of its own keeps the rows in a
+# known order; the helper runs from its managed copy there.
+export PANE_DATA_DIR=$out/helper-data
+rm -rf "$PANE_DATA_DIR"
+# Pane's helper processes: pane-echo run from this data folder.
+helpers_running() { pgrep -f "$PANE_DATA_DIR/extensions/packages/.*/pane-echo" >/dev/null; }
+start_pane --install target/guests/packages/sample-helper
+key 36; sleep 2   # Install; Helper sample is selected
+key 36; sleep 2   # open Helper sample
+key 36; sleep 2   # Echo through the helper
+capture 90-helper-echoed.png
+check 90-helper-echoed.png 9fd8a8   # 'Echoed "hello from Pane" on macOS arm64'
+key 125; key 125; key 36; sleep 3   # Echo within a second
+capture 91-helper-cancelled.png
+check 91-helper-cancelled.png 9fd8a8   # "Stopped the helper after one second"
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{90-helper-echoed,91-helper-cancelled}.png
+if helpers_running; then echo "a cancelled helper is still running"; exit 1; fi
+key 126; key 36; sleep 2   # Up: Echo after waiting
+helpers_running || { echo "the waiting helper is not running"; exit 1; }
+capture 92-helper-waiting.png
+key 53; sleep 1   # root search; the helper keeps running
+for ((i = 0; i < 10; i++)); do key 125; done   # Manage extensions…
+key 36; sleep 1
+key 36; sleep 2   # disable Helper sample
+capture 93-helper-disabled.png
+check 93-helper-disabled.png 9fd8a8   # "Disabled Helper sample"
+if helpers_running; then echo "the helper outlived its disabled package"; exit 1; fi
+grep -q '"helper-wait": "started"' "$PANE_DATA_DIR/extensions/settings.json" || { echo "saved note lost"; exit 1; }
+if grep -q '"helper-wait": "finished"' "$PANE_DATA_DIR/extensions/settings.json"; then echo "the stopped call finished"; exit 1; fi
+stop_pane
+if helpers_running; then echo "a helper outlived Pane"; exit 1; fi
+
+# Quitting Pane while a helper runs ends it: with "Echo after waiting"
+# running (the helper beats in pane-echo.alive in its folder of the managed
+# copy), asking Pane to quit the way the Dock's Quit does (a quit Apple
+# event, sent by NSRunningApplication's terminate) ends the helper first. A
+# data folder of its own again.
+export PANE_DATA_DIR=$out/helper-quit-data
+rm -rf "$PANE_DATA_DIR"
+start_pane --install target/guests/packages/sample-helper
+key 36; sleep 2   # Install; Helper sample is selected
+key 36; sleep 2   # open Helper sample
+key 125; key 36; sleep 2   # Echo after waiting
+helpers_running || { echo "the waiting helper is not running"; exit 1; }
+capture 94-helper-before-quit.png
+check 94-helper-before-quit.png d6c27a   # "Running…"
+alive=$(find "$PANE_DATA_DIR/extensions/packages" -name pane-echo.alive | head -1)
+[ -n "$alive" ] || { echo "the waiting helper does not beat"; exit 1; }
+python3 - "$pid" <<'PY'
+import ctypes, ctypes.util, sys
+objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
+ctypes.cdll.LoadLibrary(ctypes.util.find_library("AppKit"))
+objc.objc_getClass.restype = ctypes.c_void_p
+objc.objc_getClass.argtypes = [ctypes.c_char_p]
+objc.sel_registerName.restype = ctypes.c_void_p
+objc.sel_registerName.argtypes = [ctypes.c_char_p]
+address = ctypes.cast(objc.objc_msgSend, ctypes.c_void_p).value
+by_pid = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int)(address)
+terminate = ctypes.CFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)(address)
+app = by_pid(objc.objc_getClass(b"NSRunningApplication"),
+             objc.sel_registerName(b"runningApplicationWithProcessIdentifier:"), int(sys.argv[1]))
+if not app:
+    sys.exit("Pane is not a running application")
+sys.exit(0 if terminate(app, objc.sel_registerName(b"terminate")) else "Pane did not take the quit request")
+PY
+for _ in $(seq 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+if kill -0 "$pid" 2>/dev/null; then echo "Pane did not quit when asked"; exit 1; fi
+wait "$pid" 2>/dev/null || true
+pid=
+if helpers_running; then echo "a helper outlived Pane quitting"; exit 1; fi
+beats=$(stat -f %z "$alive"); sleep 0.5
+[ "$(stat -f %z "$alive")" = "$beats" ] || { echo "the helper still beats after Pane quit"; exit 1; }
 
 # Development mode (#12, #13): a copy of each development sample
 # (guests/hello-rust, hello-ts, hello-js) is built once, installed and
