@@ -1,7 +1,8 @@
 //! Guest-side bindings for Pane's `pane:extension` contract.
 //!
 //! An extension implements [`Guest`] and calls [`export!`]. It may keep
-//! values between runs with [`settings`]. The crate is
+//! values between runs with [`settings`], and compute results from root
+//! search's query with [`root`]. The crate is
 //! `no_std` so the component imports only WASI 0.3 interfaces; it supplies the
 //! allocator and a panic handler that traps, which the host reports as a
 //! runtime error.
@@ -30,6 +31,27 @@ pub use exports::pane::extension::command::{
     TextField, View, ViewEvent,
 };
 pub use pane::extension::settings;
+
+/// Results a command computes from root search's query
+/// (`pane:extension/root-results`), such as a calculator's answer. A command
+/// whose `pane.json` entry sets `"rootResults": true` implements
+/// [`root::Guest`] too and calls [`root::export!`](crate::root::export)
+/// beside [`export!`]:
+///
+/// ```ignore
+/// pane_guest::export!(Calculator);
+/// pane_guest::root::export!(Calculator);
+/// ```
+pub mod root {
+    wit_bindgen::generate!({
+        path: "../../wit",
+        world: "root-results-provider",
+        pub_export_macro: true,
+        default_bindings_module: "pane_guest::root",
+    });
+
+    pub use exports::pane::extension::root_results::{Guest, RootAction, RootResult};
+}
 
 /// The custom view type of a command that has none: `type CustomView =
 /// NoCustomView;` in its `Guest` implementation, with an `open_view` that

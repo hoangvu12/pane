@@ -36,6 +36,10 @@ _Avoid_: Every integration's internal search
 One entry root search lists for a query and can invoke, such as an extension command; it is matched by its title, subtitle and, for an installed command, its package's title, and ranked by the core.
 _Avoid_: Item (an item belongs to a command's own list), search hit
 
+**Computed result**:
+A root result an extension command computes from the query itself, such as the calculator's answer to "6*7", rather than one found by matching titles; it is listed above those, and invoking it performs its action, such as copying the answer.
+_Avoid_: Suggestion, answer card, inline result
+
 **Search provider**:
 A source of matching results for a query, such as applications, files or an online service.
 _Avoid_: The entire search interface

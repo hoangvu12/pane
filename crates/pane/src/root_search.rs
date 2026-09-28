@@ -60,8 +60,15 @@ impl QueryField {
         let input = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
         input.focus_handle(cx).tab_stop(true);
         let changes = cx.subscribe(&input, |this, input, _: &TextChanged, cx| {
-            this.launcher.set_query(input.read(cx).as_str());
+            // Results computed from the query (the calculator's answer)
+            // arrive later, without holding up typing.
+            let computed = this.launcher.set_query(input.read(cx).as_str());
             cx.notify();
+            cx.spawn(async move |this, cx| {
+                computed.await;
+                this.update(cx, |_, cx| cx.notify()).ok();
+            })
+            .detach();
         });
         QueryField {
             input,

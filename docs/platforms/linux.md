@@ -179,6 +179,28 @@ No input method (IBus, Fcitx) was used; composition in the field is covered
 only by the window tests. The macOS and Windows smokes run the same phase
 (screenshots 24 to 26); it has not run there yet.
 
+### Calculator (#27)
+
+The last phase installs the calculator package
+(`--install target/guests/packages/calculator`), types "6*7" with real X11
+key events and checks the selected answer row's color; Enter copies the
+answer. Ctrl+A and typing "42+1" gives screenshot 29; Ctrl+A, Ctrl+V (the
+copied "42") and typing "+1" must give exactly the same screen (`--same`),
+which holds only if the X11 clipboard held "42"; screens 27 to 29 must
+differ. Run locally on 2026-09-28 (Ubuntu 26.04.1 LTS, kernel
+7.0.0-31-generic, x86_64, same Xvfb/lavapipe setup): all checks of the
+whole smoke passed.
+
+| Step | Evidence |
+| --- | --- |
+| "6*7" typed: the answer 42, first and selected, computed by the calculator's guest | [27-answer.png](evidence/linux-x11/27-answer.png) |
+| Enter: "Copied 42 to the clipboard", root search unchanged | [28-copied.png](evidence/linux-x11/28-copied.png) |
+| Pasted "42", typed "+1": the answer 43, the same screen as typing "42+1" | [30-pasted.png](evidence/linux-x11/30-pasted.png) |
+
+The macOS and Windows smokes run the same phase (screenshots 27 to 30, with
+Cmd and Ctrl respectively); it has not run there yet. Disabling the
+calculator is covered by the launcher tests, not natively.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms have a text field (GPUI CE's

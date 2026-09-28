@@ -90,6 +90,14 @@ exactly like step 4, then types "zzz" and presses Enter on no results. **It
 has not run on Windows yet**; typing into the query field through the
 window's text input (TSF) is therefore unverified here, as is any IME.
 
+## Calculator (#27)
+
+The smoke's last phase (screenshots 27 to 30) installs the calculator
+package, types "6*7", checks the selected answer row, presses Enter to copy
+it, then compares typing "42+1" with pasting the copy (Ctrl+A, Ctrl+V through `SendKeys`) and typing
+"+1", which must look the same. **It has not run on Windows yet**, so
+the calculator's answer and the native clipboard are unverified here.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** the smoke now also opens the Rust command's

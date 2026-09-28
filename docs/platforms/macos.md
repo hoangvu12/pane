@@ -112,6 +112,14 @@ look exactly like step 4, then types "zzz" and presses Return on no results.
 **It has not run on macOS yet**; typing into the query field through
 `NSTextInputClient` is therefore unverified here, as is any input method.
 
+## Calculator (#27)
+
+The smoke's last phase (screenshots 27 to 30) installs the calculator
+package, types "6*7", checks the selected answer row, presses Enter to copy
+it, then compares typing "42+1" with pasting the copy (Cmd+A, Cmd+V) and typing
+"+1", which must look the same. **It has not run on macOS yet**, so
+the calculator's answer and the native clipboard are unverified here.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms now have a text field. The

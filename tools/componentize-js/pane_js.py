@@ -38,6 +38,9 @@ REPO = HERE.parents[1]
 PINS = json.loads((HERE / "pins.json").read_text(encoding="utf-8"))
 EXE = ".exe" if os.name == "nt" else ""
 WORLD = "js-extension"
+# The world of a command that also computes root results, chosen by
+# `"pane": { "rootResults": true }` in its package.json.
+WORLD_WITH_ROOT_RESULTS = "js-extension-with-root-results"
 PREBUILT = REPO / "guests" / "prebuilt"
 MANIFEST = PREBUILT / "manifest.json"
 # (component file in guests/prebuilt and target/guests, source package)
@@ -48,7 +51,7 @@ SAMPLES = [
     ("sample_settings_ts.wasm", "guests/sample-settings-ts"),
 ]
 # Pane's WIT, copied beside the world in guests/js/wit.
-PANE_WIT = ["extension.wit", "settings.wit"]
+PANE_WIT = ["extension.wit", "settings.wit", "root-results.wit"]
 # Toolchain inputs that decide what a component contains.
 TOOL_INPUTS = ["pins.json", "package.json", "package-lock.json", "bundle.mjs", "p3_build.rs", "patches"]
 SKIP_DIRS = {"node_modules", ".git"}
@@ -348,7 +351,8 @@ def build(package: Path, out: Path, toolchain: Toolchain) -> dict:
     for name in PANE_WIT:
         shutil.copyfile(REPO / "wit" / name, wit / "deps" / "pane-extension" / name)
     out.parent.mkdir(parents=True, exist_ok=True)
-    report = run([toolchain.componentizer, wit, WORLD, bundle, toolchain.runtime, out],
+    world = WORLD_WITH_ROOT_RESULTS if manifest.get("pane", {}).get("rootResults") else WORLD
+    report = run([toolchain.componentizer, wit, world, bundle, toolchain.runtime, out],
                  env=clean_env(QJS_P3_LIBC=str(toolchain.libc)), capture=True)
     result = json.loads(report.strip().splitlines()[-1])
     log(f"built {out} ({result['component_bytes']} bytes in {result['componentize_ms']} ms)")
