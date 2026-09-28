@@ -399,7 +399,12 @@ fn a_build_that_fails_keeps_the_working_code_and_shows_its_diagnostics() {
     );
     // The whole output is in a log file under Pane's data folder.
     let log = failure.log.clone().unwrap();
-    assert!(log.starts_with(dev._data.path()), "{}", log.display());
+    let data = fs::canonicalize(dev._data.path()).unwrap();
+    assert!(
+        fs::canonicalize(&log).unwrap().starts_with(&data),
+        "{}",
+        log.display()
+    );
     assert_eq!(
         fs::read_to_string(&log).unwrap(),
         "   Compiling dev\nerror[E0308]: mismatched types\nfake build failed\n"
@@ -790,12 +795,14 @@ fn a_published_copy_keeps_its_own_identity_and_code() {
 fn development_is_started_and_stopped_in_manage_extensions() {
     let dev = Dev::new();
     let (folder, identity) = dev.install("Dev", "sample_rust");
+    // The folder as Pane resolves it (macOS: /private/var for /var).
+    let resolved = identity.local_folder().unwrap().to_path_buf();
     let status = press(&dev.launcher, "Develop Dev");
     assert_eq!(
         status,
         Status::Result(format!(
             "Developing Dev: each save in {} runs `fake build`, then reloads it",
-            folder.display()
+            resolved.display()
         ))
     );
     let view = dev.launcher.view();
@@ -813,7 +820,7 @@ fn development_is_started_and_stopped_in_manage_extensions() {
         Some("Stop developing Dev")
     );
     let development = dev.launcher.development(&identity).unwrap();
-    assert_eq!(development.folder, folder.canonicalize().unwrap());
+    assert_eq!(development.folder, resolved);
     assert_eq!(development.command, "fake build");
 
     // Developing it again does nothing more.
@@ -872,4 +879,25 @@ fn the_window_is_told_of_each_change() {
         launcher.view().status == Status::Result("Reloaded Dev".into())
     });
     block_on(changes.next()).unwrap();
+}
+
+#[test]
+fn a_package_being_updated_or_installed_is_not_developed_meanwhile() {
+    let dev = Dev::new();
+    let (folder, identity) = dev.install("Dev", "sample_rust");
+    block_on(dev.launcher.preview_package(&folder));
+    select_title(&dev.launcher, "Update");
+    let update = dev.launcher.activate_selected();
+
+    block_on(dev.launcher.start_developing(&identity));
+    assert_eq!(
+        dev.launcher.view().status,
+        Status::Error("Dev is updating".into())
+    );
+    assert!(dev.launcher.development(&identity).is_none());
+    block_on(update);
+
+    // Once updated, it is developed as ever.
+    block_on(dev.launcher.start_developing(&identity));
+    assert!(dev.launcher.development(&identity).is_some());
 }

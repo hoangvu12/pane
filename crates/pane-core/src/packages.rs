@@ -187,6 +187,12 @@ pub(crate) fn folder_name(folder: &Path) -> String {
         .unwrap_or_else(|| folder.display().to_string())
 }
 
+/// `path` resolved as a package identity's folder is: canonical, in the
+/// ordinary spelling on Windows.
+pub(crate) fn canonical(path: &Path) -> io::Result<PathBuf> {
+    fs::canonicalize(path).map(without_verbatim_prefix)
+}
+
 /// Windows' canonical paths carry a `\\?\` prefix; the identity uses the
 /// ordinary spelling (`C:\…`, `\\server\share\…`) that users recognise.
 fn without_verbatim_prefix(path: PathBuf) -> PathBuf {

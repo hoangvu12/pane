@@ -70,8 +70,10 @@ Development is turned on per installed, enabled package, from its **Develop
    JetBrains' `___jb_tmp___` and `___jb_old___`, Emacs's `.#name` and
    `#name#`). Reading a file is not a save.
 2. **Building.** After a save, once nothing more is saved for 150 ms (an
-   editor's several writes are one save), Pane copies `pane.json` to a
-   staging folder of the build's own, under Pane's data folder
+   editor's several writes are one save), Pane copies `pane.json` and the
+   files of the [helpers](helpers.md) the package ships for this system
+   (which no build makes) to a staging folder of the build's own, under
+   Pane's data folder
    (`extensions/develop/<hash of the identity>/staging/build-<n>`), and runs
    the package's build in the source folder, one adapter per language, the
    command the guest README documents:
@@ -132,7 +134,9 @@ Development is turned on per installed, enabled package, from its **Develop
    available command. A start that fails pauses the package with Retry and
    diagnostics, and **the earlier code is not restored** (Q31,
    [pausing](pausing.md)); the next save that builds reloads it, which ends
-   the pause. Settings are kept; nothing live is carried over. The
+   the pause. Settings are kept; nothing live is carried over, and a
+   running helper of the package is stopped before its copy is replaced,
+   as a Reload does. The
    components are then copied to where `pane.json` names them in the source
    folder, so a later **Reload** reloads the same build. If the package is
    being changed otherwise when the build ends (a **Reload**, an update),
