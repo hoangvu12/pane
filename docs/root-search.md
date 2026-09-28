@@ -136,10 +136,12 @@ comes from the extension, through the same guest boundary as its command:
   query (or after leaving root search) are discarded; until a command
   answers, the new query lists none of its results, never an older
   query's. The guest's work for an older query is not cancelled, and calls
-  run one at a time on the runtime thread, so a slow or hung command still
-  delays every command asked after it, for this query and the next ones
-  ([#29](https://github.com/hoangvu12/pane/issues/29) owns cancellation,
-  [#18](https://github.com/hoangvu12/pane/issues/18) timeouts).
+  run one at a time on the runtime thread, so a slow command still delays
+  every command asked after it, for this query and the next ones
+  ([#29](https://github.com/hoangvu12/pane/issues/29) owns cancellation);
+  since [#18](https://github.com/hoangvu12/pane/issues/18) one computing
+  without waiting does so for at most 5 seconds, and counts towards pausing
+  it ([pausing](pausing.md#when-an-extension-stops-responding)).
 - Computed results are listed **above** every title match, in the order the
   commands and their answers give them; they are not ranked against titles
   (provisional, pending user confirmation; see

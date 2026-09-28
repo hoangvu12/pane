@@ -145,7 +145,7 @@ A reload whose checked replacement was installed but could not start: a command 
 _Avoid_: Build failure, rollback
 
 **Paused extension**:
-An enabled extension Pane stopped running after a failure attributable to it: it could not start, or it crashed three times within five minutes (an error it answers with is not a failure, nor a call stopped because a generation ended). Its commands stay listed, saying why they do not run; its saved data is kept, and the pause holds across restarts until the user retries, reloads, updates, disables or enables it. Distinct from a disabled extension, which is the user's choice.
+An enabled extension Pane stopped running after a failure attributable to it: it could not start, or it crashed or stopped responding three times within five minutes (an error it answers with is not a failure, nor a call stopped because a generation ended). Its commands stay listed, saying why they do not run; its saved data is kept, and the pause holds across restarts until the user retries, reloads, updates, disables or enables it. Distinct from a disabled extension, which is the user's choice.
 _Avoid_: Crashed extension, quarantined, disabled (by Pane)
 
 **Extension runtime**:
@@ -155,6 +155,14 @@ _Avoid_: Engine (one part of it)
 **Runtime crash**:
 A failure of the extension runtime itself, not attributable to any one extension, such as a panic of its thread: every call it held is stopped and none is run again by itself, even if its effect was done and only its answer lost; Pane names and pauses no extension, keeps saved data, ends the native helpers it ran and starts the runtime again, unless it crashed within five minutes before, when it stays stopped until the user restarts it in Manage extensions. Distinct from an extension's crash (a guest trap), which counts towards pausing that extension.
 _Avoid_: Extension crash, paused runtime
+
+**Unresponsive call**:
+A guest call whose extension computed for five seconds without finishing, holding every other extension's calls behind it; Pane stops it where the guest yields (every guest yields to the runtime at each epoch tick), drops its instance and says so, and, since the extension's own code was running, counts it towards pausing that extension as a crash. Time the guest spends waiting (on a clock, a helper, another extension) is not computing, so a slow call is never stopped for it.
+_Avoid_: Timeout (waiting is not limited), hung extension, frozen
+
+**Runtime hang**:
+The extension runtime's thread not returning to its work for ten seconds: stuck in Pane's own code or in Wasmtime, outside every guest (which yields each tick), so no extension is known to have caused it. Pane gives up on the thread as on a runtime crash (every call it held is answered and none run again, its native helpers end, it is started again unless it failed within five minutes before, nothing is named or paused); the stuck thread cannot be ended, so it is abandoned and runs nothing more if it ever returns.
+_Avoid_: Unresponsive call (an extension's own), freeze of Pane (the window keeps working)
 
 **Generation**:
 One run of an installed package's code, from when it is installed, enabled or Pane starts until it is disabled, paused or its code is replaced by a reload or an update. Every call into the package belongs to the generation current when it was asked for, and is stopped when that generation ends; its late result is discarded.
@@ -193,7 +201,7 @@ The operation calls waiting on one another at one moment, from the command that 
 _Avoid_: Call stack (of one guest), workflow
 
 **Native helper**:
-A prebuilt program an installed package ships for each target (operating system and processor) it supports, which its commands run through Pane for what a WASI guest cannot do; Pane runs this system's file, never compiles one, and ends its process when the command cancels the run, the call that started it returns, the package's generation ends or Pane quits. Processes the helper starts itself are its own.
+A prebuilt program an installed package ships for each target (operating system and processor) it supports, which its commands run through Pane for what a WASI guest cannot do; Pane runs this system's file, never compiles one, and ends its process when the command cancels the run, the call that started it returns, the package's generation ends, it has run for thirty seconds (an error the command handles) or Pane quits. Processes the helper starts itself are its own.
 _Avoid_: Plugin binary, native extension (the extension's entry point stays a WASI component), sidecar
 
 **Helper target**:
