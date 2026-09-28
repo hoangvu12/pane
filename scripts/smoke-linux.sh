@@ -806,4 +806,29 @@ grep -q '"helper-wait": "started"' "$PANE_DATA_DIR/extensions/settings.json" || 
 if grep -q '"helper-wait": "finished"' "$PANE_DATA_DIR/extensions/settings.json"; then echo "the stopped call finished"; exit 1; fi
 stop_pane
 if helpers_running; then echo "a helper outlived Pane"; exit 1; fi
+
+# Quitting Pane while a helper runs ends it: with "Echo after waiting"
+# running (the helper beats in pane-echo.alive in its folder of the managed
+# copy), closing the window the way a window manager asks quits Pane, which
+# ends the helper first. A data folder of its own again.
+export PANE_DATA_DIR=$out/helper-quit-data
+rm -rf "$PANE_DATA_DIR"
+start_pane --install target/guests/packages/sample-helper
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 2   # Install; Helper sample is selected
+"$xdotool" key Return; sleep 2   # open Helper sample
+"$xdotool" key Down Return; sleep 2   # Echo after waiting
+helpers_running || { echo "the waiting helper is not running"; exit 1; }
+capture 94-helper-before-quit.png
+check 94-helper-before-quit.png d6c27a   # "Running…"
+alive=$(find "$PANE_DATA_DIR/extensions/packages" -name pane-echo.alive | head -1)
+[ -n "$alive" ] || { echo "the waiting helper does not beat"; exit 1; }
+python3 "$(dirname "$0")/close_window.py" "$window"
+for _ in $(seq 50); do kill -0 "$pane_pid" 2>/dev/null || break; sleep 0.1; done
+if kill -0 "$pane_pid" 2>/dev/null; then echo "Pane did not quit when its window closed"; exit 1; fi
+wait "$pane_pid" 2>/dev/null || true
+pane_pid=
+if helpers_running; then echo "a helper outlived Pane quitting"; exit 1; fi
+beats=$(stat -c %s "$alive"); sleep 0.5
+[ "$(stat -c %s "$alive")" = "$beats" ] || { echo "the helper still beats after Pane quit"; exit 1; }
 echo "screenshots in $out"

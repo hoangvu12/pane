@@ -791,4 +791,27 @@ if (-not (Select-String -Quiet -SimpleMatch '"helper-wait": "started"' $settings
 if (Select-String -Quiet -SimpleMatch '"helper-wait": "finished"' $settings) { throw "the stopped call finished" }
 Stop-Pane $process
 if (Helpers-Running) { throw "a helper outlived Pane" }
+
+# Quitting Pane while a helper runs ends it: with "Echo after waiting"
+# running (the helper beats in pane-echo.alive in its folder of the managed
+# copy), closing Pane's window (WM_CLOSE, as its close button does) quits
+# Pane, which ends the helper first. A data folder of its own again.
+$data = Join-Path $OutDir "helper-quit-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+$packages = [System.IO.Path]::GetFullPath((Join-Path $data "extensions/packages"))
+$process = Start-Pane "stderr-helper-quit.log" @("--install", "target/guests/packages/sample-helper")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Helper sample is selected
+Send "{ENTER}"; Start-Sleep -Seconds 2   # open Helper sample
+Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2   # Echo after waiting
+if (-not (Helpers-Running)) { throw "the waiting helper is not running" }
+Capture "94-helper-before-quit.png"
+Check "94-helper-before-quit.png" "d6c27a"   # "Running…"
+$alive = Get-ChildItem -Recurse -Filter "pane-echo.alive" $packages | Select-Object -First 1
+if (-not $alive) { throw "the waiting helper does not beat" }
+if (-not $process.CloseMainWindow()) { throw "Pane's window did not take the close request" }
+if (-not $process.WaitForExit(5000)) { throw "Pane did not quit when its window closed" }
+if (Helpers-Running) { throw "a helper outlived Pane quitting" }
+$beats = (Get-Item $alive.FullName).Length; Start-Sleep -Milliseconds 500
+if ((Get-Item $alive.FullName).Length -ne $beats) { throw "the helper still beats after Pane quit" }
 Write-Output "screenshots in $OutDir"

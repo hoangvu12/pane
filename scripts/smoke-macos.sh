@@ -744,4 +744,45 @@ grep -q '"helper-wait": "started"' "$PANE_DATA_DIR/extensions/settings.json" || 
 if grep -q '"helper-wait": "finished"' "$PANE_DATA_DIR/extensions/settings.json"; then echo "the stopped call finished"; exit 1; fi
 stop_pane
 if helpers_running; then echo "a helper outlived Pane"; exit 1; fi
+
+# Quitting Pane while a helper runs ends it: with "Echo after waiting"
+# running (the helper beats in pane-echo.alive in its folder of the managed
+# copy), asking Pane to quit the way the Dock's Quit does (a quit Apple
+# event, sent by NSRunningApplication's terminate) ends the helper first. A
+# data folder of its own again.
+export PANE_DATA_DIR=$out/helper-quit-data
+rm -rf "$PANE_DATA_DIR"
+start_pane --install target/guests/packages/sample-helper
+key 36; sleep 2   # Install; Helper sample is selected
+key 36; sleep 2   # open Helper sample
+key 125; key 36; sleep 2   # Echo after waiting
+helpers_running || { echo "the waiting helper is not running"; exit 1; }
+capture 94-helper-before-quit.png
+check 94-helper-before-quit.png d6c27a   # "Running…"
+alive=$(find "$PANE_DATA_DIR/extensions/packages" -name pane-echo.alive | head -1)
+[ -n "$alive" ] || { echo "the waiting helper does not beat"; exit 1; }
+python3 - "$pid" <<'PY'
+import ctypes, ctypes.util, sys
+objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
+ctypes.cdll.LoadLibrary(ctypes.util.find_library("AppKit"))
+objc.objc_getClass.restype = ctypes.c_void_p
+objc.objc_getClass.argtypes = [ctypes.c_char_p]
+objc.sel_registerName.restype = ctypes.c_void_p
+objc.sel_registerName.argtypes = [ctypes.c_char_p]
+address = ctypes.cast(objc.objc_msgSend, ctypes.c_void_p).value
+by_pid = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int)(address)
+terminate = ctypes.CFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)(address)
+app = by_pid(objc.objc_getClass(b"NSRunningApplication"),
+             objc.sel_registerName(b"runningApplicationWithProcessIdentifier:"), int(sys.argv[1]))
+if not app:
+    sys.exit("Pane is not a running application")
+sys.exit(0 if terminate(app, objc.sel_registerName(b"terminate")) else "Pane did not take the quit request")
+PY
+for _ in $(seq 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+if kill -0 "$pid" 2>/dev/null; then echo "Pane did not quit when asked"; exit 1; fi
+wait "$pid" 2>/dev/null || true
+pid=
+if helpers_running; then echo "a helper outlived Pane quitting"; exit 1; fi
+beats=$(stat -f %z "$alive"); sleep 0.5
+[ "$(stat -f %z "$alive")" = "$beats" ] || { echo "the helper still beats after Pane quit"; exit 1; }
 echo "screenshots in $out"
