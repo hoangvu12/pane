@@ -249,4 +249,27 @@ $shots = "1-root", "24-search", "25-search-result", "26-no-results" | ForEach-Ob
 python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: root search showed the same window twice" }
 Stop-Pane $process
+
+# The calculator, a default extension: an expression typed into root search
+# lists its answer first, selected, and Enter copies it. Pasting the copy
+# over the query and typing on shows exactly the screen typing the whole
+# expression shows, so the clipboard held the answer.
+# SendKeys: {+} is a plus sign, ^ holds Ctrl.
+$process = Start-Pane "stderr-calculator.log" @("--install", "target/guests/packages/calculator")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install
+Send "6*7"; Start-Sleep -Seconds 2
+Capture "27-answer.png"
+Check "27-answer.png" "364355" 3000   # the selected answer row
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Capture "28-copied.png"   # "Copied 42 to the clipboard"
+Send "^a"; Send "42{+}1"; Start-Sleep -Seconds 2
+Capture "29-typed.png"
+Send "^a"; Send "^v"; Send "{+}1"; Start-Sleep -Seconds 2
+Capture "30-pasted.png"
+$shots = "27-answer", "28-copied", "29-typed" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the calculator showed the same window twice" }
+python "$PSScriptRoot/check_screenshot.py" --same (Join-Path $OutDir "29-typed.png") (Join-Path $OutDir "30-pasted.png")
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: pasting did not give the copied answer" }
+Stop-Pane $process
 Write-Output "screenshots in $OutDir"

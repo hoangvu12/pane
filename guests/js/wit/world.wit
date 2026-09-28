@@ -11,3 +11,11 @@ world js-extension {
   include pane:extension/extension-with-settings@0.1.0;
   import wasi:clocks/monotonic-clock@0.3.0;
 }
+
+// A command that also computes root results (wit/root-results.wit): built
+// against this world when its package.json sets
+// `"pane": { "rootResults": true }`.
+world js-extension-with-root-results {
+  include js-extension;
+  export pane:extension/root-results@0.1.0;
+}

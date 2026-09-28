@@ -73,6 +73,7 @@ fn guests() -> Result<(), String> {
             &[
                 "sample_rust",
                 "sample_settings",
+                "calculator",
                 "faulty",
                 "old_api",
                 "mismatched_api",
@@ -125,14 +126,16 @@ fn guests() -> Result<(), String> {
     Ok(())
 }
 
-/// (package folder in `guests/packages`, component) of each sample package.
-const SAMPLE_PACKAGES: [(&str, &str); 6] = [
+/// (package folder in `guests/packages`, component) of each sample package,
+/// and of the calculator, a default extension.
+const SAMPLE_PACKAGES: [(&str, &str); 7] = [
     ("sample-rust", "sample_rust"),
     ("sample-settings", "sample_settings"),
     ("sample-js", "sample_js"),
     ("sample-ts", "sample_ts"),
     ("sample-settings-js", "sample_settings_js"),
     ("sample-settings-ts", "sample_settings_ts"),
+    ("calculator", "calculator"),
 ];
 
 /// Rebuilds `guests/prebuilt/` from the JS/TS sample sources, then refreshes

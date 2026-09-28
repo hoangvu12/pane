@@ -10,7 +10,8 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   `cabi_realloc` and `memcmp`/`bcmp` (which string comparisons need).
 - `sample-rust`, `sample-js`, `sample-ts`: the same sample command in Rust,
   JavaScript and TypeScript. All three show the same items, the same form and
-  the same color picker, and give the same answers and errors; the contract
+  the same color picker, compute the same root result ("reverse <text>"), and
+  give the same answers and errors; the contract
   tests in `crates/pane-core/tests/samples.rs` and `crates/pane/tests/window.rs`
   hold each of them to that.
 - `sample-settings`, `sample-settings-js`, `sample-settings-ts`: the same
@@ -18,17 +19,22 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   style in Pane's settings ([Keeping settings](#keeping-settings)); the
   fixtures for disabling and re-enabling a package, held alike by
   `crates/pane-core/tests/disable.rs`.
+- `calculator`: Pane's calculator, a default extension in Rust: an
+  arithmetic expression typed into root search lists its answer, which Enter
+  copies ([Root results](#root-results-computed-from-the-query),
+  [expression scope](../docs/root-search.md#the-calculator)). Its package
+  is `packages/calculator`; held by `crates/pane-core/tests/calculator.rs`.
 - `js`: `@pane/extension`, TypeScript declarations for the contract
   (`pane.d.ts`) and the WIT world JS/TS commands are built against.
 - `prebuilt`: the JS and TS sample components (both samples in each
   language), committed so that tests and
   `cargo run -p pane` need no JavaScript toolchain, with `manifest.json`
   recording their hashes and build inputs.
-- `packages`: the samples' package manifests (`pane.json`). `cargo xtask
+- `packages`: the samples' and the calculator's package manifests (`pane.json`). `cargo xtask
   guests` puts each one with its built component in
   `target/guests/packages/<name>/`, a ready-to-install package.
-- `fixtures/faulty`: test fixture whose actions, form and custom view return
-  an error or trap.
+- `fixtures/faulty`: test fixture whose actions, form, custom view and root
+  results return an error or trap.
 - `fixtures/mixed-p2`: negative control that imports WASI 0.2 and must be rejected.
 - `fixtures/old-api`: negative control built against extension API 0.1 as it
   was before `item` gained `platforms` and custom views, with its own copy of
@@ -349,6 +355,65 @@ which system it runs on; Pane applies the declaration. The samples' last two
 items are the runnable example, and
 [platform availability](../docs/platform-availability.md) has the details.
 
+## Root results computed from the query
+
+A command can answer what the user types into root search, as the
+[calculator](calculator) does: its results are listed above the results
+root search finds by title, and Enter on one performs its action, which
+today is copying a text to the clipboard. Set `"rootResults": true` on the
+command in `pane.json` and export `pane:extension/root-results`
+([`wit/root-results.wit`](../wit/root-results.wit)) beside the command.
+Pane asks the command on every change of a query that is not blank, so its
+instance starts with the first query typed, and discards an answer once the
+query has changed. A query the command has no answer for returns no results
+(an incomplete expression is not an error); returning an error is the
+extension failing, and Pane lists a result explaining it. A disabled package
+is not asked. See [root search](../docs/root-search.md#results-computed-from-the-query).
+
+Rust (`pane_guest::root`; the component then exports both interfaces):
+
+```rust
+use pane_guest::alloc::{string::String, vec, vec::Vec};
+use pane_guest::root::{RootAction, RootResult};
+
+pane_guest::export!(Sample);
+pane_guest::root::export!(Sample);
+
+impl pane_guest::root::Guest for Sample {
+    async fn results_for(query: String) -> Result<Vec<RootResult>, String> {
+        let Some(text) = query.strip_prefix("reverse ") else {
+            return Ok(Vec::new());
+        };
+        let reversed: String = text.chars().rev().collect();
+        Ok(vec![RootResult {
+            id: "reversed".into(),
+            title: reversed.clone(),
+            subtitle: None,
+            action: RootAction::Copy(reversed),
+        }])
+    }
+}
+```
+
+JavaScript or TypeScript: add `"pane": { "rootResults": true }` to
+`package.json`, so the build exports the interface, and export
+`rootResults` from the module:
+
+```ts
+import type { RootResult, RootResults } from "@pane/extension";
+
+export const rootResults: RootResults = {
+  async resultsFor(query): Promise<RootResult[]> {
+    if (!query.startsWith("reverse ")) return [];
+    const reversed = [...query.slice(8)].reverse().join("");
+    return [{ id: "reversed", title: reversed, action: { tag: "copy", val: reversed } }];
+  },
+};
+```
+
+The three samples answer "reverse <text>" this way; their packages in
+[`packages/`](packages) set `rootResults`.
+
 ## Custom views
 
 An item can open a custom view that the command draws itself: filled
@@ -486,13 +551,16 @@ and TypeScript: Pane sees only components.
   root search by its `title` and its `subtitle` (the package `title` when it
   has none), so put the words people will type there; Pane searches this
   metadata without running the command
-  ([root search](../docs/root-search.md#matching-and-ranking)).
+  ([root search](../docs/root-search.md#matching-and-ranking)). Optional
+  `rootResults: true` says the command also computes
+  [root results from the query](#root-results-computed-from-the-query).
 
 Unknown fields are ignored. The component must exist when you install: a
 package whose component is not built is refused as source-only, with the
 missing path. Pane then checks each component without running it: it must
 compile, import only WASI 0.3 and export the extension interface, each
-function Pane calls with the types it calls it with.
+function Pane calls with the types it calls it with, and for a command with
+`rootResults` the root results interface too.
 A component built against an older shape of the same `apiVersion` (the
 pre-release API 0.1 changes between slices) is therefore refused at install,
 naming the first mismatch ("it was built for an older extension API shape:

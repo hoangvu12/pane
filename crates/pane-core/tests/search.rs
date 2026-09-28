@@ -94,7 +94,7 @@ fn root_search_opens_with_an_empty_query_listing_every_command_in_order() {
 #[test]
 fn a_query_keeps_the_matching_commands_best_match_first() {
     let launcher = downloads();
-    launcher.set_query("download");
+    block_on(launcher.set_query("download"));
 
     assert_eq!(launcher.view().query(), Some("download"));
     // The whole title, then a title that starts with the query, then a word
@@ -115,9 +115,9 @@ fn a_query_keeps_the_matching_commands_best_match_first() {
 #[test]
 fn matching_ignores_letter_case_and_surrounding_spaces() {
     let launcher = downloads();
-    launcher.set_query("  DOWNLOADER ");
+    block_on(launcher.set_query("  DOWNLOADER "));
     assert_eq!(titles(&launcher), ["Downloader"]);
-    launcher.set_query("   ");
+    block_on(launcher.set_query("   "));
     assert_eq!(titles(&launcher).len(), 6, "a blank query lists everything");
 }
 
@@ -129,7 +129,7 @@ fn spaces_inside_and_around_a_title_do_not_lower_its_rank() {
         command("Clear  cache ", None),
         command("Clear  cache  files", None),
     ]);
-    launcher.set_query("clear cache");
+    block_on(launcher.set_query("clear cache"));
     // The whole title, then titles that start with the query, then a title
     // with words starting with the query's.
     assert_eq!(
@@ -151,27 +151,27 @@ fn composed_and_decomposed_accents_match_each_other() {
         command("Résumé", None),
         command("Directions", Some("To the café")),
     ]);
-    launcher.set_query("café");
+    block_on(launcher.set_query("café"));
     assert_eq!(titles(&launcher), ["Cafe\u{301} menu", "Directions"]);
-    launcher.set_query("RE\u{301}SUME\u{301}");
+    block_on(launcher.set_query("RE\u{301}SUME\u{301}"));
     assert_eq!(titles(&launcher), ["Résumé"]);
 }
 
 #[test]
 fn searching_the_same_query_again_keeps_the_selection() {
     let launcher = downloads();
-    launcher.set_query("download");
+    block_on(launcher.set_query("download"));
     launcher.move_selection(1);
-    launcher.set_query("download");
+    block_on(launcher.set_query("download"));
     assert_eq!(selected_title(&launcher).as_deref(), Some("Downloader"));
 }
 
 #[test]
 fn every_word_of_the_query_must_match() {
     let launcher = downloads();
-    launcher.set_query("rec down");
+    block_on(launcher.set_query("rec down"));
     assert_eq!(titles(&launcher), ["Recent downloads"]);
-    launcher.set_query("down files");
+    block_on(launcher.set_query("down files"));
     // "files" is a word of one title and only in the other's subtitle.
     assert_eq!(titles(&launcher), ["Undownloadable files", "Clear cache"]);
 }
@@ -183,12 +183,12 @@ fn equally_good_matches_keep_root_search_order() {
         command("JavaScript sample", None),
         command("TypeScript sample", None),
     ]);
-    launcher.set_query("sample");
+    block_on(launcher.set_query("sample"));
     assert_eq!(
         titles(&launcher),
         ["Rust sample", "JavaScript sample", "TypeScript sample"]
     );
-    launcher.set_query("script");
+    block_on(launcher.set_query("script"));
     assert_eq!(
         titles(&launcher),
         ["JavaScript sample", "TypeScript sample"]
@@ -205,7 +205,7 @@ fn the_selection_moves_among_the_matches_and_enter_opens_the_selected_one() {
             command("Unrelated", None),
         ],
     );
-    launcher.set_query("sample");
+    block_on(launcher.set_query("sample"));
     launcher.move_selection(1);
     assert_eq!(selected_title(&launcher).as_deref(), Some("Other sample"));
     launcher.move_selection(5);
@@ -224,7 +224,7 @@ fn the_selection_moves_among_the_matches_and_enter_opens_the_selected_one() {
 #[test]
 fn a_query_that_matches_nothing_shows_no_rows_and_enter_does_nothing() {
     let launcher = downloads();
-    launcher.set_query("zzz");
+    block_on(launcher.set_query("zzz"));
     let view = launcher.view();
     assert!(view.rows.is_empty());
     assert_eq!((view.selected, &view.status), (None, &Status::Idle));
@@ -241,7 +241,7 @@ fn a_query_that_matches_nothing_shows_no_rows_and_enter_does_nothing() {
 #[test]
 fn a_matching_command_that_fails_explains_the_failure() {
     let launcher = without_runtime(vec![command("Broken", None)]);
-    launcher.set_query("brok");
+    block_on(launcher.set_query("brok"));
     block_on(launcher.activate_selected());
     let view = launcher.view();
     assert!(
@@ -259,7 +259,7 @@ fn a_matching_command_that_fails_explains_the_failure() {
 #[test]
 fn back_clears_the_query_before_anything_else() {
     let launcher = downloads();
-    launcher.set_query("settings");
+    block_on(launcher.set_query("settings"));
     launcher.back();
     let view = launcher.view();
     assert_eq!(view.query(), Some(""));
@@ -272,10 +272,10 @@ fn returning_to_root_search_starts_a_new_search() {
         Runtime::start(),
         vec![command("Rust sample", None), command("Other", None)],
     );
-    launcher.set_query("rust");
+    block_on(launcher.set_query("rust"));
     block_on(launcher.activate_selected());
     assert_eq!(launcher.view().screen, Screen::Command);
-    launcher.set_query("ignored");
+    block_on(launcher.set_query("ignored"));
     assert_eq!(
         launcher.view().query(),
         None,
@@ -361,7 +361,7 @@ fn many_installed_commands_are_searched_without_running_them_and_only_the_chosen
     let runtime = dirs.runtime();
     let launcher = Launcher::with_packages(Ok(runtime.clone()), vec![], dirs.packages_dir());
     assert_eq!(launcher.view().rows.len(), 14);
-    launcher.set_query("tool 1");
+    block_on(launcher.set_query("tool 1"));
     assert_eq!(
         titles(&launcher),
         ["Tool 1", "Tool 10", "Tool 11", "Tool 12"]
@@ -390,17 +390,17 @@ fn an_installed_command_is_found_by_its_title_or_its_package_title() {
         &dirs.package("weather", &manifest("Weather", "Forecast", None)),
     );
 
-    launcher.set_query("forec");
+    block_on(launcher.set_query("forec"));
     assert_eq!(titles(&launcher), ["Forecast"]);
     // Without its own subtitle a command shows its package title, which
     // matches too.
-    launcher.set_query("weather");
+    block_on(launcher.set_query("weather"));
     assert_eq!(titles(&launcher), ["Forecast"]);
-    launcher.set_query("manage");
+    block_on(launcher.set_query("manage"));
     assert_eq!(titles(&launcher), [MANAGE_ROW]);
     // Pane's own rows are searched like commands: the manager's subtitle
     // ("Enable or disable installed extensions") matches too, below.
-    launcher.set_query("install");
+    block_on(launcher.set_query("install"));
     assert_eq!(titles(&launcher), [INSTALL_ROW, MANAGE_ROW]);
 }
 
@@ -422,7 +422,7 @@ fn a_command_with_its_own_subtitle_is_found_by_its_package_title_last() {
     let maps = manifest_with_subtitle("Maps", "Radar", "Weather radar");
     install(&launcher, &dirs.package("maps", &maps));
 
-    launcher.set_query("weather");
+    block_on(launcher.set_query("weather"));
     // A subtitle match ranks above a package title match.
     assert_eq!(titles(&launcher), ["Radar", "Forecast"]);
     let view = launcher.view();
@@ -432,9 +432,9 @@ fn a_command_with_its_own_subtitle_is_found_by_its_package_title_last() {
         "the command still shows its own subtitle"
     );
     // Words may match the title, subtitle and package title together.
-    launcher.set_query("weather five");
+    block_on(launcher.set_query("weather five"));
     assert_eq!(titles(&launcher), ["Forecast"]);
-    launcher.set_query("forecast weather");
+    block_on(launcher.set_query("forecast weather"));
     assert_eq!(titles(&launcher), ["Forecast"]);
 }
 
@@ -446,7 +446,7 @@ fn disabling_a_package_removes_its_matches_at_once_and_enabling_brings_them_back
     let second = dirs.package("second", &manifest("Second", "Greet second", None));
     install(&launcher, &first);
     install(&launcher, &second);
-    launcher.set_query("greet");
+    block_on(launcher.set_query("greet"));
     launcher.move_selection(1);
     assert_eq!(selected_title(&launcher).as_deref(), Some("Greet second"));
 
@@ -481,14 +481,14 @@ fn an_update_finishing_while_the_user_searches_updates_the_results_and_keeps_the
     let update = launcher.activate_selected();
     // The user goes back to root search and types before it finishes.
     launcher.back();
-    launcher.set_query("note");
+    block_on(launcher.set_query("note"));
     assert_eq!(titles(&launcher), ["Take a note"]);
     block_on(update);
 
     let view = launcher.view();
     assert_eq!(view.query(), Some("note"));
     assert!(titles(&launcher).is_empty(), "{:?}", titles(&launcher));
-    launcher.set_query("jot");
+    block_on(launcher.set_query("jot"));
     assert_eq!(titles(&launcher), ["Jot down"]);
 }
 
@@ -505,7 +505,7 @@ fn an_unavailable_command_matches_and_explains_why_it_does_not_run() {
     );
     install(&launcher, &folder);
 
-    launcher.set_query("native");
+    block_on(launcher.set_query("native"));
     let view = launcher.view();
     assert_eq!(titles(&launcher), ["Native tool"]);
     let reason = platforms::only("this command", &platforms::other_names());

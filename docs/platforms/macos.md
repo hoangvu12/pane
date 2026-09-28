@@ -111,6 +111,14 @@ Events `keystroke`, opens the only match and runs "Wait briefly", which must
 look exactly like step 4, then types "zzz" and presses Return on no results.
 In run [36420611977](https://github.com/wasimysaid/pane/actions/runs/36420611977) (commit `6d73d18`) every step passed: typing "typescr" left only TypeScript sample and Enter ran it, and "zzz" showed No results ([24-search.png](evidence/macos/24-search.png), [26-no-results.png](evidence/macos/26-no-results.png)). Input-method composition in the query field is still unverified here.
 
+## Calculator (#27)
+
+The smoke's last phase (screenshots 27 to 30) installs the calculator
+package, types "6*7", checks the selected answer row, presses Enter to copy
+it, then compares typing "42+1" with pasting the copy (Cmd+A, Cmd+V) and typing
+"+1", which must look the same. **It has not run on macOS yet**, so
+the calculator's answer and the native clipboard are unverified here.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms now have a text field. The

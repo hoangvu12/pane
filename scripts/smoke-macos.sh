@@ -44,6 +44,7 @@ key() {  # macOS virtual key codes: 36 Return, 125 Down, 124 Right, 53 Escape, 4
   osascript -e "tell application \"System Events\" to key code $1"
 }
 type_text() { osascript -e "tell application \"System Events\" to keystroke \"$1\""; }
+command_key() { osascript -e "tell application \"System Events\" to keystroke \"$1\" using command down"; }
 
 # Brings the running Pane to the front, so that key events reach it.
 focus_pane() {
@@ -237,5 +238,24 @@ type_text zzz; sleep 1
 key 36; sleep 1
 capture 26-no-results.png
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{1-root,24-search,25-search-result,26-no-results}.png
+stop_pane
+
+# The calculator, a default extension: an expression typed into root search
+# lists its answer first, selected, and Enter copies it. Pasting the copy
+# over the query and typing on shows exactly the screen typing the whole
+# expression shows, so the clipboard held the answer.
+start_pane --install target/guests/packages/calculator
+key 36; sleep 2   # Install
+type_text '6*7'; sleep 2
+capture 27-answer.png
+check 27-answer.png 364355 3000   # the selected answer row
+key 36; sleep 1
+capture 28-copied.png   # "Copied 42 to the clipboard"
+command_key a; type_text '42+1'; sleep 2
+capture 29-typed.png
+command_key a; command_key v; type_text '+1'; sleep 2
+capture 30-pasted.png
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{27-answer,28-copied,29-typed}.png
+python3 "$(dirname "$0")/check_screenshot.py" --same "$out/29-typed.png" "$out/30-pasted.png"
 stop_pane
 echo "screenshots in $out"

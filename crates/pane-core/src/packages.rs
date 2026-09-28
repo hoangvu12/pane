@@ -147,6 +147,10 @@ pub struct ManifestCommand {
     /// The operating systems the command supports; `None` for every system
     /// the package supports. Elsewhere it is listed as unavailable.
     pub platforms: Option<Vec<Platform>>,
+    /// Whether the command computes root results from root search's query
+    /// (`"rootResults": true`), such as a calculator's answer: its component
+    /// then also exports `pane:extension/root-results`.
+    pub root_results: bool,
 }
 
 #[derive(Deserialize)]
@@ -162,6 +166,7 @@ struct ManifestJson {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CommandJson {
     id: String,
     title: String,
@@ -170,6 +175,8 @@ struct CommandJson {
     component: String,
     #[serde(default)]
     platforms: Option<Vec<String>>,
+    #[serde(default)]
+    root_results: bool,
 }
 
 impl Manifest {
@@ -283,6 +290,7 @@ impl Manifest {
                 subtitle: command.subtitle,
                 component,
                 platforms,
+                root_results: command.root_results,
             });
         }
         Ok(Manifest {
@@ -525,6 +533,22 @@ impl InstalledPackage {
                 });
                 (registration, unavailable)
             })
+            .collect()
+    }
+}
+
+impl InstalledPackage {
+    /// The commands of this package that compute root results and can run
+    /// on this system; none if the package cannot be read.
+    pub(crate) fn root_result_commands(&self) -> Vec<CommandRegistration> {
+        let Ok(manifest) = &self.manifest else {
+            return Vec::new();
+        };
+        self.available_commands()
+            .into_iter()
+            .zip(&manifest.commands)
+            .filter(|((_, unavailable), command)| command.root_results && unavailable.is_none())
+            .map(|((registration, _), _)| registration)
             .collect()
     }
 }

@@ -24,8 +24,18 @@ mod bindings {
     });
 }
 
+/// The `root-results` export of a command that computes root results.
+mod root_bindings {
+    wasmtime::component::bindgen!({
+        path: "../../wit",
+        world: "root-results-provider",
+        exports: { default: async | store },
+    });
+}
+
 use bindings::exports::pane::extension::command;
 use bindings::pane::extension::settings;
+use root_bindings::exports::pane::extension::root_results;
 
 use crate::packages::EXTENSION_API;
 use crate::settings::PackageSettings;
@@ -35,6 +45,25 @@ const WASI_VERSION: &str = "@0.3.";
 
 /// The interface an extension command exports.
 const COMMAND_INTERFACE: &str = "pane:extension/command@0.1.0";
+
+/// The interface a command that computes root results also exports.
+const ROOT_RESULTS_INTERFACE: &str = "pane:extension/root-results@0.1.0";
+
+/// A result a command computed from root search's query.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RootResult {
+    pub id: String,
+    pub title: String,
+    pub subtitle: Option<String>,
+    pub action: RootAction,
+}
+
+/// What invoking a computed root result does; Pane performs it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum RootAction {
+    /// Copy this text to the clipboard.
+    Copy(String),
+}
 
 /// One entry in a command's list view, as produced by the guest.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -310,7 +339,15 @@ enum Request {
     },
     Check {
         component: PathBuf,
+        /// Whether the component must also compute root results.
+        root_results: bool,
         reply: oneshot::Sender<Result<(), CallError>>,
+    },
+    RootResults {
+        component: PathBuf,
+        query: String,
+        settings: Option<PackageSettings>,
+        reply: oneshot::Sender<Result<Vec<RootResult>, CallError>>,
     },
     Forget {
         components: Vec<PathBuf>,
@@ -434,9 +471,39 @@ impl Runtime {
     /// contract ([`CallError::OlderApiShape`] otherwise). The check keeps
     /// nothing loaded.
     pub async fn check(&self, component: &Path) -> Result<(), CallError> {
+        self.check_with(component, false).await
+    }
+
+    /// Like [`Runtime::check`]; with `root_results`, the component must also
+    /// export the root results interface, with the current function types.
+    pub(crate) async fn check_with(
+        &self,
+        component: &Path,
+        root_results: bool,
+    ) -> Result<(), CallError> {
         let (reply, response) = oneshot::channel();
         self.send(Request::Check {
             component: component.to_path_buf(),
+            root_results,
+            reply,
+        })?;
+        response.await.unwrap_or_else(|_| Err(stopped()))
+    }
+
+    /// Asks the command in `component`, which computes root results, for
+    /// its results for `query`; the command reads and saves `settings`.
+    /// Starts its instance if it has none.
+    pub(crate) async fn root_results_with(
+        &self,
+        component: &Path,
+        query: &str,
+        settings: Option<PackageSettings>,
+    ) -> Result<Vec<RootResult>, CallError> {
+        let (reply, response) = oneshot::channel();
+        self.send(Request::RootResults {
+            component: component.to_path_buf(),
+            query: query.to_owned(),
+            settings,
             reply,
         })?;
         response.await.unwrap_or_else(|_| Err(stopped()))
@@ -612,6 +679,8 @@ impl WasiView for GuestState {
 struct Instance {
     store: Store<GuestState>,
     bindings: bindings::ExtensionWithSettings,
+    /// Its root results export, if it has one.
+    root_results: Option<root_bindings::RootResultsProvider>,
 }
 
 /// A custom view open in a guest instance.
@@ -672,8 +741,21 @@ impl Host {
                     let result = self.run_action(&component, item_id, settings).await;
                     let _ = reply.send(result);
                 }
-                Request::Check { component, reply } => {
-                    let _ = reply.send(self.check(&component));
+                Request::Check {
+                    component,
+                    root_results,
+                    reply,
+                } => {
+                    let _ = reply.send(self.check(&component, root_results));
+                }
+                Request::RootResults {
+                    component,
+                    query,
+                    settings,
+                    reply,
+                } => {
+                    let result = self.root_results(&component, query, settings).await;
+                    let _ = reply.send(result);
                 }
                 Request::Forget { components } => {
                     for component in &components {
@@ -860,6 +942,37 @@ impl Host {
         self.views.retain(|_, view| view.component != path);
     }
 
+    async fn root_results(
+        &mut self,
+        path: &Path,
+        query: String,
+        settings: Option<PackageSettings>,
+    ) -> Result<Vec<RootResult>, CallError> {
+        let instance = self.instance(path, settings).await?;
+        let Some(provider) = &instance.root_results else {
+            return Err(CallError::Interface(format!(
+                "it does not export {ROOT_RESULTS_INTERFACE}"
+            )));
+        };
+        let provider = provider.pane_extension_root_results();
+        let result = instance
+            .store
+            .run_concurrent(async |store| provider.call_results_for(store, query).await)
+            .await;
+        let results = self.settle(path, result, CallError::Guest)?;
+        Ok(results
+            .into_iter()
+            .map(|result| RootResult {
+                id: result.id,
+                title: result.title,
+                subtitle: result.subtitle,
+                action: match result.action {
+                    root_results::RootAction::Copy(text) => RootAction::Copy(text),
+                },
+            })
+            .collect())
+    }
+
     async fn run_action(
         &mut self,
         path: &Path,
@@ -915,15 +1028,24 @@ impl Host {
                     settings,
                 },
             );
-            let bindings = bindings::ExtensionWithSettings::instantiate_async(
-                &mut store,
-                &component,
-                &self.linker,
-            )
-            .await
-            .map_err(|error| CallError::Load(format!("{error:#}")))?;
-            self.instances
-                .insert(path.to_path_buf(), Instance { store, bindings });
+            let load = |error: wasmtime::Error| CallError::Load(format!("{error:#}"));
+            let instance = self
+                .linker
+                .instantiate_async(&mut store, &component)
+                .await
+                .map_err(load)?;
+            let bindings =
+                bindings::ExtensionWithSettings::new(&mut store, &instance).map_err(load)?;
+            // Only a command that computes root results exports them.
+            let root_results = root_bindings::RootResultsProvider::new(&mut store, &instance).ok();
+            self.instances.insert(
+                path.to_path_buf(),
+                Instance {
+                    store,
+                    bindings,
+                    root_results,
+                },
+            );
         }
         Ok(self.instances.get_mut(path).expect("inserted above"))
     }
@@ -1002,12 +1124,21 @@ impl Host {
         )
     }
 
-    /// Type-checks `path` against the linker and the extension world without
+    /// Type-checks `path` against the linker and the extension world, and
+    /// with `root_results` against the root results interface too, without
     /// instantiating it, so no guest code runs.
-    fn check(&self, path: &Path) -> Result<(), CallError> {
+    fn check(&self, path: &Path, root_results: bool) -> Result<(), CallError> {
         let component = self.compile(path)?;
         let interface = |error: wasmtime::Error| CallError::Interface(format!("{error:#}"));
         let pre = self.linker.instantiate_pre(&component).map_err(interface)?;
+        if root_results {
+            root_bindings::RootResultsProviderPre::new(pre.clone()).map_err(|error| {
+                CallError::Interface(format!(
+                    "its manifest says it computes root results, but it does not export \
+                     {ROOT_RESULTS_INTERFACE} with the functions Pane calls: {error:#}"
+                ))
+            })?;
+        }
         bindings::ExtensionWithSettingsPre::new(pre).map_err(interface)?;
         Ok(())
     }

@@ -2,8 +2,8 @@
 //! in Rust, JavaScript or TypeScript: the same items, answers and errors
 //! through the launcher's public interface, a native WASI 0.3 async wait,
 //! fresh state per instance, a form the guest validates, a color picker the
-//! guest draws and changes on keys and pointer input, and WASI 0.3-only
-//! imports.
+//! guest draws and changes on keys and pointer input, a root result
+//! computed from the query, and WASI 0.3-only imports.
 //!
 //! Components come from `cargo xtask guests`; the JavaScript and TypeScript
 //! ones are the prebuilt components in `guests/prebuilt/`.
@@ -531,6 +531,36 @@ fn an_unknown_view_is_a_guest_error(sample: &Sample) {
     assert_eq!(block_on(runtime.view_count()), 0);
 }
 
+fn reverse_typed_into_root_search_lists_the_reversed_text_to_copy(sample: &Sample) {
+    // Root results come from installed packages: this sample's package.
+    let data = tempfile::tempdir().unwrap();
+    let launcher =
+        Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"));
+    let folder = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/guests/packages")
+        .join(sample.component.replace('_', "-"));
+    block_on(launcher.install_package(&folder));
+    launcher.back();
+
+    block_on(launcher.set_query("reverse Pané 1"));
+
+    let view = launcher.view();
+    assert_eq!(view.rows[0].title, "1 énaP");
+    assert_eq!(
+        view.rows[0].subtitle,
+        Some(format!("Reversed by the {} guest", sample.language))
+    );
+    assert_eq!(launcher.selected_copy().as_deref(), Some("1 énaP"));
+    block_on(launcher.activate_selected());
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Copied 1 énaP to the clipboard".into())
+    );
+    // Nothing to reverse is no result, not an error.
+    block_on(launcher.set_query("reverse   "));
+    assert_eq!(launcher.view().rows, []);
+}
+
 /// Declares one test per check for each sample.
 macro_rules! contract {
     ($($check:ident),* $(,)?) => {
@@ -567,6 +597,7 @@ contract!(
     each_opened_color_view_starts_afresh,
     views_open_at_once_keep_their_own_state,
     an_unknown_view_is_a_guest_error,
+    reverse_typed_into_root_search_lists_the_reversed_text_to_copy,
 );
 
 /// The names of the component's imports.
