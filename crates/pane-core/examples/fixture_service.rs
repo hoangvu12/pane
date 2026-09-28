@@ -4,7 +4,8 @@
 //! answered (`ABANDONED <path>`). It never reaches beyond this computer.
 //!
 //! Usage: `cargo run -p pane-core --example fixture_service [-- --port N]`
-//! (default port 8740, the samples' default address).
+//! (default port 8740, the samples' default address; 0 for a free port,
+//! which it prints).
 
 #[path = "../tests/support/service.rs"]
 mod service;

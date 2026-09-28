@@ -2,8 +2,10 @@
 //! over HTTP/1.1 on 127.0.0.1 only, which the package search samples
 //! (`guests/sample-search*`) query. Tests start it on a free port;
 //! `cargo run -p pane-core --example fixture_service` serves it on port 8740,
-//! the samples' default address, for the smoke checks and for trying the
-//! samples by hand. It never reaches beyond this computer.
+//! the samples' default address, for trying the samples by hand, or on the
+//! port `--port` names (0 for a free one, as the smoke checks use, which
+//! then set it as the sample's address). It never reaches beyond this
+//! computer.
 //!
 //! - `GET /search?q=<text>`: `{"results": [{"name", "summary"}, ...]}`,
 //!   the packages whose name contains the text, ignoring case. A text

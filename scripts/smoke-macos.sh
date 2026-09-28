@@ -1126,11 +1126,11 @@ stop_pane
 
 # Searching an online service inside its command: Package search, the Rust
 # search sample, queries the fixture service (a made-up package registry on
-# 127.0.0.1:8740, the sample's default address; nothing leaves this
-# computer), whose log lists each request. Typed into root search, "aurora"
-# finds nothing and sends the service nothing. Opened, the command's own
-# search field sends it: its results are listed, Enter shows a package's
-# details. A search the service holds ("slow...") is stopped when the text
+# a free port of 127.0.0.1, set as the sample's address through its form;
+# nothing leaves this computer), whose log lists each request. Typed into
+# root search, "aurora" finds nothing and sends the service nothing. Opened,
+# the command's own search field sends it: its results are listed, Enter
+# shows a package's details. A search the service holds ("slow...") is stopped when the text
 # changes: the service sees its client hang up and the newer results show.
 # The service's own error, then the service stopped (offline), are errors in
 # place of results; once it is back, searching works again: the extension
@@ -1140,11 +1140,17 @@ rm -rf "$PANE_DATA_DIR"
 cargo build --locked --quiet -p pane-core --example fixture_service
 service_log=$out/fixture-service.log
 service_pid=
+service_port=0
+# Starts the fixture service, the `$1`th time: first on a free port, which
+# it prints, then on that same port again.
 start_service() {
-  target/debug/examples/fixture_service --port 8740 >>"$service_log" 2>&1 &
+  target/debug/examples/fixture_service --port "$service_port" >>"$service_log" 2>&1 &
   service_pid=$!
   for _ in $(seq 50); do
-    [ "$(grep -c 'listening on' "$service_log" 2>/dev/null)" -ge "$1" ] && return
+    if [ "$(grep -c 'listening on' "$service_log" 2>/dev/null)" -ge "$1" ]; then
+      service_port=$(sed -n 's#.*listening on http://127\.0\.0\.1:\([0-9]*\).*#\1#p' "$service_log" | tail -n 1)
+      return
+    fi
     kill -0 "$service_pid" 2>/dev/null || break
     sleep 0.1
   done
@@ -1166,30 +1172,36 @@ type_text 'package search'; sleep 1
 key 36; sleep 3   # open Package search
 capture 162-command-opened.png   # its own list, its search field empty
 check 162-command-opened.png 364355 3000   # its first row, selected
+key 125; key 36; sleep 2   # Service address: its form
+type_text "http://127.0.0.1:$service_port"
+key 36; sleep 2   # Save
+capture 163-service-set.png   # "Searching http://127.0.0.1:<port> from now on"
+check 163-service-set.png 9fd8a8
+key 53; sleep 1   # back to the command, its search field empty
 type_text aurora; sleep 3
-capture 163-search-results.png   # aurora-charts, selected, and aurora-cli
-check 163-search-results.png 364355 3000
+capture 164-search-results.png   # aurora-charts, selected, and aurora-cli
+check 164-search-results.png 364355 3000
 grep -q '^GET /search?q=aurora$' "$service_log" || { echo "the command's search did not reach the service"; exit 1; }
 key 125; key 36; sleep 3   # aurora-cli's details
-capture 164-details.png
-check 164-details.png 9fd8a8   # "aurora-cli 0.9.3 (Apache-2.0): Command-line parsing with subcommands"
+capture 165-details.png
+check 165-details.png 9fd8a8   # "aurora-cli 0.9.3 (Apache-2.0): Command-line parsing with subcommands"
 command_key a; type_text slow; sleep 2   # held by the service
 command_key a; type_text ember; sleep 3
-capture 165-newer-search.png   # ember-tz, not what "slow" would list
-check 165-newer-search.png 364355 3000
+capture 166-newer-search.png   # ember-tz, not what "slow" would list
+check 166-newer-search.png 364355 3000
 grep -q '^ABANDONED /search?q=slow$' "$service_log" || { echo "the replaced search was not stopped"; exit 1; }
 command_key a; type_text down; sleep 3
-capture 166-service-error.png
-check 166-service-error.png f08c8c   # "... The service answered 503: the registry is down for maintenance"
+capture 167-service-error.png
+check 167-service-error.png f08c8c   # "... The service answered 503: the registry is down for maintenance"
 stop_service
 command_key a; type_text basalt; sleep 3
-capture 167-offline.png
-check 167-offline.png f08c8c   # "... Could not reach the service at http://127.0.0.1:8740: connection refused"
+capture 168-offline.png
+check 168-offline.png f08c8c   # "... Could not reach the service at http://127.0.0.1:<port>: connection refused"
 start_service 2
 command_key a; type_text cobalt; sleep 3
-capture 168-back-online.png   # cobalt-http, selected: not paused
-check 168-back-online.png 364355 3000
-python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{161-root-typed,162-command-opened,163-search-results,164-details,165-newer-search,166-service-error,167-offline,168-back-online}.png
+capture 169-back-online.png   # cobalt-http, selected: not paused
+check 169-back-online.png 364355 3000
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{161-root-typed,162-command-opened,163-service-set,164-search-results,165-details,166-newer-search,167-service-error,168-offline,169-back-online}.png
 stop_pane
 stop_service
 echo "screenshots in $out"
