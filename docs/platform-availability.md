@@ -6,9 +6,11 @@ implements Q34 as accepted: [simple supported-OS metadata and per-action
 availability explanations, preserving functioning actions, with no general
 compatibility-rule language](extension-policy-proposal.md#platform-specific-extensions-and-actions).
 
-There are two declarations, both a plain list of operating systems
+There are three declarations, each a plain list of operating systems
 (`windows`, `macos`, `linux`), and nothing else: no versions, architectures,
-desktops, ranges or conditions.
+desktops, ranges or conditions. In each, an omitted list means every system
+Pane runs on and an empty list (`[]`) means none; unknown names are an
+invalid manifest (or cannot be expressed in WIT).
 
 ## A package's supported systems
 
@@ -19,20 +21,37 @@ desktops, ranges or conditions.
   "platforms": ["windows", "linux"], "commands": [ ... ] }
 ```
 
-- Omitted: every system Pane runs on. Present: at least one known name; an
-  empty list or an unknown name is an invalid manifest.
 - A package that does not list this system has no compatible artifact here.
   It is explained before anything is installed or run ("Not available on
-  Linux: this package supports only Windows and macOS"), with no Install
-  row; installing it anyway (`--install`, [`Launcher::install_package`]) and
+  Linux: this package supports only Windows and macOS", or "... supports no
+  operating system" for `[]`), with no Install row; installing it anyway (`--install`, [`Launcher::install_package`]) and
   updating to it are refused with the same reason. This check comes before
   the source-only check, so a Windows-only source package is explained as
   Windows-only on Linux.
 - A package for this system shows "Supported systems: Windows and Linux (this
   system)" on its package screen.
 - An installed package whose managed copy does not list this system (for
-  example a data folder copied from another machine) stays listed in root
-  search with the reason, like any installed copy that cannot load.
+  example a data folder copied from another machine) is not a load failure:
+  its commands stay listed in root search, each with the package's reason,
+  and activating one shows the reason without opening the command.
+
+## A command's supported systems
+
+A command in `pane.json` may list the systems it supports, for that command
+alone:
+
+```json
+"commands": [
+  { "id": "hello", "title": "Say hi", "platforms": ["windows"], "component": "hello.wasm" }
+]
+```
+
+On a system the command does not list, its root row is listed like an
+unavailable item (below): with the reason, "Not available on Linux: this
+command supports only Windows", and activating it shows the reason and never
+opens the command. The package's other commands are unaffected. When the
+package itself does not support this system, the package's reason is shown
+instead.
 
 The components themselves are the same WASI 0.3 components on every system;
 the declaration is the author's statement of where the package works, and it
@@ -84,14 +103,19 @@ from the Rust sample with the two other systems in `platforms`.
 
 - Public host interface: `crates/pane-core/tests/samples.rs` (each sample, on
   the system the test runs on), `tests/launcher.rs` (an unavailable form does
-  not open), `tests/packages.rs` (a package only for the other systems, a
-  package for this one, an installed copy for the other systems, invalid
-  lists). Expected results come from the test binary's own target OS, never
-  from a simulated one.
+  not open), `tests/packages.rs` (a package only for the other systems, one
+  for none, one for this system, an installed copy for the other systems,
+  commands for the other systems, for this one and for none, invalid lists).
+  Expected results come from the test binary's own target OS, never from a
+  simulated one, through one helper shared by the test binaries
+  (`crates/pane-core/tests/support/platforms.rs`).
 - Window: `crates/pane/tests/window.rs`, each sample at Pane's window size:
-  the unavailable row is scrolled into view, rendered with its reason,
-  described to assistive technology and explained on Enter; the action for
-  this system and the others still run.
+  the unavailable row is scrolled into view, the selected row renders its
+  own reason (each reason's debug selector names its row), it is described
+  to assistive technology and explained on Enter; the action for this system
+  and the others still run. The list keeps the selected row visible when
+  the window shrinks and when the rows reload, and does not undo a
+  mouse-wheel scroll otherwise.
 - Native GUI smokes, identical steps on all three systems (screenshots 13 to
   15): the sixth and seventh items of the Rust command after a restart, then
   `--install` of a package listing the other two systems. Expected colors
@@ -105,9 +129,13 @@ from the Rust sample with the two other systems in `platforms`.
 
 - No architecture declaration: components are architecture-independent WASI.
   Native helper artifacts matching OS/architecture belong to #15.
-- A root-search command cannot declare platforms in `pane.json`; only whole
-  packages and list items can. Aliases, fallbacks and other surfaces do not
-  exist yet.
+- The commands this build supplies (the samples) declare no platforms; only
+  packages, their commands and list items can. Aliases, fallbacks and other
+  surfaces do not exist yet.
+- `platforms` on `item` was added to extension API 0.1 without a version
+  bump ([current decisions](current-decisions.md#explicitly-unresolved-or-deferred),
+  item 5); a component built against the older shape is refused when its
+  command opens.
 - Other runtime availability (a missing app or setting) is not modelled; a
   command reports that as an error from its action.
 - Whether an unavailable item should be hidden instead is left open by Q34;

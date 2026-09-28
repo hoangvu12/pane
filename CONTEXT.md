@@ -57,7 +57,7 @@ Replacing the managed copy of an installed package from its source while keeping
 _Avoid_: Reinstall
 
 **Supported platforms**:
-The operating systems a package or an action declares it works on: a plain list, not a rule language. A declaration is not evidence of native support.
+The operating systems a package, a command or an action declares it works on: a plain list, not a rule language. A declaration is not evidence of native support.
 _Avoid_: Compatibility rules, target matrix
 
 **Unavailable action**:
