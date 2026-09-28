@@ -148,17 +148,48 @@ Screenshots from run [36371205770](https://github.com/wasimysaid/pane/actions/ru
   the screenshot, the screen bounds and `SetCursorPos` all use physical
   pixels and the click should land on the swatch at any display scaling;
   scaling other than 100 % is unverified.
+- **Operations (#22):** the operations phase (screenshots 31 and 32) installs
+  the JavaScript operations sample, then the Rust one, opens the Rust
+  sample's command and fills its form with the JavaScript package's identity
+  and the name "Rust"; the Rust guest calls that package's `greet` operation
+  through Pane, the same steps as on
+  [Linux](linux.md#operations-22). In run
+  [36429153309](https://github.com/wasimysaid/pane/actions/runs/36429153309)
+  (commit `1848494`) every step passed: the Rust guest's call into the
+  JavaScript package answered "Hello, Rust, from JavaScript"
+  ([32-operation-answer.png](evidence/windows/32-operation-answer.png)).
 - **Reload (#11):** after the calculator and operations phases, the smoke installs a package from
   `<output-dir>\dev`, replaces its component with the JavaScript sample and
   reloads it in Manage extensions, then reloads it without its component (the
   checks fail and the old code keeps answering) and with the `failing-start`
   fixture (a startup failure, then Retry); screenshots 33 to 39, the same
-  steps as on [Linux](linux.md#reloading-a-package-11). **This phase has not
-  run on Windows yet.** Replacing the managed copy removes the old folder on
-  a best-effort basis; on Windows a folder still in use is left behind,
-  listed in `installed.json`, and removal is tried again at the next start
-  (tested on Linux with a folder whose files cannot be deleted; not run on
-  Windows).
+  steps as on [Linux](linux.md#reloading-a-package-11). In run
+  [36429153309](https://github.com/wasimysaid/pane/actions/runs/36429153309)
+  (commit `1848494`) every step passed: reloaded with the JavaScript build,
+  Dev answered from the new code
+  ([35-dev-after.png](evidence/windows/35-dev-after.png)); reloading the
+  `failing-start` fixture showed "Reloaded Dev, but it failed to start…
+  Retry…" ([38-start-failed.png](evidence/windows/38-start-failed.png)), and
+  Retry then showed "Started Dev"
+  ([39-retried.png](evidence/windows/39-retried.png)). Replacing the managed
+  copy removes the old folder on a best-effort basis; on Windows a folder
+  still in use is left behind, listed in `installed.json`, and removal is
+  tried again at the next start (tested on Linux with a folder whose files
+  cannot be deleted; not run on Windows).
+- **Clearing an extension's cache (#39):** after the reload phase, the smoke
+  restarts Pane, saves one value of each kind of
+  [extension data](../extension-data.md) for the Settings sample (style,
+  content, cache and credential), then chooses "Clear cache of Settings
+  sample" in Manage extensions and confirms, the same steps as on
+  [Linux](linux.md#clearing-an-extensions-cache-39). In run
+  [36429153309](https://github.com/wasimysaid/pane/actions/runs/36429153309)
+  (commit `1848494`) every step passed: Manage extensions showed "Cleared the
+  cache of Settings sample"
+  ([42-cache-cleared.png](evidence/windows/42-cache-cleared.png)), and "Show
+  what Pane keeps" then read "Style: formal · Note: Water the plants ·
+  Signed in: yes · Cached greeting: none", with the cached greeting gone and
+  the other three values kept
+  ([43-kept-after-clear.png](evidence/windows/43-kept-after-clear.png)).
 
 ## Disabling an extension and keeping its settings (#10)
 
