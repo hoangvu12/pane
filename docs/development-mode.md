@@ -139,8 +139,8 @@ These are implementation choices of #12/#13, not user decisions:
 - Reloading on save starts every available command, as a manual reload does
   (the provisional exception to lazy activation in
   [current decisions](current-decisions.md)).
-- The rows are at the end of Manage extensions, one per enabled package,
-  after the hotkey rows.
+- The rows are near the end of Manage extensions, one per enabled
+  package, after the hotkey rows and before retained data.
 
 ## Checks
 
@@ -168,7 +168,7 @@ These are implementation choices of #12/#13, not user decisions:
 - [`crates/pane/tests/develop.rs`](../crates/pane/tests/develop.rs): the
   window redraws by itself when a background build fails and when the fix
   is reloaded, and renders the diagnostics.
-- The native smokes' development phase (screenshots 63 to 89; see the
+- The native smokes' development phase (screenshots 66 to 92; see the
   [platform notes](platforms/linux.md#development-mode-12-13)).
 
 ## Limits

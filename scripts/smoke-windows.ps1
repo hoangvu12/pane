@@ -616,6 +616,63 @@ python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: Retry changed nothing" }
 Stop-Pane $process
 if (Select-String -Quiet -SimpleMatch '"paused"' (Join-Path $data "extensions/installed.json")) { throw "pause not cleared" }
+
+# Delete retained data: with a data folder of its own, the settings sample
+# saves a note and is uninstalled keeping it (its Uninstall row follows its
+# state, Reload and Clear cache rows); its retained data, the extension list's
+# last row, is deleted after confirming (Cancel is selected first, so Down
+# then Enter), without the extension. Installing the same folder again finds
+# nothing. Steps that change Pane's files wait for the change instead of a
+# fixed time.
+$data = Join-Path $OutDir "retained-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+# Waits until $file contains $text ($present) or no longer does (-not $present).
+function Wait-For($file, $text, [bool]$present) {
+    for ($i = 0; $i -lt 100; $i++) {
+        $found = (Test-Path $file) -and (Select-String -Quiet -SimpleMatch $text $file)
+        if ($found -eq $present) { return }
+        Start-Sleep -Milliseconds 100
+    }
+    throw "${file}: $text is not $(if ($present) { 'present' } else { 'absent' })"
+}
+$registry = Join-Path $data "extensions/installed.json"
+$process = Start-Pane "stderr-retained.log" @("--install", "target/guests/packages/sample-settings")
+Send "{ENTER}"   # Install; Greeting is selected
+Wait-For $registry "sample-settings" $true; Start-Sleep -Seconds 1
+Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greeting
+Send "{DOWN 3}"
+Send "{ENTER}"   # "Save a note"
+Wait-For (Join-Path $data "extensions/content.json") '"note": "Water the plants"' $true
+Send "{ESC}"; Start-Sleep -Seconds 1   # root search
+Send "{DOWN 10}"   # Manage extensions…
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Send "{DOWN 3}{ENTER}"; Start-Sleep -Seconds 1   # "Uninstall Settings sample"
+Send "{ENTER}"   # "Uninstall and keep saved data"
+Wait-For $registry '"retained"' $true; Start-Sleep -Seconds 1
+Send "{DOWN 40}"
+Send "{ENTER}"; Start-Sleep -Seconds 1   # "Delete retained data of Settings sample"
+Capture "63-confirm-delete-retained.png"
+Check "63-confirm-delete-retained.png" "aab4c0"   # what is kept and what is not touched
+Send "{DOWN}{ENTER}"   # "Delete retained data"
+Wait-For $registry '"retained"' $false; Start-Sleep -Seconds 1
+Capture "64-retained-deleted.png"
+Check "64-retained-deleted.png" "9fd8a8"   # "Deleted the retained data of Settings sample"
+Stop-Pane $process
+if (Select-String -Quiet -SimpleMatch 'Water the plants' (Join-Path $data "extensions/content.json")) { throw "note not deleted" }
+$process = Start-Pane "stderr-reinstall-empty.log" @("--install", "target/guests/packages/sample-settings")
+Send "{ENTER}"   # Install; Greeting is selected
+Wait-For $registry "sample-settings" $true; Start-Sleep -Seconds 1
+Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greeting
+Send "{DOWN 5}"
+Send "{ENTER}"; Start-Sleep -Seconds 2   # "Show what Pane keeps"
+Capture "65-reinstalled-empty.png"
+Check "65-reinstalled-empty.png" "9fd8a8"   # "Style: none · Note: none · Signed in: no ..."
+python "$PSScriptRoot/check_screenshot.py" --distinct (Join-Path $OutDir "51-reinstalled.png") (Join-Path $OutDir "65-reinstalled-empty.png")
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the deleted data is still shown" }
+Send "{ESC}"; Start-Sleep -Seconds 1
+Stop-Pane $process
+
 # Development mode (#12, #13): a copy of each development sample
 # (guests/hello-rust, hello-ts, hello-js) is built once, installed and
 # developed from Manage extensions ("Develop <title>", its last row). Saving
@@ -757,13 +814,13 @@ function Develop-Sample($sample, $title, $component, $source, $n, $greeting, $br
     if (-not (Same-File $built $before)) { throw "$title was built after development stopped" }
     Stop-Pane $process
 }
-Develop-Sample "hello-rust" "Hello Rust" "target/wasm32-wasip2/release/hello_rust.wasm" "src/lib.rs" 63 `
+Develop-Sample "hello-rust" "Hello Rust" "target/wasm32-wasip2/release/hello_rust.wasm" "src/lib.rs" 66 `
     'const GREETING: &str = "{0} from Rust";' 'const GREETING: &str = 42;'
 $jsToolchain = if ($env:PANE_JS_TOOLCHAIN_DIR) { $env:PANE_JS_TOOLCHAIN_DIR } else { Join-Path $env:LOCALAPPDATA "pane/componentize-js" }
 if ((Test-Path (Join-Path $jsToolchain "bin/*/toolchain.json")) -and (Get-Command node -ErrorAction SilentlyContinue)) {
-    Develop-Sample "hello-ts" "Hello TypeScript" "dist/hello_ts.wasm" "src/index.ts" 72 `
+    Develop-Sample "hello-ts" "Hello TypeScript" "dist/hello_ts.wasm" "src/index.ts" 75 `
         'const GREETING: string = "{0} from TypeScript";' 'const GREETING: string = 42;'
-    Develop-Sample "hello-js" "Hello JavaScript" "dist/hello_js.wasm" "src/index.js" 81 `
+    Develop-Sample "hello-js" "Hello JavaScript" "dist/hello_js.wasm" "src/index.js" 84 `
         'const GREETING = "{0} from JavaScript";' 'const GREETING = 42;'
 } else {
     Write-Output "skipped the JavaScript and TypeScript development smoke: no JS toolchain in $jsToolchain"

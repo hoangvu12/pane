@@ -588,6 +588,61 @@ check 62-pause-retried.png 9fd8a8   # "Started Settings sample"
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{61-pause-details,62-pause-retried}.png
 stop_pane
 if grep -q '"paused"' "$PANE_DATA_DIR/extensions/installed.json"; then echo "pause not cleared"; exit 1; fi
+
+# Delete retained data: with a data folder of its own, the settings sample
+# saves a note and is uninstalled keeping it (its Uninstall row follows its
+# state, Reload and Clear cache rows); its retained data, the extension list's
+# last row, is deleted after confirming (Cancel is selected first, so Down
+# then Return), without the extension. Installing the same folder again finds
+# nothing. Steps that change Pane's files wait for the change instead of a
+# fixed time.
+export PANE_DATA_DIR=$out/retained-data
+rm -rf "$PANE_DATA_DIR"
+# Waits until file $1 contains text $2 ("present") or no longer does ("absent").
+wait_for() {
+  for _ in $(seq 100); do
+    if grep -q "$2" "$1" 2>/dev/null; then [ "$3" = present ] && return; else [ "$3" = absent ] && return; fi
+    sleep 0.1
+  done
+  echo "$1: $2 is not $3"; exit 1
+}
+registry=$PANE_DATA_DIR/extensions/installed.json
+start_pane --install target/guests/packages/sample-settings
+key 36   # Install; Greeting is selected
+wait_for "$registry" sample-settings present; sleep 1
+key 36; sleep 3   # open Greeting
+for ((i = 0; i < 3; i++)); do key 125; done
+key 36   # "Save a note"
+wait_for "$PANE_DATA_DIR/extensions/content.json" '"note": "Water the plants"' present
+key 53; sleep 1   # root search
+for ((i = 0; i < 10; i++)); do key 125; done   # Manage extensions…
+key 36; sleep 1
+for ((i = 0; i < 3; i++)); do key 125; done
+key 36; sleep 1   # "Uninstall Settings sample"
+key 36   # "Uninstall and keep saved data"
+wait_for "$registry" '"retained"' present; sleep 1
+for ((i = 0; i < 40; i++)); do key 125; done
+key 36; sleep 1   # "Delete retained data of Settings sample"
+capture 63-confirm-delete-retained.png
+check 63-confirm-delete-retained.png aab4c0   # what is kept and what is not touched
+key 125; key 36   # "Delete retained data"
+wait_for "$registry" '"retained"' absent; sleep 1
+capture 64-retained-deleted.png
+check 64-retained-deleted.png 9fd8a8   # "Deleted the retained data of Settings sample"
+stop_pane
+if grep -q 'Water the plants' "$PANE_DATA_DIR/extensions/content.json"; then echo "note not deleted"; exit 1; fi
+start_pane --install target/guests/packages/sample-settings
+key 36   # Install; Greeting is selected
+wait_for "$registry" sample-settings present; sleep 1
+key 36; sleep 3   # open Greeting
+for ((i = 0; i < 5; i++)); do key 125; done
+key 36; sleep 2   # "Show what Pane keeps"
+capture 65-reinstalled-empty.png
+check 65-reinstalled-empty.png 9fd8a8   # "Style: none · Note: none · Signed in: no ..."
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/51-reinstalled.png" "$out/65-reinstalled-empty.png"
+key 53; sleep 1
+stop_pane
+
 # Development mode (#12, #13): a copy of each development sample
 # (guests/hello-rust, hello-ts, hello-js) is built once, installed and
 # developed from Manage extensions ("Develop <title>", its last row). Saving
@@ -719,13 +774,13 @@ PY
   cmp -s "$built" "$before" || { echo "$title was built after development stopped"; exit 1; }
   stop_pane
 }
-develop_sample hello-rust "Hello Rust" target/wasm32-wasip2/release/hello_rust.wasm src/lib.rs 63 \
+develop_sample hello-rust "Hello Rust" target/wasm32-wasip2/release/hello_rust.wasm src/lib.rs 66 \
   'const GREETING: &str = "%s from Rust";' 'const GREETING: &str = 42;'
 js_toolchain=${PANE_JS_TOOLCHAIN_DIR:-$HOME/Library/Caches/pane/componentize-js}
 if compgen -G "$js_toolchain/bin/*/toolchain.json" >/dev/null && command -v node >/dev/null; then
-  develop_sample hello-ts "Hello TypeScript" dist/hello_ts.wasm src/index.ts 72 \
+  develop_sample hello-ts "Hello TypeScript" dist/hello_ts.wasm src/index.ts 75 \
     'const GREETING: string = "%s from TypeScript";' 'const GREETING: string = 42;'
-  develop_sample hello-js "Hello JavaScript" dist/hello_js.wasm src/index.js 81 \
+  develop_sample hello-js "Hello JavaScript" dist/hello_js.wasm src/index.js 84 \
     'const GREETING = "%s from JavaScript";' 'const GREETING = 42;'
 else
   echo "skipped the JavaScript and TypeScript development smoke: no JS toolchain in $js_toolchain"

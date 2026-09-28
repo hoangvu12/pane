@@ -384,6 +384,29 @@ window manager, so raising and focusing Pane's window
 (`_NET_ACTIVE_WINDOW`) is not verified; Wayland is explained as unavailable
 (tested with a fake, not natively), and no real desktop session ran.
 
+### Deleting retained data (#41)
+
+The last phase, after the hotkeys and pausing phases, with a data folder of its own,
+installs the settings sample, saves a note, uninstalls it keeping its saved
+data, then chooses "Delete retained data of Settings sample" (the extension
+list's last row) and confirms with Down from the selected Cancel, then Return,
+waiting for Pane's files to change rather than a fixed time. It checks that `installed.json` no longer has
+a `retained` record and that the note is gone from `content.json`; installs
+the same folder again and shows what Pane keeps, which must differ from
+screenshot 51. Run locally on 2026-09-28 (Ubuntu 26.04.1 LTS, kernel
+7.0.0-31-generic, x86_64, same Xvfb/lavapipe setup): all checks of the whole
+smoke passed.
+
+| Step | Evidence |
+| --- | --- |
+| "Delete the retained data of Settings sample?", its source, "Retained data: 1 content record", what is not touched; Cancel (selected) and Delete retained data | `63-confirm-delete-retained.png` (not committed: it shows the local checkout path) |
+| "Deleted the retained data of Settings sample", the row gone and nothing installed | [64-retained-deleted.png](evidence/linux-x11/64-retained-deleted.png) |
+| Reinstalled: "Style: none · Note: none · Signed in: no · Cached greeting: none" | [65-reinstalled-empty.png](evidence/linux-x11/65-reinstalled-empty.png) |
+
+The macOS and Windows smokes run the same phase (screenshots 63 to 65); it
+has not run there yet. A file locked by another program on Windows is
+covered only by the tests' unreadable and unwritable files, not natively.
+
 ### Development mode (#12, #13)
 
 The last phase ([development mode](../development-mode.md#checks)) takes a
@@ -404,21 +427,21 @@ setup, with the JS toolchain): all checks of the whole smoke passed.
 
 | Step | Evidence |
 | --- | --- |
-| Hello Rust as installed | [64-hello-rust-greeting-before.png](evidence/linux-x11/64-hello-rust-greeting-before.png) |
-| Its source saved: "Reloaded Hello Rust", with Pane open | [65-hello-rust-rebuilt.png](evidence/linux-x11/65-hello-rust-rebuilt.png) |
-| The new greeting (`--distinct` from 64) | [66-hello-rust-greeting-after.png](evidence/linux-x11/66-hello-rust-greeting-after.png) |
-| A save that does not compile: "Hello Rust did not build: error[E0308]: mismatched types. It keeps running its installed code; …" | [67-hello-rust-build-failed.png](evidence/linux-x11/67-hello-rust-build-failed.png) |
-| The working code still answers (`--same` as 66) | [68-hello-rust-kept.png](evidence/linux-x11/68-hello-rust-kept.png) |
-| Two saves, the second during the build: the newer greeting | [70-hello-rust-greeting-fixed.png](evidence/linux-x11/70-hello-rust-greeting-fixed.png) |
-| TypeScript: "Hello TypeScript did not build: src/index.ts(12,7): error TS2322: …" | [76-hello-ts-build-failed.png](evidence/linux-x11/76-hello-ts-build-failed.png) |
-| TypeScript after the two saves | [79-hello-ts-greeting-fixed.png](evidence/linux-x11/79-hello-ts-greeting-fixed.png) |
-| JavaScript (checked through JSDoc): "Hello JavaScript did not build: src/index.js(15,7): error TS2322: …" | [85-hello-js-build-failed.png](evidence/linux-x11/85-hello-js-build-failed.png) |
-| JavaScript after the two saves | [88-hello-js-greeting-fixed.png](evidence/linux-x11/88-hello-js-greeting-fixed.png) |
+| Hello Rust as installed | [67-hello-rust-greeting-before.png](evidence/linux-x11/67-hello-rust-greeting-before.png) |
+| Its source saved: "Reloaded Hello Rust", with Pane open | [68-hello-rust-rebuilt.png](evidence/linux-x11/68-hello-rust-rebuilt.png) |
+| The new greeting (`--distinct` from 67) | [69-hello-rust-greeting-after.png](evidence/linux-x11/69-hello-rust-greeting-after.png) |
+| A save that does not compile: "Hello Rust did not build: error[E0308]: mismatched types. It keeps running its installed code; …" | [70-hello-rust-build-failed.png](evidence/linux-x11/70-hello-rust-build-failed.png) |
+| The working code still answers (`--same` as 69) | [71-hello-rust-kept.png](evidence/linux-x11/71-hello-rust-kept.png) |
+| Two saves, the second during the build: the newer greeting | [73-hello-rust-greeting-fixed.png](evidence/linux-x11/73-hello-rust-greeting-fixed.png) |
+| TypeScript: "Hello TypeScript did not build: src/index.ts(12,7): error TS2322: …" | [79-hello-ts-build-failed.png](evidence/linux-x11/79-hello-ts-build-failed.png) |
+| TypeScript after the two saves | [82-hello-ts-greeting-fixed.png](evidence/linux-x11/82-hello-ts-greeting-fixed.png) |
+| JavaScript (checked through JSDoc): "Hello JavaScript did not build: src/index.js(15,7): error TS2322: …" | [88-hello-js-build-failed.png](evidence/linux-x11/88-hello-js-build-failed.png) |
+| JavaScript after the two saves | [91-hello-js-greeting-fixed.png](evidence/linux-x11/91-hello-js-greeting-fixed.png) |
 
-Screenshots 63, 71, 72, 80, 81 and 89 (developing started and stopped, on
+Screenshots 66, 74, 75, 83, 84 and 92 (developing started and stopped, on
 the extension list) are checked but not kept here: they show local package
-paths; the other steps of each language (69, 73 to 75, 77, 78, 82 to 84, 86,
-87) match those above.
+paths; the other steps of each language (72, 76 to 78, 80, 81, 85 to 87, 89,
+90) match those above.
 
 ## Text input and accessibility findings
 
