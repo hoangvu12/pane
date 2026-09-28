@@ -249,9 +249,20 @@ export const command: Command = { getView, runAction, submitForm, openView };
 
 /**
  * "reverse <text>" typed into root search lists the text reversed, which
- * Enter copies; other queries have no results.
+ * Enter copies, and "pane website" lists Pane's website, which Enter opens;
+ * other queries have no results.
  */
 async function resultsFor(query: string): Promise<RootResult[]> {
+  if (query === "pane website") {
+    return [
+      {
+        id: "website",
+        title: "Pane's website",
+        subtitle: "Opened by the TypeScript guest",
+        action: { tag: "open-url", val: "https://github.com/hoangvu12/pane" },
+      },
+    ];
+  }
   const text = query.startsWith("reverse ") ? query.slice("reverse ".length).trim() : "";
   if (!text) {
     return [];

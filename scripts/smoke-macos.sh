@@ -276,4 +276,27 @@ capture 32-operation-answer.png
 check 32-operation-answer.png 9fd8a8   # the JavaScript guest's answer
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{31-operations-target,32-operation-answer}.png
 stop_pane
+# Quicklinks, a default extension: installed, its command's form saves a
+# quicklink (Quicklinks is selected once installed, and "Create quicklink" is
+# its first item). After a restart, typing part of its name lists it,
+# selected. Enter would open the default browser, so this smoke stops there
+# (the Linux smoke opens it through a recording handler).
+start_pane --install target/guests/packages/quicklinks
+key 36; sleep 2   # Install
+key 36; sleep 3   # open Quicklinks
+key 36; sleep 1   # Create quicklink
+type_text 'Pane issues'
+key 48
+type_text 'https://example.com/pane-issues'
+key 36; sleep 2
+capture 33-quicklink-saved.png
+check 33-quicklink-saved.png 9fd8a8   # "Saved quicklink “Pane issues”"
+key 53; key 53; sleep 1
+stop_pane
+start_pane
+type_text 'pane iss'; sleep 2
+capture 34-quicklink-found.png
+check 34-quicklink-found.png 364355 3000   # the selected quicklink row
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{33-quicklink-saved,34-quicklink-found}.png
+stop_pane
 echo "screenshots in $out"

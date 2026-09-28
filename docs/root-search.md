@@ -8,8 +8,10 @@ searched; no extension runs until the user invokes one of its commands. This
 is a first matching and ranking, not tuned relevance.
 [#27](https://github.com/hoangvu12/pane/issues/27) (US06, US12, T01, T03)
 adds [results computed from the query](#results-computed-from-the-query),
-with [the calculator](#the-calculator) as a default extension. App
-launching, quicklinks, file search, aliases, fallback actions and hotkeys
+with [the calculator](#the-calculator) as a default extension.
+[#28](https://github.com/hoangvu12/pane/issues/28) adds
+[quicklinks](quicklinks.md), computed results that open a saved web
+address. App launching, file search, aliases, fallback actions and hotkeys
 (#24 to #34) are not part of it.
 
 ## What is searched
@@ -129,9 +131,12 @@ comes from the extension, through the same guest boundary as its command:
   moved the selection, which stays on its row.
 - A computed result has an id (`<command id>:<result id>`), title, optional
   subtitle and an **action** Pane performs without calling the extension
-  again. The only action is **copy**: Enter copies the text to the
+  again. **copy**: Enter copies the text to the
   clipboard, which the window writes (`Launcher::selected_copy`), and the
-  status says "Copied … to the clipboard".
+  status says "Copied … to the clipboard". **open-url** (since #28): Enter
+  opens an `http://` or `https://` address with the launcher's link opener,
+  the system's handler in the window; any other address is refused
+  ([opening a link](quicklinks.md#opening-a-link)).
 - **No result is not a failure**: a query the command cannot answer (words,
   an incomplete or invalid expression) gives no results and the status is
   untouched. An error or crash of the extension is shown as a row titled
@@ -212,7 +217,8 @@ to plug in:
 - an optional **unavailability reason**, which keeps the result listed and
   searchable but stops it from running;
 - an **action** the core dispatches when it is invoked (today: open a
-  command, explain, open one of Pane's screens, or copy a computed result).
+  command, explain, open one of Pane's screens, or copy or open the link of
+  a computed result).
 
 What is *not* settled here, and is left to the tickets that need it: results
 from a provider that must search something outside the query (files,

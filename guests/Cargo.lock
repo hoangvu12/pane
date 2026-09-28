@@ -172,6 +172,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "quicklinks"
+version = "0.1.0"
+dependencies = [
+ "pane-guest",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"

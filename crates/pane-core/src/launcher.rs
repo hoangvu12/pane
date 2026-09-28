@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use crate::links::{self, LinkOpener, NoOpener};
 use crate::operations::{self, Installed};
 use crate::packages::{
     InstalledPackage, PackageError, PackageIdentity, SourcePackage, Store, folder_name,
@@ -199,6 +200,8 @@ pub struct Launcher {
     commands: Arc<[CommandRegistration]>,
     /// Where installed packages are kept, when installing packages is on.
     installation: Option<Installation>,
+    /// Opens the web links of computed results.
+    links: Arc<dyn LinkOpener>,
     state: Arc<Mutex<State>>,
 }
 
@@ -326,6 +329,8 @@ struct Computed {
 enum Entry {
     /// Copy this text to the clipboard, which the window does (root).
     Copy(String),
+    /// Open this web address with the link opener (root).
+    OpenUrl(String),
     /// Open the command with this component (root).
     Open(PathBuf),
     /// Explain why this installed package cannot load (root).
@@ -416,6 +421,7 @@ impl Launcher {
             runtime,
             commands: commands.into(),
             installation,
+            links: Arc::new(NoOpener),
             state: Arc::new(Mutex::new(state)),
         };
         if let (Ok(runtime), Some(installation)) = (&launcher.runtime, &launcher.installation) {
@@ -432,6 +438,13 @@ impl Launcher {
         }
         launcher.show_root(&mut launcher.lock(), None);
         launcher
+    }
+
+    /// This launcher opening web links, such as quicklinks, with `links`,
+    /// normally the system's handler. Without one, opening a link explains
+    /// that this Pane has no link handler.
+    pub fn with_link_opener(self, links: Arc<dyn LinkOpener>) -> Self {
+        Launcher { links, ..self }
     }
 
     pub fn view(&self) -> LauncherView {
@@ -682,6 +695,16 @@ impl Launcher {
                 open_form(&mut state, item_id, form);
                 None
             }
+            Some(Entry::OpenUrl(url)) => match links::refusal(&url) {
+                Some(reason) => {
+                    state.view.status = Status::Error(format!("Could not open {url}: {reason}"));
+                    None
+                }
+                None => {
+                    state.view.status = Status::Running;
+                    Some(Entry::OpenUrl(url))
+                }
+            },
             Some(Entry::Manage) => {
                 self.show_extensions(&mut state);
                 None
@@ -721,6 +744,7 @@ impl Launcher {
                 Some(Entry::Install(folder, mode)) => {
                     launcher.install(generation, folder, mode).await
                 }
+                Some(Entry::OpenUrl(url)) => launcher.open_url(generation, url).await,
                 Some(Entry::CustomView(item_id, info)) => {
                     if let Some(component) = open {
                         launcher
@@ -1507,6 +1531,23 @@ impl Launcher {
         Some(open.return_to)
     }
 
+    /// Opens `url` with the link opener, off the calling thread, and reports
+    /// the outcome while the screen is the one it was opened from.
+    async fn open_url(&self, generation: u64, url: String) {
+        let links = self.links.clone();
+        let opened = {
+            let url = url.clone();
+            off_thread(move || links.open(&url)).await
+        };
+        let Some(mut state) = self.lock_if_current(generation) else {
+            return;
+        };
+        state.view.status = match opened {
+            Ok(()) => Status::Result(format!("Opened {url}")),
+            Err(reason) => Status::Error(format!("Could not open {url}: {reason}")),
+        };
+    }
+
     async fn run_action(&self, generation: u64, component: PathBuf, item_id: String) {
         let settings = self.settings_of(&component);
         let result = match self.runtime() {
@@ -1802,6 +1843,7 @@ fn computed_results(
                 };
                 let entry = match result.action {
                     RootAction::Copy(text) => Entry::Copy(text),
+                    RootAction::OpenUrl(url) => Entry::OpenUrl(url),
                 };
                 computed(row, entry)
             })

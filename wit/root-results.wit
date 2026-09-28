@@ -16,6 +16,11 @@ interface root-results {
   variant root-action {
     /// Copies this text to the clipboard.
     copy(string),
+    /// Opens this web address, an absolute `http://` or `https://` URL, with
+    /// the system's handler for web links, normally the default browser.
+    /// Pane refuses any other kind of address and explains a system that
+    /// cannot open it.
+    open-url(string),
   }
 
   /// One result for the query, listed above the results root search finds

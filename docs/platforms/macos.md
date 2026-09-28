@@ -118,6 +118,14 @@ package, types "6*7", checks the selected answer row, presses Enter to copy
 it, then compares typing "42+1" with pasting the copy (Cmd+A, Cmd+V) and typing
 "+1", which must look the same. In run [36423871204](https://github.com/wasimysaid/pane/actions/runs/36423871204) (commit `ab91081`) every step passed: "6*7" answered 42, Enter copied it, and pasting then typing "+1" matched typing "42+1", so the system clipboard held "42" ([27-answer.png](evidence/macos/27-answer.png), [30-pasted.png](evidence/macos/30-pasted.png)).
 
+## Quicklinks (#28)
+
+The smoke's last phase (screenshots 33 and 34) installs the Quicklinks
+package, creates "Pane issues" (https://example.com/pane-issues) in its
+form, restarts Pane and types "pane iss", which must list it selected. It
+stops before Enter, which would open the default browser; opening a link
+here is checked only through the tests' recording opener. Not run yet.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms now have a text field. The
