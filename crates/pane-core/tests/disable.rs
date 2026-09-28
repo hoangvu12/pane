@@ -1,7 +1,8 @@
 //! Disabling and re-enabling installed packages through the launcher's public
 //! interface: a disabled package contributes nothing and runs nothing, stays
 //! disabled across restarts, and keeps its settings for when it is enabled
-//! again. Uses the real settings sample guest from `cargo xtask guests`.
+//! again. Every check runs against the settings sample in Rust, JavaScript
+//! and TypeScript, real guests from `cargo xtask guests`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,24 +14,50 @@ use tempfile::TempDir;
 const INSTALL_ROW: &str = "Install extension from folder…";
 const MANAGE_ROW: &str = "Manage extensions…";
 
-/// Copies the assembled settings sample package into `folder`, a package
-/// with its own identity. `title` replaces the package title.
-fn settings_package(folder: &Path, title: &str) -> PathBuf {
+/// A settings sample package: the same command in each language.
+struct Fixture {
+    /// The assembled package under `target/guests/packages`.
+    package: &'static str,
+    component: &'static str,
+    title: &'static str,
+}
+
+const RUST: Fixture = Fixture {
+    package: "sample-settings",
+    component: "sample_settings.wasm",
+    title: "Settings sample",
+};
+const JAVASCRIPT: Fixture = Fixture {
+    package: "sample-settings-js",
+    component: "sample_settings_js.wasm",
+    title: "JavaScript settings sample",
+};
+const TYPESCRIPT: Fixture = Fixture {
+    package: "sample-settings-ts",
+    component: "sample_settings_ts.wasm",
+    title: "TypeScript settings sample",
+};
+
+/// Copies the assembled settings sample package of `fixture` into `folder`,
+/// a package with its own identity. `title` replaces the package title.
+fn settings_package(fixture: &Fixture, folder: &Path, title: &str) -> PathBuf {
     let assembled = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/guests/packages/sample-settings");
+        .join("../../target/guests/packages")
+        .join(fixture.package);
     assert!(
         assembled.exists(),
         "{} is missing; run `cargo xtask guests`",
         assembled.display()
     );
     fs::create_dir_all(folder).unwrap();
-    let manifest = fs::read_to_string(assembled.join("pane.json"))
-        .unwrap()
-        .replace("\"Settings sample\"", &format!("\"{title}\""));
+    let manifest = fs::read_to_string(assembled.join("pane.json")).unwrap();
+    let original = format!("\"{}\"", fixture.title);
+    assert!(manifest.contains(&original), "{manifest}");
+    let manifest = manifest.replace(&original, &format!("\"{title}\""));
     fs::write(folder.join("pane.json"), manifest).unwrap();
     fs::copy(
-        assembled.join("sample_settings.wasm"),
-        folder.join("sample_settings.wasm"),
+        assembled.join(fixture.component),
+        folder.join(fixture.component),
     )
     .unwrap();
     folder.to_path_buf()
@@ -125,10 +152,9 @@ fn enabled(launcher: &Launcher) -> Vec<(PackageIdentity, bool)> {
         .collect()
 }
 
-#[test]
-fn a_disabled_package_leaves_root_search_and_stays_disabled_after_a_restart() {
+fn a_disabled_package_leaves_root_search_and_stays_disabled_after_a_restart(fixture: &Fixture) {
     let dirs = Dirs::new();
-    let folder = settings_package(&dirs.source("settings"), "Settings sample");
+    let folder = settings_package(fixture, &dirs.source("settings"), "Settings sample");
     let launcher = dirs.launcher();
     block_on(launcher.install_package(&folder));
     assert_eq!(titles(&launcher), ["Greeting", INSTALL_ROW, MANAGE_ROW]);
@@ -156,10 +182,9 @@ fn a_disabled_package_leaves_root_search_and_stays_disabled_after_a_restart() {
     assert!(subtitles(&restarted)[0].starts_with("Disabled"));
 }
 
-#[test]
-fn re_enabling_after_a_restart_restores_the_saved_settings() {
+fn re_enabling_after_a_restart_restores_the_saved_settings(fixture: &Fixture) {
     let dirs = Dirs::new();
-    let folder = settings_package(&dirs.source("settings"), "Settings sample");
+    let folder = settings_package(fixture, &dirs.source("settings"), "Settings sample");
     let launcher = dirs.launcher();
     block_on(launcher.install_package(&folder));
     assert_eq!(
@@ -194,11 +219,10 @@ fn re_enabling_after_a_restart_restores_the_saved_settings() {
     );
 }
 
-#[test]
-fn copies_with_the_same_title_are_enabled_and_keep_settings_by_identity() {
+fn copies_with_the_same_title_are_enabled_and_keep_settings_by_identity(fixture: &Fixture) {
     let dirs = Dirs::new();
-    let published = settings_package(&dirs.source("published"), "Greeter");
-    let development = settings_package(&dirs.source("development"), "Greeter");
+    let published = settings_package(fixture, &dirs.source("published"), "Greeter");
+    let development = settings_package(fixture, &dirs.source("development"), "Greeter");
     let launcher = dirs.launcher();
     block_on(launcher.install_package(&published));
     block_on(launcher.install_package(&development));
@@ -252,10 +276,11 @@ fn copies_with_the_same_title_are_enabled_and_keep_settings_by_identity() {
     );
 }
 
-#[test]
-fn disabling_through_the_api_closes_the_package_command_and_updating_keeps_it_disabled() {
+fn disabling_through_the_api_closes_the_package_command_and_updating_keeps_it_disabled(
+    fixture: &Fixture,
+) {
     let dirs = Dirs::new();
-    let folder = settings_package(&dirs.source("settings"), "Settings sample");
+    let folder = settings_package(fixture, &dirs.source("settings"), "Settings sample");
     let launcher = dirs.launcher();
     block_on(launcher.install_package(&folder));
     let identity = PackageIdentity::local(&folder).unwrap();
@@ -288,10 +313,9 @@ fn disabling_through_the_api_closes_the_package_command_and_updating_keeps_it_di
     assert_eq!(enabled(&dirs.launcher()), [(identity, false)]);
 }
 
-#[test]
-fn enabling_an_identity_that_is_not_installed_is_explained() {
+fn enabling_an_identity_that_is_not_installed_is_explained(fixture: &Fixture) {
     let dirs = Dirs::new();
-    let folder = settings_package(&dirs.source("settings"), "Settings sample");
+    let folder = settings_package(fixture, &dirs.source("settings"), "Settings sample");
     let launcher = dirs.launcher();
 
     block_on(launcher.set_enabled(&PackageIdentity::local(&folder).unwrap(), true));
@@ -302,15 +326,14 @@ fn enabling_an_identity_that_is_not_installed_is_explained() {
     }
 }
 
-#[test]
-fn commands_built_into_pane_have_no_settings() {
+fn commands_built_into_pane_have_no_settings(fixture: &Fixture) {
     let dirs = Dirs::new();
-    let folder = settings_package(&dirs.source("settings"), "Settings sample");
+    let folder = settings_package(fixture, &dirs.source("settings"), "Settings sample");
     let command = pane_core::CommandRegistration {
         id: "greeting".into(),
         title: "Built-in greeting".into(),
         subtitle: None,
-        component: folder.join("sample_settings.wasm"),
+        component: folder.join(fixture.component),
     };
     let launcher = Launcher::new(Runtime::start(), vec![command]);
 
@@ -324,10 +347,9 @@ fn commands_built_into_pane_have_no_settings() {
     }
 }
 
-#[test]
-fn unreadable_settings_are_explained_to_the_command_and_never_overwritten() {
+fn unreadable_settings_are_explained_to_the_command_and_never_overwritten(fixture: &Fixture) {
     let dirs = Dirs::new();
-    let folder = settings_package(&dirs.source("settings"), "Settings sample");
+    let folder = settings_package(fixture, &dirs.source("settings"), "Settings sample");
     block_on(dirs.launcher().install_package(&folder));
     let file = dirs.packages_dir().join("settings.json");
     fs::write(&file, "not settings").unwrap();
@@ -353,10 +375,9 @@ fn open_greeting_at(launcher: &Launcher, item: &str) {
     select_title(launcher, item);
 }
 
-#[test]
-fn a_setting_saved_while_the_package_is_being_disabled_is_refused() {
+fn a_setting_saved_while_the_package_is_being_disabled_is_refused(fixture: &Fixture) {
     let dirs = Dirs::new();
-    let folder = settings_package(&dirs.source("settings"), "Settings sample");
+    let folder = settings_package(fixture, &dirs.source("settings"), "Settings sample");
     let launcher = dirs.launcher();
     block_on(launcher.install_package(&folder));
     let identity = PackageIdentity::local(&folder).unwrap();
@@ -386,10 +407,9 @@ fn a_setting_saved_while_the_package_is_being_disabled_is_refused() {
     );
 }
 
-#[test]
-fn an_action_result_that_arrives_after_its_package_was_disabled_is_not_shown() {
+fn an_action_result_that_arrives_after_its_package_was_disabled_is_not_shown(fixture: &Fixture) {
     let dirs = Dirs::new();
-    let folder = settings_package(&dirs.source("settings"), "Settings sample");
+    let folder = settings_package(fixture, &dirs.source("settings"), "Settings sample");
     let launcher = dirs.launcher();
     block_on(launcher.install_package(&folder));
     let identity = PackageIdentity::local(&folder).unwrap();
@@ -407,10 +427,9 @@ fn an_action_result_that_arrives_after_its_package_was_disabled_is_not_shown() {
     );
 }
 
-#[test]
-fn a_second_change_while_one_is_pending_is_ignored() {
+fn a_second_change_while_one_is_pending_is_ignored(fixture: &Fixture) {
     let dirs = Dirs::new();
-    let folder = settings_package(&dirs.source("settings"), "Settings sample");
+    let folder = settings_package(fixture, &dirs.source("settings"), "Settings sample");
     let launcher = dirs.launcher();
     block_on(launcher.install_package(&folder));
     let identity = PackageIdentity::local(&folder).unwrap();
@@ -428,10 +447,9 @@ fn a_second_change_while_one_is_pending_is_ignored() {
     assert_eq!(enabled(&dirs.launcher()), [(identity, false)]);
 }
 
-#[test]
-fn pressing_enter_twice_on_an_extension_row_changes_it_once() {
+fn pressing_enter_twice_on_an_extension_row_changes_it_once(fixture: &Fixture) {
     let dirs = Dirs::new();
-    let folder = settings_package(&dirs.source("settings"), "Settings sample");
+    let folder = settings_package(fixture, &dirs.source("settings"), "Settings sample");
     let launcher = dirs.launcher();
     block_on(launcher.install_package(&folder));
     let identity = PackageIdentity::local(&folder).unwrap();
@@ -449,10 +467,9 @@ fn pressing_enter_twice_on_an_extension_row_changes_it_once() {
     assert_eq!(enabled(&launcher), [(identity, true)]);
 }
 
-#[test]
-fn a_launcher_without_a_package_location_explains_it_cannot_disable() {
+fn a_launcher_without_a_package_location_explains_it_cannot_disable(fixture: &Fixture) {
     let dirs = Dirs::new();
-    let folder = settings_package(&dirs.source("settings"), "Settings sample");
+    let folder = settings_package(fixture, &dirs.source("settings"), "Settings sample");
     let launcher = Launcher::new(Runtime::start(), vec![]);
 
     block_on(launcher.set_enabled(&PackageIdentity::local(&folder).unwrap(), false));
@@ -465,3 +482,33 @@ fn a_launcher_without_a_package_location_explains_it_cannot_disable() {
         )
     );
 }
+
+/// Declares one test per check for each language's settings sample.
+macro_rules! contract {
+    ($($check:ident),* $(,)?) => {
+        mod rust {
+            $(#[test] fn $check() { super::$check(&super::RUST) })*
+        }
+        mod javascript {
+            $(#[test] fn $check() { super::$check(&super::JAVASCRIPT) })*
+        }
+        mod typescript {
+            $(#[test] fn $check() { super::$check(&super::TYPESCRIPT) })*
+        }
+    };
+}
+
+contract!(
+    a_disabled_package_leaves_root_search_and_stays_disabled_after_a_restart,
+    re_enabling_after_a_restart_restores_the_saved_settings,
+    copies_with_the_same_title_are_enabled_and_keep_settings_by_identity,
+    disabling_through_the_api_closes_the_package_command_and_updating_keeps_it_disabled,
+    enabling_an_identity_that_is_not_installed_is_explained,
+    commands_built_into_pane_have_no_settings,
+    unreadable_settings_are_explained_to_the_command_and_never_overwritten,
+    a_setting_saved_while_the_package_is_being_disabled_is_refused,
+    an_action_result_that_arrives_after_its_package_was_disabled_is_not_shown,
+    a_second_change_while_one_is_pending_is_ignored,
+    pressing_enter_twice_on_an_extension_row_changes_it_once,
+    a_launcher_without_a_package_location_explains_it_cannot_disable,
+);

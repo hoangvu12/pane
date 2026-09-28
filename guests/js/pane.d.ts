@@ -4,6 +4,7 @@
 // wit/extension.wit, as JavaScript and TypeScript commands see it. They
 // describe plain values only; nothing here is specific to the JS engine.
 /// <reference path="./wasi.d.ts" />
+/// <reference path="./settings.d.ts" />
 
 /** One entry in a command's list view. */
 export interface Item {

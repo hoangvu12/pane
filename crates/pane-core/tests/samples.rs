@@ -197,9 +197,12 @@ fn the_component_imports_only_wasi_0_3(sample: &Sample) {
     let imports = imports(&sample.path());
 
     assert!(!imports.is_empty());
+    // Besides WASI 0.3, only Pane's own interfaces: a JS/TS component lists
+    // `pane:extension/settings` whether or not it uses it.
     let other: Vec<&String> = imports
         .iter()
         .filter(|name| !(name.starts_with("wasi:") && name.contains("@0.3.")))
+        .filter(|name| !name.starts_with("pane:extension/"))
         .collect();
     assert!(other.is_empty(), "non-WASI 0.3 imports: {other:?}");
 }

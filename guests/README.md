@@ -12,12 +12,15 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   JavaScript and TypeScript. All three show the same items, the same form, and
   give the same answers and errors; the contract tests in `crates/pane-core/tests/samples.rs`
   and `crates/pane/tests/window.rs` hold each of them to that.
-- `sample-settings`: a Rust command that keeps a chosen greeting style in
-  Pane's settings ([Keeping settings](#keeping-settings)); the fixture for
-  disabling and re-enabling a package.
+- `sample-settings`, `sample-settings-js`, `sample-settings-ts`: the same
+  command in Rust, JavaScript and TypeScript, which keeps a chosen greeting
+  style in Pane's settings ([Keeping settings](#keeping-settings)); the
+  fixtures for disabling and re-enabling a package, held alike by
+  `crates/pane-core/tests/disable.rs`.
 - `js`: `@pane/extension`, TypeScript declarations for the contract
   (`pane.d.ts`) and the WIT world JS/TS commands are built against.
-- `prebuilt`: the JS and TS sample components, committed so that tests and
+- `prebuilt`: the JS and TS sample components (both samples in each
+  language), committed so that tests and
   `cargo run -p pane` need no JavaScript toolchain, with `manifest.json`
   recording their hashes and build inputs.
 - `packages`: the samples' package manifests (`pane.json`). `cargo xtask
@@ -86,16 +89,28 @@ host Wasmtime and wasmtime-wasi 49.0.1.
 ### Keeping settings
 
 A command of an installed package can keep string values between runs with
-`pane_guest::settings` (the `pane:extension/settings` interface in
-[`wit/settings.wit`](../wit/settings.wit)). The
-[settings sample](sample-settings/src/lib.rs) saves the greeting style the
-user picks:
+the `pane:extension/settings` interface in
+[`wit/settings.wit`](../wit/settings.wit). The settings sample, in
+[Rust](sample-settings/src/lib.rs), [JavaScript](sample-settings-js/src/index.js)
+and [TypeScript](sample-settings-ts/src/index.ts), saves the greeting style
+the user picks. In Rust it is `pane_guest::settings`:
 
 ```rust
 use pane_guest::settings;
 
 settings::set("greeting-style", "formal")?;          // Result<(), String>
 let style: Option<String> = settings::get("greeting-style")?;
+```
+
+In JavaScript and TypeScript it is a module (typed in
+[`js/settings.d.ts`](js/settings.d.ts)); an error is thrown as an `Error`
+whose message is the reason, so rethrowing it shows the reason to the user:
+
+```ts
+import { get, set } from "pane:extension/settings@0.1.0";
+
+set("greeting-style", "formal");
+const style: string | null = get("greeting-style");
 ```
 
 - Values belong to the installed package's source identity, not its title
@@ -113,8 +128,9 @@ let style: Option<String> = settings::get("greeting-style")?;
 - A component that does not import `settings` is unaffected; it is built for
   the `extension` world as before. `extension-with-settings` adds the import
   within extension API 0.1, so a component that uses settings needs a Pane
-  with this change. JavaScript and TypeScript commands cannot import
-  settings yet.
+  with this change. JavaScript and TypeScript commands are built against a
+  world that includes it, so the prebuilt JS/TS components list the import
+  whether or not they use it.
 
 ## Writing a JavaScript or TypeScript command
 

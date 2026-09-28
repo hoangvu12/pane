@@ -3,8 +3,9 @@ package pane:extension@0.1.0;
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 //
 // Settings an extension keeps between runs. Kept apart from extension.wit so
-// commands that do not use settings, including the prebuilt JS/TS samples,
-// are unchanged; JS/TS commands cannot import it yet.
+// a component built for the `extension` world alone is unchanged. Rust
+// commands import it through pane-guest, JS/TS commands as the module
+// "pane:extension/settings@0.1.0" (guests/js/settings.d.ts).
 // The header follows `package`: comments above it would document the package,
 // which extension.wit already does.
 
