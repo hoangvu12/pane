@@ -595,6 +595,7 @@ Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Greeting is selected
 Send "{ENTER}"; Start-Sleep -Seconds 2   # open Greeting
 Send "{DOWN 7}"   # Crash
 for ($i = 0; $i -lt 3; $i++) { Send "{ENTER}"; Start-Sleep -Seconds 2 }
+Send "greet"; Start-Sleep -Seconds 1   # Greeting and its reason at the top on any window height
 Capture "59-paused.png"
 Check "59-paused.png" "f08c8c"   # "Settings sample crashed 3 times within 5 minutes and is paused ..."
 Check "59-paused.png" "d6a36a"   # Greeting: "Settings sample is paused after an error; ..."
