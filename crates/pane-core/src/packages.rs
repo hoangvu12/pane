@@ -269,6 +269,11 @@ pub struct Manifest {
     /// The other packages whose operations this one calls, required or
     /// optional.
     pub dependencies: Vec<ManifestDependency>,
+    /// The package asks for access to one folder the user chooses
+    /// (`"folderAccess": true`): Pane offers its own "Choose folder" row
+    /// in the package's commands, and lists only that folder for it
+    /// (`pane:extension/files`).
+    pub folder_access: bool,
 }
 
 /// A native helper a package ships: a prebuilt program per target (operating
@@ -408,6 +413,8 @@ struct ManifestJson {
     helpers: Vec<HelperJson>,
     #[serde(default)]
     dependencies: Vec<DependencyJson>,
+    #[serde(default)]
+    folder_access: bool,
 }
 
 #[derive(Deserialize)]
@@ -706,6 +713,7 @@ impl Manifest {
             operations,
             helpers,
             dependencies,
+            folder_access: json.folder_access,
         })
     }
 

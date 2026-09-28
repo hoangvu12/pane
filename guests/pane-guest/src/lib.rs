@@ -8,8 +8,8 @@
 //! operations other packages publish with [`operations::call`], serve those
 //! its own package publishes with [`publish`], find and open installed
 //! applications with [`applications`], supply root results ahead of the
-//! query with [`indexed`] and run its package's native helpers with
-//! [`helpers`]. The crate is
+//! query with [`indexed`], run its package's native helpers with
+//! [`helpers`] and list the files of a folder with [`files`]. The crate is
 //! `no_std` so the component imports only WASI 0.3 interfaces; it supplies the
 //! allocator and a panic handler that traps, which the host reports as a
 //! runtime error.
@@ -164,6 +164,27 @@ pub mod helpers {
             }
         }
     }
+}
+
+/// The files of the folder the user granted the command's package
+/// (`pane:extension/files`), which Pane lists for it under its scan limits
+/// ([`files::limits`]): [`files::list_folder`] answers at once, with the
+/// listing Pane keeps for this visit of root search, or that it is still
+/// listing (Pane asks the command again when it is done), or that no folder
+/// is granted. The package's `pane.json` sets `"folderAccess": true`; the
+/// user chooses the folder in Pane's own row, and the extension never sees
+/// its path. A command answers `open-file` results
+/// ([`root::RootAction::OpenFile`]) with the files' ids.
+pub mod files {
+    wit_bindgen::generate!({
+        path: "../../wit",
+        world: "files-user",
+        default_bindings_module: "pane_guest::files",
+    });
+
+    pub use pane::extension::files::{
+        FolderListing, FolderState, FoundFile, ScanLimits, limits, list_folder,
+    };
 }
 
 /// Root results a command supplies ahead of the query

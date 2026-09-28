@@ -38,8 +38,11 @@ Every guest call has two owners, with different powers:
   it waits stops the operation it waits for too.
 - Navigation does not stop calls: an action may be doing what the user
   asked, such as saving, and leaving its screen is not a request to stop
-  it. Making a search an owner that stops its provider calls (#29, #30)
-  adds its lifetime to the call's stopping owners in the same way.
+  it. The one exception, since [#29](files.md#cancelling-a-pending-search),
+  is root search's own calls for computed results: the search is a
+  stopping owner of them, so a newer query or leaving root search cancels
+  those pending (`CallError::Cancelled`), exactly as an ended generation
+  stops them, and it is not a failure for pausing.
 
 ## What stopping does
 
@@ -91,8 +94,9 @@ resume in the store. So:
   same instance, caches kept in guest memory, and so on. For disable,
   reload and update that is intended, since the code stops anyway. Later
   owners that stop calls while the package keeps running pay this cost
-  too: cancelling a search's pending provider calls (#29, #30) would drop
-  the provider's instance, losing what it keeps in memory between queries.
+  too: cancelling a search's pending provider calls (#29) drops the
+  provider's instance, losing what it keeps in memory between queries (the
+  Files extension keeps nothing there).
   A command cancelling its own [native helper](helpers.md) run (#15) needs
   no such owner: the guest drops the run, Wasmtime cancels the host task
   and the process ends, while the instance stays. Such owners may prefer
