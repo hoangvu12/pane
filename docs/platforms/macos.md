@@ -92,9 +92,16 @@ tickets will replace it.
 
 ## Text input and accessibility findings
 
-- **Text input / IME:** the current controls have no text field (root search
-  lists commands but has no query input yet), so text input and IME could not
-  be exercised. They remain open for the ticket that adds query input.
+- **Text input / IME (#20):** extension forms now have a text field. The
+  smoke also opens the Rust command's form, submits it empty (the error color
+  must appear), types "Ada" through System Events `keystroke`, then Tab, Down
+  and Return (the result color must appear, which only happens if the typed
+  text reached the name field). **This step has not run on macOS yet**: it was
+  added after the CI run recorded above, and no Mac or runner was available
+  while implementing #20. Composition with a macOS input method (for example
+  Japanese Kana) through `NSTextInputClient` is unverified; the window tests
+  cover composition only through the field's input handler. Editing bindings
+  follow the element's macOS defaults (Cmd-A/C/V/X/Z, Option-arrow words).
 - **Accessibility:** the window exposes a `ListBox` labelled with the view
   title, `ListBoxOption` rows with label, description and selected state, the
   selected row as the active descendant, and a `Status` node for the result.
@@ -102,6 +109,7 @@ tickets will replace it.
   (`assistive_technology_sees_the_list_the_selection_and_the_result`), which
   pass on macOS but are platform-independent. **VoiceOver was not run**, so how
   the tree reaches NSAccessibility and what VoiceOver announces are unverified.
+  Forms: see [accessibility of forms](../forms.md#accessibility).
 
 ## Remaining limits
 

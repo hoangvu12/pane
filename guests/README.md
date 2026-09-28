@@ -6,11 +6,11 @@ WASI 0.3 interfaces; a component that imports WASI 0.2 (for example through
 Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
 
 - `pane-guest`: Rust bindings for the contract. `no_std`, so only WASI 0.3 is
-  imported; it supplies the allocator, a trapping panic handler and
-  `cabi_realloc`.
+  imported; it supplies the allocator, a trapping panic handler,
+  `cabi_realloc` and `memcmp`/`bcmp` (which string comparisons need).
 - `sample-rust`, `sample-js`, `sample-ts`: the same sample command in Rust,
-  JavaScript and TypeScript. All three show the same items and give the same
-  answers and errors; the contract tests in `crates/pane-core/tests/samples.rs`
+  JavaScript and TypeScript. All three show the same items, the same form, and
+  give the same answers and errors; the contract tests in `crates/pane-core/tests/samples.rs`
   and `crates/pane/tests/window.rs` hold each of them to that.
 - `js`: `@pane/extension`, TypeScript declarations for the contract
   (`pane.d.ts`) and the WIT world JS/TS commands are built against.
@@ -23,13 +23,14 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
 ## Writing a Rust command
 
 The [sample](sample-rust/src/lib.rs) is the complete example. A command is a
-`cdylib` crate depending on `pane-guest` that implements two async functions:
+`cdylib` crate depending on `pane-guest` that implements three async
+functions (see [Forms](#forms) for the third):
 
 ```rust
 #![no_std]
 
-use pane_guest::alloc::{string::String, vec};
-use pane_guest::{Guest, Item, View};
+use pane_guest::alloc::{string::String, vec, vec::Vec};
+use pane_guest::{FieldValue, FormError, Guest, Item, View};
 
 struct Hello;
 pane_guest::export!(Hello);
@@ -38,12 +39,16 @@ impl Guest for Hello {
     async fn get_view() -> Result<View, String> {
         Ok(View {
             title: "Hello".into(),
-            items: vec![Item { id: "hi".into(), title: "Say hi".into(), subtitle: None }],
+            items: vec![Item { id: "hi".into(), title: "Say hi".into(), subtitle: None, form: None }],
         })
     }
 
     async fn run_action(_item_id: String) -> Result<String, String> {
         Ok("hi!".into())
+    }
+
+    async fn submit_form(_item_id: String, _values: Vec<FieldValue>) -> Result<String, FormError> {
+        Err(FormError { field: None, message: "this command has no forms".into() })
     }
 }
 ```
@@ -75,9 +80,10 @@ host Wasmtime and wasmtime-wasi 49.0.1.
 
 The [JavaScript](sample-js/src/index.js) and
 [TypeScript](sample-ts/src/index.ts) samples are complete examples. A command
-is an npm package whose `main` module exports `command` with two async
-functions. Pane's types come from `@pane/extension` (a `file:../js`
-development dependency); they describe plain values, not engine objects:
+is an npm package whose `main` module exports `command` with three async
+functions (see [Forms](#forms) for the third). Pane's types come from
+`@pane/extension` (a `file:../js` development dependency); they describe plain
+values, not engine objects:
 
 ```ts
 import type { Command } from "@pane/extension";
@@ -91,6 +97,9 @@ export const command: Command = {
     if (itemId !== "hi") throw new Error(`unknown item: ${itemId}`);
     await waitFor(10_000_000); // 10 ms; the command suspends meanwhile
     return "hi!";
+  },
+  async submitForm() {
+    throw { message: "this command has no forms" };
   },
 };
 ```
@@ -158,3 +167,78 @@ through its libc, whatever the source uses, and is about 4.3 MB. Only Linux
 x86_64 builds have been run; the scripts avoid OS-specific paths, but Windows
 and macOS builds are unverified. See
 [tools/componentize-js](../tools/componentize-js/README.md) for the patch queue.
+
+## Forms
+
+An item can open a form instead of running an action: a single-line text
+field and a choice of one option per field, and a submit button. Pane renders
+the controls, handles focus, typing and input methods, and calls
+`submit-form` with every field's value; the command validates them and answers
+with a result, or with an error about one field (shown under it, with focus
+moved there) or about the whole form. The contract, keyboard behavior and
+accessibility are described in [docs/forms.md](../docs/forms.md). The "Greet
+someone" item of each sample is the complete example.
+
+Rust:
+
+```rust
+use pane_guest::{Choice, Field, FieldKind, FieldValue, Form, FormError, Item, TextField};
+
+let form = Form {
+    title: "Greet someone".into(),
+    fields: vec![
+        Field {
+            id: "name".into(),
+            label: "Name".into(),
+            kind: FieldKind::Text(TextField { placeholder: Some("Ada Lovelace".into()) }),
+        },
+        Field {
+            id: "greeting".into(),
+            label: "Greeting".into(),
+            kind: FieldKind::Choice(vec![
+                Choice { id: "hello".into(), label: "Hello".into() },
+                Choice { id: "morning".into(), label: "Good morning".into() },
+            ]),
+        },
+    ],
+    submit_label: "Greet".into(),
+};
+let item = Item { id: "form".into(), title: "Greet someone".into(), subtitle: None, form: Some(form) };
+
+// In `impl Guest`:
+async fn submit_form(item_id: String, values: Vec<FieldValue>) -> Result<String, FormError> {
+    let name = values.iter().find(|v| v.id == "name").map_or("", |v| v.value.trim());
+    if name.is_empty() {
+        return Err(FormError { field: Some("name".into()), message: "Enter a name".into() });
+    }
+    Ok(format!("Hello, {name}"))
+}
+```
+
+JavaScript or TypeScript (fields are camelCase; a field's `kind` is a tagged
+value, `{ tag: "text", val: {...} }` or `{ tag: "choice", val: [...] }`):
+
+```ts
+const form: Form = {
+  title: "Greet someone",
+  fields: [
+    { id: "name", label: "Name", kind: { tag: "text", val: { placeholder: "Ada Lovelace" } } },
+    { id: "greeting", label: "Greeting", kind: { tag: "choice", val: [
+      { id: "hello", label: "Hello" }, { id: "morning", label: "Good morning" },
+    ] } },
+  ],
+  submitLabel: "Greet",
+};
+// items: [{ id: "form", title: "Greet someone", form }]
+
+async submitForm(itemId, values) {
+  const name = values.find((v) => v.id === "name")?.value.trim() ?? "";
+  if (!name) throw { field: "name", message: "Enter a name" } satisfies FormError;
+  return `Hello, ${name}`;
+},
+```
+
+In JS/TS, reject a submission by throwing a plain `FormError` object as above.
+Throwing an `Error` from `submitForm` is treated as a crash, not as a
+validation message. The samples validate with Zod and turn its first issue
+into a `FormError`.

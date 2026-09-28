@@ -68,6 +68,19 @@ background. This is most likely hover under wherever the runner's mouse pointer
 sits, since keyboard selection (the Rust row) opened the Rust command. This was
 not confirmed.
 
+## Text input and accessibility findings
+
+- **Text input / IME (#20):** the smoke now also opens the Rust command's
+  form, submits it empty (the error color must appear), types "Ada" with
+  `SendKeys`, then Tab, Down and Enter (the result color must appear, which
+  only happens if the typed text reached the name field). **This step has not
+  run on Windows yet**: it was added after the CI run recorded above, and no
+  Windows machine or runner was available while implementing #20. Windows IME
+  (TSF) composition, for example with Microsoft Japanese IME, is unverified;
+  the window tests cover composition only through the field's input handler.
+- **Accessibility:** see [accessibility of forms](../forms.md#accessibility).
+  Narrator/NVDA were not run.
+
 ## Remaining limits
 
 - Only a CI runner (Windows Server) was used, not a Windows 10/11 desktop.

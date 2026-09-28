@@ -46,5 +46,18 @@ Capture "5-back-to-root.png"
 # Each command must have answered from its own guest, not the same view twice.
 python "$PSScriptRoot/check_screenshot.py" --distinct @(2..4 | ForEach-Object { Join-Path $OutDir "$_-result-$($_ - 2).png" })
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: result screenshots are not distinct" }
+# The Rust command's form (its fifth item): submitting it empty is rejected
+# and focus returns to the name, so typing there and choosing a greeting with
+# Tab and Down makes the guest answer.
+[System.Windows.Forms.SendKeys]::SendWait("{ENTER}"); Start-Sleep -Seconds 3
+[System.Windows.Forms.SendKeys]::SendWait("{DOWN}{DOWN}{DOWN}{DOWN}{ENTER}"); Start-Sleep -Seconds 1
+Capture "6-form.png"
+[System.Windows.Forms.SendKeys]::SendWait("{ENTER}"); Start-Sleep -Seconds 2
+Capture "7-form-error.png"
+Check "7-form-error.png" "f08c8c"
+[System.Windows.Forms.SendKeys]::SendWait("Ada{TAB}{DOWN}{ENTER}"); Start-Sleep -Seconds 2
+Capture "8-form-result.png"
+Check "8-form-result.png" "9fd8a8"
+[System.Windows.Forms.SendKeys]::SendWait("{ESC}{ESC}"); Start-Sleep -Seconds 1
 if ($process.HasExited) { throw "Pane exited during the smoke" }
 Stop-Process -Id $process.Id

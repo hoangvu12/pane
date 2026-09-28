@@ -25,11 +25,11 @@ cargo xtask ci       # build guests, check the prebuilt JS/TS samples, then form
 
 No JavaScript toolchain is needed for these: the JS and TS sample components are committed prebuilt in `guests/prebuilt/`. Rebuilding them from source with `cargo xtask js-guests` also needs Python 3.12+, git and Node.js 22+ on any of the three OSes; see [guests/README.md](guests/README.md#writing-a-javascript-or-typescript-command).
 
-In the window, use the arrow keys to select, Enter to open a command or run an item, and Escape to go back; clicking a row runs it too.
+In the window, use the arrow keys to select, Enter to open a command or run an item, and Escape to go back; clicking a row runs it too. The last item, "Greet someone", opens a form: type a name, Tab to the greeting, arrow keys to choose, Enter to submit.
 
 Layout:
 
-- `wit/extension.wit`: the host/guest contract for one extension command.
+- `wit/extension.wit`: the host/guest contract for one extension command: a list view, item actions and [forms](docs/forms.md).
 - `crates/pane-core`: the launcher model (the public host interface the tests drive) and the extension runtime, a Wasmtime 49.0.1 engine registering only WASI 0.3.
 - `crates/pane`: the GPUI CE window.
 - `guests/`: extension guests, including [the Rust, JavaScript and TypeScript sample commands](guests/README.md), TypeScript declarations for the contract, the prebuilt JS/TS components and test fixtures.

@@ -35,3 +35,7 @@ _Avoid_: The entire search interface
 **Package identity**:
 The identity that distinguishes an installed source package from other packages, independently of its display title or selected release.
 _Avoid_: Display name, command name
+
+**Form**:
+A set of fields an extension command asks the user to fill in and submit; the launcher renders its standard controls and the extension validates the submitted values.
+_Avoid_: Dialog, custom view

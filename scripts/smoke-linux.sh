@@ -64,5 +64,21 @@ capture 5-back-to-root.png
 # Each command must have answered from its own guest, not the same view twice.
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{2,3,4}-result-*.png
 
+# The Rust command's form (its fifth item): submitting it empty is rejected
+# and focus returns to the name, so typing there and choosing a greeting with
+# Tab and Down makes the guest answer.
+"$xdotool" key Return; sleep 3
+for _ in 1 2 3 4; do "$xdotool" key Down; done
+"$xdotool" key Return; sleep 1
+capture 6-form.png
+"$xdotool" key Return; sleep 2
+capture 7-form-error.png
+check 7-form-error.png f08c8c   # the rejected field's message
+"$xdotool" type --delay 50 Ada
+"$xdotool" key Tab key Down key Return; sleep 2
+capture 8-form-result.png
+check 8-form-result.png 9fd8a8   # the guest's answer
+"$xdotool" key Escape key Escape; sleep 1
+
 kill -0 "$pane_pid" || { echo "Pane exited during the smoke"; exit 1; }
 echo "screenshots in $out"
