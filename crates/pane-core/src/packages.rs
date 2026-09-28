@@ -1769,13 +1769,22 @@ fn copy_package(package: &SourcePackage, location: &Path) -> io::Result<()> {
         }
         // Checked when the package was read; a helper file replaced by a
         // link since is not followed.
-        if helper_files.contains(&file) && !fs::symlink_metadata(&source)?.is_file() {
+        let is_helper = helper_files.contains(&file);
+        if is_helper && !fs::symlink_metadata(&source)?.is_file() {
             return Err(io::Error::other(format!(
                 "the helper file {} is no longer a regular file",
                 file.display()
             )));
         }
-        fs::copy(source, target)?;
+        if is_helper {
+            // Closed and renamed into place rather than written straight to
+            // `target`: a helper run soon after this install (or a reinstall
+            // rewriting it while another generation is spawning it) must
+            // never see it half-written and get Linux's `ETXTBSY`.
+            runner::copy_executable(&source, &target)?;
+        } else {
+            fs::copy(source, target)?;
+        }
     }
     for file in helper_files {
         make_executable(&location.join(file))?;

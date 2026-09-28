@@ -236,9 +236,25 @@ Nothing in it is specific to macOS (no system API is involved; the
 closure reuses the dependency identities recorded at install); **not run on
 macOS yet**.
 
+## Runtime crashes (#17)
+
+The runtime-crash phase (screenshots 200 to 209, data folder
+`runtime-crash-data`, [runtime crashes](../pausing.md#when-the-extension-runtime-itself-crashes))
+installs the helper and settings samples, starts Pane with
+`PANE_TEST_RUNTIME_FAULTS` naming a fault file, runs the settings sample's
+Count, starts the waiting helper and has the runtime crash: the helper must
+be gone (`pgrep`, and its heartbeat must stop growing), the note it saved kept,
+and the status line the error color. A second crash, injected before
+Count's answer, must leave the count at 2 and the runtime stopped; root
+search explains it, Manage extensions shows why (the details color), a
+disable works, **Restart the extension runtime** runs extensions again and
+Count then counts 3; no package may be recorded as paused. Nothing in it is
+specific to macOS (the runtime is a thread; helpers are ended as for a
+disable); **not run on macOS yet**.
+
 ## Uninstalling required dependents (#44)
 
-The smoke's phase after it (screenshots 180 to 183, [uninstalling a required dependency](../dependencies.md#uninstalling-a-required-dependency)),
+A phase of the smoke (screenshots 180 to 183, [uninstalling a required dependency](../dependencies.md#uninstalling-a-required-dependency)),
 with a data folder of its own, installs the dependencies sample, presses
 Enter on "Uninstall JavaScript operations sample" in Manage extensions,
 which must ask first (the details color), cancels, then chooses Uninstall

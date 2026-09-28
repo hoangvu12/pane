@@ -148,6 +148,14 @@ _Avoid_: Build failure, rollback
 An enabled extension Pane stopped running after a failure attributable to it: it could not start, or it crashed three times within five minutes (an error it answers with is not a failure, nor a call stopped because a generation ended). Its commands stay listed, saying why they do not run; its saved data is kept, and the pause holds across restarts until the user retries, reloads, updates, disables or enables it. Distinct from a disabled extension, which is the user's choice.
 _Avoid_: Crashed extension, quarantined, disabled (by Pane)
 
+**Extension runtime**:
+The part of Pane that runs every installed extension's code (the Wasmtime engine; the runtime is a thread in Pane's process today), shared by all extensions; the window, root search's own rows and Manage extensions do not depend on it.
+_Avoid_: Engine (one part of it)
+
+**Runtime crash**:
+A failure of the extension runtime itself, not attributable to any one extension, such as a panic of its thread: every call it held is stopped and none is run again by itself, even if its effect was done and only its answer lost; Pane names and pauses no extension, keeps saved data, ends the native helpers it ran and starts the runtime again, unless it crashed within five minutes before, when it stays stopped until the user restarts it in Manage extensions. Distinct from an extension's crash (a guest trap), which counts towards pausing that extension.
+_Avoid_: Extension crash, paused runtime
+
 **Generation**:
 One run of an installed package's code, from when it is installed, enabled or Pane starts until it is disabled, paused or its code is replaced by a reload or an update. Every call into the package belongs to the generation current when it was asked for, and is stopped when that generation ends; its late result is discarded.
 _Avoid_: Version (a package's version is its manifest's), session, instance (one generation can start several), screen or search epoch (the launcher's counters of screens and searches, which only decide whether an answer is shown)
