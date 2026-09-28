@@ -1,6 +1,7 @@
 //! Each system's global hotkey adapter against the real system: a shortcut
 //! registers, a second registration of it (as another application would
-//! make) is refused as taken, and releasing it frees it for others.
+//! make) is refused as taken, and releasing it, or dropping the adapter,
+//! frees it for others.
 //!
 //! On Linux the checks run on a virtual X server of their own (Xvfb, from
 //! `PANE_XVFB` or `PATH`), never on the desktop the tests run in, and a key
@@ -146,6 +147,27 @@ mod x11 {
     }
 
     #[test]
+    fn dropping_the_adapter_releases_its_grabs() {
+        let Some(server) = xvfb() else {
+            return;
+        };
+        let shortcut = Shortcut::parse("ctrl+alt+p").unwrap();
+        let (sender, _presses) = channel();
+        let pane = X11Hotkeys::connect(&server.display, sender).unwrap();
+        pane.register(&shortcut).unwrap();
+        // With Caps Lock, Num Lock and Scroll Lock variants too: another
+        // client grabbing any of them is refused while Pane holds it.
+        let (other_sender, _other_presses) = channel();
+        let other = X11Hotkeys::connect(&server.display, other_sender).unwrap();
+        assert_eq!(other.register(&shortcut), Err(HotkeyError::Taken));
+
+        drop(pane);
+        other
+            .register(&shortcut)
+            .expect("the dropped adapter's shortcut registers elsewhere");
+    }
+
+    #[test]
     fn a_display_that_cannot_be_reached_is_explained() {
         let (sender, _presses) = channel();
         let error = X11Hotkeys::connect(":4999", sender)
@@ -179,5 +201,20 @@ mod windows {
             .register(&shortcut)
             .expect("the released shortcut registers elsewhere");
         other.unregister(&shortcut);
+    }
+
+    #[test]
+    fn dropping_the_adapter_releases_its_hotkeys() {
+        let shortcut = Shortcut::parse("ctrl+alt+shift+f10").unwrap();
+        let (sender, _presses) = channel();
+        let pane = WindowsHotkeys::start(sender).unwrap();
+        pane.register(&shortcut).unwrap();
+        drop(pane);
+
+        let (other_sender, _other_presses) = channel();
+        let other = WindowsHotkeys::start(other_sender).unwrap();
+        other
+            .register(&shortcut)
+            .expect("the dropped adapter's shortcut registers elsewhere");
     }
 }

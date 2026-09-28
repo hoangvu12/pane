@@ -270,16 +270,19 @@ impl LauncherWindow {
 
     /// Opens the command whose global hotkey `shortcut` is, as the system
     /// reported it pressed while any application had focus: the window
-    /// comes to the front and shows the command.
+    /// comes to the front and shows the command. A press that opens nothing
+    /// (a hotkey released meanwhile) leaves the window where it is.
     pub fn hotkey_pressed(
         &mut self,
         shortcut: &Shortcut,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Some(pending) = self.launcher.press_hotkey(shortcut) else {
+            return;
+        };
         window.activate_window();
         cx.activate(true);
-        let pending = self.launcher.press_hotkey(shortcut);
         self.show_until_done(pending, window, cx);
     }
 

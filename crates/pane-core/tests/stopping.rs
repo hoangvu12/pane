@@ -15,9 +15,15 @@ use futures::executor::block_on;
 use pane_core::{Launcher, PackageIdentity, Runtime, SavedData, Screen, Status};
 use tempfile::TempDir;
 
-/// Well under the ten seconds "Save after waiting" waits: a call that is
-/// stopped ends within it, one that is not takes longer.
-const STOPPED_WITHIN: Duration = Duration::from_secs(6);
+/// Under the ten seconds "Save after waiting" waits after saving "started":
+/// a call that is not stopped cannot end sooner after it was asked, so one
+/// that ends within this was stopped. The margin is for stopping it: a
+/// reload first checks the new code, which a slow, busy machine takes
+/// seconds to do even with the compiled code cached.
+const STOPPED_WITHIN: Duration = Duration::from_secs(8);
+
+/// How long a call may take to begin waiting, or the new code to open.
+const PROMPTLY: Duration = Duration::from_secs(6);
 
 /// A settings sample package: the same command in each language.
 struct Fixture {
@@ -68,9 +74,13 @@ fn settings_package(fixture: &Fixture, folder: &Path) -> PathBuf {
     folder.to_path_buf()
 }
 
-/// A launcher with the settings sample of one language installed.
+/// A launcher with the settings sample of one language installed. Its
+/// runtime keeps compiled code in a cache, as Pane's does, so the code a
+/// reload checks and starts is not compiled again (a JavaScript component
+/// takes seconds to compile in a debug build on a slow machine).
 struct Installed {
     _sources: TempDir,
+    _cache: TempDir,
     data: TempDir,
     runtime: Runtime,
     launcher: Launcher,
@@ -82,7 +92,8 @@ impl Installed {
     fn new(fixture: &Fixture) -> Installed {
         let sources = tempfile::tempdir().unwrap();
         let data = tempfile::tempdir().unwrap();
-        let runtime = Runtime::start().unwrap();
+        let cache = tempfile::tempdir().unwrap();
+        let runtime = Runtime::start_with_cache(cache.path().to_path_buf()).unwrap();
         let launcher =
             Launcher::with_packages(Ok(runtime.clone()), vec![], data.path().join("extensions"));
         let folder = settings_package(fixture, &sources.path().join("settings"));
@@ -90,6 +101,7 @@ impl Installed {
         let identity = PackageIdentity::local(&folder).unwrap();
         Installed {
             _sources: sources,
+            _cache: cache,
             data,
             runtime,
             launcher,
@@ -116,10 +128,13 @@ impl Installed {
         open_greeting_at(&self.launcher, "Save after waiting");
         let saving = self.launcher.activate_selected();
         let started = Instant::now();
-        let thread = thread::spawn(move || block_on(saving));
+        let thread = thread::spawn(move || {
+            block_on(saving);
+            Instant::now()
+        });
         while self.slow_save().as_deref() != Some("started") {
             assert!(
-                started.elapsed() < STOPPED_WITHIN,
+                started.elapsed() < PROMPTLY,
                 "the call did not start: {:?}",
                 self.launcher.view().status
             );
@@ -131,16 +146,19 @@ impl Installed {
 
 /// A call waiting inside the guest.
 struct Pending {
-    thread: thread::JoinHandle<()>,
+    /// Answers when the call ended.
+    thread: thread::JoinHandle<Instant>,
+    /// When the call was asked, before the guest saved "started".
     started: Instant,
 }
 
 impl Pending {
     /// Waits for the call to end, asserting it was stopped rather than
-    /// finishing its wait.
+    /// finishing its wait. Only the call is timed, not what the stopping
+    /// operation does after it, such as a reload starting the new code.
     fn assert_stopped(self) {
-        self.thread.join().unwrap();
-        let took = self.started.elapsed();
+        let ended = self.thread.join().unwrap();
+        let took = ended - self.started;
         assert!(took < STOPPED_WITHIN, "the call ran for {took:?}");
     }
 }
@@ -311,7 +329,7 @@ fn a_call_waiting_behind_a_stopped_one_is_served_at_once(fixture: &Fixture) {
     );
     let started = Instant::now();
     open_greeting_at(&installed.launcher, "Save after waiting");
-    assert!(started.elapsed() < STOPPED_WITHIN);
+    assert!(started.elapsed() < PROMPTLY);
 }
 
 /// Declares one test per check for each language's settings sample.

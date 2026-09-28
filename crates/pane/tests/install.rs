@@ -402,7 +402,11 @@ fn a_short_confirmation_after_a_scrolled_extension_list_shows_its_first_choice(
         settle(&window, cx).screen,
         Screen::Extensions { .. }
     ));
-    let last = launcher.view().rows.len() - 1;
+    // The last Uninstall row, which the six hotkey rows follow.
+    let last = titles(&launcher.view())
+        .iter()
+        .rposition(|title| title.starts_with("Uninstall "))
+        .unwrap();
     launcher.select(last);
     // Drawn twice: the list's size is known once laid out.
     for _ in 0..2 {
@@ -414,7 +418,7 @@ fn a_short_confirmation_after_a_scrolled_extension_list_shows_its_first_choice(
         "the list is scrolled to its last row"
     );
 
-    // The last row asks to uninstall the sixth package: a screen of three
+    // That row asks to uninstall the sixth package: a screen of three
     // short rows, the first selected.
     cx.simulate_keystrokes("enter");
     let view = settle(&window, cx);

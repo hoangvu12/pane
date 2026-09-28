@@ -68,6 +68,14 @@ released, reaches Pane no more.
   registers them again. They are registered again at every start.
 - An **update** or **reload** keeps a command's hotkey; a command the new copy
   no longer has releases its hotkey (the choice stays recorded).
+- Each system adapter lives for the whole process; dropping one releases
+  every shortcut it registered and ends its thread (checked on X11 and
+  Windows by the adapter tests).
+- The record is written one change at a time, each write holding the
+  choices as they are when it begins, so the last write holds the latest
+  choices whatever order changes finish in. A change that cannot be written
+  goes back, in Pane, to what was last recorded, and its registration
+  follows.
 - **Uninstall** (#40) releases the package's hotkeys at once and forgets
   them, whether its saved data is kept or deleted (they are Pane's records).
 - A hotkey another application took meanwhile is shown on its row as "Not
@@ -79,7 +87,7 @@ released, reaches Pane no more.
 
 | | Windows ([#32](https://github.com/hoangvu12/pane/issues/32)) | macOS ([#33](https://github.com/hoangvu12/pane/issues/33)) | Linux ([#34](https://github.com/hoangvu12/pane/issues/34)) |
 | --- | --- | --- | --- |
-| Registered with | `RegisterHotKey` (`MOD_NOREPEAT`) on a thread of Pane's own with its own message loop | Carbon `RegisterEventHotKey` through the `global-hotkey` crate (0.8, Apache-2.0 OR MIT), on the main run loop | `XGrabKey` on the root window through `x11rb`, with the Caps Lock and Num Lock variants, XKB detectable auto-repeat |
+| Registered with | `RegisterHotKey` (`MOD_NOREPEAT`) on a thread of Pane's own with its own message loop | Carbon `RegisterEventHotKey` through the `global-hotkey` crate (0.8, Apache-2.0 OR MIT), on the main run loop | `XGrabKey` on the root window through `x11rb`, on the key whose first level (no Shift) gives the key, with every Caps Lock, Num Lock and Scroll Lock combination (their modifiers read from the server's modifier mapping), XKB detectable auto-repeat; grabs are made again when the keyboard mapping changes (`MappingNotify`) |
 | Conflict with another application | `ERROR_HOTKEY_ALREADY_REGISTERED` → "already uses it" (Windows refuses some of its own shortcuts the same way) | Refused only if another application registered it exclusively ("the system refused it: …"); system shortcuts are covered by Pane's reserved list | `BadAccess` → "already uses it" (also a shortcut the window manager grabs) |
 | Permission | None | None: Carbon hot keys need no Accessibility or Input Monitoring permission (an event tap would) | None on X11 |
 | Unavailable | | | **Wayland** (Pane's window uses Wayland whenever `WAYLAND_DISPLAY` is set): every hotkey row says "Not available on Linux with Wayland: Wayland does not let an application see keys pressed in other applications, and Pane does not use the desktop's global shortcuts portal yet. Assign a shortcut in the desktop's keyboard settings instead, or run Pane on X11." Activating it shows that reason; the commands still open from root search. Without any display, or an X11 display that cannot be reached, the rows say so. |
@@ -140,8 +148,15 @@ cannot assign, read or declare one (no WIT or manifest change).
 - One hotkey per command, only for installed packages' commands (not the
   samples this build supplies), and no hotkey of Pane's own to summon its
   window: a summon hotkey is a separate choice (root search itself).
-- No key-code layouts beyond the listed keys; on X11 the key is the one the
-  current layout maps the letter to when the hotkey is registered.
+- Only the listed keys. On X11 the key is the one the current layout gives
+  without Shift; a key the layout gives only with Shift (the digits of a
+  French AZERTY keyboard) is refused for a hotkey without Shift ("on this
+  keyboard layout Ctrl+Alt+1 needs Shift; add Shift or choose another key")
+  and grabbed as it is for one with Shift. After a layout change a hotkey
+  the new layout cannot give, or another client took meanwhile, is released
+  (reported on standard error, not yet on its row). Windows and macOS
+  register virtual keys and key codes, whose layout behavior is the
+  system's.
 - Wayland is unsupported (above); the portal (`org.freedesktop.portal.GlobalShortcuts`)
   would let the desktop ask the user to confirm each shortcut, with
   support that differs between desktops, and is future work.
