@@ -289,8 +289,10 @@ the chosen row to every package shown, exactly as uninstalling each alone
 would (their commands leave root search, their instances stop, their
 managed copies, caches and credentials go, and their settings and content
 are kept as [retained data](extension-data.md#retained-data) or deleted),
-except that their records leave `installed.json` in **one write**: all of
-them or, if it cannot be written, none ("Could not uninstall A, B and C:
+except that their records leave `installed.json` in **one write**, read
+again first so that only those records change and what another Pane on the
+same data folder recorded meanwhile is kept: all of them or, if it cannot
+be written, none ("Could not uninstall A, B and C:
 <reason>. They are all still installed and nothing was deleted."). With
 Keep, each package that has saved data gets its own retained record;
 another does not. The outcome is "Uninstalled Greeter and Caller, which
@@ -334,7 +336,9 @@ recorded graph (`InstalledPackage::dependency_identity`) without the
 wording. `dependencies::required_dependents` is that traversal: every
 installed package in the required dependent closure, disabled ones included
 (each with `enabled` and the package that brought it in), which #43 filters
-to the enabled ones and #44 uses whole for Uninstall all.
+to the enabled ones and #44 uses whole for Uninstall all. Both confirmations
+check the set again when chosen with one step (`still_shown` in
+`launcher/dependents.rs`).
 
 ## Checks
 
@@ -380,7 +384,9 @@ to the enabled ones and #44 uses whole for Uninstall all.
   dependent finding its settings, a disabled dependent uninstalled with it,
   cycles, a dependent appearing (by a reload) or uninstalled while the
   question is shown, the dependency uninstalled alone meanwhile, a record
-  that cannot be written (none uninstalled), and, on Unix, one dependent's
+  that cannot be written (none uninstalled), a second launcher on the same
+  data folder installing a package meanwhile (its record and copy kept), and,
+  on Unix, one dependent's
   managed copy that cannot be removed, reported against it alone and
   removed at the next start.
 - [`crates/pane/tests/install.rs`](../crates/pane/tests/install.rs): the
