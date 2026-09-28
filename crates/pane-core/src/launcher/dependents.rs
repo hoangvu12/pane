@@ -149,25 +149,11 @@ impl Launcher {
             state.view.status = Status::Error(format!("{title} is disabled already"));
             return None;
         }
-        let closure = dependencies::required_dependents(&state.packages, &identity);
-        let now: Vec<PackageIdentity> = closure
-            .iter()
-            .filter(|dependent| dependent.enabled)
-            .map(|dependent| dependent.package.identity.clone())
-            .collect();
-        if now.iter().any(|dependent| !shown.contains(dependent)) {
-            self.show_disable_dependents(state, &identity, closure);
-            state.view.status = Status::Error(format!(
-                "What disabling {title} affects changed since it was shown; check it again and \
-                 choose Disable all once more"
-            ));
-            return None;
-        }
+        let identities = self.still_shown(state, &identity, &title, shown, Together::Disable)?;
         self.show_extensions_at(
             state,
             |entry| matches!(entry, Entry::Toggle(asked) if *asked == identity),
         );
-        let identities = std::iter::once(identity).chain(now).collect();
         self.begin_change(state, identities, false)
     }
 
@@ -282,20 +268,66 @@ impl Launcher {
             return None;
         };
         let title = package.title();
-        let closure = dependencies::required_dependents(&state.packages, &identity);
+        let identities = self.still_shown(state, &identity, &title, shown, Together::Uninstall)?;
+        self.begin_uninstall(state, identities, saved)
+    }
+
+    /// The package with `identity`, titled `title`, and its required
+    /// dependents that `together` changes, as they are now, the package
+    /// first: those the confirmation showed (`shown`), less any that left
+    /// the closure meanwhile. If one that was not shown is in it now, shows
+    /// the question again with the new set, says why, and returns `None`.
+    fn still_shown(
+        &self,
+        state: &mut State,
+        identity: &PackageIdentity,
+        title: &str,
+        shown: &[PackageIdentity],
+        together: Together,
+    ) -> Option<Vec<PackageIdentity>> {
+        let closure = dependencies::required_dependents(&state.packages, identity);
         let now: Vec<PackageIdentity> = closure
             .iter()
+            .filter(|dependent| together.changes(dependent))
             .map(|dependent| dependent.package.identity.clone())
             .collect();
         if now.iter().any(|dependent| !shown.contains(dependent)) {
-            self.show_uninstall_dependents(state, &identity, closure);
+            let (doing, choice) = match together {
+                Together::Disable => {
+                    self.show_disable_dependents(state, identity, closure);
+                    ("disabling", "Disable all")
+                }
+                Together::Uninstall => {
+                    self.show_uninstall_dependents(state, identity, closure);
+                    ("uninstalling", "Uninstall all")
+                }
+            };
             state.view.status = Status::Error(format!(
-                "What uninstalling {title} affects changed since it was shown; check it again \
-                 and choose Uninstall all once more"
+                "What {doing} {title} affects changed since it was shown; check it again and \
+                 choose {choice} once more"
             ));
             return None;
         }
-        let identities = std::iter::once(identity).chain(now).collect();
-        self.begin_uninstall(state, identities, saved)
+        Some(std::iter::once(identity.clone()).chain(now).collect())
+    }
+}
+
+/// What a confirmation does to a package together with its required
+/// dependents.
+#[derive(Clone, Copy)]
+enum Together {
+    /// Disable All: the enabled dependents.
+    Disable,
+    /// Uninstall All: every dependent, disabled ones too.
+    Uninstall,
+}
+
+impl Together {
+    /// Whether it changes `dependent`.
+    fn changes(self, dependent: &Dependent) -> bool {
+        match self {
+            Together::Disable => dependent.enabled,
+            Together::Uninstall => true,
+        }
     }
 }
