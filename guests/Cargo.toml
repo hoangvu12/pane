@@ -10,6 +10,7 @@ members = [
     "calculator",
     "applications",
     "quicklinks",
+    "files",
     "sample-operations",
     "sample-dependencies",
     "sample-query",

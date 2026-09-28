@@ -35,6 +35,14 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   ([Root results supplied ahead of the query](#root-results-supplied-ahead-of-the-query),
   [applications](../docs/applications.md)). Its package is
   `packages/applications`; held by `crates/pane-core/tests/applications.rs`.
+- `files`: Pane's file search, a default extension in Rust: the user grants
+  it a folder through Pane's own row, and root search finds its files by
+  name and opens one ([Files of a granted folder](#files-of-a-granted-folder),
+  [files](../docs/files.md)).
+  Its package is `packages/files`; held by `crates/pane-core/tests/files.rs`.
+- `sample-files-js`, `sample-files-ts`: the same host import and `open-file`
+  results in JavaScript and TypeScript; held by
+  `crates/pane-core/tests/files.rs`.
 - `sample-helper`, `sample-helper-js`, `sample-helper-ts`: a command in
   Rust, JavaScript and TypeScript running a [native helper](#native-helpers)
   its package ships, `helpers/echo` (`pane-echo`, an ordinary program
@@ -536,6 +544,74 @@ The three samples answer "reverse <text>" this way, and "pane website"
 with a result whose action opens a link (`RootAction::OpenUrl(url)` in Rust,
 `{ tag: "open-url", val: url }` in JavaScript and TypeScript); their
 packages in [`packages/`](packages) set `rootResults`.
+
+Once the query changes or root search is left, Pane cancels a call still
+pending: one not started is never started, and one waiting inside the
+command (on an async import) is dropped with the command's instance, so
+module or struct state kept between queries is lost and the next query
+starts a fresh instance. Keep what must last in [settings](#keeping-settings)
+or the [cache](#keeping-content-cache-and-credentials).
+
+### Files of a granted folder
+
+A command can find the files of the one folder the user granted its
+package, which a WASI guest cannot read itself, through
+`pane:extension/files` ([`wit/files.wit`](../wit/files.wit)), and answer
+results that open one (`open-file`). The package's `pane.json` sets
+`"folderAccess": true`: Pane then shows its own "Choose folder…" row at the
+top of the package's commands, and records the folder the user picks. The
+command never names or sees a path: `list-folder()` answers that no folder
+is granted, that Pane is listing it (Pane asks the command again once it is
+done, so answer no files for now), or the listing Pane keeps for this visit
+of root search, whose files have an `id` and a `relative` path. An
+`open-file` result gives the `id`; Pane shows the file's own name and folder
+in the row, whatever the result's title says, drops an id it did not give,
+checks the file again when it is invoked and refuses programs and scripts.
+Pane lists the folder under its [scan policy](../docs/files.md#the-scan-policy)
+(`files.limits()` gives its limits); file results are listed after the
+results root search finds by title. The [Files](files) default extension,
+in Rust, works this way; [`sample-files-js`](sample-files-js) and
+[`sample-files-ts`](sample-files-ts) do the same in JavaScript and
+TypeScript.
+
+Rust (`pane_guest::files`):
+
+```rust
+use pane_guest::files::{self, FolderState};
+use pane_guest::root::{RootAction, RootResult};
+
+async fn results_for(query: String) -> Result<Vec<RootResult>, String> {
+    let FolderState::Ready(listing) = files::list_folder()? else {
+        return Ok(Vec::new());
+    };
+    Ok(listing
+        .files
+        .into_iter()
+        .filter(|file| file.relative.contains(query.as_str()))
+        .map(|file| RootResult {
+            id: file.relative.clone(),
+            title: file.relative,
+            subtitle: None,
+            action: RootAction::OpenFile(file.id),
+        })
+        .collect())
+}
+```
+
+JavaScript or TypeScript: add `"files": true` to the `"pane"` options of
+`package.json`, so the build imports the interface (a command without it
+does not), and import it (`listFolder` throws an object whose `payload` is
+the reason; declarations in [`js/files.d.ts`](js/files.d.ts)):
+
+```ts
+import { listFolder } from "pane:extension/files@0.1.0";
+
+const state = listFolder();
+if (state.tag !== "ready") return [];
+return state.val.files
+  .filter((file) => file.relative.includes(query))
+  .map((file) => ({ id: file.relative, title: file.relative, action: { tag: "open-file", val: file.id } }));
+```
 
 ## Root results supplied ahead of the query
 

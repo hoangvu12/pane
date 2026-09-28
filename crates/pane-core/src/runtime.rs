@@ -46,8 +46,11 @@ use supervisor::{NotSent, Shared};
 pub(crate) mod bindings {
     wasmtime::component::bindgen!({
         path: "../../wit",
-        world: "extension-with-helpers",
-        imports: { "pane:extension/operations": store, "pane:extension/helpers": store },
+        world: "extension-with-files",
+        imports: {
+            "pane:extension/operations": store,
+            "pane:extension/helpers": store,
+        },
         exports: { default: async | store },
     });
 }
@@ -96,6 +99,7 @@ use root_bindings::exports::pane::extension::root_results;
 
 use crate::applications::Applications;
 use crate::extension_data::{DataKind, PackageData};
+use crate::files::{FileAccess, Folders};
 use crate::generation::{End, Generation};
 use crate::helpers;
 use crate::helpers::runner::{self, HelperError, HelperErrorKind, Helpers, Running, Spec};
@@ -137,6 +141,8 @@ pub(crate) enum RootAction {
     Copy(String),
     /// Open this web address with the system's link handler.
     OpenUrl(String),
+    /// Open this file with the system's handler for its type.
+    OpenFile(String),
 }
 
 /// A root result a command supplies ahead of the query.
@@ -421,6 +427,10 @@ pub enum CallError {
     /// The custom view was closed, or its guest instance has stopped, so it
     /// cannot handle events any more.
     ViewClosed,
+    /// The caller no longer wanted the answer (root search's query changed,
+    /// or root search was left), so the call was not started, or was stopped
+    /// where the guest waited, with its instance.
+    Cancelled,
 }
 
 impl fmt::Display for CallError {
@@ -456,6 +466,7 @@ impl fmt::Display for CallError {
             CallError::Form(error) => f.write_str(&error.message),
             CallError::Trap(reason) => write!(f, "The extension crashed: {reason}"),
             CallError::ViewClosed => f.write_str("The extension's view is no longer open"),
+            CallError::Cancelled => f.write_str("The search was cancelled"),
         }
     }
 }
@@ -799,6 +810,17 @@ impl Runtime {
         *lock(&self.shared.applications) = applications;
     }
 
+    /// Has the runtime list granted folders through `folders` from now on,
+    /// instead of this system's own ([`crate::files::native`]).
+    pub fn set_folders(&self, folders: Arc<dyn Folders>) {
+        self.shared.files.set_folders(folders);
+    }
+
+    /// The granted folders and their listings, which the launcher shares.
+    pub(crate) fn file_access(&self) -> FileAccess {
+        self.shared.files.clone()
+    }
+
     /// Finds and opens the system's applications.
     pub(crate) fn applications(&self) -> Arc<dyn Applications> {
         lock(&self.shared.applications).clone()
@@ -1108,6 +1130,8 @@ pub(crate) struct GuestState {
     pub(crate) serving: bool,
     /// Finds and opens the system's applications for the guest.
     applications: SharedApplications,
+    /// The granted folders and their listings.
+    files: FileAccess,
     /// The installed packages, for finding the guest's helpers.
     directory: SharedDirectory,
     /// The runtime's helper processes; those of this instance are ended
@@ -1202,6 +1226,17 @@ impl GuestState {
     fn applications(&self) -> Arc<dyn Applications> {
         lock(&self.applications).clone()
     }
+
+    /// The granted folders and their listings, for the guest.
+    pub(crate) fn file_access(&self) -> FileAccess {
+        self.files.clone()
+    }
+
+    /// The identity key of the guest's package; `None` for a command
+    /// built into Pane.
+    pub(crate) fn owner(&self) -> Option<String> {
+        self.data.as_ref().map(|data| data.owner().to_owned())
+    }
 }
 
 impl applications::Host for GuestState {
@@ -1247,7 +1282,7 @@ impl WasiView for GuestState {
 /// A running guest instance of one component.
 struct Instance {
     store: Store<GuestState>,
-    bindings: bindings::ExtensionWithHelpers,
+    bindings: bindings::ExtensionWithFiles,
     /// Its root results export, if it has one.
     root_results: Option<root_bindings::RootResultsProvider>,
     /// Its indexed results export, if it has one.
@@ -1308,6 +1343,8 @@ struct Host {
     owners: Vec<Generation>,
     /// Finds and opens the system's applications for guests.
     applications: SharedApplications,
+    /// The granted folders and their listings.
+    files: FileAccess,
 }
 
 impl Code {
@@ -1341,6 +1378,11 @@ impl Code {
             |state| state,
         )
         .expect("registering helpers in a fresh linker cannot conflict");
+        bindings::pane::extension::files::add_to_linker::<_, wasmtime::component::HasSelf<_>>(
+            &mut linker,
+            |state| state,
+        )
+        .expect("registering files in a fresh linker cannot conflict");
         Code { engine, linker }
     }
 
@@ -1449,7 +1491,7 @@ impl Code {
                 ))
             })?;
         }
-        bindings::ExtensionWithHelpersPre::new(pre).map_err(interface)?;
+        bindings::ExtensionWithFilesPre::new(pre).map_err(interface)?;
         Ok(())
     }
 }
@@ -1474,6 +1516,7 @@ impl Host {
             chain: Vec::new(),
             owners: Vec::new(),
             applications: shared.applications.clone(),
+            files: shared.files.clone(),
         }
     }
 
@@ -1528,9 +1571,9 @@ impl Host {
                     component,
                     query,
                     data,
-                    reply,
+                    mut reply,
                 } => {
-                    let result = self.root_results(&component, query, data).await;
+                    let result = self.root_results(&component, query, data, &mut reply).await;
                     let _ = reply.send(result);
                 }
                 Request::RunQuery {
@@ -1759,12 +1802,21 @@ impl Host {
         }
     }
 
+    /// Asks the command in `path` for its root results for `query`, unless
+    /// its caller gives up on the answer (drops the receiver of `reply`)
+    /// first: then the call is not started, or is stopped where the guest
+    /// waits, and the instance goes with it (see [`Host::run_guest_until`]).
     async fn root_results(
         &mut self,
         path: &Path,
         query: String,
         data: Option<PackageData>,
+        reply: &mut oneshot::Sender<Result<Vec<RootResult>, CallError>>,
     ) -> Result<Vec<RootResult>, CallError> {
+        // Its search was replaced or left before the call started.
+        if reply.is_closed() {
+            return Err(CallError::Cancelled);
+        }
         let instance = self.instance(path, data).await?;
         let provider = instance
             .root_results
@@ -1774,12 +1826,16 @@ impl Host {
                 CallError::Interface(format!("it does not export {ROOT_RESULTS_INTERFACE}"))
             })?;
         let result = self
-            .run_guest(path, async |instance| {
-                instance
-                    .store
-                    .run_concurrent(async |store| provider.call_results_for(store, query).await)
-                    .await
-            })
+            .run_guest_until(
+                path,
+                async |instance| {
+                    instance
+                        .store
+                        .run_concurrent(async |store| provider.call_results_for(store, query).await)
+                        .await
+                },
+                reply.closed(),
+            )
             .await?;
         let results = self.settle(path, result, CallError::Guest)?;
         Ok(results
@@ -1791,6 +1847,7 @@ impl Host {
                 action: match result.action {
                     root_results::RootAction::Copy(text) => RootAction::Copy(text),
                     root_results::RootAction::OpenUrl(url) => RootAction::OpenUrl(url),
+                    root_results::RootAction::OpenFile(path) => RootAction::OpenFile(path),
                 },
             })
             .collect())
@@ -1906,13 +1963,35 @@ impl Host {
         path: &Path,
         call: impl AsyncFnOnce(&mut Instance) -> R,
     ) -> Result<R, CallError> {
+        self.run_guest_until(path, call, std::future::pending())
+            .await
+    }
+
+    /// Like [`Host::run_guest`], and the call also stops, as when its
+    /// generation ends, once `cancelled` resolves: its caller no longer
+    /// wants the answer. It is then [`CallError::Cancelled`]; the instance is
+    /// dropped all the same (Wasmtime would resume the dropped call's task),
+    /// and it is not a failure of the package.
+    async fn run_guest_until<R>(
+        &mut self,
+        path: &Path,
+        call: impl AsyncFnOnce(&mut Instance) -> R,
+        cancelled: impl Future<Output = ()>,
+    ) -> Result<R, CallError> {
         use std::task::Poll;
 
         /// What happened next while the guest's call ran.
         enum Next<R> {
             Returned(R),
             Stopped(End),
+            Cancelled,
             Called(OperationCall),
+        }
+
+        /// Why the call stopped before its answer was taken.
+        enum Stop {
+            Ended(End),
+            Cancelled,
         }
 
         let mut instance = self.instances.remove(path).ok_or(CallError::ViewClosed)?;
@@ -1927,6 +2006,7 @@ impl Host {
             .collect();
         self.chain.push(path.to_path_buf());
         instance.store.data_mut().serving = true;
+        let mut cancelled = std::pin::pin!(cancelled);
         let faults = self.faults.clone();
         let result = {
             let mut running = std::pin::pin!(call(&mut instance));
@@ -1938,6 +2018,9 @@ impl Host {
                         if let Poll::Ready(end) = end.as_mut().poll(cx) {
                             return Poll::Ready(Next::Stopped(end));
                         }
+                    }
+                    if cancelled.as_mut().poll(cx).is_ready() {
+                        return Poll::Ready(Next::Cancelled);
                     }
                     if let Poll::Ready(result) = running.as_mut().poll(cx) {
                         return Poll::Ready(Next::Returned(result));
@@ -1959,10 +2042,11 @@ impl Host {
                 .await;
                 match next {
                     Next::Returned(result) => match own.as_ref().and_then(Generation::ended) {
-                        Some(end) => break Err(end),
+                        Some(end) => break Err(Stop::Ended(end)),
                         None => break Ok(result),
                     },
-                    Next::Stopped(end) => break Err(end),
+                    Next::Stopped(end) => break Err(Stop::Ended(end)),
+                    Next::Cancelled => break Err(Stop::Cancelled),
                     Next::Called(operation_call) => {
                         Box::pin(self.serve_operation(operation_call)).await;
                     }
@@ -1992,12 +2076,15 @@ impl Host {
                 self.instances.insert(path.to_path_buf(), instance);
                 Ok(result)
             }
-            Err(end) => {
+            Err(stop) => {
                 // The instance is dropped with its store: the abandoned
                 // task, its host tasks, streams, futures and views.
                 drop(instance);
                 self.views.retain(|_, view| view.component != path);
-                Err(ended(end))
+                Err(match stop {
+                    Stop::Ended(end) => ended(end),
+                    Stop::Cancelled => CallError::Cancelled,
+                })
             }
         }
     }
@@ -2184,6 +2271,7 @@ impl Host {
                 calls: self.calls.clone(),
                 serving: false,
                 applications: self.applications.clone(),
+                files: self.files.clone(),
                 directory: self.directory.clone(),
                 owner: self.helpers.new_owner(),
                 helpers: self.helpers.clone(),
@@ -2196,7 +2284,7 @@ impl Host {
             .instantiate_async(&mut store, &component)
             .await
             .map_err(load)?;
-        let bindings = bindings::ExtensionWithHelpers::new(&mut store, &instance).map_err(load)?;
+        let bindings = bindings::ExtensionWithFiles::new(&mut store, &instance).map_err(load)?;
         // Only a command that computes root results exports them.
         let root_results = root_bindings::RootResultsProvider::new(&mut store, &instance).ok();
         // Only a command that supplies results ahead of the query exports

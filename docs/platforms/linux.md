@@ -614,6 +614,38 @@ whole frames. Frames 181, the list after Cancel, and 183, the list after
 installing the JavaScript operations sample again with only it listed, are
 checked to differ from the others but not kept, as they show those paths.)
 
+### Files (#29)
+
+The last phase, with its own data folder ([files](../files.md)), makes a
+fixture folder `/tmp/pane-smoke-files.XXXXXX/Pane smoke files` (spaces;
+outside the home folder, so no frame shows a home path) holding "Résumé
+plan ü.txt", `notes/todo.txt` and an executable `notes/runner.sh`, installs
+Files, opens its command and presses Return on Pane's own "Choose folder…"
+row; a debug build's `PANE_TEST_CHOOSE_FOLDER` names the folder instead of
+showing the system's picker. It then returns to root search, types "plan"
+and presses Return. `xdg-open` runs with no desktop session variables,
+XDG_CONFIG_HOME and XDG_DATA_HOME in the smoke's output folder whose
+`mimeapps.list` makes a recording script the only handler for `text/plain`
+(checked with `xdg-mime query default`), and BROWSER the same script, so no
+program of the user's opens the file; the path the script received,
+resolved, must be the fixture file's, resolved. Last it types "runner" and
+presses Return: Pane must refuse the script, hand nothing to the handler,
+and the script must not run. Run locally on 2026-09-28 (Ubuntu 26.04.1 LTS,
+kernel 7.0.0-31-generic, x86_64, same Xvfb/lavapipe setup): all checks of
+the whole smoke passed, and frames 220 to 223 were looked at.
+
+| Step | Evidence |
+| --- | --- |
+| "Choose folder…": "Files may now list “Pane smoke files”" | [220-files-folder-granted.png](evidence/linux-x11/220-files-folder-granted.png) |
+| "plan" typed: "Résumé plan ü.txt", "File in Pane smoke files", selected | [221-files-found.png](evidence/linux-x11/221-files-found.png) |
+| Return: "Opened Résumé plan ü.txt", the path received by the handler | [222-files-opened.png](evidence/linux-x11/222-files-opened.png) |
+| "runner", Return: "Could not open runner.sh: it is a program or script…" | [223-files-program-refused.png](evidence/linux-x11/223-files-program-refused.png) |
+
+The system's folder picker (the XDG portal) and a real desktop's handler
+(GNOME's `gio open`, a text editor) were not run; cancelling, the slow
+listing and the re-checks at Enter are checked by the launcher tests, not
+natively.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms have a text field (GPUI CE's

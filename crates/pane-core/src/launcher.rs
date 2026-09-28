@@ -16,7 +16,9 @@
 //! in the runtime, and its answer is never shown, even on a screen that is
 //! still current. Leaving a screen only discards its replies; it does not
 //! stop the call. So does pausing a package that keeps failing (see
-//! `pausing`).
+//! `pausing`). The one exception is root search's own calls for results
+//! computed from the query: a search owns them, so a newer query, or
+//! leaving root search, cancels those still pending.
 
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
@@ -32,6 +34,7 @@ mod indexed;
 use crate::changes::ChangeSender;
 use crate::dependencies;
 use crate::extension_data::{ExtensionData, PackageData};
+use crate::files::FileAccess;
 use crate::generation::End;
 use crate::helpers;
 use crate::hotkeys::{self as system_hotkeys, Hotkeys};
@@ -50,6 +53,7 @@ use crate::search::{self, Keys, Query};
 
 mod dependents;
 mod developing;
+mod files;
 mod install;
 mod pausing;
 mod recovery;
@@ -402,6 +406,13 @@ struct State {
     /// Incremented on every search, so that an answer arriving for an
     /// earlier search, even of the same query, is discarded.
     search_epoch: u64,
+    /// Kept while the current search's calls for computed results may run:
+    /// dropping it, when the query changes or root search is left, cancels
+    /// those still pending (see [`State::next_screen`]).
+    search_alive: Option<tokio::sync::oneshot::Sender<()>>,
+    /// The folders granted to packages and their listings, shared with the
+    /// runtime; `None` without a runtime.
+    files: Option<FileAccess>,
     /// The component of the command whose view is open.
     open: Option<PathBuf>,
     /// The form on screen, if one is open.
@@ -541,6 +552,19 @@ impl State {
     fn release(&mut self, identity: &PackageIdentity) {
         self.changing.remove(identity);
     }
+
+    /// Notes that the user left the screen on display: replies for it are
+    /// discarded from now on, and root search's pending calls for computed
+    /// results are cancelled.
+    fn next_screen(&mut self) {
+        self.screen_epoch += 1;
+        self.search_alive = None;
+        // A granted folder is listed again on the next visit, and a
+        // listing being made for this one stops.
+        if let Some(files) = &self.files {
+            files.new_visit();
+        }
+    }
 }
 
 /// An enabling or disabling that has taken effect and is being recorded:
@@ -640,6 +664,18 @@ enum Entry {
     Copy(String),
     /// Open this web address with the link opener (root).
     OpenUrl(String),
+    /// Open the file with id `id` in the latest listing of the package with
+    /// identity key `owner`, named `name` (root).
+    OpenFile {
+        owner: String,
+        id: String,
+        name: String,
+    },
+    /// Nothing in the launcher: the window asks for the folder to grant
+    /// this package, then calls [`Launcher::grant_folder`] (command view).
+    ChooseFolder(PackageIdentity),
+    /// Take back the folder granted to this package (command view).
+    StopSharingFolder(PackageIdentity),
     /// Open the installed application `id`, named `name` (root).
     OpenApplication { id: String, name: String },
     /// Open the command with this component (root).
@@ -797,6 +833,8 @@ impl Launcher {
             computed: Vec::new(),
             indexes: indexed::Indexes::default(),
             search_epoch: 0,
+            search_alive: None,
+            files: runtime.as_ref().ok().map(Runtime::file_access),
             open: None,
             form: None,
             custom_view: None,
@@ -811,6 +849,9 @@ impl Launcher {
             aliases,
             sent_from: None,
         };
+        if let (Some(installation), Some(files)) = (&installation, &state.files) {
+            files.open_record(&installation.dir);
+        }
         if let Some(installation) = &installation {
             for package in &state.packages {
                 installation
@@ -964,15 +1005,19 @@ impl Launcher {
     /// listed.
     pub fn set_query(&self, query: &str) -> impl Future<Output = ()> + Send + 'static {
         let mut state = self.lock();
-        let (asked, indexing) = match &state.view.screen {
+        let (asked, indexing, cancelled) = match &state.view.screen {
             Screen::Root { query: current } if current != query => {
-                self.search(&mut state, query);
+                let cancelled = self.search(&mut state, query);
                 let indexing = self.ask_for_indexed_results(&mut state, query);
-                (self.ask_for_root_results(&state, query), indexing)
+                (
+                    self.ask_for_root_results(&state, query),
+                    indexing,
+                    Some(cancelled),
+                )
             }
             // Searching the same query again changes nothing, not even the
             // selection.
-            _ => (Vec::new(), Vec::new()),
+            _ => (Vec::new(), Vec::new(), None),
         };
         let query = query.to_owned();
         let epoch = state.screen_epoch;
@@ -980,12 +1025,27 @@ impl Launcher {
         drop(state);
         let launcher = self.clone();
         async move {
-            if !asked.is_empty() {
-                launcher
-                    .show_root_results(epoch, search, query, asked)
-                    .await
-            }
+            let Some(mut cancelled) = cancelled.filter(|_| !asked.is_empty()) else {
+                launcher.show_indexed_results(indexing).await;
+                return;
+            };
+            let listing = launcher
+                .show_root_results(epoch, search, &query, asked, &mut cancelled)
+                .await;
             launcher.show_indexed_results(indexing).await;
+            // Commands whose granted folder was still being listed are asked
+            // again once it is, after every other result was shown.
+            for (command, data, listed) in listing.unwrap_or_default() {
+                if until_cancelled(listed, &mut cancelled).await.is_none() {
+                    return;
+                }
+                let asked = launcher
+                    .show_one_root_result(epoch, search, &query, command, data, &mut cancelled)
+                    .await;
+                if asked.is_none() {
+                    return;
+                }
+            }
         }
     }
 
@@ -1081,9 +1141,14 @@ impl Launcher {
     }
 
     /// Shows the root results matching `query` from metadata alone; results
-    /// computed for an earlier query are gone.
-    fn search(&self, state: &mut State, query: &str) {
+    /// computed for an earlier query are gone, and the calls still asking
+    /// for them are cancelled. Returns what resolves once this search is
+    /// replaced too, or root search is left.
+    fn search(&self, state: &mut State, query: &str) -> tokio::sync::oneshot::Receiver<()> {
         state.search_epoch += 1;
+        let (alive, cancelled) = tokio::sync::oneshot::channel();
+        // Dropping the earlier search's cancels its pending calls.
+        state.search_alive = Some(alive);
         state.computed.clear();
         // A command's answer to the query sent is not an answer to this one.
         if state.sent_from.take().is_some_and(|sent| sent != query) {
@@ -1096,6 +1161,7 @@ impl Launcher {
         state.view.selected = aliases::first_choice(&entries);
         state.view.rows = rows;
         state.entries = entries;
+        cancelled
     }
 
     /// The enabled commands that compute root results, each with its
@@ -1130,42 +1196,90 @@ impl Launcher {
     /// lists each one's as soon as it answers, unless the query, the search
     /// or the screen has changed meanwhile.
     ///
-    /// The runtime serves calls one at a time, so a command that is slow or
-    /// hangs still delays the commands asked after it (cancellation and
-    /// timeouts are #29 and #18); it no longer hides the answers of those
-    /// asked before it.
+    /// Once `cancelled` resolves (the search was replaced, or root search
+    /// was left), the pending call is dropped, which cancels it in the
+    /// runtime, and no further command is asked. The runtime serves calls one
+    /// at a time, so a command that is slow or hangs still delays the
+    /// commands asked after it until then (timeouts are #18); it no longer
+    /// hides the answers of those asked before it.
     async fn show_root_results(
         &self,
         epoch: u64,
         search: u64,
-        query: String,
+        query: &str,
         commands: Vec<(CommandRegistration, Option<PackageData>)>,
-    ) {
+        cancelled: &mut tokio::sync::oneshot::Receiver<()>,
+    ) -> Option<Vec<Listing>> {
+        let mut listing = Vec::new();
         for (command, data) in commands {
-            let answer = match self.runtime() {
-                Ok(runtime) => {
-                    runtime
-                        .root_results_with(&command.component, &query, data.clone())
-                        .await
-                }
-                Err(error) => Err(error),
-            };
-            let Some(mut state) = self.lock_if_current(epoch) else {
-                return;
-            };
-            if state.search_epoch != search || state.view.query() != Some(query.as_str()) {
-                return;
+            let asked = self
+                .show_one_root_result(
+                    epoch,
+                    search,
+                    query,
+                    command.clone(),
+                    data.clone(),
+                    cancelled,
+                )
+                .await?;
+            if let Some(listed) = asked {
+                listing.push((command, data, listed));
             }
-            let state = &mut *state;
-            // A command disabled or replaced meanwhile contributes nothing.
-            if data.as_ref().and_then(PackageData::stopped).is_some() {
-                continue;
-            }
-            state
-                .computed
-                .extend(computed_results(command, &query, answer));
-            relist_root(state, &query);
         }
+        Some(listing)
+    }
+
+    /// Asks `command` for its root results for `query` and lists them in
+    /// place of any it gave before, unless the query, the search or the
+    /// screen changed meanwhile (then `None`: ask nothing more). Answers
+    /// what resolves once the granted folder its package's answer was still
+    /// waiting for is listed, if it was.
+    async fn show_one_root_result(
+        &self,
+        epoch: u64,
+        search: u64,
+        query: &str,
+        command: CommandRegistration,
+        data: Option<PackageData>,
+        cancelled: &mut tokio::sync::oneshot::Receiver<()>,
+    ) -> Option<Option<ListedFuture>> {
+        let answer = match self.runtime() {
+            Ok(runtime) => {
+                let call = runtime.root_results_with(&command.component, query, data.clone());
+                until_cancelled(call, cancelled).await?
+            }
+            Err(error) => Err(error),
+        };
+        let mut state = self.lock_if_current(epoch)?;
+        if state.search_epoch != search || state.view.query() != Some(query) {
+            return None;
+        }
+        let state = &mut *state;
+        // A command disabled or replaced meanwhile contributes nothing.
+        if data.as_ref().and_then(PackageData::stopped).is_some() {
+            return Some(None);
+        }
+        let owner = owner(&state.packages, &command.component).map(|p| p.identity.key());
+        let listed = match (&owner, &state.files) {
+            (Some(owner), Some(files)) => files
+                .listed(owner)
+                .map(|listed| Box::pin(listed) as ListedFuture),
+            _ => None,
+        };
+        let component = command.component.clone();
+        state
+            .computed
+            .retain(|computed| computed.component != component);
+        let files = state.files.clone();
+        state.computed.extend(computed_results(
+            command,
+            owner.as_deref(),
+            files.as_ref(),
+            query,
+            answer,
+        ));
+        relist_root(state, query);
+        Some(listed)
     }
 
     /// Selects the row at `index`, if there is one.
@@ -1211,7 +1325,7 @@ impl Launcher {
         match &state.view.screen {
             Screen::Form(_) => {
                 let form = state.form.take().expect("a form is open");
-                state.screen_epoch += 1;
+                state.next_screen();
                 state.view = LauncherView {
                     status: Status::Idle,
                     ..form.return_to
@@ -1272,6 +1386,7 @@ impl Launcher {
         let mut develop = None;
         let mut delete_retained = None;
         let mut install = None;
+        let mut stop_sharing = None;
         // The status line is about this action from now on.
         state.sent_from = None;
         let entry = match entry {
@@ -1308,6 +1423,10 @@ impl Launcher {
                     Some(Entry::OpenUrl(url))
                 }
             },
+            Some(Entry::StopSharingFolder(identity)) => {
+                stop_sharing = Some(identity);
+                None
+            }
             Some(Entry::Manage) => {
                 self.show_extensions(&mut state);
                 None
@@ -1427,7 +1546,7 @@ impl Launcher {
                 install = self.begin_install(&mut state, folder, mode, assumptions);
                 None
             }
-            Some(Entry::InstallFromFolder) | None => None,
+            Some(Entry::InstallFromFolder | Entry::ChooseFolder(_)) | None => None,
             Some(entry) => {
                 state.view.status = Status::Running;
                 Some(entry)
@@ -1472,6 +1591,9 @@ impl Launcher {
             if let Some(install) = install {
                 launcher.finish_install(epoch, install).await;
             }
+            if let Some(identity) = stop_sharing {
+                launcher.stop_sharing_folder(identity).await;
+            }
             match entry {
                 Some(Entry::Open(component)) => launcher.open_command(epoch, component, data).await,
                 Some(Entry::Send(sending)) => launcher.run_query(epoch, sending, data).await,
@@ -1484,6 +1606,9 @@ impl Launcher {
                     }
                 }
                 Some(Entry::OpenUrl(url)) => launcher.open_url(epoch, url).await,
+                Some(Entry::OpenFile { owner, id, name }) => {
+                    launcher.open_file(epoch, owner, id, name).await
+                }
                 Some(Entry::ClearCache(identity)) => launcher.clear_cache(epoch, identity).await,
                 Some(Entry::CustomView(item_id, info)) => {
                     if let Some(component) = open {
@@ -1497,6 +1622,8 @@ impl Launcher {
                     | Entry::Broken(_)
                     | Entry::Unavailable(_)
                     | Entry::InstallFromFolder
+                    | Entry::ChooseFolder(_)
+                    | Entry::StopSharingFolder(_)
                     | Entry::Install(..)
                     | Entry::Manage
                     | Entry::Toggle(_)
@@ -2301,7 +2428,7 @@ impl Launcher {
             subtitle: Some("Start it again".into()),
             unavailable: None,
         };
-        state.screen_epoch += 1;
+        state.next_screen();
         state.entries = vec![Entry::Retry(identity.clone())];
         let screen = Screen::PauseDetails {
             identity: identity.clone(),
@@ -2321,7 +2448,7 @@ impl Launcher {
             subtitle: Some(subtitle.into()),
             unavailable: None,
         };
-        state.screen_epoch += 1;
+        state.next_screen();
         state.entries = vec![Entry::ClearCache(identity.clone()), Entry::Cancel];
         let details = vec![
             format!("From {identity}"),
@@ -2497,7 +2624,7 @@ impl Launcher {
                     moves_in_flight: 0,
                     waiting_move: None,
                 });
-                state.screen_epoch += 1;
+                state.next_screen();
             }
             Err(error) => state.view.status = Status::Error(error.to_string()),
         }
@@ -2620,7 +2747,7 @@ impl Launcher {
     /// from, with `status`, as a new screen.
     fn return_from_custom_view(&self, state: &mut State, status: Status) {
         let return_to = self.close_custom_view(state).expect("a view is open");
-        state.screen_epoch += 1;
+        state.next_screen();
         state.view = LauncherView {
             status,
             ..return_to
@@ -2634,7 +2761,7 @@ impl Launcher {
         self.close_custom_view(state);
         state.open = None;
         state.form = None;
-        state.screen_epoch += 1;
+        state.next_screen();
     }
 
     /// Closes the open custom view, if there is one, and returns the command
@@ -2792,9 +2919,17 @@ impl Launcher {
                         (row, entry)
                     })
                     .unzip();
+                let (mut rows, mut entries) = (rows, entries);
+                if let Some(package) = owner(&state.packages, &component)
+                    && folder_access(package)
+                {
+                    let (pane_rows, pane_entries) = files::folder_rows(state, &package.identity);
+                    rows.splice(0..0, pane_rows);
+                    entries.splice(0..0, pane_entries);
+                }
                 state.entries = entries;
                 state.open = Some(component);
-                state.screen_epoch += 1;
+                state.next_screen();
                 state.view = LauncherView::new(Screen::Command, view.title).with_rows(rows);
             }
             Err(error) => state.view.status = Status::Error(error.to_string()),
@@ -3161,14 +3296,14 @@ fn open_form(state: &mut State, item_id: String, form: Form) {
         return_to,
         submitting: false,
     });
-    state.screen_epoch += 1;
+    state.next_screen();
 }
 
 /// The rows of root search for `query`, and what activating each does: the
 /// results computed from it, then the root results matching it, best match
 /// first, with, for a query that is not blank, those supplied ahead of it
-/// (after the others of the same rank), then the rows explaining why a
-/// command could not supply them.
+/// (after the others of the same rank), then the computed results that open
+/// a file, then the rows explaining why a command could not supply them.
 fn root_rows(state: &State, query: &str) -> (Vec<Row>, Vec<Entry>) {
     let blank = query.trim().is_empty();
     let candidates: Vec<&RootResult> = state
@@ -3195,18 +3330,21 @@ fn root_rows(state: &State, query: &str) -> (Vec<Row>, Vec<Entry>) {
         .failures()
         .filter(|_| !blank)
         .map(|(row, entry)| (row.clone(), entry.clone()));
+    let (files, computed): (Vec<&Computed>, Vec<&Computed>) = state
+        .computed
+        .iter()
+        .partition(|computed| matches!(computed.entry, Entry::OpenFile { .. }));
+    let computed_row = |computed: &Computed| (computed.row.clone(), computed.entry.clone());
     // What the user's alias names comes first, even before computed
-    // results; the fallbacks, which the user must choose, come last.
+    // results; files found for the query follow what is found by title,
+    // since a folder can hold many; the fallbacks, which the user must
+    // choose, come last.
     aliases::rows_sending_after_alias(state, query)
         .into_iter()
         .chain(by_alias.into_iter().map(found))
-        .chain(
-            state
-                .computed
-                .iter()
-                .map(|computed| (computed.row.clone(), computed.entry.clone())),
-        )
+        .chain(computed.into_iter().map(computed_row))
         .chain(matches.into_iter().map(found))
+        .chain(files.into_iter().map(computed_row))
         .chain(failures)
         .chain(aliases::fallback_rows(state, query))
         .unzip()
@@ -3231,9 +3369,14 @@ fn relist_root(state: &mut State, query: &str) {
 }
 
 /// The rows for `command`'s `answer` to `query`: its results, or one
-/// explaining why it failed.
+/// explaining why it failed. A result that opens a file is shown with the
+/// file's own name and folder, as the host found it in the latest listing
+/// of `owner`'s granted folder, whatever the extension titled it; one the
+/// host does not know is left out.
 fn computed_results(
     command: CommandRegistration,
+    owner: Option<&str>,
+    files: Option<&FileAccess>,
     query: &str,
     answer: Result<Vec<ComputedResult>, CallError>,
 ) -> Vec<Computed> {
@@ -3245,18 +3388,30 @@ fn computed_results(
     match answer {
         Ok(results) => results
             .into_iter()
-            .map(|result| {
+            .filter_map(|result| {
+                let (title, subtitle, entry) = match result.action {
+                    RootAction::Copy(text) => (result.title, result.subtitle, Entry::Copy(text)),
+                    RootAction::OpenUrl(url) => {
+                        (result.title, result.subtitle, Entry::OpenUrl(url))
+                    }
+                    RootAction::OpenFile(id) => {
+                        let owner = owner?;
+                        let known = files?.known(owner, &id)?;
+                        let entry = Entry::OpenFile {
+                            owner: owner.to_owned(),
+                            id,
+                            name: known.name.clone(),
+                        };
+                        (known.name, Some(format!("File in {}", known.within)), entry)
+                    }
+                };
                 let row = Row {
                     id: format!("{}:{}", command.id, result.id),
-                    title: result.title,
-                    subtitle: result.subtitle,
+                    title,
+                    subtitle,
                     unavailable: None,
                 };
-                let entry = match result.action {
-                    RootAction::Copy(text) => Entry::Copy(text),
-                    RootAction::OpenUrl(url) => Entry::OpenUrl(url),
-                };
-                computed(row, entry)
+                Some(computed(row, entry))
             })
             .collect(),
         Err(error) => {
@@ -3270,6 +3425,37 @@ fn computed_results(
             vec![computed(row, Entry::Broken(problem))]
         }
     }
+}
+
+/// What resolves once a granted folder's listing ends.
+type ListedFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
+
+/// A command whose answer waited for its granted folder's listing, its
+/// data, and what resolves once the listing ends.
+type Listing = (CommandRegistration, Option<PackageData>, ListedFuture);
+
+/// Whether `package` asks for access to a folder the user grants it.
+fn folder_access(package: &InstalledPackage) -> bool {
+    package
+        .manifest
+        .as_ref()
+        .is_ok_and(|manifest| manifest.folder_access)
+}
+
+/// Awaits `call`, unless `cancelled` resolves first (its sender was used or
+/// dropped): then `call` is dropped unfinished, and the answer is `None`.
+async fn until_cancelled<T>(
+    call: impl Future<Output = T>,
+    cancelled: &mut tokio::sync::oneshot::Receiver<()>,
+) -> Option<T> {
+    let mut call = std::pin::pin!(call);
+    std::future::poll_fn(|cx| {
+        if Pin::new(&mut *cancelled).poll(cx).is_ready() {
+            return std::task::Poll::Ready(None);
+        }
+        call.as_mut().poll(cx).map(Some)
+    })
+    .await
 }
 
 /// Runs blocking file work on its own thread, so the caller's thread (the

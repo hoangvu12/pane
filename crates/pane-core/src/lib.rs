@@ -7,6 +7,7 @@ pub mod changes;
 mod dependencies;
 pub mod develop;
 mod extension_data;
+pub mod files;
 mod generation;
 mod helpers;
 pub mod hotkeys;
