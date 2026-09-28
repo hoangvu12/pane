@@ -4,9 +4,17 @@
 //! `no_std` so the component imports only WASI 0.3 interfaces; it supplies the
 //! allocator and a panic handler that traps, which the host reports as a
 //! runtime error.
+//!
+//! Without `std` no libc is linked, so the crate also supplies what the
+//! compiler and the component runtime call into libc or `std` for:
+//! `memcmp` and `bcmp`, which the compiler emits for byte and string
+//! comparisons (`==` on `str`, `starts_with`, ...) as soon as a guest compares
+//! strings, and the canonical-ABI `cabi_realloc`.
 #![no_std]
 
 pub extern crate alloc;
+
+use core::ffi::c_void;
 
 wit_bindgen::generate!({
     path: "../../wit",
@@ -26,8 +34,6 @@ static ALLOC: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     core::arch::wasm32::unreachable()
 }
-
-use core::ffi::c_void;
 
 /// Byte comparison, normally supplied by libc. The compiler emits calls to it
 /// for slice and string comparisons (`==` on `str`, `starts_with`, ...).

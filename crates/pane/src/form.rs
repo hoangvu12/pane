@@ -71,8 +71,11 @@ impl Control {
 }
 
 impl LauncherWindow {
-    /// The editing state of the open form's text field `field_id`: what a
-    /// platform input method talks to while composing text.
+    /// Test support: the editing state of the open form's text field
+    /// `field_id`, which a platform input method talks to while composing
+    /// text. GPUI CE's test platform cannot reach the window's input handler,
+    /// so the window tests compose through this instead.
+    #[doc(hidden)]
     pub fn text_field(&self, field_id: &str) -> Option<Entity<EditableTextState>> {
         let view = self.launcher.view();
         let form = view.form?;
@@ -144,16 +147,7 @@ impl LauncherWindow {
     /// Submits the form and applies the extension's reply when it arrives.
     pub(crate) fn submit_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let pending = self.launcher.submit_form();
-        cx.notify();
-        cx.spawn_in(window, async move |this, cx| {
-            pending.await;
-            this.update_in(cx, |this, window, cx| {
-                this.sync_form(window, cx);
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
+        self.show_until_done(pending, window, cx);
     }
 
     /// Chooses the option `delta` places from the current one in the choice

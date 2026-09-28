@@ -77,7 +77,8 @@ not confirmed.
   run on Windows yet**: it was added after the CI run recorded above, and no
   Windows machine or runner was available while implementing #20. Windows IME
   (TSF) composition, for example with Microsoft Japanese IME, is unverified;
-  the window tests cover composition only through the field's input handler.
+  the window tests cover composition only on the field's editing state
+  ([what that proves](../forms.md#checks)).
 - **Accessibility:** see [accessibility of forms](../forms.md#accessibility).
   Narrator/NVDA were not run.
 

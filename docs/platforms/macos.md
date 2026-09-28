@@ -100,7 +100,8 @@ tickets will replace it.
   added after the CI run recorded above, and no Mac or runner was available
   while implementing #20. Composition with a macOS input method (for example
   Japanese Kana) through `NSTextInputClient` is unverified; the window tests
-  cover composition only through the field's input handler. Editing bindings
+  cover composition only on the field's editing state
+  ([what that proves](../forms.md#checks)). Editing bindings
   follow the element's macOS defaults (Cmd-A/C/V/X/Z, Option-arrow words).
 - **Accessibility:** the window exposes a `ListBox` labelled with the view
   title, `ListBoxOption` rows with label, description and selected state, the

@@ -20,9 +20,14 @@ Defined in [`wit/extension.wit`](../wit/extension.wit), identically for Rust
   starts chosen; the value is the chosen option's id).
 - Submitting calls `submit-form(item-id, values)`, with one `field-value` per
   field in form order. The command answers with text, shown as the result, or
-  a `form-error { field, message }`. With a `field` that names one of the
-  form's fields, the message is shown under that field and the status line
-  reads `<label>: <message>`; without one, the message is the status.
+  a `form-error { field, message }`. A form error is the command's
+  validation message to the user, not a failure, so Pane shows it as written:
+  with a `field` that names one of the form's fields, the message is shown
+  under that field and the status line reads `<label>: <message>`; without
+  one (or with an unknown field), the status line is the message itself.
+  Only failures, an `Err` from `get-view`/`run-action` or a trap, are
+  prefixed ("The extension reported an error: ...", "The extension crashed:
+  ...").
 - The launcher submits only choices the form offers; validating text (empty,
   too long, ...) is the command's job.
 - In JS/TS, `submitForm` rejects by throwing a plain `FormError` object. Any
@@ -54,8 +59,17 @@ state and maps input to those calls.
 | Escape | Back to the command's list, with the form's item still selected |
 
 When a form opens, focus is on its first field. After a rejected submission,
-focus moves to the rejected field. Editing a field clears its error. A reply
-that arrives after the user went back is discarded.
+focus moves to the rejected field. Editing a field clears its error. Each
+control is one tab stop (the text field's wrapper node holds the stop; the
+editable text element inside only shares its focus handle).
+
+While a submission waits for its reply the status is "running", the fields
+stay editable, and submitting again (Enter, Space, a click) does nothing, so
+the command sees one `submit-form` call at a time. The reply is applied as if
+it had arrived before any edit made meanwhile: a rejected field the user has
+changed since is not marked (editing clears its error) and focus is not moved
+there, though the status line still shows the rejection. A reply that arrives
+after the user went back is discarded.
 
 ## Accessibility
 
@@ -101,18 +115,39 @@ too-long name rejected, and an unknown choice rejected by the guest itself.
 Host behavior with the Rust sample and the faulty fixture
 ([`launcher.rs`](../crates/pane-core/tests/launcher.rs)): Back from a form,
 clearing an error by editing, ignoring options the form does not offer, a
-form-level error, and a stale reply after Back.
+form-level error, a stale reply after Back, and a second submission while
+one is pending being ignored (with an edit made meanwhile not marked by the
+older rejection).
 
 Window checks through GPUI's test platform, with real key and mouse events
 dispatched to the window and real guests
 ([`crates/pane/tests/window.rs`](../crates/pane/tests/window.rs)): filling in
 and submitting by keyboard and the rejected-field flow for all three
-languages; Tab/Shift-Tab order, editing keys, input-method composition
-through the field's input handler, clicks, Space on the button and the
-accessibility nodes with the Rust sample.
+languages; Tab/Shift-Tab visiting each control exactly once in both
+directions over two rounds, editing keys, input-method composition, clicks,
+Space on the button and the accessibility nodes with the Rust sample.
+
+What the composition test proves, and what it does not: GPUI CE's test
+platform (at the pinned revision) has no public way to reach the window's
+platform input handler, and its keystroke simulation only commits text, never
+marks it. The test therefore calls `replace_and_mark_text_in_range` and then
+`replace_text_in_range` on the name field's editing state
+(`EntityInputHandler`), after checking that this state's focus handle is the
+focused one. It proves the field's editing state handles marked (composing)
+text and its commit, and that the focused field is the one composed into.
+Typed text going through the window's input handler to the focused field is
+proven separately, by the typing tests. It does not prove that the window
+routes platform IME calls (NSTextInputClient, TSF, XIM/Wayland text-input) to
+that field. The window exposes the editing state for this test only
+(`LauncherWindow::text_field`, hidden from the docs).
 
 Native checks: the GUI smoke scripts open the Rust form, submit it empty,
-type a name, Tab, Down and Enter, and assert the error and result colors. On
+type a name, Tab, Down and Enter, and assert the error and result colors.
+Only the Rust form is driven natively, to keep the smokes short (each JS or TS
+component is about 4 MB of code to compile on first use); the host and window code is the
+same for every language, and the JavaScript and TypeScript forms are shown
+equivalent only by the contract checks and window checks above, not by a
+native run. On
 Linux X11 this ran on 2026-09-28 ([findings](platforms/linux.md#text-input-and-accessibility-findings));
 the macOS and Windows steps are written but have not run yet
 ([macOS](platforms/macos.md#text-input-and-accessibility-findings),

@@ -262,22 +262,35 @@ fn field_value(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext, id: 
 }
 
 #[gpui::test]
-fn tab_and_shift_tab_move_through_the_form_in_order(cx: &mut TestAppContext) {
+fn tab_and_shift_tab_visit_each_control_once_in_order(cx: &mut TestAppContext) {
     let (window, cx) = open(cx, &RUST);
     open_form(&window, cx);
+    assert_eq!(focused_label(cx).as_deref(), Some("Name"));
 
-    // The greeting group reports its chosen option as focused, like a list
-    // reports its selected row.
-    let mut order = vec![focused_label(cx)];
-    for _ in 0..3 {
+    // Two full rounds each way: a control with two tab stops (such as the
+    // text field and a wrapper tracking its focus) would appear twice in a
+    // row. The greeting group reports its chosen option as focused, like a
+    // list reports its selected row.
+    let mut forward = Vec::new();
+    for _ in 0..6 {
         cx.simulate_keystrokes("tab");
-        order.push(focused_label(cx));
+        forward.push(focused_label(cx));
     }
-    cx.simulate_keystrokes("shift-tab");
-    order.push(focused_label(cx));
+    let mut backward = Vec::new();
+    for _ in 0..6 {
+        cx.simulate_keystrokes("shift-tab");
+        backward.push(focused_label(cx));
+    }
 
-    let expected = ["Name", "Hello", "Greet", "Name", "Greet"];
-    assert_eq!(order, expected.map(|label| Some(label.to_owned())));
+    let labels = |order: [&str; 6]| order.map(|label| Some(label.to_owned()));
+    assert_eq!(
+        forward,
+        labels(["Hello", "Greet", "Name", "Hello", "Greet", "Name"])
+    );
+    assert_eq!(
+        backward,
+        labels(["Greet", "Hello", "Name", "Greet", "Hello", "Name"])
+    );
 }
 
 #[gpui::test]
@@ -298,15 +311,22 @@ fn editing_keys_change_the_text_field(cx: &mut TestAppContext) {
     assert_eq!(field_value(&window, cx, "name"), "Ada ");
 }
 
+/// GPUI CE's test platform offers no public way to reach the window's
+/// platform input handler, so composition is driven on the name field's
+/// editing state, which the window's input handler forwards to. The test
+/// checks that this state belongs to the focused field; typing through the
+/// window's input handler is covered by the other form tests.
 #[gpui::test]
 fn input_method_composition_commits_into_the_text_field(cx: &mut TestAppContext) {
-    use gpui::EntityInputHandler;
+    use gpui::{EntityInputHandler, Focusable};
 
     let (window, cx) = open(cx, &RUST);
     open_form(&window, cx);
     let input = cx
         .read_entity(&window, |window, _| window.text_field("name"))
         .expect("the name field has an editing state");
+    let focused = cx.update(|window, cx| input.focus_handle(cx).is_focused(window));
+    assert!(focused, "the name field has keyboard focus");
 
     // What a platform input method does: mark composing text, then replace
     // it with the committed text.

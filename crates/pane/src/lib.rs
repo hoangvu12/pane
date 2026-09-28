@@ -3,6 +3,7 @@
 //! The window is a thin renderer over [`pane_core::Launcher`]: key and mouse
 //! input call launcher actions, and each frame draws the launcher's snapshot.
 
+use std::future::Future;
 use std::path::{Path, PathBuf};
 
 use gpui::{
@@ -239,7 +240,19 @@ impl LauncherWindow {
             return;
         }
         let pending = self.launcher.activate_selected();
-        // Opening a form needs no guest call; its controls appear at once.
+        self.show_until_done(pending, window, cx);
+    }
+
+    /// Shows the launcher's state now and again when `pending`, a launcher
+    /// action's reply, has been applied, without blocking the window
+    /// meanwhile. Each time the form's controls follow the launcher's screen
+    /// (opening a form needs no guest call, so its controls appear at once).
+    fn show_until_done(
+        &mut self,
+        pending: impl Future<Output = ()> + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.sync_form(window, cx);
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {

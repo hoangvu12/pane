@@ -100,9 +100,10 @@ smokes run the same phase (screenshots 9 to 12); it has not run there yet.
   ([8-form-result.png](evidence/linux-x11/8-form-result.png), checked by the
   script's result-color assertion and by inspection). Editing keys (arrows,
   Backspace), Tab order and composition are covered by the window tests
-  through GPUI's test platform, where composition is driven through the
-  field's input handler (`replace_and_mark_text_in_range` then
-  `replace_text_in_range`) as a platform input method would. **No real input
+  through GPUI's test platform, where composition is driven on the
+  focused field's editing state (`replace_and_mark_text_in_range` then
+  `replace_text_in_range`) as a platform input method would, not through the
+  window's platform input handler ([what that proves](../forms.md#checks)). **No real input
   method (IBus, Fcitx) was run**: X11 XIM/preedit handling in GPUI CE and
   composition with a CJK IME on Linux are unverified.
 - **Accessibility:** before this slice the window exposed only an empty
