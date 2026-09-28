@@ -95,9 +95,13 @@ tickets will replace it.
 The smoke also runs the platform-availability steps (screenshots 13 to 15,
 [platform availability](../platform-availability.md#checks)): the Rust
 command's Windows-only and macOS-and-Linux actions, then a package listing
-only the two other systems. **These steps have not run on this system yet**;
-only the Linux X11 run and the host-interface tests' expectations for this
-system exist, so the availability results here are unverified natively.
+only the two other systems. In run [36372625940](https://github.com/wasimysaid/pane/actions/runs/36372625940) (commit `38a95cb`, macOS 15.7.9, arm64) every step passed: the Windows-only action was listed with "Not available on macOS: this action supports only Windows" and did not run, the macOS-and-Linux action answered, and the package for Windows and Linux was refused with "Not available on macOS: this package supports only Windows and Linux". The list scrolled to keep the selected row visible. The later #19 fixes (per-command platforms, re-focusing before these steps) have not run here yet.
+
+| Step | Evidence |
+| --- | --- |
+| Windows-only action | [13-windows-only.png](evidence/macos/13-windows-only.png) |
+| macOS-and-Linux action | [14-not-windows.png](evidence/macos/14-not-windows.png) |
+| Package for the other two systems | [15-no-compatible-package.png](evidence/macos/15-no-compatible-package.png) |
 
 ## Text input and accessibility findings
 
