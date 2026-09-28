@@ -472,14 +472,14 @@ pub(crate) struct PackageData {
 }
 
 impl PackageData {
+    /// The identity key of the package the data belongs to.
+    pub fn owner(&self) -> &str {
+        &self.owner
+    }
+
     /// The generation of the package's code this data was handed out in.
     pub fn generation(&self) -> &Generation {
         &self.generation
-    }
-
-    /// The key of the identity of the package this data belongs to.
-    pub fn owner(&self) -> &str {
-        &self.owner
     }
 
     /// Why this data's generation ended, if it has: its commands may no

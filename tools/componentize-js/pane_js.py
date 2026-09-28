@@ -49,6 +49,12 @@ EXPORT_OPTIONS = {
     "takesQuery": "pane:extension/query-command@0.1.0",
     "search": "pane:extension/command-search@0.1.0",
 }
+# `"pane"` option -> the interface a command setting it also imports, beyond
+# what every command may import (`js-extension`): a command that sets none
+# of them does not import it at all.
+IMPORT_OPTIONS = {
+    "files": "pane:extension/files@0.1.0",
+}
 PREBUILT = REPO / "guests" / "prebuilt"
 MANIFEST = PREBUILT / "manifest.json"
 # (component file in guests/prebuilt and target/guests, source package)
@@ -67,10 +73,12 @@ SAMPLES = [
     ("sample_search_ts.wasm", "guests/sample-search-ts"),
     ("sample_helper_js.wasm", "guests/sample-helper-js"),
     ("sample_helper_ts.wasm", "guests/sample-helper-ts"),
+    ("sample_files_js.wasm", "guests/sample-files-js"),
+    ("sample_files_ts.wasm", "guests/sample-files-ts"),
 ]
 # Pane's WIT, copied beside the world in guests/js/wit.
 PANE_WIT = ["extension.wit", "data.wit", "root-results.wit", "operations.wit", "applications.wit", "query.wit",
-            "search.wit", "helpers.wit"]
+            "search.wit", "helpers.wit", "files.wit"]
 # WASI's WIT (clocks, and `wasi:http` with the packages it names), copied from
 # wit/deps into the world's deps/.
 WASI_WIT = sorted((REPO / "wit" / "deps").glob("*.wit"))
@@ -430,14 +438,17 @@ def uses_http(bundle: str) -> bool:
 
 
 def command_world(options: dict, http: bool) -> str:
-    """The world `js-command`: `js-extension` exporting what `options` name,
-    importing `wasi:http`'s client if `http`."""
-    unknown = sorted(set(options) - set(EXPORT_OPTIONS))
+    """The world `js-command`: `js-extension` exporting and importing what
+    `options` name, and importing `wasi:http`'s client if `http`."""
+    unknown = sorted(set(options) - set(EXPORT_OPTIONS) - set(IMPORT_OPTIONS))
     if unknown:
         raise SystemExit(f"pane-js: unknown \"pane\" options in package.json: {', '.join(unknown)}")
     exports = "".join(f"  export {interface};\n" for option, interface in EXPORT_OPTIONS.items()
                       if options.get(option))
-    imports = f"  import {HTTP_IMPORT};\n" if http else ""
+    imports = "".join(f"  import {interface};\n" for option, interface in IMPORT_OPTIONS.items()
+                      if options.get(option))
+    if http:
+        imports += f"  import {HTTP_IMPORT};\n"
     return (f"package pane:js-guest@0.1.0;\n\nworld {COMMAND_WORLD} {{\n  include {WORLD};\n"
             f"{imports}{exports}}}\n")
 

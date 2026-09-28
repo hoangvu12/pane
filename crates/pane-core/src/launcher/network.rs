@@ -60,7 +60,7 @@ impl Launcher {
             details.push("Addresses it tried to reach this session:".into());
             details.extend(contacted);
         }
-        state.screen_epoch += 1;
+        state.next_screen();
         state.entries = Vec::new();
         let screen = Screen::NetworkDetails {
             identity: identity.clone(),

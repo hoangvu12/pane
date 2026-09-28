@@ -81,6 +81,7 @@ pub(super) struct Shared {
     /// handle is dropped.
     pub(super) helpers: Helpers,
     pub(super) applications: SharedApplications,
+    pub(super) files: crate::files::FileAccess,
     pub(super) directory: SharedDirectory,
     pub(super) health: Arc<Mutex<Option<HealthReport>>>,
     /// Custom view ids, never reused, even by a restarted thread: a view
@@ -165,6 +166,7 @@ impl Shared {
         let shared = Arc::new(Shared {
             helpers,
             applications,
+            files: crate::files::FileAccess::default(),
             directory: SharedDirectory::default(),
             health: Arc::default(),
             next_view: Arc::default(),

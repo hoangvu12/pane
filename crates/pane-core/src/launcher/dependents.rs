@@ -108,7 +108,7 @@ impl Launcher {
             ),
             choice("cancel", "Cancel".into(), "Keep them all enabled".into()),
         ];
-        state.screen_epoch += 1;
+        state.next_screen();
         state.entries = vec![Entry::DisableAll(identity.clone(), shown), Entry::Cancel];
         let screen = Screen::Confirm {
             question: Question::DisableDependents(identity.clone()),

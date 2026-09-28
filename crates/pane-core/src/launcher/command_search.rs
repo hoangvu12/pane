@@ -201,7 +201,7 @@ impl Launcher {
             // Stopped while it was running: its answer is not shown.
             (Some(problem), _) => (CommandList::default(), Status::Error(problem)),
             // Replaced by a newer search, whose answer is shown instead.
-            (None, Err(CallError::SearchStopped)) => return,
+            (None, Err(CallError::Cancelled)) => return,
             (None, Ok(results)) => {
                 let (rows, entries) = results
                     .into_iter()

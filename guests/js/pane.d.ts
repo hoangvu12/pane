@@ -8,6 +8,7 @@
 /// <reference path="./operations.d.ts" />
 /// <reference path="./applications.d.ts" />
 /// <reference path="./helpers.d.ts" />
+/// <reference path="./files.d.ts" />
 
 /** One entry in a command's list view. */
 export interface Item {
@@ -224,11 +225,14 @@ export interface Command {
 }
 
 /** What invoking a root result does; Pane performs it. */
-export type RootAction = { tag: "copy"; val: string } | { tag: "open-url"; val: string };
+export type RootAction =
+  | { tag: "copy"; val: string }
+  | { tag: "open-url"; val: string }
+  | { tag: "open-file"; val: string };
 
 /**
  * One result computed from root search's query, listed above the results
- * root search finds by title.
+ * root search finds by title (below them for an `open-file` result).
  */
 export interface RootResult {
   /** Identifies the result among this command's results for the query. */
@@ -239,7 +243,10 @@ export interface RootResult {
   /**
    * `{ tag: "copy", val: text }` copies `text` to the clipboard;
    * `{ tag: "open-url", val: url }` opens `url`, an `http://` or `https://`
-   * address, with the system's handler for web links (Pane refuses others).
+   * address, with the system's handler for web links (Pane refuses others);
+   * `{ tag: "open-file", val: path }` opens the file at `path`, an absolute
+   * path such as one `listFolder` found, with the system's handler for its
+   * type (Pane refuses a relative path, a folder or a missing file).
    */
   action: RootAction;
 }
@@ -264,7 +271,9 @@ export interface RootResults {
    * blank, best first. A query the command has no answer for resolves to
    * `[]`: that is not an error. Throwing is the extension failing; Pane
    * lists a result explaining it. Pane asks again on every change of the
-   * query and discards an answer once the query has changed.
+   * query; once the query changes or root search is left, it cancels a call
+   * still waiting (on `listFolder`, say): the instance is dropped, so its
+   * module state is lost, and the next call starts afresh.
    */
   resultsFor(query: string): Promise<RootResult[]>;
 }

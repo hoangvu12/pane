@@ -269,6 +269,54 @@ impl LauncherWindow {
         self.show_until_done(pending, window, cx);
     }
 
+    /// Asks for the folder to grant the package with `identity` with the
+    /// platform's folder picker, then has Pane check and record it.
+    /// Cancelling changes nothing. A debug build run by the native smokes
+    /// takes the folder `PANE_TEST_CHOOSE_FOLDER` names instead of showing
+    /// the picker (nothing else sets it; a release build has no such hook).
+    fn choose_granted_folder(
+        &mut self,
+        identity: pane_core::PackageIdentity,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        #[cfg(debug_assertions)]
+        if let Some(folder) = std::env::var_os("PANE_TEST_CHOOSE_FOLDER") {
+            let pending = self.launcher.grant_folder(&identity, Path::new(&folder));
+            self.show_until_done(pending, window, cx);
+            return;
+        }
+        let chosen = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Choose".into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let folder = match chosen.await {
+                Ok(Ok(Some(paths))) => paths.into_iter().next(),
+                Ok(Ok(None)) | Err(_) => None,
+                Ok(Err(error)) => {
+                    this.update(cx, |this, cx| {
+                        this.launcher
+                            .show_error(format!("Could not open a folder picker: {error:#}"));
+                        cx.notify();
+                    })
+                    .ok();
+                    None
+                }
+            };
+            if let Some(folder) = folder {
+                this.update_in(cx, |this, window, cx| {
+                    let pending = this.launcher.grant_folder(&identity, &folder);
+                    this.show_until_done(pending, window, cx);
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
     /// Asks for a package folder with the platform's folder picker, then
     /// previews it. Cancelling leaves root search as it was.
     fn choose_package_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -362,6 +410,10 @@ impl LauncherWindow {
     fn activate_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.launcher.selected_asks_for_folder() {
             self.choose_package_folder(window, cx);
+            return;
+        }
+        if let Some(identity) = self.launcher.folder_to_choose() {
+            self.choose_granted_folder(identity, window, cx);
             return;
         }
         if let Some(text) = self.launcher.selected_copy() {
