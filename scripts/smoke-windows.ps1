@@ -776,6 +776,261 @@ $record = Join-Path $data "extensions/installed.json"
 if (-not (Select-String -Quiet -SimpleMatch '"id": "greeter"' $record)) { throw "dependency not recorded" }
 if ((Select-String -SimpleMatch '"dir"' $record).Count -ne 2) { throw "not exactly two packages installed" }
 
+# Native helpers: the helper sample's command runs pane-echo, the file its
+# package ships for this system (built by `cargo xtask guests`). Its first
+# item shows the helper's answer, naming the system; its third races the
+# helper against a one-second timer and cancels it. Its second has the
+# helper wait ten seconds: disabling the package meanwhile (its row is the
+# first in Manage extensions) ends the helper's process at once, and the
+# note it saved before is kept. A data folder of its own keeps the rows in a
+# known order; the helper runs from its managed copy there.
+$data = Join-Path $OutDir "helper-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+$packages = [System.IO.Path]::GetFullPath((Join-Path $data "extensions/packages"))
+# Pane's helper processes: pane-echo run from this data folder.
+function Helpers-Running {
+    [bool](Get-Process -Name "pane-echo" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -and $_.Path.StartsWith($packages, [System.StringComparison]::OrdinalIgnoreCase) })
+}
+$process = Start-Pane "stderr-helper.log" @("--install", "target/guests/packages/sample-helper")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Helper sample is selected
+Send "{ENTER}"; Start-Sleep -Seconds 2   # open Helper sample
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Echo through the helper
+Capture "90-helper-echoed.png"
+Check "90-helper-echoed.png" "9fd8a8"   # 'Echoed "hello from Pane" on Windows x86-64'
+Send "{DOWN 2}{ENTER}"; Start-Sleep -Seconds 3   # Echo within a second
+Capture "91-helper-cancelled.png"
+Check "91-helper-cancelled.png" "9fd8a8"   # "Stopped the helper after one second"
+$shots = "90-helper-echoed", "91-helper-cancelled" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the helper's answers look the same" }
+if (Helpers-Running) { throw "a cancelled helper is still running" }
+Send "{UP}{ENTER}"; Start-Sleep -Seconds 2   # Echo after waiting
+if (-not (Helpers-Running)) { throw "the waiting helper is not running" }
+Capture "92-helper-waiting.png"
+Send "{ESC}"; Start-Sleep -Seconds 1   # root search; the helper keeps running
+Send "{DOWN 10}"   # Manage extensions…
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Send "{ENTER}"; Start-Sleep -Seconds 2   # disable Helper sample
+Capture "93-helper-disabled.png"
+Check "93-helper-disabled.png" "9fd8a8"   # "Disabled Helper sample"
+if (Helpers-Running) { throw "the helper outlived its disabled package" }
+$settings = Join-Path $data "extensions/settings.json"
+if (-not (Select-String -Quiet -SimpleMatch '"helper-wait": "started"' $settings)) { throw "saved note lost" }
+if (Select-String -Quiet -SimpleMatch '"helper-wait": "finished"' $settings) { throw "the stopped call finished" }
+Stop-Pane $process
+if (Helpers-Running) { throw "a helper outlived Pane" }
+
+# Quitting Pane while a helper runs ends it: with "Echo after waiting"
+# running (the helper beats in pane-echo.alive in its folder of the managed
+# copy), closing Pane's window (WM_CLOSE, as its close button does) quits
+# Pane, which ends the helper first. A data folder of its own again.
+$data = Join-Path $OutDir "helper-quit-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+$packages = [System.IO.Path]::GetFullPath((Join-Path $data "extensions/packages"))
+$process = Start-Pane "stderr-helper-quit.log" @("--install", "target/guests/packages/sample-helper")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Helper sample is selected
+Send "{ENTER}"; Start-Sleep -Seconds 2   # open Helper sample
+Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2   # Echo after waiting
+if (-not (Helpers-Running)) { throw "the waiting helper is not running" }
+Capture "94-helper-before-quit.png"
+Check "94-helper-before-quit.png" "d6c27a"   # "Running…"
+$alive = Get-ChildItem -Recurse -Filter "pane-echo.alive" $packages | Select-Object -First 1
+if (-not $alive) { throw "the waiting helper does not beat" }
+if (-not $process.CloseMainWindow()) { throw "Pane's window did not take the close request" }
+if (-not $process.WaitForExit(5000)) { throw "Pane did not quit when its window closed" }
+if (Helpers-Running) { throw "a helper outlived Pane quitting" }
+$beats = (Get-Item $alive.FullName).Length; Start-Sleep -Milliseconds 500
+if ((Get-Item $alive.FullName).Length -ne $beats) { throw "the helper still beats after Pane quit" }
+
+# Development mode (#12, #13): a copy of each development sample
+# (guests/hello-rust, hello-ts, hello-js) is built once, installed and
+# developed from Manage extensions ("Develop <title>", its last row). Saving
+# an edit of its greeting builds it with the documented command and reloads
+# it while Pane keeps running; a save that does not build keeps the working
+# code and shows the error; two saves in a row (the second while the first
+# builds) end with the newer greeting; after "Stop developing", a save builds
+# nothing. Each sample has a data folder of its own, so root lists the three
+# built-in samples, then its command, the install and Manage extensions
+# rows. The JavaScript and TypeScript samples need the JS toolchain
+# (guests/README.md) and are skipped without it.
+function Set-Greeting($path, $line) {
+    $text = [IO.File]::ReadAllText($path)
+    $evaluator = [Text.RegularExpressions.MatchEvaluator] { param($match) $line }
+    $text = ([regex]'(?m)^const GREETING[^\r\n]*').Replace($text, $evaluator, 1)
+    [IO.File]::WriteAllText($path, $text)
+}
+function Same-File($a, $b) {
+    (Test-Path $a) -and (Test-Path $b) -and ((Get-FileHash $a).Hash -eq (Get-FileHash $b).Hash)
+}
+# Waits until Pane has reloaded a new build: the component built in the
+# copy differs from $before (the one before the save) and the managed copy is it.
+function Wait-Reloaded($built, $before) {
+    for ($i = 0; $i -lt 600; $i++) {
+        $managed = Get-ChildItem -Recurse -File -Filter (Split-Path -Leaf $built) (Join-Path $env:PANE_DATA_DIR "extensions/packages") -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($managed -and -not (Same-File $built $before) -and (Same-File $built $managed.FullName)) {
+            Start-Sleep -Seconds 3; return
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    throw "Pane did not reload $built"
+}
+function Failures($log) {
+    @(Select-String -SimpleMatch "did not build" (Join-Path $OutDir $log) -ErrorAction SilentlyContinue).Count
+}
+# Waits until Pane has reported one more build that did not build.
+function Wait-Failed($log, $before) {
+    for ($i = 0; $i -lt 600; $i++) {
+        if ((Failures $log) -gt $before) { Start-Sleep -Seconds 1; return }
+        Start-Sleep -Milliseconds 500
+    }
+    throw "Pane did not report the failed build"
+}
+# From root: open the developed command, the 4th row, and run its item.
+function Say-Hello {
+    Send "{DOWN 3}{ENTER}"; Start-Sleep -Seconds 3
+    Send "{ENTER}"; Start-Sleep -Seconds 2
+}
+function Shots-Differ($first, $second, $what) {
+    python "$PSScriptRoot/check_screenshot.py" --distinct (Join-Path $OutDir $first) (Join-Path $OutDir $second)
+    if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: $what" }
+}
+function Develop-Sample($sample, $title, $component, $source, $n, $greeting, $broken) {
+    $data = Join-Path $OutDir "develop-$sample-data"
+    if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+    $env:PANE_DATA_DIR = $data
+    $copy = Join-Path $OutDir "develop-$sample"
+    if (Test-Path $copy) { Remove-Item -Recurse -Force $copy }
+    New-Item -ItemType Directory -Force -Path $copy | Out-Null
+    Get-ChildItem "guests/$sample" -Exclude target, dist, node_modules | Copy-Item -Destination $copy -Recurse
+    if (Test-Path (Join-Path $copy "Cargo.toml")) {
+        Copy-Item rust-toolchain.toml $copy
+        $guest = (Resolve-Path "guests/pane-guest").Path -replace '\\', '/'
+        $manifest = Join-Path $copy "Cargo.toml"
+        $text = [IO.File]::ReadAllText($manifest).Replace('path = "../pane-guest"', "path = '$guest'")
+        [IO.File]::WriteAllText($manifest, $text)
+        Push-Location $copy
+        cargo build --release --target wasm32-wasip2 --quiet
+        $built = $LASTEXITCODE
+        Pop-Location
+        if ($built -ne 0) { throw "$title did not build" }
+    } else {
+        python tools/componentize-js/pane_js.py build $copy (Join-Path $copy $component) | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "$title did not build" }
+    }
+    $built = Join-Path $copy $component
+    $before = Join-Path $OutDir "develop-$sample-before.wasm"
+    $log = "stderr-develop-$sample.log"
+    $process = Start-Pane $log @("--install", $copy)
+    Send "{ENTER}"; Start-Sleep -Seconds 2   # Install
+    Send "{DOWN 10}{ENTER}"; Start-Sleep -Seconds 1   # Manage extensions
+    Send "{DOWN 10}{ENTER}"; Start-Sleep -Seconds 2   # Develop <title>
+    Capture "$n-$sample-develop-started.png"
+    Check "$n-$sample-develop-started.png" "9fd8a8"   # "Developing <title>: each save in ..."
+    Send "{ESC}"; Start-Sleep -Seconds 1
+    Say-Hello
+    Capture "$($n + 1)-$sample-greeting-before.png"
+    Check "$($n + 1)-$sample-greeting-before.png" "9fd8a8"   # "Hello from ..."
+    Send "{ESC}"; Start-Sleep -Seconds 1
+
+    # An edit, saved: built and reloaded.
+    Copy-Item -Force $built $before
+    Set-Greeting (Join-Path $copy $source) ($greeting -f "Hello again")
+    Wait-Reloaded $built $before
+    Capture "$($n + 2)-$sample-rebuilt.png"
+    Check "$($n + 2)-$sample-rebuilt.png" "9fd8a8"   # "Reloaded <title>"
+    Say-Hello
+    Capture "$($n + 3)-$sample-greeting-after.png"
+    Check "$($n + 3)-$sample-greeting-after.png" "9fd8a8"   # "Hello again"
+    Shots-Differ "$($n + 1)-$sample-greeting-before.png" "$($n + 3)-$sample-greeting-after.png" "the edit changed nothing"
+    Send "{ESC}"; Start-Sleep -Seconds 1
+
+    # A save that does not build: the working code stays.
+    $failures = Failures $log
+    Set-Greeting (Join-Path $copy $source) $broken
+    Wait-Failed $log $failures
+    Capture "$($n + 4)-$sample-build-failed.png"
+    Check "$($n + 4)-$sample-build-failed.png" "f08c8c"   # "<title> did not build: ..."
+    Say-Hello
+    Capture "$($n + 5)-$sample-kept.png"
+    Check "$($n + 5)-$sample-kept.png" "9fd8a8"   # still "Hello again"
+    $shots = "$($n + 3)-$sample-greeting-after", "$($n + 5)-$sample-kept" | ForEach-Object { Join-Path $OutDir "$_.png" }
+    python "$PSScriptRoot/check_screenshot.py" --same @shots
+    if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the failed build replaced the code" }
+    Send "{ESC}"; Start-Sleep -Seconds 1
+
+    # Two saves, the second while the first builds: the newer one is reloaded.
+    Copy-Item -Force $built $before
+    Set-Greeting (Join-Path $copy $source) ($greeting -f "Hello once more")
+    Start-Sleep -Milliseconds 500
+    Set-Greeting (Join-Path $copy $source) ($greeting -f "Hello at last")
+    Wait-Reloaded $built $before
+    Capture "$($n + 6)-$sample-rebuilt-again.png"
+    Check "$($n + 6)-$sample-rebuilt-again.png" "9fd8a8"   # "Reloaded <title>"
+    Say-Hello
+    Capture "$($n + 7)-$sample-greeting-fixed.png"
+    Check "$($n + 7)-$sample-greeting-fixed.png" "9fd8a8"   # "Hello at last"
+    Shots-Differ "$($n + 3)-$sample-greeting-after.png" "$($n + 7)-$sample-greeting-fixed.png" "the fix changed nothing"
+    Send "{ESC}"; Start-Sleep -Seconds 1
+
+    # Stopped: a save builds nothing.
+    Send "{DOWN 10}{ENTER}"; Start-Sleep -Seconds 1   # Manage extensions
+    Send "{DOWN 10}{ENTER}"; Start-Sleep -Seconds 2   # Stop developing <title>
+    Capture "$($n + 8)-$sample-stopped.png"
+    Check "$($n + 8)-$sample-stopped.png" "9fd8a8"   # "Stopped developing <title>"
+    Copy-Item -Force $built $before
+    Set-Greeting (Join-Path $copy $source) ($greeting -f "Hello unseen")
+    Start-Sleep -Seconds 8
+    if (-not (Same-File $built $before)) { throw "$title was built after development stopped" }
+    Stop-Pane $process
+}
+Develop-Sample "hello-rust" "Hello Rust" "target/wasm32-wasip2/release/hello_rust.wasm" "src/lib.rs" 110 `
+    'const GREETING: &str = "{0} from Rust";' 'const GREETING: &str = 42;'
+$jsToolchain = if ($env:PANE_JS_TOOLCHAIN_DIR) { $env:PANE_JS_TOOLCHAIN_DIR } else { Join-Path $env:LOCALAPPDATA "pane/componentize-js" }
+if ((Test-Path (Join-Path $jsToolchain "bin/*/toolchain.json")) -and (Get-Command node -ErrorAction SilentlyContinue)) {
+    Develop-Sample "hello-ts" "Hello TypeScript" "dist/hello_ts.wasm" "src/index.ts" 119 `
+        'const GREETING: string = "{0} from TypeScript";' 'const GREETING: string = 42;'
+    Develop-Sample "hello-js" "Hello JavaScript" "dist/hello_js.wasm" "src/index.js" 128 `
+        'const GREETING = "{0} from JavaScript";' 'const GREETING = 42;'
+} else {
+    Write-Output "skipped the JavaScript and TypeScript development smoke: no JS toolchain in $jsToolchain"
+}
+
+# Disabling a required dependency: installed with the dependencies sample
+# (whose install and data folder are this phase's own), the JavaScript
+# operations sample is the first row of Manage extensions. Enter asks first,
+# listing the Dependencies sample, which requires it, with Disable all and
+# Cancel; Cancel changes nothing, Disable all disables both, and Enter again
+# enables the JavaScript operations sample alone: the Dependencies sample
+# stays disabled, on record too.
+$data = Join-Path $OutDir "disable-dependents-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+$process = Start-Pane "stderr-disable-dependents.log" @("--install", "target/guests/packages/sample-dependencies")
+Send "{ENTER}"; Start-Sleep -Seconds 3   # Install
+for ($i = 0; $i -lt 10; $i++) { Send "{DOWN}" }   # Manage extensions...
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Send "{ENTER}"; Start-Sleep -Seconds 1   # disable JavaScript operations sample: asks first
+Capture "140-disable-dependents-asked.png"
+Check "140-disable-dependents-asked.png" "aab4c0"   # "Dependencies sample, which requires JavaScript operations sample ..."
+Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 1   # Cancel
+Capture "141-disable-dependents-cancelled.png"   # both still enabled
+Send "{ENTER}"; Start-Sleep -Seconds 1   # asks again
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Disable all 2
+Capture "142-disable-dependents-disabled.png"
+Check "142-disable-dependents-disabled.png" "9fd8a8"   # "Disabled JavaScript operations sample and Dependencies sample, which requires it"
+Send "{ENTER}"; Start-Sleep -Seconds 2   # enable JavaScript operations sample
+Capture "143-disable-dependents-enabled-alone.png"
+Check "143-disable-dependents-enabled-alone.png" "9fd8a8"   # "Enabled JavaScript operations sample"; Dependencies sample stays disabled
+$shots = "140-disable-dependents-asked", "141-disable-dependents-cancelled", "142-disable-dependents-disabled", "143-disable-dependents-enabled-alone" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: disabling with dependents changed nothing" }
+Stop-Pane $process
+$record = Join-Path $data "extensions/installed.json"
+if ((Select-String -SimpleMatch '"disabled": true' $record).Count -ne 1) { throw "not exactly the dependent left disabled" }
+
 # Searching an online service inside its command: Package search, the Rust
 # search sample, queries the fixture service (a made-up package registry on
 # 127.0.0.1:8740, the sample's default address; nothing leaves this

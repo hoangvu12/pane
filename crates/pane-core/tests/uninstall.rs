@@ -309,6 +309,7 @@ fn uninstalling_and_keeping_saved_data_restores_it_on_reinstall(fixture: &Fixtur
             "Uninstall Settings sample",
             "Hotkey for Greeting",
             "Alias for Greeting",
+            "Develop Settings sample",
         ]
     );
     ask_to_uninstall(&launcher, "Settings sample", 0);

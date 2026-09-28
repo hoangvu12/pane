@@ -65,10 +65,12 @@ SAMPLES = [
     ("sample_query_ts.wasm", "guests/sample-query-ts"),
     ("sample_search_js.wasm", "guests/sample-search-js"),
     ("sample_search_ts.wasm", "guests/sample-search-ts"),
+    ("sample_helper_js.wasm", "guests/sample-helper-js"),
+    ("sample_helper_ts.wasm", "guests/sample-helper-ts"),
 ]
 # Pane's WIT, copied beside the world in guests/js/wit.
 PANE_WIT = ["extension.wit", "data.wit", "root-results.wit", "operations.wit", "applications.wit", "query.wit",
-            "search.wit"]
+            "search.wit", "helpers.wit"]
 # WASI's WIT (clocks, and `wasi:http` with the packages it names), copied from
 # wit/deps into the world's deps/.
 WASI_WIT = sorted((REPO / "wit" / "deps").glob("*.wit"))
@@ -362,7 +364,9 @@ def build(package: Path, out: Path, toolchain: Toolchain) -> dict:
     modules = toolchain.node / "node_modules"
     if (staged / "tsconfig.json").exists():
         log(f"type-checking {package.name}")
-        run([node, modules / "typescript" / "bin" / "tsc", "-p", staged / "tsconfig.json"])
+        # From the staged package, so errors name its files as the author
+        # does ("src/index.ts(3,7): error ...").
+        run([node, modules / "typescript" / "bin" / "tsc", "-p", staged / "tsconfig.json"], cwd=staged)
     bundle = work / "bundle.mjs"
     adapted = work / "pane-entry.mjs"
     adapted.write_text(adapted_entry(staged / entry, types / "adapt.js", manifest.get("pane", {})),
@@ -508,4 +512,13 @@ def main(argv: list[str]) -> None:
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    try:
+        main(sys.argv[1:])
+    except SystemExit as failure:
+        # A failure is one line starting "pane-js: error:" on standard error,
+        # which Pane's development mode shows as a build's first error.
+        message = failure.code
+        if isinstance(message, str) and message.startswith("pane-js: "):
+            print("pane-js: error: " + message.removeprefix("pane-js: "), file=sys.stderr, flush=True)
+            raise SystemExit(1) from None
+        raise

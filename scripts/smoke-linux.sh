@@ -796,6 +796,244 @@ stop_pane
 grep -q '"id": "greeter"' "$PANE_DATA_DIR/extensions/installed.json" || { echo "dependency not recorded"; exit 1; }
 [ "$(grep -c '"dir"' "$PANE_DATA_DIR/extensions/installed.json")" = 2 ] || { echo "not exactly two packages installed"; exit 1; }
 
+# Native helpers: the helper sample's command runs pane-echo, the file its
+# package ships for this system (built by `cargo xtask guests`). Its first
+# item shows the helper's answer, naming the system; its third races the
+# helper against a one-second timer and cancels it. Its second has the
+# helper wait ten seconds: disabling the package meanwhile (its row is the
+# first in Manage extensions) ends the helper's process at once, and the
+# note it saved before is kept. A data folder of its own keeps the rows in a
+# known order; the helper runs from its managed copy there.
+export PANE_DATA_DIR=$out/helper-data
+rm -rf "$PANE_DATA_DIR"
+# Pane's helper processes: pane-echo run from this data folder.
+helpers_running() { pgrep -f "$PANE_DATA_DIR/extensions/packages/.*/pane-echo" >/dev/null; }
+start_pane --install target/guests/packages/sample-helper
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 2   # Install; Helper sample is selected
+"$xdotool" key Return; sleep 2   # open Helper sample
+"$xdotool" key Return; sleep 2   # Echo through the helper
+capture 90-helper-echoed.png
+check 90-helper-echoed.png 9fd8a8   # 'Echoed "hello from Pane" on Linux x86-64'
+"$xdotool" key Down Down Return; sleep 3   # Echo within a second
+capture 91-helper-cancelled.png
+check 91-helper-cancelled.png 9fd8a8   # "Stopped the helper after one second"
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{90-helper-echoed,91-helper-cancelled}.png
+if helpers_running; then echo "a cancelled helper is still running"; exit 1; fi
+"$xdotool" key Up Return; sleep 2   # Echo after waiting
+helpers_running || { echo "the waiting helper is not running"; exit 1; }
+capture 92-helper-waiting.png
+"$xdotool" key Escape; sleep 1   # root search; the helper keeps running
+for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+"$xdotool" key Return; sleep 1
+"$xdotool" key Return; sleep 2   # disable Helper sample
+capture 93-helper-disabled.png
+check 93-helper-disabled.png 9fd8a8   # "Disabled Helper sample"
+if helpers_running; then echo "the helper outlived its disabled package"; exit 1; fi
+grep -q '"helper-wait": "started"' "$PANE_DATA_DIR/extensions/settings.json" || { echo "saved note lost"; exit 1; }
+if grep -q '"helper-wait": "finished"' "$PANE_DATA_DIR/extensions/settings.json"; then echo "the stopped call finished"; exit 1; fi
+stop_pane
+if helpers_running; then echo "a helper outlived Pane"; exit 1; fi
+
+# Quitting Pane while a helper runs ends it: with "Echo after waiting"
+# running (the helper beats in pane-echo.alive in its folder of the managed
+# copy), closing the window the way a window manager asks quits Pane, which
+# ends the helper first. A data folder of its own again.
+export PANE_DATA_DIR=$out/helper-quit-data
+rm -rf "$PANE_DATA_DIR"
+start_pane --install target/guests/packages/sample-helper
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 2   # Install; Helper sample is selected
+"$xdotool" key Return; sleep 2   # open Helper sample
+"$xdotool" key Down Return; sleep 2   # Echo after waiting
+helpers_running || { echo "the waiting helper is not running"; exit 1; }
+capture 94-helper-before-quit.png
+check 94-helper-before-quit.png d6c27a   # "Running…"
+alive=$(find "$PANE_DATA_DIR/extensions/packages" -name pane-echo.alive | head -1)
+[ -n "$alive" ] || { echo "the waiting helper does not beat"; exit 1; }
+python3 "$(dirname "$0")/close_window.py" "$window"
+for _ in $(seq 50); do kill -0 "$pane_pid" 2>/dev/null || break; sleep 0.1; done
+if kill -0 "$pane_pid" 2>/dev/null; then echo "Pane did not quit when its window closed"; exit 1; fi
+wait "$pane_pid" 2>/dev/null || true
+pane_pid=
+if helpers_running; then echo "a helper outlived Pane quitting"; exit 1; fi
+beats=$(stat -c %s "$alive"); sleep 0.5
+[ "$(stat -c %s "$alive")" = "$beats" ] || { echo "the helper still beats after Pane quit"; exit 1; }
+
+# Development mode (#12, #13): a copy of each development sample
+# (guests/hello-rust, hello-ts, hello-js) is built once, installed and
+# developed from Manage extensions ("Develop <title>", its last row). Saving
+# an edit of its greeting builds it with the documented command and reloads
+# it while Pane keeps running; a save that does not build keeps the working
+# code and shows the error; two saves in a row (the second while the first
+# builds) end with the newer greeting; after "Stop developing", a save builds
+# nothing. Each sample has a data folder of its own, so root lists the three
+# built-in samples, then its command, the install and Manage extensions…
+# rows. The JavaScript and TypeScript samples need the JS toolchain
+# (guests/README.md) and are skipped without it.
+set_greeting() {   # set_greeting <source file> <line replacing the greeting's>
+  python3 - "$1" "$2" <<'PY'
+import re, sys
+path, line = sys.argv[1], sys.argv[2]
+text = open(path, encoding="utf-8").read()
+text = re.sub(r"^const GREETING.*$", lambda _: line, text, count=1, flags=re.M)
+open(path, "w", encoding="utf-8").write(text)
+PY
+}
+# Waits until Pane has reloaded a new build: the component built in the
+# copy differs from $2 (the one before the save) and the managed copy is it.
+wait_reloaded() {   # wait_reloaded <built component> <component before the save>
+  for _ in $(seq 600); do
+    managed=$(find "$PANE_DATA_DIR/extensions/packages" -name "$(basename "$1")" | head -1)
+    if [ -n "$managed" ] && ! cmp -s "$1" "$2" && cmp -s "$1" "$managed"; then
+      sleep 3; return
+    fi
+    sleep 0.5
+  done
+  echo "Pane did not reload $1"; exit 1
+}
+# Waits until Pane has reported one more build that did not build.
+wait_failed() {   # wait_failed <failures before>
+  for _ in $(seq 600); do
+    [ "$(grep -c 'did not build' "$out/stderr.log")" -gt "$1" ] && { sleep 1; return; }
+    sleep 0.5
+  done
+  echo "Pane did not report the failed build"; exit 1
+}
+say_hello() {   # from root: open the developed command, the 4th row, and run its item
+  "$xdotool" key Down Down Down Return; sleep 3
+  "$xdotool" key Return; sleep 2
+}
+develop_sample() {   # develop_sample <sample> <title> <component> <source> <first frame> <greeting line> <broken line>
+  local sample=$1 title=$2 component=$3 source=$4 n=$5 greeting=$6 broken=$7
+  export PANE_DATA_DIR=$out/develop-$sample-data
+  rm -rf "$PANE_DATA_DIR"
+  local copy=$out/develop-$sample
+  rm -rf "$copy"
+  mkdir -p "$copy"
+  (cd "guests/$sample" && tar cf - --exclude=target --exclude=dist --exclude=node_modules .) | (cd "$copy" && tar xf -)
+  if [ -f "$copy/Cargo.toml" ]; then
+    cp rust-toolchain.toml "$copy/"
+    python3 - "$copy/Cargo.toml" "$PWD/guests/pane-guest" <<'PY'
+import sys
+path, guest = sys.argv[1], sys.argv[2]
+text = open(path, encoding="utf-8").read().replace('path = "../pane-guest"', "path = '%s'" % guest)
+open(path, "w", encoding="utf-8").write(text)
+PY
+    (cd "$copy" && cargo build --release --target wasm32-wasip2 --quiet)
+  else
+    python3 tools/componentize-js/pane_js.py build "$copy" "$copy/$component" >/dev/null
+  fi
+  local built=$copy/$component before=$out/develop-$sample-before.wasm
+  start_pane --install "$copy"
+  "$xdotool" windowfocus --sync "$window"
+  "$xdotool" key Return; sleep 2   # Install
+  for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+  "$xdotool" key Return; sleep 1
+  for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Develop <title>
+  "$xdotool" key Return; sleep 2
+  capture "$n-$sample-develop-started.png"
+  check "$n-$sample-develop-started.png" 9fd8a8   # "Developing <title>: each save in ..."
+  "$xdotool" key Escape; sleep 1
+  say_hello
+  capture "$((n + 1))-$sample-greeting-before.png"
+  check "$((n + 1))-$sample-greeting-before.png" 9fd8a8   # "Hello from ..."
+  "$xdotool" key Escape; sleep 1
+
+  # An edit, saved: built and reloaded.
+  cp "$built" "$before"
+  set_greeting "$copy/$source" "$(printf "$greeting" "Hello again")"
+  wait_reloaded "$built" "$before"
+  capture "$((n + 2))-$sample-rebuilt.png"
+  check "$((n + 2))-$sample-rebuilt.png" 9fd8a8   # "Reloaded <title>"
+  say_hello
+  capture "$((n + 3))-$sample-greeting-after.png"
+  check "$((n + 3))-$sample-greeting-after.png" 9fd8a8   # "Hello again"
+  python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/$((n + 1))-$sample-greeting-before.png" "$out/$((n + 3))-$sample-greeting-after.png"
+  "$xdotool" key Escape; sleep 1
+
+  # A save that does not build: the working code stays.
+  local failures
+  failures=$(grep -c 'did not build' "$out/stderr.log" || true)
+  set_greeting "$copy/$source" "$broken"
+  wait_failed "$failures"
+  capture "$((n + 4))-$sample-build-failed.png"
+  check "$((n + 4))-$sample-build-failed.png" f08c8c   # "<title> did not build: ..."
+  say_hello
+  capture "$((n + 5))-$sample-kept.png"
+  check "$((n + 5))-$sample-kept.png" 9fd8a8   # still "Hello again"
+  python3 "$(dirname "$0")/check_screenshot.py" --same "$out/$((n + 3))-$sample-greeting-after.png" "$out/$((n + 5))-$sample-kept.png"
+  "$xdotool" key Escape; sleep 1
+
+  # Two saves, the second while the first builds: the newer one is reloaded.
+  cp "$built" "$before"
+  set_greeting "$copy/$source" "$(printf "$greeting" "Hello once more")"
+  sleep 0.5
+  set_greeting "$copy/$source" "$(printf "$greeting" "Hello at last")"
+  wait_reloaded "$built" "$before"
+  capture "$((n + 6))-$sample-rebuilt-again.png"
+  check "$((n + 6))-$sample-rebuilt-again.png" 9fd8a8   # "Reloaded <title>"
+  say_hello
+  capture "$((n + 7))-$sample-greeting-fixed.png"
+  check "$((n + 7))-$sample-greeting-fixed.png" 9fd8a8   # "Hello at last"
+  python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/$((n + 3))-$sample-greeting-after.png" "$out/$((n + 7))-$sample-greeting-fixed.png"
+  "$xdotool" key Escape; sleep 1
+
+  # Stopped: a save builds nothing.
+  for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+  "$xdotool" key Return; sleep 1
+  for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Stop developing <title>
+  "$xdotool" key Return; sleep 2
+  capture "$((n + 8))-$sample-stopped.png"
+  check "$((n + 8))-$sample-stopped.png" 9fd8a8   # "Stopped developing <title>"
+  cp "$built" "$before"
+  set_greeting "$copy/$source" "$(printf "$greeting" "Hello unseen")"
+  sleep 8
+  cmp -s "$built" "$before" || { echo "$title was built after development stopped"; exit 1; }
+  stop_pane
+}
+develop_sample hello-rust "Hello Rust" target/wasm32-wasip2/release/hello_rust.wasm src/lib.rs 110 \
+  'const GREETING: &str = "%s from Rust";' 'const GREETING: &str = 42;'
+js_toolchain=${PANE_JS_TOOLCHAIN_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/pane/componentize-js}
+if compgen -G "$js_toolchain/bin/*/toolchain.json" >/dev/null && command -v node >/dev/null; then
+  develop_sample hello-ts "Hello TypeScript" dist/hello_ts.wasm src/index.ts 119 \
+    'const GREETING: string = "%s from TypeScript";' 'const GREETING: string = 42;'
+  develop_sample hello-js "Hello JavaScript" dist/hello_js.wasm src/index.js 128 \
+    'const GREETING = "%s from JavaScript";' 'const GREETING = 42;'
+else
+  echo "skipped the JavaScript and TypeScript development smoke: no JS toolchain in $js_toolchain"
+fi
+
+# Disabling a required dependency: installed with the dependencies sample
+# (whose install and data folder are this phase's own), the JavaScript
+# operations sample is the first row of Manage extensions. Enter asks first,
+# listing the Dependencies sample, which requires it, with Disable all and
+# Cancel; Cancel changes nothing, Disable all disables both, and Enter again
+# enables the JavaScript operations sample alone: the Dependencies sample
+# stays disabled, on record too.
+export PANE_DATA_DIR=$out/disable-dependents-data
+rm -rf "$PANE_DATA_DIR"
+start_pane --install target/guests/packages/sample-dependencies
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 3   # Install
+for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+"$xdotool" key Return; sleep 1
+"$xdotool" key Return; sleep 1   # disable JavaScript operations sample: asks first
+capture 140-disable-dependents-asked.png
+check 140-disable-dependents-asked.png aab4c0   # "Dependencies sample, which requires JavaScript operations sample · …"
+"$xdotool" key Down Return; sleep 1   # Cancel
+capture 141-disable-dependents-cancelled.png   # both still enabled
+"$xdotool" key Return; sleep 1   # asks again
+"$xdotool" key Return; sleep 2   # Disable all 2
+capture 142-disable-dependents-disabled.png
+check 142-disable-dependents-disabled.png 9fd8a8   # "Disabled JavaScript operations sample and Dependencies sample, which requires it"
+"$xdotool" key Return; sleep 2   # enable JavaScript operations sample
+capture 143-disable-dependents-enabled-alone.png
+check 143-disable-dependents-enabled-alone.png 9fd8a8   # "Enabled JavaScript operations sample"; Dependencies sample stays disabled
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{140-disable-dependents-asked,141-disable-dependents-cancelled,142-disable-dependents-disabled,143-disable-dependents-enabled-alone}.png
+stop_pane
+[ "$(grep -c '"disabled": true' "$PANE_DATA_DIR/extensions/installed.json")" = 1 ] || { echo "not exactly the dependent left disabled"; exit 1; }
+
 # Searching an online service inside its command: Package search, the Rust
 # search sample, queries the fixture service (a made-up package registry on
 # 127.0.0.1:8740, the sample's default address; nothing leaves this

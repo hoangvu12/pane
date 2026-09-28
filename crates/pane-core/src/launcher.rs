@@ -33,6 +33,7 @@ mod indexed;
 use crate::dependencies;
 use crate::extension_data::{ExtensionData, PackageData};
 use crate::generation::End;
+use crate::helpers;
 use crate::hotkeys::{self as system_hotkeys, Hotkeys};
 use crate::links::{self, LinkOpener, NoOpener};
 use crate::operations::{self, Installed};
@@ -47,6 +48,8 @@ use crate::runtime::{
 };
 use crate::search::{self, Keys, Query};
 
+mod dependents;
+mod developing;
 mod install;
 mod pausing;
 mod reload;
@@ -55,6 +58,8 @@ mod uninstall;
 
 use aliases::AliasChoices;
 use choices::Record;
+use developing::Developing;
+pub use developing::{BuildFailure, Development};
 use hotkeys::Bindings;
 use pausing::{Pauses, Recorder};
 
@@ -120,6 +125,13 @@ pub enum Screen {
         identity: PackageIdentity,
         details: Vec<String>,
     },
+    /// Why the last development build of an installed package failed, as
+    /// lines of information under the title (its command and output), with
+    /// a row that builds it again.
+    BuildDetails {
+        identity: PackageIdentity,
+        details: Vec<String>,
+    },
     /// `question` about an installed package before Pane acts on it, with
     /// lines of information under the title, answered by choosing a row.
     Confirm {
@@ -148,6 +160,9 @@ pub enum Question {
     /// Whether to delete the retained data of this identity, which is not
     /// installed.
     DeleteRetained(PackageIdentity),
+    /// Whether to disable the installed package with this identity together
+    /// with the enabled packages that require it.
+    DisableDependents(PackageIdentity),
 }
 
 /// A selectable row.
@@ -188,6 +203,9 @@ pub enum Status {
     Idle,
     /// An extension call or package operation is in progress.
     Running,
+    /// Work Pane does in the background is in progress, saying what, such
+    /// as building a package being developed.
+    Progress(String),
     /// The outcome of the most recent action, such as the extension's answer.
     Result(String),
     /// Why the most recent action failed. For a rejected form field this is
@@ -287,6 +305,7 @@ impl LauncherView {
             | Screen::Extensions { details }
             | Screen::Confirm { details, .. }
             | Screen::PauseDetails { details, .. }
+            | Screen::BuildDetails { details, .. }
             | Screen::Hotkey { details, .. } => details,
             _ => &[],
         }
@@ -321,6 +340,8 @@ pub struct Launcher {
     links: Arc<dyn LinkOpener>,
     /// Registers the global hotkeys the user assigns with the system.
     hotkeys: Arc<dyn Hotkeys>,
+    /// The packages being developed: built and reloaded on save.
+    developing: Arc<Developing>,
     state: Arc<Mutex<State>>,
 }
 
@@ -332,6 +353,7 @@ struct WeakLauncher {
     installation: Option<Installation>,
     links: Arc<dyn LinkOpener>,
     hotkeys: Arc<dyn Hotkeys>,
+    developing: std::sync::Weak<Developing>,
     state: std::sync::Weak<Mutex<State>>,
 }
 
@@ -348,6 +370,7 @@ impl WeakLauncher {
             installation: self.installation.clone(),
             links: self.links.clone(),
             hotkeys: self.hotkeys.clone(),
+            developing: self.developing.upgrade()?,
             state: self.state.upgrade()?,
         })
     }
@@ -417,6 +440,9 @@ struct State {
     /// command's answer to a query sent from it (or its sending), so that
     /// changing the query clears it.
     sent_from: Option<String>,
+    /// The newest status of a developed package's builds, kept while
+    /// another screen is shown (see `developing`).
+    development_status: Option<(PackageIdentity, Status)>,
 }
 
 /// What is happening to a package, which stops another change to it
@@ -497,6 +523,24 @@ impl State {
         false
     }
 
+    /// Notes that each `(identity, what)` of `claims` begins, all of them or
+    /// none: if something is already happening to one of them, claims
+    /// nothing and returns that identity with what is happening to it.
+    fn claim_all(
+        &mut self,
+        claims: &[(PackageIdentity, Changing)],
+    ) -> Result<(), (PackageIdentity, Changing)> {
+        for (identity, _) in claims {
+            if let Some(&busy) = self.changing.get(identity) {
+                return Err((identity.clone(), busy));
+            }
+        }
+        for (identity, what) in claims {
+            self.changing.insert(identity.clone(), *what);
+        }
+        Ok(())
+    }
+
     /// Notes that what began with [`State::claim`] on the package with
     /// `identity` has ended.
     fn release(&mut self, identity: &PackageIdentity) {
@@ -504,9 +548,11 @@ impl State {
     }
 }
 
-/// An enabling or disabling that has taken effect and is being recorded.
+/// An enabling or disabling that has taken effect and is being recorded:
+/// of one package, or of a package and the packages that require it, the
+/// package asked about first.
 struct Change {
-    identity: PackageIdentity,
+    identities: Vec<PackageIdentity>,
     enabled: bool,
 }
 
@@ -624,14 +670,28 @@ enum Entry {
     Install(PathBuf, Mode, dependencies::Assumptions),
     /// Show the installed packages (root).
     Manage,
-    /// Enable this installed package if it is disabled, else disable it.
+    /// Enable this installed package if it is disabled, else disable it, or
+    /// first ask about the enabled packages that require it.
     Toggle(PackageIdentity),
+    /// Disable this installed package and the packages that require it,
+    /// which the confirmation showed (confirmation).
+    DisableAll(PackageIdentity, Vec<PackageIdentity>),
     /// Reload this installed package from its source folder.
     Reload(PackageIdentity),
     /// Start again this package, which Pane paused after it failed.
     Retry(PackageIdentity),
     /// Show why Pane paused this package (extension list).
     PauseDetails(PackageIdentity),
+    /// Build and reload this package after each save in its source folder
+    /// (extension list).
+    Develop(PackageIdentity),
+    /// Stop developing this package (extension list).
+    StopDeveloping(PackageIdentity),
+    /// Show why this developed package's last build failed (extension
+    /// list).
+    BuildDetails(PackageIdentity),
+    /// Build this developed package now (build details).
+    BuildAgain(PackageIdentity),
     /// Ask whether to clear this installed package's cache (extension list).
     AskClearCache(PackageIdentity),
     /// Clear this installed package's cache (confirmation).
@@ -759,6 +819,7 @@ impl Launcher {
             packages,
             retained,
             changing: HashMap::new(),
+            development_status: None,
             store_problem,
             paused: Pauses::default(),
             bindings,
@@ -789,6 +850,7 @@ impl Launcher {
             installation,
             links: Arc::new(NoOpener),
             hotkeys: system_hotkeys::none(),
+            developing: Arc::new(Developing::new(None, None)),
             state: Arc::new(Mutex::new(state)),
         };
         if let (Ok(runtime), Some(installation)) = (&launcher.runtime, &launcher.installation) {
@@ -855,6 +917,7 @@ impl Launcher {
             installation: self.installation.clone(),
             links: self.links.clone(),
             hotkeys: self.hotkeys.clone(),
+            developing: Arc::downgrade(&self.developing),
             state: Arc::downgrade(&self.state),
         }
     }
@@ -1193,6 +1256,13 @@ impl Launcher {
                     |entry| matches!(entry, Entry::PauseDetails(shown) if *shown == identity),
                 );
             }
+            Screen::BuildDetails { identity, .. } => {
+                let identity = identity.clone();
+                self.show_extensions_at(
+                    &mut state,
+                    |entry| matches!(entry, Entry::BuildDetails(shown) if *shown == identity),
+                );
+            }
             // Escape clears the command's search before leaving it, as it
             // clears root search's query.
             Screen::CommandSearch { query } if !query.is_empty() => {
@@ -1228,6 +1298,7 @@ impl Launcher {
         let mut hotkey_change = None;
         let mut choice_change = None;
         let mut uninstall = None;
+        let mut develop = None;
         let mut delete_retained = None;
         let mut install = None;
         // The status line is about this action from now on.
@@ -1278,6 +1349,25 @@ impl Launcher {
                 self.show_pause_details(&mut state, &identity);
                 None
             }
+            Some(Entry::Develop(identity)) => {
+                develop = self
+                    .begin_developing(&mut state, &identity)
+                    .map(|start| (identity, start));
+                None
+            }
+            Some(Entry::StopDeveloping(identity)) => {
+                self.end_developing(&mut state, &identity);
+                self.refresh(&mut state);
+                None
+            }
+            Some(Entry::BuildDetails(identity)) => {
+                self.show_build_details(&mut state, &identity);
+                None
+            }
+            Some(Entry::BuildAgain(identity)) => {
+                self.build_again(&mut state, &identity);
+                None
+            }
             Some(Entry::AskUninstall(identity)) => {
                 self.show_uninstall(&mut state, &identity);
                 None
@@ -1322,7 +1412,19 @@ impl Launcher {
                 // The package's state when the user pressed, not when the
                 // future runs.
                 let enable = state.package(&identity).is_some_and(|p| !p.enabled);
-                change = self.begin_change(&mut state, identity, enable);
+                let closure = match enable {
+                    true => Vec::new(),
+                    false => dependencies::required_dependents(&state.packages, &identity),
+                };
+                if closure.iter().any(|dependent| dependent.enabled) {
+                    self.show_disable_dependents(&mut state, &identity, closure);
+                } else {
+                    change = self.begin_change(&mut state, vec![identity], enable);
+                }
+                None
+            }
+            Some(Entry::DisableAll(identity, shown)) => {
+                change = self.begin_disable_all(&mut state, identity, &shown);
                 None
             }
             Some(Entry::Reload(identity)) => {
@@ -1359,6 +1461,9 @@ impl Launcher {
         drop(state);
         let launcher = self.clone();
         async move {
+            if let Some((identity, start)) = develop {
+                launcher.finish_developing(identity, start).await;
+            }
             if let Some(change) = change {
                 launcher.finish_change(epoch, change).await;
             }
@@ -1408,9 +1513,14 @@ impl Launcher {
                     | Entry::Install(..)
                     | Entry::Manage
                     | Entry::Toggle(_)
+                    | Entry::DisableAll(..)
                     | Entry::Reload(_)
                     | Entry::Retry(_)
                     | Entry::PauseDetails(_)
+                    | Entry::Develop(_)
+                    | Entry::StopDeveloping(_)
+                    | Entry::BuildDetails(_)
+                    | Entry::BuildAgain(_)
                     | Entry::AskClearCache(_)
                     | Entry::AskHotkey(_)
                     | Entry::RemoveHotkey(_)
@@ -1496,7 +1606,7 @@ impl Launcher {
         enabled: bool,
     ) -> impl Future<Output = ()> + Send + 'static {
         let mut state = self.lock();
-        let change = self.begin_change(&mut state, identity.clone(), enabled);
+        let change = self.begin_change(&mut state, vec![identity.clone()], enabled);
         let epoch = state.screen_epoch;
         drop(state);
         let launcher = self.clone();
@@ -1507,15 +1617,16 @@ impl Launcher {
         }
     }
 
-    /// Applies the user's choice to enable or disable a package, to be
-    /// recorded by [`Launcher::finish_change`]. Explains why not and returns
-    /// `None` if there is no such package or it is being reloaded or updated;
-    /// returns `None` without a word while another change to it is being
-    /// recorded.
+    /// Applies the user's choice to enable or disable the packages with
+    /// `identities` (the one asked about first), to be recorded together by
+    /// [`Launcher::finish_change`]. Changes none of them, explains why and
+    /// returns `None` if one is not installed or something else is happening
+    /// to it; returns `None` without a word while another change to one is
+    /// being recorded.
     fn begin_change(
         &self,
         state: &mut State,
-        identity: PackageIdentity,
+        identities: Vec<PackageIdentity>,
         enabled: bool,
     ) -> Option<Change> {
         if self.installation.is_none() {
@@ -1523,22 +1634,43 @@ impl Launcher {
             state.view.status = Status::Error(error.to_string());
             return None;
         }
-        if state.package(&identity).is_none() {
-            state.view.status = Status::Error(PackageError::NotInstalled(identity).to_string());
+        if let Some(missing) = identities.iter().find(|i| state.package(i).is_none()) {
+            let error = PackageError::NotInstalled(missing.clone());
+            state.view.status = Status::Error(error.to_string());
             return None;
         }
-        if !state.claim(&identity, Changing::Recording) {
-            return None;
+        let claims: Vec<(PackageIdentity, Changing)> = identities
+            .iter()
+            .map(|identity| (identity.clone(), Changing::Recording))
+            .collect();
+        match state.claim_all(&claims) {
+            Ok(()) => {}
+            // A second enabling or disabling while one is recorded is
+            // ignored without a word, as pressing Enter twice would do.
+            Err((_, Changing::Recording)) => return None,
+            Err((identity, busy)) => {
+                let message = format!("{} {}", state.title_of(&identity), busy.doing());
+                state.view.status = Status::Error(message);
+                return None;
+            }
         }
-        self.apply_enabled(state, &identity, enabled);
+        for identity in &identities {
+            self.apply_enabled(state, identity, enabled);
+        }
         state.view.status = Status::Running;
-        Some(Change { identity, enabled })
+        Some(Change {
+            identities,
+            enabled,
+        })
     }
 
-    /// Records a change begun by [`Launcher::begin_change`], undoing it if
-    /// it cannot be recorded.
+    /// Records a change begun by [`Launcher::begin_change`] in one write,
+    /// undoing all of it if it cannot be recorded.
     async fn finish_change(&self, epoch: u64, change: Change) {
-        let Change { identity, enabled } = change;
+        let Change {
+            identities,
+            enabled,
+        } = change;
         let store = self
             .installation
             .as_ref()
@@ -1546,26 +1678,33 @@ impl Launcher {
             .store
             .clone();
         let recorded = {
-            let identity = identity.clone();
+            let identities = identities.clone();
             off_thread(move || {
                 let mut store = store.lock().unwrap_or_else(|p| p.into_inner());
-                store.set_enabled(&identity, enabled)
+                store.set_enabled_all(&identities, enabled)
             })
             .await
         };
         let mut state = self.lock();
-        state.release(&identity);
+        for identity in &identities {
+            state.release(identity);
+        }
         let status = match recorded {
             Ok(()) => {
-                let title = state.title_of(&identity);
-                if enabled {
-                    Status::Result(format!("Enabled {title}"))
-                } else {
-                    Status::Result(format!("Disabled {title}"))
+                let titles: Vec<String> = identities.iter().map(|i| state.title_of(i)).collect();
+                match (enabled, titles.as_slice()) {
+                    (true, _) => Status::Result(format!("Enabled {}", platform::join(&titles))),
+                    (false, [title]) => Status::Result(format!("Disabled {title}")),
+                    (false, [title, dependents @ ..]) => {
+                        Status::Result(dependents::disabled(title, dependents))
+                    }
+                    (false, []) => Status::Idle,
                 }
             }
             Err(error) => {
-                self.apply_enabled(&mut state, &identity, !enabled);
+                for identity in &identities {
+                    self.apply_enabled(&mut state, identity, !enabled);
+                }
                 Status::Error(error.to_string())
             }
         };
@@ -1596,6 +1735,8 @@ impl Launcher {
         // Its hotkeys are released while it is disabled.
         self.sync_hotkeys(state);
         if !enabled {
+            // Its development ends, with a build that is running.
+            self.developing.end(Some(identity));
             // Its results kept for root search go, and so does an answer
             // from it being awaited.
             Launcher::forget_indexes(state);
@@ -1647,11 +1788,8 @@ impl Launcher {
             self.sync_hotkeys(state);
             return false;
         };
-        // The replaced copy's code is not run again: its generation ends,
-        // which stops its pending calls, and the new code runs in a new one.
-        if let Some(installation) = &self.installation {
-            installation.data.replace_code(&installed.identity);
-        }
+        // The replaced copy's code no longer runs: its generation ended
+        // before its folder was removed ([`Launcher::retire`]).
         let replaced: Vec<PathBuf> = package
             .commands()
             .into_iter()
@@ -1677,6 +1815,18 @@ impl Launcher {
     /// runtime check each component without running it.
     async fn read_and_check(&self, folder: PathBuf) -> Result<SourcePackage, PackageError> {
         let package = off_thread(move || SourcePackage::read(&folder)).await?;
+        self.check_components(&package).await?;
+        Ok(package)
+    }
+
+    /// Like [`Launcher::read_and_check`], for a package staged in `folder`
+    /// (a development build) that belongs to the source `identity`.
+    async fn read_and_check_staged(
+        &self,
+        folder: PathBuf,
+        identity: PackageIdentity,
+    ) -> Result<SourcePackage, PackageError> {
+        let package = off_thread(move || SourcePackage::read_staged(&folder, identity)).await?;
         self.check_components(&package).await?;
         Ok(package)
     }
@@ -1738,6 +1888,7 @@ impl Launcher {
                 "Pane",
             )
         };
+        self.show_kept_development_status(state);
     }
 
     /// Updates root search or the extension list on screen after a package
@@ -1753,6 +1904,14 @@ impl Launcher {
             | Screen::CustomView(_)
             | Screen::Confirm { .. }
             | Screen::Hotkey { .. } => {}
+            // Once the build succeeded or development ended, the extension
+            // list; else the latest failure. The screen epoch is kept.
+            Screen::BuildDetails { identity, .. } => {
+                let identity = identity.clone();
+                let epoch = state.screen_epoch;
+                self.show_build_details(state, &identity);
+                state.screen_epoch = epoch;
+            }
             // Once the package is no longer paused (retried, reloaded,
             // disabled), the extension list, keeping the screen epoch as
             // refreshing does.
@@ -2082,17 +2241,21 @@ impl Launcher {
         }
         state.view =
             LauncherView::new(Screen::Extensions { details }, "Extensions").with_rows(rows);
+        self.show_kept_development_status(state);
     }
 
     /// The extension list's rows: each package's state, reload and cache
     /// rows, then the hotkey of each command of the enabled packages, then
     /// one row per identity with retained data.
     fn extension_rows(&self, state: &State) -> (Vec<Row>, Vec<Entry>) {
-        let (mut rows, mut entries) = extension_rows(&state.packages, &state.paused);
+        let developed = |identity: &PackageIdentity| self.is_developed(identity);
+        let (mut rows, mut entries) = extension_rows(&state.packages, &state.paused, developed);
+        let development = self.development_rows(&state.packages);
         for (row, entry) in self
             .hotkey_rows(state)
             .into_iter()
             .chain(self.choice_rows(state))
+            .chain(development)
         {
             rows.push(row);
             entries.push(entry);
@@ -2240,6 +2403,10 @@ impl Launcher {
             Question::DeleteRetained(identity) => self.show_extensions_at(
                 state,
                 |entry| matches!(entry, Entry::AskDeleteRetained(asked) if *asked == identity),
+            ),
+            Question::DisableDependents(identity) => self.show_extensions_at(
+                state,
+                |entry| matches!(entry, Entry::Toggle(asked) if *asked == identity),
             ),
         }
     }
@@ -2669,6 +2836,26 @@ impl Launcher {
         Some(self.installation.as_ref()?.data.owned_by(&package.identity))
     }
 
+    /// What an update or reload of the package with `identity` does to the
+    /// old code once the new copy is recorded, before the old copy's folder
+    /// is removed: its generation ends, which stops its pending calls (the
+    /// new code runs in a new one), and its helpers are ended and reaped, so
+    /// no running program keeps the folder in use (Windows would refuse to
+    /// remove it).
+    fn retire(&self, identity: &PackageIdentity) -> impl FnOnce(&Path) + Send + 'static {
+        let data = self.installation.as_ref().map(|i| i.data.clone());
+        let runtime = self.runtime().ok().cloned();
+        let identity = identity.clone();
+        move |old: &Path| {
+            if let Some(data) = data {
+                data.replace_code(&identity);
+            }
+            if let Some(runtime) = runtime {
+                runtime.stop_helpers_in(old);
+            }
+        }
+    }
+
     fn runtime(&self) -> Result<&Runtime, CallError> {
         self.runtime.as_ref().map_err(Clone::clone)
     }
@@ -2729,7 +2916,11 @@ fn disabled(state: &State, component: &Path) -> String {
 /// paused it, by a row that retries it and one that shows why it is paused;
 /// then one row per package to clear its cache, and one to uninstall it, in
 /// the same order.
-fn extension_rows(packages: &[InstalledPackage], paused: &Pauses) -> (Vec<Row>, Vec<Entry>) {
+fn extension_rows(
+    packages: &[InstalledPackage],
+    paused: &Pauses,
+    developed: impl Fn(&PackageIdentity) -> bool,
+) -> (Vec<Row>, Vec<Entry>) {
     let failure = |package: &InstalledPackage| paused.of(&package.identity).cloned();
     let toggles = packages.iter().map(|package| {
         let state = match (package.enabled, failure(package).map(|pause| pause.after)) {
@@ -2738,10 +2929,15 @@ fn extension_rows(packages: &[InstalledPackage], paused: &Pauses) -> (Vec<Row>, 
             (true, Some(PauseCause::FailedToStart)) => "Enabled · Failed to start",
             (true, Some(PauseCause::Crashes)) => "Enabled · Paused after crashing",
         };
+        let developing = if developed(&package.identity) {
+            " · Developing"
+        } else {
+            ""
+        };
         let row = Row {
             id: package.identity.key(),
             title: package.title(),
-            subtitle: Some(format!("{state} · {}", package.identity)),
+            subtitle: Some(format!("{state}{developing} · {}", package.identity)),
             unavailable: None,
         };
         (row, Entry::Toggle(package.identity.clone()))
@@ -2849,6 +3045,9 @@ fn preview_view(
     }
     if let Some(operations) = operations::describe(&manifest.operations) {
         details.push(operations);
+    }
+    if let Some(helpers) = helpers::describe(&manifest.helpers) {
+        details.push(helpers);
     }
     details.push(format!(
         "Compatible: needs extension API {}, and its components import only WASI 0.3",

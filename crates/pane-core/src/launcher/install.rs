@@ -7,7 +7,8 @@
 //! and every package the plan relies on ([`Changing::Installing`]), after
 //! checking that they are still as the plan found them: until the install
 //! ends, uninstalling, deleting the retained data of, reloading, updating,
-//! enabling or disabling any of them is refused. The install then reads the
+//! enabling, disabling or starting to develop any of them is refused, and a
+//! development build of one waits to reload it. The install then reads the
 //! folders and works the plan out again; if it differs from the preview's
 //! (a folder changed, or a package was installed or changed meanwhile),
 //! nothing is installed and the new plan is shown. An install without a
@@ -97,22 +98,23 @@ fn claim(
         .chain(assumptions.packages.iter().map(|(identity, _)| identity))
         .cloned()
         .collect();
-    for identity in &identities {
-        if let Some(&busy) = state.changing.get(identity) {
-            let mut message = format!("{} {}", state.title_of(identity), busy.doing());
-            // Its data is being removed: installing it later finds none.
-            if matches!(busy, Changing::Uninstalling | Changing::DeletingRetained) {
-                message.push_str("; install it again once that is done");
-            }
-            return Err(Refusal::Busy(message));
+    let claims: Vec<(PackageIdentity, Changing)> = identities
+        .iter()
+        .map(|identity| {
+            let what = match mode {
+                Mode::Update(updated) if updated == identity => Changing::Updating,
+                _ => Changing::Installing,
+            };
+            (identity.clone(), what)
+        })
+        .collect();
+    if let Err((identity, busy)) = state.claim_all(&claims) {
+        let mut message = format!("{} {}", state.title_of(&identity), busy.doing());
+        // Its data is being removed: installing it later finds none.
+        if matches!(busy, Changing::Uninstalling | Changing::DeletingRetained) {
+            message.push_str("; install it again once that is done");
         }
-    }
-    for identity in &identities {
-        let what = match mode {
-            Mode::Update(updated) if updated == identity => Changing::Updating,
-            _ => Changing::Installing,
-        };
-        state.changing.insert(identity.clone(), what);
+        return Err(Refusal::Busy(message));
     }
     Ok(identities)
 }
@@ -290,11 +292,12 @@ impl Launcher {
         let disabled = plan.titles_in(RequiredState::Disabled);
         let paused = plan.titles_in(RequiredState::Paused);
         let mode = mode.clone();
+        let retire = self.retire(&package.identity);
         let (dependencies, package) = off_thread(move || {
             let mut store = store.lock().unwrap_or_else(|p| p.into_inner());
             dependencies::install_all(&mut store, &plan.install, |store| match mode {
                 Mode::Install => store.install(&package),
-                Mode::Update(_) => store.update(&package),
+                Mode::Update(_) => store.update(&package, retire),
             })
         })
         .await

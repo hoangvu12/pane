@@ -7,6 +7,7 @@
 /// <reference path="./data.d.ts" />
 /// <reference path="./operations.d.ts" />
 /// <reference path="./applications.d.ts" />
+/// <reference path="./helpers.d.ts" />
 
 /** One entry in a command's list view. */
 export interface Item {

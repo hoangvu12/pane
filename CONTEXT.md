@@ -132,8 +132,20 @@ _Avoid_: Reinstall
 Replacing an installed package's code from its source folder while Pane and other packages keep running: the replacement is checked as an install would check it, then replaces the managed copy, the old instances stop and the new code starts. Settings are kept; live state is not carried over.
 _Avoid_: Restart, hot swap, update (an update does not start the new code)
 
+**Development mode**:
+An installed local package whose source folder Pane watches while its author works on it: each save runs the package's documented build command in that folder, staging the components under Pane's data folder, and a build that succeeds reloads the package from there, while one that fails keeps its working code and shows the build's diagnostics. It lasts until the author stops it, the package is disabled or uninstalled, or Pane quits, each of which kills a running build with the processes it started; another installed copy of the package is never affected.
+_Avoid_: Watch mode, hot reload, dev copy (a copy is an installation)
+
+**Build failure**:
+A development build that did not succeed: nothing is replaced, and the package keeps running its installed code. Distinct from a startup failure, whose replacement was installed.
+_Avoid_: Crash, startup failure
+
+**Obsolete build**:
+A development build during which the source was saved again: it is never reloaded, what it left in the source folder is replaced with the installed components, and the folder is built again, so an older build cannot replace a newer one; after three in a row, Pane waits for the next save.
+_Avoid_: Cancelled build (it runs to its end)
+
 **Startup failure**:
-A reload whose checked replacement was installed but could not start: a command trapped, or its component could not load or be instantiated (an error the command returns for its view is not one); Pane pauses the package, reporting it with Retry and diagnostics, and does not restore the earlier code. Distinct from a replacement that fails its checks, which leaves the working code in place.
+A reload whose checked replacement was installed but could not start: a command trapped, or its component could not load or be instantiated (an error the command returns for its view is not one); Pane pauses the package, reporting it with Retry and diagnostics, and does not restore the earlier code. Distinct from a replacement that fails its checks, or a build failure, which leave the working code in place.
 _Avoid_: Build failure, rollback
 
 **Paused extension**:
@@ -164,6 +176,10 @@ _Avoid_: Library dependency (an npm or Cargo library bundled into a component), 
 A dependency a package needs: installing the package shows it and installs it first if it is missing, but never replaces an installed copy (which counts as pinned) or enables a disabled one; a required dependency that cannot be installed or does not publish what is called stops the install before anything changes.
 _Avoid_: Hard dependency, prerequisite
 
+**Required dependent**:
+An installed package that requires another on this system, directly or through other installed packages that do (its required dependent closure; optional dependencies never count). Disabling the package it requires first shows the enabled ones, which are disabled together or not at all (Disable all or Cancel); enabling that package again does not enable them.
+_Avoid_: Reverse dependency, child extension
+
 **Optional dependency**:
 A dependency a package uses only when the user installed it; installing the package lists it but never installs it.
 _Avoid_: Soft dependency, suggestion, recommended extension
@@ -171,6 +187,14 @@ _Avoid_: Soft dependency, suggestion, recommended extension
 **Call chain**:
 The operation calls waiting on one another at one moment, from the command that made the first; each package in it is busy until its call returns, so a call back into one is refused rather than waited on.
 _Avoid_: Call stack (of one guest), workflow
+
+**Native helper**:
+A prebuilt program an installed package ships for each target (operating system and processor) it supports, which its commands run through Pane for what a WASI guest cannot do; Pane runs this system's file, never compiles one, and ends its process when the command cancels the run, the call that started it returns, the package's generation ends or Pane quits. Processes the helper starts itself are its own.
+_Avoid_: Plugin binary, native extension (the extension's entry point stays a WASI component), sidecar
+
+**Helper target**:
+The operating system and processor a native helper's file is built for, written `<os>-<arch>` in the package manifest, such as `linux-x86_64` or `macos-aarch64`; Pane runs only the file for its own target.
+_Avoid_: Platform (a supported platform is an operating system alone), triple
 
 **Form**:
 A set of fields an extension command asks the user to fill in and submit; the launcher renders its standard controls and the extension validates the submitted values.

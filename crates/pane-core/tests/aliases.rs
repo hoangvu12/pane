@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use futures::executor::block_on;
-use pane_core::{Launcher, Runtime, Screen, Status};
+use pane_core::{Launcher, PackageIdentity, Runtime, Screen, Status};
 use tempfile::TempDir;
 
 const MANAGE_ROW: &str = "Manage extensions…";
@@ -212,12 +212,18 @@ fn running(runtime: &Runtime) -> Vec<PathBuf> {
     block_on(runtime.running())
 }
 
+/// The identity of the package in `folder`, as Pane resolves the folder (the
+/// temporary folder's own path differs on macOS and Windows).
+fn identity_of(folder: &Path) -> PackageIdentity {
+    PackageIdentity::local(folder).unwrap()
+}
+
 /// The component `component` of the installed package from `folder`.
 fn component_of(launcher: &Launcher, folder: &Path, component: &str) -> PathBuf {
     let package = launcher
         .packages()
         .into_iter()
-        .find(|package| package.identity.local_folder() == Some(folder))
+        .find(|package| package.identity == identity_of(folder))
         .expect("installed");
     package.location.join(component)
 }
@@ -228,7 +234,7 @@ fn source_of(launcher: &Launcher, folder: &Path) -> String {
     launcher
         .packages()
         .into_iter()
-        .find(|package| package.identity.local_folder() == Some(folder))
+        .find(|package| package.identity == identity_of(folder))
         .expect("installed")
         .identity
         .to_string()
@@ -614,12 +620,7 @@ fn a_conflict_in_the_record_is_shown_and_neither_alias_is_used() {
     let query = dirs.install(&launcher, "sample-query", "query");
     let settings = dirs.install(&launcher, "sample-settings", "settings");
     drop(launcher);
-    let id = |folder: &Path, command: &str| {
-        format!(
-            "local:{}#{command}",
-            fs::canonicalize(folder).unwrap().display()
-        )
-    };
+    let id = |folder: &Path, command: &str| format!("{}#{command}", identity_of(folder).key());
     let record = serde_json::json!({
         "version": 1,
         "aliases": { id(&query, "echo"): "same", id(&settings, "greeting"): "SAME" },
@@ -706,7 +707,7 @@ fn a_choice_whose_command_is_gone_is_shown_and_can_be_forgotten() {
     let (launcher, _runtime) = dirs.launcher();
     let query = dirs.install(&launcher, "sample-query", "query");
     drop(launcher);
-    let key = format!("local:{}", fs::canonicalize(&query).unwrap().display());
+    let key = identity_of(&query).key();
     let record = serde_json::json!({
         "version": 1,
         "aliases": { format!("{key}#gone"): "gn", "local:/nowhere#echo": "nw" },
