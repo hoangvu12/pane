@@ -31,8 +31,10 @@ pub use packages::{
 };
 pub use pane_target::{Arch, Target};
 pub use platform::Platform;
+#[doc(hidden)]
+pub use runtime::Fault;
 pub use runtime::{
     CallError, Choice, CustomViewInfo, CustomViewRole, Field, FieldKind, FieldValue, Form,
     FormError, Frame, Item, Key, MAX_FRAME_SHAPES, MAX_FRAME_SIZE, MAX_TEXT_CHARS, Point, Rgb,
-    Runtime, Shape, View, ViewEvent, ViewId,
+    Runtime, RuntimeStatus, Shape, View, ViewEvent, ViewId,
 };

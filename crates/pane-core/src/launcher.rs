@@ -51,6 +51,7 @@ mod dependents;
 mod developing;
 mod install;
 mod pausing;
+mod recovery;
 mod reload;
 mod retained;
 mod uninstall;
@@ -128,6 +129,10 @@ pub enum Screen {
         question: Question,
         details: Vec<String>,
     },
+    /// Why Pane's extension runtime stopped after its thread crashed, and
+    /// what Pane did, as lines of information under the title, with a row
+    /// that restarts it when Pane did not.
+    RuntimeDetails { details: Vec<String> },
     /// Asks for the keys of a global hotkey that opens the installed command
     /// with id `command` from any application, with lines of information
     /// under the title. The window sends the keys pressed to
@@ -286,6 +291,7 @@ impl LauncherView {
             | Screen::Confirm { details, .. }
             | Screen::PauseDetails { details, .. }
             | Screen::BuildDetails { details, .. }
+            | Screen::RuntimeDetails { details }
             | Screen::Hotkey { details, .. } => details,
             _ => &[],
         }
@@ -660,6 +666,11 @@ enum Entry {
     Retry(PackageIdentity),
     /// Show why Pane paused this package (extension list).
     PauseDetails(PackageIdentity),
+    /// Show why Pane's extension runtime stopped (extension list).
+    RuntimeDetails,
+    /// Start Pane's extension runtime again after it crashed and Pane did
+    /// not restart it (extension list, runtime details).
+    RestartRuntime,
     /// Build and reload this package after each save in its source folder
     /// (extension list).
     Develop(PackageIdentity),
@@ -854,6 +865,7 @@ impl Launcher {
     /// runtime holds it weakly: it does not keep this launcher, or itself,
     /// running.
     fn report_failures(&self) {
+        self.report_runtime_crashes();
         let (Ok(runtime), Some(_)) = (&self.runtime, &self.installation) else {
             return;
         };
@@ -1208,6 +1220,9 @@ impl Launcher {
                     |entry| matches!(entry, Entry::BuildDetails(shown) if *shown == identity),
                 );
             }
+            Screen::RuntimeDetails { .. } => {
+                self.show_extensions_at(&mut state, |entry| matches!(entry, Entry::RuntimeDetails));
+            }
             Screen::Command | Screen::Package { .. } | Screen::Extensions { .. } => {
                 self.show_root(&mut state, None)
             }
@@ -1286,6 +1301,14 @@ impl Launcher {
             }
             Some(Entry::PauseDetails(identity)) => {
                 self.show_pause_details(&mut state, &identity);
+                None
+            }
+            Some(Entry::RuntimeDetails) => {
+                self.show_runtime_details(&mut state);
+                None
+            }
+            Some(Entry::RestartRuntime) => {
+                self.restart_runtime(&mut state);
                 None
             }
             Some(Entry::Develop(identity)) => {
@@ -1455,6 +1478,8 @@ impl Launcher {
                     | Entry::Reload(_)
                     | Entry::Retry(_)
                     | Entry::PauseDetails(_)
+                    | Entry::RuntimeDetails
+                    | Entry::RestartRuntime
                     | Entry::Develop(_)
                     | Entry::StopDeveloping(_)
                     | Entry::BuildDetails(_)
@@ -1841,6 +1866,7 @@ impl Launcher {
             | Screen::CustomView(_)
             | Screen::Confirm { .. }
             | Screen::Hotkey { .. } => {}
+            Screen::RuntimeDetails { .. } => self.keep_runtime_details(state),
             // Once the build succeeded or development ended, the extension
             // list; else the latest failure. The screen epoch is kept.
             Screen::BuildDetails { identity, .. } => {
@@ -2186,7 +2212,12 @@ impl Launcher {
     /// one row per identity with retained data.
     fn extension_rows(&self, state: &State) -> (Vec<Row>, Vec<Entry>) {
         let developed = |identity: &PackageIdentity| self.is_developed(identity);
-        let (mut rows, mut entries) = extension_rows(&state.packages, &state.paused, developed);
+        let (mut rows, mut entries): (Vec<Row>, Vec<Entry>) =
+            self.runtime_rows().into_iter().unzip();
+        let (package_rows, package_entries) =
+            extension_rows(&state.packages, &state.paused, developed);
+        rows.extend(package_rows);
+        entries.extend(package_entries);
         let development = self.development_rows(&state.packages);
         for (row, entry) in self
             .hotkey_rows(state)

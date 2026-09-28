@@ -231,7 +231,7 @@ impl Developing {
         !ended.is_empty()
     }
 
-    fn changed(&self) {
+    pub(super) fn changed(&self) {
         if let Some(changes) = &self.changes {
             changes.changed();
         }

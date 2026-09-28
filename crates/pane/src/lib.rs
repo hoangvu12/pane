@@ -528,6 +528,7 @@ impl Render for LauncherWindow {
             Screen::Confirm { .. } => ("", "↑↓ select · Enter choose · Esc cancel"),
             Screen::Hotkey { .. } => ("", "Press the new hotkey · Enter choose · Esc back"),
             Screen::PauseDetails { .. } => ("", "Enter retry · Esc back"),
+            Screen::RuntimeDetails { .. } => ("", "Enter restart · Esc back"),
             Screen::BuildDetails { .. } => ("", "Enter build again · Esc back"),
         };
         let details: Vec<_> = view

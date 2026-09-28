@@ -32,6 +32,11 @@ fn main() {
         // Quitting ends the native helpers still running, which would
         // otherwise outlive Pane.
         if let Ok(runtime) = &runtime {
+            // The native smokes crash the runtime on purpose, to check that
+            // Pane recovers (#17); nothing else sets this.
+            if let Some(file) = std::env::var_os("PANE_TEST_RUNTIME_FAULTS") {
+                runtime.watch_fault_file(PathBuf::from(file));
+            }
             let runtime = runtime.clone();
             cx.on_app_quit(move |_| {
                 runtime.stop_helpers();

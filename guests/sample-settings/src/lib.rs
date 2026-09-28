@@ -9,6 +9,10 @@
 //! or reloading the package meanwhile stops it, so it never finishes.
 //! "Crash" crashes on purpose (a panic traps the guest): three crashes in a
 //! row pause the package until the user retries it, keeping its data.
+//! "Count" adds one to a count kept in its content and answers the new
+//! count: an action whose effect is done once it has run. If its answer is
+//! lost (Pane's runtime crashed before answering), Pane does not run it
+//! again by itself, so the count never grows without the user asking.
 #![no_std]
 
 use pane_guest::alloc::{format, string::String, vec, vec::Vec};
@@ -27,6 +31,8 @@ const LAST_GREETING: &str = "last-greeting";
 const TOKEN: &str = "token";
 /// The settings key where "Save after waiting" notes how far it got.
 const SLOW_SAVE: &str = "slow-save";
+/// The content key holding the count "Count" adds to.
+const COUNT: &str = "count";
 /// How long "Save after waiting" waits, in nanoseconds.
 const SLOW_WAIT: u64 = 10_000_000_000;
 
@@ -84,6 +90,7 @@ impl Guest for Greeting {
                     "Crash",
                     "Crashes on purpose; three crashes within five minutes pause the extension",
                 ),
+                item("count", "Count", "Adds one to a count kept in its content"),
             ],
         })
     }
@@ -131,6 +138,14 @@ impl Guest for Greeting {
                 wasip3::clocks::monotonic_clock::wait_for(SLOW_WAIT).await;
                 settings::set(SLOW_SAVE, "finished")?;
                 Ok("Saved after waiting 10 seconds".into())
+            }
+            "count" => {
+                let count = match content::get(COUNT)? {
+                    Some(count) => count.parse::<u64>().map_err(|_| "the count is not a number")?,
+                    None => 0,
+                } + 1;
+                content::set(COUNT, &format!("{count}"))?;
+                Ok(format!("Counted {count}"))
             }
             // A panic traps the guest: Pane reports a crash, not an error
             // the extension answered with.
