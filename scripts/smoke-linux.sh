@@ -282,4 +282,42 @@ capture 32-operation-answer.png
 check 32-operation-answer.png 9fd8a8   # the JavaScript guest's answer
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{31-operations-target,32-operation-answer}.png
 stop_pane
+# Quicklinks, a default extension: installed, its command's form saves a
+# quicklink (Quicklinks is selected once installed, and "Create quicklink" is
+# its first item). After a restart, typing part of its name lists it,
+# selected, and Enter opens its address with the system's link handler. The
+# handler is xdg-open outside any desktop session, with BROWSER set to a
+# script that records the address instead of starting a browser.
+start_pane --install target/guests/packages/quicklinks
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 2   # Install
+"$xdotool" key Return; sleep 3   # open Quicklinks
+"$xdotool" key Return; sleep 1   # Create quicklink
+"$xdotool" type --delay 50 'Pane issues'
+"$xdotool" key Tab
+"$xdotool" type --delay 50 'https://example.com/pane-issues'
+"$xdotool" key Return; sleep 2
+capture 33-quicklink-saved.png
+check 33-quicklink-saved.png 9fd8a8   # "Saved quicklink “Pane issues”"
+"$xdotool" key Escape key Escape; sleep 1
+stop_pane
+mkdir -p "$out/xdg"
+printf '#!/bin/sh\necho "$1" >"%s/opened-link.txt"\n' "$out" >"$out/browser.sh"
+chmod +x "$out/browser.sh"
+rm -f "$out/opened-link.txt"
+unset XDG_CURRENT_DESKTOP DESKTOP_SESSION DBUS_SESSION_BUS_ADDRESS GNOME_DESKTOP_SESSION_ID KDE_FULL_SESSION
+# No desktop settings of the user choose the browser: only BROWSER.
+export BROWSER="$(cd "$out" && pwd)/browser.sh" XDG_CONFIG_HOME="$out/xdg" XDG_CONFIG_DIRS="$out/xdg" \
+  XDG_DATA_HOME="$out/xdg" XDG_DATA_DIRS="$out/xdg"
+start_pane
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" type --delay 50 'pane iss'; sleep 2
+capture 34-quicklink-found.png
+check 34-quicklink-found.png 364355 3000   # the selected quicklink row
+"$xdotool" key Return; sleep 3
+capture 35-quicklink-opened.png
+check 35-quicklink-opened.png 9fd8a8   # "Opened https://example.com/pane-issues"
+[ "$(cat "$out/opened-link.txt")" = https://example.com/pane-issues ] || { echo "the link handler was not asked to open the quicklink"; exit 1; }
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{33-quicklink-saved,34-quicklink-found,35-quicklink-opened}.png
+stop_pane
 echo "screenshots in $out"

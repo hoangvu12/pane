@@ -366,8 +366,11 @@ items are the runnable example, and
 
 A command can answer what the user types into root search, as the
 [calculator](calculator) does: its results are listed above the results
-root search finds by title, and Enter on one performs its action, which
-today is copying a text to the clipboard. Set `"rootResults": true` on the
+root search finds by title, and Enter on one performs its action:
+copying a text to the clipboard (`copy`) or opening an `http://` or
+`https://` address with the system's handler for web links, normally the
+default browser (`open-url`, as [quicklinks](quicklinks) do; Pane refuses
+any other address). Set `"rootResults": true` on the
 command in `pane.json` and export `pane:extension/root-results`
 ([`wit/root-results.wit`](../wit/root-results.wit)) beside the command.
 Pane asks the command on every change of a query that is not blank, so its
@@ -418,8 +421,10 @@ export const rootResults: RootResults = {
 };
 ```
 
-The three samples answer "reverse <text>" this way; their packages in
-[`packages/`](packages) set `rootResults`.
+The three samples answer "reverse <text>" this way, and "pane website"
+with a result whose action opens a link (`RootAction::OpenUrl(url)` in Rust,
+`{ tag: "open-url", val: url }` in JavaScript and TypeScript); their
+packages in [`packages/`](packages) set `rootResults`.
 
 ## Custom views
 

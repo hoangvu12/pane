@@ -222,6 +222,30 @@ has not run there yet. The other directions (JavaScript and TypeScript
 calling Rust) and every failure are covered by the launcher tests, not
 natively.
 
+### Quicklinks (#28)
+
+The last phase installs the Quicklinks package
+(`--install target/guests/packages/quicklinks`), opens its command, and in
+"Create quicklink" types "Pane issues", Tab and
+"https://example.com/pane-issues" with real X11 key events, then Return.
+After a restart it types "pane iss" (the selected row's color must appear)
+and presses Return: `xdg-open` runs with no desktop session variables, every
+XDG configuration and data location in the smoke's output folder and
+`BROWSER` set to a script that records its argument, so no real browser
+starts; the script must have received the URL. Run locally on 2026-09-28
+(Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64, same Xvfb/lavapipe
+setup): all checks of the whole smoke passed.
+
+| Step | Evidence |
+| --- | --- |
+| Form submitted: "Saved quicklink “Pane issues”" | [33-quicklink-saved.png](evidence/linux-x11/33-quicklink-saved.png) |
+| Restarted, "pane iss" typed: the quicklink, first and selected | [34-quicklink-found.png](evidence/linux-x11/34-quicklink-found.png) |
+| Return: "Opened https://example.com/pane-issues", the URL received by the handler | [35-quicklink-opened.png](evidence/linux-x11/35-quicklink-opened.png) |
+
+A real desktop's handler (GNOME's `gio open`, a browser chosen in the
+desktop settings) was not run. The macOS and Windows smokes run the phase up
+to screenshot 34; it has not run there yet.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms have a text field (GPUI CE's

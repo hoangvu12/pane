@@ -40,6 +40,10 @@ _Avoid_: Item (an item belongs to a command's own list), search hit
 A root result an extension command computes from the query itself, such as the calculator's answer to "6*7", rather than one found by matching titles; it is listed above those, and invoking it performs its action, such as copying the answer.
 _Avoid_: Suggestion, answer card, inline result
 
+**Quicklink**:
+A named web address the user saves through the Quicklinks default extension's form and finds in root search, where invoking it opens the address with the system's handler for web links; it is kept in that extension's settings.
+_Avoid_: Bookmark, shortcut, alias
+
 **Search provider**:
 A source of matching results for a query, such as applications, files or an online service.
 _Avoid_: The entire search interface

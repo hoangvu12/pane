@@ -4169,6 +4169,7 @@ dependencies = [
  "gpui-ce",
  "gpui_ce_elements",
  "gpui_ce_platform",
+ "open",
  "pane-core",
  "serde_json",
  "tempfile",

@@ -344,10 +344,23 @@ impl Guest for Sample {
 
 pane_guest::root::export!(Sample);
 
+/// The query that lists [`WEBSITE`], which invoking opens.
+const WEBSITE_QUERY: &str = "pane website";
+const WEBSITE: &str = "https://github.com/hoangvu12/pane";
+
 impl pane_guest::root::Guest for Sample {
     /// "reverse <text>" typed into root search lists the text reversed,
-    /// which Enter copies; other queries have no results.
+    /// which Enter copies, and "pane website" lists Pane's website, which
+    /// Enter opens; other queries have no results.
     async fn results_for(query: String) -> Result<Vec<RootResult>, String> {
+        if query == WEBSITE_QUERY {
+            return Ok(vec![RootResult {
+                id: "website".into(),
+                title: "Pane's website".into(),
+                subtitle: Some("Opened by the Rust guest".into()),
+                action: RootAction::OpenUrl(WEBSITE.into()),
+            }]);
+        }
         let text = query.strip_prefix("reverse ").unwrap_or_default().trim();
         if text.is_empty() {
             return Ok(Vec::new());

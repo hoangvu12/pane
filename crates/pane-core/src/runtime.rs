@@ -77,6 +77,8 @@ pub(crate) struct RootResult {
 pub(crate) enum RootAction {
     /// Copy this text to the clipboard.
     Copy(String),
+    /// Open this web address with the system's link handler.
+    OpenUrl(String),
 }
 
 /// One entry in a command's list view, as produced by the guest.
@@ -1047,6 +1049,7 @@ impl Host {
                 subtitle: result.subtitle,
                 action: match result.action {
                     root_results::RootAction::Copy(text) => RootAction::Copy(text),
+                    root_results::RootAction::OpenUrl(url) => RootAction::OpenUrl(url),
                 },
             })
             .collect())
