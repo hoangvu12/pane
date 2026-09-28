@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use crate::atomic::write_atomically;
 use crate::launcher::CommandRegistration;
 use crate::platform::{self, Platform};
-use crate::runtime::CallError;
+use crate::runtime::{CallError, Exports};
 
 /// The manifest file at the root of every package.
 pub const MANIFEST_FILE: &str = "pane.json";
@@ -176,6 +176,10 @@ pub struct ManifestCommand {
     /// (`"rootResults": true`), such as a calculator's answer: its component
     /// then also exports `pane:extension/root-results`.
     pub root_results: bool,
+    /// Whether the command supplies root results ahead of the query
+    /// (`"indexedResults": true`), such as the installed applications: its
+    /// component then also exports `pane:extension/indexed-results`.
+    pub indexed_results: bool,
 }
 
 #[derive(Deserialize)]
@@ -213,6 +217,8 @@ struct CommandJson {
     platforms: Option<Vec<String>>,
     #[serde(default)]
     root_results: bool,
+    #[serde(default)]
+    indexed_results: bool,
 }
 
 impl Manifest {
@@ -285,18 +291,21 @@ impl Manifest {
         commands.chain(operations)
     }
 
-    /// What `component` exports besides `command`, as the manifest says:
-    /// (root results, published operations).
-    pub(crate) fn exports_of(&self, component: &Path) -> (bool, bool) {
-        let root_results = self
-            .commands
-            .iter()
-            .any(|command| command.component == component && command.root_results);
-        let operations = self
-            .operations
-            .iter()
-            .any(|operation| operation.component == component);
-        (root_results, operations)
+    /// What `component` exports besides `command`, as the manifest says.
+    pub(crate) fn exports_of(&self, component: &Path) -> Exports {
+        let commands = || {
+            self.commands
+                .iter()
+                .filter(|command| command.component == component)
+        };
+        Exports {
+            root_results: commands().any(|command| command.root_results),
+            indexed_results: commands().any(|command| command.indexed_results),
+            operations: self
+                .operations
+                .iter()
+                .any(|operation| operation.component == component),
+        }
     }
 
     fn parse(text: &str) -> Result<Manifest, PackageError> {
@@ -348,6 +357,7 @@ impl Manifest {
                 component,
                 platforms,
                 root_results: command.root_results,
+                indexed_results: command.indexed_results,
             });
         }
         let mut operations: Vec<ManifestOperation> = Vec::new();
@@ -635,6 +645,20 @@ impl InstalledPackage {
             .into_iter()
             .zip(&manifest.commands)
             .filter(|((_, unavailable), command)| command.root_results && unavailable.is_none())
+            .map(|((registration, _), _)| registration)
+            .collect()
+    }
+
+    /// The commands of this package that supply root results ahead of the
+    /// query and can run on this system; none if the package cannot be read.
+    pub(crate) fn indexed_result_commands(&self) -> Vec<CommandRegistration> {
+        let Ok(manifest) = &self.manifest else {
+            return Vec::new();
+        };
+        self.available_commands()
+            .into_iter()
+            .zip(&manifest.commands)
+            .filter(|((_, unavailable), command)| command.indexed_results && unavailable.is_none())
             .map(|((registration, _), _)| registration)
             .collect()
     }

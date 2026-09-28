@@ -8,6 +8,7 @@ members = [
     "sample-rust",
     "sample-settings",
     "calculator",
+    "applications",
     "sample-operations",
     "fixtures/faulty",
     "fixtures/operations",

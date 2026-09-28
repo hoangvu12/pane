@@ -4,7 +4,8 @@
 //! values between runs with [`settings`], compute results from root
 //! search's query with [`root`], call operations other packages publish with
 //! [`operations::call`] and serve those its own package publishes with
-//! [`publish`]. The crate is
+//! [`publish`], find and open installed applications with [`applications`]
+//! and supply root results ahead of the query with [`indexed`]. The crate is
 //! `no_std` so the component imports only WASI 0.3 interfaces; it supplies the
 //! allocator and a panic handler that traps, which the host reports as a
 //! runtime error.
@@ -97,6 +98,41 @@ pub mod root {
     });
 
     pub use exports::pane::extension::root_results::{Guest, RootAction, RootResult};
+}
+
+/// The applications installed on the system (`pane:extension/applications`),
+/// which Pane finds and opens for the extension: [`applications::installed`] and
+/// [`applications::open`].
+pub mod applications {
+    wit_bindgen::generate!({
+        path: "../../wit",
+        world: "applications-user",
+        default_bindings_module: "pane_guest::applications",
+    });
+
+    pub use pane::extension::applications::{Application, installed, open};
+}
+
+/// Root results a command supplies ahead of the query
+/// (`pane:extension/indexed-results`), such as the installed applications,
+/// which root search matches by title like commands. A command whose
+/// `pane.json` entry sets `"indexedResults": true` implements
+/// [`indexed::Guest`] too and calls [`indexed::export!`](crate::indexed::export)
+/// beside [`export!`]:
+///
+/// ```ignore
+/// pane_guest::export!(Applications);
+/// pane_guest::indexed::export!(Applications);
+/// ```
+pub mod indexed {
+    wit_bindgen::generate!({
+        path: "../../wit",
+        world: "indexed-results-provider",
+        pub_export_macro: true,
+        default_bindings_module: "pane_guest::indexed",
+    });
+
+    pub use exports::pane::extension::indexed_results::{Guest, IndexedAction, IndexedResult};
 }
 
 /// The custom view type of a command that has none: `type CustomView =

@@ -1207,3 +1207,58 @@ fn typing_an_expression_shows_its_answer_and_enter_copies_it(cx: &mut TestAppCon
     wait_for_rows(&window, cx, &[]);
     assert!(cx.debug_bounds("no-results").is_some());
 }
+
+/// A system with two applications, recording which one Pane opens.
+#[derive(Default)]
+struct TwoApplications {
+    opened: std::sync::Mutex<Vec<String>>,
+}
+
+impl pane_core::applications::Applications for TwoApplications {
+    fn installed(&self) -> Result<Vec<pane_core::applications::Application>, String> {
+        Ok(["Firefox", "Files"]
+            .map(|name| pane_core::applications::Application {
+                id: format!("/apps/{name}.desktop"),
+                name: name.into(),
+                location: "/apps".into(),
+            })
+            .into())
+    }
+
+    fn open(&self, id: &str) -> Result<(), String> {
+        self.opened.lock().unwrap().push(id.into());
+        Ok(())
+    }
+}
+
+#[gpui::test]
+fn typing_an_applications_name_shows_it_and_enter_opens_it(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let system = std::sync::Arc::new(TwoApplications::default());
+    let runtime = Runtime::start().unwrap();
+    runtime.set_applications(system.clone());
+    let folder =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/guests/packages/applications");
+    let launcher = Launcher::with_packages(Ok(runtime), vec![], data.path().join("extensions"));
+    cx.executor().allow_parking();
+    cx.foreground_executor()
+        .block_on(launcher.install_package(&folder));
+    launcher.back();
+    let (window, cx) = open_launcher(cx, launcher);
+
+    cx.simulate_input("fire");
+    wait_for_rows(&window, cx, &["Firefox"]);
+    assert!(
+        cx.debug_bounds("row-Firefox").is_some(),
+        "the application is rendered"
+    );
+    let (nodes, focused) = accessibility_tree(cx);
+    assert!(has(&nodes, "ListBoxOption", "Firefox"), "{nodes:?}");
+    assert_eq!(focused.as_deref(), Some("Firefox"), "the selected result");
+
+    cx.simulate_keystrokes("enter");
+    let view = wait_for_answer(&window, cx);
+    assert_eq!(view.status, Status::Result("Opened Firefox".into()));
+    assert_eq!(*system.opened.lock().unwrap(), ["/apps/Firefox.desktop"]);
+    assert!(query_has_focus(&window, cx), "typing goes on in the field");
+}

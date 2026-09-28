@@ -282,4 +282,32 @@ capture 32-operation-answer.png
 check 32-operation-answer.png 9fd8a8   # the JavaScript guest's answer
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{31-operations-target,32-operation-answer}.png
 stop_pane
+
+# Applications, a default extension: an installed application is found by
+# name in root search and Enter opens it. The application is a desktop entry
+# the smoke adds in an XDG_DATA_HOME of its own (for Pane only), whose
+# program writes a marker file, so nothing else is started; Pane still
+# searches the system's applications too.
+apps=$(cd "$out" && pwd)/apps
+rm -rf "$apps"
+mkdir -p "$apps/data/applications"
+cat >"$apps/data/applications/pane-smoke-app.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Pane Smoke App
+Exec=sh -c "echo launched > '$apps/launched'"
+EOF
+XDG_DATA_HOME=$apps/data start_pane --install target/guests/packages/applications
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 2   # Install
+"$xdotool" type --delay 50 'pane smoke'; sleep 3
+capture 33-application.png
+check 33-application.png 364355 3000   # the selected application row
+"$xdotool" key Return; sleep 3
+capture 34-opened.png
+check 34-opened.png 9fd8a8   # "Opened Pane Smoke App"
+for _ in $(seq 50); do [ -f "$apps/launched" ] && break; sleep 0.2; done
+[ -f "$apps/launched" ] || { echo "the application did not run"; exit 1; }
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{33-application,34-opened}.png
+stop_pane
 echo "screenshots in $out"
