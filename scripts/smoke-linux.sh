@@ -12,6 +12,7 @@ pane=${2:-target/debug/pane}
 xvfb=${PANE_XVFB:-Xvfb}
 xdotool=${PANE_XDOTOOL:-xdotool}
 mkdir -p "$out"
+{ grep PRETTY_NAME /etc/os-release; uname -srm; } >"$out/system.txt"   # the tested OS and architecture
 
 display=:$((90 + RANDOM % 100))
 "$xvfb" "$display" -screen 0 1280x800x24 -nolisten tcp 2>"$out/xvfb.log" &

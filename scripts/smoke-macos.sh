@@ -8,6 +8,7 @@ set -euo pipefail
 out=${1:-smoke}
 pane=${2:-target/debug/pane}
 mkdir -p "$out"
+{ sw_vers; uname -m; } >"$out/system.txt"   # the tested OS version and architecture
 
 "$pane" 2>"$out/stderr.log" &
 pid=$!
