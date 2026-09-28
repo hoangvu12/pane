@@ -646,6 +646,61 @@ python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{61-pause-detail
 stop_pane
 if grep -q '"paused"' "$PANE_DATA_DIR/extensions/installed.json"; then echo "pause not cleared"; exit 1; fi
 
+# Delete retained data: with a data folder of its own, the settings sample
+# saves a note and is uninstalled keeping it (its Uninstall row follows its
+# state, Reload and Clear cache rows); its retained data, the extension list's
+# last row, is deleted after confirming (Cancel is selected first, so Down
+# then Return), without the extension. Installing the same folder again finds
+# nothing. Steps that change Pane's files wait for the change instead of a
+# fixed time.
+export PANE_DATA_DIR=$out/retained-data
+rm -rf "$PANE_DATA_DIR"
+# Waits until file $1 contains text $2 ("present") or no longer does ("absent").
+wait_for() {
+  for _ in $(seq 100); do
+    if grep -q "$2" "$1" 2>/dev/null; then [ "$3" = present ] && return; else [ "$3" = absent ] && return; fi
+    sleep 0.1
+  done
+  echo "$1: $2 is not $3"; exit 1
+}
+registry=$PANE_DATA_DIR/extensions/installed.json
+start_pane --install target/guests/packages/sample-settings
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return   # Install; Greeting is selected
+wait_for "$registry" sample-settings present; sleep 1
+"$xdotool" key Return; sleep 3   # open Greeting
+for ((i = 0; i < 3; i++)); do "$xdotool" key Down; done
+"$xdotool" key Return   # "Save a note"
+wait_for "$PANE_DATA_DIR/extensions/content.json" '"note": "Water the plants"' present
+"$xdotool" key Escape; sleep 1   # root search
+for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+"$xdotool" key Return; sleep 1
+"$xdotool" key Down Down Down Return; sleep 1   # "Uninstall Settings sample"
+"$xdotool" key Return   # "Uninstall and keep saved data"
+wait_for "$registry" '"retained"' present; sleep 1
+for ((i = 0; i < 40; i++)); do "$xdotool" key Down; done
+"$xdotool" key Return; sleep 1   # "Delete retained data of Settings sample"
+capture 63-confirm-delete-retained.png
+check 63-confirm-delete-retained.png aab4c0   # what is kept and what is not touched
+"$xdotool" key Down Return   # "Delete retained data"
+wait_for "$registry" '"retained"' absent; sleep 1
+capture 64-retained-deleted.png
+check 64-retained-deleted.png 9fd8a8   # "Deleted the retained data of Settings sample"
+stop_pane
+if grep -q 'Water the plants' "$PANE_DATA_DIR/extensions/content.json"; then echo "note not deleted"; exit 1; fi
+start_pane --install target/guests/packages/sample-settings
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return   # Install; Greeting is selected
+wait_for "$registry" sample-settings present; sleep 1
+"$xdotool" key Return; sleep 3   # open Greeting
+for ((i = 0; i < 5; i++)); do "$xdotool" key Down; done
+"$xdotool" key Return; sleep 2   # "Show what Pane keeps"
+capture 65-reinstalled-empty.png
+check 65-reinstalled-empty.png 9fd8a8   # "Style: none · Note: none · Signed in: no ..."
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/51-reinstalled.png" "$out/65-reinstalled-empty.png"
+"$xdotool" key Escape; sleep 1
+stop_pane
+
 # Native helpers: the helper sample's command runs pane-echo, the file its
 # package ships for this system (built by `cargo xtask guests`). Its first
 # item shows the helper's answer, naming the system; its third races the
@@ -663,22 +718,22 @@ start_pane --install target/guests/packages/sample-helper
 "$xdotool" key Return; sleep 2   # Install; Helper sample is selected
 "$xdotool" key Return; sleep 2   # open Helper sample
 "$xdotool" key Return; sleep 2   # Echo through the helper
-capture 63-helper-echoed.png
-check 63-helper-echoed.png 9fd8a8   # 'Echoed "hello from Pane" on Linux x86-64'
+capture 66-helper-echoed.png
+check 66-helper-echoed.png 9fd8a8   # 'Echoed "hello from Pane" on Linux x86-64'
 "$xdotool" key Down Down Return; sleep 3   # Echo within a second
-capture 64-helper-cancelled.png
-check 64-helper-cancelled.png 9fd8a8   # "Stopped the helper after one second"
-python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{63-helper-echoed,64-helper-cancelled}.png
+capture 67-helper-cancelled.png
+check 67-helper-cancelled.png 9fd8a8   # "Stopped the helper after one second"
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{66-helper-echoed,67-helper-cancelled}.png
 if helpers_running; then echo "a cancelled helper is still running"; exit 1; fi
 "$xdotool" key Up Return; sleep 2   # Echo after waiting
 helpers_running || { echo "the waiting helper is not running"; exit 1; }
-capture 65-helper-waiting.png
+capture 68-helper-waiting.png
 "$xdotool" key Escape; sleep 1   # root search; the helper keeps running
 for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
 "$xdotool" key Return; sleep 1
 "$xdotool" key Return; sleep 2   # disable Helper sample
-capture 66-helper-disabled.png
-check 66-helper-disabled.png 9fd8a8   # "Disabled Helper sample"
+capture 69-helper-disabled.png
+check 69-helper-disabled.png 9fd8a8   # "Disabled Helper sample"
 if helpers_running; then echo "the helper outlived its disabled package"; exit 1; fi
 grep -q '"helper-wait": "started"' "$PANE_DATA_DIR/extensions/settings.json" || { echo "saved note lost"; exit 1; }
 if grep -q '"helper-wait": "finished"' "$PANE_DATA_DIR/extensions/settings.json"; then echo "the stopped call finished"; exit 1; fi

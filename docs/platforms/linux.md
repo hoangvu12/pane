@@ -384,9 +384,32 @@ window manager, so raising and focusing Pane's window
 (`_NET_ACTIVE_WINDOW`) is not verified; Wayland is explained as unavailable
 (tested with a fake, not natively), and no real desktop session ran.
 
+### Deleting retained data (#41)
+
+The retained-data phase, after the hotkeys and pausing phases, with a data folder of its own,
+installs the settings sample, saves a note, uninstalls it keeping its saved
+data, then chooses "Delete retained data of Settings sample" (the extension
+list's last row) and confirms with Down from the selected Cancel, then Return,
+waiting for Pane's files to change rather than a fixed time. It checks that `installed.json` no longer has
+a `retained` record and that the note is gone from `content.json`; installs
+the same folder again and shows what Pane keeps, which must differ from
+screenshot 51. Run locally on 2026-09-28 (Ubuntu 26.04.1 LTS, kernel
+7.0.0-31-generic, x86_64, same Xvfb/lavapipe setup): all checks of the whole
+smoke passed.
+
+| Step | Evidence |
+| --- | --- |
+| "Delete the retained data of Settings sample?", its source, "Retained data: 1 content record", what is not touched; Cancel (selected) and Delete retained data | `63-confirm-delete-retained.png` (not committed: it shows the local checkout path) |
+| "Deleted the retained data of Settings sample", the row gone and nothing installed | [64-retained-deleted.png](evidence/linux-x11/64-retained-deleted.png) |
+| Reinstalled: "Style: none · Note: none · Signed in: no · Cached greeting: none" | [65-reinstalled-empty.png](evidence/linux-x11/65-reinstalled-empty.png) |
+
+The macOS and Windows smokes run the same phase (screenshots 63 to 65); it
+has not run there yet. A file locked by another program on Windows is
+covered only by the tests' unreadable and unwritable files, not natively.
+
 ### Native helpers (#15)
 
-The last phase, after the pausing phase ([native helpers](../helpers.md#checks)),
+The last phase, after the retained-data phase ([native helpers](../helpers.md#checks)),
 with a data folder of its own (`helper-data`), installs the helper sample,
 whose `pane-echo` `cargo xtask guests` built for `linux-x86_64`, and runs
 it with real X11 key events: the answer names Linux x86-64; "Echo within a
@@ -400,10 +423,10 @@ setup): all checks of the whole smoke passed.
 
 | Step | Evidence |
 | --- | --- |
-| "Echo through the helper": 'Echoed "hello from Pane" on Linux x86-64' | [63-helper-echoed.png](evidence/linux-x11/63-helper-echoed.png) |
-| "Echo within a second": "Stopped the helper after one second"; no helper runs | [64-helper-cancelled.png](evidence/linux-x11/64-helper-cancelled.png) |
-| "Echo after waiting" running; the helper process runs | [65-helper-waiting.png](evidence/linux-x11/65-helper-waiting.png) |
-| "Disabled Helper sample"; the helper process is gone, the note kept | `66-helper-disabled.png` (not committed: the list's rows show the local checkout path) |
+| "Echo through the helper": 'Echoed "hello from Pane" on Linux x86-64' | [66-helper-echoed.png](evidence/linux-x11/66-helper-echoed.png) |
+| "Echo within a second": "Stopped the helper after one second"; no helper runs | [67-helper-cancelled.png](evidence/linux-x11/67-helper-cancelled.png) |
+| "Echo after waiting" running; the helper process runs | [68-helper-waiting.png](evidence/linux-x11/68-helper-waiting.png) |
+| "Disabled Helper sample"; the helper process is gone, the note kept | `69-helper-disabled.png` (not committed: the list's rows show the local checkout path) |
 
 The tests in `crates/pane-core/tests/helpers.rs` also end the helper by
 reloading, updating and uninstalling, and check each process with `kill

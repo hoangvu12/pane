@@ -49,7 +49,7 @@ Removing an installed package's managed copy, cache and local credentials, and i
 _Avoid_: Disable, delete source
 
 **Retained data**:
-Extension data Pane keeps for a package identity that is not installed, recorded with the title it had; installing the same source again makes it that package's data again.
+Extension data Pane keeps for a package identity that is not installed, recorded with the title it had; installing the same source again makes it that package's data again. Manage extensions lists it per identity, and the user can delete it there without the extension, which Pane does itself.
 _Avoid_: Orphaned data, leftovers (a leftover is a managed folder awaiting removal)
 
 **Local credential**:

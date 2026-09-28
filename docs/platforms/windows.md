@@ -134,9 +134,21 @@ adapter was only compile- and lint-checked for `x86_64-pc-windows-gnu` from
 Linux; **not run on Windows yet**, so registration, delivery and the focus
 transition (foreground rules) are unverified natively.
 
+## Deleting retained data (#41)
+
+The smoke's retained-data phase (screenshots 63 to 65, [deleting retained
+data](../extension-data.md#deleting-retained-data)), with a data folder of
+its own, saves a note with the settings sample, uninstalls it keeping its
+saved data, deletes its retained data from the extension list's last row
+(Down from the selected Cancel, then Enter), checks that `installed.json`
+and `content.json` no longer hold it, and reinstalls the same folder, which
+must show nothing kept. **Not run on Windows yet.** A data file locked by
+another program is covered only by the tests' unreadable files, and a
+record that cannot be written after the data is deleted only by a Unix test.
+
 ## Native helpers (#15)
 
-The smoke's last phase (screenshots 63 to 66, data folder `helper-data`,
+The smoke's last phase (screenshots 66 to 69, data folder `helper-data`,
 [native helpers](../helpers.md#checks)) installs the helper sample, whose
 `pane-echo.exe` `cargo xtask guests` builds for the runner
 (`windows-x86_64` on `windows-2025`), runs it (the answer must name Windows

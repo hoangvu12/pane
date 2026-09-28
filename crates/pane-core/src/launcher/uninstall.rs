@@ -32,7 +32,7 @@ use super::{
 };
 use crate::extension_data::{DataKind, ExtensionData};
 use crate::packages::{
-    InstalledPackage, Leftover, PackageError, PackageIdentity, Pause, RetainedData, SavedData,
+    InstalledPackage, Leftover, PackageError, PackageIdentity, Pause, SavedData,
 };
 
 /// An uninstall begun by [`Launcher::begin_uninstall`]: the package, already
@@ -68,18 +68,6 @@ impl Launcher {
             if let Some(uninstall) = uninstall {
                 launcher.finish_uninstall(epoch, uninstall).await;
             }
-        }
-    }
-
-    /// The identities that are not installed but whose extension data Pane
-    /// keeps, each with its title when it was uninstalled.
-    pub fn retained_data(&self) -> Vec<RetainedData> {
-        match &self.installation {
-            Some(installation) => {
-                let store = installation.store.lock().unwrap_or_else(|p| p.into_inner());
-                store.retained()
-            }
-            None => Vec::new(),
         }
     }
 
@@ -266,7 +254,7 @@ impl Launcher {
             }
             Ok(leftover) => {
                 let forget_hotkeys = self.forget_hotkeys_of(&mut self.lock(), &identity);
-                let problems = {
+                let (problems, retained) = {
                     let data = installation.data.clone();
                     let store = installation.store.clone();
                     let identity = identity.clone();
@@ -286,10 +274,11 @@ impl Launcher {
                                 "could not record that some of its data is kept: {error}"
                             ));
                         }
-                        problems
+                        (problems, store.retained())
                     })
                     .await
                 };
+                self.lock().retained = retained;
                 outcome(&title, saved, problems, leftover)
             }
         };
@@ -326,34 +315,15 @@ impl Launcher {
         }
         state.view.status = status;
     }
-
-    /// Whether the package with `identity` is being uninstalled.
-    pub(super) fn is_uninstalling(&self, identity: &PackageIdentity) -> bool {
-        self.lock().changing.get(identity) == Some(&Changing::Uninstalling)
-    }
 }
 
 /// "Saved data: …": how many settings and content records the package with
 /// `identity` keeps, the data the user chooses to keep or delete.
 fn saved_data(data: &ExtensionData, identity: &PackageIdentity) -> String {
-    let describe = |kind, one: &str, many: &str| match data.count(kind, identity) {
-        Ok(0) => None,
-        Ok(1) => Some(format!("1 {one}")),
-        Ok(count) => Some(format!("{count} {many}")),
-        Err(reason) => Some(format!("{many} that cannot be read now ({reason})")),
-    };
-    let parts: Vec<String> = [
-        describe(DataKind::Settings, "setting", "settings"),
-        describe(DataKind::Content, "content record", "content records"),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    if parts.is_empty() {
-        "Saved data: none".into()
-    } else {
-        format!("Saved data: {}", parts.join(" and "))
-    }
+    let kept = data
+        .kept_now(&[DataKind::Settings, DataKind::Content])
+        .describe(identity);
+    format!("Saved data: {}", kept.unwrap_or_else(|| "none".into()))
 }
 
 /// The outcome of an uninstall that was recorded: a success only if every
