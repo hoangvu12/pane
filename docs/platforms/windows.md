@@ -73,14 +73,47 @@ not confirmed.
 - **Text input / IME (#20):** the smoke now also opens the Rust command's
   form, submits it empty (the error color must appear), types "Ada" with
   `SendKeys`, then Tab, Down and Enter (the result color must appear, which
-  only happens if the typed text reached the name field). **This step has not
-  run on Windows yet**: it was added after the CI run recorded above, and no
-  Windows machine or runner was available while implementing #20. Windows IME
+  only happens if the typed text reached the name field). In run [36371205770](https://github.com/wasimysaid/pane/actions/runs/36371205770) (Windows NT
+  10.0.26100, AMD64) every step passed and the result read "Good morning, Ada,
+  from the Rust guest". Windows IME
   (TSF) composition, for example with Microsoft Japanese IME, is unverified;
   the window tests cover composition only on the field's editing state
   ([what that proves](../forms.md#checks)).
+
+Screenshots from run [36371205770](https://github.com/wasimysaid/pane/actions/runs/36371205770) (commit `949e35d`), cropped to the window:
+
+| Step | Evidence |
+| --- | --- |
+| Form opened; focus in the name field | [6-form.png](evidence/windows/6-form.png) |
+| Submitted empty; "Enter a name" on the field and status | [7-form-error.png](evidence/windows/7-form-error.png) |
+| Typed "Ada", Tab, Down to "Good morning", submitted | [8-form-result.png](evidence/windows/8-form-result.png) |
+
 - **Accessibility:** see [accessibility of forms](../forms.md#accessibility).
   Narrator/NVDA were not run.
+
+## Local extension package (#9)
+
+`scripts/smoke-windows.ps1` also installs `target/guests/packages/sample-rust` with
+`pane --install <folder>` (with `PANE_DATA_DIR` pointing at a fresh folder),
+runs its command, and restarts Pane. In run [36371205770](https://github.com/wasimysaid/pane/actions/runs/36371205770) (commit `949e35d`) every
+step passed. The `packages` identity tests also passed there: folder paths with
+spaces and Unicode, letter case and Unicode normalization as this file system
+treats them, and symbolic links. The symbolic-link test skips itself where
+directory links are not allowed, and cargo hides that notice for a passing
+test. The runner's administrator account can normally create them, but a skip
+can't be ruled out from the log.
+
+| Step | Evidence |
+| --- | --- |
+| Package screen: source, version, commands, compatibility | [9-package.png](evidence/windows/9-package.png) |
+| Installed; the new command is selected in root search | [10-installed.png](evidence/windows/10-installed.png) |
+| The installed command answers ("Hello from the Rust guest") | [11-installed-result.png](evidence/windows/11-installed-result.png) |
+| Still listed after a restart | [12-restarted.png](evidence/windows/12-restarted.png) |
+
+The installed copy has the same title as the built-in Rust sample, so the
+screenshots can't show which copy opened; the core tests prove the installed
+copy runs. In these screenshots the root list is taller than the window and its
+last row is cut off (being fixed with #19).
 
 ## Remaining limits
 

@@ -96,13 +96,20 @@ tickets will replace it.
   smoke also opens the Rust command's form, submits it empty (the error color
   must appear), types "Ada" through System Events `keystroke`, then Tab, Down
   and Return (the result color must appear, which only happens if the typed
-  text reached the name field). **This step has not run on macOS yet**: it was
-  added after the CI run recorded above, and no Mac or runner was available
-  while implementing #20. Composition with a macOS input method (for example
+  text reached the name field). In run [36371205770](https://github.com/wasimysaid/pane/actions/runs/36371205770) (macOS 15.7.9, arm64) every step passed and the result read "Good morning, Ada, from the Rust guest". Composition with a macOS input method (for example
   Japanese Kana) through `NSTextInputClient` is unverified; the window tests
   cover composition only on the field's editing state
   ([what that proves](../forms.md#checks)). Editing bindings
-  follow the element's macOS defaults (Cmd-A/C/V/X/Z, Option-arrow words).
+  follow the element's macOS defaults (Cmd-A/C/V/X/Z, Option-arrow words); only typing, Tab and the arrow keys ran natively.
+
+Screenshots from run [36371205770](https://github.com/wasimysaid/pane/actions/runs/36371205770) (commit `949e35d`), cropped to the window:
+
+| Step | Evidence |
+| --- | --- |
+| Form opened; focus in the name field | [6-form.png](evidence/macos/6-form.png) |
+| Submitted empty; "Enter a name" on the field and status | [7-form-error.png](evidence/macos/7-form-error.png) |
+| Typed "Ada", Tab, Down to "Good morning", submitted | [8-form-result.png](evidence/macos/8-form-result.png) |
+
 - **Accessibility:** the window exposes a `ListBox` labelled with the view
   title, `ListBoxOption` rows with label, description and selected state, the
   selected row as the active descendant, and a `Status` node for the result.
@@ -111,6 +118,27 @@ tickets will replace it.
   pass on macOS but are platform-independent. **VoiceOver was not run**, so how
   the tree reaches NSAccessibility and what VoiceOver announces are unverified.
   Forms: see [accessibility of forms](../forms.md#accessibility).
+
+## Local extension package (#9)
+
+`scripts/smoke-macos.sh` also installs `target/guests/packages/sample-rust` with
+`pane --install <folder>` (with `PANE_DATA_DIR` pointing at a fresh folder),
+runs its command, and restarts Pane. In run [36371205770](https://github.com/wasimysaid/pane/actions/runs/36371205770) (commit `949e35d`) every
+step passed. The `packages` identity tests also passed there: folder paths with
+spaces and Unicode, letter case and Unicode normalization as this file system
+treats them, and symbolic links.
+
+| Step | Evidence |
+| --- | --- |
+| Package screen: source, version, commands, compatibility | [9-package.png](evidence/macos/9-package.png) |
+| Installed; the new command is selected in root search | [10-installed.png](evidence/macos/10-installed.png) |
+| The installed command answers ("Hello from the Rust guest") | [11-installed-result.png](evidence/macos/11-installed-result.png) |
+| Still listed after a restart | [12-restarted.png](evidence/macos/12-restarted.png) |
+
+The installed copy has the same title as the built-in Rust sample, so the
+screenshots can't show which copy opened; the core tests prove the installed
+copy runs. In these screenshots the root list is taller than the window and its
+last row is cut off (being fixed with #19).
 
 ## Remaining limits
 
