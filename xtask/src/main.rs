@@ -181,7 +181,7 @@ fn ci() -> Result<(), String> {
     run(&mut pane_js("check"))?;
     let root = root();
     run(cargo().current_dir(&root).args(["fmt", "--all", "--check"]))?;
-    for dir in ["guests", "guests/fixtures/mixed-p2"] {
+    for dir in ["guests", "guests/fixtures/mixed-p2", "guests/hello-rust"] {
         run(cargo()
             .current_dir(root.join(dir))
             .args(["fmt", "--all", "--check"]))?;

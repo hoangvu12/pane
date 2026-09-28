@@ -588,4 +588,147 @@ check 62-pause-retried.png 9fd8a8   # "Started Settings sample"
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{61-pause-details,62-pause-retried}.png
 stop_pane
 if grep -q '"paused"' "$PANE_DATA_DIR/extensions/installed.json"; then echo "pause not cleared"; exit 1; fi
+# Development mode (#12, #13): a copy of each development sample
+# (guests/hello-rust, hello-ts, hello-js) is built once, installed and
+# developed from Manage extensions ("Develop <title>", its last row). Saving
+# an edit of its greeting builds it with the documented command and reloads
+# it while Pane keeps running; a save that does not build keeps the working
+# code and shows the error; two saves in a row (the second while the first
+# builds) end with the newer greeting; after "Stop developing", a save builds
+# nothing. Each sample has a data folder of its own, so root lists the three
+# built-in samples, then its command, the install and Manage extensions…
+# rows. The JavaScript and TypeScript samples need the JS toolchain
+# (guests/README.md) and are skipped without it.
+set_greeting() {   # set_greeting <source file> <line replacing the greeting's>
+  python3 - "$1" "$2" <<'PY'
+import re, sys
+path, line = sys.argv[1], sys.argv[2]
+text = open(path, encoding="utf-8").read()
+text = re.sub(r"^const GREETING.*$", lambda _: line, text, count=1, flags=re.M)
+open(path, "w", encoding="utf-8").write(text)
+PY
+}
+# Waits until Pane has reloaded a new build: the component built in the
+# copy differs from $2 (the one before the save) and the managed copy is it.
+wait_reloaded() {   # wait_reloaded <built component> <component before the save>
+  for _ in $(seq 600); do
+    managed=$(find "$PANE_DATA_DIR/extensions/packages" -name "$(basename "$1")" | head -1)
+    if [ -n "$managed" ] && ! cmp -s "$1" "$2" && cmp -s "$1" "$managed"; then
+      sleep 3; return
+    fi
+    sleep 0.5
+  done
+  echo "Pane did not reload $1"; exit 1
+}
+# Waits until Pane has reported one more build that did not build.
+wait_failed() {   # wait_failed <failures before>
+  for _ in $(seq 600); do
+    [ "$(grep -c 'did not build' "$out/stderr.log")" -gt "$1" ] && { sleep 1; return; }
+    sleep 0.5
+  done
+  echo "Pane did not report the failed build"; exit 1
+}
+say_hello() {   # from root: open the developed command, the 4th row, and run its item
+  key 125; key 125; key 125; key 36; sleep 3
+  key 36; sleep 2
+}
+develop_sample() {   # develop_sample <sample> <title> <component> <source> <first frame> <greeting line> <broken line>
+  local sample=$1 title=$2 component=$3 source=$4 n=$5 greeting=$6 broken=$7
+  export PANE_DATA_DIR=$out/develop-$sample-data
+  rm -rf "$PANE_DATA_DIR"
+  local copy=$out/develop-$sample
+  rm -rf "$copy"
+  mkdir -p "$copy"
+  (cd "guests/$sample" && tar cf - --exclude=target --exclude=dist --exclude=node_modules .) | (cd "$copy" && tar xf -)
+  if [ -f "$copy/Cargo.toml" ]; then
+    cp rust-toolchain.toml "$copy/"
+    python3 - "$copy/Cargo.toml" "$PWD/guests/pane-guest" <<'PY'
+import sys
+path, guest = sys.argv[1], sys.argv[2]
+text = open(path, encoding="utf-8").read().replace('path = "../pane-guest"', "path = '%s'" % guest)
+open(path, "w", encoding="utf-8").write(text)
+PY
+    (cd "$copy" && cargo build --release --target wasm32-wasip2 --quiet)
+  else
+    python3 tools/componentize-js/pane_js.py build "$copy" "$copy/$component" >/dev/null
+  fi
+  local built=$copy/$component before=$out/develop-$sample-before.wasm
+  start_pane --install "$copy"
+  key 36; sleep 2   # Install
+  for ((i = 0; i < 10; i++)); do key 125; done   # Manage extensions…
+  key 36; sleep 1
+  for ((i = 0; i < 10; i++)); do key 125; done   # Develop <title>
+  key 36; sleep 2
+  capture "$n-$sample-develop-started.png"
+  check "$n-$sample-develop-started.png" 9fd8a8   # "Developing <title>: each save in ..."
+  key 53; sleep 1
+  say_hello
+  capture "$((n + 1))-$sample-greeting-before.png"
+  check "$((n + 1))-$sample-greeting-before.png" 9fd8a8   # "Hello from ..."
+  key 53; sleep 1
+
+  # An edit, saved: built and reloaded.
+  cp "$built" "$before"
+  set_greeting "$copy/$source" "$(printf "$greeting" "Hello again")"
+  wait_reloaded "$built" "$before"
+  capture "$((n + 2))-$sample-rebuilt.png"
+  check "$((n + 2))-$sample-rebuilt.png" 9fd8a8   # "Reloaded <title>"
+  say_hello
+  capture "$((n + 3))-$sample-greeting-after.png"
+  check "$((n + 3))-$sample-greeting-after.png" 9fd8a8   # "Hello again"
+  python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/$((n + 1))-$sample-greeting-before.png" "$out/$((n + 3))-$sample-greeting-after.png"
+  key 53; sleep 1
+
+  # A save that does not build: the working code stays.
+  local failures
+  failures=$(grep -c 'did not build' "$out/stderr.log" || true)
+  set_greeting "$copy/$source" "$broken"
+  wait_failed "$failures"
+  capture "$((n + 4))-$sample-build-failed.png"
+  check "$((n + 4))-$sample-build-failed.png" f08c8c   # "<title> did not build: ..."
+  say_hello
+  capture "$((n + 5))-$sample-kept.png"
+  check "$((n + 5))-$sample-kept.png" 9fd8a8   # still "Hello again"
+  python3 "$(dirname "$0")/check_screenshot.py" --same "$out/$((n + 3))-$sample-greeting-after.png" "$out/$((n + 5))-$sample-kept.png"
+  key 53; sleep 1
+
+  # Two saves, the second while the first builds: the newer one is reloaded.
+  cp "$built" "$before"
+  set_greeting "$copy/$source" "$(printf "$greeting" "Hello once more")"
+  sleep 0.5
+  set_greeting "$copy/$source" "$(printf "$greeting" "Hello at last")"
+  wait_reloaded "$built" "$before"
+  capture "$((n + 6))-$sample-rebuilt-again.png"
+  check "$((n + 6))-$sample-rebuilt-again.png" 9fd8a8   # "Reloaded <title>"
+  say_hello
+  capture "$((n + 7))-$sample-greeting-fixed.png"
+  check "$((n + 7))-$sample-greeting-fixed.png" 9fd8a8   # "Hello at last"
+  python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/$((n + 3))-$sample-greeting-after.png" "$out/$((n + 7))-$sample-greeting-fixed.png"
+  key 53; sleep 1
+
+  # Stopped: a save builds nothing.
+  for ((i = 0; i < 10; i++)); do key 125; done   # Manage extensions…
+  key 36; sleep 1
+  for ((i = 0; i < 10; i++)); do key 125; done   # Stop developing <title>
+  key 36; sleep 2
+  capture "$((n + 8))-$sample-stopped.png"
+  check "$((n + 8))-$sample-stopped.png" 9fd8a8   # "Stopped developing <title>"
+  cp "$built" "$before"
+  set_greeting "$copy/$source" "$(printf "$greeting" "Hello unseen")"
+  sleep 8
+  cmp -s "$built" "$before" || { echo "$title was built after development stopped"; exit 1; }
+  stop_pane
+}
+develop_sample hello-rust "Hello Rust" target/wasm32-wasip2/release/hello_rust.wasm src/lib.rs 63 \
+  'const GREETING: &str = "%s from Rust";' 'const GREETING: &str = 42;'
+js_toolchain=${PANE_JS_TOOLCHAIN_DIR:-$HOME/Library/Caches/pane/componentize-js}
+if compgen -G "$js_toolchain/bin/*/toolchain.json" >/dev/null && command -v node >/dev/null; then
+  develop_sample hello-ts "Hello TypeScript" dist/hello_ts.wasm src/index.ts 72 \
+    'const GREETING: string = "%s from TypeScript";' 'const GREETING: string = 42;'
+  develop_sample hello-js "Hello JavaScript" dist/hello_js.wasm src/index.js 81 \
+    'const GREETING = "%s from JavaScript";' 'const GREETING = 42;'
+else
+  echo "skipped the JavaScript and TypeScript development smoke: no JS toolchain in $js_toolchain"
+fi
+
 echo "screenshots in $out"
