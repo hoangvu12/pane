@@ -93,8 +93,7 @@ exactly like step 4, then types "zzz" and presses Enter on no results. In run [3
 The smoke's last phase (screenshots 27 to 30) installs the calculator
 package, types "6*7", checks the selected answer row, presses Enter to copy
 it, then compares typing "42+1" with pasting the copy (Ctrl+A, Ctrl+V through `SendKeys`) and typing
-"+1", which must look the same. **It has not run on Windows yet**, so
-the calculator's answer and the native clipboard are unverified here.
+"+1", which must look the same. In run [36423871204](https://github.com/wasimysaid/pane/actions/runs/36423871204) (commit `ab91081`) every step passed: "6*7" answered 42, Enter copied it, and pasting then typing "+1" matched typing "42+1", so the system clipboard held "42" ([27-answer.png](evidence/windows/27-answer.png), [30-pasted.png](evidence/windows/30-pasted.png)).
 
 ## Text input and accessibility findings
 

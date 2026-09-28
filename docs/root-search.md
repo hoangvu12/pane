@@ -109,17 +109,23 @@ comes from the extension, through the same guest boundary as its command:
   in Rust, JavaScript and TypeScript).
 - For every change of a query that is not blank, `Launcher::set_query`
   ranks the metadata at once and returns a future that asks each enabled
-  command with `rootResults` for `results-for(query)`, in install order, and
-  lists the answers once all have arrived. The window awaits it off its
-  thread and redraws, so typing never waits for an extension. Answers for an
-  older query (or after leaving root search) are discarded; until the
-  answers arrive the new query lists no computed result, never an older
-  query's. The guest's work for an older query is not cancelled: calls run
-  one at a time on the runtime thread
-  ([#29](https://github.com/hoangvu12/pane/issues/29) owns cancellation).
+  command with `rootResults` for `results-for(query)`, one after another in
+  install order, and lists each command's results as soon as it answers, so
+  a slow command does not hide the answers of those asked before it. The
+  window awaits it off its thread and redraws, so typing never waits for an
+  extension. Answers for an older query or an earlier search of the same
+  query (or after leaving root search) are discarded; until a command
+  answers, the new query lists none of its results, never an older
+  query's. The guest's work for an older query is not cancelled, and calls
+  run one at a time on the runtime thread, so a slow or hung command still
+  delays every command asked after it, for this query and the next ones
+  ([#29](https://github.com/hoangvu12/pane/issues/29) owns cancellation,
+  [#18](https://github.com/hoangvu12/pane/issues/18) timeouts).
 - Computed results are listed **above** every title match, in the order the
-  commands and their answers give them; they are not ranked against titles.
-  When they arrive the first row is selected again, unless the user had
+  commands and their answers give them; they are not ranked against titles
+  (provisional, pending user confirmation; see
+  [current decisions](current-decisions.md) item 10).
+  When each command's results arrive the first row is selected again, unless the user had
   moved the selection, which stays on its row.
 - A computed result has an id (`<command id>:<result id>`), title, optional
   subtitle and an **action** Pane performs without calling the extension
@@ -156,13 +162,15 @@ arbitrary code evaluation):
 - `+`, `-` (or `−`), `*` (or `×`), `/` (or `÷`) and `^` for a power with a
   whole-number exponent; `^` binds tightest and right to left, then `*` and
   `/`, then `+` and `-`, left to right; a leading `-` or `+` applies to what
-  follows, so `-2^2` is -4;
-- parentheses and spaces anywhere.
+  follows, so `-2^2` is -4, and any number of signs may lead;
+- parentheses, nested at most 64 deep, and spaces anywhere;
+- at most 256 characters in all.
 
 A query has an answer only if it applies at least one operator: "42" or
 "(5)" is not a calculation. Everything else has no answer and lists nothing:
 incomplete input ("2 +", "(1 + 2"), invalid input ("2 + * 3", "2 3",
-letters, functions, constants, units, percentages), and undefined or
+letters, functions, constants, units, percentages, deeper nesting or a
+longer query, so that no query can exhaust the guest's stack), and undefined or
 unrepresentable values ("1 / 0", "2 ^ 0.5", overflow). Arithmetic is IEEE
 double precision; the answer shows at most 15 significant digits and at most
 10 decimals, without trailing zeros (0.1 + 0.2 is 0.3, 1 / 3 is
@@ -282,9 +290,14 @@ with the real calculator guest: an answer listed first and selected, above a
 command whose title matches too; incomplete, invalid, undefined and
 operation-free queries listing nothing with the status untouched, and
 completing one answering it; precedence, signs, powers and the number
-format; Enter reporting the copy and `selected_copy` giving the text; an
+format; parentheses 65 deep, a query over 256 characters and 100,000
+leading signs or parentheses listing nothing, without an error row or a
+restart of the calculator; Enter reporting the copy and `selected_copy` giving the text; an
 answer for an older query discarded and none shown before the new one
-arrives; a selection the user moved kept; the calculator not running until
+arrives, nor one for an earlier search of the same query; the answer listed
+and selected while a command asked after it (the `faulty` fixture, slow on
+"0 + 0") is still answering, its result added below when it answers; a
+selection the user moved kept; the calculator not running until
 a non-blank query; disabling it removing its answer at once, asking it
 nothing more and keeping other results, and enabling it again; a failing
 and a crashing command (the `faulty` fixture) explained as a row while other

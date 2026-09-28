@@ -6,6 +6,9 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use futures::executor::block_on;
 use pane_core::{Launcher, PackageIdentity, Runtime, Status};
@@ -137,6 +140,49 @@ fn incomplete_and_invalid_expressions_and_ordinary_words_list_no_answer() {
 }
 
 #[test]
+fn deeply_nested_and_very_long_queries_list_no_answer_and_do_not_crash_the_calculator() {
+    let dirs = Dirs::new();
+    let runtime = dirs.runtime();
+    let launcher = dirs.launcher(runtime.clone());
+    let status = launcher.view().status;
+    search(&launcher, "1 + 1");
+    assert_eq!(block_on(runtime.running()).len(), 1);
+
+    // Deeper than 64 parentheses, longer than 256 characters: no answer,
+    // which is not a failure.
+    let nested = format!("{}1 + 1{}", "(".repeat(65), ")".repeat(65));
+    let long_sum = vec!["1"; 200].join(" + ");
+    let queries = [
+        nested,
+        long_sum,
+        "(".repeat(100_000),
+        format!("{}1 + 1", "-".repeat(100_000)),
+        format!("{}1 + 1", "(-".repeat(50_000)),
+    ];
+    for query in &queries {
+        search(&launcher, query);
+        let shown = &query[..query.len().min(20)];
+        assert_eq!(titles(&launcher), Vec::<String>::new(), "{shown}…");
+        assert_eq!(launcher.view().status, status, "{shown}…");
+        assert_eq!(
+            block_on(runtime.running()).len(),
+            1,
+            "{shown}…: the calculator's instance is not restarted"
+        );
+    }
+
+    // Within the limits, nesting and signs are answered as usual.
+    for (query, answer) in [
+        (format!("{}1 + 1{}", "(".repeat(64), ")".repeat(64)), "2"),
+        (format!("{}1 + 1", "-".repeat(200)), "2"),
+        (format!("{}1 * 3", "-".repeat(201)), "-3"),
+    ] {
+        search(&launcher, &query);
+        assert_eq!(titles(&launcher), [answer], "{query}");
+    }
+}
+
+#[test]
 fn answers_follow_the_documented_precedence_and_number_format() {
     let dirs = Dirs::new();
     let launcher = dirs.launcher(dirs.runtime());
@@ -215,6 +261,14 @@ fn an_answer_arriving_after_the_query_changed_is_discarded() {
     assert_eq!(titles(&launcher), Vec::<String>::new());
     block_on(pending);
     assert_eq!(titles(&launcher), ["6"]);
+
+    // Nor is one for an earlier search of the same query.
+    let earlier = launcher.set_query("1 + 1");
+    search(&launcher, "2 + 2");
+    let later = launcher.set_query("1 + 1");
+    block_on(earlier);
+    block_on(later);
+    assert_eq!(titles(&launcher), ["2"]);
 }
 
 #[test]
@@ -325,6 +379,43 @@ fn a_command_that_fails_to_answer_is_explained_and_other_results_stay() {
     assert_eq!(titles(&launcher), ["2"]);
     search(&launcher, "faulty");
     assert_eq!(titles(&launcher), ["Faulty answers"]);
+}
+
+#[test]
+fn the_answer_is_listed_while_a_command_asked_after_it_is_still_answering() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher(dirs.runtime());
+    // Installed after the calculator, so asked after it.
+    let slow = dirs.package(
+        "slow",
+        &manifest_computing("Slow", "Slow answers"),
+        &built("faulty.wasm"),
+    );
+    install(&launcher, &slow);
+    launcher.back();
+
+    // The faulty fixture answers "0 + 0" after about a second of work.
+    let pending = launcher.set_query("0 + 0");
+    let (done, answered) = mpsc::channel();
+    thread::spawn(move || {
+        block_on(pending);
+        let _ = done.send(());
+    });
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while titles(&launcher).is_empty() {
+        assert!(Instant::now() < deadline, "the calculator never answered");
+        thread::sleep(Duration::from_millis(1));
+    }
+
+    assert_eq!(titles(&launcher), ["0"]);
+    assert_eq!(selected_title(&launcher).as_deref(), Some("0"));
+    assert!(
+        answered.try_recv().is_err(),
+        "the slow command is still answering"
+    );
+    answered.recv_timeout(Duration::from_secs(60)).unwrap();
+    assert_eq!(titles(&launcher), ["0", "Slow answer"]);
+    assert_eq!(selected_title(&launcher).as_deref(), Some("0"));
 }
 
 #[test]
