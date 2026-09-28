@@ -3,7 +3,7 @@
 # `cargo xtask guests` from the repository root.
 [workspace]
 resolver = "3"
-members = ["pane-guest", "sample-rust", "fixtures/faulty"]
+members = ["pane-guest", "sample-rust", "sample-settings", "fixtures/faulty"]
 # `mixed-p2` deliberately uses std (WASI 0.2) and has its own workspace.
 exclude = ["fixtures/mixed-p2"]
 

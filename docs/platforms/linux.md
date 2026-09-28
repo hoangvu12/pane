@@ -89,6 +89,31 @@ does not run, so the smoke uses `--install`; the picker flow is covered by the
 GPUI window tests (`crates/pane/tests/install.rs`). The macOS and Windows
 smokes run the same phase (screenshots 9 to 12); it has not run there yet.
 
+### Disabling a package and keeping its settings (#10)
+
+The smoke then installs `target/guests/packages/sample-settings`, opens its
+Greeting command and chooses "Use a formal greeting" (the guest saves it with
+`pane:extension/settings`), and disables Settings sample in **Manage
+extensions…**. It checks that `installed.json` records `"disabled": true` and
+`settings.json` holds the saved style, restarts Pane, enables the package
+again, and runs "Greet me", which answers in the saved style and is an error
+when no style is saved. Run locally on 2026-09-28 (Ubuntu 26.04.1 LTS, kernel
+7.0.0-31-generic, x86_64, same Xvfb/lavapipe setup), all checks passed:
+
+| Step | Evidence |
+| --- | --- |
+| The guest saves the choice: "Saved the formal greeting" | [13-setting-saved.png](evidence/linux-x11/13-setting-saved.png) |
+| Manage extensions: Settings sample "Disabled", status "Disabled Settings sample" | `14-disabled.png` (not committed: it shows the local checkout path) |
+| After a restart root search no longer lists Greeting | [15-restarted-disabled.png](evidence/linux-x11/15-restarted-disabled.png) |
+| Enabled again: "Enabled Settings sample" | `16-enabled.png` (not committed: it shows the local checkout path) |
+| Greeting is back, titled "Greeting: formal", and "Greet me" answers "Good day to you" | [17-greeted.png](evidence/linux-x11/17-greeted.png) |
+
+The root screenshot after the restart is inspected, not machine-asserted: the
+smoke's checks are colors and files, so Greeting's absence is asserted by the
+launcher tests (`crates/pane-core/tests/disable.rs`) rather than the smoke.
+The macOS and Windows smokes run the same phase (screenshots 13 to 17); they
+have not been run for this change.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms have a text field (GPUI CE's

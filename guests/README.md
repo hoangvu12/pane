@@ -12,6 +12,9 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   JavaScript and TypeScript. All three show the same items, the same form, and
   give the same answers and errors; the contract tests in `crates/pane-core/tests/samples.rs`
   and `crates/pane/tests/window.rs` hold each of them to that.
+- `sample-settings`: a Rust command that keeps a chosen greeting style in
+  Pane's settings ([Keeping settings](#keeping-settings)); the fixture for
+  disabling and re-enabling a package.
 - `js`: `@pane/extension`, TypeScript declarations for the contract
   (`pane.d.ts`) and the WIT world JS/TS commands are built against.
 - `prebuilt`: the JS and TS sample components, committed so that tests and
@@ -79,6 +82,39 @@ own command, make it a package and install it; see
 
 Toolchain used: Rust 1.98.1, `wit-bindgen` 0.62.0, `wasip3` 0.9.0+wasi-0.3.0;
 host Wasmtime and wasmtime-wasi 49.0.1.
+
+### Keeping settings
+
+A command of an installed package can keep string values between runs with
+`pane_guest::settings` (the `pane:extension/settings` interface in
+[`wit/settings.wit`](../wit/settings.wit)). The
+[settings sample](sample-settings/src/lib.rs) saves the greeting style the
+user picks:
+
+```rust
+use pane_guest::settings;
+
+settings::set("greeting-style", "formal")?;          // Result<(), String>
+let style: Option<String> = settings::get("greeting-style")?;
+```
+
+- Values belong to the installed package's source identity, not its title
+  or managed copy: two installed copies of the same package have separate
+  settings, and an update keeps them.
+- They are kept while the package is disabled and while Pane is not running,
+  and the command sees them again when the package is enabled. While it is
+  disabled nothing of the package runs, and once it is disabled a call still
+  finishing from before cannot save: `set` fails instead of writing.
+- Pane keeps them in `extensions/settings.json` in its data folder. If that
+  file cannot be read, `get` and `set` return the reason and Pane does not
+  overwrite the file.
+- A command built into Pane rather than installed from a package has no
+  settings: `get` and `set` return an error.
+- A component that does not import `settings` is unaffected; it is built for
+  the `extension` world as before. `extension-with-settings` adds the import
+  within extension API 0.1, so a component that uses settings needs a Pane
+  with this change. JavaScript and TypeScript commands cannot import
+  settings yet.
 
 ## Writing a JavaScript or TypeScript command
 
@@ -333,9 +369,20 @@ What installing does:
 - **Listing.** Installed commands are listed from the manifests alone; no
   guest runs until you open a command. A damaged installed copy stays listed
   with its problem.
+- **Disabling.** **Manage extensions…**, the last row of root search once a
+  package is installed, lists every installed package with whether it is
+  enabled and its source, so copies with the same title can be told apart.
+  Enter disables or enables the selected one; only that installation
+  changes. A disabled package's commands leave root search (they are not
+  shown greyed out), an open command of it closes, and its running
+  instances are dropped, so none of its code runs. The choice is recorded in
+  `installed.json` (`"disabled": true`) and holds after restarting Pane and
+  after an Update. Its settings are kept, and enabling it brings its
+  commands back with them. The package stays installed at the same identity;
+  choosing its folder again shows it as disabled.
 
-Disabling, uninstalling and rebuilding on save are not implemented yet; to
-pick up a rebuilt component, choose the folder again and Update.
+Uninstalling and rebuilding on save are not implemented yet; to pick up a
+rebuilt component, choose the folder again and Update.
 
 Known limits of local packages so far:
 
@@ -346,3 +393,9 @@ Known limits of local packages so far:
   replaced copy's code is dropped, so an open command of the package loses
   its state and may fail until you open it again from root search. Staged
   activation that waits for running commands comes with reload (#11, #14).
+- Disabling does not cancel a call already running in the package: it
+  finishes (its answer is discarded once its screen is gone, and it cannot
+  save settings), then its instance is dropped. Cancelling async work,
+  background services, timers and hotkeys are not part of the extension API
+  yet and come with their own tickets. Disabling does not yet consider
+  packages that depend on the disabled one (#43).
