@@ -530,6 +530,7 @@ impl Render for LauncherWindow {
             Screen::PauseDetails { .. } => ("", "Enter retry · Esc back"),
             Screen::BuildDetails { .. } => ("", "Enter build again · Esc back"),
         };
+        let confirm = matches!(view.screen, Screen::Confirm { .. });
         let details: Vec<_> = view
             .details()
             .iter()
@@ -614,8 +615,8 @@ impl Render for LauncherWindow {
             .bg(rgb(0x20252d))
             .text_color(rgb(0xf1f3f5))
             .child(div().text_xl().child(view.title.clone()))
-            // Long details scroll, leaving the rows at least half the
-            // window: a confirmation's rows stay visible.
+            // A confirmation's long details scroll within 40% of the
+            // window, leaving the rest to its choices, which stay visible.
             .when(!details.is_empty(), |root| {
                 root.child(
                     div()
@@ -623,9 +624,12 @@ impl Render for LauncherWindow {
                         .flex()
                         .flex_col()
                         .gap_2()
-                        .flex_shrink(1.)
-                        .max_h(relative(0.4))
-                        .overflow_y_scroll()
+                        .when(confirm, |details| {
+                            details
+                                .flex_shrink(1.)
+                                .max_h(relative(0.4))
+                                .overflow_y_scroll()
+                        })
                         .children(details),
                 )
             })
