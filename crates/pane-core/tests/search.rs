@@ -122,6 +122,51 @@ fn matching_ignores_letter_case_and_surrounding_spaces() {
 }
 
 #[test]
+fn spaces_inside_and_around_a_title_do_not_lower_its_rank() {
+    let launcher = without_runtime(vec![
+        command("Clear cache and history", None),
+        command("Settings for clear cache", None),
+        command("Clear  cache ", None),
+        command("Clear  cache  files", None),
+    ]);
+    launcher.set_query("clear cache");
+    // The whole title, then titles that start with the query, then a title
+    // with words starting with the query's.
+    assert_eq!(
+        titles(&launcher),
+        [
+            "Clear  cache ",
+            "Clear cache and history",
+            "Clear  cache  files",
+            "Settings for clear cache"
+        ]
+    );
+}
+
+#[test]
+fn composed_and_decomposed_accents_match_each_other() {
+    // "é" as one character (NFC) and as "e" plus a combining accent (NFD).
+    let launcher = without_runtime(vec![
+        command("Cafe\u{301} menu", None),
+        command("Résumé", None),
+        command("Directions", Some("To the café")),
+    ]);
+    launcher.set_query("café");
+    assert_eq!(titles(&launcher), ["Cafe\u{301} menu", "Directions"]);
+    launcher.set_query("RE\u{301}SUME\u{301}");
+    assert_eq!(titles(&launcher), ["Résumé"]);
+}
+
+#[test]
+fn searching_the_same_query_again_keeps_the_selection() {
+    let launcher = downloads();
+    launcher.set_query("download");
+    launcher.move_selection(1);
+    launcher.set_query("download");
+    assert_eq!(selected_title(&launcher).as_deref(), Some("Downloader"));
+}
+
+#[test]
 fn every_word_of_the_query_must_match() {
     let launcher = downloads();
     launcher.set_query("rec down");
@@ -357,6 +402,40 @@ fn an_installed_command_is_found_by_its_title_or_its_package_title() {
     // ("Enable or disable installed extensions") matches too, below.
     launcher.set_query("install");
     assert_eq!(titles(&launcher), [INSTALL_ROW, MANAGE_ROW]);
+}
+
+/// A manifest for a package titled `title` with one command titled
+/// `command` whose own subtitle is `subtitle`.
+fn manifest_with_subtitle(title: &str, command: &str, subtitle: &str) -> String {
+    format!(
+        r#"{{ "manifestVersion": 1, "title": "{title}", "apiVersion": "0.1",
+  "commands": [{{ "id": "hello", "title": "{command}", "subtitle": "{subtitle}", "component": "hello.wasm" }}] }}"#
+    )
+}
+
+#[test]
+fn a_command_with_its_own_subtitle_is_found_by_its_package_title_last() {
+    let dirs = Dirs::new();
+    let launcher = Launcher::with_packages(Ok(dirs.runtime()), vec![], dirs.packages_dir());
+    let weather = manifest_with_subtitle("Weather", "Forecast", "Five days ahead");
+    install(&launcher, &dirs.package("weather", &weather));
+    let maps = manifest_with_subtitle("Maps", "Radar", "Weather radar");
+    install(&launcher, &dirs.package("maps", &maps));
+
+    launcher.set_query("weather");
+    // A subtitle match ranks above a package title match.
+    assert_eq!(titles(&launcher), ["Radar", "Forecast"]);
+    let view = launcher.view();
+    assert_eq!(
+        view.rows[1].subtitle.as_deref(),
+        Some("Five days ahead"),
+        "the command still shows its own subtitle"
+    );
+    // Words may match the title, subtitle and package title together.
+    launcher.set_query("weather five");
+    assert_eq!(titles(&launcher), ["Forecast"]);
+    launcher.set_query("forecast weather");
+    assert_eq!(titles(&launcher), ["Forecast"]);
 }
 
 #[test]

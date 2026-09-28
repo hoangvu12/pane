@@ -24,7 +24,7 @@ use crate::runtime::{
     CallError, CustomViewInfo, CustomViewRole, FieldKind, FieldValue, Form, Frame, Point, Runtime,
     ViewEvent, ViewId,
 };
-use crate::search::{self, Query};
+use crate::search::{self, Keys, Query};
 use crate::settings::{PackageSettings, Settings};
 
 /// The id of the root row that installs a package from a local folder.
@@ -213,6 +213,9 @@ struct State {
     view: LauncherView,
     /// What activating each row of the current screen does.
     entries: Vec<Entry>,
+    /// Every root result in root search order, built when root search is
+    /// shown or refreshed, so that searching only ranks them.
+    root: Vec<RootResult>,
     /// The component of the command whose view is open.
     open: Option<PathBuf>,
     /// The form on screen, if one is open.
@@ -295,6 +298,14 @@ impl OpenCustomView {
     }
 }
 
+/// A result root search can list: its row, what activating it does, and
+/// its text as the query is matched against it.
+struct RootResult {
+    row: Row,
+    entry: Entry,
+    keys: Keys,
+}
+
 /// What activating a row does.
 #[derive(Clone)]
 enum Entry {
@@ -366,6 +377,7 @@ impl Launcher {
             // Replaced by root search below.
             view: LauncherView::new(Screen::Command, ""),
             entries: Vec::new(),
+            root: Vec::new(),
             open: None,
             form: None,
             custom_view: None,
@@ -420,13 +432,17 @@ impl Launcher {
     /// Searches root search for `query`: the rows become the root results
     /// that match it, best match first, and the best match is selected. An
     /// empty query lists every root result. Only metadata is searched: no
-    /// guest runs until the user invokes a result. Ignored on other screens.
+    /// guest runs until the user invokes a result. Ignored on other screens,
+    /// and when `query` is already the query.
     pub fn set_query(&self, query: &str) {
         let mut state = self.lock();
-        if !matches!(state.view.screen, Screen::Root { .. }) {
-            return;
+        match &state.view.screen {
+            Screen::Root { query: current } if current != query => {}
+            // Searching the same query again changes nothing, not even the
+            // selection.
+            _ => return,
         }
-        let (rows, entries) = self.root_rows(&state, query);
+        let (rows, entries) = root_rows(&state.root, query);
         state.view.screen = Screen::Root {
             query: query.to_owned(),
         };
@@ -845,7 +861,8 @@ impl Launcher {
     /// the installed packages' commands, then the install row. Selects the
     /// command with component `select` if given, else the first row.
     fn show_root(&self, state: &mut State, select: Option<PathBuf>) {
-        let (rows, entries) = self.root_rows(state, "");
+        state.root = self.root_results(state);
+        let (rows, entries) = root_rows(&state.root, "");
         let selected = select
             .and_then(|component| {
                 entries
@@ -881,8 +898,9 @@ impl Launcher {
             .selected
             .and_then(|index| state.view.rows.get(index))
             .map(|row| row.id.clone());
-        let query = state.view.query().unwrap_or_default().to_owned();
-        let (rows, entries) = self.root_rows(state, &query);
+        state.root = self.root_results(state);
+        let query = state.view.query().unwrap_or_default();
+        let (rows, entries) = root_rows(&state.root, query);
         let selected = selected_id
             .and_then(|id| rows.iter().position(|row| row.id == id))
             .or_else(|| first_index(&rows));
@@ -891,35 +909,16 @@ impl Launcher {
         state.view.selected = selected;
     }
 
-    /// The root results matching `query`, best match first, and what
-    /// activating each does.
-    fn root_rows(&self, state: &State, query: &str) -> (Vec<Row>, Vec<Entry>) {
-        let (rows, entries) = self.root_results(state);
-        let ranked = search::rank(
-            &Query::new(query),
-            rows.iter()
-                .map(|row| (row.title.as_str(), row.subtitle.as_deref())),
-        );
-        ranked
-            .into_iter()
-            .map(|index| (rows[index].clone(), entries[index].clone()))
-            .unzip()
-    }
-
-    /// Every root result, in root search order, and what activating each
-    /// does.
-    fn root_results(&self, state: &State) -> (Vec<Row>, Vec<Entry>) {
-        let mut rows = Vec::new();
-        let mut entries = Vec::new();
-        let mut add = |row: Row, entry: Entry| {
-            rows.push(row);
-            entries.push(entry);
+    /// Every root result, in root search order: this build's commands, the
+    /// enabled packages' commands, the packages that cannot load, then
+    /// Pane's own rows.
+    fn root_results(&self, state: &State) -> Vec<RootResult> {
+        let mut results = Vec::new();
+        let mut add = |row: Row, entry: Entry, package: Option<&str>| {
+            let keys = Keys::new(&row.title, row.subtitle.as_deref(), package);
+            results.push(RootResult { row, entry, keys });
         };
-        // A disabled package contributes nothing to root search.
-        let enabled = || state.packages.iter().filter(|package| package.enabled);
-        let built = self.commands.iter().cloned().map(|command| (command, None));
-        let installed = enabled().flat_map(InstalledPackage::available_commands);
-        for (command, unavailable) in built.chain(installed) {
+        let command = |(command, unavailable): (CommandRegistration, Option<String>)| {
             let entry = match &unavailable {
                 Some(reason) => Entry::Unavailable(reason.clone()),
                 None => Entry::Open(command.component),
@@ -930,7 +929,22 @@ impl Launcher {
                 subtitle: command.subtitle,
                 unavailable,
             };
-            add(row, entry);
+            (row, entry)
+        };
+        // A disabled package contributes nothing to root search.
+        let enabled = || state.packages.iter().filter(|package| package.enabled);
+        for built in self.commands.iter().cloned() {
+            let (row, entry) = command((built, None));
+            add(row, entry, None);
+        }
+        for package in enabled() {
+            // Its commands are found by its title too, even those that show
+            // a subtitle of their own.
+            let title = package.title();
+            for available in package.available_commands() {
+                let (row, entry) = command(available);
+                add(row, entry, Some(&title));
+            }
         }
         for package in enabled() {
             if let Err(error) = &package.manifest {
@@ -945,7 +959,7 @@ impl Launcher {
                     package.title(),
                     package.location.display()
                 );
-                add(row, Entry::Broken(problem));
+                add(row, Entry::Broken(problem), None);
             }
         }
         if self.installation.is_some() {
@@ -955,7 +969,7 @@ impl Launcher {
                 subtitle: Some("Choose a local extension package to install".into()),
                 unavailable: None,
             };
-            add(row, Entry::InstallFromFolder);
+            add(row, Entry::InstallFromFolder, None);
         }
         if self.installation.is_some() && !state.packages.is_empty() {
             let row = Row {
@@ -964,9 +978,9 @@ impl Launcher {
                 subtitle: Some("Enable or disable installed extensions".into()),
                 unavailable: None,
             };
-            add(row, Entry::Manage);
+            add(row, Entry::Manage, None);
         }
-        (rows, entries)
+        results
     }
 
     /// Sets the value of the open form's field `field_id`: a text field's
@@ -1557,6 +1571,16 @@ fn open_form(state: &mut State, item_id: String, form: Form) {
         submitting: false,
     });
     state.screen_generation += 1;
+}
+
+/// The rows of the `root` results matching `query`, best match first, and
+/// what activating each does.
+fn root_rows(root: &[RootResult], query: &str) -> (Vec<Row>, Vec<Entry>) {
+    let keys = root.iter().map(|result| &result.keys);
+    search::ranked_matches(&Query::new(query), keys)
+        .into_iter()
+        .map(|index| (root[index].row.clone(), root[index].entry.clone()))
+        .unzip()
 }
 
 /// Runs blocking file work on its own thread, so the caller's thread (the
