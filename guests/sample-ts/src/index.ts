@@ -1,9 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 //
-// Pane's sample command in TypeScript: a list with one action per item, and a
-// form. Items, titles, results and errors match the Rust sample
-// (guests/sample-rust) and the JavaScript sample.
-import type { Command, FieldValue, Form, FormError, View } from "@pane/extension";
+// Pane's sample command in TypeScript: a list with one action per item, a
+// form and a color picker the command draws itself. Items, titles, results,
+// errors and drawings match the Rust sample (guests/sample-rust) and the
+// JavaScript sample.
+import type {
+  Command,
+  CustomView,
+  FieldValue,
+  Form,
+  FormError,
+  Frame,
+  Key,
+  Shape,
+  View,
+  ViewEvent,
+} from "@pane/extension";
 import { waitFor } from "wasi:clocks/monotonic-clock@0.3.0";
 import * as z from "zod/mini";
 
@@ -49,6 +61,115 @@ const Greeting = z.object({
   greeting: z.enum(["hello", "morning", "welcome"], "Choose a greeting"),
 });
 
+/**
+ * The color picker's colors, [hue, light, medium, dark]: a column of swatches
+ * per hue, one row per shade.
+ */
+const COLORS: [string, number, number, number][] = [
+  ["Red", 0xef9a9a, 0xe53935, 0xb71c1c],
+  ["Orange", 0xffcc80, 0xfb8c00, 0xe65100],
+  ["Yellow", 0xfff59d, 0xfdd835, 0xf57f17],
+  ["Green", 0xa5d6a7, 0x43a047, 0x1b5e20],
+  ["Teal", 0x80cbc4, 0x00897b, 0x004d40],
+  ["Blue", 0x90caf9, 0x1e88e5, 0x0d47a1],
+  ["Purple", 0xce93d8, 0x8e24aa, 0x4a148c],
+  ["Pink", 0xf48fb1, 0xd81b60, 0x880e4f],
+];
+const SHADES = ["Light", "", "Dark"];
+/** A swatch's size, and the distance from one swatch to the next. */
+const SWATCH = 32;
+const STEP = 36;
+const COLUMNS = COLORS.length;
+const ROWS = SHADES.length;
+
+/** "#RRGGBB" for 0xRRGGBB. */
+const hex = (rgb: number) => `#${rgb.toString(16).padStart(6, "0").toUpperCase()}`;
+const clamp = (n: number, max: number) => Math.min(Math.max(n, 0), max);
+
+/** How each arrow key moves the choice, as (columns, rows). */
+const MOVES: Record<Exclude<Key, "home" | "end">, [number, number]> = {
+  left: [-1, 0],
+  right: [1, 0],
+  up: [0, -1],
+  down: [0, 1],
+};
+
+/**
+ * An open color picker: a grid of swatches and a preview of the chosen color.
+ * Arrow keys, Home and End move the choice; pressing or dragging the pointer
+ * over the grid chooses the swatch under it. Pane creates one per opened view
+ * (`openView`) and drops it when the view closes.
+ */
+class ColorPicker implements CustomView {
+  // Blue.
+  column = 5;
+  row = 1;
+  dragging = false;
+
+  async render(): Promise<Frame> {
+    const [hue, ...shades] = COLORS[this.column];
+    const chosen = shades[this.row];
+    const shade = SHADES[this.row];
+    const shapes: Shape[] = [
+      // A light frame around the chosen swatch.
+      { tag: "rect", val: { x: this.column * STEP, y: this.row * STEP, width: STEP, height: STEP, fill: 0xf1f3f5 } },
+    ];
+    COLORS.forEach(([, ...column], x) =>
+      column.forEach((fill, y) =>
+        shapes.push({
+          tag: "rect",
+          val: { x: x * STEP + 2, y: y * STEP + 2, width: SWATCH, height: SWATCH, fill },
+        }),
+      ),
+    );
+    shapes.push(
+      { tag: "rect", val: { x: COLUMNS * STEP + 12, y: 2, width: 64, height: 64, fill: chosen } },
+      { tag: "text", val: { x: COLUMNS * STEP + 12, y: 74, content: hex(chosen), color: 0xf1f3f5 } },
+    );
+    return {
+      width: COLUMNS * STEP + 88,
+      height: ROWS * STEP,
+      shapes,
+      value: `${shade ? `${shade} ${hue.toLowerCase()}` : hue}, ${hex(chosen)}`,
+    };
+  }
+
+  async handleEvent(event: ViewEvent): Promise<void> {
+    switch (event.tag) {
+      case "key":
+        if (event.val === "home") this.column = 0;
+        else if (event.val === "end") this.column = COLUMNS - 1;
+        else {
+          const [dx, dy] = MOVES[event.val];
+          this.column = clamp(this.column + dx, COLUMNS - 1);
+          this.row = clamp(this.row + dy, ROWS - 1);
+        }
+        break;
+      case "pointer-down": {
+        const { x, y } = event.val;
+        // Only a press on the grid chooses a swatch and starts a drag.
+        if (x >= 0 && x < COLUMNS * STEP && y >= 0 && y < ROWS * STEP) {
+          this.dragging = true;
+          this.choose(x, y);
+        }
+        break;
+      }
+      case "pointer-move":
+        if (this.dragging) this.choose(event.val.x, event.val.y);
+        break;
+      case "pointer-up":
+        this.dragging = false;
+        break;
+    }
+  }
+
+  /** Chooses the swatch nearest to `x`, `y`. */
+  choose(x: number, y: number) {
+    this.column = clamp(Math.floor(x / STEP), COLUMNS - 1);
+    this.row = clamp(Math.floor(y / STEP), ROWS - 1);
+  }
+}
+
 async function getView(): Promise<View> {
   return {
     title: "TypeScript sample",
@@ -58,6 +179,12 @@ async function getView(): Promise<View> {
       { id: "validate", title: "Validate settings", subtitle: "Reject settings with an out-of-range port" },
       { id: "random", title: "Roll a number", subtitle: "A random number from this instance" },
       { id: "form", title: "Greet someone", subtitle: "Fill in a form the guest checks", form: GREETING_FORM },
+      {
+        id: "color",
+        title: "Choose a color",
+        subtitle: "Pick a color in a view the guest draws",
+        customView: { title: "Choose a color", label: "Color", role: "color-well" },
+      },
     ],
   };
 }
@@ -100,4 +227,11 @@ async function submitForm(itemId: string, values: FieldValue[]): Promise<string>
   return `${GREETINGS[greeting]}, ${name}, from the TypeScript guest`;
 }
 
-export const command: Command = { getView, runAction, submitForm };
+async function openView(itemId: string): Promise<CustomView> {
+  if (itemId !== "color") {
+    throw new Error(`unknown view: ${itemId}`);
+  }
+  return new ColorPicker();
+}
+
+export const command: Command = { getView, runAction, submitForm, openView };

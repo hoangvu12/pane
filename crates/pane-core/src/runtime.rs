@@ -6,10 +6,11 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 
 use tokio::sync::{mpsc, oneshot};
-use wasmtime::component::{Component, Linker, ResourceTable};
+use wasmtime::component::{Component, Linker, ResourceAny, ResourceTable};
 use wasmtime::{Cache, CacheConfig, Config, Engine, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 
@@ -35,7 +36,92 @@ pub struct Item {
     /// When set, activating the item opens this form instead of running its
     /// action.
     pub form: Option<Form>,
+    /// When set (and `form` is not), activating the item opens this custom
+    /// view instead of running its action.
+    pub custom_view: Option<CustomViewInfo>,
 }
+
+/// What Pane shows of an item's custom view besides the view's drawing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CustomViewInfo {
+    /// The screen's title.
+    pub title: String,
+    /// Names the view to assistive technology.
+    pub label: String,
+    pub role: CustomViewRole,
+}
+
+/// What kind of control a custom view is to assistive technology.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CustomViewRole {
+    /// A color chooser; its frame's value names the chosen color.
+    ColorWell,
+}
+
+/// What a custom view shows: shapes painted in order over a
+/// `width` x `height` area of logical pixels.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Frame {
+    pub width: u32,
+    pub height: u32,
+    pub shapes: Vec<Shape>,
+    /// The view's current value for assistive technology.
+    pub value: String,
+}
+
+/// One thing a custom view draws. Coordinates are logical pixels from the
+/// view's top-left corner; colors are 0xRRGGBB.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Shape {
+    Rect {
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+        fill: u32,
+    },
+    /// One line of text, its top-left corner at `x`, `y`.
+    Text {
+        x: i32,
+        y: i32,
+        content: String,
+        color: u32,
+    },
+}
+
+/// A position in a custom view, in logical pixels from its top-left corner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Point {
+    pub x: i32,
+    pub y: i32,
+}
+
+/// The keys a focused custom view receives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Key {
+    Left,
+    Right,
+    Up,
+    Down,
+    Home,
+    End,
+}
+
+/// The user's input to a custom view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ViewEvent {
+    Key(Key),
+    /// The primary pointer button was pressed over the view.
+    PointerDown(Point),
+    /// The pointer moved while that button is held.
+    PointerMove(Point),
+    /// That button was released.
+    PointerUp(Point),
+}
+
+/// Identifies a custom view open in a [`Runtime`]. Ids are never reused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ViewId(u64);
 
 /// A form an item opens, as produced by the guest.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -108,6 +194,9 @@ pub enum CallError {
     Form(FormError),
     /// The guest trapped or otherwise failed while running.
     Trap(String),
+    /// The custom view was closed, or its guest instance has stopped, so it
+    /// cannot handle events any more.
+    ViewClosed,
 }
 
 impl fmt::Display for CallError {
@@ -129,6 +218,7 @@ impl fmt::Display for CallError {
             CallError::Guest(message) => write!(f, "The extension reported an error: {message}"),
             CallError::Form(error) => f.write_str(&error.message),
             CallError::Trap(reason) => write!(f, "The extension crashed: {reason}"),
+            CallError::ViewClosed => f.write_str("The extension's view is no longer open"),
         }
     }
 }
@@ -163,6 +253,22 @@ enum Request {
         item_id: String,
         values: Vec<FieldValue>,
         reply: oneshot::Sender<Result<String, CallError>>,
+    },
+    OpenView {
+        component: PathBuf,
+        item_id: String,
+        reply: oneshot::Sender<Result<(ViewId, Frame), CallError>>,
+    },
+    ViewEvent {
+        view: ViewId,
+        event: ViewEvent,
+        reply: oneshot::Sender<Result<Frame, CallError>>,
+    },
+    CloseView {
+        view: ViewId,
+    },
+    OpenViews {
+        reply: oneshot::Sender<usize>,
     },
 }
 
@@ -256,6 +362,59 @@ impl Runtime {
         response.await.unwrap_or_else(|_| Err(stopped()))
     }
 
+    /// Opens the custom view of `item_id` in the command in `component` and
+    /// draws it. The view stays open, holding its state in the guest, until
+    /// [`Runtime::close_view`] or until its instance stops.
+    pub async fn open_view(
+        &self,
+        component: &Path,
+        item_id: &str,
+    ) -> Result<(ViewId, Frame), CallError> {
+        let (reply, response) = oneshot::channel();
+        self.send(Request::OpenView {
+            component: component.to_path_buf(),
+            item_id: item_id.to_owned(),
+            reply,
+        })?;
+        response.await.unwrap_or_else(|_| Err(stopped()))
+    }
+
+    /// Has the open custom view `view` handle `event`, then draws it again.
+    /// A view that has closed answers [`CallError::ViewClosed`].
+    ///
+    /// The event is sent when this is called, not when the returned future
+    /// is first polled: events are handled one at a time, in the order of
+    /// these calls.
+    pub fn view_event(
+        &self,
+        view: ViewId,
+        event: ViewEvent,
+    ) -> impl Future<Output = Result<Frame, CallError>> + Send + 'static {
+        let (reply, response) = oneshot::channel();
+        let sent = self.send(Request::ViewEvent { view, event, reply });
+        async move {
+            sent?;
+            response.await.unwrap_or_else(|_| Err(stopped()))
+        }
+    }
+
+    /// Closes the custom view `view`: the guest's view is dropped, after any
+    /// event already sent to it, and later events are refused.
+    pub fn close_view(&self, view: ViewId) {
+        // A stopped runtime holds no views.
+        let _ = self.send(Request::CloseView { view });
+    }
+
+    /// How many custom views are open, counting the requests sent before
+    /// this call; for diagnostics and tests.
+    pub async fn open_views(&self) -> usize {
+        let (reply, response) = oneshot::channel();
+        if self.send(Request::OpenViews { reply }).is_err() {
+            return 0;
+        }
+        response.await.unwrap_or(0)
+    }
+
     /// Drops the compiled code and live instances of `components`, for
     /// example after their files were replaced or removed; a later call
     /// loads the file again. Calls made afterwards see the effect; a call
@@ -296,12 +455,23 @@ struct Instance {
     bindings: bindings::Extension,
 }
 
-/// Runtime-thread state: compiled components and their live instances.
+/// A custom view open in a guest instance.
+struct OpenView {
+    /// The component whose instance holds the view.
+    component: PathBuf,
+    /// The guest's `custom-view` resource.
+    resource: ResourceAny,
+}
+
+/// Runtime-thread state: compiled components, their live instances and the
+/// custom views open in them.
 struct Host {
     engine: Engine,
     linker: Linker<GuestState>,
     components: HashMap<PathBuf, Component>,
     instances: HashMap<PathBuf, Instance>,
+    views: HashMap<ViewId, OpenView>,
+    next_view: u64,
 }
 
 impl Host {
@@ -316,6 +486,8 @@ impl Host {
             linker,
             components: HashMap::new(),
             instances: HashMap::new(),
+            views: HashMap::new(),
+            next_view: 0,
         }
     }
 
@@ -340,7 +512,7 @@ impl Host {
                 Request::Forget { components } => {
                     for component in &components {
                         self.components.remove(component);
-                        self.instances.remove(component);
+                        self.drop_instance(component);
                     }
                 }
                 Request::SubmitForm {
@@ -351,6 +523,22 @@ impl Host {
                 } => {
                     let result = self.submit_form(&component, item_id, values).await;
                     let _ = reply.send(result);
+                }
+                Request::OpenView {
+                    component,
+                    item_id,
+                    reply,
+                } => {
+                    let result = self.open_view(&component, item_id).await;
+                    let _ = reply.send(result);
+                }
+                Request::ViewEvent { view, event, reply } => {
+                    let result = self.view_event(view, event).await;
+                    let _ = reply.send(result);
+                }
+                Request::CloseView { view } => self.close_view(view).await,
+                Request::OpenViews { reply } => {
+                    let _ = reply.send(self.views.len());
                 }
             }
         }
@@ -394,6 +582,94 @@ impl Host {
         })
     }
 
+    async fn open_view(
+        &mut self,
+        path: &Path,
+        item_id: String,
+    ) -> Result<(ViewId, Frame), CallError> {
+        let instance = self.instance(path).await?;
+        let command = instance.bindings.pane_extension_command();
+        let result = instance
+            .store
+            .run_concurrent(async |store| command.call_open_view(store, item_id).await)
+            .await;
+        let resource = self.settle(path, result, CallError::Guest)?;
+        let view = ViewId(self.next_view);
+        self.next_view += 1;
+        self.views.insert(
+            view,
+            OpenView {
+                component: path.to_path_buf(),
+                resource,
+            },
+        );
+        match self.render(view).await {
+            Ok(frame) => Ok((view, frame)),
+            Err(error) => {
+                self.close_view(view).await;
+                Err(error)
+            }
+        }
+    }
+
+    async fn view_event(&mut self, view: ViewId, event: ViewEvent) -> Result<Frame, CallError> {
+        let (path, resource) = self.view(view)?;
+        let instance = self.instance(&path).await?;
+        let custom_view = instance.bindings.pane_extension_command().custom_view();
+        let event = command::ViewEvent::from(event);
+        let result = instance
+            .store
+            .run_concurrent(async |store| {
+                custom_view.call_handle_event(store, resource, event).await
+            })
+            .await;
+        self.settle(&path, result, CallError::Guest)?;
+        self.render(view).await
+    }
+
+    /// Asks the guest to draw the open view `view`.
+    async fn render(&mut self, view: ViewId) -> Result<Frame, CallError> {
+        let (path, resource) = self.view(view)?;
+        let instance = self.instance(&path).await?;
+        let custom_view = instance.bindings.pane_extension_command().custom_view();
+        let result = instance
+            .store
+            .run_concurrent(async |store| custom_view.call_render(store, resource).await)
+            .await;
+        let frame = self.settle(&path, result.map(|frame| frame.map(Ok)), |never| never)?;
+        Ok(Frame::from(frame))
+    }
+
+    /// The component and guest resource of the open view `view`.
+    fn view(&self, view: ViewId) -> Result<(PathBuf, ResourceAny), CallError> {
+        let open = self.views.get(&view).ok_or(CallError::ViewClosed)?;
+        Ok((open.component.clone(), open.resource))
+    }
+
+    /// Drops the guest's view `view`, running its destructor.
+    async fn close_view(&mut self, view: ViewId) {
+        let Some(open) = self.views.remove(&view) else {
+            return;
+        };
+        if let Some(instance) = self.instances.get_mut(&open.component)
+            && open
+                .resource
+                .resource_drop_async(&mut instance.store)
+                .await
+                .is_err()
+        {
+            // The destructor trapped: the instance cannot be re-entered.
+            self.drop_instance(&open.component);
+        }
+    }
+
+    /// Drops the live instance of `path` and forgets the views open in it,
+    /// which went with it.
+    fn drop_instance(&mut self, path: &Path) {
+        self.instances.remove(path);
+        self.views.retain(|_, view| view.component != path);
+    }
+
     async fn run_action(&mut self, path: &Path, item_id: String) -> Result<String, CallError> {
         let instance = self.instance(path).await?;
         let command = instance.bindings.pane_extension_command();
@@ -416,7 +692,7 @@ impl Host {
         match outcome.and_then(|inner| inner) {
             Ok(result) => result.map_err(guest_error),
             Err(trap) => {
-                self.instances.remove(path);
+                self.drop_instance(path);
                 Err(CallError::Trap(format!("{trap:#}")))
             }
         }
@@ -485,6 +761,62 @@ impl From<command::Item> for Item {
             title: item.title,
             subtitle: item.subtitle,
             form: item.form.map(Form::from),
+            custom_view: item.custom_view.map(|info| CustomViewInfo {
+                title: info.title,
+                label: info.label,
+                role: match info.role {
+                    command::CustomViewRole::ColorWell => CustomViewRole::ColorWell,
+                },
+            }),
+        }
+    }
+}
+
+impl From<command::Frame> for Frame {
+    fn from(frame: command::Frame) -> Frame {
+        let shapes = frame
+            .shapes
+            .into_iter()
+            .map(|shape| match shape {
+                command::Shape::Rect(rect) => Shape::Rect {
+                    x: rect.x,
+                    y: rect.y,
+                    width: rect.width,
+                    height: rect.height,
+                    fill: rect.fill,
+                },
+                command::Shape::Text(text) => Shape::Text {
+                    x: text.x,
+                    y: text.y,
+                    content: text.content,
+                    color: text.color,
+                },
+            })
+            .collect();
+        Frame {
+            width: frame.width,
+            height: frame.height,
+            shapes,
+            value: frame.value,
+        }
+    }
+}
+
+impl From<ViewEvent> for command::ViewEvent {
+    fn from(event: ViewEvent) -> command::ViewEvent {
+        let point = |Point { x, y }| command::Point { x, y };
+        match event {
+            ViewEvent::Key(key) => command::ViewEvent::Key(match key {
+                Key::Left => command::Key::Left,
+                Key::Right => command::Key::Right,
+                Key::Up => command::Key::Up,
+                Key::Down => command::Key::Down,
+                Key::Home => command::Key::Home,
+                Key::End => command::Key::End,
+            }),
+            ViewEvent::PointerDown(at) => command::ViewEvent::PointerDown(point(at)),
+            ViewEvent::PointerMove(at) => command::ViewEvent::PointerMove(point(at)),
+            ViewEvent::PointerUp(at) => command::ViewEvent::PointerUp(point(at)),
         }
     }
 }

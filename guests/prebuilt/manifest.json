@@ -21,15 +21,15 @@
   "components": {
     "sample_js.wasm": {
       "source": "guests/sample-js",
-      "inputs_sha256": "8253d17d484d747d422708096c8f7067b9fea32330d16699723e72ca2991a55b",
-      "bytes": 4337115,
-      "sha256": "8427ec7216536aa1dc1d4bcc66d0e5bf659034c25211f87318d58b76b1ccc9d6"
+      "inputs_sha256": "7d60486d9d7766acc22051ee97e6af966645518d6442de915118d482076757fb",
+      "bytes": 4374452,
+      "sha256": "608b0d4989a707c7aefc70ef37a3cb97ba2f5e76b0f64aa8c9e0abe642401249"
     },
     "sample_ts.wasm": {
       "source": "guests/sample-ts",
-      "inputs_sha256": "2eb79a1e659fea781df7f2bca3637d866f88772ed8d56d9f97bca0d8602e7144",
-      "bytes": 4337240,
-      "sha256": "3328411945a340357c926ff287c707b622bfab512db17a989e977a708863d050"
+      "inputs_sha256": "22f9edc1c94ec3574baa7921bbabb55ea90af21c180907d3f0c8ff1987bc1b8c",
+      "bytes": 4382320,
+      "sha256": "b66966ec8f5eefe2668cca2a3376665c1ab25e775968af5b4ad16469287070d6"
     }
   }
 }

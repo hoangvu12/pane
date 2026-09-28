@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, prelude::*};
+use gpui::{Entity, Modifiers, MouseButton, TestAppContext, VisualTestContext, prelude::*, px};
 use pane::LauncherWindow;
 use pane_core::{CommandRegistration, Launcher, Runtime, Screen, Status};
 
@@ -246,6 +246,8 @@ for_each_sample!(
     a_validation_error_is_rendered,
     the_keyboard_fills_in_and_submits_the_form,
     a_rejected_field_shows_its_error_and_takes_focus,
+    keys_change_the_color_the_view_shows,
+    the_pointer_chooses_and_drags_across_swatches,
 );
 
 /// The label of the node assistive technology treats as focused.
@@ -552,4 +554,113 @@ fn assistive_technology_sees_the_list_the_selection_and_the_result(cx: &mut Test
         has(&nodes, "Status", "Waited 50 ms inside the Rust guest"),
         "{nodes:?}"
     );
+}
+
+/// Opens the sample's command and then its color picker ("Choose a color",
+/// the sixth item) with the keyboard.
+fn open_color(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) {
+    cx.simulate_keystrokes("enter");
+    wait_for_answer(window, cx);
+    cx.simulate_keystrokes("down down down down down enter");
+    let view = wait_for_answer(window, cx);
+    assert_eq!(
+        (view.screen, view.title.as_str()),
+        (Screen::CustomView, "Choose a color")
+    );
+}
+
+/// Waits until the open view shows `expected` as its value, which it does
+/// once the guest's answer to the last event has arrived.
+fn wait_for_color(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext, expected: &str) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        cx.run_until_parked();
+        let view = cx.read_entity(window, |window, _| window.launcher().view());
+        let shown = view.custom_view.map(|view| view.frame.value);
+        if shown.as_deref() == Some(expected) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the view shows {shown:?}, not {expected:?}; status {:?}",
+            view.status
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// The color picker's accessibility node.
+fn color_node(cx: &mut VisualTestContext) -> serde_json::Value {
+    node(&accessible_nodes(cx), "ColorWell", "Color").clone()
+}
+
+fn keys_change_the_color_the_view_shows(cx: &mut TestAppContext, sample: &Sample) {
+    let (window, cx) = open(cx, sample);
+    open_color(&window, cx);
+
+    // The view has keyboard focus, and assistive technology reads its value.
+    assert_eq!(focused_label(cx).as_deref(), Some("Color"));
+    assert_eq!(color_node(cx)["value"], "Blue, #1E88E5");
+    // The drawing itself adds no nodes: the view is one control.
+    let roles: Vec<String> = accessible_nodes(cx)
+        .iter()
+        .map(|node| node["role"].as_str().unwrap_or_default().to_owned())
+        .collect();
+    assert_eq!(
+        roles.iter().filter(|role| *role == "ColorWell").count(),
+        1,
+        "{roles:?}"
+    );
+    assert_eq!(
+        roles.len(),
+        3,
+        "the view, the status line and the window: {roles:?}"
+    );
+    assert!(
+        cx.debug_bounds("custom-view").is_some(),
+        "the view is drawn"
+    );
+
+    cx.simulate_keystrokes("right");
+    wait_for_color(&window, cx, "Purple, #8E24AA");
+    cx.simulate_keystrokes("down");
+    wait_for_color(&window, cx, "Dark purple, #4A148C");
+    cx.simulate_keystrokes("home");
+    wait_for_color(&window, cx, "Dark red, #B71C1C");
+    assert_eq!(color_node(cx)["value"], "Dark red, #B71C1C");
+
+    // The view is the screen's only tab stop, and Escape closes it.
+    cx.simulate_keystrokes("tab");
+    assert_eq!(focused_label(cx).as_deref(), Some("Color"));
+    cx.simulate_keystrokes("shift-tab");
+    assert_eq!(focused_label(cx).as_deref(), Some("Color"));
+    cx.simulate_keystrokes("escape");
+    let view = wait_for_answer(&window, cx);
+    assert_eq!((view.screen, view.selected), (Screen::Command, Some(5)));
+    assert_eq!(focused_label(cx).as_deref(), Some("Choose a color"));
+}
+
+fn the_pointer_chooses_and_drags_across_swatches(cx: &mut TestAppContext, sample: &Sample) {
+    let (window, cx) = open(cx, sample);
+    open_color(&window, cx);
+    let origin = cx
+        .debug_bounds("custom-view")
+        .expect("the view is drawn")
+        .origin;
+    let at = |x: f32, y: f32| origin + gpui::point(px(x), px(y));
+
+    cx.simulate_mouse_down(at(10.0, 10.0), MouseButton::Left, Modifiers::none());
+    wait_for_color(&window, cx, "Light red, #EF9A9A");
+    cx.simulate_mouse_move(at(80.0, 80.0), MouseButton::Left, Modifiers::none());
+    wait_for_color(&window, cx, "Dark yellow, #F57F17");
+    // Dragging on past the view's edge chooses the nearest swatch.
+    cx.simulate_mouse_move(at(120.0, -40.0), MouseButton::Left, Modifiers::none());
+    wait_for_color(&window, cx, "Light green, #A5D6A7");
+    cx.simulate_mouse_up(at(120.0, -40.0), MouseButton::Left, Modifiers::none());
+
+    // After the release, moving chooses nothing, and a click chooses again.
+    cx.simulate_mouse_move(at(260.0, 80.0), None, Modifiers::none());
+    cx.simulate_click(at(260.0, 80.0), Modifiers::none());
+    wait_for_color(&window, cx, "Dark pink, #880E4F");
+    assert_eq!(focused_label(cx).as_deref(), Some("Color"));
 }

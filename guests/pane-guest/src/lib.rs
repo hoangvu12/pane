@@ -24,8 +24,25 @@ wit_bindgen::generate!({
 });
 
 pub use exports::pane::extension::command::{
-    Choice, Field, FieldKind, FieldValue, Form, FormError, Guest, Item, TextField, View,
+    Choice, CustomView, CustomViewInfo, CustomViewRole, Field, FieldKind, FieldValue, Form,
+    FormError, Frame, Guest, GuestCustomView, Item, Key, Point, Rect, Shape, Text, TextField, View,
+    ViewEvent,
 };
+
+/// The custom view type of a command that has none: `type CustomView =
+/// NoCustomView;` in its `Guest` implementation, with an `open_view` that
+/// returns `Err`. It has no values, so no view of it can be opened.
+pub enum NoCustomView {}
+
+impl GuestCustomView for NoCustomView {
+    async fn render(&self) -> Frame {
+        match *self {}
+    }
+
+    async fn handle_event(&self, _event: ViewEvent) -> Result<(), alloc::string::String> {
+        match *self {}
+    }
+}
 
 #[global_allocator]
 static ALLOC: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;
