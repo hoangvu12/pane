@@ -10,7 +10,15 @@
 //! describes (`{"to", "operation", "input"}`, version 1) and answers its
 //! result; `crash` traps; `not-json` answers text that is not JSON;
 //! `remember` saves its input in the package's settings under `last`;
-//! `secret` answers, but tests leave it out of the manifest.
+//! Two items spin after saving `spin` as "started": they compute without
+//! yielding until Pane refuses them their settings (they were stopped), or
+//! for 20 seconds. One then tries to save `spin` as "finished" and call
+//! `b`'s `remember`, and answers; the other fails. Tests stop `a` while it
+//! spins: what it tries afterwards must be refused and its answer discarded.
+//!
+//! `wait` saves `waiting` as "started", waits ten seconds, then saves it as
+//! "finished" (tests stop it before); `secret` answers, but tests leave it
+//! and `wait` out of the manifest unless they need them.
 #![no_std]
 
 use futures::FutureExt;
@@ -27,7 +35,7 @@ pane_guest::publish::export!(Fixture);
 
 /// Each item: (title, the package it calls: a name in `sources` or a source
 /// as written, operation, version, input).
-const ITEMS: [(&str, &str, &str, u32, &str); 17] = [
+const ITEMS: [(&str, &str, &str, u32, &str); 20] = [
     ("Call b's echo", "b", "echo", 1, r#"{"hello":"world"}"#),
     ("Call b's echo at version 2", "b", "echo", 2, "{}"),
     ("Call b's secret", "b", "secret", 1, "{}"),
@@ -44,6 +52,15 @@ const ITEMS: [(&str, &str, &str, u32, &str); 17] = [
         r#""given up""#,
     ),
     ("Call c's echo", "c", "echo", 1, "{}"),
+    ("Call b's wait", "b", "wait", 1, "{}"),
+    (
+        "Spin, then save and call b's remember",
+        "b",
+        "remember",
+        1,
+        r#""from a spinning caller""#,
+    ),
+    ("Spin, then fail", "b", "echo", 1, "{}"),
     ("Call a missing package", "missing", "echo", 1, "{}"),
     (
         "Call a source that is not local",
@@ -90,6 +107,20 @@ fn chain(sources: &Value, from: u32) -> Value {
         "operation": "forward",
         "input": chain(sources, next),
     })
+}
+
+/// Saves `spin` as "started", then computes without yielding until reading
+/// its settings is refused, which happens once Pane has stopped it, or for
+/// 20 seconds.
+fn spin() -> Result<(), String> {
+    use wasip3::clocks::monotonic_clock::now;
+    settings::set("spin", "started")?;
+    let end = now() + 20_000_000_000;
+    while now() < end && settings::get("spin").is_ok() {
+        let next = now() + 1_000_000;
+        while now() < next {}
+    }
+    Ok(())
 }
 
 async fn call_as_text(
@@ -141,6 +172,16 @@ impl Guest for Fixture {
             _ => input.into(),
         };
         match title {
+            "Spin, then save and call b's remember" => {
+                spin()?;
+                let saved = settings::set("spin", "finished");
+                let called = call_as_text(&target, operation, version, input).await;
+                return Ok(format!("spun: saved {saved:?}, called {called:?}"));
+            }
+            "Spin, then fail" => {
+                spin()?;
+                return Err("failed after spinning".into());
+            }
             "Call b twice at once, which calls c" => {
                 // b forwards each to c's echo, so it is still waiting on c
                 // when Pane takes the second call.
@@ -196,6 +237,12 @@ impl publish::Guest for Fixture {
             "not-json" => Ok("not JSON".into()),
             "remember" => {
                 settings::set("last", &input)?;
+                Ok("true".into())
+            }
+            "wait" => {
+                settings::set("waiting", "started")?;
+                wasip3::clocks::monotonic_clock::wait_for(10_000_000_000).await;
+                settings::set("waiting", "finished")?;
                 Ok("true".into())
             }
             "secret" => Ok(r#""the secret""#.into()),

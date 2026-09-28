@@ -5,11 +5,15 @@
 // of each other kind of data: a note (content), the last greeting (cache) and
 // a sign-in token (credentials). Items, titles, results and errors match the
 // Rust settings sample (guests/sample-settings) and the JavaScript one.
+// "Save after waiting" notes in its settings that it started, waits ten
+// seconds, then notes that it finished: disabling or reloading the package
+// meanwhile stops the call, so it never finishes.
 import type { Command, CustomView, FormError, Item, View } from "@pane/extension";
 import { get, set } from "pane:extension/settings@0.1.0";
 import * as cache from "pane:extension/cache@0.1.0";
 import * as content from "pane:extension/content@0.1.0";
 import * as credentials from "pane:extension/credentials@0.1.0";
+import { waitFor } from "wasi:clocks/monotonic-clock@0.3.0";
 
 /** The settings key holding the chosen greeting style. */
 const STYLE = "greeting-style";
@@ -19,6 +23,10 @@ const NOTE = "note";
 const LAST_GREETING = "last-greeting";
 /** The credentials key holding the sign-in token. */
 const TOKEN = "token";
+/** The settings key where "Save after waiting" notes how far it got. */
+const SLOW_SAVE = "slow-save";
+/** How long "Save after waiting" waits, in nanoseconds. */
+const SLOW_WAIT = 10_000_000_000;
 
 const item = (id: string, title: string, subtitle: string): Item => ({ id, title, subtitle });
 
@@ -46,6 +54,7 @@ async function getView(): Promise<View> {
       item("note", "Save a note", "Kept in Pane as the extension's content"),
       item("sign-in", "Sign in", "Keeps a token as a local credential"),
       item("kept", "Show what Pane keeps", "Settings, content, cache and credential"),
+      item("slow", "Save after waiting", "Waits 10 seconds, then saves; disabling or reloading stops it"),
     ],
   };
 }
@@ -74,6 +83,13 @@ async function runAction(itemId: string): Promise<string> {
         `Signed in: ${credentials.get(TOKEN) === null ? "no" : "yes"}`,
         `Cached greeting: ${cache.get(LAST_GREETING) ?? "none"}`,
       ].join(" · ");
+    case "slow":
+      set(SLOW_SAVE, "started");
+      // The command suspends here; if Pane stops the call meanwhile, nothing
+      // after this line runs.
+      await waitFor(SLOW_WAIT);
+      set(SLOW_SAVE, "finished");
+      return "Saved after waiting 10 seconds";
     default:
       throw new Error(`unknown item: ${itemId}`);
   }

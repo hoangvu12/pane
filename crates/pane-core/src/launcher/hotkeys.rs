@@ -240,13 +240,16 @@ impl Launcher {
         let opening = component.map(|component| {
             self.show_root(&mut state, Some(component.clone()));
             state.view.status = Status::Running;
-            (state.screen_generation, component)
+            // Its data as the package is now, so a disable or reload
+            // meanwhile stops the opening.
+            let data = self.data_in(&state, &component);
+            (state.screen_epoch, component, data)
         });
         drop(state);
         let launcher = self.clone();
         async move {
-            if let Some((generation, component)) = opening {
-                launcher.open_command(generation, component).await;
+            if let Some((epoch, component, data)) = opening {
+                launcher.open_command(epoch, component, data).await;
             }
         }
     }
@@ -329,7 +332,7 @@ impl Launcher {
             ),
             None => (Vec::new(), Vec::new()),
         };
-        state.screen_generation += 1;
+        state.screen_epoch += 1;
         state.entries = entries;
         let screen = Screen::Hotkey {
             command: command.to_owned(),
@@ -411,7 +414,7 @@ impl Launcher {
             previous,
             record,
             done: format!("{shortcut} now opens {title}"),
-            generation: state.screen_generation,
+            epoch: state.screen_epoch,
         })
     }
 
@@ -429,7 +432,7 @@ impl Launcher {
             previous,
             record,
             done: format!("{title} has no hotkey now"),
-            generation: state.screen_generation,
+            epoch: state.screen_epoch,
         })
     }
 
@@ -440,7 +443,7 @@ impl Launcher {
             previous,
             record,
             done,
-            generation,
+            epoch,
         } = change;
         let saved = off_thread(move || save(record)).await;
         let mut state = self.lock();
@@ -456,7 +459,7 @@ impl Launcher {
                 Status::Error(format!("Could not keep the hotkey: {problem}"))
             }
         };
-        if state.screen_generation == generation {
+        if state.screen_epoch == epoch {
             state.view.status = status;
         }
     }
@@ -490,5 +493,5 @@ pub(super) struct HotkeyChange {
     record: Result<(PathBuf, String), String>,
     /// The outcome once recorded.
     done: String,
-    generation: u64,
+    epoch: u64,
 }

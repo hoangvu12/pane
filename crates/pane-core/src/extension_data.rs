@@ -17,7 +17,7 @@
 //! never by running the package. An unreadable file is reported to the guest
 //! and never overwritten.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -26,6 +26,7 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 
 use crate::atomic::{Readers, write_atomically};
+use crate::generation::{End, Generation};
 use crate::packages::PackageIdentity;
 
 /// The version of every kind's file.
@@ -114,17 +115,18 @@ impl KindFile {
     }
 }
 
-/// Every kind's file, as Pane last read or wrote it, and which packages are
-/// disabled.
+/// Every kind's file, as Pane last read or wrote it, and each package's
+/// current generation.
 struct DataFile {
     settings: KindFile,
     content: KindFile,
     cache: KindFile,
     local_credentials: KindFile,
-    /// Identity keys of disabled packages, whose commands may not run or
-    /// save values. The launcher keeps it in step with its packages; the
-    /// runtime reads it here, on its own thread.
-    disabled: HashSet<String>,
+    /// The current generation of each package by identity key; a disabled
+    /// package's has ended, so its commands may not run or save values. The
+    /// launcher keeps it in step with its packages; the runtime reads it
+    /// here, on its own thread.
+    generations: HashMap<String, Generation>,
 }
 
 impl DataFile {
@@ -152,26 +154,56 @@ impl ExtensionData {
             content: KindFile::open(dir, DataKind::Content),
             cache: KindFile::open(dir, DataKind::Cache),
             local_credentials: KindFile::open(dir, DataKind::LocalCredentials),
-            disabled: HashSet::new(),
+            generations: HashMap::new(),
         })))
     }
 
-    /// The data of the package with `identity`, as its commands see it.
+    /// The data of the package with `identity`, as its commands see it,
+    /// in the package's current generation: a call made with it belongs to
+    /// that generation.
     pub fn owned_by(&self, identity: &PackageIdentity) -> PackageData {
+        let owner = identity.key();
+        let generation = self
+            .lock()
+            .generations
+            .entry(owner.clone())
+            .or_insert_with(Generation::new)
+            .clone();
         PackageData {
             data: self.clone(),
-            owner: identity.key(),
+            owner,
+            generation,
         }
     }
 
-    /// Records whether the package with `identity` is enabled; a disabled
-    /// package's commands cannot run or save values.
+    /// Records whether the package with `identity` is enabled. Disabling it
+    /// ends its generation, which stops its pending calls; enabling it again
+    /// starts a new one.
     pub fn set_enabled(&self, identity: &PackageIdentity, enabled: bool) {
         let mut file = self.lock();
-        if enabled {
-            file.disabled.remove(&identity.key());
-        } else {
-            file.disabled.insert(identity.key());
+        let current = file
+            .generations
+            .entry(identity.key())
+            .or_insert_with(Generation::new);
+        if !enabled {
+            current.end(End::Disabled);
+        } else if current.ended().is_some() {
+            *current = Generation::new();
+        }
+    }
+
+    /// Notes that the code of the package with `identity` was replaced (a
+    /// reload or an update): its generation ends, which stops its pending
+    /// calls, and an enabled package's new code runs in a new one. A
+    /// disabled package stays disabled.
+    pub fn replace_code(&self, identity: &PackageIdentity) {
+        let mut file = self.lock();
+        let Some(current) = file.generations.get_mut(&identity.key()) else {
+            return;
+        };
+        if current.ended().is_none() {
+            current.end(End::Replaced);
+            *current = Generation::new();
         }
     }
 
@@ -221,16 +253,39 @@ impl ExtensionData {
 pub(crate) struct PackageData {
     data: ExtensionData,
     owner: String,
+    /// The generation the call using it belongs to.
+    generation: Generation,
 }
 
 impl PackageData {
-    /// Whether the package is disabled, so its commands may not run.
-    pub fn is_disabled(&self) -> bool {
-        self.data.lock().disabled.contains(&self.owner)
+    /// The generation of the package's code this data was handed out in.
+    pub fn generation(&self) -> &Generation {
+        &self.generation
     }
 
-    /// The value of `kind` saved under `key`, if any.
+    /// Why this data's generation ended, if it has: its commands may no
+    /// longer run or save values.
+    pub fn stopped(&self) -> Option<End> {
+        self.generation.ended()
+    }
+
+    /// Why code of this data's generation may no longer read or save
+    /// values, if its generation has ended.
+    fn refusal(&self) -> Option<&'static str> {
+        match self.stopped()? {
+            End::Disabled => Some("the extension is disabled"),
+            End::Replaced => {
+                Some("this code of the extension was replaced by a reload or an update")
+            }
+        }
+    }
+
+    /// The value of `kind` saved under `key`, if any, unless this data's
+    /// generation has ended: stopped code reads nothing more either.
     pub fn get(&self, kind: DataKind, key: &str) -> Result<Option<String>, String> {
+        if let Some(refusal) = self.refusal() {
+            return Err(refusal.into());
+        }
         let mut store = self.data.lock();
         let file = store.of(kind).file.as_ref().map_err(Clone::clone)?;
         Ok(file
@@ -240,14 +295,12 @@ impl PackageData {
             .cloned())
     }
 
-    /// Saves `value` of `kind` under `key`, unless the package is disabled.
+    /// Saves `value` of `kind` under `key`, unless this data's generation
+    /// has ended: code that was disabled or replaced saves nothing more.
     pub fn set(&self, kind: DataKind, key: &str, value: &str) -> Result<(), String> {
         let mut store = self.data.lock();
-        if store.disabled.contains(&self.owner) {
-            return Err(format!(
-                "the extension is disabled; {}",
-                kind.kept_unchanged()
-            ));
+        if let Some(refusal) = self.refusal() {
+            return Err(format!("{refusal}; {}", kind.kept_unchanged()));
         }
         let data = store.of(kind);
         let file = data.file.as_ref().map_err(Clone::clone)?;
@@ -286,4 +339,52 @@ fn read(path: &Path) -> Result<DataJson, String> {
         Err(error) => Err(error.to_string()),
     }
     .map_err(|reason| format!("Cannot read {}: {reason}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Code whose generation ended reads and saves nothing more, even though a newer
+    /// generation of the same package may.
+    #[test]
+    fn replaced_or_disabled_code_reads_and_saves_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = ExtensionData::open(dir.path());
+        let identity = PackageIdentity::local(dir.path()).unwrap();
+        let old = data.owned_by(&identity);
+
+        data.replace_code(&identity);
+        let new = data.owned_by(&identity);
+
+        assert_eq!(
+            old.set(DataKind::Settings, "key", "old"),
+            Err(
+                "this code of the extension was replaced by a reload or an update; its \
+                 settings are kept unchanged"
+                    .into()
+            )
+        );
+        assert_eq!(
+            old.get(DataKind::Settings, "key"),
+            Err("this code of the extension was replaced by a reload or an update".into())
+        );
+        assert_eq!(new.set(DataKind::Settings, "key", "new"), Ok(()));
+        data.set_enabled(&identity, false);
+        assert_eq!(
+            new.set(DataKind::Content, "key", "late"),
+            Err("the extension is disabled; its content is kept unchanged".into())
+        );
+        assert_eq!(
+            new.get(DataKind::Settings, "key"),
+            Err("the extension is disabled".into())
+        );
+        data.set_enabled(&identity, true);
+        assert!(new.stopped().is_some());
+        assert_eq!(data.owned_by(&identity).stopped(), None);
+        assert_eq!(
+            data.owned_by(&identity).get(DataKind::Settings, "key"),
+            Ok(Some("new".into()))
+        );
+    }
 }

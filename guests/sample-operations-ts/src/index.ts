@@ -13,6 +13,11 @@
 // `greet` version 1 takes `{"name": "<name>"}` and answers
 // `{"greeting": "Hello, <name>, from TypeScript"}`, or the error "a name is
 // needed".
+//
+// `wait` version 1 shows a call Pane stops: it saves `waiting` as "started"
+// in its settings, waits ten seconds, saves "finished" and answers
+// `{"waited": true}`. Disabling or reloading either package meanwhile stops
+// it; the "wait" item calls it.
 import type {
   Command,
   CustomView,
@@ -23,6 +28,8 @@ import type {
   View,
 } from "@pane/extension";
 import { call, type CallError } from "pane:extension/operations@0.1.0";
+import { set } from "pane:extension/settings@0.1.0";
+import { waitFor } from "wasi:clocks/monotonic-clock@0.3.0";
 
 /** `greet`'s input and result, version 1. */
 interface GreetInput {
@@ -76,6 +83,18 @@ const greetForm: Form = {
   submitLabel: "Greet",
 };
 
+const waitForm: Form = {
+  title: "Wait in another extension",
+  fields: [
+    {
+      id: "source",
+      label: "Package source",
+      kind: { tag: "text", val: { placeholder: "local:/path/to/sample-operations" } },
+    },
+  ],
+  submitLabel: "Wait",
+};
+
 async function getView(): Promise<View> {
   return {
     title: "Call from TypeScript",
@@ -86,6 +105,12 @@ async function getView(): Promise<View> {
         subtitle: "Calls its greet operation through Pane",
         form: greetForm,
       },
+      {
+        id: "wait",
+        title: "Wait in another extension",
+        subtitle: "Calls its wait operation, which takes ten seconds",
+        form: waitForm,
+      },
     ],
   };
 }
@@ -95,13 +120,22 @@ async function runAction(itemId: string): Promise<string> {
 }
 
 async function submitForm(itemId: string, values: FieldValue[]): Promise<string> {
-  if (itemId !== "greet") {
+  if (itemId !== "greet" && itemId !== "wait") {
     throw { message: `unknown form: ${itemId}` } satisfies FormError;
   }
   const value = (id: string) => values.find((field) => field.id === id)?.value ?? "";
   const source = value("source").trim();
   if (source === "") {
     throw { field: "source", message: "Enter the package's source" } satisfies FormError;
+  }
+  if (itemId === "wait") {
+    try {
+      await call(source, "wait", 1, "{}");
+    } catch (error) {
+      const { kind, message } = (error as { payload: CallError }).payload;
+      throw { message: `${kind}: ${message}` } satisfies FormError;
+    }
+    return "Waited in the other extension";
   }
   const name = value("name");
   try {
@@ -121,6 +155,13 @@ async function openView(itemId: string): Promise<CustomView> {
 }
 
 async function runOperation(operation: string, input: string): Promise<string> {
+  if (operation === "wait") {
+    set("waiting", "started");
+    // If Pane stops the call meanwhile, nothing after this runs.
+    await waitFor(10_000_000_000);
+    set("waiting", "finished");
+    return JSON.stringify({ waited: true });
+  }
   if (operation !== "greet") {
     throw new Error(`unknown operation: ${operation}`);
   }
