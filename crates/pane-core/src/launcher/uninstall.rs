@@ -85,7 +85,7 @@ impl Launcher {
             subtitle: Some(subtitle.into()),
             unavailable: None,
         };
-        state.screen_epoch += 1;
+        state.next_screen();
         state.entries = vec![
             Entry::Uninstall(identity.clone(), SavedData::Keep),
             Entry::Uninstall(identity.clone(), SavedData::Delete),

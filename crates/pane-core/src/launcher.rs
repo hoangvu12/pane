@@ -16,7 +16,9 @@
 //! in the runtime, and its answer is never shown, even on a screen that is
 //! still current. Leaving a screen only discards its replies; it does not
 //! stop the call. So does pausing a package that keeps failing (see
-//! `pausing`).
+//! `pausing`). The one exception is root search's own calls for results
+//! computed from the query: a search owns them, so a newer query, or
+//! leaving root search, cancels those still pending.
 
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
@@ -385,6 +387,10 @@ struct State {
     /// Incremented on every search, so that an answer arriving for an
     /// earlier search, even of the same query, is discarded.
     search_epoch: u64,
+    /// Kept while the current search's calls for computed results may run:
+    /// dropping it, when the query changes or root search is left, cancels
+    /// those still pending (see [`State::next_screen`]).
+    search_alive: Option<tokio::sync::oneshot::Sender<()>>,
     /// The component of the command whose view is open.
     open: Option<PathBuf>,
     /// The form on screen, if one is open.
@@ -524,6 +530,14 @@ impl State {
     fn release(&mut self, identity: &PackageIdentity) {
         self.changing.remove(identity);
     }
+
+    /// Notes that the user left the screen on display: replies for it are
+    /// discarded from now on, and root search's pending calls for computed
+    /// results are cancelled.
+    fn next_screen(&mut self) {
+        self.screen_epoch += 1;
+        self.search_alive = None;
+    }
 }
 
 /// An enabling or disabling that has taken effect and is being recorded:
@@ -623,6 +637,8 @@ enum Entry {
     Copy(String),
     /// Open this web address with the link opener (root).
     OpenUrl(String),
+    /// Open this file with the link opener's handler for files (root).
+    OpenFile(String),
     /// Open the installed application `id`, named `name` (root).
     OpenApplication { id: String, name: String },
     /// Open the command with this component (root).
@@ -771,6 +787,7 @@ impl Launcher {
             computed: Vec::new(),
             indexes: indexed::Indexes::default(),
             search_epoch: 0,
+            search_alive: None,
             open: None,
             form: None,
             custom_view: None,
@@ -935,15 +952,19 @@ impl Launcher {
     /// listed.
     pub fn set_query(&self, query: &str) -> impl Future<Output = ()> + Send + 'static {
         let mut state = self.lock();
-        let (asked, indexing) = match &state.view.screen {
+        let (asked, indexing, cancelled) = match &state.view.screen {
             Screen::Root { query: current } if current != query => {
-                self.search(&mut state, query);
+                let cancelled = self.search(&mut state, query);
                 let indexing = self.ask_for_indexed_results(&mut state, query);
-                (self.ask_for_root_results(&state, query), indexing)
+                (
+                    self.ask_for_root_results(&state, query),
+                    indexing,
+                    Some(cancelled),
+                )
             }
             // Searching the same query again changes nothing, not even the
             // selection.
-            _ => (Vec::new(), Vec::new()),
+            _ => (Vec::new(), Vec::new(), None),
         };
         let query = query.to_owned();
         let epoch = state.screen_epoch;
@@ -951,9 +972,9 @@ impl Launcher {
         drop(state);
         let launcher = self.clone();
         async move {
-            if !asked.is_empty() {
+            if let Some(cancelled) = cancelled.filter(|_| !asked.is_empty()) {
                 launcher
-                    .show_root_results(epoch, search, query, asked)
+                    .show_root_results(epoch, search, query, asked, cancelled)
                     .await
             }
             launcher.show_indexed_results(indexing).await;
@@ -1052,9 +1073,14 @@ impl Launcher {
     }
 
     /// Shows the root results matching `query` from metadata alone; results
-    /// computed for an earlier query are gone.
-    fn search(&self, state: &mut State, query: &str) {
+    /// computed for an earlier query are gone, and the calls still asking
+    /// for them are cancelled. Returns what resolves once this search is
+    /// replaced too, or root search is left.
+    fn search(&self, state: &mut State, query: &str) -> tokio::sync::oneshot::Receiver<()> {
         state.search_epoch += 1;
+        let (alive, cancelled) = tokio::sync::oneshot::channel();
+        // Dropping the earlier search's cancels its pending calls.
+        state.search_alive = Some(alive);
         state.computed.clear();
         // A command's answer to the query sent is not an answer to this one.
         if state.sent_from.take().is_some_and(|sent| sent != query) {
@@ -1067,6 +1093,7 @@ impl Launcher {
         state.view.selected = aliases::first_choice(&entries);
         state.view.rows = rows;
         state.entries = entries;
+        cancelled
     }
 
     /// The enabled commands that compute root results, each with its
@@ -1101,23 +1128,28 @@ impl Launcher {
     /// lists each one's as soon as it answers, unless the query, the search
     /// or the screen has changed meanwhile.
     ///
-    /// The runtime serves calls one at a time, so a command that is slow or
-    /// hangs still delays the commands asked after it (cancellation and
-    /// timeouts are #29 and #18); it no longer hides the answers of those
-    /// asked before it.
+    /// Once `cancelled` resolves (the search was replaced, or root search
+    /// was left), the pending call is dropped, which cancels it in the
+    /// runtime, and no further command is asked. The runtime serves calls one
+    /// at a time, so a command that is slow or hangs still delays the
+    /// commands asked after it until then (timeouts are #18); it no longer
+    /// hides the answers of those asked before it.
     async fn show_root_results(
         &self,
         epoch: u64,
         search: u64,
         query: String,
         commands: Vec<(CommandRegistration, Option<PackageData>)>,
+        mut cancelled: tokio::sync::oneshot::Receiver<()>,
     ) {
         for (command, data) in commands {
             let answer = match self.runtime() {
                 Ok(runtime) => {
-                    runtime
-                        .root_results_with(&command.component, &query, data.clone())
-                        .await
+                    let call = runtime.root_results_with(&command.component, &query, data.clone());
+                    match until_cancelled(call, &mut cancelled).await {
+                        Some(answer) => answer,
+                        None => return,
+                    }
                 }
                 Err(error) => Err(error),
             };
@@ -1182,7 +1214,7 @@ impl Launcher {
         match &state.view.screen {
             Screen::Form(_) => {
                 let form = state.form.take().expect("a form is open");
-                state.screen_epoch += 1;
+                state.next_screen();
                 state.view = LauncherView {
                     status: Status::Idle,
                     ..form.return_to
@@ -1274,6 +1306,17 @@ impl Launcher {
                 None => {
                     state.view.status = Status::Running;
                     Some(Entry::OpenUrl(url))
+                }
+            },
+            Some(Entry::OpenFile(path)) => match links::file_refusal(&path) {
+                Some(reason) => {
+                    let name = links::file_name(&path);
+                    state.view.status = Status::Error(format!("Could not open {name}: {reason}"));
+                    None
+                }
+                None => {
+                    state.view.status = Status::Running;
+                    Some(Entry::OpenFile(path))
                 }
             },
             Some(Entry::Manage) => {
@@ -1435,6 +1478,7 @@ impl Launcher {
                     }
                 }
                 Some(Entry::OpenUrl(url)) => launcher.open_url(epoch, url).await,
+                Some(Entry::OpenFile(path)) => launcher.open_file(epoch, path).await,
                 Some(Entry::ClearCache(identity)) => launcher.clear_cache(epoch, identity).await,
                 Some(Entry::CustomView(item_id, info)) => {
                     if let Some(component) = open {
@@ -2243,7 +2287,7 @@ impl Launcher {
             subtitle: Some("Start it again".into()),
             unavailable: None,
         };
-        state.screen_epoch += 1;
+        state.next_screen();
         state.entries = vec![Entry::Retry(identity.clone())];
         let screen = Screen::PauseDetails {
             identity: identity.clone(),
@@ -2263,7 +2307,7 @@ impl Launcher {
             subtitle: Some(subtitle.into()),
             unavailable: None,
         };
-        state.screen_epoch += 1;
+        state.next_screen();
         state.entries = vec![Entry::ClearCache(identity.clone()), Entry::Cancel];
         let details = vec![
             format!("From {identity}"),
@@ -2438,7 +2482,7 @@ impl Launcher {
                     moves_in_flight: 0,
                     waiting_move: None,
                 });
-                state.screen_epoch += 1;
+                state.next_screen();
             }
             Err(error) => state.view.status = Status::Error(error.to_string()),
         }
@@ -2561,7 +2605,7 @@ impl Launcher {
     /// from, with `status`, as a new screen.
     fn return_from_custom_view(&self, state: &mut State, status: Status) {
         let return_to = self.close_custom_view(state).expect("a view is open");
-        state.screen_epoch += 1;
+        state.next_screen();
         state.view = LauncherView {
             status,
             ..return_to
@@ -2575,7 +2619,7 @@ impl Launcher {
         self.close_custom_view(state);
         state.open = None;
         state.form = None;
-        state.screen_epoch += 1;
+        state.next_screen();
     }
 
     /// Closes the open custom view, if there is one, and returns the command
@@ -2602,6 +2646,26 @@ impl Launcher {
         state.view.status = match opened {
             Ok(()) => Status::Result(format!("Opened {url}")),
             Err(reason) => Status::Error(format!("Could not open {url}: {reason}")),
+        };
+    }
+
+    /// Opens the file `path` with the link opener's handler for files, off
+    /// the calling thread, once it is checked to be a file that still
+    /// exists, and reports the outcome while the screen is the one it was
+    /// opened from. The status names the file, not its folders.
+    async fn open_file(&self, epoch: u64, path: String) {
+        let links = self.links.clone();
+        let opened = {
+            let path = path.clone();
+            off_thread(move || links::open_file(&*links, &path)).await
+        };
+        let Some(mut state) = self.lock_if_current(epoch) else {
+            return;
+        };
+        let name = links::file_name(&path);
+        state.view.status = match opened {
+            Ok(()) => Status::Result(format!("Opened {name}")),
+            Err(reason) => Status::Error(format!("Could not open {name}: {reason}")),
         };
     }
 
@@ -2735,7 +2799,7 @@ impl Launcher {
                     .unzip();
                 state.entries = entries;
                 state.open = Some(component);
-                state.screen_epoch += 1;
+                state.next_screen();
                 state.view = LauncherView::new(Screen::Command, view.title).with_rows(rows);
             }
             Err(error) => state.view.status = Status::Error(error.to_string()),
@@ -3085,14 +3149,14 @@ fn open_form(state: &mut State, item_id: String, form: Form) {
         return_to,
         submitting: false,
     });
-    state.screen_epoch += 1;
+    state.next_screen();
 }
 
 /// The rows of root search for `query`, and what activating each does: the
 /// results computed from it, then the root results matching it, best match
 /// first, with, for a query that is not blank, those supplied ahead of it
-/// (after the others of the same rank), then the rows explaining why a
-/// command could not supply them.
+/// (after the others of the same rank), then the computed results that open
+/// a file, then the rows explaining why a command could not supply them.
 fn root_rows(state: &State, query: &str) -> (Vec<Row>, Vec<Entry>) {
     let blank = query.trim().is_empty();
     let candidates: Vec<&RootResult> = state
@@ -3119,18 +3183,21 @@ fn root_rows(state: &State, query: &str) -> (Vec<Row>, Vec<Entry>) {
         .failures()
         .filter(|_| !blank)
         .map(|(row, entry)| (row.clone(), entry.clone()));
+    let (files, computed): (Vec<&Computed>, Vec<&Computed>) = state
+        .computed
+        .iter()
+        .partition(|computed| matches!(computed.entry, Entry::OpenFile(_)));
+    let computed_row = |computed: &Computed| (computed.row.clone(), computed.entry.clone());
     // What the user's alias names comes first, even before computed
-    // results; the fallbacks, which the user must choose, come last.
+    // results; files found for the query follow what is found by title,
+    // since a folder can hold many; the fallbacks, which the user must
+    // choose, come last.
     aliases::rows_sending_after_alias(state, query)
         .into_iter()
         .chain(by_alias.into_iter().map(found))
-        .chain(
-            state
-                .computed
-                .iter()
-                .map(|computed| (computed.row.clone(), computed.entry.clone())),
-        )
+        .chain(computed.into_iter().map(computed_row))
         .chain(matches.into_iter().map(found))
+        .chain(files.into_iter().map(computed_row))
         .chain(failures)
         .chain(aliases::fallback_rows(state, query))
         .unzip()
@@ -3179,6 +3246,7 @@ fn computed_results(
                 let entry = match result.action {
                     RootAction::Copy(text) => Entry::Copy(text),
                     RootAction::OpenUrl(url) => Entry::OpenUrl(url),
+                    RootAction::OpenFile(path) => Entry::OpenFile(path),
                 };
                 computed(row, entry)
             })
@@ -3194,6 +3262,22 @@ fn computed_results(
             vec![computed(row, Entry::Broken(problem))]
         }
     }
+}
+
+/// Awaits `call`, unless `cancelled` resolves first (its sender was used or
+/// dropped): then `call` is dropped unfinished, and the answer is `None`.
+async fn until_cancelled<T>(
+    call: impl Future<Output = T>,
+    cancelled: &mut tokio::sync::oneshot::Receiver<()>,
+) -> Option<T> {
+    let mut call = std::pin::pin!(call);
+    std::future::poll_fn(|cx| {
+        if Pin::new(&mut *cancelled).poll(cx).is_ready() {
+            return std::task::Poll::Ready(None);
+        }
+        call.as_mut().poll(cx).map(Some)
+    })
+    .await
 }
 
 /// Runs blocking file work on its own thread, so the caller's thread (the

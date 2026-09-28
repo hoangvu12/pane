@@ -64,10 +64,12 @@ SAMPLES = [
     ("sample_query_ts.wasm", "guests/sample-query-ts"),
     ("sample_helper_js.wasm", "guests/sample-helper-js"),
     ("sample_helper_ts.wasm", "guests/sample-helper-ts"),
+    ("sample_files_js.wasm", "guests/sample-files-js"),
+    ("sample_files_ts.wasm", "guests/sample-files-ts"),
 ]
 # Pane's WIT, copied beside the world in guests/js/wit.
 PANE_WIT = ["extension.wit", "data.wit", "root-results.wit", "operations.wit", "applications.wit", "query.wit",
-            "helpers.wit"]
+            "helpers.wit", "files.wit"]
 # Toolchain inputs that decide what a component contains.
 TOOL_INPUTS = ["pins.json", "package.json", "package-lock.json", "bundle.mjs", "p3_build.rs", "patches"]
 SKIP_DIRS = {"node_modules", ".git"}

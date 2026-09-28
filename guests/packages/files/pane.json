@@ -1,0 +1,15 @@
+{
+  "manifestVersion": 1,
+  "title": "Files",
+  "version": "0.1.0",
+  "apiVersion": "0.1",
+  "commands": [
+    {
+      "id": "files",
+      "title": "Files",
+      "subtitle": "Choose a folder whose files root search finds and opens",
+      "component": "files.wasm",
+      "rootResults": true
+    }
+  ]
+}

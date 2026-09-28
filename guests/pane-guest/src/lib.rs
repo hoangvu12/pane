@@ -8,8 +8,8 @@
 //! operations other packages publish with [`operations::call`], serve those
 //! its own package publishes with [`publish`], find and open installed
 //! applications with [`applications`], supply root results ahead of the
-//! query with [`indexed`] and run its package's native helpers with
-//! [`helpers`]. The crate is
+//! query with [`indexed`], run its package's native helpers with
+//! [`helpers`] and list the files of a folder with [`files`]. The crate is
 //! `no_std` so the component imports only WASI 0.3 interfaces; it supplies the
 //! allocator and a panic handler that traps, which the host reports as a
 //! runtime error.
@@ -164,6 +164,22 @@ pub mod helpers {
             }
         }
     }
+}
+
+/// The files of a folder (`pane:extension/files`), which Pane lists for the
+/// extension under its bounded scan policy with [`files::list_folder`]:
+/// breadth first, at most 8 folders deep and 5,000 files, without hidden
+/// entries or links. A command that finds files for root search answers
+/// `open-file` results ([`root::RootAction::OpenFile`]), which Pane opens.
+/// Dropping the future of a listing before it resolves stops it.
+pub mod files {
+    wit_bindgen::generate!({
+        path: "../../wit",
+        world: "files-user",
+        default_bindings_module: "pane_guest::files",
+    });
+
+    pub use pane::extension::files::{FolderListing, FoundFile, list_folder};
 }
 
 /// Root results a command supplies ahead of the query

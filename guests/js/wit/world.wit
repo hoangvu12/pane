@@ -4,7 +4,7 @@
 // Pane's contract and imports its extension data, operations and installed
 // applications (wit/extension.wit, wit/data.wit, wit/operations.wit and
 // wit/applications.wit, copied into deps/ by the build), its native helpers
-// (wit/helpers.wit), and declares the
+// (wit/helpers.wit), the files of a folder (wit/files.wit), and declares the
 // WASI 0.3 imports JS source may use: a JS module can import only what this
 // world declares. The host bindings are unchanged.
 //
@@ -19,5 +19,6 @@ world js-extension {
   include pane:extension/extension-with-data@0.1.0;
   import pane:extension/applications@0.1.0;
   import pane:extension/helpers@0.1.0;
+  import pane:extension/files@0.1.0;
   import wasi:clocks/monotonic-clock@0.3.0;
 }

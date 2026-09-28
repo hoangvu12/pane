@@ -309,7 +309,7 @@ impl Launcher {
             ),
             None => (Vec::new(), Vec::new()),
         };
-        state.screen_epoch += 1;
+        state.next_screen();
         state.entries = entries;
         let screen = Screen::Hotkey {
             command: command.to_owned(),

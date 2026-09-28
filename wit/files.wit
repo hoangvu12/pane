@@ -1,0 +1,63 @@
+package pane:extension@0.1.0;
+
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+//
+// The files in a folder the user chose, which Pane's host lists for an
+// extension (a pure WASI guest has no folders to read), under Pane's
+// bounded scan policy. The extension matches them against root search's
+// query and answers `open-file` results (wit/root-results.wit), which Pane
+// opens with the system's handler for files. Rust commands use it through
+// pane-guest (`pane_guest::files`), JS/TS commands as the module
+// "pane:extension/files@0.1.0" (guests/js/files.d.ts). Kept apart from the
+// other files so a command that lists none is unchanged.
+// The header follows `package`: comments above it would document the package,
+// which extension.wit already does.
+
+/// Lists the files of a folder under Pane's scan policy.
+interface files {
+  /// One file Pane found.
+  record found-file {
+    /// Its absolute path, as the system writes it: what `open-file` takes.
+    path: string,
+    /// Its path below the folder listed, with `/` between names on every
+    /// system, such as `notes/plan.md`.
+    relative: string,
+  }
+
+  /// What Pane found in a folder.
+  record folder-listing {
+    /// The files, a folder's own files before its subfolders' (breadth
+    /// first), each folder's entries in name order.
+    files: list<found-file>,
+    /// Pane stopped before it had looked at everything in the folder: it
+    /// reached one of its limits (see `list-folder`).
+    truncated: bool,
+  }
+
+  /// Lists the files in `folder`, an absolute path, and its subfolders,
+  /// under Pane's scan policy: at most 8 folders deep, at most 5,000 files
+  /// and 20,000 entries looked at, then it stops and says so with
+  /// `truncated`. Only regular files are listed. Pane does not enter or
+  /// list hidden entries (a name starting with `.`, and on Windows the
+  /// hidden and system attributes), symbolic links or other links, or a
+  /// name that is not Unicode; a subfolder it cannot read is skipped.
+  ///
+  /// An error explains a folder that cannot be listed at all: a relative
+  /// path, a missing folder, a file, or one the user may not read. The
+  /// listing runs off Pane's extension thread; dropping the call (as Pane
+  /// does when root search's query changes) stops it.
+  list-folder: async func(folder: string) -> result<folder-listing, string>;
+}
+
+/// The files import alone, for guest bindings.
+world files-user {
+  import files;
+}
+
+/// The world Pane hosts: a command that may also use extension data, call
+/// operations, find and open installed applications, run its package's
+/// native helpers and list the files of a folder.
+world extension-with-files {
+  include extension-with-helpers;
+  import files;
+}

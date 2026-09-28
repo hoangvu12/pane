@@ -35,6 +35,13 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   ([Root results supplied ahead of the query](#root-results-supplied-ahead-of-the-query),
   [applications](../docs/applications.md)). Its package is
   `packages/applications`; held by `crates/pane-core/tests/applications.rs`.
+- `files`: Pane's file search, a default extension in Rust: the user chooses
+  a folder in its form, and root search finds its files by name and opens
+  one ([Files of a folder](#files-of-a-folder), [files](../docs/files.md)).
+  Its package is `packages/files`; held by `crates/pane-core/tests/files.rs`.
+- `sample-files-js`, `sample-files-ts`: the same host import and `open-file`
+  results in JavaScript and TypeScript; held by
+  `crates/pane-core/tests/files.rs`.
 - `sample-helper`, `sample-helper-js`, `sample-helper-ts`: a command in
   Rust, JavaScript and TypeScript running a [native helper](#native-helpers)
   its package ships, `helpers/echo` (`pane-echo`, an ordinary program
@@ -526,6 +533,63 @@ The three samples answer "reverse <text>" this way, and "pane website"
 with a result whose action opens a link (`RootAction::OpenUrl(url)` in Rust,
 `{ tag: "open-url", val: url }` in JavaScript and TypeScript); their
 packages in [`packages/`](packages) set `rootResults`.
+
+Once the query changes or root search is left, Pane cancels a call still
+pending: one not started is never started, and one waiting inside the
+command (on an async import) is dropped with the command's instance, so
+module or struct state kept between queries is lost and the next query
+starts a fresh instance. Keep what must last in [settings](#keeping-settings)
+or the [cache](#keeping-content-cache-and-credentials).
+
+### Files of a folder
+
+A command can list the files of a folder, which a WASI guest cannot read
+itself, through `pane:extension/files` ([`wit/files.wit`](../wit/files.wit)),
+and answer results that open a file: `open-file` with the file's absolute
+path, which Pane opens with the system's handler for its type (it refuses a
+relative path, a folder or a missing file). Such results are listed after
+the results root search finds by title. Pane lists the folder under its
+[scan policy](../docs/files.md#the-scan-policy) (regular files, breadth
+first in name order, at most 8 folders deep, 5,000 files and 20,000
+entries, without hidden entries or links), off the extension thread, and
+stops the listing when the call is cancelled. The [Files](files) default
+extension, in Rust, works this way; [`sample-files-js`](sample-files-js) and
+[`sample-files-ts`](sample-files-ts) do the same in JavaScript and
+TypeScript.
+
+Rust (`pane_guest::files`):
+
+```rust
+use pane_guest::files;
+use pane_guest::root::{RootAction, RootResult};
+
+async fn results_for(query: String) -> Result<Vec<RootResult>, String> {
+    let listing = files::list_folder("/home/you/Documents".into()).await?;
+    Ok(listing
+        .files
+        .into_iter()
+        .filter(|file| file.relative.contains(query.as_str()))
+        .map(|file| RootResult {
+            id: file.relative.clone(),
+            title: file.relative,
+            subtitle: None,
+            action: RootAction::OpenFile(file.path),
+        })
+        .collect())
+}
+```
+
+JavaScript or TypeScript (`listFolder` rejects with an object whose
+`payload` is the reason; declarations in [`js/files.d.ts`](js/files.d.ts)):
+
+```ts
+import { listFolder } from "pane:extension/files@0.1.0";
+
+const { files, truncated } = await listFolder("/home/you/Documents");
+return files
+  .filter((file) => file.relative.includes(query))
+  .map((file) => ({ id: file.relative, title: file.relative, action: { tag: "open-file", val: file.path } }));
+```
 
 ## Root results supplied ahead of the query
 
