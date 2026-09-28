@@ -168,10 +168,14 @@ impl Launcher {
     /// developing a package explains that this Pane cannot.
     pub fn with_development(self, builder: Arc<dyn Builder>, changes: ChangeSender) -> Self {
         self.developing.stop_all();
-        Launcher {
+        let launcher = Launcher {
             developing: Arc::new(Developing::new(Some(builder), Some(changes))),
             ..self
-        }
+        };
+        // The runtime reports failures to this launcher, not the one it
+        // replaces, whose development is gone.
+        launcher.report_failures();
+        launcher
     }
 
     /// Develops the installed package with `identity`: from now on, each
@@ -363,8 +367,10 @@ impl Launcher {
                 )),
                 Some(development) => {
                     rows.push((
+                        // The same id as the row that started it, so it
+                        // stays selected.
                         Row {
-                            id: id("stop-developing"),
+                            id: id("develop"),
                             title: format!("Stop developing {title}"),
                             subtitle: Some(format!(
                                 "Each save in {source} runs `{}`",

@@ -566,7 +566,11 @@ fn development_is_started_and_stopped_in_manage_extensions() {
         "{:?}",
         view.rows[0]
     );
-    assert!(titles(&dev.launcher).contains(&"Stop developing Dev".to_string()));
+    // The row that started it stops it, and stays selected.
+    assert_eq!(
+        view.selected.map(|index| view.rows[index].title.as_str()),
+        Some("Stop developing Dev")
+    );
     let development = dev.launcher.development(&identity).unwrap();
     assert_eq!(development.folder, folder.canonicalize().unwrap());
     assert_eq!(development.command, "fake build");
@@ -579,6 +583,28 @@ fn development_is_started_and_stopped_in_manage_extensions() {
 
     press(&dev.launcher, "Stop developing Dev");
     assert!(titles(&dev.launcher).contains(&"Develop Dev".to_string()));
+}
+
+#[test]
+fn a_launcher_that_develops_still_pauses_a_package_that_keeps_crashing() {
+    let dev = Dev::new();
+    let (_, identity) = dev.install("Dev", "sample_settings");
+    for _ in 0..3 {
+        error(run(&dev.launcher, "Open Dev", "Crash"));
+    }
+    manage(&dev.launcher);
+    assert!(titles(&dev.launcher).contains(&"Retry Dev".to_string()));
+    block_on(dev.launcher.records_written());
+    let installed = fs::read_to_string(dev._data.path().join("extensions/installed.json")).unwrap();
+    assert!(installed.contains("\"paused\""), "{installed}");
+    // Developing it and saving a fix recovers it.
+    block_on(dev.launcher.start_developing(&identity));
+    save(&dev.sources.join("Dev"), "sample_rust");
+    dev.handled(&identity, 1);
+    assert_eq!(
+        run(&dev.launcher, "Open Dev", "Say hello"),
+        Status::Result(RUST.into())
+    );
 }
 
 #[test]
