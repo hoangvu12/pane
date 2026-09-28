@@ -92,7 +92,7 @@ smokes run the same phase (screenshots 9 to 12); it has not run there yet.
 ### Platform availability (#19)
 
 After the restart the smoke opens the Rust command again and activates its
-sixth item, declared for Windows only, then its seventh, declared for macOS
+seventh item, declared for Windows only, then its eighth, declared for macOS
 and Linux; finally it starts `pane --install` on a package whose `pane.json`
 lists only Windows and macOS. Run locally on 2026-09-28 (same Ubuntu 26.04.1,
 Xvfb/lavapipe setup), all screenshot checks passed. The list scrolls to keep
@@ -106,6 +106,55 @@ the selected row visible:
 
 The macOS and Windows smokes run the same steps with their own expected
 results; they have not run there yet.
+
+### Disabling a package and keeping its settings (#10)
+
+The smoke then installs `target/guests/packages/sample-settings`, opens its
+Greeting command and chooses "Use a formal greeting" (the guest saves it with
+`pane:extension/settings`), and disables Settings sample in **Manage
+extensions…**. It checks that `installed.json` records `"disabled": true` and
+`settings.json` holds the saved style, restarts Pane, enables the package
+again, and runs "Greet me", which answers in the saved style and is an error
+when no style is saved. Run locally on 2026-09-28 (Ubuntu 26.04.1 LTS, kernel
+7.0.0-31-generic, x86_64, same Xvfb/lavapipe setup), all checks passed:
+
+| Step | Evidence |
+| --- | --- |
+| The guest saves the choice: "Saved the formal greeting" | [16-setting-saved.png](evidence/linux-x11/16-setting-saved.png) |
+| Manage extensions: Settings sample "Disabled", status "Disabled Settings sample" | `17-disabled.png` (not committed: it shows the local checkout path) |
+| After a restart root search no longer lists Greeting | [18-restarted-disabled.png](evidence/linux-x11/18-restarted-disabled.png) |
+| Enabled again: "Enabled Settings sample" | `19-enabled.png` (not committed: it shows the local checkout path) |
+| Greeting is back, titled "Greeting: formal", and "Greet me" answers "Good day to you" | [20-greeted.png](evidence/linux-x11/20-greeted.png) |
+
+The smoke asserts Greeting's absence after the restart by comparing the
+root screenshot with the one taken before the settings sample was installed
+(`check_screenshot.py --same`, pixel for pixel): Greeting would take the fifth
+visible row. The launcher tests (`crates/pane-core/tests/disable.rs`) assert it
+row by row, for the Rust, JavaScript and TypeScript settings samples.
+The macOS and Windows smokes run the same phase (screenshots 16 to 20); they
+have not been run for this change.
+
+### Custom view (#21)
+
+Finally the smoke restarts Pane again and opens the Rust command's "Choose a color", a
+color picker the guest draws ([custom views](../custom-views.md)), presses
+Right with a real X11 key event, then moves the real pointer onto the dark
+green swatch (found in the screenshot by its color with
+`check_screenshot.py --locate`) and clicks it with `xdotool`. Each screenshot
+must show the chosen color over at least 3000 pixels: its swatch and the
+preview together cover about 5100, any other swatch about 1000. Run locally on
+2026-09-28 (Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64, same
+Xvfb/lavapipe setup), all checks of the whole smoke passed.
+
+| Step | Evidence |
+| --- | --- |
+| View opened with focus (focus ring); blue chosen, its hex code under the preview | [21-color.png](evidence/linux-x11/21-color.png) |
+| Right: purple chosen, "#8E24AA" | [22-color-key.png](evidence/linux-x11/22-color-key.png) |
+| Click on the dark green swatch: dark green chosen, "#1B5E20" | [23-color-click.png](evidence/linux-x11/23-color-click.png) |
+
+A drag is not driven natively; it is covered by the window tests. The macOS
+and Windows smokes run the same phase (screenshots 21 to 23), with their own
+click helpers; it has not run there yet.
 
 ## Text input and accessibility findings
 
@@ -133,7 +182,8 @@ results; they have not run there yet.
   (`assistive_technology_sees_the_list_the_selection_and_the_result`), which is
   platform-independent. **No screen reader (Orca/AT-SPI) was run**, so
   announcement behaviour on Linux is unverified. Forms are covered in
-  [accessibility of forms](../forms.md#accessibility), which applies to all
+  [accessibility of forms](../forms.md#accessibility) and custom views in
+  [their accessibility](../custom-views.md#accessibility), which apply to all
   three platforms.
 
 ## Remaining limits

@@ -93,6 +93,7 @@ fn titles(launcher: &Launcher) -> Vec<String> {
 }
 
 const INSTALL_ROW: &str = "Install extension from folder…";
+const MANAGE_ROW: &str = "Manage extensions…";
 
 #[test]
 fn a_previewed_local_package_installs_and_its_command_runs() {
@@ -134,7 +135,7 @@ fn a_previewed_local_package_installs_and_its_command_runs() {
 
     let view = launcher.view();
     assert_eq!(view.screen, Screen::Root);
-    assert_eq!(titles(&launcher), ["Say hello", INSTALL_ROW]);
+    assert_eq!(titles(&launcher), ["Say hello", INSTALL_ROW, MANAGE_ROW]);
     assert_eq!(view.selected, Some(0));
     assert_eq!(view.status, Status::Result("Installed Hello".into()));
     // Row ids come from the identity's stable key, not its display text.
@@ -186,7 +187,7 @@ fn a_second_explicit_install_of_the_same_folder_is_rejected() {
         "{message}"
     );
     assert_eq!(installed(&launcher).len(), 1);
-    assert_eq!(titles(&launcher), ["Say hello", INSTALL_ROW]);
+    assert_eq!(titles(&launcher), ["Say hello", INSTALL_ROW, MANAGE_ROW]);
 }
 
 #[test]
@@ -248,7 +249,10 @@ fn copies_in_different_folders_are_distinct_packages_despite_the_same_title() {
             PackageIdentity::local(&development).unwrap()
         ]
     );
-    assert_eq!(titles(&launcher), ["Say hello", "Say hello", INSTALL_ROW]);
+    assert_eq!(
+        titles(&launcher),
+        ["Say hello", "Say hello", INSTALL_ROW, MANAGE_ROW]
+    );
     // Each runs its own copy.
     for (index, answer) in [(0, "Rust"), (1, "JavaScript")] {
         launcher.back();
@@ -324,7 +328,7 @@ fn installed_commands_are_listed_after_a_restart_without_running_any_guest() {
         Launcher::with_packages(unavailable, vec![], dirs.data.path().join("extensions"));
 
     let view = restarted.view();
-    assert_eq!(titles(&restarted), ["Say hello", INSTALL_ROW]);
+    assert_eq!(titles(&restarted), ["Say hello", INSTALL_ROW, MANAGE_ROW]);
     assert_eq!(view.rows[0].subtitle.as_deref(), Some("Greets you"));
     assert_eq!(
         installed(&restarted),
@@ -345,7 +349,10 @@ fn with_manifest(folder: &Path, manifest: &str) {
 }
 
 /// (case, how to build it, what the explanation must say)
-const UNSUPPORTED: [(&str, Unsupported, &str); 9] = [
+/// Explains a component built for another shape of extension API 0.1.
+const OLDER_SHAPE: &str = "it was built for an older extension API shape: rebuild it against Pane's current extension API 0.1";
+
+const UNSUPPORTED: [(&str, Unsupported, &str); 11] = [
     ("no folder", |_| {}, "Cannot open"),
     (
         "no manifest",
@@ -387,6 +394,22 @@ const UNSUPPORTED: [(&str, Unsupported, &str); 9] = [
             package(folder, "Hello", "1.0.0", "mixed_p2");
         },
         "Pane supports only WASI 0.3, but it imports wasi:io/poll@0.2",
+    ),
+    (
+        // From before #19 and #21: exports are missing.
+        "older API shape",
+        |folder| {
+            package(folder, "Hello", "1.0.0", "old_api");
+        },
+        OLDER_SHAPE,
+    ),
+    (
+        // Every export is there by name, but a record differs in type.
+        "mismatched API shape",
+        |folder| {
+            package(folder, "Hello", "1.0.0", "mismatched_api");
+        },
+        OLDER_SHAPE,
     ),
     (
         "not a component",
@@ -523,7 +546,10 @@ fn a_damaged_installed_copy_is_listed_with_its_problem_and_others_still_run() {
 
     let restarted = dirs.launcher();
 
-    assert_eq!(titles(&restarted), ["Say hello", "broken", INSTALL_ROW]);
+    assert_eq!(
+        titles(&restarted),
+        ["Say hello", "broken", INSTALL_ROW, MANAGE_ROW]
+    );
     restarted.select(1);
     block_on(restarted.activate_selected());
     let message = error(&restarted);
@@ -607,7 +633,7 @@ fn an_install_finishing_in_the_background_keeps_the_selected_row() {
 
     assert_eq!(
         titles(&launcher),
-        ["JavaScript sample", "Say hello", INSTALL_ROW]
+        ["JavaScript sample", "Say hello", INSTALL_ROW, MANAGE_ROW]
     );
     assert_eq!(selected_title(&launcher).as_deref(), Some(INSTALL_ROW));
 }
@@ -784,7 +810,7 @@ fn a_package_for_this_system_shows_its_systems_and_installs() {
         launcher.view().status,
         Status::Result("Installed Hello".into())
     );
-    assert_eq!(titles(&launcher), ["Say hello", INSTALL_ROW]);
+    assert_eq!(titles(&launcher), ["Say hello", INSTALL_ROW, MANAGE_ROW]);
 }
 
 #[test]
@@ -803,7 +829,7 @@ fn an_installed_copy_for_other_systems_lists_its_commands_as_unavailable() {
 
     let restarted = dirs.launcher();
 
-    assert_eq!(titles(&restarted), ["Say hello", INSTALL_ROW]);
+    assert_eq!(titles(&restarted), ["Say hello", INSTALL_ROW, MANAGE_ROW]);
     let row = restarted.view().rows[0].clone();
     assert_eq!(row.subtitle.as_deref(), Some("Greets you"));
     assert_eq!(row.unavailable, Some(explanation.clone()));
@@ -860,6 +886,7 @@ fn a_command_for_other_systems_is_listed_with_its_reason_and_others_still_open()
                 ("Here".into(), None),
                 ("Nowhere".into(), Some(nowhere.clone())),
                 (INSTALL_ROW.into(), None),
+                (MANAGE_ROW.into(), None),
             ]
         );
 
@@ -913,4 +940,78 @@ fn a_command_platform_list_pane_does_not_know_is_an_invalid_manifest() {
         message.contains("unknown platform `beos` in `platforms` of command `hello`"),
         "{message}"
     );
+}
+
+/// Installs the Rust sample as package "Hello" on `runtime`, opens its
+/// command and its color picker, and returns the launcher and package folder.
+fn installed_color_view(dirs: &Dirs, runtime: &Runtime) -> (Launcher, PathBuf) {
+    let folder = package(&dirs.source("hello"), "Hello", "1.0.0", "sample_rust");
+    let launcher = Launcher::with_packages(
+        Ok(runtime.clone()),
+        vec![],
+        dirs.data.path().join("extensions"),
+    );
+    block_on(launcher.install_package(&folder));
+    open_installed_color_view(&launcher);
+    (launcher, folder)
+}
+
+/// From root search, opens the installed command and its color picker.
+fn open_installed_color_view(launcher: &Launcher) {
+    launcher.select(0);
+    block_on(launcher.activate_selected());
+    let color = launcher
+        .view()
+        .rows
+        .iter()
+        .position(|row| row.title == "Choose a color")
+        .expect("the color item is listed");
+    launcher.select(color);
+    block_on(launcher.activate_selected());
+    assert_eq!(launcher.view().screen, Screen::CustomView);
+}
+
+#[test]
+fn an_update_finishing_while_its_view_is_open_closes_the_view_at_once() {
+    let dirs = Dirs::new();
+    let runtime = Runtime::start().unwrap();
+    let (launcher, folder) = installed_color_view(&dirs, &runtime);
+    launcher.back();
+    launcher.back();
+    package(&folder, "Hello", "2.0.0", "sample_rust");
+    block_on(launcher.preview_package(&folder));
+    let updating = launcher.activate_selected();
+    // The user leaves the preview and opens the old copy's view meanwhile.
+    launcher.back();
+    open_installed_color_view(&launcher);
+
+    block_on(updating);
+
+    let view = launcher.view();
+    assert_eq!(
+        (view.screen, view.custom_view, view.status),
+        (
+            Screen::Root,
+            None,
+            Status::Result("Updated Hello to 2.0.0".into())
+        )
+    );
+    assert_eq!(block_on(runtime.view_count()), 0);
+}
+
+#[test]
+fn disabling_a_package_closes_its_open_view_at_once() {
+    let dirs = Dirs::new();
+    let runtime = Runtime::start().unwrap();
+    let (launcher, folder) = installed_color_view(&dirs, &runtime);
+    let identity = PackageIdentity::local(&folder).unwrap();
+
+    block_on(launcher.set_enabled(&identity, false));
+
+    let view = launcher.view();
+    assert_eq!(
+        (view.screen, view.custom_view, view.status),
+        (Screen::Root, None, Status::Result("Disabled Hello".into()))
+    );
+    assert_eq!(block_on(runtime.view_count()), 0);
 }

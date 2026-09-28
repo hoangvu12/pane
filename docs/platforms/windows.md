@@ -101,8 +101,17 @@ Screenshots from run [36371205770](https://github.com/wasimysaid/pane/actions/ru
 | Submitted empty; "Enter a name" on the field and status | [7-form-error.png](evidence/windows/7-form-error.png) |
 | Typed "Ada", Tab, Down to "Good morning", submitted | [8-form-result.png](evidence/windows/8-form-result.png) |
 
-- **Accessibility:** see [accessibility of forms](../forms.md#accessibility).
-  Narrator/NVDA were not run.
+- **Accessibility:** see [accessibility of forms](../forms.md#accessibility)
+  and [of custom views](../custom-views.md#accessibility). Narrator/NVDA were
+  not run.
+- **Custom view (#21):** after a final restart the smoke opens the Rust command's
+  color picker, presses Right and clicks the dark green swatch with `user32`
+  `SetCursorPos` and `mouse_event`, at the screenshot's pixel position. Each
+  step must show the chosen color over at least 3000 pixels. **This phase has
+  not run on Windows yet**. The script calls `SetProcessDPIAware` first, so
+  the screenshot, the screen bounds and `SetCursorPos` all use physical
+  pixels and the click should land on the swatch at any display scaling;
+  scaling other than 100 % is unverified.
 
 ## Local extension package (#9)
 

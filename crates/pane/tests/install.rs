@@ -12,6 +12,7 @@ use pane_core::{Launcher, LauncherView, Runtime, Screen, Status};
 use tempfile::TempDir;
 
 const INSTALL_ROW: &str = "Install extension from folder…";
+const MANAGE_ROW: &str = "Manage extensions…";
 
 /// Writes a package folder whose one command is the Rust sample.
 fn package(folder: &Path) -> PathBuf {
@@ -103,7 +104,7 @@ fn a_chosen_package_is_previewed_installed_and_run(cx: &mut TestAppContext) {
 
     cx.simulate_keystrokes("enter");
     let view = settle(&window, cx);
-    assert_eq!(titles(&view), ["Say hello", INSTALL_ROW]);
+    assert_eq!(titles(&view), ["Say hello", INSTALL_ROW, MANAGE_ROW]);
     assert_eq!(view.status, Status::Result("Installed Hello".into()));
     assert!(cx.debug_bounds("status-result").is_some());
 
@@ -141,4 +142,51 @@ fn an_unsupported_folder_is_explained_and_escape_returns_to_root(cx: &mut TestAp
     );
     cx.simulate_keystrokes("escape");
     assert_eq!(titles(&settle(&window, cx)), [INSTALL_ROW]);
+}
+
+#[gpui::test]
+fn an_installed_package_is_disabled_and_enabled_from_the_extension_list(cx: &mut TestAppContext) {
+    let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let folder = package(&sources.path().join("hello"));
+    let (window, cx) = open(cx, &data);
+    choose_folder(&window, cx, Some(folder));
+    cx.simulate_keystrokes("enter");
+    assert_eq!(
+        titles(&settle(&window, cx)),
+        ["Say hello", INSTALL_ROW, MANAGE_ROW]
+    );
+
+    cx.simulate_keystrokes("down down enter");
+    let view = settle(&window, cx);
+    assert_eq!(
+        (view.screen, view.title.as_str()),
+        (Screen::Extensions, "Extensions")
+    );
+    assert_eq!(titles(&view), ["Hello"]);
+    assert!(
+        cx.debug_bounds("row-Hello").is_some(),
+        "the package is listed"
+    );
+
+    cx.simulate_keystrokes("enter");
+    let view = settle(&window, cx);
+    assert_eq!(view.status, Status::Result("Disabled Hello".into()));
+    let subtitle = view.rows[0].subtitle.clone().unwrap_or_default();
+    assert!(subtitle.starts_with("Disabled"), "{subtitle}");
+    assert!(cx.debug_bounds("status-result").is_some());
+    cx.simulate_keystrokes("escape");
+    assert_eq!(titles(&settle(&window, cx)), [INSTALL_ROW, MANAGE_ROW]);
+
+    cx.simulate_keystrokes("down enter");
+    settle(&window, cx);
+    cx.simulate_keystrokes("enter");
+    assert_eq!(
+        settle(&window, cx).status,
+        Status::Result("Enabled Hello".into())
+    );
+    cx.simulate_keystrokes("escape");
+    assert_eq!(
+        titles(&settle(&window, cx)),
+        ["Say hello", INSTALL_ROW, MANAGE_ROW]
+    );
 }

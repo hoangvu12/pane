@@ -15,7 +15,12 @@ const GUEST_TARGET: &str = "wasm32-wasip2";
 
 /// Components built by `js-guests` and committed, so that normal builds and
 /// tests need no JavaScript toolchain.
-const PREBUILT: &[&str] = &["sample_js", "sample_ts"];
+const PREBUILT: &[&str] = &[
+    "sample_js",
+    "sample_ts",
+    "sample_settings_js",
+    "sample_settings_ts",
+];
 
 fn main() -> ExitCode {
     let task = std::env::args().nth(1);
@@ -63,7 +68,16 @@ fn guests() -> Result<(), String> {
     std::fs::create_dir_all(&out).map_err(|error| error.to_string())?;
     // (workspace directory, component file names)
     let workspaces: [(&str, &[&str]); 2] = [
-        ("guests", &["sample_rust", "faulty", "old_api"]),
+        (
+            "guests",
+            &[
+                "sample_rust",
+                "sample_settings",
+                "faulty",
+                "old_api",
+                "mismatched_api",
+            ],
+        ),
         ("guests/fixtures/mixed-p2", &["mixed_p2"]),
     ];
     for (dir, components) in workspaces {
@@ -112,10 +126,13 @@ fn guests() -> Result<(), String> {
 }
 
 /// (package folder in `guests/packages`, component) of each sample package.
-const SAMPLE_PACKAGES: [(&str, &str); 3] = [
+const SAMPLE_PACKAGES: [(&str, &str); 6] = [
     ("sample-rust", "sample_rust"),
+    ("sample-settings", "sample_settings"),
     ("sample-js", "sample_js"),
     ("sample-ts", "sample_ts"),
+    ("sample-settings-js", "sample_settings_js"),
+    ("sample-settings-ts", "sample_settings_ts"),
 ];
 
 /// Rebuilds `guests/prebuilt/` from the JS/TS sample sources, then refreshes

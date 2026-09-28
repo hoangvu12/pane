@@ -117,7 +117,7 @@ from the Rust sample with the two other systems in `platforms`.
   the window shrinks and when the rows reload, and does not undo a
   mouse-wheel scroll otherwise.
 - Native GUI smokes, identical steps on all three systems (screenshots 13 to
-  15): the sixth and seventh items of the Rust command after a restart, then
+  15): the seventh and eighth items of the Rust command after a restart, then
   `--install` of a package listing the other two systems. Expected colors
   differ by system: Windows expects the Windows-only action to answer and the
   other to be explained; macOS and Linux the reverse. Run locally on Linux
@@ -134,8 +134,8 @@ from the Rust sample with the two other systems in `platforms`.
   surfaces do not exist yet.
 - `platforms` on `item` was added to extension API 0.1 without a version
   bump ([current decisions](current-decisions.md#explicitly-unresolved-or-deferred),
-  item 5); a component built against the older shape is refused when its
-  command opens.
+  item 5); a component built against the older shape is refused when it is
+  installed, and when a built-in command of it loads.
 - Other runtime availability (a missing app or setting) is not modelled; a
   command reports that as an error from its action.
 - Whether an unavailable item should be hidden instead is left open by Q34;
