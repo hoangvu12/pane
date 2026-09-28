@@ -7,6 +7,12 @@
 //! of the caret, Enter opens the selected result and Escape clears the
 //! query.
 //!
+//! The field's editing keys are the ones the form's text fields use, bound
+//! once by [`crate::form::bind_text_editing`] without Tab, Enter and
+//! Escape: those bubble from the field to the launcher's Confirm and Back
+//! actions. [`bind_keys`] takes that binding's result, so root search cannot
+//! be registered without it.
+//!
 //! For assistive technology the field and the result list form one
 //! `EditableComboBox` node, which tracks the field's focus and carries the
 //! query as its value; the selected result is its active descendant, so it
@@ -18,7 +24,9 @@ use gpui::{
 };
 use gpui_elements::editable_text::actions::DEFAULT_INPUT_CONTEXT;
 use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged, text_input};
+use pane_core::Screen;
 
+use crate::form::TextEditingKeys;
 use crate::{LauncherWindow, SelectNext, SelectPrevious};
 
 const CONTEXT: &str = "RootSearch";
@@ -27,8 +35,9 @@ const PLACEHOLDER: &str = "Search commands";
 /// Registers Up and Down in the query field to move the selection. They are
 /// registered after, and so take precedence over, the text element's own
 /// Up and Down, which in a single-line field move the caret to its start or
-/// end.
-pub(crate) fn bind_keys(cx: &mut App) {
+/// end. The field's other editing keys, and Enter and Escape bubbling to
+/// the launcher, come from the shared text editing keys.
+pub(crate) fn bind_keys(cx: &mut App, _: &TextEditingKeys) {
     let context = format!("{CONTEXT} > {DEFAULT_INPUT_CONTEXT}");
     cx.bind_keys([
         KeyBinding::new("down", SelectNext, Some(&context)),
@@ -80,7 +89,10 @@ impl LauncherWindow {
     /// and takes focus when root search comes on screen; focus moves to the
     /// list when root search leaves the screen.
     pub(crate) fn sync_root_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let query = self.launcher.view().query;
+        let query = match self.launcher.view().screen {
+            Screen::Root { query } => Some(query),
+            _ => None,
+        };
         let was_shown = self.query.shown;
         self.query.shown = query.is_some();
         match query {

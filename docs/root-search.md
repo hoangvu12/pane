@@ -32,11 +32,17 @@ it still matches.
 ## Matching and ranking
 
 Implemented in [`crates/pane-core/src/search.rs`](../crates/pane-core/src/search.rs).
-The query and each result's title and subtitle are compared in lowercase
-(Unicode `to_lowercase`), and the query is split into words at whitespace. A
-result matches when **every word** of the query appears in its title or
-subtitle. An installed command without its own subtitle shows its package
-title as the subtitle, so a package's title finds its commands. Matches are
+The query and each result's title, subtitle and, for an installed command,
+its package's title are compared after three steps: Unicode NFC
+normalization, so "é" typed as one character matches "e" followed by a
+combining accent; full Unicode lowercasing (`to_lowercase`); and collapsing
+every run of whitespace, including leading and trailing spaces, to a single
+space, in titles as in the query. Lowercasing is not locale-aware case
+folding: language rules such as Turkish dotted and dotless I are out of
+scope. A result matches when **every word** of the query appears in its
+title, subtitle or package title. An installed command without its own
+subtitle shows its package title as the subtitle; one with its own subtitle
+is still found by its package title, below everything else. Matches are
 ranked by how well the title matches:
 
 | Rank | The title… | Query "download" |
@@ -46,19 +52,23 @@ ranked by how well the title matches:
 | 3 | has a word starting with each query word | Recent downloads |
 | 4 | contains each query word | Undownloadable files |
 | 5 | (a word is only in the subtitle) | Clear cache, "Delete downloaded files" |
+| 6 | (a word is only in the package title) | a command of package "Downloads" with a subtitle of its own |
 
 Results of the same rank keep root search order. A blank query lists every
-root result. The best match is selected after every change of the query.
+root result. The best match is selected after every change of the query;
+searching the same query again changes nothing. Each result's text is
+normalized once, when root search is shown or its results are rebuilt,
+not on every keystroke.
 
 Not done, deliberately: typo tolerance, abbreviations ("ts" for TypeScript
-sample), accent folding, frequency or recency, per-user ranking, keywords or
-aliases in the manifest, and ranking results of different kinds (apps,
-files) against each other.
+sample), accent folding ("e" finding "é"), locale-aware case folding,
+frequency or recency, per-user ranking, keywords or aliases in the manifest,
+and ranking results of different kinds (apps, files) against each other.
 
 ## Host behavior
 
 The public host interface is [`pane_core::Launcher`](../crates/pane-core/src/launcher.rs):
-`LauncherView::query` (`Some` exactly on root search), `set_query`,
+`Screen::Root`, which carries the query, `set_query`,
 `move_selection`, `activate_selected` and `back`. The window renders that
 state and maps input to those calls.
 
@@ -118,6 +128,26 @@ provider-supplied ranks and how they mix with title matching, asynchronous or
 cancellable providers, and online providers, which stay inside their own
 command (US11, T03): nothing in root search queries an online service.
 
+### Open: extension points later tickets need
+
+None of these exists yet; root search today ranks a fixed list of results
+rebuilt from metadata. Each is open, to be designed by its ticket:
+
+- **Query-computed results** ([#27](https://github.com/hoangvu12/pane/issues/27)):
+  a provider that answers from the query itself (a calculator result) rather
+  than being matched by title, and where such a result ranks.
+- **Asynchronous, cancellable providers** ([#29](https://github.com/hoangvu12/pane/issues/29)):
+  a provider that must run to answer (files, applications), whose late
+  answers for an older query are discarded and whose work is cancelled when
+  the query changes.
+- **Aliases and fallbacks** ([#31](https://github.com/hoangvu12/pane/issues/31)):
+  extra words a result is found by, and actions offered when nothing
+  matches.
+
+Removal is not covered either: a package's commands leave root search when
+it is disabled, and change when it is updated, but uninstalling a package
+is not built yet ([#40](https://github.com/hoangvu12/pane/issues/40)).
+
 ## Accessibility
 
 Checked through GPUI's accessibility tree
@@ -133,12 +163,16 @@ Checked through GPUI's accessibility tree
   reported as focused while the caret stays in the field; with no result, the
   combo box itself is reported as focused.
 
-GPUI CE implements the active descendant by reporting the descendant as the
-focused node, not through AccessKit's `active_descendant` property on the
-field. A screen reader may therefore announce the selected result rather
-than echo typed characters. **No screen reader was run** on any platform;
-announcements, echo and the combo box pattern's behaviour with
-Narrator/NVDA, VoiceOver and Orca are unverified. The limits listed for
+**Open: active descendant.** GPUI CE has no real active-descendant support:
+it implements it by reporting the descendant as the focused node, not
+through AccessKit's `active_descendant` property on the field. So the
+selected result is reported as focused while the caret is in the field, and
+a screen reader may announce results instead of echoing what the user types.
+This needs a GPUI CE change (exposing `active_descendant` on the focused
+node) or a workaround before G2 (screen-reader-usable root search) can
+pass. **No screen reader was run** on any platform; announcements, echo and
+the combo box pattern's behaviour with Narrator/NVDA, VoiceOver and Orca are
+unverified. The limits listed for
 [form text fields](forms.md#accessibility) (no text details, actions or
 invalid state) apply to the query field too.
 
@@ -146,11 +180,15 @@ invalid state) apply to the query field too.
 
 Through the launcher's public interface
 ([`crates/pane-core/tests/search.rs`](../crates/pane-core/tests/search.rs)):
-the empty query, each rank in order, letter case and blank queries, every
-word having to match, ties keeping order, selection and invocation among the
+the empty query, each rank in order, letter case and blank queries, spaces
+inside and around titles not lowering their rank, composed and decomposed
+accents matching each other, every word having to match, ties keeping
+order, the same query searched again keeping the selection, selection and
+invocation among the
 matches, no match with Enter doing nothing versus a match that fails,
 Escape clearing the query, a new search after returning to root, installed
-commands found by title or package title and Pane's own rows, disabling and
+commands found by title or package title (below subtitle matches, even
+with a subtitle of their own) and Pane's own rows, disabling and
 re-enabling a package under a query, an update finishing while the user
 searches, an unavailable command found and explained without running, and
 twelve installed packages searched with no guest running and only the

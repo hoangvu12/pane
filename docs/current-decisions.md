@@ -90,6 +90,7 @@ These remain open design/validation work in the specification and implementation
 7. Installer acquisition/retry/cache mechanics; app/runtime update delivery; default clipboard retention and other concrete settings defaults.
 8. The licensing split is decided and applied; release notice generation (cargo-about plus a manual supplement) and the per-release Corresponding Source procedure remain to be exercised on a real artifact.
 9. Catalog and historical-version picker are explicitly deferred; Python/C# are later languages. Neither is silently restored to launch scope.
+10. [Root search](root-search.md) (#23) open items. Accessibility: GPUI CE lacks real active-descendant support, so the selected result is reported as the focused node while the caret is in the query field, and a screen reader may announce results instead of echoing typing; G2 cannot pass until GPUI CE exposes `active_descendant` on the focused field or a workaround is found, and no screen reader has been run. Extension points later tickets need, none built: results computed from the query (#27), asynchronous cancellable providers (#29), and aliases and fallbacks (#31). Removal: disable and update change a package's root results, but uninstall is not built yet (#40).
 
 The specification identifies bounded validation tasks and open contracts. A consequential new product choice still needs a user decision before implementation depends on it.
 
