@@ -1267,25 +1267,29 @@ impl Store {
         self.write_copy(package, Some(old))
     }
 
-    /// Records whether the installed package with `identity` is enabled.
-    /// Its managed copy and settings are left as they are.
-    pub fn set_enabled(
+    /// Records whether each installed package of `identities` is enabled,
+    /// in one write: all of them change, or, if one is not installed or the
+    /// record cannot be written, none does. Their managed copies and
+    /// settings are left as they are.
+    pub fn set_enabled_all(
         &mut self,
-        identity: &PackageIdentity,
+        identities: &[PackageIdentity],
         enabled: bool,
     ) -> Result<(), PackageError> {
         let registry = self
             .registry
             .as_mut()
             .map_err(|reason| PackageError::Storage(reason.clone()))?;
-        let PackageIdentity(Source::Local(local)) = identity;
         let mut updated = registry.clone();
-        let Some(record) = updated.packages.iter_mut().find(|r| &r.local == local) else {
-            return Err(PackageError::NotInstalled(identity.clone()));
-        };
-        record.disabled = !enabled;
-        // Disabling or enabling ends a pause: the package starts afresh.
-        record.paused = None;
+        for identity in identities {
+            let PackageIdentity(Source::Local(local)) = identity;
+            let Some(record) = updated.packages.iter_mut().find(|r| &r.local == local) else {
+                return Err(PackageError::NotInstalled(identity.clone()));
+            };
+            record.disabled = !enabled;
+            // Disabling or enabling ends a pause: the package starts afresh.
+            record.paused = None;
+        }
         write_registry(&self.dir, &updated)
             .map_err(|error| PackageError::Storage(error.to_string()))?;
         *registry = updated;

@@ -789,6 +789,92 @@ fn unmet<'d>(
     problems
 }
 
+/// An installed package that requires another, directly or through other
+/// installed packages that do.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Dependent {
+    pub package: Named,
+    /// The package it requires that brought it into the set: the package
+    /// asked about, or another dependent.
+    pub requires: Named,
+    /// Whether the user left it enabled.
+    pub enabled: bool,
+}
+
+/// The installed package a dependency recorded as `recorded` reaches among
+/// `installed`: the one with that identity, or else the one its folder
+/// resolves to now (a folder that became a link after it was recorded), as
+/// a call through the dependency's id finds it.
+pub(crate) fn reached<'a>(
+    installed: &'a [InstalledPackage],
+    recorded: &PackageIdentity,
+) -> Option<&'a InstalledPackage> {
+    installed_as(installed, recorded).or_else(|| {
+        let again = recorded.resolved_again()?;
+        installed_as(installed, &again)
+    })
+}
+
+/// Every installed package that requires `of` on this system, directly or
+/// through another installed package that does: the **required dependent
+/// closure**, each package once, nearest first and otherwise in installed
+/// order. Only required dependencies needed on this system count: an
+/// optional dependency, or one declared only for other systems, never
+/// brings a package in. Cycles are allowed: a package requiring `of` back is
+/// listed once, and `of` itself never is. Disabled dependents are listed
+/// (with `enabled` false) and followed, since what requires them requires
+/// `of` too. Reads only the installed records; runs nothing.
+pub(crate) fn required_dependents(
+    installed: &[InstalledPackage],
+    of: &PackageIdentity,
+) -> Vec<Dependent> {
+    let named = |package: &InstalledPackage| Named {
+        identity: package.identity.clone(),
+        title: package.title(),
+    };
+    let Some(first) = installed_as(installed, of) else {
+        return Vec::new();
+    };
+    let mut seen = vec![of.clone()];
+    let mut queue = std::collections::VecDeque::from([named(first)]);
+    let mut dependents = Vec::new();
+    while let Some(required) = queue.pop_front() {
+        for package in installed {
+            if seen.contains(&package.identity) || !requires(installed, package, &required.identity)
+            {
+                continue;
+            }
+            seen.push(package.identity.clone());
+            let dependent = Dependent {
+                package: named(package),
+                requires: required.clone(),
+                enabled: package.enabled,
+            };
+            queue.push_back(dependent.package.clone());
+            dependents.push(dependent);
+        }
+    }
+    dependents
+}
+
+/// Whether `package` requires the installed package `target` on this
+/// system, as its dependencies were recorded when it was installed.
+fn requires(
+    installed: &[InstalledPackage],
+    package: &InstalledPackage,
+    target: &PackageIdentity,
+) -> bool {
+    let Ok(manifest) = &package.manifest else {
+        return false;
+    };
+    manifest
+        .dependencies
+        .iter()
+        .filter(|dependency| dependency.required && dependency.needed_here())
+        .filter_map(|dependency| package.dependency_identity(&dependency.id))
+        .any(|recorded| reached(installed, recorded).is_some_and(|p| p.identity == *target))
+}
+
 /// Installing a package with its planned dependencies failed.
 pub(crate) struct Failure {
     /// Why, naming the package that could not be installed.
@@ -943,6 +1029,136 @@ mod tests {
             failure.error
         );
         assert_eq!(titles(&store), ["Package c"]);
+    }
+
+    /// Installs package folder `name` in `sources`, titled "Package <name>",
+    /// declaring `dependencies` (JSON array contents).
+    fn installed_with(
+        store: &mut Store,
+        sources: &Path,
+        name: &str,
+        dependencies: &str,
+    ) -> PackageIdentity {
+        let folder = sources.join(name);
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join("c.wasm"), b"not run").unwrap();
+        fs::write(
+            folder.join("pane.json"),
+            format!(
+                r#"{{ "manifestVersion": 1, "title": "Package {name}", "apiVersion": "0.1",
+                     "operations": [{{ "id": "echo", "version": 1, "component": "c.wasm" }}],
+                     "dependencies": [{dependencies}] }}"#
+            ),
+        )
+        .unwrap();
+        store
+            .install(&SourcePackage::read(&folder).unwrap())
+            .unwrap()
+            .identity
+    }
+
+    /// A dependency on sibling folder `folder`; `extra` adds fields.
+    fn on(folder: &str, extra: &str) -> String {
+        format!(
+            r#"{{ "id": "{folder}", "source": "local:../{folder}", {extra}
+                 "operations": [{{ "id": "echo", "version": 1 }}] }}"#
+        )
+    }
+
+    fn dependent_titles(store: &Store, of: &PackageIdentity) -> Vec<(String, String)> {
+        required_dependents(&store.installed(), of)
+            .into_iter()
+            .map(|d| (d.package.title, d.requires.title))
+            .collect()
+    }
+
+    #[test]
+    fn required_dependents_are_found_directly_and_through_others_nearest_first() {
+        let (dir, _data, mut store) = setup();
+        let sources = dir.path();
+        let a = installed_with(&mut store, sources, "a", "");
+        // c requires b, which is installed after it; b and d require a.
+        installed_with(&mut store, sources, "c", &on("b", ""));
+        installed_with(&mut store, sources, "b", &on("a", ""));
+        installed_with(&mut store, sources, "d", &on("a", ""));
+        // e only uses a if it is installed.
+        installed_with(&mut store, sources, "e", &on("a", r#""optional": true,"#));
+
+        assert_eq!(
+            dependent_titles(&store, &a),
+            [
+                ("Package b".into(), "Package a".into()),
+                ("Package d".into(), "Package a".into()),
+                ("Package c".into(), "Package b".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn packages_requiring_each_other_are_listed_once_without_the_package_asked_about() {
+        let (dir, _data, mut store) = setup();
+        let sources = dir.path();
+        let a = installed_with(&mut store, sources, "a", &on("b", ""));
+        installed_with(&mut store, sources, "b", &on("a", ""));
+        installed_with(&mut store, sources, "c", &on("b", ""));
+
+        assert_eq!(
+            dependent_titles(&store, &a),
+            [
+                ("Package b".into(), "Package a".into()),
+                ("Package c".into(), "Package b".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_dependency_needed_only_on_other_systems_brings_no_dependent() {
+        let (dir, _data, mut store) = setup();
+        let sources = dir.path();
+        let a = installed_with(&mut store, sources, "a", "");
+        let others: Vec<String> = platform::Platform::ALL
+            .into_iter()
+            .filter(|p| Some(*p) != platform::Platform::current())
+            .map(|p| format!("\"{}\"", p.id()))
+            .collect();
+        let only_elsewhere = format!(r#""platforms": [{}],"#, others.join(", "));
+        installed_with(&mut store, sources, "b", &on("a", &only_elsewhere));
+
+        assert!(dependent_titles(&store, &a).is_empty());
+    }
+
+    #[test]
+    fn disabled_dependents_are_listed_and_followed() {
+        let (dir, _data, mut store) = setup();
+        let sources = dir.path();
+        let a = installed_with(&mut store, sources, "a", "");
+        let b = installed_with(&mut store, sources, "b", &on("a", ""));
+        installed_with(&mut store, sources, "c", &on("b", ""));
+        store.set_enabled_all(&[b], false).unwrap();
+
+        let dependents = required_dependents(&store.installed(), &a);
+        let states: Vec<(String, bool)> = dependents
+            .into_iter()
+            .map(|d| (d.package.title, d.enabled))
+            .collect();
+        assert_eq!(
+            states,
+            [("Package b".into(), false), ("Package c".into(), true)]
+        );
+    }
+
+    #[test]
+    fn a_package_not_installed_has_no_dependents() {
+        let (dir, _data, mut store) = setup();
+        let sources = dir.path();
+        installed_with(&mut store, sources, "b", &on("a", ""));
+        // Folder a does not exist: b's record spells it.
+        let a = store.installed()[0]
+            .dependency_identity("a")
+            .unwrap()
+            .clone();
+
+        assert!(dependent_titles(&store, &a).is_empty());
     }
 
     #[test]
