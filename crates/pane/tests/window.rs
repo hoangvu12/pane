@@ -153,6 +153,78 @@ fn a_validation_error_is_rendered(cx: &mut TestAppContext, sample: &Sample) {
     );
 }
 
+/// Opens the sample's command and then its form ("Greet someone", the fifth
+/// item) with the keyboard.
+fn open_form(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) {
+    cx.simulate_keystrokes("enter");
+    wait_for_answer(window, cx);
+    cx.simulate_keystrokes("down down down down enter");
+    let view = wait_for_answer(window, cx);
+    assert_eq!(
+        (view.screen, view.title.as_str()),
+        (Screen::Form, "Greet someone")
+    );
+}
+
+fn the_keyboard_fills_in_and_submits_the_form(cx: &mut TestAppContext, sample: &Sample) {
+    let (window, cx) = open(cx, sample);
+    open_form(&window, cx);
+    assert!(
+        cx.debug_bounds("field-name").is_some(),
+        "the form is rendered"
+    );
+
+    // The name field has focus; Tab moves to the greeting, Down chooses the
+    // next greeting, and Enter submits.
+    cx.simulate_input("Ada");
+    cx.simulate_keystrokes("tab down enter");
+
+    let view = wait_for_answer(&window, cx);
+    assert_eq!(
+        view.status,
+        Status::Result(format!(
+            "Good morning, Ada, from the {} guest",
+            sample.language
+        ))
+    );
+    assert!(
+        cx.debug_bounds("status-result").is_some(),
+        "the answer is rendered"
+    );
+    cx.simulate_keystrokes("escape");
+    let view = wait_for_answer(&window, cx);
+    assert_eq!((view.screen, view.selected), (Screen::Command, Some(4)));
+}
+
+fn a_rejected_field_shows_its_error_and_takes_focus(cx: &mut TestAppContext, sample: &Sample) {
+    let (window, cx) = open(cx, sample);
+    open_form(&window, cx);
+
+    // Submit from the greeting with the name left empty.
+    cx.simulate_keystrokes("tab enter");
+
+    let view = wait_for_answer(&window, cx);
+    assert_eq!(view.status, Status::Error("Name: Enter a name".into()));
+    assert!(
+        cx.debug_bounds("field-error-name").is_some(),
+        "the error is rendered next to the field"
+    );
+    let (nodes, focused) = accessibility_tree(cx);
+    assert_eq!(focused.as_deref(), Some("Name"));
+    assert!(
+        nodes.contains(&("TextInput".into(), "Name".into(), "Enter a name".into())),
+        "{nodes:?}"
+    );
+
+    // Focus is back on the name, so typing fixes it.
+    cx.simulate_input("Grace");
+    cx.simulate_keystrokes("enter");
+    assert_eq!(
+        wait_for_answer(&window, cx).status,
+        Status::Result(format!("Hello, Grace, from the {} guest", sample.language))
+    );
+}
+
 /// Declares one window test per check for each sample.
 macro_rules! for_each_sample {
     ($($check:ident),* $(,)?) => {
@@ -172,7 +244,170 @@ for_each_sample!(
     the_keyboard_opens_the_sample_and_runs_an_action,
     clicking_a_row_runs_its_action,
     a_validation_error_is_rendered,
+    the_keyboard_fills_in_and_submits_the_form,
+    a_rejected_field_shows_its_error_and_takes_focus,
 );
+
+/// The label of the node assistive technology treats as focused.
+fn focused_label(cx: &mut VisualTestContext) -> Option<String> {
+    accessibility_tree(cx).1
+}
+
+/// The open form's value of field `id`.
+fn field_value(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext, id: &str) -> String {
+    let view = cx.read_entity(window, |window, _| window.launcher().view());
+    let form = view.form.expect("a form is open");
+    let field = form.fields.into_iter().find(|field| field.id == id);
+    field.expect("the field exists").value
+}
+
+#[gpui::test]
+fn tab_and_shift_tab_move_through_the_form_in_order(cx: &mut TestAppContext) {
+    let (window, cx) = open(cx, &RUST);
+    open_form(&window, cx);
+
+    // The greeting group reports its chosen option as focused, like a list
+    // reports its selected row.
+    let mut order = vec![focused_label(cx)];
+    for _ in 0..3 {
+        cx.simulate_keystrokes("tab");
+        order.push(focused_label(cx));
+    }
+    cx.simulate_keystrokes("shift-tab");
+    order.push(focused_label(cx));
+
+    let expected = ["Name", "Hello", "Greet", "Name", "Greet"];
+    assert_eq!(order, expected.map(|label| Some(label.to_owned())));
+}
+
+#[gpui::test]
+fn editing_keys_change_the_text_field(cx: &mut TestAppContext) {
+    let (window, cx) = open(cx, &RUST);
+    open_form(&window, cx);
+
+    cx.simulate_input("Ad");
+    cx.simulate_keystrokes("left");
+    cx.simulate_input("x");
+    assert_eq!(field_value(&window, cx, "name"), "Axd");
+    cx.simulate_keystrokes("backspace right");
+    cx.simulate_input("a");
+    assert_eq!(field_value(&window, cx, "name"), "Ada");
+
+    // Space is text in the field, not a key for the form.
+    cx.simulate_keystrokes("space");
+    assert_eq!(field_value(&window, cx, "name"), "Ada ");
+}
+
+#[gpui::test]
+fn input_method_composition_commits_into_the_text_field(cx: &mut TestAppContext) {
+    use gpui::EntityInputHandler;
+
+    let (window, cx) = open(cx, &RUST);
+    open_form(&window, cx);
+    let input = cx
+        .read_entity(&window, |window, _| window.text_field("name"))
+        .expect("the name field has an editing state");
+
+    // What a platform input method does: mark composing text, then replace
+    // it with the committed text.
+    cx.update(|window, cx| {
+        input.update(cx, |input, cx| {
+            input.replace_and_mark_text_in_range(None, "にほ", None, window, cx);
+        })
+    });
+    assert_eq!(field_value(&window, cx, "name"), "にほ");
+    cx.update(|window, cx| {
+        input.update(cx, |input, cx| {
+            assert_eq!(input.marked_text_range(window, cx), Some(0..2));
+            input.replace_text_in_range(None, "日本", window, cx);
+            assert_eq!(input.marked_text_range(window, cx), None);
+        })
+    });
+    assert_eq!(field_value(&window, cx, "name"), "日本");
+
+    cx.simulate_keystrokes("enter");
+    assert_eq!(
+        wait_for_answer(&window, cx).status,
+        Status::Result("Hello, 日本, from the Rust guest".into())
+    );
+}
+
+#[gpui::test]
+fn clicking_a_choice_and_the_submit_button_submits_the_form(cx: &mut TestAppContext) {
+    let (window, cx) = open(cx, &RUST);
+    open_form(&window, cx);
+    cx.simulate_input("Ada");
+
+    let welcome = cx
+        .debug_bounds("choice-greeting-welcome")
+        .expect("choice rendered");
+    cx.simulate_click(welcome.center(), Modifiers::none());
+    assert_eq!(field_value(&window, cx, "greeting"), "welcome");
+    let submit = cx.debug_bounds("submit").expect("submit button rendered");
+    cx.simulate_click(submit.center(), Modifiers::none());
+
+    assert_eq!(
+        wait_for_answer(&window, cx).status,
+        Status::Result("Welcome, Ada, from the Rust guest".into())
+    );
+}
+
+#[gpui::test]
+fn the_focused_submit_button_submits_with_space(cx: &mut TestAppContext) {
+    let (window, cx) = open(cx, &RUST);
+    open_form(&window, cx);
+    cx.simulate_input("Ada");
+
+    cx.simulate_keystrokes("tab tab space");
+
+    assert_eq!(
+        wait_for_answer(&window, cx).status,
+        Status::Result("Hello, Ada, from the Rust guest".into())
+    );
+}
+
+/// Every accessibility node's properties (`role`, `label`, `value`,
+/// `toggled`, ...), as GPUI reports them to assistive technology.
+fn accessible_nodes(cx: &mut VisualTestContext) -> Vec<serde_json::Value> {
+    cx.update(|window, _| window.set_a11y_forced(true));
+    cx.run_until_parked();
+    let json = cx
+        .update(|window, _| window.debug_a11y_tree_json())
+        .expect("an accessibility tree");
+    let tree: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let nodes = tree["nodes"].as_object().unwrap();
+    nodes.values().map(|node| node["aria"].clone()).collect()
+}
+
+/// The node with this role and label.
+fn node<'a>(nodes: &'a [serde_json::Value], role: &str, label: &str) -> &'a serde_json::Value {
+    nodes
+        .iter()
+        .find(|node| node["role"] == role && node["label"] == label)
+        .unwrap_or_else(|| panic!("no {role} labelled {label:?} in {nodes:#?}"))
+}
+
+#[gpui::test]
+fn assistive_technology_sees_the_forms_labelled_controls_and_values(cx: &mut TestAppContext) {
+    let (window, cx) = open(cx, &RUST);
+    open_form(&window, cx);
+    cx.simulate_input("Ada");
+
+    let nodes = accessible_nodes(cx);
+    node(&nodes, "Form", "Greet someone");
+    let name = node(&nodes, "TextInput", "Name");
+    assert_eq!(
+        (&name["value"], &name["placeholder"]),
+        (&"Ada".into(), &"Ada Lovelace".into())
+    );
+    node(&nodes, "RadioGroup", "Greeting");
+    assert_eq!(node(&nodes, "RadioButton", "Hello")["toggled"], "True");
+    assert_eq!(
+        node(&nodes, "RadioButton", "Good morning")["toggled"],
+        "False"
+    );
+    node(&nodes, "Button", "Greet");
+}
 
 #[gpui::test]
 fn the_launcher_offers_the_rust_javascript_and_typescript_samples(cx: &mut TestAppContext) {

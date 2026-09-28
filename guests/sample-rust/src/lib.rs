@@ -1,9 +1,12 @@
-//! Pane's Rust sample command: one list and one action per item. Items,
-//! titles and results match the JavaScript and TypeScript samples.
+//! Pane's Rust sample command: a list with one action per item, and a form.
+//! Items, titles, results and errors match the JavaScript and TypeScript
+//! samples.
 #![no_std]
 
-use pane_guest::alloc::{format, string::String, vec};
-use pane_guest::{Guest, Item, View};
+use pane_guest::alloc::{format, string::String, vec, vec::Vec};
+use pane_guest::{
+    Choice, Field, FieldKind, FieldValue, Form, FormError, Guest, Item, TextField, View,
+};
 
 struct Sample;
 pane_guest::export!(Sample);
@@ -26,12 +29,58 @@ impl Settings {
     }
 }
 
+/// The greeting form's options: (id, label).
+const GREETINGS: [(&str, &str); 3] = [
+    ("hello", "Hello"),
+    ("morning", "Good morning"),
+    ("welcome", "Welcome"),
+];
+
+/// The "form" item's form: a name to greet and a greeting to choose.
+fn greeting_form() -> Form {
+    Form {
+        title: "Greet someone".into(),
+        fields: vec![
+            Field {
+                id: "name".into(),
+                label: "Name".into(),
+                kind: FieldKind::Text(TextField {
+                    placeholder: Some("Ada Lovelace".into()),
+                }),
+            },
+            Field {
+                id: "greeting".into(),
+                label: "Greeting".into(),
+                kind: FieldKind::Choice(
+                    GREETINGS
+                        .iter()
+                        .map(|&(id, label)| Choice {
+                            id: id.into(),
+                            label: label.into(),
+                        })
+                        .collect(),
+                ),
+            },
+        ],
+        submit_label: "Greet".into(),
+    }
+}
+
+/// An error about the field `field`.
+fn invalid(field: &str, message: &str) -> FormError {
+    FormError {
+        field: Some(field.into()),
+        message: message.into(),
+    }
+}
+
 impl Guest for Sample {
     async fn get_view() -> Result<View, String> {
         let item = |id: &str, title: &str, subtitle: &str| Item {
             id: id.into(),
             title: title.into(),
             subtitle: Some(subtitle.into()),
+            form: None,
         };
         Ok(View {
             title: "Rust sample".into(),
@@ -52,6 +101,10 @@ impl Guest for Sample {
                     "Roll a number",
                     "A random number from this instance",
                 ),
+                Item {
+                    form: Some(greeting_form()),
+                    ..item("form", "Greet someone", "Fill in a form the guest checks")
+                },
             ],
         })
     }
@@ -84,5 +137,32 @@ impl Guest for Sample {
             }
             other => Err(format!("unknown item: {other}")),
         }
+    }
+
+    async fn submit_form(item_id: String, values: Vec<FieldValue>) -> Result<String, FormError> {
+        if item_id != "form" {
+            return Err(FormError {
+                field: None,
+                message: format!("unknown form: {item_id}"),
+            });
+        }
+        let value = |id: &str| {
+            values
+                .iter()
+                .find(|field| field.id == id)
+                .map_or("", |field| field.value.as_str())
+        };
+        let name = value("name").trim();
+        if name.is_empty() {
+            return Err(invalid("name", "Enter a name"));
+        }
+        if name.chars().count() > 40 {
+            return Err(invalid("name", "Use at most 40 characters"));
+        }
+        let greeting = value("greeting");
+        let Some(&(_, greeting)) = GREETINGS.iter().find(|&&(id, _)| id == greeting) else {
+            return Err(invalid("greeting", "Choose a greeting"));
+        };
+        Ok(format!("{greeting}, {name}, from the Rust guest"))
     }
 }

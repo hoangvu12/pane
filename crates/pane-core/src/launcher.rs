@@ -10,7 +10,7 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use crate::runtime::{CallError, Runtime};
+use crate::runtime::{CallError, FieldKind, FieldValue, Form, Item, Runtime};
 
 /// A command offered in root search, backed by one extension component.
 #[derive(Clone, Debug)]
@@ -28,6 +28,8 @@ pub enum Screen {
     Root,
     /// An opened command's list view.
     Command,
+    /// A form opened from an item of the command's list view.
+    Form,
 }
 
 /// A selectable row.
@@ -46,8 +48,28 @@ pub enum Status {
     Running,
     /// The extension's answer to the most recent action.
     Result(String),
-    /// Why the most recent action failed.
+    /// Why the most recent action failed. For a rejected form field this is
+    /// "<field label>: <message>".
     Error(String),
+}
+
+/// An open form, as the user is filling it in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FormView {
+    pub fields: Vec<FormField>,
+    pub submit_label: String,
+}
+
+/// One field of an open form with its current value.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FormField {
+    pub id: String,
+    pub label: String,
+    pub kind: FieldKind,
+    /// The text of a text field, or the id of the chosen option.
+    pub value: String,
+    /// Why the extension rejected this field on the last submission.
+    pub error: Option<String>,
 }
 
 /// A snapshot of what the launcher shows.
@@ -55,10 +77,13 @@ pub enum Status {
 pub struct LauncherView {
     pub screen: Screen,
     pub title: String,
+    /// Empty on the form screen.
     pub rows: Vec<Row>,
     /// Index into `rows`; `None` when there are no rows.
     pub selected: Option<usize>,
     pub status: Status,
+    /// The open form; `Some` exactly on the form screen.
+    pub form: Option<FormView>,
 }
 
 /// The launcher. Cloning shares the same state.
@@ -73,6 +98,11 @@ struct State {
     view: LauncherView,
     /// The command whose view is open, as an index into `commands`.
     open: Option<usize>,
+    /// The open command's items, as its extension produced them.
+    items: Vec<Item>,
+    /// While a form is open: the item it belongs to and the command view to
+    /// return to.
+    form: Option<(String, LauncherView)>,
     /// Incremented on every navigation, so a reply that arrives after the
     /// user has left the screen it was requested from is discarded.
     screen_generation: u64,
@@ -86,6 +116,8 @@ impl Launcher {
         let state = State {
             view: root_view(&commands),
             open: None,
+            items: Vec::new(),
+            form: None,
             screen_generation: 0,
         };
         Launcher {
@@ -117,25 +149,51 @@ impl Launcher {
         }
     }
 
-    /// Leaves an open command for root search.
+    /// Leaves an open form for its command's list, or an open command for
+    /// root search.
     pub fn back(&self) {
         let mut state = self.lock();
-        if state.view.screen == Screen::Command {
-            state.open = None;
-            state.screen_generation += 1;
-            state.view = root_view(&self.commands);
+        match state.view.screen {
+            Screen::Form => {
+                let (_, command_view) = state.form.take().expect("a form is open");
+                state.screen_generation += 1;
+                state.view = LauncherView {
+                    status: Status::Idle,
+                    ..command_view
+                };
+            }
+            Screen::Command => {
+                state.open = None;
+                state.items.clear();
+                state.screen_generation += 1;
+                state.view = root_view(&self.commands);
+            }
+            Screen::Root => {}
         }
     }
 
-    /// Opens the selected command (root) or runs the selected item's action
-    /// (command view). Await the returned future to apply the reply.
+    /// Opens the selected command (root), or opens the selected item's form
+    /// or runs its action (command view). Await the returned future to apply
+    /// the reply.
     pub fn activate_selected(&self) -> impl Future<Output = ()> + Send + 'static {
         let mut state = self.lock();
         let selected = state.view.selected;
         let call = match (state.view.screen, state.open, selected) {
             (Screen::Root, _, Some(index)) => Some(Call::Open(index)),
             (Screen::Command, Some(command), Some(index)) => {
-                Some(Call::Run(command, state.view.rows[index].id.clone()))
+                let id = state.view.rows[index].id.clone();
+                let form = state
+                    .items
+                    .iter()
+                    .find(|item| item.id == id)
+                    .and_then(|item| item.form.clone());
+                match form {
+                    Some(form) => {
+                        open_form(&mut state, id, form);
+                        None
+                    }
+                    None => Some(Call::Run(command, id)),
+                }
             }
             _ => None,
         };
@@ -154,6 +212,98 @@ impl Launcher {
                 None => {}
             }
         }
+    }
+
+    /// Sets the value of the open form's field `field_id`: a text field's
+    /// text, or the id of an option of a choice field. Unknown fields and
+    /// options are ignored. Editing a field clears its error.
+    pub fn set_field_value(&self, field_id: &str, value: &str) {
+        let mut state = self.lock();
+        let Some(form) = state.view.form.as_mut() else {
+            return;
+        };
+        let Some(field) = form.fields.iter_mut().find(|field| field.id == field_id) else {
+            return;
+        };
+        if let FieldKind::Choice(choices) = &field.kind
+            && !choices.iter().any(|choice| choice.id == value)
+        {
+            return;
+        }
+        field.value = value.to_owned();
+        field.error = None;
+    }
+
+    /// Submits the open form to its extension. Await the returned future to
+    /// apply the reply: the answer as the result, or the extension's
+    /// rejection next to its field.
+    pub fn submit_form(&self) -> impl Future<Output = ()> + Send + 'static {
+        let mut state = self.lock();
+        let submission = match (&state.view.form, &state.form, state.open) {
+            (Some(form), Some((item_id, _)), Some(command)) => {
+                let values: Vec<FieldValue> = form
+                    .fields
+                    .iter()
+                    .map(|field| FieldValue {
+                        id: field.id.clone(),
+                        value: field.value.clone(),
+                    })
+                    .collect();
+                Some((command, item_id.clone(), values))
+            }
+            _ => None,
+        };
+        if submission.is_some() {
+            state.view.status = Status::Running;
+        }
+        let generation = state.screen_generation;
+        drop(state);
+        let launcher = self.clone();
+        async move {
+            if let Some((command, item_id, values)) = submission {
+                launcher.submit(generation, command, item_id, values).await
+            }
+        }
+    }
+
+    async fn submit(
+        &self,
+        generation: u64,
+        index: usize,
+        item_id: String,
+        values: Vec<FieldValue>,
+    ) {
+        let component = &self.commands[index].component;
+        let result = match self.runtime() {
+            Ok(runtime) => runtime.submit_form(component, &item_id, values).await,
+            Err(error) => Err(error),
+        };
+        let Some(mut state) = self.lock_if_current(generation) else {
+            return;
+        };
+        let view = &mut state.view;
+        let fields = &mut view.form.as_mut().expect("a form is open").fields;
+        for field in fields.iter_mut() {
+            field.error = None;
+        }
+        view.status = match result {
+            Ok(answer) => Status::Result(answer),
+            Err(CallError::Form(error)) => {
+                let field = error
+                    .field
+                    .as_deref()
+                    .and_then(|id| fields.iter_mut().find(|field| field.id == id));
+                match field {
+                    Some(field) => {
+                        let status = format!("{}: {}", field.label, error.message);
+                        field.error = Some(error.message);
+                        Status::Error(status)
+                    }
+                    None => Status::Error(error.message),
+                }
+            }
+            Err(error) => Status::Error(error.to_string()),
+        };
     }
 
     async fn run_action(&self, generation: u64, index: usize, item_id: String) {
@@ -184,14 +334,15 @@ impl Launcher {
             Ok(view) => {
                 let rows: Vec<Row> = view
                     .items
-                    .into_iter()
+                    .iter()
                     .map(|item| Row {
-                        id: item.id,
-                        title: item.title,
-                        subtitle: item.subtitle,
+                        id: item.id.clone(),
+                        title: item.title.clone(),
+                        subtitle: item.subtitle.clone(),
                     })
                     .collect();
                 state.open = Some(index);
+                state.items = view.items;
                 state.screen_generation += 1;
                 state.view = LauncherView {
                     screen: Screen::Command,
@@ -199,6 +350,7 @@ impl Launcher {
                     selected: first_index(&rows),
                     rows,
                     status: Status::Idle,
+                    form: None,
                 };
             }
             Err(error) => state.view.status = Status::Error(error.to_string()),
@@ -229,6 +381,44 @@ enum Call {
     Run(usize, String),
 }
 
+/// Replaces the command view with `form`, which belongs to item `item_id`.
+fn open_form(state: &mut State, item_id: String, form: Form) {
+    let fields = form
+        .fields
+        .into_iter()
+        .map(|field| {
+            let value = match &field.kind {
+                FieldKind::Text { .. } => String::new(),
+                FieldKind::Choice(choices) => choices
+                    .first()
+                    .map(|choice| choice.id.clone())
+                    .unwrap_or_default(),
+            };
+            FormField {
+                id: field.id,
+                label: field.label,
+                kind: field.kind,
+                value,
+                error: None,
+            }
+        })
+        .collect();
+    let form_view = LauncherView {
+        screen: Screen::Form,
+        title: form.title,
+        rows: Vec::new(),
+        selected: None,
+        status: Status::Idle,
+        form: Some(FormView {
+            fields,
+            submit_label: form.submit_label,
+        }),
+    };
+    let command_view = std::mem::replace(&mut state.view, form_view);
+    state.form = Some((item_id, command_view));
+    state.screen_generation += 1;
+}
+
 fn root_view(commands: &[CommandRegistration]) -> LauncherView {
     let rows: Vec<Row> = commands
         .iter()
@@ -244,6 +434,7 @@ fn root_view(commands: &[CommandRegistration]) -> LauncherView {
         selected: first_index(&rows),
         rows,
         status: Status::Idle,
+        form: None,
     }
 }
 
