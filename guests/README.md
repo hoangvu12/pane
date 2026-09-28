@@ -16,9 +16,12 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   hold each of them to that.
 - `sample-settings`, `sample-settings-js`, `sample-settings-ts`: the same
   command in Rust, JavaScript and TypeScript, which keeps a chosen greeting
-  style in Pane's settings ([Keeping settings](#keeping-settings)); the
-  fixtures for disabling and re-enabling a package, held alike by
-  `crates/pane-core/tests/disable.rs`.
+  style in Pane's settings ([Keeping settings](#keeping-settings)) and one
+  value of each other kind of data
+  ([content, cache and credentials](#keeping-content-cache-and-credentials));
+  the fixtures for disabling and re-enabling a package and for clearing its
+  cache, held alike by `crates/pane-core/tests/disable.rs` and
+  `crates/pane-core/tests/clear_cache.rs`.
 - `calculator`: Pane's calculator, a default extension in Rust: an
   arithmetic expression typed into root search lists its answer, which Enter
   copies ([Root results](#root-results-computed-from-the-query),
@@ -46,6 +49,11 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   `target/guests/packages/<name>/`, a ready-to-install package.
 - `fixtures/faulty`: test fixture whose actions, form, custom view and root
   results return an error or trap.
+- `fixtures/failing-start`: test fixture that builds and installs but traps
+  the first time it is asked for its view (after saving a setting), so a
+  reload to it fails to start and Retry then starts it.
+- `fixtures/refusing-view`: test fixture whose view is always refused with
+  an error it returns, which a reload must not report as a failure to start.
 - `fixtures/operations`: test fixture installed as several packages to drive
   each way an operation call can fail, cycles and the depth limit.
 - `fixtures/mixed-p2`: negative control that imports WASI 0.2 and must be rejected.
@@ -129,7 +137,7 @@ host Wasmtime and wasmtime-wasi 49.0.1.
 
 A command of an installed package can keep string values between runs with
 the `pane:extension/settings` interface in
-[`wit/settings.wit`](../wit/settings.wit). The settings sample, in
+[`wit/data.wit`](../wit/data.wit). The settings sample, in
 [Rust](sample-settings/src/lib.rs), [JavaScript](sample-settings-js/src/index.js)
 and [TypeScript](sample-settings-ts/src/index.ts), saves the greeting style
 the user picks. In Rust it is `pane_guest::settings`:
@@ -142,7 +150,7 @@ let style: Option<String> = settings::get("greeting-style")?;
 ```
 
 In JavaScript and TypeScript it is a module (typed in
-[`js/settings.d.ts`](js/settings.d.ts)); an error is thrown as an `Error`
+[`js/data.d.ts`](js/data.d.ts)); an error is thrown as an `Error`
 whose message is the reason, so rethrowing it shows the reason to the user:
 
 ```ts
@@ -168,11 +176,42 @@ const style: string | null = get("greeting-style");
 - A command built into Pane rather than installed from a package has no
   settings: `get` and `set` return an error.
 - A component that does not import `settings` is unaffected; it is built for
-  the `extension` world as before. `extension-with-settings` adds the import
+  the `extension` world as before. `extension-with-data` adds the imports
   within extension API 0.1, so a component that uses settings needs a Pane
   with this change. JavaScript and TypeScript commands are built against a
   world that includes it, so the prebuilt JS/TS components list the import
   whether or not they use it.
+
+### Keeping content, cache and credentials
+
+Next to `settings`, [`wit/data.wit`](../wit/data.wit) has three
+interfaces with the same `get` and `set`, one per other kind of
+[extension data](../docs/extension-data.md): `content` for the extension's own
+durable records, `cache` for values it can make again, and `credentials` for
+secrets kept on this computer. The settings sample uses all three. In Rust
+they are `pane_guest::{content, cache, credentials}`; in JavaScript and
+TypeScript the modules `pane:extension/content@0.1.0`,
+`pane:extension/cache@0.1.0` and `pane:extension/credentials@0.1.0`:
+
+```ts
+import * as cache from "pane:extension/cache@0.1.0";
+
+const greeting = cache.get("last-greeting") ?? makeGreeting();
+cache.set("last-greeting", greeting);
+```
+
+- They behave like settings: owned by the source identity, kept while the
+  package is disabled or updated, refused while it is disabled, and each kept
+  in its own file (`content.json`, `cache.json`, `credentials.json`).
+- The user can clear an extension's cache in Manage extensions at any time,
+  without the extension running: expect any cache value to be missing. Its
+  settings, content and credentials are kept.
+- Credentials are plain text in Pane's data folder, not in the system's
+  keychain; on macOS and Linux only the user can read their file. Other
+  extensions and programs running as the user can
+  ([limits](../docs/extension-data.md#limits)).
+- The extension migrates its own values between its versions; Pane keeps
+  them unchanged across an update.
 
 ## Writing a JavaScript or TypeScript command
 
@@ -605,7 +644,7 @@ you were written for and JSON input:
 ```rust
 use pane_guest::operations::call;
 
-let result = call("local:../sample-operations-js".into(), "greet".into(), 1, input)
+let result = call(source.into(), "greet".into(), 1, input) // "local:/…/sample-operations-js"
     .await
     .map_err(|error| error.explain())?; // "not-found: …", "failed: …"
 ```
@@ -614,15 +653,15 @@ let result = call("local:../sample-operations-js".into(), "greet".into(), 1, inp
 import { call, type CallError } from "pane:extension/operations@0.1.0";
 
 try {
-  const result = await call("local:../sample-operations", "greet", 1, JSON.stringify({ name }));
+  const result = await call(source, "greet", 1, JSON.stringify({ name })); // "local:/…"
 } catch (error) {
   const { kind, message } = (error as { payload: CallError }).payload;
 }
 ```
 
-A relative `local:` source is resolved from your package's own source
-folder, so packages kept side by side find each other wherever they are.
-Pane starts the target only when it is called, never enables a disabled one,
+`source` is the target's identity exactly as installed: `local:` and the
+absolute folder path it was installed from, the path Manage extensions shows
+after "local folder" (the samples ask for it in their form). Pane starts the target only when it is called, never enables a disabled one,
 keeps each package's settings apart, and refuses a call back into a package
 already waiting in the same chain instead of deadlocking.
 
@@ -751,15 +790,65 @@ What installing does:
   commands back with them. The package stays installed at the same identity;
   choosing its folder again shows it as disabled.
 
-Uninstalling and rebuilding on save are not implemented yet; to pick up a
-rebuilt component, choose the folder again and Update.
+### Reloading a package while Pane stays open
+
+After rebuilding a component, reload the package instead of restarting
+Pane: in **Manage extensions…**, after the rows that enable or disable each
+package, every enabled package has a **Reload <title>** row. Enter (or a
+click) on it reads the package's source folder again and replaces only that
+package; Pane and every other package keep running, including a custom view
+of another package that is open. It works the same for Rust, JavaScript and
+TypeScript packages, since Pane sees only components. A reload goes through
+two stages, and a failure in each is reported differently:
+
+1. **Checks.** The folder is checked exactly as an install checks it
+   (manifest, built components, WASI 0.3 imports, the extension API shape),
+   without running anything. If that fails, nothing is replaced: the
+   package keeps running the code installed before, and the status says
+   "Dev was not reloaded: <reason>. It keeps running its installed code."
+2. **Start.** Otherwise the new copy replaces the installed one, the old
+   instances are stopped (an open command, form or custom view of the
+   package closes; root search then selects its command), and the new code
+   starts: Pane starts each of the package's commands available on this
+   system and asks it for its view (`get-view`). Success shows "Reloaded
+   Dev". If a command fails to initialize (it traps, or its component
+   cannot load or be instantiated), its instances are stopped again and the
+   package is reported as failed to start. An error the command returns
+   from `get-view` itself, such as asking the user to sign in first, is an
+   ordinary answer and not a failure to start. On a failure to start: the package's row says "Failed to start", a **Retry
+   starting <title>** row appears under its Reload row with the diagnostics
+   (for a trap, the guest backtrace), which Pane also writes to its standard
+   error. The earlier code is not restored. Retry starts the same code
+   again; to fix it, rebuild and reload.
+
+What a reload keeps and what it does not:
+
+- **Settings are kept.** They belong to the package identity, so the new
+  code reads what the old code saved ([Keeping settings](#keeping-settings)),
+  including anything saved by a start that then failed. Nothing is migrated
+  or undone.
+- **Nothing live is carried over.** The old instance's memory, an open
+  view's state and a running call are not transferred to the new code, and
+  there is no API for an extension to hand transient state to its
+  replacement: save what must survive in settings. An answer from the old
+  code that arrives after the reload (for example a command that was
+  opening) is not shown.
+- A disabled package has no Reload row and is not reloaded; enable it first.
+- Reload is manual. Rebuilding and reloading on save (#12, #13) come later;
+  the Update in the install screen still replaces the copy too, without the
+  start stage.
+
+Uninstalling is not implemented yet.
 
 Known limits of local packages so far:
 
 - An update is not coordinated with a command that is running or open: the
   replaced copy's code is dropped, so an open command of the package loses
-  its state and may fail until you open it again from root search. Staged
-  activation that waits for running commands comes with reload (#11, #14).
+  its state and may fail until you open it again from root search.
+- A reload does not cancel a call of the old code that is already running;
+  it finishes first (its answer is not shown), since calls into extensions
+  run one at a time. Cancelling pending async work across a reload or
+  disable is #14.
 - Disabling does not cancel a call already running in the package: it
   finishes (its answer is not shown, and it cannot save settings), then its
   instance is dropped; a call that had not started is refused. Cancelling async work,

@@ -74,6 +74,6 @@ world applications-user {
 /// The world Pane hosts: a command that may also use settings, call
 /// operations and find and open installed applications.
 world extension-with-applications {
-  include extension-with-settings;
+  include extension-with-data;
   import applications;
 }

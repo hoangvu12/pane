@@ -260,9 +260,10 @@ python3 "$(dirname "$0")/check_screenshot.py" --same "$out/29-typed.png" "$out/3
 stop_pane
 
 # Operations: install the JavaScript operations sample, then the Rust one,
-# whose command (Call from Rust, selected once installed) asks the JavaScript
-# package's greet operation: "JavaScript answered: Hello, Rust, from
-# JavaScript" comes from the other package's guest, started for the call.
+# whose command (Call from Rust, selected once installed) opens its form,
+# takes the JavaScript package's identity (local: and the folder's resolved
+# path) and a name, and calls that package's greet operation: "Hello, Rust,
+# from JavaScript" comes from the other package's guest, started for the call.
 start_pane --install target/guests/packages/sample-operations-js
 key 36; sleep 2   # Install
 capture 31-operations-target.png
@@ -271,11 +272,132 @@ stop_pane
 start_pane --install target/guests/packages/sample-operations
 key 36; sleep 2   # Install; Call from Rust is selected
 key 36; sleep 3   # open Call from Rust
-key 36; sleep 5   # "Ask JavaScript to greet"
+key 36; sleep 2   # "Greet through another extension": its form
+type_text "local:$(cd target/guests/packages/sample-operations-js && pwd -P)"
+key 48; type_text Rust
+key 36; sleep 5   # Greet
 capture 32-operation-answer.png
 check 32-operation-answer.png 9fd8a8   # the JavaScript guest's answer
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{31-operations-target,32-operation-answer}.png
 stop_pane
+
+# Reload a development package while Pane stays open. Its command starts as
+# the Rust sample; a new build of it is the JavaScript sample. Root lists the
+# three samples, Rust sample, Greeting, Calculator, Call from JavaScript, Call
+# from Rust, Dev sample (the ninth row), the install row, then Manage
+# extensions… last; the extension list holds the six packages (Dev is the
+# sixth), then their six Reload rows (Reload Dev is the twelfth).
+mkdir -p "$out/dev"
+cp target/guests/sample_rust.wasm "$out/dev/command.wasm"
+cat >"$out/dev/pane.json" <<'JSON'
+{
+  "manifestVersion": 1,
+  "title": "Dev",
+  "apiVersion": "0.1",
+  "commands": [{ "id": "sample", "title": "Dev sample", "component": "command.wasm" }]
+}
+JSON
+start_pane --install "$out/dev"
+key 36; sleep 2   # Install; Dev sample is selected
+key 36; sleep 3
+key 36; sleep 2   # "Say hello"
+capture 33-dev-before.png
+check 33-dev-before.png 9fd8a8   # "Hello from the Rust guest"
+key 53; sleep 1
+cp target/guests/sample_js.wasm "$out/dev/command.wasm"
+for ((i = 0; i < 12; i++)); do key 125; done   # the last row
+key 36; sleep 1
+for ((i = 0; i < 11; i++)); do key 125; done   # Reload Dev
+key 36; sleep 3
+capture 34-reloaded.png
+check 34-reloaded.png 9fd8a8   # "Reloaded Dev"
+key 53; sleep 1
+for ((i = 0; i < 8; i++)); do key 125; done   # Dev sample
+key 36; sleep 3
+key 36; sleep 2   # "Say hello"
+capture 35-dev-after.png
+check 35-dev-after.png 9fd8a8   # "Hello from the JavaScript guest"
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/33-dev-before.png" "$out/35-dev-after.png"
+key 53; sleep 1
+
+# A build that fails the install checks (here its component is missing) is
+# not reloaded: the working code keeps running, exactly as before.
+rm "$out/dev/command.wasm"
+for ((i = 0; i < 12; i++)); do key 125; done
+key 36; sleep 1
+for ((i = 0; i < 11; i++)); do key 125; done
+key 36; sleep 2
+capture 36-not-reloaded.png
+check 36-not-reloaded.png f08c8c   # "Dev was not reloaded: ..."
+key 53; sleep 1
+for ((i = 0; i < 8; i++)); do key 125; done
+key 36; sleep 3
+key 36; sleep 2
+capture 37-still-running.png
+python3 "$(dirname "$0")/check_screenshot.py" --same "$out/35-dev-after.png" "$out/37-still-running.png"
+key 53; sleep 1
+
+# A build whose start fails is reported with Retry, after Reload Dev; this
+# one saves a setting and fails its first start only, so Retry starts it.
+cp target/guests/failing_start.wasm "$out/dev/command.wasm"
+for ((i = 0; i < 12; i++)); do key 125; done
+key 36; sleep 1
+for ((i = 0; i < 11; i++)); do key 125; done
+key 36; sleep 3
+capture 38-start-failed.png
+check 38-start-failed.png f08c8c   # "Reloaded Dev, but it failed to start; ..."
+key 125; key 36; sleep 3   # Retry starting Dev
+capture 39-retried.png
+check 39-retried.png 9fd8a8   # "Started Dev"
+stop_pane
+grep -q '"start-attempted": "yes"' "$out/data/extensions/settings.json" || { echo "the failed start's setting was not kept"; exit 1; }
+
+# The settings sample keeps one value of each kind of data: its formal style
+# (settings) and "Good day to you" (cache) are saved above; its fourth and
+# fifth items save a note (content) and sign in (a local credential), and its
+# sixth shows all four.
+start_pane
+for ((i = 0; i < 4; i++)); do key 125; done   # Greeting
+key 36; sleep 3
+for ((i = 0; i < 3; i++)); do key 125; done
+key 36; sleep 2   # "Save a note"
+key 125; key 36; sleep 2   # "Sign in"
+key 125; key 36; sleep 2   # "Show what Pane keeps"
+capture 40-kept.png
+check 40-kept.png 9fd8a8   # every value, the cached greeting included
+key 53; sleep 1
+stop_pane
+grep -q '"note": "Water the plants"' "$out/data/extensions/content.json" || { echo "note not saved"; exit 1; }
+grep -q '"token": "sample-token"' "$out/data/extensions/credentials.json" || { echo "credential not saved"; exit 1; }
+grep -q '"last-greeting": "Good day to you"' "$out/data/extensions/cache.json" || { echo "greeting not cached"; exit 1; }
+
+# Clear the settings sample's cache in Manage extensions: its row follows the
+# six package rows, their six Reload rows and "Clear cache of Rust sample". Pane asks first, then deletes only the cached
+# greeting, without running the extension.
+start_pane
+for ((i = 0; i < 12; i++)); do key 125; done   # the last row
+key 36; sleep 1
+for ((i = 0; i < 13; i++)); do key 125; done
+key 36; sleep 1   # "Clear cache of Settings sample"
+capture 41-confirm-clear-cache.png
+check 41-confirm-clear-cache.png aab4c0   # what is deleted and what is kept
+key 36; sleep 2   # "Clear cache"
+capture 42-cache-cleared.png
+check 42-cache-cleared.png 9fd8a8   # "Cleared the cache of Settings sample"
+key 53; sleep 1
+for ((i = 0; i < 4; i++)); do key 125; done   # Greeting
+key 36; sleep 3
+for ((i = 0; i < 5; i++)); do key 125; done
+key 36; sleep 2   # "Show what Pane keeps"
+capture 43-kept-after-clear.png
+check 43-kept-after-clear.png 9fd8a8   # "... Cached greeting: none"
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/40-kept.png" "$out/43-kept-after-clear.png"
+key 53; sleep 1
+stop_pane
+if grep -q 'Good day to you' "$out/data/extensions/cache.json"; then echo "cache not cleared"; exit 1; fi
+grep -q '"greeting-style": "formal"' "$out/data/extensions/settings.json" || { echo "setting lost"; exit 1; }
+grep -q '"note": "Water the plants"' "$out/data/extensions/content.json" || { echo "note lost"; exit 1; }
+grep -q '"token": "sample-token"' "$out/data/extensions/credentials.json" || { echo "credential lost"; exit 1; }
 
 # Applications, a default extension: an installed application is found by
 # name in root search and Enter opens it. The application is a bundle the
@@ -304,14 +426,14 @@ sleep 8
 focus_pane
 key 36; sleep 2   # Install
 type_text 'pane smoke'; sleep 3
-capture 33-application.png
-check 33-application.png 364355 3000   # the selected application row
+capture 44-application.png
+check 44-application.png 364355 3000   # the selected application row
 key 36; sleep 3
 focus_pane
-capture 34-opened.png
-check 34-opened.png 9fd8a8   # "Opened Pane Smoke App"
+capture 45-opened.png
+check 45-opened.png 9fd8a8   # "Opened Pane Smoke App"
 for _ in $(seq 50); do [ -f "$apps/launched" ] && break; sleep 0.2; done
 [ -f "$apps/launched" ] || { echo "the application did not run"; exit 1; }
-python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{33-application,34-opened}.png
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{44-application,45-opened}.png
 stop_pane
 echo "screenshots in $out"

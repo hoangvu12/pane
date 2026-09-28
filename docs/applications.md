@@ -114,7 +114,7 @@ The same author-facing contract serves all three: an extension receives
   a shortcut to `cmd.exe` made with `WScript.Shell` (Windows). The native
   lists are also read on each system, and on macOS must include Calculator.
 - Native GUI smokes, one identical phase on all three systems (screenshots
-  33 and 34): install the package, type "pane smoke", check the selected
+  44 and 45): install the package, type "pane smoke", check the selected
   row, Enter, check "Opened Pane Smoke App" and that the application the
   smoke added (in a data folder, HOME or APPDATA of Pane's own, so the
   system's are searched too) wrote its marker file. See the

@@ -82,6 +82,8 @@ fn guests() -> Result<(), String> {
                 "operations_fixture",
                 "old_api",
                 "mismatched_api",
+                "failing_start",
+                "refusing_view",
             ],
         ),
         ("guests/fixtures/mixed-p2", &["mixed_p2"]),

@@ -361,9 +361,9 @@ expression showing the calculator's answer as the query changes, Enter
 writing it to the clipboard, and an incomplete expression showing no
 results.
 
-Native checks: the GUI smoke scripts' last phase types "typescr", presses
-Enter, runs "Wait briefly" and asserts the screen is pixel for pixel the one
-step 4 reached by Down; then it types a query that matches nothing, presses
+Native checks: the GUI smoke scripts' search phase (screenshots 24 to 26)
+types "typescr", presses Enter, runs "Wait briefly" and asserts the screen
+is pixel for pixel the one step 4 reached by Down; then it types a query that matches nothing, presses
 Enter, and asserts root, the search and the no-results screens all differ.
 The earlier phases still navigate root with Down, which moves the selection
 while the field has focus. On Linux X11 this ran on 2026-09-28
