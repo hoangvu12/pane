@@ -4186,7 +4186,7 @@ dependencies = [
  "unicode-normalization",
  "wasmtime",
  "wasmtime-wasi",
- "windows-sys 0.60.2",
+ "windows 0.62.2",
 ]
 
 [[package]]

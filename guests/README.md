@@ -33,6 +33,11 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   ([Root results supplied ahead of the query](#root-results-supplied-ahead-of-the-query),
   [applications](../docs/applications.md)). Its package is
   `packages/applications`; held by `crates/pane-core/tests/applications.rs`.
+- `sample-applications-js`, `sample-applications-ts`: the same host import
+  and indexed results in JavaScript and TypeScript: "Launch <name>" for each
+  installed application, and a command listing and opening them
+  ([Root results supplied ahead of the query](#root-results-supplied-ahead-of-the-query));
+  held by `crates/pane-core/tests/applications.rs`.
 - `sample-operations`, `sample-operations-js`, `sample-operations-ts`: each
   package publishes the operation `greet` and has a command that calls
   another's, Rust calling JavaScript and TypeScript and they calling Rust
@@ -506,8 +511,32 @@ impl pane_guest::indexed::Guest for Apps {
 }
 ```
 
-`applications::open(&id)` opens one from a command's own action. JavaScript
-and TypeScript commands cannot use either yet.
+`applications::open(&id)` opens one from a command's own action.
+
+JavaScript or TypeScript: add `"pane": { "indexedResults": true }` to
+`package.json`, so the build exports the interface, import the host's
+functions from `"pane:extension/applications@0.1.0"` (they throw an object
+whose `payload` is the reason) and export `indexedResults`:
+
+```ts
+import type { IndexedResults } from "@pane/extension";
+import { installed } from "pane:extension/applications@0.1.0";
+
+export const indexedResults: IndexedResults = {
+  async results() {
+    return installed().map((app) => ({
+      id: app.id,
+      title: `Launch ${app.name}`,
+      action: { tag: "open-application", val: app.id },
+    }));
+  },
+};
+```
+
+The [JavaScript](sample-applications-js) and
+[TypeScript](sample-applications-ts) applications samples do this, and
+their commands list the applications and open one with `open(id)`; their
+packages in [`packages/`](packages) set `indexedResults`.
 
 ## Custom views
 

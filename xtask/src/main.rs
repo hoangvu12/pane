@@ -22,6 +22,8 @@ const PREBUILT: &[&str] = &[
     "sample_settings_ts",
     "sample_operations_js",
     "sample_operations_ts",
+    "sample_applications_js",
+    "sample_applications_ts",
 ];
 
 fn main() -> ExitCode {
@@ -135,7 +137,7 @@ fn guests() -> Result<(), String> {
 
 /// (package folder in `guests/packages`, component) of each sample package,
 /// and of the calculator and applications, default extensions.
-const SAMPLE_PACKAGES: [(&str, &str); 11] = [
+const SAMPLE_PACKAGES: [(&str, &str); 13] = [
     ("sample-rust", "sample_rust"),
     ("sample-settings", "sample_settings"),
     ("sample-js", "sample_js"),
@@ -147,6 +149,8 @@ const SAMPLE_PACKAGES: [(&str, &str); 11] = [
     ("sample-operations", "sample_operations"),
     ("sample-operations-js", "sample_operations_js"),
     ("sample-operations-ts", "sample_operations_ts"),
+    ("sample-applications-js", "sample_applications_js"),
+    ("sample-applications-ts", "sample_applications_ts"),
 ];
 
 /// Rebuilds `guests/prebuilt/` from the JS/TS sample sources, then refreshes

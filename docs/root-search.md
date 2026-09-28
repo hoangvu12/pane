@@ -158,7 +158,8 @@ extension, through the same guest boundary as its command:
   component exports `pane:extension/indexed-results`
   ([`wit/applications.wit`](../wit/applications.wit)) besides `command`;
   Pane checks both at install, without running it
-  ([author guide](../guests/README.md#root-results-supplied-ahead-of-the-query), Rust only).
+  ([author guide](../guests/README.md#root-results-supplied-ahead-of-the-query),
+  in Rust, JavaScript and TypeScript).
 - The first change to a query that is not blank after root search is shown
   asks each enabled command with `indexedResults` for `results()`, one after
   another, after the commands computing results from the query. Pane keeps
