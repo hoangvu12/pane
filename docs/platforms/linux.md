@@ -156,6 +156,32 @@ A drag is not driven natively; it is covered by the window tests. The macOS
 and Windows smokes run the same phase (screenshots 21 to 23), with their own
 click helpers; it has not run there yet.
 
+### Reloading a package (#11)
+
+Last, the smoke writes a package `Dev` in `<output-dir>/dev` whose component
+is a copy of the Rust sample, installs it and runs "Say hello". It then
+copies the JavaScript sample over the component, reloads Dev in **Manage
+extensions…** without restarting Pane, and runs "Say hello" again. Next it
+deletes the component and reloads (the checks fail, so the working code must
+keep answering exactly as before), and finally copies in the
+`failing-start` fixture, whose first start traps, reloads, and presses Retry.
+It checks that `settings.json` kept the setting the failed start saved. Run
+locally on 2026-09-28 (Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64,
+same Xvfb/lavapipe setup), all checks of the whole smoke passed:
+
+| Step | Evidence |
+| --- | --- |
+| Dev as installed: the Rust guest answers | [24-dev-before.png](evidence/linux-x11/24-dev-before.png) |
+| Reload Dev: "Reloaded Dev" | `25-reloaded.png` (not committed: it shows local paths) |
+| The same command now shows the JavaScript sample and its answer (`--distinct` from step 24) | [26-dev-after.png](evidence/linux-x11/26-dev-after.png) |
+| Component deleted, Reload Dev: "Dev was not reloaded: Not ready to run: … It keeps running its installed code." | `27-not-reloaded.png` (not committed: it shows local paths) |
+| The command still answers from the JavaScript code, pixel for pixel as in step 26 (`--same`) | `28-still-running.png` |
+| Failing start: "Reloaded Dev, but it failed to start; its earlier code is not restored. …" | `29-start-failed.png` (not committed: it shows local paths) |
+| Retry starting Dev: "Started Dev" | `30-retried.png` (not committed: it shows local paths) |
+
+The macOS and Windows smokes run the same phase (screenshots 24 to 30); it
+has not run there yet.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms have a text field (GPUI CE's

@@ -222,4 +222,75 @@ capture 23-color-click.png
 check 23-color-click.png 1b5e20 3000   # dark green
 "$xdotool" key Escape key Escape; sleep 1
 stop_pane
+
+# Reload a development package while Pane stays open. Its command starts as
+# the Rust sample; a new build of it is the JavaScript sample. Root lists the
+# three samples, Rust sample, Greeting, Dev sample, the install row, then
+# Manage extensions… last; the extension list holds Rust sample, Settings
+# sample, Dev, then Reload Rust sample, Reload Settings sample, Reload Dev.
+mkdir -p "$out/dev"
+cp target/guests/sample_rust.wasm "$out/dev/command.wasm"
+cat >"$out/dev/pane.json" <<'JSON'
+{
+  "manifestVersion": 1,
+  "title": "Dev",
+  "apiVersion": "0.1",
+  "commands": [{ "id": "sample", "title": "Dev sample", "component": "command.wasm" }]
+}
+JSON
+start_pane --install "$out/dev"
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 2   # Install; Dev sample is selected
+"$xdotool" key Return; sleep 3
+"$xdotool" key Return; sleep 2   # "Say hello"
+capture 24-dev-before.png
+check 24-dev-before.png 9fd8a8   # "Hello from the Rust guest"
+"$xdotool" key Escape; sleep 1
+cp target/guests/sample_js.wasm "$out/dev/command.wasm"
+for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # the last row
+"$xdotool" key Return; sleep 1
+for ((i = 0; i < 5; i++)); do "$xdotool" key Down; done   # Reload Dev
+"$xdotool" key Return; sleep 3
+capture 25-reloaded.png
+check 25-reloaded.png 9fd8a8   # "Reloaded Dev"
+"$xdotool" key Escape; sleep 1
+for ((i = 0; i < 5; i++)); do "$xdotool" key Down; done   # Dev sample
+"$xdotool" key Return; sleep 3
+"$xdotool" key Return; sleep 2   # "Say hello"
+capture 26-dev-after.png
+check 26-dev-after.png 9fd8a8   # "Hello from the JavaScript guest"
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/24-dev-before.png" "$out/26-dev-after.png"
+"$xdotool" key Escape; sleep 1
+
+# A build that fails the install checks (here its component is missing) is
+# not reloaded: the working code keeps running, exactly as before.
+rm "$out/dev/command.wasm"
+for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done
+"$xdotool" key Return; sleep 1
+for ((i = 0; i < 5; i++)); do "$xdotool" key Down; done
+"$xdotool" key Return; sleep 2
+capture 27-not-reloaded.png
+check 27-not-reloaded.png f08c8c   # "Dev was not reloaded: ..."
+"$xdotool" key Escape; sleep 1
+for ((i = 0; i < 5; i++)); do "$xdotool" key Down; done
+"$xdotool" key Return; sleep 3
+"$xdotool" key Return; sleep 2
+capture 28-still-running.png
+python3 "$(dirname "$0")/check_screenshot.py" --same "$out/26-dev-after.png" "$out/28-still-running.png"
+"$xdotool" key Escape; sleep 1
+
+# A build whose start fails is reported with Retry, after Reload Dev; this
+# one saves a setting and fails its first start only, so Retry starts it.
+cp target/guests/failing_start.wasm "$out/dev/command.wasm"
+for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done
+"$xdotool" key Return; sleep 1
+for ((i = 0; i < 5; i++)); do "$xdotool" key Down; done
+"$xdotool" key Return; sleep 3
+capture 29-start-failed.png
+check 29-start-failed.png f08c8c   # "Reloaded Dev, but it failed to start; ..."
+"$xdotool" key Down key Return; sleep 3   # Retry starting Dev
+capture 30-retried.png
+check 30-retried.png 9fd8a8   # "Started Dev"
+stop_pane
+grep -q '"start-attempted": "yes"' "$out/data/extensions/settings.json" || { echo "the failed start's setting was not kept"; exit 1; }
 echo "screenshots in $out"

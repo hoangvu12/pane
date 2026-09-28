@@ -60,6 +60,14 @@ _Avoid_: Cache (it is not disposable)
 Replacing the managed copy of an installed package from its source while keeping its package identity. A second explicit install of the same identity is rejected instead.
 _Avoid_: Reinstall
 
+**Reload**:
+Replacing an installed package's code from its source folder while Pane and other packages keep running: the replacement is checked as an install would check it, then replaces the managed copy, the old instances stop and the new code starts. Settings are kept; live state is not carried over.
+_Avoid_: Restart, hot swap, update (an update does not start the new code)
+
+**Startup failure**:
+A reload whose checked replacement was installed but could not start; Pane stops its instances, reports it with Retry and diagnostics and does not restore the earlier code. Distinct from a replacement that fails its checks, which leaves the working code in place.
+_Avoid_: Build failure, rollback
+
 **Supported platforms**:
 The operating systems a package, a command or an action declares it works on: a plain list, not a rule language. A declaration is not evidence of native support.
 _Avoid_: Compatibility rules, target matrix

@@ -139,6 +139,13 @@ Screenshots from run [36371205770](https://github.com/wasimysaid/pane/actions/ru
   yet**; whether posting the Quartz event needs a permission beyond the one
   System Events has is unverified. Accessibility: see
   [custom views](../custom-views.md#accessibility).
+- **Reload (#11):** last, the smoke installs a package from
+  `<output-dir>/dev`, replaces its component with the JavaScript sample and
+  reloads it in Manage extensions, then reloads it without its component (the
+  checks fail and the old code keeps answering) and with the `failing-start`
+  fixture (a startup failure, then Retry); screenshots 24 to 30, the same
+  steps as on [Linux](linux.md#reloading-a-package-11). **This phase has not
+  run on macOS yet.**
 
 ## Local extension package (#9)
 

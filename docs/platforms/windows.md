@@ -112,6 +112,14 @@ Screenshots from run [36371205770](https://github.com/wasimysaid/pane/actions/ru
   the screenshot, the screen bounds and `SetCursorPos` all use physical
   pixels and the click should land on the swatch at any display scaling;
   scaling other than 100 % is unverified.
+- **Reload (#11):** last, the smoke installs a package from
+  `<output-dir>\dev`, replaces its component with the JavaScript sample and
+  reloads it in Manage extensions, then reloads it without its component (the
+  checks fail and the old code keeps answering) and with the `failing-start`
+  fixture (a startup failure, then Retry); screenshots 24 to 30, the same
+  steps as on [Linux](linux.md#reloading-a-package-11). **This phase has not
+  run on Windows yet.** Replacing the managed copy removes the old folder on
+  a best-effort basis; on Windows a folder still in use is left behind.
 
 ## Local extension package (#9)
 

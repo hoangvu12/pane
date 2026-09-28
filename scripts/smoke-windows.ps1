@@ -227,4 +227,77 @@ Capture "23-color-click.png"
 Check "23-color-click.png" "1b5e20" 3000   # dark green
 Send "{ESC}{ESC}"; Start-Sleep -Seconds 1
 Stop-Pane $process
+
+# Reload a development package while Pane stays open. Its command starts as
+# the Rust sample; a new build of it is the JavaScript sample. Root lists the
+# three samples, Rust sample, Greeting, Dev sample, the install row, then
+# Manage extensions... last; the extension list holds Rust sample, Settings
+# sample, Dev, then Reload Rust sample, Reload Settings sample, Reload Dev.
+$dev = Join-Path $OutDir "dev"
+New-Item -ItemType Directory -Force -Path $dev | Out-Null
+Copy-Item "target/guests/sample_rust.wasm" (Join-Path $dev "command.wasm")
+@'
+{
+  "manifestVersion": 1,
+  "title": "Dev",
+  "apiVersion": "0.1",
+  "commands": [{ "id": "sample", "title": "Dev sample", "component": "command.wasm" }]
+}
+'@ | Set-Content -Encoding ascii (Join-Path $dev "pane.json")
+$process = Start-Pane "stderr-reload.log" @("--install", $dev)
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Dev sample is selected
+Send "{ENTER}"; Start-Sleep -Seconds 3
+Send "{ENTER}"; Start-Sleep -Seconds 2   # "Say hello"
+Capture "24-dev-before.png"
+Check "24-dev-before.png" "9fd8a8"   # "Hello from the Rust guest"
+Send "{ESC}"; Start-Sleep -Seconds 1
+Copy-Item -Force "target/guests/sample_js.wasm" (Join-Path $dev "command.wasm")
+Send "{DOWN 10}"   # the last row
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Send "{DOWN 5}"   # Reload Dev
+Send "{ENTER}"; Start-Sleep -Seconds 3
+Capture "25-reloaded.png"
+Check "25-reloaded.png" "9fd8a8"   # "Reloaded Dev"
+Send "{ESC}"; Start-Sleep -Seconds 1
+Send "{DOWN 5}"   # Dev sample
+Send "{ENTER}"; Start-Sleep -Seconds 3
+Send "{ENTER}"; Start-Sleep -Seconds 2   # "Say hello"
+Capture "26-dev-after.png"
+Check "26-dev-after.png" "9fd8a8"   # "Hello from the JavaScript guest"
+python "$PSScriptRoot/check_screenshot.py" --distinct (Join-Path $OutDir "24-dev-before.png") (Join-Path $OutDir "26-dev-after.png")
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the reloaded command shows its earlier code" }
+Send "{ESC}"; Start-Sleep -Seconds 1
+
+# A build that fails the install checks (here its component is missing) is
+# not reloaded: the working code keeps running, exactly as before.
+Remove-Item (Join-Path $dev "command.wasm")
+Send "{DOWN 10}"
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Send "{DOWN 5}"
+Send "{ENTER}"; Start-Sleep -Seconds 2
+Capture "27-not-reloaded.png"
+Check "27-not-reloaded.png" "f08c8c"   # "Dev was not reloaded: ..."
+Send "{ESC}"; Start-Sleep -Seconds 1
+Send "{DOWN 5}"
+Send "{ENTER}"; Start-Sleep -Seconds 3
+Send "{ENTER}"; Start-Sleep -Seconds 2
+Capture "28-still-running.png"
+python "$PSScriptRoot/check_screenshot.py" --same (Join-Path $OutDir "26-dev-after.png") (Join-Path $OutDir "28-still-running.png")
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: a build that failed its checks replaced the working code" }
+Send "{ESC}"; Start-Sleep -Seconds 1
+
+# A build whose start fails is reported with Retry, after Reload Dev; this
+# one saves a setting and fails its first start only, so Retry starts it.
+Copy-Item "target/guests/failing_start.wasm" (Join-Path $dev "command.wasm")
+Send "{DOWN 10}"
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Send "{DOWN 5}"
+Send "{ENTER}"; Start-Sleep -Seconds 3
+Capture "29-start-failed.png"
+Check "29-start-failed.png" "f08c8c"   # "Reloaded Dev, but it failed to start; ..."
+Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 3   # Retry starting Dev
+Capture "30-retried.png"
+Check "30-retried.png" "9fd8a8"   # "Started Dev"
+Stop-Pane $process
+if (-not (Select-String -Quiet -SimpleMatch '"start-attempted": "yes"' (Join-Path $data "extensions/settings.json"))) { throw "the failed start's setting was not kept" }
 Write-Output "screenshots in $OutDir"
