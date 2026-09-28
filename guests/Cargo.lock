@@ -290,6 +290,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sample-dependencies"
+version = "0.1.0"
+dependencies = [
+ "pane-guest",
+ "serde_json",
+]
+
+[[package]]
 name = "sample-operations"
 version = "0.1.0"
 dependencies = [

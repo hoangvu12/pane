@@ -45,6 +45,11 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   another's, Rust calling JavaScript and TypeScript and they calling Rust
   ([Operations](#operations)); held by
   `crates/pane-core/tests/operations.rs`.
+- `sample-dependencies`: a Rust package declaring the JavaScript operations
+  sample as a required dependency and the Rust one as an optional one, and
+  calling each by its dependency id; installing it installs the JavaScript
+  sample too ([Dependencies](#dependencies-on-other-extensions)); held by
+  `crates/pane-core/tests/dependencies.rs`.
 - `sample-query`, `sample-query-js`, `sample-query-ts`: Echo, the smallest
   command that takes a query, in Rust, JavaScript and TypeScript:
   it answers the text the user sends it from root search through its alias
@@ -775,9 +780,59 @@ try {
 
 `source` is the target's identity exactly as installed: `local:` and the
 absolute folder path it was installed from, the path Manage extensions shows
-after "local folder" (the samples ask for it in their form). Pane starts the target only when it is called, never enables a disabled one,
+after "local folder" (the samples ask for it in their form), or the id of a
+dependency your `pane.json` declares ([below](#dependencies-on-other-extensions)),
+which is how a package names the extensions it is written for. Pane starts the target only when it is called, never enables a disabled one,
 keeps each package's settings apart, and refuses a call back into a package
 already waiting in the same chain instead of deadlocking.
+
+### Dependencies on other extensions
+
+A package that calls other packages' operations declares them, so that
+installing it installs what it needs
+([details](../docs/dependencies.md)):
+
+```json
+"dependencies": [
+  {
+    "id": "greeter",
+    "source": "local:../sample-operations-js",
+    "operations": [{ "id": "greet", "version": 1 }]
+  },
+  {
+    "id": "rust-greeter",
+    "source": "local:../sample-operations",
+    "optional": true,
+    "operations": [{ "id": "greet", "version": 1 }]
+  }
+]
+```
+
+- `id`: the name your code calls it by, `call("greeter", "greet", 1, input)`,
+  in place of its identity; lowercase letters, digits and `-`.
+- `source`: `local:` and its folder, relative to your package's folder (the
+  folder a link to it points to) or absolute, with `/` between folders on
+  every system: `\`, drive letters and `//server` shares are refused. Pane
+  resolves it as it resolves an installed folder and keeps what it resolved
+  to, so moving your source folder later does not change it. Other sources
+  (npm, Git) are not supported yet.
+- `optional` (default `false`): a required dependency is installed with your
+  package when it is missing; an optional one never is, and a call to it
+  when it is not installed is `not-found` (the
+  [sample](sample-dependencies/src/lib.rs) answers how to get it instead).
+- `operations`: every operation you call, at the version you call. Pane
+  checks them before installing anything, and a call through the id reaches
+  only these.
+- `platforms` (optional): the systems you need it on; elsewhere it is
+  neither installed nor checked.
+
+The preview lists each dependency: "Requires: <title>, installed with it
+from <source>", "already installed", or disabled (it stays disabled), and
+the optional ones. A required dependency that cannot be installed (missing
+folder, source-only, other system, an operation it does not publish at that
+version, two packages needing different versions of one operation) is
+explained and nothing is installed. An installed dependency is never
+replaced by installing another package: update it yourself.
 
 ## Packaging and installing a local extension
 
@@ -828,6 +883,10 @@ and TypeScript: Pane sees only components.
   ([root search](../docs/root-search.md#matching-and-ranking)). Optional
   `rootResults: true` says the command also computes
   [root results from the query](#root-results-computed-from-the-query).
+- `operations` (optional): the [operations](#operations) the package
+  publishes; `commands` may then be empty.
+- `dependencies` (optional): the other packages whose operations it calls,
+  required or optional ([dependencies](#dependencies-on-other-extensions)).
 
 Unknown fields are ignored. The component must exist when you install: a
 package whose component is not built is refused as source-only, with the
@@ -885,6 +944,9 @@ What installing does:
   whatever its new title or version. Two different folders are two packages,
   even with identical contents, and nothing is merged or switched between
   them.
+- **Required dependencies.** Installing or updating also installs the
+  missing [required dependencies](#dependencies-on-other-extensions) the
+  manifest declares, first, or explains why it cannot and installs nothing.
 - **Listing.** Installed commands are listed from the manifests alone; no
   guest runs until you open a command or another extension calls one of the
   package's [operations](#operations). A damaged installed copy stays listed

@@ -84,6 +84,86 @@ impl PackageIdentity {
             Source::Local(path) => Some(Path::new(path)),
         }
     }
+
+    /// The identity of the package that the package with this identity
+    /// names with the dependency source `source` (`local:` and a `/`-separated
+    /// path, as the manifest checked). The path is relative to this package's
+    /// source folder as Pane resolved it (a package installed through a
+    /// symbolic link resolves against the folder the link points to), or
+    /// absolute. An existing folder is resolved as an installed folder is.
+    /// For one that does not exist (yet, or any more), `.` and `..` are
+    /// removed from the spelling and its deepest existing parent is resolved
+    /// by the operating system, so that it matches the identity the folder
+    /// gets once it exists, unless the folder itself becomes a link, which
+    /// [`PackageIdentity::resolved_again`] covers when calls are matched.
+    /// Fails, with the path, only for a path that cannot be an identity (not
+    /// absolute or not Unicode).
+    pub(crate) fn dependency(&self, source: &str) -> Result<PackageIdentity, PathBuf> {
+        let path = source.strip_prefix("local:").unwrap_or(source);
+        let folder = match self.local_folder() {
+            Some(base) => base.join(path),
+            None => PathBuf::from(path),
+        };
+        if let Ok(identity) = PackageIdentity::local(&folder) {
+            return Ok(identity);
+        }
+        let mut spelled = PathBuf::new();
+        for part in folder.components() {
+            match part {
+                PathPart::CurDir => {}
+                PathPart::ParentDir => {
+                    spelled.pop();
+                }
+                other => spelled.push(other),
+            }
+        }
+        let mut missing = Vec::new();
+        let mut existing = spelled.clone();
+        let resolved = loop {
+            if let Ok(resolved) = fs::canonicalize(&existing) {
+                break missing
+                    .iter()
+                    .rev()
+                    .fold(resolved, |path: PathBuf, part| path.join(part));
+            }
+            match (
+                existing.file_name().map(ToOwned::to_owned),
+                existing.parent(),
+            ) {
+                (Some(name), Some(parent)) => {
+                    missing.push(name);
+                    existing = parent.to_path_buf();
+                }
+                _ => break spelled.clone(),
+            }
+        };
+        let resolved = without_verbatim_prefix(resolved);
+        match resolved.to_str() {
+            Some(text) if resolved.is_absolute() => {
+                Ok(PackageIdentity(Source::Local(text.to_owned())))
+            }
+            _ => Err(resolved),
+        }
+    }
+
+    /// This local identity resolved by the operating system now, if its
+    /// folder exists and resolves to another spelling: a dependency recorded
+    /// before its folder existed, which became a symbolic link or was
+    /// created with another spelling on a file system that ignores case.
+    pub(crate) fn resolved_again(&self) -> Option<PackageIdentity> {
+        let resolved = PackageIdentity::local(self.local_folder()?).ok()?;
+        (resolved != *self).then_some(resolved)
+    }
+}
+
+/// The installed package with `identity` among `packages`.
+pub(crate) fn installed_as<'a>(
+    packages: &'a [InstalledPackage],
+    identity: &PackageIdentity,
+) -> Option<&'a InstalledPackage> {
+    packages
+        .iter()
+        .find(|package| package.identity == *identity)
 }
 
 impl fmt::Display for PackageIdentity {
@@ -137,6 +217,67 @@ pub struct Manifest {
     /// The operations the package publishes for other extensions to call.
     /// Only these are callable: a command is not an operation.
     pub operations: Vec<ManifestOperation>,
+    /// The other packages whose operations this one calls, required or
+    /// optional.
+    pub dependencies: Vec<ManifestDependency>,
+}
+
+/// Another package whose operations a package calls, as its `pane.json`
+/// declares it under `dependencies`. Installing the package installs its
+/// missing required dependencies with it; an optional one is used only when
+/// the user installed it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ManifestDependency {
+    /// The name the package's code calls it by in place of its package
+    /// identity: unique in the package; lowercase letters, digits and `-`.
+    pub id: String,
+    /// Where it is installed from, as written: `local:` and a folder path
+    /// separated by `/`, relative to the declaring package's folder or
+    /// absolute (`/…`). Other sources are not supported yet.
+    pub source: String,
+    /// Whether the package needs it (the default) or only uses it when it is
+    /// installed (`"optional": true`).
+    pub required: bool,
+    /// The operations the package calls, each at the version it calls: the
+    /// dependency is compatible when it publishes all of them.
+    pub operations: Vec<RequiredOperation>,
+    /// The operating systems on which the package needs it; `None` for
+    /// every system. Elsewhere it is neither installed nor checked.
+    pub platforms: Option<Vec<Platform>>,
+}
+
+impl ManifestDependency {
+    /// Whether the declaring package needs this dependency on this system.
+    pub fn needed_here(&self) -> bool {
+        self.only_on().is_none()
+    }
+
+    /// "only on Windows and Linux" when the package does not need it on
+    /// this system; `None` when it does.
+    pub(crate) fn only_on(&self) -> Option<String> {
+        platform::unavailable(self.platforms.as_deref(), "it")?;
+        let platforms = self.platforms.as_deref().unwrap_or_default();
+        Some(match platforms {
+            [] => "on no system".to_owned(),
+            platforms => format!("only on {}", platform::names(platforms)),
+        })
+    }
+
+    /// Whether the package declares that it calls `operation` at `version`
+    /// here.
+    pub(crate) fn calls(&self, operation: &str, version: u32) -> bool {
+        self.operations
+            .iter()
+            .any(|declared| declared.id == operation && declared.version == version)
+    }
+}
+
+/// An operation a package calls in one of its dependencies, at the version
+/// it calls.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RequiredOperation {
+    pub id: String,
+    pub version: u32,
 }
 
 /// An operation a package publishes: other extensions call it through
@@ -195,6 +336,27 @@ struct ManifestJson {
     commands: Vec<CommandJson>,
     #[serde(default)]
     operations: Vec<OperationJson>,
+    #[serde(default)]
+    dependencies: Vec<DependencyJson>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DependencyJson {
+    id: String,
+    source: String,
+    #[serde(default)]
+    optional: bool,
+    operations: Vec<RequiredOperationJson>,
+    #[serde(default)]
+    platforms: Option<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RequiredOperationJson {
+    id: String,
+    version: u32,
 }
 
 #[derive(Deserialize)]
@@ -402,6 +564,7 @@ impl Manifest {
                 version: operation.version,
             });
         }
+        let dependencies = parse_dependencies(json.dependencies)?;
         Ok(Manifest {
             title: json.title,
             version: json.version,
@@ -409,8 +572,101 @@ impl Manifest {
             platforms,
             commands,
             operations,
+            dependencies,
         })
     }
+
+    /// The dependency the package's code calls `id`.
+    pub fn dependency(&self, id: &str) -> Option<&ManifestDependency> {
+        self.dependencies
+            .iter()
+            .find(|dependency| dependency.id == id)
+    }
+}
+
+/// Checks that `source`, of dependency `id`, is `local:` and a folder path
+/// written the same way on every system: `/` between folders, relative or
+/// absolute from `/`, never with `\`, a drive letter or a `//server` share,
+/// which one system would read differently from another.
+fn check_local_source(source: &str, id: &str) -> Result<(), PackageError> {
+    let invalid = |reason: &str| {
+        Err(PackageError::InvalidManifest(format!(
+            "the source `{source}` of dependency `{id}` {reason}"
+        )))
+    };
+    let Some(path) = source.strip_prefix("local:") else {
+        return invalid(
+            "must be `local:` followed by a folder path; other sources are not supported yet",
+        );
+    };
+    if path.is_empty() {
+        return invalid("must be `local:` followed by a folder path");
+    }
+    let drive =
+        path.len() >= 2 && path.as_bytes()[1] == b':' && path.as_bytes()[0].is_ascii_alphabetic();
+    if path.contains('\\') || drive || path.starts_with("//") {
+        return invalid(
+            "must separate folders with `/`, without a drive letter, `\\` or a `//server` \
+             share, so that every system reads it alike (such as `local:../greeter`)",
+        );
+    }
+    Ok(())
+}
+
+fn parse_dependencies(json: Vec<DependencyJson>) -> Result<Vec<ManifestDependency>, PackageError> {
+    let invalid = |message: String| PackageError::InvalidManifest(message);
+    let mut dependencies: Vec<ManifestDependency> = Vec::new();
+    for dependency in json {
+        let id = dependency.id;
+        let valid_id = !id.is_empty()
+            && id
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+        if !valid_id {
+            return Err(invalid(format!(
+                "dependency id `{id}` must be lowercase letters, digits and `-`"
+            )));
+        }
+        if dependencies.iter().any(|seen| seen.id == id) {
+            return Err(invalid(format!("dependency id `{id}` is repeated")));
+        }
+        check_local_source(&dependency.source, &id)?;
+        let mut operations: Vec<RequiredOperation> = Vec::new();
+        for operation in dependency.operations {
+            if operation.id.is_empty() || operation.version == 0 {
+                return Err(invalid(format!(
+                    "every operation of dependency `{id}` needs an `id` and a `version` from 1"
+                )));
+            }
+            if operations.iter().any(|seen| seen.id == operation.id) {
+                return Err(invalid(format!(
+                    "operation `{}` of dependency `{id}` is repeated",
+                    operation.id
+                )));
+            }
+            operations.push(RequiredOperation {
+                id: operation.id,
+                version: operation.version,
+            });
+        }
+        if operations.is_empty() {
+            return Err(invalid(format!(
+                "dependency `{id}` lists no `operations`; name those the package calls"
+            )));
+        }
+        let platforms = parse_platforms(
+            dependency.platforms,
+            &format!("`platforms` of dependency `{id}`"),
+        )?;
+        dependencies.push(ManifestDependency {
+            id,
+            source: dependency.source,
+            required: !dependency.optional,
+            operations,
+            platforms,
+        });
+    }
+    Ok(dependencies)
 }
 
 /// `component` as a path, if it is a relative path inside the package folder.
@@ -496,6 +752,9 @@ pub enum PackageError {
     NotInstalled(PackageIdentity),
     /// Pane's managed location could not be read or written.
     Storage(String),
+    /// A required dependency cannot be installed or used, for these
+    /// reasons.
+    Dependencies(Vec<String>),
 }
 
 impl fmt::Display for PackageError {
@@ -543,6 +802,9 @@ impl fmt::Display for PackageError {
             PackageError::Storage(reason) => {
                 write!(f, "Could not update Pane's installed extensions: {reason}")
             }
+            PackageError::Dependencies(problems) => {
+                write!(f, "Nothing was installed: {}", problems.join("; "))
+            }
         }
     }
 }
@@ -575,6 +837,11 @@ impl SourcePackage {
             manifest_text,
         })
     }
+
+    /// The `pane.json` text the manifest was read from.
+    pub(crate) fn manifest_text(&self) -> &str {
+        &self.manifest_text
+    }
 }
 
 /// An installed package, as read from its managed copy.
@@ -588,16 +855,53 @@ pub struct InstalledPackage {
     /// Whether the user has left the package enabled. A disabled package
     /// contributes no commands and runs nothing, but keeps its settings.
     pub enabled: bool,
+    /// The identity each `local:` dependency the manifest declares was
+    /// resolved to when the package was installed, by dependency id.
+    dependencies: Vec<(String, PackageIdentity)>,
 }
 
 impl InstalledPackage {
-    fn load(identity: PackageIdentity, location: PathBuf, enabled: bool) -> InstalledPackage {
+    /// The package whose managed copy is at `location`, with the identities
+    /// its dependencies were resolved to as `recorded`; one not recorded
+    /// (installed before Pane recorded them) is resolved now.
+    fn load(
+        identity: PackageIdentity,
+        location: PathBuf,
+        enabled: bool,
+        recorded: &[ResolvedJson],
+    ) -> InstalledPackage {
+        let manifest = Manifest::read_installed(&location);
+        let dependencies = match &manifest {
+            Ok(manifest) => manifest
+                .dependencies
+                .iter()
+                .filter_map(|dependency| {
+                    let resolved = match recorded.iter().find(|r| r.id == dependency.id) {
+                        Some(record) => PackageIdentity(Source::Local(record.local.clone())),
+                        None => identity.dependency(&dependency.source).ok()?,
+                    };
+                    Some((dependency.id.clone(), resolved))
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        };
         InstalledPackage {
-            manifest: Manifest::read_installed(&location),
+            manifest,
             identity,
             location,
             enabled,
+            dependencies,
         }
+    }
+
+    /// The identity of the package this one's code calls by the dependency
+    /// id `id`, as resolved when it was installed; `None` if its manifest
+    /// declares no such dependency, or not one from a local folder.
+    pub fn dependency_identity(&self, id: &str) -> Option<&PackageIdentity> {
+        self.dependencies
+            .iter()
+            .find(|(declared, _)| declared == id)
+            .map(|(_, identity)| identity)
     }
 
     /// The package's display title.
@@ -768,6 +1072,35 @@ struct RecordJson {
     /// runs. Separate from `disabled`, which is the user's choice.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     paused: Option<PausedJson>,
+    /// The identity each `local:` dependency its manifest declares resolved
+    /// to when it was installed or updated.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    dependencies: Vec<ResolvedJson>,
+}
+
+/// A dependency id and the local source folder it resolved to.
+#[derive(Clone, Serialize, Deserialize)]
+struct ResolvedJson {
+    id: String,
+    local: String,
+}
+
+/// The records of `package`'s `local:` dependencies, resolved from its
+/// source folder.
+fn resolved_dependencies(package: &SourcePackage) -> Vec<ResolvedJson> {
+    package
+        .manifest
+        .dependencies
+        .iter()
+        .filter_map(|dependency| {
+            let identity = package.identity.dependency(&dependency.source).ok()?;
+            let PackageIdentity(Source::Local(local)) = identity;
+            Some(ResolvedJson {
+                id: dependency.id.clone(),
+                local,
+            })
+        })
+        .collect()
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -896,6 +1229,7 @@ impl Store {
                     PackageIdentity(Source::Local(record.local.clone())),
                     self.dir.join(PACKAGES_DIR).join(&record.dir),
                     !record.disabled,
+                    &record.dependencies,
                 )
             })
             .collect()
@@ -1036,6 +1370,28 @@ impl Store {
         identity: &PackageIdentity,
         retain: Option<String>,
     ) -> Result<Leftover, PackageError> {
+        self.remove(identity, retain.map(|title| (title, None)))
+    }
+
+    /// Removes again the package with `identity` that an install added,
+    /// putting back, at its place among them, the record that Pane kept its
+    /// data under `title` if it had one (`(title, index)`).
+    pub(crate) fn undo_install(
+        &mut self,
+        identity: &PackageIdentity,
+        retained: Option<(String, usize)>,
+    ) -> Result<Leftover, PackageError> {
+        self.remove(identity, retained.map(|(title, at)| (title, Some(at))))
+    }
+
+    /// Uninstalls as [`Store::uninstall`] does, recording retained data
+    /// under a title, at a position among the retained records if given,
+    /// else last.
+    fn remove(
+        &mut self,
+        identity: &PackageIdentity,
+        retain: Option<(String, Option<usize>)>,
+    ) -> Result<Leftover, PackageError> {
         let registry = self
             .registry
             .as_mut()
@@ -1046,8 +1402,8 @@ impl Store {
             return Err(PackageError::NotInstalled(identity.clone()));
         };
         let record = updated.packages.remove(index);
-        if let Some(title) = retain {
-            put_retained(&mut updated, local, title);
+        if let Some((title, at)) = retain {
+            put_retained(&mut updated, local, title, at);
         }
         write_registry(&self.dir, &updated)
             .map_err(|error| PackageError::Storage(error.to_string()))?;
@@ -1104,7 +1460,7 @@ impl Store {
             .map_err(|reason| PackageError::Storage(reason.clone()))?;
         let PackageIdentity(Source::Local(local)) = identity;
         let mut updated = registry.clone();
-        put_retained(&mut updated, local, title);
+        put_retained(&mut updated, local, title, None);
         write_registry(&self.dir, &updated)
             .map_err(|error| PackageError::Storage(error.to_string()))?;
         *registry = updated;
@@ -1145,12 +1501,14 @@ impl Store {
             next: number + 1,
             ..registry.clone()
         };
+        let dependencies = resolved_dependencies(package);
         // An update keeps the record, so a disabled package stays disabled.
         let enabled = match updated.packages.iter_mut().find(|r| &r.local == local) {
             Some(record) => {
                 record.dir = dir;
                 // New code has not failed.
                 record.paused = None;
+                record.dependencies = dependencies.clone();
                 !record.disabled
             }
             None => {
@@ -1162,6 +1520,7 @@ impl Store {
                     dir,
                     disabled: false,
                     paused: None,
+                    dependencies: dependencies.clone(),
                 });
                 true
             }
@@ -1187,18 +1546,24 @@ impl Store {
             package.identity.clone(),
             location,
             enabled,
+            &dependencies,
         ))
     }
 }
 
 /// Records in `registry` that data is kept for the local source `local`,
-/// last uninstalled as `title`.
-fn put_retained(registry: &mut RegistryJson, local: &str, title: String) {
+/// last uninstalled as `title`: at position `at` among the records if
+/// given, else last.
+fn put_retained(registry: &mut RegistryJson, local: &str, title: String, at: Option<usize>) {
     registry.retained.retain(|record| record.local != local);
-    registry.retained.push(RetainedJson {
+    let record = RetainedJson {
         local: local.to_owned(),
         title,
-    });
+    };
+    match at {
+        Some(at) if at <= registry.retained.len() => registry.retained.insert(at, record),
+        _ => registry.retained.push(record),
+    }
 }
 
 /// Writes the validated `pane.json` and copies the components it names,

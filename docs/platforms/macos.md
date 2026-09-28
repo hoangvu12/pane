@@ -158,7 +158,7 @@ focus transition are unverified natively.
 
 ## Deleting retained data (#41)
 
-The smoke's last phase (screenshots 63 to 65, [deleting retained
+The phase before it (screenshots 63 to 65, [deleting retained
 data](../extension-data.md#deleting-retained-data)), with a data folder of
 its own, saves a note with the settings sample, uninstalls it keeping its
 saved data, deletes its retained data from the extension list's last row
@@ -174,6 +174,17 @@ fallback in Manage extensions, sends "ec hello" and, from the unselected
 fallback row chosen with Down, "zqx" to it, and checks that with the
 extension disabled "ec hello" lists nothing. Nothing in it is specific to
 macOS (no system API is involved); **not run on macOS yet**.
+
+## Dependencies (#42)
+
+The smoke's last phase (screenshots 75 to 77, [dependencies](../dependencies.md#checks)),
+with a data folder of its own, previews the dependencies sample (its
+required JavaScript operations sample and optional Rust one listed),
+installs it with the JavaScript sample and runs "Greet through the required
+greeter", which must answer from the JavaScript guest; `installed.json`
+must then hold exactly two packages and the recorded dependency. The logic
+is platform-independent except path resolution, which uses the same
+`canonicalize` as package identity. **Not run on macOS yet.**
 
 ## Text input and accessibility findings
 

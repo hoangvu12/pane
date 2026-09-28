@@ -58,7 +58,7 @@ impl fmt::Display for Platform {
 
 /// People's names for `platforms`: "Windows", "Windows and Linux",
 /// "Windows, macOS and Linux".
-fn names(platforms: &[Platform]) -> String {
+pub(crate) fn names(platforms: &[Platform]) -> String {
     let names: Vec<String> = platforms.iter().map(Platform::to_string).collect();
     join(&names)
 }
