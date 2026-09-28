@@ -94,6 +94,7 @@ pub fn sample_commands() -> Vec<CommandRegistration> {
             subtitle: Some(subtitle.into()),
             component: dir.join(file),
             takes_query: false,
+            search: false,
         })
         .collect()
 }
@@ -577,6 +578,10 @@ impl Render for LauncherWindow {
                 "This command has no items.",
                 "↑↓ select · Enter run · Esc back",
             ),
+            Screen::CommandSearch { .. } => (
+                "This command has no items.",
+                "Type to search · ↑↓ select · Enter run · Esc clear, then back",
+            ),
             Screen::Package { .. } => ("Nothing to install.", "Enter confirm · Esc back"),
             Screen::Form(_) => ("", "Tab next field · Enter submit · Esc back"),
             Screen::Extensions { .. } => (
@@ -587,6 +592,7 @@ impl Render for LauncherWindow {
             Screen::Confirm { .. } => ("", "↑↓ select · Enter choose · Esc cancel"),
             Screen::Hotkey { .. } => ("", "Press the new hotkey · Enter choose · Esc back"),
             Screen::PauseDetails { .. } => ("", "Enter retry · Esc back"),
+            Screen::NetworkDetails { .. } => ("", "Esc back"),
             Screen::RuntimeDetails { .. } => ("", "Enter restart · Esc back"),
             Screen::BuildDetails { .. } => ("", "Enter build again · Esc back"),
         };
@@ -608,6 +614,12 @@ impl Render for LauncherWindow {
                     .child(line.clone())
             })
             .collect();
+        // A command's search that failed lists nothing; its error says why,
+        // not "No results".
+        let search_failed = matches!(
+            (&view.screen, &view.status),
+            (Screen::CommandSearch { .. }, Status::Error(_))
+        );
         let (status_selector, status_text, status_color): (&str, SharedString, u32) =
             match view.status {
                 Status::Idle => ("status-idle", hint.into(), 0x8a96a3),
@@ -626,10 +638,15 @@ impl Render for LauncherWindow {
             })
             .collect();
         let empty = match &view.screen {
-            Screen::Root { query } if !query.trim().is_empty() => div()
-                .id("no-results")
-                .debug_selector(|| "no-results".into())
-                .child(format!("No results for “{}”", query.trim())),
+            Screen::CommandSearch { .. } if search_failed => div().id("empty"),
+            Screen::Root { query } | Screen::CommandSearch { query }
+                if !query.trim().is_empty() =>
+            {
+                div()
+                    .id("no-results")
+                    .debug_selector(|| "no-results".into())
+                    .child(format!("No results for “{}”", query.trim()))
+            }
             _ => div().id("empty").child(empty),
         };
         let list = div()
@@ -638,6 +655,7 @@ impl Render for LauncherWindow {
             .role(Role::ListBox)
             .aria_label(match view.screen {
                 Screen::Root { .. } => "Results".into(),
+                Screen::CommandSearch { .. } => format!("{} results", view.title),
                 _ => view.title.clone(),
             })
             .flex_1()
@@ -656,7 +674,13 @@ impl Render for LauncherWindow {
         let body = match view.screen {
             Screen::Form(form) => self.render_form(view.title.clone(), form, cx),
             Screen::CustomView(custom_view) => self.render_custom_view(custom_view, cx),
-            Screen::Root { query } => self.render_root_search(query, list, cx),
+            Screen::Root { query } => {
+                self.render_search(query, root_search::ROOT_PLACEHOLDER, list, cx)
+            }
+            // The opened command's own search field, the same control.
+            Screen::CommandSearch { query } => {
+                self.render_search(query, root_search::COMMAND_PLACEHOLDER, list, cx)
+            }
             // The list holds keyboard focus; the selected row is its active
             // descendant, and key actions bubble to the root.
             _ => list.track_focus(&self.focus_handle).into_any_element(),

@@ -28,6 +28,8 @@ const PREBUILT: &[&str] = &[
     "sample_applications_ts",
     "sample_query_js",
     "sample_query_ts",
+    "sample_search_js",
+    "sample_search_ts",
     "sample_helper_js",
     "sample_helper_ts",
     "sample_files_js",
@@ -92,6 +94,7 @@ fn guests() -> Result<(), String> {
                 "sample_operations",
                 "sample_dependencies",
                 "sample_query",
+                "sample_search",
                 "sample_helper",
                 "faulty",
                 "operations_fixture",
@@ -241,7 +244,7 @@ fn npm_sample(root: &Path, out: &Path) -> Result<(), String> {
 /// (package folder in `guests/packages`, component) of each sample package,
 /// and of the default extensions (the calculator, applications and
 /// quicklinks).
-const SAMPLE_PACKAGES: [(&str, &str); 25] = [
+const SAMPLE_PACKAGES: [(&str, &str); 28] = [
     ("sample-rust", "sample_rust"),
     ("sample-settings", "sample_settings"),
     ("sample-js", "sample_js"),
@@ -262,6 +265,9 @@ const SAMPLE_PACKAGES: [(&str, &str); 25] = [
     ("sample-query", "sample_query"),
     ("sample-query-js", "sample_query_js"),
     ("sample-query-ts", "sample_query_ts"),
+    ("sample-search", "sample_search"),
+    ("sample-search-js", "sample_search_js"),
+    ("sample-search-ts", "sample_search_ts"),
     ("sample-helper", "sample_helper"),
     ("sample-helper-js", "sample_helper_js"),
     ("sample-helper-ts", "sample_helper_ts"),

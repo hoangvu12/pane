@@ -1301,4 +1301,89 @@ Stop-Pane $process
 Remove-Item Env:PANE_TEST_CHOOSE_FOLDER
 Remove-Item Env:PANE_TEST_OPEN_FILE_LOG
 Remove-Item -Recurse -Force $filesFixture
+
+# Searching an online service inside its command: Package search, the Rust
+# search sample, queries the fixture service (a made-up package registry on
+# a free port of 127.0.0.1, set as the sample's address through its form;
+# nothing leaves this computer), whose log lists each request. Typed into
+# root search, "aurora" finds nothing and sends the service nothing. Opened,
+# the command's own search field sends it: its results are listed, Enter
+# shows a package's details. A search the service holds ("slow...") is stopped when the text
+# changes: the service sees its client hang up and the newer results show.
+# The service's own error, then the service stopped (offline), are errors in
+# place of results; once it is back, searching works again: the extension
+# was not paused. A data folder of its own keeps the rows in a known order.
+$data = Join-Path $OutDir "search-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+cargo build --locked --quiet -p pane-core --example fixture_service
+if ($LASTEXITCODE -ne 0) { throw "could not build the fixture service" }
+# Starts the fixture service on `$port` (0: a free one), logging to `$log`;
+# the process, and sets $servicePort to the port it listens on.
+function Start-FixtureService($log, $port) {
+    $path = Join-Path $OutDir $log
+    $service = Start-Process -FilePath "target/debug/examples/fixture_service.exe" -ArgumentList "--port", "$port" `
+        -PassThru -RedirectStandardOutput $path -RedirectStandardError "$path.err"
+    for ($i = 0; $i -lt 50; $i++) {
+        $listening = if (Test-Path $path) { Select-String -Pattern 'listening on http://127\.0\.0\.1:(\d+)' $path }
+        if ($listening) {
+            $script:servicePort = $listening.Matches[0].Groups[1].Value
+            return $service
+        }
+        if ($service.HasExited) { break }
+        Start-Sleep -Milliseconds 100
+    }
+    throw "the fixture service did not start (see $path)"
+}
+$serviceLog = Join-Path $OutDir "fixture-service.log"
+$service = Start-FixtureService "fixture-service.log" 0
+try {
+    $process = Start-Pane "stderr-search.log" @("--install", "target/guests/packages/sample-search")
+    Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Package search is selected
+    Capture "160-search-installed.png"
+    Check "160-search-installed.png" "9fd8a8"   # "Installed Search sample"
+    Send "aurora"; Start-Sleep -Seconds 2
+    Capture "161-root-typed.png"   # root search: "No results for “aurora”"
+    if (Select-String -Quiet -Pattern '^GET' $serviceLog) { throw "root search reached the service" }
+    Send "{ESC}"; Start-Sleep -Seconds 1   # clears the query
+    Send "package search"; Start-Sleep -Seconds 1
+    Send "{ENTER}"; Start-Sleep -Seconds 3   # open Package search
+    Capture "162-command-opened.png"   # its own list, its search field empty
+    Check "162-command-opened.png" "364355" 3000   # its first row, selected
+    Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2   # Service address: its form
+    Send "http://127.0.0.1:$servicePort"
+    Send "{ENTER}"; Start-Sleep -Seconds 2   # Save
+    Capture "163-service-set.png"   # "Searching http://127.0.0.1:<port> from now on"
+    Check "163-service-set.png" "9fd8a8"
+    Send "{ESC}"; Start-Sleep -Seconds 1   # back to the command, its search field empty
+    Send "aurora"; Start-Sleep -Seconds 3
+    Capture "164-search-results.png"   # aurora-charts, selected, and aurora-cli
+    Check "164-search-results.png" "364355" 3000
+    if (-not (Select-String -Quiet -Pattern '^GET /search\?q=aurora$' $serviceLog)) { throw "the command's search did not reach the service" }
+    Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 3   # aurora-cli's details
+    Capture "165-details.png"
+    Check "165-details.png" "9fd8a8"   # "aurora-cli 0.9.3 (Apache-2.0): Command-line parsing with subcommands"
+    Send "^a"; Send "slow"; Start-Sleep -Seconds 2   # held by the service
+    Send "^a"; Send "ember"; Start-Sleep -Seconds 3
+    Capture "166-newer-search.png"   # ember-tz, not what "slow" would list
+    Check "166-newer-search.png" "364355" 3000
+    if (-not (Select-String -Quiet -Pattern '^ABANDONED /search\?q=slow$' $serviceLog)) { throw "the replaced search was not stopped" }
+    Send "^a"; Send "down"; Start-Sleep -Seconds 3
+    Capture "167-service-error.png"
+    Check "167-service-error.png" "f08c8c"   # "... The service answered 503: the registry is down for maintenance"
+    Stop-Process -Id $service.Id; $service.WaitForExit()
+    Send "^a"; Send "basalt"; Start-Sleep -Seconds 6   # Windows retries a refused connection for about two seconds
+    Capture "168-offline.png"
+    Check "168-offline.png" "f08c8c"   # "... Could not reach the service at http://127.0.0.1:<port>: connection refused"
+    $service = Start-FixtureService "fixture-service-again.log" $servicePort
+    Send "^a"; Send "cobalt"; Start-Sleep -Seconds 3
+    Capture "169-back-online.png"   # cobalt-http, selected: not paused
+    Check "169-back-online.png" "364355" 3000
+    $shots = "161-root-typed", "162-command-opened", "163-service-set", "164-search-results", "165-details", "166-newer-search", "167-service-error", "168-offline", "169-back-online" | ForEach-Object { Join-Path $OutDir "$_.png" }
+    python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+    if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: searching inside the command changed nothing" }
+    Stop-Pane $process
+} finally {
+    if (-not $service.HasExited) { Stop-Process -Id $service.Id }
+}
 Write-Output "screenshots in $OutDir"

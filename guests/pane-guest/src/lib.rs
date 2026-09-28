@@ -9,7 +9,9 @@
 //! its own package publishes with [`publish`], find and open installed
 //! applications with [`applications`], supply root results ahead of the
 //! query with [`indexed`], run its package's native helpers with
-//! [`helpers`] and list the files of a folder with [`files`]. The crate is
+//! [`helpers`], list the files of a folder with [`files`], search as the
+//! user types into its own search field with [`search`] and make web
+//! requests with [`http`]. The crate is
 //! `no_std` so the component imports only WASI 0.3 interfaces; it supplies the
 //! allocator and a panic handler that traps, which the host reports as a
 //! runtime error.
@@ -208,6 +210,30 @@ pub mod indexed {
 
     pub use exports::pane::extension::indexed_results::{Guest, IndexedAction, IndexedResult};
 }
+
+/// A command that searches as the user types into its own search field
+/// (`pane:extension/command-search`), such as one searching an online
+/// service. Pane asks it only once the user has opened it, never while they
+/// type in root search. A command whose `pane.json` entry sets
+/// `"search": true` implements [`search::Guest`] too and calls
+/// [`search::export!`](crate::search::export) beside [`export!`]:
+///
+/// ```ignore
+/// pane_guest::export!(Packages);
+/// pane_guest::search::export!(Packages);
+/// ```
+pub mod search {
+    wit_bindgen::generate!({
+        path: "../../wit",
+        world: "command-search-provider",
+        pub_export_macro: true,
+        default_bindings_module: "pane_guest::search",
+    });
+
+    pub use exports::pane::extension::command_search::{Guest, SearchResult};
+}
+
+pub mod http;
 
 /// The custom view type of a command that has none: `type CustomView =
 /// NoCustomView;` in its `Guest` implementation, with an `open_view` that

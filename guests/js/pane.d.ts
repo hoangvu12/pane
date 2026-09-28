@@ -302,6 +302,53 @@ export interface QueryCommand {
   runQuery(command: string, query: string): Promise<string>;
 }
 
+/** One thing a command's search found, listed as a row of the command. */
+export interface SearchResult {
+  /**
+   * Passed to the command's `runAction` when the user activates the row, so
+   * it should say which result it is (the instance may have been replaced
+   * meanwhile).
+   */
+  id: string;
+  title: string;
+  subtitle?: string;
+}
+
+/**
+ * A command that searches as the user types into its own search field
+ * (`pane:extension/command-search` in wit/search.wit), such as one
+ * searching an online service. Pane asks it only once the user has opened
+ * it, never while they type in root search. It sets `"search": true` on its
+ * entry in `pane.json`, and `"pane": { "search": true }` in its
+ * `package.json` so that it is built with the interface; its module exports
+ * it as `commandSearch`:
+ *
+ * ```ts
+ * import { get } from "@pane/extension/http";
+ *
+ * export const commandSearch: CommandSearch = {
+ *   async search(command, query) {
+ *     const response = await get(`https://example.com/search?q=${encodeURIComponent(query)}`);
+ *     return response.json().results.map((r: { id: string; name: string }) => ({ id: r.id, title: r.name }));
+ *   },
+ * };
+ * ```
+ */
+export interface CommandSearch {
+  /**
+   * Searches for `query`, the text in the search field of the command with
+   * id `command` (its id in `pane.json`), trimmed and never empty. The
+   * results replace the command's list while the text stays; activating one
+   * calls `runAction` with its id. Throwing shows the error in place of
+   * results; it does not count against the extension, so a service that is
+   * down or unreachable is an expected error. Pane stops a search it no
+   * longer needs (the text changed again, the user left) where it waits,
+   * dropping the instance: code after that `await` never runs, and the
+   * instance's memory is lost.
+   */
+  search(command: string, query: string): Promise<SearchResult[]>;
+}
+
 /**
  * What invoking an indexed result does; Pane performs it.
  * `{ tag: "open-application", val: id }` opens the installed application

@@ -394,6 +394,11 @@ pub struct ManifestCommand {
     /// its alias or as a fallback. Its component then also exports
     /// `pane:extension/query-command`.
     pub takes_query: bool,
+    /// Whether the command searches as the user types into its own search
+    /// field once it is open (`"search": true`), such as a command searching
+    /// an online service; root search never asks it. Its component then
+    /// also exports `pane:extension/command-search`.
+    pub search: bool,
 }
 
 #[derive(Deserialize)]
@@ -469,6 +474,8 @@ struct CommandJson {
     indexed_results: bool,
     #[serde(default)]
     takes_query: bool,
+    #[serde(default)]
+    search: bool,
 }
 
 impl Manifest {
@@ -571,6 +578,7 @@ impl Manifest {
             root_results: commands().any(|command| command.root_results),
             indexed_results: commands().any(|command| command.indexed_results),
             query_command: commands().any(|command| command.takes_query),
+            search: commands().any(|command| command.search),
             operations: self
                 .operations
                 .iter()
@@ -623,6 +631,15 @@ impl Manifest {
             {
                 return Err(invalid(format!("command id `{}` is repeated", command.id)));
             }
+            // Root search never asks a command that searches inside itself:
+            // results it computed for root search would never be shown.
+            if command.search && command.root_results {
+                return Err(invalid(format!(
+                    "command `{}` sets both `search` and `rootResults`: a command that \
+                     searches inside itself is never asked by root search",
+                    command.id
+                )));
+            }
             let component = inside_package(&command.component, "component")?;
             let platforms = parse_platforms(
                 command.platforms,
@@ -637,6 +654,7 @@ impl Manifest {
                 root_results: command.root_results,
                 indexed_results: command.indexed_results,
                 takes_query: command.takes_query,
+                search: command.search,
             });
         }
         let mut operations: Vec<ManifestOperation> = Vec::new();
@@ -992,6 +1010,10 @@ pub(crate) struct SourcePackage {
     /// Where a package from npm was downloaded from; `None` for a local
     /// folder.
     pub npm: Option<NpmOrigin>,
+    /// Whether a component of it imports `wasi:http` (it can make web
+    /// requests), as checking its components found; `false` until they are
+    /// checked.
+    pub network: bool,
 }
 
 impl SourcePackage {
@@ -1038,6 +1060,7 @@ impl SourcePackage {
             manifest,
             manifest_text,
             npm: Some(origin),
+            network: false,
         })
     }
 
@@ -1054,6 +1077,7 @@ impl SourcePackage {
             manifest,
             manifest_text,
             npm: None,
+            network: false,
         })
     }
 
@@ -1070,6 +1094,7 @@ impl SourcePackage {
             manifest,
             manifest_text,
             npm: None,
+            network: false,
         })
     }
 
@@ -1093,6 +1118,9 @@ pub struct InstalledPackage {
     /// For a package from npm, the npm version installed and whether it is
     /// pinned to it.
     pub npm: Option<NpmInstalled>,
+    /// Whether a component of it imports `wasi:http`, so its code can make
+    /// web requests, as found when it was installed, updated or reloaded.
+    pub uses_network: bool,
     /// The identity each dependency the manifest declares was resolved to
     /// when the package was installed, by dependency id.
     dependencies: Vec<(String, PackageIdentity)>,
@@ -1106,6 +1134,7 @@ impl InstalledPackage {
         identity: PackageIdentity,
         location: PathBuf,
         enabled: bool,
+        uses_network: bool,
         recorded: &[ResolvedJson],
         npm: Option<&NpmRecordJson>,
     ) -> InstalledPackage {
@@ -1133,6 +1162,7 @@ impl InstalledPackage {
                 version: npm.version.clone(),
                 pinned: npm.pinned,
             }),
+            uses_network,
             dependencies,
         }
     }
@@ -1192,6 +1222,7 @@ impl InstalledPackage {
                         .or_else(|| Some(manifest.title.clone())),
                     component: self.location.join(&command.component),
                     takes_query: command.takes_query,
+                    search: command.search,
                 };
                 let unavailable = package.clone().or_else(|| {
                     platform::unavailable(command.platforms.as_deref(), "this command")
@@ -1333,6 +1364,11 @@ struct RecordJson {
     /// to when it was installed or updated.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     dependencies: Vec<ResolvedJson>,
+    /// Set when a component of its current code imports `wasi:http`;
+    /// absent means none does (or it was installed before Pane recorded
+    /// it, until it is reloaded or updated).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    network: bool,
 }
 
 /// The npm version of an installed npm package, recorded beside its name:
@@ -1504,6 +1540,7 @@ impl Store {
                     PackageIdentity(record.source.clone()),
                     self.dir.join(PACKAGES_DIR).join(&record.dir),
                     !record.disabled,
+                    record.network,
                     &record.dependencies,
                     record.npm.as_ref(),
                 )
@@ -1850,6 +1887,7 @@ impl Store {
                 record.paused = None;
                 record.dependencies = dependencies.clone();
                 record.npm = npm.clone();
+                record.network = package.network;
                 !record.disabled
             }
             None => {
@@ -1863,6 +1901,7 @@ impl Store {
                     disabled: false,
                     paused: None,
                     dependencies: dependencies.clone(),
+                    network: package.network,
                 });
                 true
             }
@@ -1891,6 +1930,7 @@ impl Store {
             package.identity.clone(),
             location,
             enabled,
+            package.network,
             &dependencies,
             npm.as_ref(),
         ))
