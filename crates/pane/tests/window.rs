@@ -8,6 +8,9 @@ use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, prelude::*};
 use pane::LauncherWindow;
 use pane_core::{CommandRegistration, Launcher, Runtime, Screen, Status};
 
+#[path = "../../pane-core/tests/support/platforms.rs"]
+mod platforms;
+
 /// A sample command: its component and the language it is written in.
 struct Sample {
     component: &'static str,
@@ -56,11 +59,17 @@ fn open_with(
     cx: &mut TestAppContext,
     commands: Vec<CommandRegistration>,
 ) -> (Entity<LauncherWindow>, &mut VisualTestContext) {
+    open_launcher(cx, Launcher::new(Runtime::start(), commands))
+}
+
+fn open_launcher(
+    cx: &mut TestAppContext,
+    launcher: Launcher,
+) -> (Entity<LauncherWindow>, &mut VisualTestContext) {
     // Guest replies arrive from the real runtime thread, outside the test
     // scheduler's deterministic control.
     cx.executor().allow_parking();
     cx.update(pane::bind_keys);
-    let launcher = Launcher::new(Runtime::start(), commands);
     cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx))
 }
 
@@ -225,41 +234,12 @@ fn a_rejected_field_shows_its_error_and_takes_focus(cx: &mut TestAppContext, sam
     );
 }
 
-/// The sample's item declared for other systems than this one, the reason
-/// Pane gives for it here, and the item declared for this system with its
-/// answer.
-fn platform_items(sample: &Sample) -> (&'static str, &'static str, &'static str, String) {
-    let (unavailable, reason, available, action) = if cfg!(target_os = "windows") {
-        (
-            "macOS and Linux action",
-            "Not available on Windows: this action supports only macOS and Linux",
-            "Windows-only action",
-            "Windows-only action",
-        )
-    } else if cfg!(target_os = "macos") {
-        (
-            "Windows-only action",
-            "Not available on macOS: this action supports only Windows",
-            "macOS and Linux action",
-            "macOS and Linux action",
-        )
-    } else {
-        (
-            "Windows-only action",
-            "Not available on Linux: this action supports only Windows",
-            "macOS and Linux action",
-            "macOS and Linux action",
-        )
-    };
-    let answer = format!("Ran the {action} in the {} guest", sample.language);
-    (unavailable, reason, available, answer)
-}
-
 fn an_unavailable_action_is_listed_with_its_reason_and_others_still_run(
     cx: &mut TestAppContext,
     sample: &Sample,
 ) {
-    let (unavailable, reason, available, answer) = platform_items(sample);
+    let ((_, available), (_, unavailable), reason) = platforms::sample_items();
+    let answer = format!("Ran the {available} in the {} guest", sample.language);
     let (window, cx) = open(cx, sample);
     cx.simulate_resize(gpui::size(gpui::px(640.), gpui::px(420.)));
     cx.simulate_keystrokes("enter");
@@ -272,22 +252,22 @@ fn an_unavailable_action_is_listed_with_its_reason_and_others_still_run(
         cx.simulate_keystrokes("down");
     }
     cx.run_until_parked();
-    let selector = if unavailable == "Windows-only action" {
-        "row-Windows-only action"
-    } else {
-        "row-macOS and Linux action"
-    };
-    assert!(row_is_visible(cx, selector));
+    assert!(row_is_visible(cx, &format!("row-{unavailable}")));
     assert!(
-        cx.debug_bounds("unavailable-reason").is_some(),
-        "the reason is rendered in the row"
+        row_is_visible(cx, &format!("unavailable-reason-{unavailable}")),
+        "the selected row shows its reason"
+    );
+    assert!(
+        cx.debug_bounds(selector(&format!("unavailable-reason-{available}")))
+            .is_none(),
+        "the action for this system shows none"
     );
     let nodes = accessible_nodes(cx);
     let option = node(&nodes, "ListBoxOption", unavailable);
     let description = option["description"].as_str().unwrap_or_default();
     // The row is also marked disabled, which GPUI CE's debug tree does not
     // report, so only the description is checked.
-    assert!(description.ends_with(reason), "{option:#}");
+    assert!(description.ends_with(&reason), "{option:#}");
     assert_eq!(focused_label(cx).as_deref(), Some(unavailable));
 
     // Enter explains instead of running the action.
@@ -295,10 +275,10 @@ fn an_unavailable_action_is_listed_with_its_reason_and_others_still_run(
     let view = wait_for_answer(&window, cx);
     assert_eq!(
         (view.screen, view.status),
-        (Screen::Command, Status::Error(reason.into()))
+        (Screen::Command, Status::Error(reason.clone()))
     );
     let (nodes, _) = accessibility_tree(cx);
-    assert!(has(&nodes, "Status", reason), "{nodes:?}");
+    assert!(has(&nodes, "Status", &reason), "{nodes:?}");
 
     // The action declared for this system, and the others, still run.
     let delta = index(available) as isize - index(unavailable) as isize;
@@ -562,11 +542,18 @@ fn arrow_keys_move_the_selection(cx: &mut TestAppContext) {
     assert_eq!(wait_for_answer(&window, cx).selected, Some(0));
 }
 
-/// Whether the element with debug selector `row` lies wholly inside the list.
-fn row_is_visible(cx: &mut VisualTestContext, row: &'static str) -> bool {
+/// A debug selector as GPUI's test context takes it, from a name a test
+/// builds.
+fn selector(name: &str) -> &'static str {
+    name.to_owned().leak()
+}
+
+/// Whether the element with debug selector `element` (such as `row-<title>`)
+/// lies wholly inside the list.
+fn row_is_visible(cx: &mut VisualTestContext, element: &str) -> bool {
     let list = cx.debug_bounds("rows").expect("the list is rendered");
-    let row = cx.debug_bounds(row).expect("the row is rendered");
-    row.top() >= list.top() && row.bottom() <= list.bottom()
+    let element = cx.debug_bounds(selector(element)).expect("it is rendered");
+    element.top() >= list.top() && element.bottom() <= list.bottom()
 }
 
 #[gpui::test]
@@ -602,6 +589,104 @@ fn the_list_scrolls_to_keep_the_selected_row_visible(cx: &mut TestAppContext) {
     }
     cx.run_until_parked();
     assert!(row_is_visible(cx, "row-Row 1"), "and back to the first");
+}
+
+/// Twelve root commands, "Row 1" to "Row 12", all the Rust sample.
+fn twelve_rows() -> Vec<CommandRegistration> {
+    (1..=12)
+        .map(|n| command(&format!("Row {n}"), "sample_rust"))
+        .collect()
+}
+
+#[gpui::test]
+fn the_selected_row_stays_visible_when_the_window_shrinks(cx: &mut TestAppContext) {
+    let (window, cx) = open_with(cx, twelve_rows());
+    cx.simulate_resize(gpui::size(gpui::px(640.), gpui::px(420.)));
+    for _ in 0..3 {
+        cx.simulate_keystrokes("down");
+    }
+    cx.run_until_parked();
+    assert_eq!(wait_for_answer(&window, cx).selected, Some(3));
+    assert!(row_is_visible(cx, "row-Row 4"));
+
+    cx.simulate_resize(gpui::size(gpui::px(640.), gpui::px(200.)));
+    // The window asks for one more frame once the list's new size is laid
+    // out; the test platform delivers no frames by itself, so draw it.
+    redraw(&window, cx);
+
+    assert!(
+        row_is_visible(cx, "row-Row 4"),
+        "the selected row is scrolled back into the smaller list"
+    );
+}
+
+/// Turns the mouse wheel over the list by `pixels` (negative scrolls down).
+fn wheel(cx: &mut VisualTestContext, pixels: f32) {
+    let list = cx.debug_bounds("rows").expect("the list is rendered");
+    cx.simulate_event(gpui::ScrollWheelEvent {
+        position: list.center(),
+        delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(pixels))),
+        modifiers: Modifiers::none(),
+        touch_phase: gpui::TouchPhase::Moved,
+    });
+    cx.run_until_parked();
+}
+
+/// Redraws the window after the launcher changed outside it.
+fn redraw(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) {
+    window.update(cx, |_, cx| cx.notify());
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn the_mouse_wheel_scrolls_away_until_the_rows_reload(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    let folder = source.path().join("hello");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join("pane.json"),
+        r#"{ "manifestVersion": 1, "title": "Hello", "apiVersion": "0.1",
+  "commands": [{ "id": "hello", "title": "Say hello", "component": "hello.wasm" }] }"#,
+    )
+    .unwrap();
+    std::fs::copy(
+        command("hello", "sample_rust").component,
+        folder.join("hello.wasm"),
+    )
+    .unwrap();
+    let launcher = Launcher::with_packages(
+        Runtime::start(),
+        twelve_rows(),
+        data.path().join("extensions"),
+    );
+    let (window, cx) = open_launcher(cx, launcher.clone());
+    cx.simulate_resize(gpui::size(gpui::px(640.), gpui::px(420.)));
+    // An install that finishes after the user has moved on: it reloads root
+    // search in the background and keeps the selected row, the first.
+    let install = launcher.install_package(&folder);
+    cx.foreground_executor()
+        .block_on(launcher.activate_selected());
+    launcher.back();
+    redraw(&window, cx);
+    assert!(row_is_visible(cx, "row-Row 1"));
+
+    wheel(cx, -400.);
+    redraw(&window, cx);
+    assert!(
+        !row_is_visible(cx, "row-Row 1"),
+        "redrawing does not undo the wheel"
+    );
+
+    cx.foreground_executor().block_on(install);
+    redraw(&window, cx);
+    let view = launcher.view();
+    assert_eq!((view.screen, view.selected), (Screen::Root, Some(0)));
+    assert!(view.rows.iter().any(|row| row.title == "Say hello"));
+    assert!(
+        row_is_visible(cx, "row-Row 1"),
+        "the reloaded list shows the selected row again"
+    );
 }
 
 #[gpui::test]

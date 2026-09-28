@@ -7,10 +7,10 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 
 use gpui::{
-    App, Context, Div, FocusHandle, KeyBinding, PathPromptOptions, Role, ScrollHandle,
-    SharedString, Stateful, Window, actions, div, prelude::*, rgb,
+    App, Context, Div, FocusHandle, KeyBinding, PathPromptOptions, Pixels, Role, ScrollHandle,
+    SharedString, Size, Stateful, Window, actions, div, prelude::*, rgb,
 };
-use pane_core::{CommandRegistration, Launcher, Row, Screen, Status};
+use pane_core::{CommandRegistration, Launcher, LauncherView, Row, Screen, Status};
 
 mod form;
 
@@ -142,9 +142,23 @@ pub struct LauncherWindow {
     form: Option<form::FormControls>,
     /// The list's scroll position.
     scroll: ScrollHandle,
-    /// The screen, title and selection the list was last scrolled for; when
-    /// they change, the list scrolls to keep the selected row visible.
-    scrolled_for: Option<(Screen, String, Option<usize>)>,
+    /// What the list was last scrolled for.
+    scrolled_for: Option<ScrolledFor>,
+}
+
+/// What the list was last scrolled for. When any of it changes, the list
+/// scrolls the least it can to keep the selected row visible: the screen,
+/// title or selection; the rows, as reloaded after an install; or the size
+/// of the window or of the list. The mouse wheel changes none of it, so the
+/// list never scrolls back while the user scrolls it.
+#[derive(PartialEq)]
+struct ScrolledFor {
+    screen: Screen,
+    title: String,
+    selected: Option<usize>,
+    rows: Vec<Row>,
+    window: Size<Pixels>,
+    list: Size<Pixels>,
 }
 
 impl LauncherWindow {
@@ -273,6 +287,33 @@ impl LauncherWindow {
         .detach();
     }
 
+    /// Scrolls the list to the selected row when what it shows or its size
+    /// changed since it was last scrolled for (see [`ScrolledFor`]).
+    fn keep_selected_visible(&mut self, view: &LauncherView, window: &mut Window) {
+        let shown = ScrolledFor {
+            screen: view.screen,
+            title: view.title.clone(),
+            selected: view.selected,
+            rows: view.rows.clone(),
+            window: window.viewport_size(),
+            // As laid out in the last frame.
+            list: self.scroll.bounds().size,
+        };
+        let last = self.scrolled_for.as_ref();
+        if last == Some(&shown) {
+            return;
+        }
+        if last.is_some_and(|last| last.window != shown.window) {
+            // The list's new size is known only once this frame is laid out,
+            // so the next frame scrolls again with it.
+            window.request_animation_frame();
+        }
+        if let Some(selected) = view.selected {
+            self.scroll.scroll_to_item(selected);
+        }
+        self.scrolled_for = Some(shown);
+    }
+
     fn render_row(
         &self,
         index: usize,
@@ -280,6 +321,7 @@ impl LauncherWindow {
         selected: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
+        let reason_selector = format!("unavailable-reason-{}", row.title);
         div()
             .id(("row", index))
             .debug_selector(|| format!("row-{}", row.title))
@@ -312,7 +354,7 @@ impl LauncherWindow {
                 element.aria_disabled(true).child(
                     div()
                         .id(("unavailable", index))
-                        .debug_selector(|| "unavailable-reason".into())
+                        .debug_selector(|| reason_selector)
                         .text_sm()
                         .text_color(rgb(0xd6a36a))
                         .child(reason),
@@ -333,15 +375,9 @@ impl LauncherWindow {
 }
 
 impl Render for LauncherWindow {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let view = self.launcher.view();
-        let shown = (view.screen, view.title.clone(), view.selected);
-        if self.scrolled_for.as_ref() != Some(&shown) {
-            if let Some(selected) = view.selected {
-                self.scroll.scroll_to_item(selected);
-            }
-            self.scrolled_for = Some(shown);
-        }
+        self.keep_selected_visible(&view, window);
         let (empty, hint) = match view.screen {
             Screen::Root => ("No commands are installed.", "↑↓ select · Enter open"),
             Screen::Command => (
