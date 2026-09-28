@@ -23,8 +23,10 @@ export PANE_DATA_DIR=$out/data
 # smoke) is never used: Xvfb exits there, and another number is tried.
 xvfb_pid=
 pane_pid=
+npm_registry_pid=
 cleanup() {
   [ -n "$pane_pid" ] && kill "$pane_pid" 2>/dev/null || true
+  [ -n "$npm_registry_pid" ] && kill "$npm_registry_pid" 2>/dev/null || true
   [ -n "$xvfb_pid" ] && kill "$xvfb_pid" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -1177,4 +1179,55 @@ check 183-uninstall-dependents-reinstalled-alone.png aab4c0
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{180-uninstall-dependents-asked,181-uninstall-dependents-cancelled,182-uninstall-dependents-uninstalled,183-uninstall-dependents-reinstalled-alone}.png
 stop_pane
 [ "$(grep -c '"dir"' "$PANE_DATA_DIR/extensions/installed.json")" = 1 ] || { echo "not the dependency alone reinstalled"; exit 1; }
+
+# npm packages (#45), from a local registry on 127.0.0.1 serving the npm
+# sample `cargo xtask guests` packed (scripts/npm_registry.py; nothing reaches
+# the network), with a data folder of its own. Installing the local
+# Dependencies from npm sample shows the npm package it requires and
+# installs both; its command calls the npm package's greet operation. Then
+# "Install extension from npm…" (root's second-to-last row) asks for the
+# npm package in a form; naming the installed one offers Update, and its
+# command runs: "Hello from the JavaScript guest".
+export PANE_DATA_DIR=$out/npm-data
+rm -rf "$PANE_DATA_DIR"
+rm -f "$out/npm-registry.port"
+python3 "$(dirname "$0")/npm_registry.py" target/guests/npm "$out/npm-registry.port" 2>>"$out/npm-registry.log" &
+npm_registry_pid=$!
+for _ in $(seq 50); do [ -s "$out/npm-registry.port" ] && break; sleep 0.1; done
+[ -s "$out/npm-registry.port" ] || { echo "the local npm registry did not start"; exit 1; }
+export PANE_NPM_REGISTRY=http://127.0.0.1:$(cat "$out/npm-registry.port")/
+start_pane --install target/guests/packages/sample-dependencies-npm
+"$xdotool" windowfocus --sync "$window"
+capture 260-npm-dependency-preview.png
+check 260-npm-dependency-preview.png aab4c0   # "Requires: Greeter from npm, installed with it from npm:@pane-samples/greeter"
+"$xdotool" key Return; sleep 3   # Install; Greet through an npm dependency is selected
+capture 261-npm-dependency-installed.png
+check 261-npm-dependency-installed.png 9fd8a8   # "Installed Dependencies from npm sample with Greeter from npm, which it requires"
+"$xdotool" key Return; sleep 3   # open it
+"$xdotool" key Return; sleep 3   # "Greet through the required greeter"
+capture 262-npm-dependency-called.png
+check 262-npm-dependency-called.png 9fd8a8   # "Hello, Pane, from JavaScript"
+"$xdotool" key Escape; sleep 1
+for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…, the last row
+"$xdotool" key Up Return; sleep 1   # Install extension from npm…
+capture 263-npm-form.png
+check 263-npm-form.png 8a96a3   # the form's hint line
+"$xdotool" type --delay 50 @pane-samples/greeter
+"$xdotool" key Return; sleep 3
+capture 264-npm-preview.png
+check 264-npm-preview.png aab4c0   # "Source: npm package @pane-samples/greeter", "npm version: 0.1.0, the latest", …
+"$xdotool" key Return; sleep 3   # Update; Greeter from npm is selected
+capture 265-npm-updated.png
+check 265-npm-updated.png 9fd8a8   # "Updated Greeter from npm to 0.1.0"
+"$xdotool" key Return; sleep 3   # open Greeter from npm
+"$xdotool" key Return; sleep 2   # "Say hello"
+capture 266-npm-command-ran.png
+check 266-npm-command-ran.png 9fd8a8   # "Hello from the JavaScript guest"
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{260-npm-dependency-preview,261-npm-dependency-installed,262-npm-dependency-called,263-npm-form,264-npm-preview,265-npm-updated,266-npm-command-ran}.png
+stop_pane
+kill "$npm_registry_pid"; wait "$npm_registry_pid" 2>/dev/null || true; npm_registry_pid=
+unset PANE_NPM_REGISTRY
+grep -q '"npm": "@pane-samples/greeter"' "$PANE_DATA_DIR/extensions/installed.json" || { echo "npm package not recorded"; exit 1; }
+grep -q '"npmVersion": "0.1.0"' "$PANE_DATA_DIR/extensions/installed.json" || { echo "npm version not recorded"; exit 1; }
+[ "$(grep -c '"dir"' "$PANE_DATA_DIR/extensions/installed.json")" = 2 ] || { echo "not both installed"; exit 1; }
 echo "screenshots in $out"

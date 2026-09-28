@@ -1183,4 +1183,63 @@ python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: uninstalling with dependents changed nothing" }
 Stop-Pane $process
 if ((Select-String -SimpleMatch '"dir"' $record).Count -ne 1) { throw "not the dependency alone reinstalled" }
+
+# npm packages (#45), from a local registry on 127.0.0.1 serving the npm
+# sample `cargo xtask guests` packed (scripts/npm_registry.py; nothing reaches
+# the network), with a data folder of its own. Installing the local
+# Dependencies from npm sample shows the npm package it requires and
+# installs both; its command calls the npm package's greet operation. Then
+# "Install extension from npm..." (root's second-to-last row) asks for the
+# npm package in a form; naming the installed one offers Update, and its
+# command runs: "Hello from the JavaScript guest".
+$data = Join-Path $OutDir "npm-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+$portFile = Join-Path $OutDir "npm-registry.port"
+if (Test-Path $portFile) { Remove-Item -Force $portFile }
+$registry = Start-Process python -PassThru -NoNewWindow `
+    -ArgumentList @("`"$PSScriptRoot/npm_registry.py`"", "target/guests/npm", "`"$portFile`"") `
+    -RedirectStandardError (Join-Path $OutDir "npm-registry.log")
+try {
+    for ($i = 0; $i -lt 50 -and -not (Test-Path $portFile); $i++) { Start-Sleep -Milliseconds 100 }
+    if (-not (Test-Path $portFile)) { throw "the local npm registry did not start" }
+    $env:PANE_NPM_REGISTRY = "http://127.0.0.1:$((Get-Content $portFile).Trim())/"
+    $process = Start-Pane "stderr-npm.log" @("--install", "target/guests/packages/sample-dependencies-npm")
+    Capture "260-npm-dependency-preview.png"
+    Check "260-npm-dependency-preview.png" "aab4c0"   # "Requires: Greeter from npm, installed with it from npm:@pane-samples/greeter"
+    Send "{ENTER}"; Start-Sleep -Seconds 3   # Install; Greet through an npm dependency is selected
+    Capture "261-npm-dependency-installed.png"
+    Check "261-npm-dependency-installed.png" "9fd8a8"   # "Installed Dependencies from npm sample with Greeter from npm, which it requires"
+    Send "{ENTER}"; Start-Sleep -Seconds 3   # open it
+    Send "{ENTER}"; Start-Sleep -Seconds 3   # "Greet through the required greeter"
+    Capture "262-npm-dependency-called.png"
+    Check "262-npm-dependency-called.png" "9fd8a8"   # "Hello, Pane, from JavaScript"
+    Send "{ESC}"; Start-Sleep -Seconds 1
+    for ($i = 0; $i -lt 10; $i++) { Send "{DOWN}" }   # Manage extensions..., the last row
+    Send "{UP}{ENTER}"; Start-Sleep -Seconds 1   # Install extension from npm...
+    Capture "263-npm-form.png"
+    Check "263-npm-form.png" "8a96a3"   # the form's hint line
+    Send "@pane-samples/greeter"
+    Send "{ENTER}"; Start-Sleep -Seconds 3
+    Capture "264-npm-preview.png"
+    Check "264-npm-preview.png" "aab4c0"   # "Source: npm package @pane-samples/greeter", "npm version: 0.1.0, the latest", ...
+    Send "{ENTER}"; Start-Sleep -Seconds 3   # Update; Greeter from npm is selected
+    Capture "265-npm-updated.png"
+    Check "265-npm-updated.png" "9fd8a8"   # "Updated Greeter from npm to 0.1.0"
+    Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greeter from npm
+    Send "{ENTER}"; Start-Sleep -Seconds 2   # "Say hello"
+    Capture "266-npm-command-ran.png"
+    Check "266-npm-command-ran.png" "9fd8a8"   # "Hello from the JavaScript guest"
+    $shots = "260-npm-dependency-preview", "261-npm-dependency-installed", "262-npm-dependency-called", "263-npm-form", "264-npm-preview", "265-npm-updated", "266-npm-command-ran" | ForEach-Object { Join-Path $OutDir "$_.png" }
+    python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+    if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: installing from npm changed nothing" }
+    Stop-Pane $process
+} finally {
+    Stop-Process -Id $registry.Id -ErrorAction SilentlyContinue
+    Remove-Item Env:PANE_NPM_REGISTRY -ErrorAction SilentlyContinue
+}
+$record = Join-Path $data "extensions/installed.json"
+if (-not (Select-String -Quiet -SimpleMatch '"npm": "@pane-samples/greeter"' $record)) { throw "npm package not recorded" }
+if (-not (Select-String -Quiet -SimpleMatch '"npmVersion": "0.1.0"' $record)) { throw "npm version not recorded" }
+if ((Select-String -SimpleMatch '"dir"' $record).Count -ne 2) { throw "not both installed" }
 Write-Output "screenshots in $OutDir"

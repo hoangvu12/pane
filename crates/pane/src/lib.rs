@@ -538,7 +538,11 @@ impl Render for LauncherWindow {
             Screen::RuntimeDetails { .. } => ("", "Enter restart · Esc back"),
             Screen::BuildDetails { .. } => ("", "Enter build again · Esc back"),
         };
-        let confirm = matches!(view.screen, Screen::Confirm { .. });
+        // A confirmation, and a package preview offering Install or Update
+        // (an npm package's has several more lines), keep their choices in
+        // view.
+        let confirm = matches!(view.screen, Screen::Confirm { .. })
+            || (matches!(view.screen, Screen::Package { .. }) && !view.rows.is_empty());
         let details: Vec<_> = view
             .details()
             .iter()
@@ -623,8 +627,9 @@ impl Render for LauncherWindow {
             .bg(rgb(0x20252d))
             .text_color(rgb(0xf1f3f5))
             .child(div().text_xl().child(view.title.clone()))
-            // A confirmation's long details scroll within 40% of the
-            // window, leaving the rest to its choices, which stay visible.
+            // A confirmation's or preview's long details scroll within 40%
+            // of the window, leaving the rest to its choices, which stay
+            // visible.
             .when(!details.is_empty(), |root| {
                 root.child(
                     div()

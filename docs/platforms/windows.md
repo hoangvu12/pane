@@ -252,6 +252,25 @@ uninstall; a folder still in use (a file open on Windows) is listed and removed 
 reported against its own package. Nothing else in it is specific to
 Windows; **not run on Windows yet**.
 
+## npm packages (#45)
+
+A phase of the smoke (screenshots 260 to 266, [npm packages](../npm.md)),
+with a data folder of its own, starts `scripts/npm_registry.py` (with
+`python`) on 127.0.0.1 serving the npm sample `cargo xtask guests` packed,
+and points the development build at it with `PANE_NPM_REGISTRY`: it installs
+the local Dependencies from npm sample, which downloads and installs the npm
+package it requires, calls its `greet` operation, then names the npm package
+in "Install extension from npm…" (Up from the last row; SendKeys types
+`@pane-samples/greeter`), updates it and runs its command; `installed.json`
+must then record `"npm": "@pane-samples/greeter"` at `"npmVersion":
+"0.1.0"` with both packages. Unpacking refuses `\`, `:`, trailing dots and
+spaces and device names such as `con` on every system, so a tarball that
+would write elsewhere on Windows is refused everywhere; the real registry's
+certificate would be checked by the Windows verifier through
+`rustls-platform-verifier`, which no check exercises (the smoke never
+reaches the network). The packing, in `cargo xtask guests`, runs in CI on
+Windows. **Not run on Windows yet.**
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** the smoke now also opens the Rust command's

@@ -68,6 +68,8 @@ fn a_package_named_in_the_npm_form_is_previewed_installed_and_run(cx: &mut TestA
         Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"))
             .with_npm_registry(NpmRegistry::local(registry.url()).unwrap());
     let (window, cx) = cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
+    // Pane's own window size.
+    cx.simulate_resize(gpui::size(gpui::px(640.), gpui::px(420.)));
     settle(&window, cx);
 
     let view = press_enter_on(&window, cx, "Install extension from npm…");
@@ -92,6 +94,31 @@ fn a_package_named_in_the_npm_form_is_previewed_installed_and_run(cx: &mut TestA
         Status::Result("Installed Greeter from npm".into())
     );
     assert_eq!(titles(&view)[0], "Greeter from npm");
+
+    // Named again, it is offered as an Update, whose row stays in view below
+    // the npm package's longer details.
+    press_enter_on(&window, cx, "Install extension from npm…");
+    cx.simulate_input("@pane-samples/greeter");
+    cx.simulate_keystrokes("enter");
+    let view = settle(&window, cx);
+    assert_eq!(titles(&view), ["Update"]);
+    for _ in 0..2 {
+        window.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+    }
+    let list = cx.debug_bounds("rows").expect("the list is rendered");
+    let row = cx.debug_bounds("row-Update").expect("the Update row is rendered");
+    assert!(
+        row.top() >= list.top() && row.bottom() <= list.bottom(),
+        "{row:?} not in {list:?}"
+    );
+    assert!(list.bottom() <= gpui::px(420.), "{list:?}");
+    cx.simulate_keystrokes("enter");
+    let view = settle(&window, cx);
+    assert_eq!(
+        view.status,
+        Status::Result("Updated Greeter from npm to 0.1.0".into())
+    );
     cx.simulate_keystrokes("enter");
     settle(&window, cx);
     let view = press_enter_on(&window, cx, "Say hello");

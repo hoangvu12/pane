@@ -614,6 +614,41 @@ whole frames. Frames 181, the list after Cancel, and 183, the list after
 installing the JavaScript operations sample again with only it listed, are
 checked to differ from the others but not kept, as they show those paths.)
 
+### npm packages (#45)
+
+The last phase, with a data folder of its own ([npm packages](../npm.md)),
+starts `scripts/npm_registry.py` on 127.0.0.1 serving
+`target/guests/npm/pane-samples-greeter-0.1.0.tgz` (the npm sample `cargo
+xtask guests` packed) and points the development build at it with
+`PANE_NPM_REGISTRY`; nothing reaches the network. `--install` of the local
+Dependencies from npm sample previews it (frame 260: "Requires: Greeter from
+npm, installed with it from npm:@pane-samples/greeter"); Enter installs both
+(261) and "Greet through the required greeter" answers "Hello, Pane, from
+JavaScript" from the npm package's guest (262). Up from root's last row is
+"Install extension from npm…", whose form (263) takes
+`@pane-samples/greeter`; its preview (264) shows the npm lines and, the
+package being installed, **Update**, which Enter chooses ("Updated Greeter
+from npm to 0.1.0", 265); its command's "Say hello" answers "Hello from the
+JavaScript guest" (266). `installed.json` must then hold both packages and
+record the npm name and version. Run locally on 2026-09-29 (same Ubuntu
+26.04.1 / Xvfb / lavapipe setup): all checks of the whole smoke passed and
+frames 260 to 266 were looked at. A first run showed the Update row pushed
+out of Pane's window by the preview's longer details; a package preview's
+details now scroll within 40% of the window, as a confirmation's do. The
+same phase, serving instead the tarball `npm pack` (npm 11.19.0) made of the
+assembled sample folder, also passed: it holds the same four files as
+Pane's own packing.
+
+| Step | Evidence |
+| --- | --- |
+| Installing the dependency from npm: "Installed Dependencies from npm sample with Greeter from npm, which it requires" | [261-npm-dependency-installed.png](evidence/linux-x11/261-npm-dependency-installed.png) |
+| The npm package's `greet`, called by the dependency id: "Hello, Pane, from JavaScript" | [262-npm-dependency-called.png](evidence/linux-x11/262-npm-dependency-called.png) |
+| The preview: "Source: npm package @pane-samples/greeter", "npm version: 0.1.0, the latest", the tarball and its sha512 integrity, what Pane runs, and Update in view | [264-npm-preview.png](evidence/linux-x11/264-npm-preview.png) |
+| Its command: "Hello from the JavaScript guest" | [266-npm-command-ran.png](evidence/linux-x11/266-npm-command-ran.png) |
+
+(The kept frames are cropped to Pane's window; the smoke checks the whole
+frames. Frame 260 shows the local checkout path and is not kept.)
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms have a text field (GPUI CE's
