@@ -619,7 +619,7 @@ fn data_that_cannot_be_deleted_is_explained_and_kept_on_record(fixture: &Fixture
     );
 
     // Once the file is repaired, deleting the retained data removes the
-    // cache left behind.
+    // cache the uninstall could not delete.
     fs::write(&cache, text).unwrap();
     assert_eq!(dirs.kinds_kept(&folder), ["cache.json"]);
     assert_eq!(
@@ -728,7 +728,9 @@ fn retained_data_is_listed_and_deleted_without_the_extension(fixture: &Fixture) 
             ),
         ]
     );
-    assert_eq!(titles(&restarted), [DELETE_RETAINED_ROW, "Cancel"]);
+    assert_eq!(titles(&restarted), ["Cancel", DELETE_RETAINED_ROW]);
+    // Cancel is selected, so Enter keeps the data.
+    assert_eq!(view.selected, Some(0));
     select_title(&restarted, DELETE_RETAINED_ROW);
     block_on(restarted.activate_selected());
     let view = restarted.view();
@@ -915,8 +917,17 @@ fn retained_data_that_cannot_be_deleted_is_explained_and_stays_listed(fixture: &
     assert_eq!(launcher.retained_data().len(), 1);
     assert!(titles(&launcher).contains(&"Delete retained data of Settings sample".to_string()));
 
-    // Once the file is repaired, deleting again finishes, without a restart.
+    // Once the file is repaired, the list counts what it holds, and deleting
+    // again finishes, without a restart.
     fs::write(&content, text).unwrap();
+    manage(&launcher);
+    assert_eq!(
+        retained_subtitles(&launcher),
+        [format!(
+            "Not installed · keeps 1 content record · {}",
+            PackageIdentity::local(&folder).unwrap()
+        )]
+    );
     assert_eq!(
         delete_retained(&launcher, "Settings sample"),
         Status::Result("Deleted the retained data of Settings sample".into())
@@ -925,14 +936,27 @@ fn retained_data_that_cannot_be_deleted_is_explained_and_stays_listed(fixture: &
     assert!(dirs.launcher().retained_data().is_empty());
 }
 
-fn a_record_that_cannot_be_updated_is_explained_and_stays_listed(fixture: &Fixture) {
+/// The subtitles of the extension list's "Delete retained data" rows.
+fn retained_subtitles(launcher: &Launcher) -> Vec<String> {
+    launcher
+        .view()
+        .rows
+        .into_iter()
+        .filter(|row| row.title.starts_with("Delete retained data of "))
+        .filter_map(|row| row.subtitle)
+        .collect()
+}
+
+/// `installed.json` that cannot be read: a folder is in its place, which
+/// every system refuses to read as a file, so this fails the same way on
+/// Windows, macOS and Linux.
+fn a_registry_that_cannot_be_read_deletes_nothing(fixture: &Fixture) {
     let dirs = Dirs::new();
     let folder = settings_package(fixture, &dirs.source("settings"), "Settings sample");
     let launcher = dirs.launcher();
     block_on(launcher.install_package(&folder));
     save_everything(&launcher);
     uninstall(&launcher, "Settings sample", KEEP_ROW);
-    // `installed.json` cannot be replaced by a file while a folder is there.
     let registry = dirs.packages_dir().join("installed.json");
     let text = fs::read(&registry).unwrap();
     fs::remove_file(&registry).unwrap();
@@ -940,6 +964,52 @@ fn a_record_that_cannot_be_updated_is_explained_and_stays_listed(fixture: &Fixtu
     fs::write(registry.join("blocker"), "").unwrap();
 
     match delete_retained(&launcher, "Settings sample") {
+        Status::Error(message) => {
+            assert!(
+                message.starts_with("Could not delete the retained data of Settings sample: "),
+                "{message}"
+            );
+            assert!(message.ends_with(". Nothing was deleted."), "{message}");
+        }
+        other => panic!("expected an error, got {other:?}"),
+    }
+    assert_eq!(dirs.kinds_kept(&folder), ["settings.json", "content.json"]);
+    assert_eq!(launcher.retained_data().len(), 1);
+
+    fs::remove_dir_all(&registry).unwrap();
+    fs::write(&registry, text).unwrap();
+    assert_eq!(
+        delete_retained(&launcher, "Settings sample"),
+        Status::Result("Deleted the retained data of Settings sample".into())
+    );
+    assert!(dirs.kinds_kept(&folder).is_empty());
+    assert!(dirs.launcher().retained_data().is_empty());
+}
+
+/// `installed.json` readable but not writable once the data is deleted: the
+/// data folder made read-only. Unix only: on Windows a read-only folder
+/// still lets files be created in it, and a folder in place of the file
+/// fails when it is read, before anything is deleted (the check above).
+#[cfg(unix)]
+fn a_record_that_cannot_be_updated_is_explained_and_stays_listed(fixture: &Fixture) {
+    use std::os::unix::fs::PermissionsExt;
+    let dirs = Dirs::new();
+    let folder = settings_package(fixture, &dirs.source("settings"), "Settings sample");
+    let launcher = dirs.launcher();
+    block_on(launcher.install_package(&folder));
+    save_everything(&launcher);
+    uninstall(&launcher, "Settings sample", KEEP_ROW);
+    // Its data files are emptied while Pane runs, as another Pane deleting
+    // it would, so deleting writes only `installed.json`.
+    for file in ["settings.json", "content.json"] {
+        fs::remove_file(dirs.packages_dir().join(file)).unwrap();
+    }
+    let extensions = dirs.packages_dir();
+    fs::set_permissions(&extensions, fs::Permissions::from_mode(0o555)).unwrap();
+
+    let status = delete_retained(&launcher, "Settings sample");
+    fs::set_permissions(&extensions, fs::Permissions::from_mode(0o755)).unwrap();
+    match status {
         Status::Error(message) => {
             assert!(
                 message.starts_with(
@@ -955,29 +1025,129 @@ fn a_record_that_cannot_be_updated_is_explained_and_stays_listed(fixture: &Fixtu
         }
         other => panic!("expected an error, got {other:?}"),
     }
-    assert!(dirs.kinds_kept(&folder).is_empty());
     manage(&launcher);
-    let row = launcher
-        .view()
-        .rows
-        .into_iter()
-        .find(|row| row.title == "Delete retained data of Settings sample")
-        .expect("still listed");
     assert_eq!(
-        row.subtitle,
-        Some(format!(
+        retained_subtitles(&launcher),
+        [format!(
             "Not installed · keeps nothing · {}",
             PackageIdentity::local(&folder).unwrap()
-        ))
+        )]
     );
-
-    fs::remove_dir_all(&registry).unwrap();
-    fs::write(&registry, text).unwrap();
     assert_eq!(
         delete_retained(&launcher, "Settings sample"),
         Status::Result("Deleted the retained data of Settings sample".into())
     );
     assert!(dirs.launcher().retained_data().is_empty());
+}
+
+#[cfg(not(unix))]
+fn a_record_that_cannot_be_updated_is_explained_and_stays_listed(_fixture: &Fixture) {}
+
+/// A kind whose file does not exist keeps nothing: the list and the
+/// confirmation count the other kinds, and deleting succeeds.
+fn a_missing_kind_file_counts_as_empty(fixture: &Fixture) {
+    let dirs = Dirs::new();
+    let folder = settings_package(fixture, &dirs.source("settings"), "Settings sample");
+    let launcher = dirs.launcher();
+    block_on(launcher.install_package(&folder));
+    save_everything(&launcher);
+    uninstall(&launcher, "Settings sample", KEEP_ROW);
+    fs::remove_file(dirs.packages_dir().join("content.json")).unwrap();
+
+    manage(&launcher);
+    let identity = PackageIdentity::local(&folder).unwrap();
+    assert_eq!(
+        retained_subtitles(&launcher),
+        [format!("Not installed · keeps 1 setting · {identity}")]
+    );
+    ask_to_delete_retained(&launcher, "Settings sample", 0);
+    assert_eq!(launcher.view().details()[2], "Retained data: 1 setting");
+    select_title(&launcher, DELETE_RETAINED_ROW);
+    block_on(launcher.activate_selected());
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Deleted the retained data of Settings sample".into())
+    );
+    assert!(dirs.kinds_kept(&folder).is_empty());
+    assert!(!dirs.packages_dir().join("content.json").exists());
+}
+
+/// Two Panes on one data folder: the second installs the same source again,
+/// and installs another package, after the first read `installed.json`. The
+/// first, still listing the retained data, deletes nothing, and keeps the
+/// second's install records and live data.
+fn another_pane_reinstalling_the_source_keeps_its_data(fixture: &Fixture) {
+    let dirs = Dirs::new();
+    let folder = settings_package(fixture, &dirs.source("settings"), "Settings sample");
+    let other = settings_package(fixture, &dirs.source("other"), "Other sample");
+    let first = dirs.launcher();
+    block_on(first.install_package(&folder));
+    save_everything(&first);
+    uninstall(&first, "Settings sample", KEEP_ROW);
+    assert_eq!(first.retained_data().len(), 1);
+
+    let second = dirs.launcher();
+    block_on(second.install_package(&folder));
+    block_on(second.install_package(&other));
+    assert_eq!(kept(&second), Status::Result(SAVED_DATA_KEPT.into()));
+    drop(second);
+
+    match delete_retained(&first, "Settings sample") {
+        Status::Error(message) => assert_eq!(
+            message,
+            "Settings sample was installed again from the same source by another Pane using \
+             this data folder, so its data is in use and nothing was deleted"
+        ),
+        other => panic!("expected an error, got {other:?}"),
+    }
+    assert!(first.retained_data().is_empty());
+    assert!(retained_subtitles(&first).is_empty());
+    assert_eq!(dirs.kinds_kept(&folder), ["settings.json", "content.json"]);
+
+    let third = dirs.launcher();
+    let installed: Vec<PackageIdentity> = third
+        .packages()
+        .into_iter()
+        .map(|package| package.identity)
+        .collect();
+    assert_eq!(
+        installed,
+        [
+            PackageIdentity::local(&folder).unwrap(),
+            PackageIdentity::local(&other).unwrap()
+        ]
+    );
+    assert!(third.retained_data().is_empty());
+}
+
+/// Deleting keeps what another Pane recorded since this one read
+/// `installed.json`, such as a package it installed.
+fn deleting_keeps_another_panes_install_records(fixture: &Fixture) {
+    let dirs = Dirs::new();
+    let folder = settings_package(fixture, &dirs.source("settings"), "Settings sample");
+    let other = settings_package(fixture, &dirs.source("other"), "Other sample");
+    let first = dirs.launcher();
+    block_on(first.install_package(&folder));
+    save_everything(&first);
+    uninstall(&first, "Settings sample", KEEP_ROW);
+
+    let second = dirs.launcher();
+    block_on(second.install_package(&other));
+    drop(second);
+
+    assert_eq!(
+        delete_retained(&first, "Settings sample"),
+        Status::Result("Deleted the retained data of Settings sample".into())
+    );
+    assert!(dirs.kinds_kept(&folder).is_empty());
+    let third = dirs.launcher();
+    assert!(third.retained_data().is_empty());
+    let installed: Vec<PackageIdentity> = third
+        .packages()
+        .into_iter()
+        .map(|package| package.identity)
+        .collect();
+    assert_eq!(installed, [PackageIdentity::local(&other).unwrap()]);
 }
 
 /// Declares one test per check for each language's settings sample.
@@ -1011,4 +1181,8 @@ contract!(
     deleting_one_identitys_retained_data_keeps_the_others,
     retained_data_that_cannot_be_deleted_is_explained_and_stays_listed,
     a_record_that_cannot_be_updated_is_explained_and_stays_listed,
+    a_registry_that_cannot_be_read_deletes_nothing,
+    a_missing_kind_file_counts_as_empty,
+    another_pane_reinstalling_the_source_keeps_its_data,
+    deleting_keeps_another_panes_install_records,
 );

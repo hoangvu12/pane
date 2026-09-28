@@ -208,6 +208,23 @@ fn an_installed_package_is_disabled_and_enabled_from_the_extension_list(cx: &mut
     );
 }
 
+/// Selects the row titled `title` on the screen shown and presses Enter.
+fn press_enter_on(
+    window: &Entity<LauncherWindow>,
+    cx: &mut VisualTestContext,
+    title: &str,
+) -> LauncherView {
+    let launcher = cx.read_entity(window, |window, _| window.launcher().clone());
+    let view = launcher.view();
+    let index = titles(&view)
+        .iter()
+        .position(|row| *row == title)
+        .unwrap_or_else(|| panic!("no row {title:?} in {:?}", titles(&view)));
+    launcher.select(index);
+    cx.simulate_keystrokes("enter");
+    settle(window, cx)
+}
+
 /// Replaces the package's component with the built guest `name`, as a new
 /// build of the package would.
 fn rebuild(folder: &Path, name: &str) {
@@ -512,36 +529,38 @@ fn retained_data_is_deleted_from_the_extension_list_after_confirming(cx: &mut Te
     let (window, cx) = open(cx, &data);
     install(&window, cx, &folder);
     // Uninstall it, keeping its saved data.
-    cx.simulate_keystrokes("down down enter");
-    settle(&window, cx);
-    cx.simulate_keystrokes("down down down enter");
-    settle(&window, cx);
-    cx.simulate_keystrokes("enter");
-    let view = settle(&window, cx);
+    press_enter_on(&window, cx, MANAGE_ROW);
+    press_enter_on(&window, cx, "Uninstall Hello");
+    let view = press_enter_on(&window, cx, "Uninstall and keep saved data");
     assert_eq!(titles(&view), ["Delete retained data of Hello"]);
     assert!(
         cx.debug_bounds("row-Delete retained data of Hello")
             .is_some()
     );
 
-    // It asks first, saying what is kept; Escape keeps it.
-    cx.simulate_keystrokes("enter");
-    let view = settle(&window, cx);
+    // It asks first, saying what is kept, with Cancel selected: Enter keeps
+    // the data and returns to its row, as Escape does.
+    let view = press_enter_on(&window, cx, "Delete retained data of Hello");
     assert_eq!(view.title, "Delete the retained data of Hello?");
-    assert_eq!(titles(&view), ["Delete retained data", "Cancel"]);
+    assert_eq!(titles(&view), ["Cancel", "Delete retained data"]);
+    assert_eq!(view.selected, Some(0));
     assert!(
         cx.debug_bounds("detail-Retained data: 1 setting").is_some(),
         "what is kept is rendered"
     );
+    cx.simulate_keystrokes("enter");
+    let view = settle(&window, cx);
+    assert!(matches!(view.screen, Screen::Extensions { .. }));
+    assert_eq!((view.status, view.selected), (Status::Idle, Some(0)));
+    press_enter_on(&window, cx, "Delete retained data of Hello");
     cx.simulate_keystrokes("escape");
     let view = settle(&window, cx);
     assert!(matches!(view.screen, Screen::Extensions { .. }));
     assert_eq!((view.status, view.selected), (Status::Idle, Some(0)));
+    assert!(fs::read_to_string(&settings).unwrap().contains(&key));
 
-    cx.simulate_keystrokes("enter");
-    settle(&window, cx);
-    cx.simulate_keystrokes("enter");
-    let view = settle(&window, cx);
+    press_enter_on(&window, cx, "Delete retained data of Hello");
+    let view = press_enter_on(&window, cx, "Delete retained data");
     assert!(matches!(view.screen, Screen::Extensions { .. }));
     assert_eq!(
         view.status,

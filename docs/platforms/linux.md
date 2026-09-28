@@ -389,7 +389,8 @@ window manager, so raising and focusing Pane's window
 The last phase, after the hotkeys phase, with a data folder of its own,
 installs the settings sample, saves a note, uninstalls it keeping its saved
 data, then chooses "Delete retained data of Settings sample" (the extension
-list's last row) and confirms. It checks that `installed.json` no longer has
+list's last row) and confirms with Down from the selected Cancel, then Return,
+waiting for Pane's files to change rather than a fixed time. It checks that `installed.json` no longer has
 a `retained` record and that the note is gone from `content.json`; installs
 the same folder again and shows what Pane keeps, which must differ from
 screenshot 51. Run locally on 2026-09-28 (Ubuntu 26.04.1 LTS, kernel
@@ -398,7 +399,7 @@ smoke passed.
 
 | Step | Evidence |
 | --- | --- |
-| "Delete the retained data of Settings sample?", its source, "Retained data: 1 content record", what is not touched; Delete retained data and Cancel | `59-confirm-delete-retained.png` (not committed: it shows the local checkout path) |
+| "Delete the retained data of Settings sample?", its source, "Retained data: 1 content record", what is not touched; Cancel (selected) and Delete retained data | `59-confirm-delete-retained.png` (not committed: it shows the local checkout path) |
 | "Deleted the retained data of Settings sample", the row gone and nothing installed | [60-retained-deleted.png](evidence/linux-x11/60-retained-deleted.png) |
 | Reinstalled: "Style: none · Note: none · Signed in: no · Cached greeting: none" | [61-reinstalled-empty.png](evidence/linux-x11/61-reinstalled-empty.png) |
 

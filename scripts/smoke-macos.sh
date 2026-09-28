@@ -558,34 +558,48 @@ stop_pane
 # Delete retained data: with a data folder of its own, the settings sample
 # saves a note and is uninstalled keeping it (its Uninstall row follows its
 # state, Reload and Clear cache rows); its retained data, the extension list's
-# last row, is deleted after confirming, without the extension. Installing
-# the same folder again finds nothing.
+# last row, is deleted after confirming (Cancel is selected first, so Down
+# then Return), without the extension. Installing the same folder again finds
+# nothing. Steps that change Pane's files wait for the change instead of a
+# fixed time.
 export PANE_DATA_DIR=$out/retained-data
 rm -rf "$PANE_DATA_DIR"
+# Waits until file $1 contains text $2 ("present") or no longer does ("absent").
+wait_for() {
+  for _ in $(seq 100); do
+    if grep -q "$2" "$1" 2>/dev/null; then [ "$3" = present ] && return; else [ "$3" = absent ] && return; fi
+    sleep 0.1
+  done
+  echo "$1: $2 is not $3"; exit 1
+}
+registry=$PANE_DATA_DIR/extensions/installed.json
 start_pane --install target/guests/packages/sample-settings
-key 36; sleep 2   # Install; Greeting is selected
+key 36   # Install; Greeting is selected
+wait_for "$registry" sample-settings present; sleep 1
 key 36; sleep 3   # open Greeting
 for ((i = 0; i < 3; i++)); do key 125; done
-key 36; sleep 2   # "Save a note"
-grep -q '"note": "Water the plants"' "$PANE_DATA_DIR/extensions/content.json" || { echo "note not saved"; exit 1; }
+key 36   # "Save a note"
+wait_for "$PANE_DATA_DIR/extensions/content.json" '"note": "Water the plants"' present
 key 53; sleep 1   # root search
 for ((i = 0; i < 10; i++)); do key 125; done   # Manage extensions…
 key 36; sleep 1
 for ((i = 0; i < 3; i++)); do key 125; done
 key 36; sleep 1   # "Uninstall Settings sample"
-key 36; sleep 2   # "Uninstall and keep saved data"
+key 36   # "Uninstall and keep saved data"
+wait_for "$registry" '"retained"' present; sleep 1
 for ((i = 0; i < 40; i++)); do key 125; done
 key 36; sleep 1   # "Delete retained data of Settings sample"
 capture 59-confirm-delete-retained.png
 check 59-confirm-delete-retained.png aab4c0   # what is kept and what is not touched
-key 36; sleep 2   # "Delete retained data"
+key 125; key 36   # "Delete retained data"
+wait_for "$registry" '"retained"' absent; sleep 1
 capture 60-retained-deleted.png
 check 60-retained-deleted.png 9fd8a8   # "Deleted the retained data of Settings sample"
 stop_pane
-if grep -q '"retained"' "$PANE_DATA_DIR/extensions/installed.json"; then echo "retained record not dropped"; exit 1; fi
 if grep -q 'Water the plants' "$PANE_DATA_DIR/extensions/content.json"; then echo "note not deleted"; exit 1; fi
 start_pane --install target/guests/packages/sample-settings
-key 36; sleep 2   # Install; Greeting is selected
+key 36   # Install; Greeting is selected
+wait_for "$registry" sample-settings present; sleep 1
 key 36; sleep 3   # open Greeting
 for ((i = 0; i < 5; i++)); do key 125; done
 key 36; sleep 2   # "Show what Pane keeps"

@@ -583,34 +583,49 @@ Stop-Pane $process
 # Delete retained data: with a data folder of its own, the settings sample
 # saves a note and is uninstalled keeping it (its Uninstall row follows its
 # state, Reload and Clear cache rows); its retained data, the extension list's
-# last row, is deleted after confirming, without the extension. Installing
-# the same folder again finds nothing.
+# last row, is deleted after confirming (Cancel is selected first, so Down
+# then Enter), without the extension. Installing the same folder again finds
+# nothing. Steps that change Pane's files wait for the change instead of a
+# fixed time.
 $data = Join-Path $OutDir "retained-data"
 if (Test-Path $data) { Remove-Item -Recurse -Force $data }
 $env:PANE_DATA_DIR = $data
+# Waits until $file contains $text ($present) or no longer does (-not $present).
+function Wait-For($file, $text, [bool]$present) {
+    for ($i = 0; $i -lt 100; $i++) {
+        $found = (Test-Path $file) -and (Select-String -Quiet -SimpleMatch $text $file)
+        if ($found -eq $present) { return }
+        Start-Sleep -Milliseconds 100
+    }
+    throw "${file}: $text is not $(if ($present) { 'present' } else { 'absent' })"
+}
+$registry = Join-Path $data "extensions/installed.json"
 $process = Start-Pane "stderr-retained.log" @("--install", "target/guests/packages/sample-settings")
-Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Greeting is selected
+Send "{ENTER}"   # Install; Greeting is selected
+Wait-For $registry "sample-settings" $true; Start-Sleep -Seconds 1
 Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greeting
 Send "{DOWN 3}"
-Send "{ENTER}"; Start-Sleep -Seconds 2   # "Save a note"
-if (-not (Select-String -Quiet -SimpleMatch '"note": "Water the plants"' (Join-Path $data "extensions/content.json"))) { throw "note not saved" }
+Send "{ENTER}"   # "Save a note"
+Wait-For (Join-Path $data "extensions/content.json") '"note": "Water the plants"' $true
 Send "{ESC}"; Start-Sleep -Seconds 1   # root search
 Send "{DOWN 10}"   # Manage extensions…
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{DOWN 3}{ENTER}"; Start-Sleep -Seconds 1   # "Uninstall Settings sample"
-Send "{ENTER}"; Start-Sleep -Seconds 2   # "Uninstall and keep saved data"
+Send "{ENTER}"   # "Uninstall and keep saved data"
+Wait-For $registry '"retained"' $true; Start-Sleep -Seconds 1
 Send "{DOWN 40}"
 Send "{ENTER}"; Start-Sleep -Seconds 1   # "Delete retained data of Settings sample"
 Capture "59-confirm-delete-retained.png"
 Check "59-confirm-delete-retained.png" "aab4c0"   # what is kept and what is not touched
-Send "{ENTER}"; Start-Sleep -Seconds 2   # "Delete retained data"
+Send "{DOWN}{ENTER}"   # "Delete retained data"
+Wait-For $registry '"retained"' $false; Start-Sleep -Seconds 1
 Capture "60-retained-deleted.png"
 Check "60-retained-deleted.png" "9fd8a8"   # "Deleted the retained data of Settings sample"
 Stop-Pane $process
-if (Select-String -Quiet -SimpleMatch '"retained"' (Join-Path $data "extensions/installed.json")) { throw "retained record not dropped" }
 if (Select-String -Quiet -SimpleMatch 'Water the plants' (Join-Path $data "extensions/content.json")) { throw "note not deleted" }
 $process = Start-Pane "stderr-reinstall-empty.log" @("--install", "target/guests/packages/sample-settings")
-Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Greeting is selected
+Send "{ENTER}"   # Install; Greeting is selected
+Wait-For $registry "sample-settings" $true; Start-Sleep -Seconds 1
 Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greeting
 Send "{DOWN 5}"
 Send "{ENTER}"; Start-Sleep -Seconds 2   # "Show what Pane keeps"

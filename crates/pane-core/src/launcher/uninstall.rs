@@ -29,7 +29,6 @@ use std::path::PathBuf;
 
 use super::{
     Changing, Entry, Launcher, LauncherView, Question, Row, Screen, State, Status, off_thread,
-    retained,
 };
 use crate::extension_data::{DataKind, ExtensionData};
 use crate::packages::{InstalledPackage, Leftover, PackageError, PackageIdentity, SavedData};
@@ -303,17 +302,14 @@ impl Launcher {
         }
         state.view.status = status;
     }
-
-    /// Whether the package with `identity` is being uninstalled.
-    pub(super) fn is_uninstalling(&self, identity: &PackageIdentity) -> bool {
-        self.lock().changing.get(identity) == Some(&Changing::Uninstalling)
-    }
 }
 
 /// "Saved data: …": how many settings and content records the package with
 /// `identity` keeps, the data the user chooses to keep or delete.
 fn saved_data(data: &ExtensionData, identity: &PackageIdentity) -> String {
-    let kept = retained::describe(data, identity, &[DataKind::Settings, DataKind::Content]);
+    let kept = data
+        .kept_now(&[DataKind::Settings, DataKind::Content])
+        .describe(identity);
     format!("Saved data: {}", kept.unwrap_or_else(|| "none".into()))
 }
 

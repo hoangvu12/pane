@@ -329,6 +329,18 @@ enum Changing {
     DeletingRetained,
 }
 
+impl Changing {
+    /// Why installing the same source must wait, if it must: its data is
+    /// being removed.
+    fn refuses_install(self) -> Option<&'static str> {
+        match self {
+            Changing::Uninstalling => Some("is being uninstalled"),
+            Changing::DeletingRetained => Some("is having its retained data deleted"),
+            Changing::Recording | Changing::Reloading | Changing::Updating => None,
+        }
+    }
+}
+
 impl State {
     /// The installed package with `identity`.
     fn package(&self, identity: &PackageIdentity) -> Option<&InstalledPackage> {
@@ -1292,6 +1304,11 @@ impl Launcher {
         self.refresh(state);
     }
 
+    /// What is happening to the package with `identity`, if anything.
+    fn changing_as(&self, identity: &PackageIdentity) -> Option<Changing> {
+        self.lock().changing.get(identity).copied()
+    }
+
     fn start_running(&self) -> u64 {
         let mut state = self.lock();
         state.view.status = Status::Running;
@@ -1304,17 +1321,15 @@ impl Launcher {
                 "this launcher does not install packages".into(),
             )),
             Some(store) => match self.read_and_check(folder).await {
-                // Not installed again while its data is being removed.
-                Ok(package) if self.is_uninstalling(&package.identity) => {
+                // Not installed again while the data it would find is being
+                // removed.
+                Ok(package)
+                    if let Some(busy) = self
+                        .changing_as(&package.identity)
+                        .and_then(Changing::refuses_install) =>
+                {
                     Err(PackageError::Storage(format!(
-                        "{} is being uninstalled; install it again once that is done",
-                        package.manifest.title
-                    )))
-                }
-                // Nor while the data it would find is being deleted.
-                Ok(package) if self.is_deleting_retained(&package.identity) => {
-                    Err(PackageError::Storage(format!(
-                        "the retained data of {} is being deleted; install it once that is done",
+                        "{} {busy}; install it again once that is done",
                         package.manifest.title
                     )))
                 }

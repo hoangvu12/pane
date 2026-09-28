@@ -93,7 +93,7 @@ impl DataKind {
 
     /// What one value, and several values, of this kind are called when
     /// counted.
-    pub fn counted(self) -> (&'static str, &'static str) {
+    fn counted(self) -> (&'static str, &'static str) {
         match self {
             DataKind::Settings => ("setting", "settings"),
             DataKind::Content => ("content record", "content records"),
@@ -291,7 +291,7 @@ impl ExtensionData {
         if saved == SavedData::Delete {
             kinds.extend([DataKind::Settings, DataKind::Content]);
         }
-        self.remove_kinds(identity, kinds)
+        self.remove_kinds(identity, &kinds)
     }
 
     /// Removes every kind of data Pane keeps for `identity`, a package that
@@ -300,14 +300,15 @@ impl ExtensionData {
     /// other identities' values stay. Returns why each kind that could not be
     /// removed was not; its values remain where they were.
     pub fn remove_retained(&self, identity: &PackageIdentity) -> Vec<String> {
-        self.remove_kinds(identity, DataKind::ALL.to_vec())
+        self.remove_kinds(identity, &DataKind::ALL)
     }
 
     /// Removes `kinds` of the data of `identity`, returning why each that
     /// could not be removed was not.
-    fn remove_kinds(&self, identity: &PackageIdentity, kinds: Vec<DataKind>) -> Vec<String> {
+    fn remove_kinds(&self, identity: &PackageIdentity, kinds: &[DataKind]) -> Vec<String> {
         kinds
-            .into_iter()
+            .iter()
+            .copied()
             .filter_map(|kind| {
                 let failure = self.remove(kind, identity).err()?;
                 Some(match failure {
@@ -330,6 +331,25 @@ impl ExtensionData {
         DataKind::ALL
             .into_iter()
             .any(|kind| self.count(kind, identity) != Ok(0))
+    }
+
+    /// What Pane keeps of `kinds`, read from their files now, so that a file
+    /// repaired or changed by another Pane since is counted as it is. Each
+    /// file is read once, however many identities are then described.
+    pub fn kept_now(&self, kinds: &[DataKind]) -> Kept {
+        let paths: Vec<(DataKind, PathBuf)> = {
+            let mut store = self.lock();
+            kinds
+                .iter()
+                .map(|&kind| (kind, store.of(kind).path.clone()))
+                .collect()
+        };
+        Kept(
+            paths
+                .into_iter()
+                .map(|(kind, path)| (kind, read(&path)))
+                .collect(),
+        )
     }
 
     /// How many values of `kind` the package with `identity` keeps, as Pane
@@ -367,6 +387,41 @@ impl ExtensionData {
         self.0
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+/// Some kinds' files as they were read at one moment, to say what Pane keeps
+/// for a package.
+pub(crate) struct Kept(Vec<(DataKind, Result<DataJson, String>)>);
+
+impl Kept {
+    /// How many values of each kind Pane keeps for `identity`, such as
+    /// "1 setting and 1 content record", or `None` if it keeps none. A kind
+    /// whose file is missing keeps none; one whose file cannot be read says
+    /// so.
+    pub fn describe(&self, identity: &PackageIdentity) -> Option<String> {
+        let key = identity.key();
+        let parts: Vec<String> = self
+            .0
+            .iter()
+            .filter_map(|(kind, file)| {
+                let (one, many) = kind.counted();
+                let count = file
+                    .as_ref()
+                    .map(|file| file.packages.get(&key).map_or(0, BTreeMap::len));
+                match count {
+                    Ok(0) => None,
+                    Ok(1) => Some(format!("1 {one}")),
+                    Ok(count) => Some(format!("{count} {many}")),
+                    Err(reason) => Some(format!("{many} that cannot be read now ({reason})")),
+                }
+            })
+            .collect();
+        match parts.as_slice() {
+            [] => None,
+            [one] => Some(one.clone()),
+            [rest @ .., last] => Some(format!("{} and {last}", rest.join(", "))),
+        }
     }
 }
 

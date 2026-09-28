@@ -5,22 +5,24 @@
 //! The extension list shows one row per such identity, after the installed
 //! packages' rows, naming its source and what is kept. Choosing it asks
 //! first; confirming deletes every kind of data Pane keeps for that identity
-//! (settings, content, and any cache or credentials an earlier removal left)
-//! and then drops its record from `installed.json`. Pane does this itself:
+//! (settings, content, and any cache or credentials an earlier removal could
+//! not delete) and then drops its record from `installed.json`. Pane does this itself:
 //! the package's code is gone, and nothing is downloaded or run. Other
 //! identities' data, the source folder and anything outside Pane's data
 //! folder are never touched.
 //!
 //! The record is dropped only once every kind is deleted, so data that
 //! could not be deleted stays listed and can be deleted again once its file
-//! is repaired.
+//! is repaired. `installed.json` is read again first: if another Pane on the
+//! same data folder installed the same source again meanwhile, the data is
+//! its package's again and nothing is deleted.
 
 use std::future::Future;
 
 use super::off_thread;
 use super::{Changing, Entry, Launcher, LauncherView, Question, Row, Screen, State, Status};
 use crate::extension_data::{DataKind, ExtensionData};
-use crate::packages::{PackageError, PackageIdentity, RetainedData};
+use crate::packages::{PackageError, PackageIdentity, RetainedData, Standing};
 
 impl Launcher {
     /// The identities that are not installed but whose extension data Pane
@@ -63,12 +65,16 @@ impl Launcher {
             unavailable: None,
         };
         state.screen_epoch += 1;
-        state.entries = vec![Entry::DeleteRetained(identity.clone()), Entry::Cancel];
+        // Cancel first, so that Enter keeps the data, as uninstalling does.
+        state.entries = vec![Entry::Cancel, Entry::DeleteRetained(identity.clone())];
         let source = match identity.local_folder() {
             Some(folder) => format!("Its source folder {}", folder.display()),
             None => "Its source".into(),
         };
-        let kept = describe(&installation.data, identity, &DataKind::ALL);
+        let kept = installation
+            .data
+            .kept_now(&DataKind::ALL)
+            .describe(identity);
         let details = vec![
             format!("From {identity}"),
             format!(
@@ -86,12 +92,12 @@ impl Launcher {
         };
         state.view = LauncherView::new(screen, format!("Delete the retained data of {title}?"))
             .with_rows(vec![
+                choice("cancel", "Cancel", "Keep it"),
                 choice(
                     "delete",
                     "Delete retained data",
                     "Delete it now; installing it again from this source starts with nothing",
                 ),
-                choice("cancel", "Cancel", "Keep it"),
             ]);
     }
 
@@ -143,30 +149,46 @@ impl Launcher {
         let (deleted, now_retained) = {
             let identity = identity.clone();
             off_thread(move || {
-                // The store stays locked throughout, so the same source
-                // cannot be installed again meanwhile and find half its data.
+                // The store stays locked throughout, so this Pane cannot
+                // install the same source again meanwhile and find half its
+                // data.
                 let mut store = installation.store.lock().unwrap_or_else(|p| p.into_inner());
-                let deleted = if store.retained().iter().any(|r| r.identity == identity) {
-                    let problems = installation.data.remove_retained(&identity);
-                    if problems.is_empty() {
-                        Ok(store.forget_retained(&identity).err())
-                    } else {
-                        Err(Some(problems))
+                let deleted = match store.standing_on_disk(&identity) {
+                    Err(error) => Deletion::Unchecked(error),
+                    Ok(Standing::Retained) => {
+                        let problems = installation.data.remove_retained(&identity);
+                        if !problems.is_empty() {
+                            Deletion::Partial(problems)
+                        } else {
+                            match store.forget_retained(&identity) {
+                                Ok(()) => Deletion::Done,
+                                Err(error) => Deletion::Unlisted(error),
+                            }
+                        }
                     }
-                } else {
-                    Err(None)
+                    // Another Pane on the same data folder installed it
+                    // again, or deleted its data: nothing is deleted, and
+                    // this Pane stops listing it.
+                    Ok(Standing::Installed) => {
+                        let _ = store.forget_retained(&identity);
+                        Deletion::Installed
+                    }
+                    Ok(Standing::Neither) => {
+                        let _ = store.forget_retained(&identity);
+                        Deletion::Gone
+                    }
                 };
                 (deleted, store.retained())
             })
             .await
         };
         let status = match deleted {
-            Ok(None) => Status::Result(format!("Deleted the retained data of {title}")),
-            Ok(Some(error)) => Status::Error(format!(
+            Deletion::Done => Status::Result(format!("Deleted the retained data of {title}")),
+            Deletion::Unlisted(error) => Status::Error(format!(
                 "Deleted the retained data of {title}, but could not remove it from the list: \
                  {error}. It stays listed, keeping nothing, until it is deleted again."
             )),
-            Err(Some(problems)) => {
+            Deletion::Partial(problems) => {
                 let files = if problems.len() == 1 {
                     "that file"
                 } else {
@@ -178,9 +200,15 @@ impl Launcher {
                     problems.join("; ")
                 ))
             }
-            Err(None) => Status::Error(format!(
-                "The data of {title} is no longer retained: it was installed again from the \
-                 same source, and nothing was deleted"
+            Deletion::Unchecked(error) => Status::Error(format!(
+                "Could not delete the retained data of {title}: {error}. Nothing was deleted."
+            )),
+            Deletion::Installed => Status::Error(format!(
+                "{title} was installed again from the same source by another Pane using this \
+                 data folder, so its data is in use and nothing was deleted"
+            )),
+            Deletion::Gone => Status::Error(format!(
+                "The data of {title} is no longer kept, so nothing was deleted"
             )),
         };
         let mut state = self.lock();
@@ -203,20 +231,37 @@ impl Launcher {
         );
         state.view.status = status;
     }
+}
 
-    /// Whether the retained data of `identity` is being deleted.
-    pub(super) fn is_deleting_retained(&self, identity: &PackageIdentity) -> bool {
-        self.lock().changing.get(identity) == Some(&Changing::DeletingRetained)
-    }
+/// How deleting retained data ended.
+enum Deletion {
+    /// Every kind is deleted and the record dropped.
+    Done,
+    /// Every kind is deleted, but the record could not be dropped.
+    Unlisted(PackageError),
+    /// These kinds could not be deleted; the record stays.
+    Partial(Vec<String>),
+    /// `installed.json` could not be read, so nothing was deleted.
+    Unchecked(PackageError),
+    /// The same source is installed again on disk; nothing was deleted.
+    Installed,
+    /// Nothing is kept for it on disk any more; nothing was deleted.
+    Gone,
 }
 
 /// The extension list's rows for `retained`, one per identity in the order
 /// they were uninstalled, each naming its source and what is kept.
 pub(super) fn rows(retained: &[RetainedData], data: &ExtensionData) -> (Vec<Row>, Vec<Entry>) {
+    if retained.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+    // Each kind's file is read once for every row.
+    let kept = data.kept_now(&DataKind::ALL);
     retained
         .iter()
         .map(|retained| {
-            let kept = describe(data, &retained.identity, &DataKind::ALL)
+            let kept = kept
+                .describe(&retained.identity)
                 .unwrap_or_else(|| "nothing".into());
             let row = Row {
                 id: format!("delete-retained:{}", retained.identity.key()),
@@ -230,30 +275,4 @@ pub(super) fn rows(retained: &[RetainedData], data: &ExtensionData) -> (Vec<Row>
             (row, Entry::AskDeleteRetained(retained.identity.clone()))
         })
         .unzip()
-}
-
-/// How many values of each of `kinds` Pane keeps for `identity`, such as
-/// "1 setting and 1 content record", or `None` if it keeps none.
-pub(super) fn describe(
-    data: &ExtensionData,
-    identity: &PackageIdentity,
-    kinds: &[DataKind],
-) -> Option<String> {
-    let parts: Vec<String> = kinds
-        .iter()
-        .filter_map(|&kind| {
-            let (one, many) = kind.counted();
-            match data.count(kind, identity) {
-                Ok(0) => None,
-                Ok(1) => Some(format!("1 {one}")),
-                Ok(count) => Some(format!("{count} {many}")),
-                Err(reason) => Some(format!("{many} that cannot be read now ({reason})")),
-            }
-        })
-        .collect();
-    match parts.as_slice() {
-        [] => None,
-        [one] => Some(one.clone()),
-        [rest @ .., last] => Some(format!("{} and {last}", rest.join(", "))),
-    }
 }
