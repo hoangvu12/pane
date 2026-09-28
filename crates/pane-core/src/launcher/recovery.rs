@@ -13,7 +13,7 @@
 //! run no extension) keep working meanwhile.
 
 use super::{Entry, Launcher, LauncherView, Row, Screen, State, Status};
-use crate::runtime::{RESTART_WINDOW, RuntimeStatus};
+use crate::runtime::{CRASH_WINDOW, RuntimeStatus};
 
 /// The id of the extension list's row restarting the runtime.
 const RESTART_ROW: &str = "pane.runtime.restart";
@@ -27,21 +27,26 @@ impl Launcher {
             return;
         };
         let launcher = self.downgrade();
-        runtime.set_crash_report(std::sync::Arc::new(move |status| {
+        runtime.set_crash_report(std::sync::Arc::new(move |thread, status| {
             if let Some(launcher) = launcher.upgrade() {
-                launcher.note_runtime_crash(status);
+                launcher.note_runtime_crash(thread, status);
             }
         }));
     }
 
-    /// The runtime thread crashed and was restarted or not (`status`):
-    /// says so, closes a custom view its instance held, updates the
-    /// screens about it, and has the window redraw. Called on the crashed
-    /// thread, once the helpers it ran were ended.
-    fn note_runtime_crash(&self, status: &RuntimeStatus) {
+    /// Runtime thread number `thread` crashed and the runtime was
+    /// restarted or not (`status`): says so, closes the custom view on
+    /// screen if that thread held it (one a restarted thread opened since
+    /// stays), updates the screens about it, and has the window redraw.
+    /// Called on the crashed thread, once the helpers it ran were ended.
+    pub(super) fn note_runtime_crash(&self, thread: u64, status: &RuntimeStatus) {
         let mut state = self.lock();
         let toast = Status::Error(toast(status));
-        if state.custom_view.is_some() {
+        let held = state
+            .custom_view
+            .as_ref()
+            .is_some_and(|open| open.id.thread() == thread);
+        if held {
             // Its guest instance, and the view with it, is gone.
             self.return_from_custom_view(&mut state, toast.clone());
         }
@@ -52,7 +57,36 @@ impl Launcher {
         }
         state.view.status = toast;
         drop(state);
-        self.developing.changed();
+        self.changed();
+    }
+
+    /// Puts `state` back into a known state after a thread panicked while
+    /// holding it (the runtime thread may, while it notes a failure). What
+    /// that thread was doing may be half done, so:
+    ///
+    /// - every claim of a change in progress (enabling, reloading,
+    ///   installing, uninstalling, ...) is dropped: the panicked thread's
+    ///   would never be released, leaving its package "busy" for good. A
+    ///   change still running elsewhere finishes as before; releasing a
+    ///   claim that is gone is harmless, but another change to the same
+    ///   package is no longer refused meanwhile;
+    /// - the pauses listed are made to agree with the packages whose code
+    ///   is stopped (see [`Launcher::reconcile_pauses`]);
+    /// - root search is shown afresh, built from the installed packages,
+    ///   closing any command, form or custom view, with a status line saying
+    ///   what happened.
+    ///
+    /// The packages, their records and extension data are not rebuilt:
+    /// they are changed only after the change is written.
+    pub(super) fn recover_state(&self, state: &mut State) {
+        state.changing.clear();
+        self.reconcile_pauses(state);
+        self.show_root(state, None);
+        state.view.status = Status::Error(
+            "Pane recovered from an internal error; what was in progress may not have finished. \
+             Saved data is kept."
+                .into(),
+        );
     }
 
     /// What the runtime does, when it failed; `None` while it runs as it
@@ -176,11 +210,136 @@ fn toast(status: &RuntimeStatus) -> String {
         RuntimeStatus::Stopped { .. } => format!(
             "Pane's extension runtime stopped unexpectedly again within {} minutes and was not \
              restarted; saved data is kept. Restart it in Manage extensions.",
-            RESTART_WINDOW.as_secs() / 60
+            CRASH_WINDOW.as_secs() / 60
         ),
         _ => "Pane's extension runtime stopped unexpectedly and was started again; what was \
               running was stopped and is not run again. Saved data is kept; details are in \
               Manage extensions."
             .into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use futures::executor::block_on;
+
+    use super::*;
+    use crate::launcher::{Changing, CommandRegistration};
+    use crate::packages::{PackageIdentity, Store};
+    use crate::runtime::Runtime;
+
+    /// A launcher whose one command is the Rust sample, which draws a
+    /// custom view, with it open on its color view.
+    fn with_view_open() -> (Runtime, Launcher) {
+        let component =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/guests/sample_rust.wasm");
+        assert!(component.exists(), "run `cargo xtask guests`");
+        let runtime = Runtime::start().unwrap();
+        let command = CommandRegistration {
+            id: "rust".into(),
+            title: "Rust sample".into(),
+            subtitle: None,
+            component,
+            takes_query: false,
+        };
+        let launcher = Launcher::new(Ok(runtime.clone()), vec![command]);
+        block_on(launcher.activate_selected());
+        let items = launcher.view().rows;
+        let color = items
+            .iter()
+            .position(|row| row.title == "Choose a color")
+            .unwrap();
+        launcher.select(color);
+        block_on(launcher.activate_selected());
+        assert!(matches!(launcher.view().screen, Screen::CustomView(_)));
+        (runtime, launcher)
+    }
+
+    fn crashed() -> RuntimeStatus {
+        RuntimeStatus::Restarted {
+            why: "a test".into(),
+        }
+    }
+
+    #[test]
+    fn a_crash_closes_the_custom_view_of_the_thread_that_crashed() {
+        let (_runtime, launcher) = with_view_open();
+        let thread = launcher.lock().custom_view.as_ref().unwrap().id.thread();
+
+        launcher.note_runtime_crash(thread, &crashed());
+
+        assert_eq!(launcher.view().screen, Screen::Command);
+    }
+
+    #[test]
+    fn a_crash_leaves_a_custom_view_another_thread_opened() {
+        let (_runtime, launcher) = with_view_open();
+        let thread = launcher.lock().custom_view.as_ref().unwrap().id.thread();
+
+        // Reported late, after a restarted thread opened this view.
+        launcher.note_runtime_crash(thread - 1, &crashed());
+
+        assert!(matches!(launcher.view().screen, Screen::CustomView(_)));
+        assert!(matches!(launcher.view().status, Status::Error(_)));
+    }
+
+    #[test]
+    fn a_state_taken_over_from_a_panicked_thread_is_made_consistent() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("pane.json"),
+            r#"{ "manifestVersion": 1, "title": "Broken", "apiVersion": "0.1",
+                "commands": [{ "id": "open", "title": "Open", "component": "c.wasm" }] }"#,
+        )
+        .unwrap();
+        std::fs::write(source.join("c.wasm"), b"").unwrap();
+        let packages = dir.path().join("extensions");
+        let package = crate::packages::SourcePackage::read(&source).unwrap();
+        let identity: PackageIdentity = Store::open(packages.clone())
+            .install(&package)
+            .unwrap()
+            .identity;
+        let unavailable = crate::runtime::CallError::RuntimeUnavailable("none".into());
+        let launcher = Launcher::with_packages(Err(unavailable), vec![], packages);
+        let data = launcher.installation.clone().unwrap().data;
+
+        // A thread panics holding the state, halfway through pausing the
+        // package (its code stopped, the pause not listed yet) and with a
+        // change claimed that it will never release.
+        let panicked = {
+            let launcher = launcher.clone();
+            let identity = identity.clone();
+            std::thread::spawn(move || {
+                let mut state = launcher.state.lock().unwrap();
+                // Held while it panics.
+                state.changing.insert(identity.clone(), Changing::Reloading);
+                launcher
+                    .installation
+                    .as_ref()
+                    .unwrap()
+                    .data
+                    .pause(&identity);
+                panic!("halfway");
+            })
+            .join()
+        };
+        assert!(panicked.is_err());
+        assert!(launcher.state.is_poisoned());
+
+        let state = launcher.lock();
+
+        assert!(!launcher.state.is_poisoned());
+        assert!(state.changing.is_empty());
+        assert!(state.paused.is_paused(&identity));
+        assert_eq!(
+            data.owned_by(&identity).stopped(),
+            Some(crate::generation::End::Paused)
+        );
+        assert!(matches!(state.view.screen, Screen::Root { .. }));
+        assert!(matches!(&state.view.status, Status::Error(text) if text.contains("recovered")));
     }
 }

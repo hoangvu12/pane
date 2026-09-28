@@ -10,32 +10,50 @@
 //!
 //! - starts a fresh runtime thread, so the next call the user asks for runs
 //!   there; or,
-//! - when it crashed within [`RESTART_WINDOW`] of the previous crash, starts
+//! - when it crashed within [`CRASH_WINDOW`] of the previous crash, starts
 //!   none: repeated automatic restarts are suppressed, and the runtime stays
 //!   stopped until the user restarts it ([`Runtime::restart`]).
 //!
 //! Either way the launcher is told ([`CrashReport`]), without naming any
 //! package: which one, if any, caused a crash of the shared thread is not
 //! known, so nothing is paused. Extension data is untouched.
+//!
+//! This needs the panic to unwind (checked at compile time below). A panic
+//! in a destructor while the thread unwinds from a first panic aborts the
+//! whole process, as does any other abort: neither is recovered.
 
 use std::any::Any;
-use std::future::Future as _;
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, Weak};
-use std::task::{Context, Poll};
+use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
-use tokio::sync::{Notify, mpsc, watch};
+use tokio::sync::{mpsc, watch};
 
-use super::{CallError, Code, HealthReport, Host, Request, SharedApplications, SharedDirectory};
+#[cfg(any(test, debug_assertions))]
+use super::faults::Fault;
+use super::faults::Faults;
+
+use super::{
+    CallError, Code, HealthReport, Host, Request, SharedApplications, SharedDirectory, lock,
+    unavailable,
+};
 use crate::helpers::runner::Helpers;
 
-/// How soon after a crash a second one stops the runtime instead of
-/// restarting it: an explicit choice (provisional), the same window as for
-/// pausing a package.
-pub(crate) const RESTART_WINDOW: Duration = Duration::from_secs(5 * 60);
+// Recovering from a crash of the runtime thread relies on its panic
+// unwinding to a `catch_unwind` on that thread: with `panic = "abort"`, any
+// panic there ends Pane's whole process.
+#[cfg(not(panic = "unwind"))]
+compile_error!(
+    "Pane must be built with `panic = \"unwind\"`: it recovers from a crash of its extension runtime thread by catching its panic"
+);
+
+/// How close together crashes count together: three crashes of a package
+/// within it pause the package (see the launcher's `pausing`), and a second
+/// crash of the runtime thread within it after the previous one stops the
+/// runtime instead of restarting it. An explicit choice (provisional).
+pub(crate) const CRASH_WINDOW: Duration = Duration::from_secs(5 * 60);
 
 /// What the runtime is doing, as far as crashes of its thread go.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,65 +70,9 @@ pub enum RuntimeStatus {
 }
 
 /// Told on the crashed runtime thread, once its helpers were ended and it
-/// was restarted or not, with what the runtime does now.
-pub(crate) type CrashReport = Arc<dyn Fn(&RuntimeStatus) + Send + Sync>;
-
-/// A fault Pane injects into its own runtime to check that it recovers,
-/// for tests and the native smokes (`PANE_TEST_RUNTIME_FAULTS`). Nothing an
-/// extension can cause.
-#[doc(hidden)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Fault {
-    /// The runtime thread panics at once, wherever it is: waiting for the
-    /// next request, or for a guest call it runs (on a clock, a helper, an
-    /// operation).
-    Crash,
-    /// The runtime thread panics once the next guest call has returned,
-    /// before its answer is sent: what the call did (saving data, say) is
-    /// done, but its answer is lost.
-    CrashBeforeAnswer,
-}
-
-/// The faults injected into one runtime thread.
-#[derive(Default)]
-pub(super) struct Faults {
-    crash: AtomicBool,
-    crash_before_answer: AtomicBool,
-    /// Wakes the thread where it waits, for [`Fault::Crash`].
-    woken: Notify,
-}
-
-impl Faults {
-    /// Panics if [`Fault::Crash`] was injected. `waiting` is polled first,
-    /// so an injection after this check wakes the task that polled it.
-    pub(super) fn check(
-        &self,
-        waiting: std::pin::Pin<&mut tokio::sync::futures::Notified<'_>>,
-        cx: &mut Context<'_>,
-    ) {
-        let _: Poll<()> = waiting.poll(cx);
-        if self.crash.load(Ordering::SeqCst) {
-            panic!(
-                "Pane's extension runtime was made to crash (a fault injected to check recovery)"
-            );
-        }
-    }
-
-    pub(super) fn waiting(&self) -> tokio::sync::futures::Notified<'_> {
-        self.woken.notified()
-    }
-
-    /// Panics if [`Fault::CrashBeforeAnswer`] was injected: called once a
-    /// guest call has returned, before its answer is sent.
-    pub(super) fn before_answer(&self) {
-        if self.crash_before_answer.swap(false, Ordering::SeqCst) {
-            panic!(
-                "Pane's extension runtime was made to crash before answering (a fault injected \
-                 to check recovery)"
-            );
-        }
-    }
-}
+/// was restarted or not, with the crashed thread's number (see
+/// [`super::ViewId::thread`]) and what the runtime does now.
+pub(crate) type CrashReport = Arc<dyn Fn(u64, &RuntimeStatus) + Send + Sync>;
 
 /// What every [`super::Runtime`] handle shares: the runtime thread now
 /// serving calls, if one is, and what a new one needs.
@@ -184,13 +146,9 @@ struct Current {
 #[derive(Clone)]
 struct Thread {
     requests: mpsc::UnboundedSender<Request>,
+    /// Where faults are injected into it.
+    #[cfg(any(test, debug_assertions))]
     faults: Arc<Faults>,
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 impl Shared {
@@ -251,22 +209,12 @@ impl Shared {
         *lock(&self.crashes) = Some(report);
     }
 
+    #[cfg(any(test, debug_assertions))]
     pub(super) fn inject(&self, fault: Fault) {
         let Some(thread) = lock(&self.current).thread.clone() else {
             return;
         };
-        match fault {
-            Fault::Crash => {
-                thread.faults.crash.store(true, Ordering::SeqCst);
-                thread.faults.woken.notify_waiters();
-            }
-            Fault::CrashBeforeAnswer => {
-                thread
-                    .faults
-                    .crash_before_answer
-                    .store(true, Ordering::SeqCst);
-            }
-        }
+        thread.faults.inject(fault);
     }
 
     /// Starts the runtime again after it stopped, at the user's request:
@@ -296,15 +244,13 @@ impl Shared {
 
     /// Starts runtime thread number `number`, serving calls with `code`.
     fn spawn(self: &Arc<Shared>, code: Arc<Code>, number: u64) -> Result<Thread, CallError> {
-        let unavailable =
-            |error: &dyn std::fmt::Display| CallError::RuntimeUnavailable(error.to_string());
         let executor = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .map_err(|error| unavailable(&error))?;
+            .map_err(unavailable)?;
         let (requests, receiver) = mpsc::unbounded_channel();
         let faults = Arc::new(Faults::default());
-        let host = Host::new(code, self, faults.clone());
+        let host = Host::new(code, self, number, Arc::clone(&faults));
         let shared = Arc::downgrade(self);
         std::thread::Builder::new()
             .name("pane-extension-runtime".into())
@@ -319,14 +265,18 @@ impl Shared {
                     crashed(&shared, number, panic_message(&*panic));
                 }
             })
-            .map_err(|error| unavailable(&error))?;
-        Ok(Thread { requests, faults })
+            .map_err(unavailable)?;
+        Ok(Thread {
+            requests,
+            #[cfg(any(test, debug_assertions))]
+            faults,
+        })
     }
 }
 
 /// Runtime thread `number` crashed with `why`, and its unwinding dropped
 /// everything it held: ends the helpers its guests left running, restarts
-/// it unless it crashed within [`RESTART_WINDOW`] of its previous crash,
+/// it unless it crashed within [`CRASH_WINDOW`] of its previous crash,
 /// and tells the launcher.
 fn crashed(shared: &Weak<Shared>, number: u64, why: String) {
     let Some(shared) = shared.upgrade() else {
@@ -338,9 +288,8 @@ fn crashed(shared: &Weak<Shared>, number: u64, why: String) {
     shared.helpers.stop_running();
     let status = {
         let mut current = lock(&shared.current);
-        if current.started != number {
-            return;
-        }
+        // Only the thread serving calls runs guests and so can crash: a
+        // restart replaces a thread only once it has stopped.
         current.thread = None;
         let now = Instant::now();
         let again = restarts_automatically(current.last_crash, now);
@@ -350,7 +299,7 @@ fn crashed(shared: &Weak<Shared>, number: u64, why: String) {
         } else if !again {
             Err(format!(
                 "it crashed twice within {} minutes; repeated automatic restarts are suppressed",
-                RESTART_WINDOW.as_secs() / 60
+                CRASH_WINDOW.as_secs() / 60
             ))
         } else {
             let next = number + 1;
@@ -372,15 +321,15 @@ fn crashed(shared: &Weak<Shared>, number: u64, why: String) {
     eprintln!("Pane's extension runtime stopped unexpectedly: {status:?}");
     let report = lock(&shared.crashes).clone();
     if let Some(report) = report {
-        report(&status);
+        report(number, &status);
     }
 }
 
 /// Whether a crash at `now` restarts the runtime by itself: not when it
-/// already crashed within [`RESTART_WINDOW`] before (`previous`, since the
+/// already crashed within [`CRASH_WINDOW`] before (`previous`, since the
 /// user last restarted it).
 pub(crate) fn restarts_automatically(previous: Option<Instant>, now: Instant) -> bool {
-    previous.is_none_or(|previous| now.saturating_duration_since(previous) >= RESTART_WINDOW)
+    previous.is_none_or(|previous| now.saturating_duration_since(previous) >= CRASH_WINDOW)
 }
 
 /// The message of a panic, for diagnostics.
@@ -445,14 +394,14 @@ mod tests {
     #[test]
     fn a_second_crash_within_the_window_does_not() {
         let first = Instant::now();
-        let soon = first + RESTART_WINDOW - Duration::from_secs(1);
+        let soon = first + CRASH_WINDOW - Duration::from_secs(1);
         assert!(!restarts_automatically(Some(first), soon));
     }
 
     #[test]
     fn a_crash_after_the_window_restarts_it_again() {
         let first = Instant::now();
-        assert!(restarts_automatically(Some(first), first + RESTART_WINDOW));
+        assert!(restarts_automatically(Some(first), first + CRASH_WINDOW));
     }
 
     #[test]

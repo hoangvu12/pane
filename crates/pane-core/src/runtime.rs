@@ -30,13 +30,18 @@ use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 
 use crate::platform::Platform;
 
+mod faults;
 mod supervisor;
 
+#[cfg(any(test, debug_assertions))]
 #[doc(hidden)]
-pub use supervisor::Fault;
-pub(crate) use supervisor::RESTART_WINDOW;
+pub use faults::Fault;
+#[cfg(any(test, debug_assertions))]
+use faults::Fault as InjectedFault;
+use faults::Faults;
+pub(crate) use supervisor::CRASH_WINDOW;
 pub use supervisor::RuntimeStatus;
-use supervisor::{Faults, NotSent, Shared};
+use supervisor::{NotSent, Shared};
 
 pub(crate) mod bindings {
     wasmtime::component::bindgen!({
@@ -307,9 +312,22 @@ pub enum ViewEvent {
     PointerUp(Point),
 }
 
-/// Identifies a custom view open in a [`Runtime`]. Ids are never reused.
+/// Identifies a custom view open in a [`Runtime`]. Ids are never reused,
+/// even by a runtime thread that replaced a crashed one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct ViewId(u64);
+pub struct ViewId {
+    /// The number of the runtime thread holding the view.
+    thread: u64,
+    id: u64,
+}
+
+impl ViewId {
+    /// The number of the runtime thread that holds the view: a crash of
+    /// that thread (see [`supervisor::CrashReport`]) closes it.
+    pub(crate) fn thread(&self) -> u64 {
+        self.thread
+    }
+}
 
 /// A form an item opens, as produced by the guest.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -451,7 +469,6 @@ pub struct Runtime {
     /// The thread serving calls now, and the helper processes guests
     /// started, which end once every handle is dropped.
     shared: Arc<Shared>,
-    applications: SharedApplications,
     /// Component checks, served one at a time by the checker thread, apart
     /// from the runtime thread: a reload's check must not wait behind the
     /// guest call the reload is about to stop.
@@ -464,7 +481,6 @@ pub struct Runtime {
 #[derive(Clone)]
 pub(crate) struct WeakRuntime {
     shared: std::sync::Weak<Shared>,
-    applications: SharedApplications,
     checks: std::sync::mpsc::Sender<Check>,
 }
 
@@ -473,7 +489,6 @@ impl WeakRuntime {
     pub(crate) fn upgrade(&self) -> Option<Runtime> {
         Some(Runtime {
             shared: self.shared.upgrade()?,
-            applications: self.applications.clone(),
             checks: self.checks.clone(),
         })
     }
@@ -572,7 +587,6 @@ impl Runtime {
     pub(crate) fn downgrade(&self) -> WeakRuntime {
         WeakRuntime {
             shared: Arc::downgrade(&self.shared),
-            applications: self.applications.clone(),
             checks: self.checks.clone(),
         }
     }
@@ -590,8 +604,6 @@ impl Runtime {
     }
 
     fn start_with(cache_dir: Option<PathBuf>) -> Result<Runtime, CallError> {
-        let unavailable =
-            |error: &dyn fmt::Display| CallError::RuntimeUnavailable(error.to_string());
         let engine = engine(cache_dir.clone())?;
         let applications: SharedApplications = Arc::new(Mutex::new(crate::applications::native()));
         let code = Arc::new(Code::new(engine));
@@ -614,13 +626,9 @@ impl Runtime {
                     let _ = check.reply.send(checked);
                 }
             })
-            .map_err(|error| unavailable(&error))?;
-        let shared = Shared::start(code, applications.clone(), Helpers::default(), cache_dir)?;
-        Ok(Runtime {
-            shared,
-            applications,
-            checks,
-        })
+            .map_err(unavailable)?;
+        let shared = Shared::start(code, applications, Helpers::default(), cache_dir)?;
+        Ok(Runtime { shared, checks })
     }
 
     /// What the runtime is doing after a crash of its thread, if it had one.
@@ -636,17 +644,21 @@ impl Runtime {
     }
 
     /// Injects `fault` into the runtime thread serving calls now, to check
-    /// that Pane recovers. For tests and the native smokes only.
+    /// that Pane recovers. For tests and the native smokes only; debug
+    /// builds only.
+    #[cfg(any(test, debug_assertions))]
     #[doc(hidden)]
-    pub fn inject(&self, fault: Fault) {
+    pub fn inject(&self, fault: InjectedFault) {
         self.shared.inject(fault);
     }
 
     /// Injects a fault each time a file appears at `file`, then removes it:
-    /// `crash` injects [`Fault::Crash`], `crash-before-answer`
-    /// [`Fault::CrashBeforeAnswer`]. For the native smokes, which set
-    /// `PANE_TEST_RUNTIME_FAULTS`; the file is looked for every 100 ms, by
-    /// a thread that stops once every handle to the runtime is dropped.
+    /// `crash` injects [`Fault::Crash`], `crash-before-answer:<item>`
+    /// [`Fault::CrashBeforeAnswer`] for the action `<item>`. For the native
+    /// smokes, which set `PANE_TEST_RUNTIME_FAULTS`; the file is looked for
+    /// every 100 ms, by a thread that stops once every handle to the
+    /// runtime is dropped. Debug builds only.
+    #[cfg(any(test, debug_assertions))]
     #[doc(hidden)]
     pub fn watch_fault_file(&self, file: PathBuf) {
         let runtime = self.downgrade();
@@ -662,10 +674,13 @@ impl Runtime {
                         continue;
                     };
                     let _ = std::fs::remove_file(&file);
-                    match text.trim() {
-                        "crash" => runtime.inject(Fault::Crash),
-                        "crash-before-answer" => runtime.inject(Fault::CrashBeforeAnswer),
-                        other => eprintln!("PANE_TEST_RUNTIME_FAULTS: unknown fault {other:?}"),
+                    let text = text.trim();
+                    match text.strip_prefix("crash-before-answer:") {
+                        Some(item) => runtime.inject(InjectedFault::CrashBeforeAnswer {
+                            item: item.to_owned(),
+                        }),
+                        None if text == "crash" => runtime.inject(InjectedFault::Crash),
+                        None => eprintln!("PANE_TEST_RUNTIME_FAULTS: unknown fault {text:?}"),
                     }
                 }
             });
@@ -781,18 +796,12 @@ impl Runtime {
     /// find and open applications through `applications` from now on,
     /// instead of this system's own ([`crate::applications::native`]).
     pub fn set_applications(&self, applications: Arc<dyn Applications>) {
-        *self
-            .applications
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = applications;
+        *lock(&self.shared.applications) = applications;
     }
 
     /// Finds and opens the system's applications.
     pub(crate) fn applications(&self) -> Arc<dyn Applications> {
-        self.applications
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
+        lock(&self.shared.applications).clone()
     }
 
     /// Asks the command in `component`, which computes root results, for
@@ -991,23 +1000,20 @@ impl Runtime {
 
     /// Resolves the operation calls guests make against `directory` from
     /// now on. Without one, every call is answered that nothing is
-    /// installed.
+    /// installed. It applies at once, not in the order of the requests:
+    /// a call already queued resolves against it too. It is shared by
+    /// every runtime thread, so a restarted one keeps it. The launcher sets
+    /// it once, as it is created, before it asks for any call.
     pub(crate) fn set_directory(&self, directory: Directory) {
-        *self
-            .shared
-            .directory
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(directory);
+        *lock(&self.shared.directory) = Some(directory);
     }
 
     /// Tells `health` of each later failure of a call into an installed
-    /// package's code (see [`Health`]).
+    /// package's code (see [`Health`]). Like [`Runtime::set_directory`], it
+    /// applies at once, to calls already queued too, and holds for a
+    /// restarted runtime thread.
     pub(crate) fn set_health(&self, health: HealthReport) {
-        *self
-            .shared
-            .health
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(health);
+        *lock(&self.shared.health) = Some(health);
     }
 
     fn send(&self, request: Request) -> Result<(), CallError> {
@@ -1041,10 +1047,23 @@ impl Runtime {
     }
 }
 
+/// Locks `mutex`, taking it over if a thread panicked while holding it:
+/// the runtime thread may crash while a lock is held (see `supervisor`),
+/// and Pane carries on with what the lock guarded.
+pub(crate) fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// The runtime could not do something because of `error`.
+pub(crate) fn unavailable(error: impl fmt::Display) -> CallError {
+    CallError::RuntimeUnavailable(error.to_string())
+}
+
 /// The engine every runtime thread runs guests with: WASI 0.3 and
 /// component-model async, keeping compiled code in `cache_dir`, if given.
 fn engine(cache_dir: Option<PathBuf>) -> Result<Engine, CallError> {
-    let unavailable = |error: &dyn fmt::Display| CallError::RuntimeUnavailable(error.to_string());
     let mut config = Config::new();
     config
         .wasm_component_model(true)
@@ -1052,10 +1071,10 @@ fn engine(cache_dir: Option<PathBuf>) -> Result<Engine, CallError> {
     if let Some(dir) = cache_dir {
         let mut cache = CacheConfig::new();
         cache.with_directory(dir);
-        let cache = Cache::new(cache).map_err(|error| unavailable(&error))?;
+        let cache = Cache::new(cache).map_err(unavailable)?;
         config.cache(Some(cache));
     }
-    Engine::new(&config).map_err(|error| unavailable(&error))
+    Engine::new(&config).map_err(unavailable)
 }
 
 /// How a check answers once the checker thread has stopped.
@@ -1127,11 +1146,7 @@ impl GuestState {
             ));
         }
         runner::check_limits(&args, &input)?;
-        let directory = self
-            .directory
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone();
+        let directory = lock(&self.directory).clone();
         let installed = directory.map(|directory| directory()).unwrap_or_default();
         let program = helpers::find(&installed, &self.component, &name)?;
         self.helpers.start(Spec {
@@ -1185,10 +1200,7 @@ data_host!(credentials, DataKind::LocalCredentials);
 
 impl GuestState {
     fn applications(&self) -> Arc<dyn Applications> {
-        self.applications
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
+        lock(&self.applications).clone()
     }
 }
 
@@ -1279,6 +1291,8 @@ struct Host {
     health: Arc<Mutex<Option<HealthReport>>>,
     /// Faults injected into this thread, to check recovery.
     faults: Arc<Faults>,
+    /// This thread's number among those the runtime started.
+    number: u64,
     /// Handed to every guest, for its operation calls.
     calls: mpsc::UnboundedSender<OperationCall>,
     /// Operation calls guests made, served while their callers wait.
@@ -1441,7 +1455,7 @@ impl Code {
 }
 
 impl Host {
-    fn new(code: Arc<Code>, shared: &Shared, faults: Arc<Faults>) -> Host {
+    fn new(code: Arc<Code>, shared: &Shared, number: u64, faults: Arc<Faults>) -> Host {
         let (calls, calls_sent) = operations::channel();
         Host {
             code,
@@ -1453,6 +1467,7 @@ impl Host {
             helpers: shared.helpers.clone(),
             health: shared.health.clone(),
             faults,
+            number,
             calls,
             calls_sent,
             waiting_calls: VecDeque::new(),
@@ -1477,13 +1492,6 @@ impl Host {
         .await
     }
 
-    /// Sends a guest call's answer, unless an injected
-    /// [`Fault::CrashBeforeAnswer`] panics first.
-    fn answer<T>(&self, reply: oneshot::Sender<T>, answer: T) {
-        self.faults.before_answer();
-        let _ = reply.send(answer);
-    }
-
     async fn serve(mut self, mut requests: mpsc::UnboundedReceiver<Request>) {
         while let Some(request) = self.next_request(&mut requests).await {
             self.drop_stopped();
@@ -1494,7 +1502,7 @@ impl Host {
                     reply,
                 } => {
                     let result = self.get_view(&component, data).await;
-                    self.answer(reply, result);
+                    let _ = reply.send(result);
                 }
                 Request::RunAction {
                     component,
@@ -1502,8 +1510,11 @@ impl Host {
                     data,
                     reply,
                 } => {
-                    let result = self.run_action(&component, item_id, data).await;
-                    self.answer(reply, result);
+                    let result = self.run_action(&component, item_id.clone(), data).await;
+                    // An injected fault may lose this answer, after the
+                    // action ran.
+                    self.faults.before_answer(&item_id);
+                    let _ = reply.send(result);
                 }
                 Request::IndexedResults {
                     component,
@@ -1511,7 +1522,7 @@ impl Host {
                     reply,
                 } => {
                     let result = self.indexed_results(&component, data).await;
-                    self.answer(reply, result);
+                    let _ = reply.send(result);
                 }
                 Request::RootResults {
                     component,
@@ -1520,7 +1531,7 @@ impl Host {
                     reply,
                 } => {
                     let result = self.root_results(&component, query, data).await;
-                    self.answer(reply, result);
+                    let _ = reply.send(result);
                 }
                 Request::RunQuery {
                     component,
@@ -1530,7 +1541,7 @@ impl Host {
                     reply,
                 } => {
                     let result = self.run_query(&component, command, query, data).await;
-                    self.answer(reply, result);
+                    let _ = reply.send(result);
                 }
                 Request::Forget { components } => {
                     for component in &components {
@@ -1546,7 +1557,7 @@ impl Host {
                     reply,
                 } => {
                     let result = self.submit_form(&component, item_id, values, data).await;
-                    self.answer(reply, result);
+                    let _ = reply.send(result);
                 }
                 Request::OpenView {
                     component,
@@ -1555,11 +1566,11 @@ impl Host {
                     reply,
                 } => {
                     let result = self.open_view(&component, item_id, data).await;
-                    self.answer(reply, result);
+                    let _ = reply.send(result);
                 }
                 Request::ViewEvent { view, event, reply } => {
                     let result = self.view_event(view, event).await;
-                    self.answer(reply, result);
+                    let _ = reply.send(result);
                 }
                 Request::CloseView { view } => self.close_view(view).await,
                 Request::ViewCount { reply } => {
@@ -1642,7 +1653,10 @@ impl Host {
             })
             .await?;
         let resource = self.settle(path, result, CallError::Guest)?;
-        let view = ViewId(self.next_view.fetch_add(1, Ordering::Relaxed));
+        let view = ViewId {
+            thread: self.number,
+            id: self.next_view.fetch_add(1, Ordering::Relaxed),
+        };
         self.views.insert(
             view,
             LiveView {
@@ -2028,11 +2042,7 @@ impl Host {
     /// package already serves a call in the chain, through whichever of its
     /// components.
     fn resolve_target(&self, call: &OperationCall) -> Result<Target, OperationError> {
-        let directory = self
-            .directory
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone();
+        let directory = lock(&self.directory).clone();
         let installed = match directory {
             Some(directory) => directory(),
             None => operations::Installed::default(),
@@ -2120,11 +2130,7 @@ impl Host {
     /// package whose extension data is `data`, failed; nothing for a command
     /// built into Pane.
     fn report(&self, path: &Path, data: Option<&PackageData>, health: Health) {
-        let report = self
-            .health
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone();
+        let report = lock(&self.health).clone();
         if let (Some(report), Some(data)) = (report, data) {
             report(path, data, health);
         }

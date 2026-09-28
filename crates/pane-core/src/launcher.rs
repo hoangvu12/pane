@@ -29,6 +29,7 @@ mod choices;
 mod hotkeys;
 mod indexed;
 
+use crate::changes::ChangeSender;
 use crate::dependencies;
 use crate::extension_data::{ExtensionData, PackageData};
 use crate::generation::End;
@@ -328,6 +329,10 @@ pub struct Launcher {
     hotkeys: Arc<dyn Hotkeys>,
     /// The packages being developed: built and reloaded on save.
     developing: Arc<Developing>,
+    /// Tells the window that the launcher changed in the background, such
+    /// as after a runtime crash; given with development
+    /// ([`Launcher::with_development`]).
+    changes: Option<ChangeSender>,
     state: Arc<Mutex<State>>,
 }
 
@@ -340,6 +345,7 @@ struct WeakLauncher {
     links: Arc<dyn LinkOpener>,
     hotkeys: Arc<dyn Hotkeys>,
     developing: std::sync::Weak<Developing>,
+    changes: Option<ChangeSender>,
     state: std::sync::Weak<Mutex<State>>,
 }
 
@@ -357,6 +363,7 @@ impl WeakLauncher {
             links: self.links.clone(),
             hotkeys: self.hotkeys.clone(),
             developing: self.developing.upgrade()?,
+            changes: self.changes.clone(),
             state: self.state.upgrade()?,
         })
     }
@@ -821,6 +828,7 @@ impl Launcher {
             links: Arc::new(NoOpener),
             hotkeys: system_hotkeys::none(),
             developing: Arc::new(Developing::new(None, None)),
+            changes: None,
             state: Arc::new(Mutex::new(state)),
         };
         if let (Ok(runtime), Some(installation)) = (&launcher.runtime, &launcher.installation) {
@@ -889,6 +897,7 @@ impl Launcher {
             links: self.links.clone(),
             hotkeys: self.hotkeys.clone(),
             developing: Arc::downgrade(&self.developing),
+            changes: self.changes.clone(),
             state: Arc::downgrade(&self.state),
         }
     }
@@ -2815,10 +2824,27 @@ impl Launcher {
         (state.screen_epoch == epoch).then_some(state)
     }
 
+    /// Locks the launcher's state. If a thread panicked while holding it
+    /// (such as the runtime thread crashing while it noted a failure), the
+    /// state is taken over and first put back into a known state (see
+    /// [`Launcher::recover_state`]).
     fn lock(&self) -> MutexGuard<'_, State> {
-        self.state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        match self.state.lock() {
+            Ok(state) => state,
+            Err(poisoned) => {
+                let mut state = poisoned.into_inner();
+                self.state.clear_poison();
+                self.recover_state(&mut state);
+                state
+            }
+        }
+    }
+
+    /// Tells the window that the launcher changed in the background.
+    fn changed(&self) {
+        if let Some(changes) = &self.changes {
+            changes.changed();
+        }
     }
 }
 

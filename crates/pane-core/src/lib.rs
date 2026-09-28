@@ -31,6 +31,7 @@ pub use packages::{
 };
 pub use pane_target::{Arch, Target};
 pub use platform::Platform;
+#[cfg(debug_assertions)]
 #[doc(hidden)]
 pub use runtime::Fault;
 pub use runtime::{

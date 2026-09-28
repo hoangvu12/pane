@@ -10,6 +10,9 @@
 //! keeps saved data, restarts the runtime once by itself but not again
 //! after a second crash soon after, and never runs a call again by itself:
 //! an action whose answer was lost after it saved stays done once.
+//!
+//! Faults are injected in debug builds only.
+#![cfg(debug_assertions)]
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -162,6 +165,25 @@ impl Pane {
         }
     }
 
+    /// Waits until the launcher's status line shows the crash, as the
+    /// crash report or the lost call's answer puts it, and returns it.
+    fn toast(&self, wanted: &str) -> String {
+        let started = Instant::now();
+        loop {
+            if let Status::Error(text) = self.launcher.view().status
+                && text.contains(wanted)
+            {
+                return text;
+            }
+            assert!(
+                started.elapsed() < PROMPTLY,
+                "no {wanted:?} in {:?}",
+                self.launcher.view().status
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     /// Whether Pane paused any package.
     fn any_paused(&self) -> bool {
         manage(&self.launcher);
@@ -297,11 +319,7 @@ fn a_crash_while_two_extensions_run_keeps_pane_usable_and_ends_the_helper() {
     thread::sleep(Duration::from_millis(200));
     assert_eq!(beats(&alive), last, "the helper still beats");
     // The status line explains it, naming no extension.
-    let toast = error(pane.launcher.view().status);
-    assert!(
-        toast.contains("extension runtime") || toast.contains("Extension runtime"),
-        "{toast}"
-    );
+    let toast = pane.toast("xtension runtime");
     names_no_extension(&toast);
     // Navigation and Manage extensions work; the details name no extension
     // either, and nothing is paused.
@@ -367,8 +385,7 @@ fn a_second_crash_soon_after_stops_the_runtime_until_the_user_restarts_it() {
         not_restarted.contains("twice within 5 minutes"),
         "{not_restarted}"
     );
-    let toast = error(pane.launcher.view().status);
-    assert!(toast.contains("not restarted"), "{toast}");
+    let toast = pane.toast("not restarted");
     names_no_extension(&toast);
     // Nothing runs: a command explains why and where to restart it.
     to_root(&pane.launcher);
@@ -422,7 +439,9 @@ fn an_action_whose_answer_was_lost_is_not_run_again() {
     );
 
     open_at(&pane.launcher, "Greeting", "Count");
-    pane.runtime.inject(Fault::CrashBeforeAnswer);
+    pane.runtime.inject(Fault::CrashBeforeAnswer {
+        item: "count".into(),
+    });
     block_on(pane.launcher.activate_selected());
 
     // The action ran and saved; its answer was lost.
@@ -448,12 +467,18 @@ fn an_action_whose_answer_was_lost_is_not_run_again() {
 #[test]
 fn a_call_whose_answer_was_lost_says_it_was_not_run_again() {
     let pane = Pane::new();
-    pane.runtime.inject(Fault::CrashBeforeAnswer);
+    pane.runtime.inject(Fault::CrashBeforeAnswer {
+        item: "count".into(),
+    });
     let path = pane.launcher.packages()[0]
         .location
         .join("sample_settings.wasm");
+    // Other calls answer as usual (here, that a command built into Pane
+    // keeps no settings): the fault is for Count only.
+    let view = block_on(pane.runtime.get_view(&path));
+    assert!(matches!(view, Err(CallError::Guest(_))), "{view:?}");
 
-    let answer = block_on(pane.runtime.get_view(&path));
+    let answer = block_on(pane.runtime.run_action(&path, "count"));
 
     let Err(CallError::RuntimeUnavailable(reason)) = answer else {
         panic!("expected the runtime unavailable, got {answer:?}");

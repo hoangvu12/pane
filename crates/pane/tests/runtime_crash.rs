@@ -2,6 +2,9 @@
 //! GPUI's test platform: the window redraws by itself with the explanation,
 //! a custom view open in the crashed runtime closes, Manage extensions shows
 //! why and, after a second crash, restarts it.
+//!
+//! Faults are injected in debug builds only.
+#![cfg(debug_assertions)]
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -77,25 +80,30 @@ fn settle(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) -> Launch
 }
 
 /// Waits until the runtime reports its crash as `wanted`, and the window
-/// has drawn it.
+/// shows it: the status line says so (the crash report, or a lost call's
+/// answer) with `text`, and `screen` holds.
 fn crashed(
     runtime: &Runtime,
     window: &Entity<LauncherWindow>,
     cx: &mut VisualTestContext,
     wanted: fn(&RuntimeStatus) -> bool,
+    text: &str,
+    screen: fn(&Screen) -> bool,
 ) -> LauncherView {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !wanted(&runtime.status()) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let view = settle(window, cx);
+        let shown = matches!(&view.status, Status::Error(error) if error.contains(text));
+        if wanted(&runtime.status()) && shown && screen(&view.screen) {
+            return view;
+        }
         assert!(
             Instant::now() < deadline,
-            "no crash: {:?}",
+            "no crash shown: {:?}, {view:?}",
             runtime.status()
         );
         std::thread::sleep(Duration::from_millis(5));
     }
-    // The launcher is told just after the status changes.
-    std::thread::sleep(Duration::from_millis(100));
-    settle(window, cx)
 }
 
 fn press_enter_on(
@@ -130,9 +138,14 @@ fn a_runtime_crash_is_explained_and_the_runtime_restarted_from_the_window(cx: &m
 
     // The window redraws by itself: the view is closed, and the status line
     // says what happened.
-    let view = crashed(&runtime, &window, cx, |status| {
-        matches!(status, RuntimeStatus::Restarted { .. })
-    });
+    let view = crashed(
+        &runtime,
+        &window,
+        cx,
+        |status| matches!(status, RuntimeStatus::Restarted { .. }),
+        "Pane's extension runtime stopped unexpectedly and was started again",
+        |screen| *screen == Screen::Command,
+    );
     assert_eq!(view.screen, Screen::Command);
     let Status::Error(toast) = &view.status else {
         panic!("expected the explanation, got {:?}", view.status);
@@ -158,9 +171,14 @@ fn a_runtime_crash_is_explained_and_the_runtime_restarted_from_the_window(cx: &m
 
     // A second crash soon after stops it; the details screen offers Restart.
     runtime.inject(Fault::Crash);
-    let view = crashed(&runtime, &window, cx, |status| {
-        matches!(status, RuntimeStatus::Stopped { .. })
-    });
+    let view = crashed(
+        &runtime,
+        &window,
+        cx,
+        |status| matches!(status, RuntimeStatus::Stopped { .. }),
+        "not restarted",
+        |screen| matches!(screen, Screen::RuntimeDetails { .. }),
+    );
     assert!(matches!(view.screen, Screen::RuntimeDetails { .. }));
     assert!(
         cx.debug_bounds("row-Restart the extension runtime")
