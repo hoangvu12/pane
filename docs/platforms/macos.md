@@ -252,6 +252,20 @@ Count then counts 3; no package may be recorded as paused. Nothing in it is
 specific to macOS (the runtime is a thread; helpers are ended as for a
 disable); **not run on macOS yet**.
 
+## Uninstalling required dependents (#44)
+
+A phase of the smoke (screenshots 180 to 183, [uninstalling a required dependency](../dependencies.md#uninstalling-a-required-dependency)),
+with a data folder of its own, installs the dependencies sample, presses
+Enter on "Uninstall JavaScript operations sample" in Manage extensions,
+which must ask first (the details color), cancels, then chooses Uninstall
+all 2 keeping saved data (the result color); `installed.json` must then hold
+no package. Pane is started again to install the JavaScript operations
+sample alone, and `installed.json` must then hold exactly one package.
+Removing a managed copy uses the same `remove_dir_all` as a single
+uninstall; a folder still in use is listed and removed at the next start,
+reported against its own package. Nothing else in it is specific to
+macOS; **not run on macOS yet**.
+
 ## Files (#29)
 
 The files phase (screenshots 220 to 223, [files](../files.md)), with a data

@@ -585,6 +585,35 @@ to 209 were looked at.
 Frames 200, 201, 204 and 208 match these; 207 ("Disabled Helper sample")
 is checked but not kept, as its row shows the local package path.
 
+### Uninstalling required dependents (#44)
+
+A phase of its own, after the runtime crash phase, with its own data folder
+([uninstalling a required dependency](../dependencies.md#uninstalling-a-required-dependency)),
+installs the dependencies sample with the JavaScript operations sample,
+opens Manage extensions and presses Enter on "Uninstall JavaScript
+operations sample" (the seventh row). Pane asks first, listing the
+Dependencies sample and the saved data of both; Down, Down and Enter
+(Cancel) returns to the list with both installed; Enter and Enter
+(Uninstall all 2 and keep saved data) uninstalls both, and `installed.json`
+must then hold no package. Pane started again installs the JavaScript
+operations sample alone, and `installed.json` must then hold exactly one
+package. Run locally on 2026-09-28 (same Ubuntu 26.04.1 / Xvfb / lavapipe
+setup): all checks of the whole smoke passed, and frames 180 to 183 were
+looked at. A first run showed the question's details pushing its choices
+out of Pane's window; a confirmation's details now scroll within 40% of the
+window, and frame 180 shows the first choice selected.
+
+| Step | Evidence |
+| --- | --- |
+| The question: "Uninstall JavaScript operations sample and the extensions that require it?", "Dependencies sample, which requires JavaScript operations sample", "Uninstall all 2 and keep saved data" selected | [180-uninstall-dependents-asked-masked.png](evidence/linux-x11/180-uninstall-dependents-asked-masked.png) |
+| Uninstall all: "No extensions are installed.", "Uninstalled JavaScript operations sample and Dependencies sample, which requires it; their settings and content are kept" | [182-uninstall-dependents-uninstalled-masked.png](evidence/linux-x11/182-uninstall-dependents-uninstalled-masked.png) |
+
+(The kept frames are cropped to Pane's window and, in frame 180, the local
+package paths are painted over with the background; the smoke checks the
+whole frames. Frames 181, the list after Cancel, and 183, the list after
+installing the JavaScript operations sample again with only it listed, are
+checked to differ from the others but not kept, as they show those paths.)
+
 ### Files (#29)
 
 The last phase, with its own data folder ([files](../files.md)), makes a

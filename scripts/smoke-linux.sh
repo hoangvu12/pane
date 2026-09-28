@@ -1140,6 +1140,44 @@ if helpers_running; then echo "a helper outlived Pane"; exit 1; fi
 grep -q '"disabled": true' "$PANE_DATA_DIR/extensions/installed.json" || { echo "disable not recorded"; exit 1; }
 if grep -q '"paused"' "$PANE_DATA_DIR/extensions/installed.json"; then echo "a package was paused for the runtime's crash"; exit 1; fi
 
+# Uninstalling a required dependency: installed with the dependencies sample
+# (whose install and data folder are this phase's own), the JavaScript
+# operations sample's Uninstall row is the seventh of Manage extensions.
+# Enter asks first, listing the Dependencies sample, which requires it, and
+# each one's saved data, with Uninstall all keeping or deleting saved data
+# and Cancel; Cancel changes nothing, Uninstall all 2 (keeping) uninstalls
+# both, and installing the JavaScript operations sample again installs it
+# alone: the Dependencies sample is not restored, on record too.
+export PANE_DATA_DIR=$out/uninstall-dependents-data
+rm -rf "$PANE_DATA_DIR"
+start_pane --install target/guests/packages/sample-dependencies
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 3   # Install
+for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+"$xdotool" key Return; sleep 1
+for ((i = 0; i < 6; i++)); do "$xdotool" key Down; done   # Uninstall JavaScript operations sample
+"$xdotool" key Return; sleep 1   # asks first
+capture 180-uninstall-dependents-asked.png
+check 180-uninstall-dependents-asked.png aab4c0   # "Dependencies sample, which requires JavaScript operations sample · …"
+"$xdotool" key Down Down Return; sleep 1   # Cancel
+capture 181-uninstall-dependents-cancelled.png   # both still installed
+"$xdotool" key Return; sleep 1   # asks again
+"$xdotool" key Return; sleep 3   # Uninstall all 2 and keep saved data
+capture 182-uninstall-dependents-uninstalled.png
+check 182-uninstall-dependents-uninstalled.png 9fd8a8   # "Uninstalled JavaScript operations sample and Dependencies sample, which requires it; …"
+stop_pane
+[ "$(grep -c '"dir"' "$PANE_DATA_DIR/extensions/installed.json")" = 0 ] || { echo "not both uninstalled"; exit 1; }
+start_pane --install target/guests/packages/sample-operations-js
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 3   # Install the dependency alone
+for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+"$xdotool" key Return; sleep 1
+capture 183-uninstall-dependents-reinstalled-alone.png   # only the JavaScript operations sample is listed
+check 183-uninstall-dependents-reinstalled-alone.png aab4c0
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{180-uninstall-dependents-asked,181-uninstall-dependents-cancelled,182-uninstall-dependents-uninstalled,183-uninstall-dependents-reinstalled-alone}.png
+stop_pane
+[ "$(grep -c '"dir"' "$PANE_DATA_DIR/extensions/installed.json")" = 1 ] || { echo "not the dependency alone reinstalled"; exit 1; }
+
 # File search (#29): Files, a default extension (its data folder is this
 # phase's own; Files is selected once installed, and Pane's own "Choose
 # folder…" row is the first of its command). Enter on it would show the
