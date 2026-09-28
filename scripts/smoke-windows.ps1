@@ -27,6 +27,11 @@ function Check($name, $color) {
     if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: $name" }
 }
 function Send($keys) { [System.Windows.Forms.SendKeys]::SendWait($keys) }
+# Brings Pane's window to the front, so that key events reach it.
+function Focus-Pane($process) {
+    [Win]::SetForegroundWindow($process.MainWindowHandle) | Out-Null
+    Start-Sleep -Milliseconds 500
+}
 # Starts Pane with the given arguments, writing its errors to $log, and
 # brings its window to the front.
 function Start-Pane($log, [string[]]$arguments) {
@@ -42,7 +47,7 @@ function Start-Pane($log, [string[]]$arguments) {
     }
     if ($process.MainWindowHandle -eq 0) { throw "Pane window did not appear" }
     Start-Sleep -Seconds 2
-    [Win]::SetForegroundWindow($process.MainWindowHandle) | Out-Null
+    Focus-Pane $process
     return $process
 }
 function Stop-Pane($process) {
@@ -104,6 +109,7 @@ $process = Start-Pane "stderr-restart.log"
 Capture "12-restarted.png"
 Check "12-restarted.png" "8a96a3"
 if (-not (Test-Path (Join-Path $data "extensions/installed.json"))) { throw "no install record" }
+Focus-Pane $process
 
 # The Rust command's sixth item is declared for Windows only, its seventh
 # for macOS and Linux only. Here the first runs and the second is explained
