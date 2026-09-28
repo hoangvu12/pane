@@ -1143,4 +1143,90 @@ if (Helpers-Running) { throw "a helper outlived Pane" }
 $record = Join-Path $data "extensions/installed.json"
 if (-not (Select-String -Quiet -SimpleMatch '"disabled": true' $record)) { throw "disable not recorded" }
 if (Select-String -Quiet -SimpleMatch '"paused"' $record) { throw "a package was paused for the runtime's crash" }
+# Recovering from an extension that stops responding (#18). The settings
+# sample's last item, Stop responding, computes without waiting for up to a
+# minute. While it computes, the window answers keys: Escape returns to root
+# search and Manage extensions opens. Pane stops the call after 5 seconds of
+# computing, says why, and the third time pauses the package (a failure of
+# its own); Retry starts it again. Then the runtime thread itself is made to
+# hang through the fault file (PANE_TEST_RUNTIME_FAULTS): Pane gives up on it
+# after 10 seconds, names and pauses no extension, and Manage extensions says
+# the runtime stopped responding; a fresh thread runs the next call. A data
+# folder of its own keeps the rows in a known order.
+$data = Join-Path $OutDir "unresponsive-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+$fault = [System.IO.Path]::GetFullPath((Join-Path $OutDir "unresponsive-fault"))
+Remove-Item -Force -ErrorAction SilentlyContinue $fault, "$fault.tmp"
+# What the settings sample saved under $key, or "none".
+function Saved-Setting($key) {
+    $settings = Get-Content -Raw (Join-Path $data "extensions/settings.json") | ConvertFrom-Json
+    foreach ($package in $settings.packages.PSObject.Properties) {
+        if ($package.Value.$key) { return $package.Value.$key }
+    }
+    "none"
+}
+$env:PANE_TEST_RUNTIME_FAULTS = $fault
+$process = Start-Pane "stderr-unresponsive.log" @("--install", "target/guests/packages/sample-settings")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Greeting is selected
+Send "{ENTER}"; Start-Sleep -Seconds 2   # open Greeting
+Send "{DOWN 9}"   # Stop responding
+Send "{ENTER}"; Start-Sleep -Seconds 1   # it computes
+if ((Saved-Setting "busy") -ne "started") { throw "Stop responding did not start" }
+Send "{ESC}"; Start-Sleep -Seconds 1   # root search answers meanwhile
+Send "{DOWN 10}"   # Manage extensions…
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Capture "240-unresponsive-window-answers.png"   # the extension list, while the guest computes
+Check "240-unresponsive-window-answers.png" "aab4c0"   # its rows' subtitles
+Send "{ESC}"; Start-Sleep -Seconds 6   # it is stopped meanwhile (its answer is not shown here)
+Send "greet"; Start-Sleep -Seconds 1
+Send "{ENTER}"; Start-Sleep -Seconds 2   # open Greeting
+Send "{DOWN 9}"   # Stop responding
+Send "{ENTER}"; Start-Sleep -Seconds 8
+Capture "241-unresponsive-stopped.png"
+Check "241-unresponsive-stopped.png" "f08c8c"   # "The extension stopped responding: it computed for 5 seconds ..."
+Send "{ENTER}"; Start-Sleep -Seconds 8   # the third time
+Send "greet"; Start-Sleep -Seconds 1   # Greeting and its reason at the top
+Capture "242-unresponsive-paused.png"
+Check "242-unresponsive-paused.png" "f08c8c"   # "Settings sample stopped responding 3 times within 5 minutes and is paused ..."
+Check "242-unresponsive-paused.png" "d6a36a"   # Greeting: "Settings sample is paused after an error; ..."
+if ((Saved-Setting "busy") -ne "started") { throw "Stop responding finished or was lost" }
+Send "{ESC}"; Start-Sleep -Seconds 1   # clears the query
+Send "{DOWN 10}"   # Manage extensions…
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Send "{DOWN 3}{ENTER}"; Start-Sleep -Seconds 1   # "Why Settings sample is paused"
+Capture "243-unresponsive-pause-details.png"
+Check "243-unresponsive-pause-details.png" "aab4c0"   # the details
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Retry Settings sample
+Capture "244-unresponsive-retried.png"
+Check "244-unresponsive-retried.png" "9fd8a8"   # "Started Settings sample"
+Send "{ESC}"; Start-Sleep -Seconds 1
+Inject-Fault "hang"
+Send "greet"; Start-Sleep -Seconds 1
+Send "{ENTER}"; Start-Sleep -Seconds 13   # open Greeting: the stuck runtime is given up on
+Capture "245-unresponsive-runtime.png"
+Check "245-unresponsive-runtime.png" "f08c8c"   # the runtime stopped responding and was started again
+Send "{ESC}"; Start-Sleep -Seconds 1   # clears the query
+Send "{DOWN 10}"   # Manage extensions…
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Send "{ENTER}"; Start-Sleep -Seconds 1   # Why the extension runtime stopped, its first row
+Capture "246-unresponsive-runtime-details.png"
+Check "246-unresponsive-runtime-details.png" "aab4c0"   # the details
+Inject-Fault "release"
+Send "{ESC}{ESC}"; Start-Sleep -Seconds 1
+Send "greet"; Start-Sleep -Seconds 1
+Send "{ENTER}"; Start-Sleep -Seconds 2   # open Greeting on a fresh runtime thread
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Use a formal greeting
+Capture "247-unresponsive-runs-again.png"
+Check "247-unresponsive-runs-again.png" "9fd8a8"   # "Saved the formal greeting"
+$shots = "240-unresponsive-window-answers", "241-unresponsive-stopped", "242-unresponsive-paused", "243-unresponsive-pause-details", "244-unresponsive-retried", "245-unresponsive-runtime", "246-unresponsive-runtime-details", "247-unresponsive-runs-again" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: recovering from an extension that stops responding changed nothing" }
+Stop-Pane $process
+Remove-Item Env:PANE_TEST_RUNTIME_FAULTS
+if ((Saved-Setting "busy") -ne "started") { throw "Stop responding finished after it was stopped" }
+if ((Saved-Setting "greeting-style") -ne "formal") { throw "the fresh runtime did not save" }
+$record = Join-Path $data "extensions/installed.json"
+if (Select-String -Quiet -SimpleMatch '"paused"' $record) { throw "a package was paused for the runtime's hang" }
+
 Write-Output "screenshots in $OutDir"

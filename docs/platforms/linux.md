@@ -585,6 +585,36 @@ to 209 were looked at.
 Frames 200, 201, 204 and 208 match these; 207 ("Disabled Helper sample")
 is checked but not kept, as its row shows the local package path.
 
+### Extensions that stop responding (#18)
+
+A phase of its own, after the runtime-crash phase, with its own data
+folder (`unresponsive-data`, [extensions that stop responding](../pausing.md#when-an-extension-stops-responding)).
+It installs the settings sample and runs **Stop responding**, which
+computes without waiting: while it computes, Escape returns to root search
+and Manage extensions opens (frame 240, captured about 3.5 seconds in).
+Run again, the call is stopped after 5 seconds of computing with its
+error; the third time pauses the package, whose saved `busy` note stays
+"started"; the pause details and Retry work. Then the fault file's `hang`
+blocks the runtime thread: opening Greeting answers that the runtime
+stopped responding once Pane gave up on it (10 seconds), Manage extensions'
+first row opens the runtime's details, and after `release` a fresh thread
+saves the formal greeting; `installed.json` records no pause. Run locally
+on 2026-09-29 (Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64, same
+Xvfb/lavapipe setup): all checks of the whole smoke passed, and frames 240
+to 247 were looked at.
+
+| Step | Evidence |
+| --- | --- |
+| The second run: "The extension stopped responding: it computed for 5 seconds without waiting for anything, so Pane stopped it; other extensions' calls waited meanwhile" | [241-unresponsive-stopped.png](evidence/linux-x11/241-unresponsive-stopped.png) |
+| The third: "Settings sample stopped responding 3 times within 5 minutes and is paused …", Greeting listed with why | [242-unresponsive-paused.png](evidence/linux-x11/242-unresponsive-paused.png) |
+| The runtime thread made to hang: "Extension runtime unavailable: it stopped responding before answering and was started again; Pane does not run this again by itself" | [245-unresponsive-runtime.png](evidence/linux-x11/245-unresponsive-runtime.png) |
+| The runtime's details: stopped responding for 10 seconds, none named or paused, the stuck thread abandoned, what it was doing | [246-unresponsive-runtime-details.png](evidence/linux-x11/246-unresponsive-runtime-details.png) |
+| A fresh thread: "Saved the formal greeting" | [247-unresponsive-runs-again.png](evidence/linux-x11/247-unresponsive-runs-again.png) |
+
+Frames 240 (the extension list while the guest computes), 243 (the pause
+details) and 244 ("Started Settings sample" on the extension list) are
+checked but not kept, as they show the local package path.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms have a text field (GPUI CE's

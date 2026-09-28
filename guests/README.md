@@ -23,7 +23,9 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   cache, held alike by `crates/pane-core/tests/disable.rs` and
   `crates/pane-core/tests/clear_cache.rs`. Their **Crash** item crashes on
   purpose: three crashes within five minutes pause the package until Retry
-  ([pausing](../docs/pausing.md), `crates/pane-core/tests/pausing.rs`).
+  ([pausing](../docs/pausing.md), `crates/pane-core/tests/pausing.rs`); their
+  **Stop responding** item computes without waiting until Pane stops it
+  (`crates/pane-core/tests/unresponsive.rs`).
 - `calculator`: Pane's calculator, a default extension in Rust: an
   arithmetic expression typed into root search lists its answer, which Enter
   copies ([Root results](#root-results-computed-from-the-query),
@@ -449,6 +451,16 @@ it again only if they want it done again
 Write an action whose repetition matters so the user can tell whether it
 ran, as the Rust settings sample's **Count** does by answering the count it
 saved.
+
+A command that computes for 5 seconds without waiting for anything holds
+every other extension's calls behind it, so Pane stops it as **not
+responding**: its instance goes, the user sees "The extension stopped
+responding", and it counts towards pausing the package as a crash does
+([extensions that stop responding](../docs/pausing.md#when-an-extension-stops-responding)).
+Waiting (a clock, a helper, another extension's operation) is not
+computing and is never stopped for it; a native helper runs for at most 30
+seconds. Split long work into several calls, or await between its parts.
+The settings samples' **Stop responding** item shows it in each language.
 
 ## Actions for some operating systems only
 
@@ -1200,9 +1212,12 @@ Known limits of local packages so far:
   waits ten seconds, then saves "finished", which a disable or reload
   meanwhile prevents. So save what must survive before awaiting, and do
   not count on code after an `await` running. A command computing without
-  awaiting is not interrupted: it runs until it awaits or returns, and
-  meanwhile Pane refuses it data, operation calls and applications (#18
-  owns hangs).
+  awaiting is interrupted too, at Pane's next epoch tick (10 ms), and one
+  that computes for 5 seconds without finishing is stopped as
+  unresponsive, which counts towards pausing its package like a crash
+  (#18, [pausing](../docs/pausing.md#when-an-extension-stops-responding)):
+  split long work into calls, or await between parts of it. A native
+  helper runs for at most 30 seconds.
 - Background services, timers and hotkeys are not part of the extension
   API yet and come with their own tickets. Disabling does not yet consider
   packages that depend on the disabled one (#43).

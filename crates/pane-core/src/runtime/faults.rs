@@ -1,6 +1,6 @@
 //! Faults Pane injects into its own runtime thread to check that it
-//! recovers from a crash (#17), for tests and the native smokes, which run
-//! debug builds. A release build has none of it: [`Faults`] is then empty
+//! recovers from a crash (#17) or from the thread not responding (#18),
+//! for tests and the native smokes, which run debug builds. A release build has none of it: [`Faults`] is then empty
 //! and its checks do nothing.
 
 use std::future::Future;
@@ -8,9 +8,9 @@ use std::pin::Pin;
 use std::task::Context;
 
 #[cfg(any(test, debug_assertions))]
-use std::sync::Mutex;
-#[cfg(any(test, debug_assertions))]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(any(test, debug_assertions))]
+use std::sync::{Condvar, Mutex};
 
 /// A fault Pane injects into its own runtime to check that it recovers.
 /// Nothing an extension can cause. Debug builds only.
@@ -27,6 +27,13 @@ pub enum Fault {
     /// data, say) is done, but its answer is lost. Other calls, such as
     /// root search's, answer as usual meanwhile.
     CrashBeforeAnswer { item: String },
+    /// The runtime thread stops responding: it blocks wherever it is, as a
+    /// thread stuck in Pane's host code would (waiting for the next
+    /// request, or between a guest's yields in a call it runs), until
+    /// [`Fault::Release`].
+    Hang,
+    /// A thread blocked by [`Fault::Hang`] carries on.
+    Release,
 }
 
 /// The faults injected into one runtime thread.
@@ -39,6 +46,12 @@ pub(super) struct Faults {
     /// Wakes the thread where it waits, for [`Fault::Crash`].
     #[cfg(any(test, debug_assertions))]
     woken: tokio::sync::Notify,
+    /// Whether the thread is to block, for [`Fault::Hang`], and what
+    /// releases it.
+    #[cfg(any(test, debug_assertions))]
+    hang: Mutex<bool>,
+    #[cfg(any(test, debug_assertions))]
+    released: Condvar,
 }
 
 impl Faults {
@@ -51,6 +64,14 @@ impl Faults {
             }
             Fault::CrashBeforeAnswer { item } => {
                 *super::lock(&self.crash_before_answer) = Some(item);
+            }
+            Fault::Hang => {
+                *super::lock(&self.hang) = true;
+                self.woken.notify_waiters();
+            }
+            Fault::Release => {
+                *super::lock(&self.hang) = false;
+                self.released.notify_all();
             }
         }
     }
@@ -66,13 +87,22 @@ impl Faults {
         std::future::pending()
     }
 
-    /// Panics if [`Fault::Crash`] was injected. `waiting` is polled first,
-    /// so an injection after this check wakes the task that polled it.
+    /// Panics if [`Fault::Crash`] was injected, and blocks until released
+    /// if [`Fault::Hang`] was. `waiting` is polled first, so an injection
+    /// after this check wakes the task that polled it.
     #[cfg_attr(not(any(test, debug_assertions)), allow(unused_variables))]
     pub(super) fn check(&self, waiting: Pin<&mut impl Future<Output = ()>>, cx: &mut Context<'_>) {
         #[cfg(any(test, debug_assertions))]
         {
             let _ = waiting.poll(cx);
+            let mut hang = super::lock(&self.hang);
+            while *hang {
+                hang = self
+                    .released
+                    .wait(hang)
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+            }
+            drop(hang);
             if self.crash.load(Ordering::SeqCst) {
                 panic!(
                     "Pane's extension runtime was made to crash (a fault injected to check \

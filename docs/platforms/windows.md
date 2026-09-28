@@ -238,6 +238,23 @@ Count then counts 3; no package may be recorded as paused. Nothing in it is
 specific to Windows (the runtime is a thread; helpers are ended as for a
 disable); **not run on Windows yet**.
 
+## Extensions that stop responding (#18)
+
+The unresponsive phase (screenshots 240 to 247, data folder
+`unresponsive-data`, [extensions that stop responding](../pausing.md#when-an-extension-stops-responding))
+installs the settings sample and runs its **Stop responding**, which
+computes without waiting: while it computes, Escape and Manage extensions
+must answer (the details color); run again, the call must be stopped after
+5 seconds with the error color, and the third time pause the package (the
+error and reason colors), with the saved `busy` note still "started";
+the pause details and Retry must work. Then the runtime thread is made to
+hang through the fault file (`hang`): opening Greeting must show the error
+color after Pane gave up on the thread, Manage extensions' first row must
+open the runtime's details, and after `release` a fresh thread must save
+the formal greeting; no package may be recorded as paused. Epoch
+interruption and the watchdog are Wasmtime's and Pane's own, with nothing
+specific to Windows; **not run on Windows yet**.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** the smoke now also opens the Rust command's

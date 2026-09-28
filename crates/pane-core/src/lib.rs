@@ -18,7 +18,7 @@ mod platform;
 mod runtime;
 mod search;
 
-pub use helpers::runner::{MAX_HELPER_INPUT, MAX_HELPER_OUTPUT};
+pub use helpers::runner::{HELPER_TIME_LIMIT, MAX_HELPER_INPUT, MAX_HELPER_OUTPUT};
 pub use launcher::{
     BuildFailure, CommandRegistration, CustomViewSnapshot, Development, FormField, FormView,
     Launcher, LauncherView, Question, Row, Screen, Status, Unavailable,
@@ -35,7 +35,8 @@ pub use platform::Platform;
 #[doc(hidden)]
 pub use runtime::Fault;
 pub use runtime::{
-    CallError, Choice, CustomViewInfo, CustomViewRole, Field, FieldKind, FieldValue, Form,
-    FormError, Frame, Item, Key, MAX_FRAME_SHAPES, MAX_FRAME_SIZE, MAX_TEXT_CHARS, Point, Rgb,
-    Runtime, RuntimeStatus, Shape, View, ViewEvent, ViewId,
+    COMPUTE_LIMIT, CallError, Choice, CustomViewInfo, CustomViewRole, Field, FieldKind, FieldValue,
+    Form, FormError, Frame, Item, Key, MAX_FRAME_SHAPES, MAX_FRAME_SIZE, MAX_TEXT_CHARS, Point,
+    Rgb, Runtime, RuntimeFailure, RuntimeStatus, Shape, UNRESPONSIVE_LIMIT, View, ViewEvent,
+    ViewId,
 };

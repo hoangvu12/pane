@@ -308,7 +308,7 @@ fn a_crash_while_two_extensions_run_keeps_pane_usable_and_ends_the_helper() {
         "the call waited for its helper"
     );
     let why = match pane.crashed() {
-        RuntimeStatus::Restarted { why } => why,
+        RuntimeStatus::Restarted { why, .. } => why,
         other => panic!("expected a restart, got {other:?}"),
     };
     assert!(why.contains("fault injected"), "{why}");

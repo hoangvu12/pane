@@ -48,6 +48,13 @@ const STDERR_KEPT: u64 = 2048;
 /// How often a supervising thread checks its process when nothing wakes it.
 const TICK: Duration = Duration::from_millis(10);
 
+/// How long a helper may run before Pane ends it (#18): a helper that
+/// never exits would otherwise hold its command's call, and every other
+/// extension's call behind it, until its package stops. Ending it is an
+/// error the command handles like any other failure of its helper, not a
+/// crash. An explicit choice (provisional).
+pub const HELPER_TIME_LIMIT: Duration = Duration::from_secs(30);
+
 /// How long stopping helpers waits for their supervising threads to reap
 /// them, all together.
 const REAP_WAIT: Duration = Duration::from_secs(5);
@@ -399,6 +406,8 @@ pub(crate) struct Spec {
     pub generation: Option<Generation>,
     /// The guest instance that started it (see [`Helpers::stop_owned_by`]).
     pub owner: u64,
+    /// How long it may run before Pane ends it ([`HELPER_TIME_LIMIT`]).
+    pub limit: Duration,
 }
 
 /// The helper processes of one runtime, for stopping and diagnostics.
@@ -773,10 +782,12 @@ enum Ended {
     Generation(End),
     Stopped,
     TooMuchOutput,
+    TimedOut,
 }
 
-/// Ends the process when asked to, when its generation ends or when it
-/// writes too much, reaps it, then reads what it wrote.
+/// Ends the process when asked to, when its generation ends, when it
+/// writes too much or runs longer than its limit, reaps it, then reads what
+/// it wrote.
 fn supervise(
     mut child: Owned,
     spec: &Spec,
@@ -787,6 +798,7 @@ fn supervise(
     let name = &spec.name;
     let child = &mut child.0;
     let written = |file: &File| file.metadata().map_or(0, |metadata| metadata.len());
+    let started = Instant::now();
     let status: Result<ExitStatus, Ended> = loop {
         let ended = if run.stop.load(Ordering::SeqCst) {
             Some(Ended::Stopped)
@@ -794,6 +806,8 @@ fn supervise(
             Some(Ended::Generation(end))
         } else if written(&output) > MAX_HELPER_OUTPUT as u64 {
             Some(Ended::TooMuchOutput)
+        } else if started.elapsed() >= spec.limit {
+            Some(Ended::TimedOut)
         } else {
             None
         };
@@ -831,6 +845,15 @@ fn supervise(
             ));
         }
         Err(Ended::TooMuchOutput) => return Err(too_much()),
+        Err(Ended::TimedOut) => {
+            return Err(HelperError::new(
+                HelperErrorKind::Failed,
+                format!(
+                    "helper `{name}` did not finish within {} seconds; Pane ended it",
+                    spec.limit.as_secs()
+                ),
+            ));
+        }
     };
     // What it wrote by the time it exited; a process it started may still
     // write, and is not waited for.
@@ -1197,6 +1220,7 @@ mod tests {
             input: "hi".into(),
             generation,
             owner,
+            limit: HELPER_TIME_LIMIT,
         }
     }
 
@@ -1245,6 +1269,31 @@ mod tests {
 
         assert!(dropped.elapsed() < Duration::from_millis(100));
         until_none_run(&helpers);
+    }
+
+    /// A helper that runs past its time limit is ended, and the run fails
+    /// saying so: an error the command handles, not a crash.
+    #[test]
+    fn a_helper_running_past_its_time_limit_is_ended() {
+        let helpers = runs();
+        let mut spec = spec(&["--wait", WAIT], None, 0);
+        spec.limit = Duration::from_secs(1);
+        let started = Instant::now();
+
+        let running = helpers.start(spec).unwrap();
+
+        let error = futures::executor::block_on(running.finish()).unwrap_err();
+        assert_eq!(error.kind, HelperErrorKind::Failed);
+        assert_eq!(
+            error.message,
+            "helper `echo` did not finish within 1 seconds; Pane ended it"
+        );
+        assert!(started.elapsed() >= Duration::from_secs(1));
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "it ran its wait out"
+        );
+        assert_eq!(helpers.running(), Vec::<u32>::new());
     }
 
     /// No one polls the run: its supervising thread sees the generation end

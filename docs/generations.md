@@ -106,19 +106,18 @@ resume in the store. So:
 
 ## What stopping cannot do yet
 
-- **A guest computing without yielding cannot be preempted.** The runtime
-  thread is inside the guest until it returns or awaits; the generation is
-  checked only then, so a busy loop holds the thread, and every later call
-  of every extension waits behind it. What such code does after the end
-  (saving data, calling operations) is refused, and its result discarded,
-  but it runs until it yields. Preempting it needs Wasmtime's epoch
-  interruption (`Config::epoch_interruption` with a ticker thread and
-  `Store::epoch_deadline_async_yield_and_update` or a trap) or fuel
-  (`Config::consume_fuel`); both add per-call overhead, and choosing
-  budgets, timeouts and what the user sees is
-  [#18](https://github.com/hoangvu12/pane/issues/18).
-- **No timeouts, and no user cancellation** of an action: a call ends when
-  the guest answers, or when its package's generation ends.
+- ~~A guest computing without yielding cannot be preempted.~~ Since
+  [#18](https://github.com/hoangvu12/pane/issues/18) every guest yields to
+  the runtime thread at each epoch tick (10 ms, `Config::epoch_interruption`
+  and `Store::epoch_deadline_async_yield_and_update`), so a generation that
+  ends stops a computing guest within a tick, and a call that computes for
+  5 seconds without finishing is stopped as unresponsive
+  ([pausing](pausing.md#when-an-extension-stops-responding)). What such
+  code did before the stop is kept; nothing after it runs.
+- **No time limit on waiting, and no user cancellation** of an action: a
+  call waiting on a clock or another extension's operation ends when the
+  guest answers, or when a generation in its chain ends; only computing
+  (5 seconds) and a native helper's run (30 seconds) are limited.
 - **External side effects are not undone**: what the guest did before the
   stop (a file written through WASI, a request sent) stays done; only what
   it would have done afterwards is prevented. Data it saved before the stop

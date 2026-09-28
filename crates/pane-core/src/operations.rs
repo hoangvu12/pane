@@ -89,6 +89,11 @@ impl OperationError {
             ),
             CallError::Paused => (Unavailable, paused_reason(title)),
             CallError::Trap(reason) => (Crashed, format!("{title} crashed: {reason}")),
+            // The operation kinds have no kind of its own: the target failed
+            // while running, as a crash does (provisional).
+            CallError::Unresponsive(reason) => {
+                (Crashed, format!("{title} stopped responding: {reason}"))
+            }
             CallError::RuntimeUnavailable(_) => (Unavailable, format!("{title}: {error}")),
             CallError::Load(_)
             | CallError::Incompatible(_)
@@ -400,6 +405,7 @@ impl<T> operations::HostWithStore<T> for Calls {
                     "this code of the extension was stopped (disabled, reloaded or updated)",
                 ));
             }
+            state.check_runtime().map_err(OperationError::refused)?;
             state
                 .calls
                 .send(OperationCall {

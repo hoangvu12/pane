@@ -13,6 +13,11 @@
 //! count: an action whose effect is done once it has run. If its answer is
 //! lost (Pane's runtime crashed before answering), Pane does not run it
 //! again by itself, so the count never grows without the user asking.
+//! "Stop responding" notes in its settings that it started, then computes
+//! without waiting for anything for up to a minute before noting that it
+//! finished: Pane stops a call that computes for 5 seconds without waiting,
+//! so it never finishes, and it counts towards pausing the package as a
+//! crash does.
 #![no_std]
 
 use pane_guest::alloc::{format, string::String, vec, vec::Vec};
@@ -35,6 +40,11 @@ const SLOW_SAVE: &str = "slow-save";
 const COUNT: &str = "count";
 /// How long "Save after waiting" waits, in nanoseconds.
 const SLOW_WAIT: u64 = 10_000_000_000;
+/// The settings key where "Stop responding" notes how far it got.
+const BUSY: &str = "busy";
+/// How long "Stop responding" computes at most, in nanoseconds: bounded, so
+/// that even without Pane stopping it, it ends.
+const BUSY_FOR: u64 = 60_000_000_000;
 
 struct Greeting;
 pane_guest::export!(Greeting);
@@ -91,6 +101,11 @@ impl Guest for Greeting {
                     "Crashes on purpose; three crashes within five minutes pause the extension",
                 ),
                 item("count", "Count", "Adds one to a count kept in its content"),
+                item(
+                    "busy",
+                    "Stop responding",
+                    "Computes without waiting for up to a minute; Pane stops it after 5 seconds",
+                ),
             ],
         })
     }
@@ -148,6 +163,16 @@ impl Guest for Greeting {
                 } + 1;
                 content::set(COUNT, &format!("{count}"))?;
                 Ok(format!("Counted {count}"))
+            }
+            "busy" => {
+                settings::set(BUSY, "started")?;
+                // Computes without awaiting anything: the guest never
+                // yields to Pane by itself.
+                let now = wasip3::clocks::monotonic_clock::now;
+                let end = now() + BUSY_FOR;
+                while now() < end {}
+                settings::set(BUSY, "finished")?;
+                Ok("Finished computing after a minute".into())
             }
             // A panic traps the guest: Pane reports a crash, not an error
             // the extension answered with.

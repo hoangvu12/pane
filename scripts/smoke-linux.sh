@@ -1139,4 +1139,87 @@ unset PANE_TEST_RUNTIME_FAULTS
 if helpers_running; then echo "a helper outlived Pane"; exit 1; fi
 grep -q '"disabled": true' "$PANE_DATA_DIR/extensions/installed.json" || { echo "disable not recorded"; exit 1; }
 if grep -q '"paused"' "$PANE_DATA_DIR/extensions/installed.json"; then echo "a package was paused for the runtime's crash"; exit 1; fi
+# Recovering from an extension that stops responding (#18). The settings
+# sample's last item, Stop responding, computes without waiting for up to a
+# minute. While it computes, the window answers keys: Escape returns to root
+# search and Manage extensions opens. Pane stops the call after 5 seconds of
+# computing, says why, and the third time pauses the package (a failure of
+# its own); Retry starts it again. Then the runtime thread itself is made to
+# hang through the fault file (PANE_TEST_RUNTIME_FAULTS): Pane gives up on it
+# after 10 seconds, names and pauses no extension, and Manage extensions says
+# the runtime stopped responding; a fresh thread runs the next call. A data
+# folder of its own keeps the rows in a known order.
+export PANE_DATA_DIR=$out/unresponsive-data
+rm -rf "$PANE_DATA_DIR"
+fault=$out/unresponsive-fault
+rm -f "$fault" "$fault.tmp"
+# What the settings sample saved under $1, or "none".
+saved() {
+  python3 - "$PANE_DATA_DIR/extensions/settings.json" "$1" <<'PY'
+import json, sys
+packages = json.load(open(sys.argv[1], encoding="utf-8"))["packages"]
+print(next((values[sys.argv[2]] for values in packages.values() if sys.argv[2] in values), "none"))
+PY
+}
+export PANE_TEST_RUNTIME_FAULTS=$fault
+start_pane --install target/guests/packages/sample-settings
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 2   # Install; Greeting is selected
+"$xdotool" key Return; sleep 2   # open Greeting
+for ((i = 0; i < 9; i++)); do "$xdotool" key Down; done   # Stop responding
+"$xdotool" key Return; sleep 1   # it computes
+[ "$(saved busy)" = started ] || { echo "Stop responding did not start"; exit 1; }
+"$xdotool" key Escape; sleep 1   # root search answers meanwhile
+for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+"$xdotool" key Return; sleep 1
+capture 240-unresponsive-window-answers.png   # the extension list, while the guest computes
+check 240-unresponsive-window-answers.png aab4c0   # its rows' subtitles
+"$xdotool" key Escape; sleep 6   # it is stopped meanwhile (its answer is not shown here)
+"$xdotool" type --delay 50 greet; sleep 1
+"$xdotool" key Return; sleep 2   # open Greeting
+for ((i = 0; i < 9; i++)); do "$xdotool" key Down; done   # Stop responding
+"$xdotool" key Return; sleep 8
+capture 241-unresponsive-stopped.png
+check 241-unresponsive-stopped.png f08c8c   # "The extension stopped responding: it computed for 5 seconds ..."
+"$xdotool" key Return; sleep 8   # the third time
+"$xdotool" type --delay 50 greet; sleep 1   # Greeting and its reason at the top
+capture 242-unresponsive-paused.png
+check 242-unresponsive-paused.png f08c8c   # "Settings sample stopped responding 3 times within 5 minutes and is paused ..."
+check 242-unresponsive-paused.png d6a36a   # Greeting: "Settings sample is paused after an error; ..."
+[ "$(saved busy)" = started ] || { echo "Stop responding finished or was lost"; exit 1; }
+"$xdotool" key Escape; sleep 1   # clears the query
+for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+"$xdotool" key Return; sleep 1
+"$xdotool" key Down Down Down Return; sleep 1   # "Why Settings sample is paused"
+capture 243-unresponsive-pause-details.png
+check 243-unresponsive-pause-details.png aab4c0   # the details
+"$xdotool" key Return; sleep 2   # Retry Settings sample
+capture 244-unresponsive-retried.png
+check 244-unresponsive-retried.png 9fd8a8   # "Started Settings sample"
+"$xdotool" key Escape; sleep 1
+inject hang
+"$xdotool" type --delay 50 greet; sleep 1
+"$xdotool" key Return; sleep 13   # open Greeting: the stuck runtime is given up on
+capture 245-unresponsive-runtime.png
+check 245-unresponsive-runtime.png f08c8c   # the runtime stopped responding and was started again
+"$xdotool" key Escape; sleep 1   # clears the query
+for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+"$xdotool" key Return; sleep 1
+"$xdotool" key Return; sleep 1   # Why the extension runtime stopped, its first row
+capture 246-unresponsive-runtime-details.png
+check 246-unresponsive-runtime-details.png aab4c0   # the details
+inject release
+"$xdotool" key Escape Escape; sleep 1
+"$xdotool" type --delay 50 greet; sleep 1
+"$xdotool" key Return; sleep 2   # open Greeting on a fresh runtime thread
+"$xdotool" key Return; sleep 2   # Use a formal greeting
+capture 247-unresponsive-runs-again.png
+check 247-unresponsive-runs-again.png 9fd8a8   # "Saved the formal greeting"
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{240-unresponsive-window-answers,241-unresponsive-stopped,242-unresponsive-paused,243-unresponsive-pause-details,244-unresponsive-retried,245-unresponsive-runtime,246-unresponsive-runtime-details,247-unresponsive-runs-again}.png
+stop_pane
+unset PANE_TEST_RUNTIME_FAULTS
+[ "$(saved busy)" = started ] || { echo "Stop responding finished after it was stopped"; exit 1; }
+[ "$(saved greeting-style)" = formal ] || { echo "the fresh runtime did not save"; exit 1; }
+if grep -q '"paused"' "$PANE_DATA_DIR/extensions/installed.json"; then echo "a package was paused for the runtime's hang"; exit 1; fi
+
 echo "screenshots in $out"
