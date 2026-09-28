@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use gpui::{Entity, TestAppContext, VisualTestContext, prelude::*};
 use pane::LauncherWindow;
-use pane_core::develop::{Build, BuildStop, Builder};
+use pane_core::develop::{Build, BuildJob, BuildOutcome, Builder};
 use pane_core::{Launcher, LauncherView, Runtime, Screen, Status};
 
 const MANAGE_ROW: &str = "Manage extensions…";
@@ -48,14 +48,15 @@ impl Build for FakeBuild {
         path == Path::new("hello.wasm")
     }
 
-    fn run(&self, _: &BuildStop) -> Result<String, String> {
+    fn run(&self, job: &BuildJob) -> BuildOutcome {
         let source = fs::read_to_string(self.0.join("source.txt")).unwrap();
         let source = source.trim();
         if source.starts_with("error") {
-            return Err(source.into());
+            job.line(source);
+            return BuildOutcome::Failed("fake build failed".into());
         }
-        fs::copy(guest(source), self.0.join("hello.wasm")).unwrap();
-        Ok(String::new())
+        fs::copy(guest(source), job.staging().join("hello.wasm")).unwrap();
+        BuildOutcome::Built
     }
 }
 
@@ -114,7 +115,7 @@ fn the_window_shows_a_failed_build_and_the_reload_after_a_fix(cx: &mut TestAppCo
     let folder = package(&sources.path().join("hello"));
     cx.executor().allow_parking();
     cx.update(pane::bind_keys);
-    let (sender, changes) = pane_core::develop::changes();
+    let (sender, changes) = pane_core::changes::channel();
     let launcher =
         Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"))
             .with_development(Arc::new(FakeBuilder), sender);

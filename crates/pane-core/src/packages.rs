@@ -562,6 +562,21 @@ pub(crate) struct SourcePackage {
 }
 
 impl SourcePackage {
+    /// Reads the package staged in `folder`, such as a development build,
+    /// as the package with the source `identity`.
+    pub fn read_staged(
+        folder: &Path,
+        identity: PackageIdentity,
+    ) -> Result<SourcePackage, PackageError> {
+        let (manifest, manifest_text) = Manifest::read_text(folder)?;
+        Ok(SourcePackage {
+            identity,
+            folder: folder.to_path_buf(),
+            manifest,
+            manifest_text,
+        })
+    }
+
     pub fn read(folder: &Path) -> Result<SourcePackage, PackageError> {
         let identity = PackageIdentity::local(folder)?;
         let folder = identity

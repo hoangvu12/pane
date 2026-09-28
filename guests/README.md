@@ -976,23 +976,33 @@ each save, runs its build there and reloads the package when the build
 succeeds:
 
 - A folder with `Cargo.toml` is built with `cargo build --release --target
-  wasm32-wasip2`, so `pane.json` names its component under
-  `target/wasm32-wasip2/release/`.
+  wasm32-wasip2` (with cargo's JSON messages, which say where it built the
+  component), so `pane.json` names its component under
+  `target/wasm32-wasip2/release/`; Pane takes the file of that name cargo
+  built this time, even with another target folder.
 - A folder with `package.json` is built with
-  `python3 tools/componentize-js/pane_js.py build <folder> <folder>/<component>`
-  for each component `pane.json` names, such as `dist/<name>.wasm` (a Pane
-  run from a checkout knows where `pane_js.py` is; otherwise set
-  `PANE_COMPONENTIZE_JS`).
+  `python3 tools/componentize-js/pane_js.py build <folder> <out>` for each
+  component `pane.json` names, such as `dist/<name>.wasm` (a Pane run from a
+  checkout knows where `pane_js.py` is; otherwise set
+  `PANE_COMPONENTIZE_JS`; `PANE_PYTHON` names the interpreter).
+
+Each build puts the components in a staging folder under Pane's data
+folder, and runs with Pane's environment (less what `cargo run` set for
+Pane itself). Once development is on, any write to the folder, such as
+`git pull` or an autosave, runs the build, `build.rs` included.
 
 A build that fails replaces nothing: the command keeps running its installed
 code, the status line shows the first error, and **Why <title> did not
-build** shows the build's output (also written to standard error). A build
-that succeeds is reloaded as **Reload <title>** does, including a failure to
-start, which pauses the package with Retry and does not restore the earlier
-code; the next save that builds recovers it. Saving again while a build runs
-makes that build obsolete: it is never reloaded, and the folder is built
-again. **Stop developing <title>**, disabling or uninstalling the package, or
-quitting Pane ends it and stops a running build. Only that installation is
+build** shows the end of the build's output and the path of a log file with
+all of it. A build that succeeds is reloaded from its staging folder as
+**Reload <title>** does, including a failure to start, which pauses the
+package with Retry and does not restore the earlier code; the next save that
+builds recovers it; its components are then copied where `pane.json` names
+them. Saving again while a build runs makes that build obsolete: it is never
+reloaded, and the folder is built again (after three in a row, Pane waits
+for the next save). **Stop developing <title>**, disabling or uninstalling
+the package, or quitting Pane ends it and kills a running build with the
+processes it started. Only that installation is
 affected: a copy of the package installed from another folder keeps its own
 code. The `hello-rust`, `hello-js` and `hello-ts` samples are ready to try;
 [development mode](../docs/development-mode.md) has the steps, what is

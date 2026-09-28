@@ -43,7 +43,7 @@ fn main() {
         // Development mode builds with the author's tools; a JavaScript or
         // TypeScript package with this checkout's build unless
         // PANE_COMPONENTIZE_JS names another.
-        let (change_sender, changes) = pane_core::develop::changes();
+        let (change_sender, changes) = pane_core::changes::channel();
         let default_js = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../tools/componentize-js/pane_js.py");
         let toolchains = Toolchains::from_env(Some(default_js));

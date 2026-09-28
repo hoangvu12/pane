@@ -12,13 +12,13 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use futures::executor::block_on;
-use pane_core::develop::{Build, BuildStop, Builder};
-use pane_core::{Launcher, PackageIdentity, Runtime, SavedData, Screen, Status};
+use pane_core::develop::{Build, BuildJob, BuildOutcome, Builder};
+use pane_core::{Development, Launcher, PackageIdentity, Runtime, SavedData, Screen, Status};
 use tempfile::TempDir;
 
 const MANAGE_ROW: &str = "Manage extensions…";
@@ -35,29 +35,50 @@ fn guest(name: &str) -> PathBuf {
     path
 }
 
-/// The stand-in build's shared state: how often it ran, how often it was
-/// stopped, and a gate it waits at while closed.
+/// The stand-in build's shared state: which packages it built, how often
+/// it was stopped, and a gate builds wait at.
 #[derive(Default)]
 struct Probe {
-    runs: AtomicUsize,
+    /// The folder names of the builds begun, in order.
+    runs: Mutex<Vec<String>>,
     stopped: AtomicUsize,
-    /// Whether builds wait; `Condvar` wakes them when it opens.
-    closed: Mutex<bool>,
+    /// How many more builds may pass the gate; `None` while it is open.
+    permits: Mutex<Option<usize>>,
     opened: Condvar,
+    /// Whether builds ignore being stopped, as a tool might.
+    stubborn: AtomicBool,
 }
 
 impl Probe {
+    /// Makes builds wait until they are let through.
     fn close(&self) {
-        *self.closed.lock().unwrap() = true;
+        *self.permits.lock().unwrap() = Some(0);
+    }
+
+    /// Lets the next waiting build through.
+    fn let_one_through(&self) {
+        if let Some(permits) = self.permits.lock().unwrap().as_mut() {
+            *permits += 1;
+        }
+        self.opened.notify_all();
     }
 
     fn open(&self) {
-        *self.closed.lock().unwrap() = false;
+        *self.permits.lock().unwrap() = None;
         self.opened.notify_all();
     }
 
     fn runs(&self) -> usize {
-        self.runs.load(Ordering::SeqCst)
+        self.runs.lock().unwrap().len()
+    }
+
+    fn runs_of(&self, title: &str) -> usize {
+        self.runs
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|run| *run == title)
+            .count()
     }
 
     fn stopped(&self) -> usize {
@@ -65,7 +86,7 @@ impl Probe {
     }
 }
 
-/// Builds a folder holding `source.txt` by copying the guest it names to
+/// Builds a folder holding `source.txt` by staging the guest it names as
 /// `command.wasm`, or fails with its text when that starts with "error".
 struct FakeBuilder(Arc<Probe>);
 
@@ -95,30 +116,41 @@ impl Build for FakeBuild {
         path == Path::new("command.wasm")
     }
 
-    fn run(&self, stop: &BuildStop) -> Result<String, String> {
+    fn run(&self, job: &BuildJob) -> BuildOutcome {
         // What was saved when the build started.
         let source = fs::read_to_string(self.folder.join("source.txt")).unwrap();
-        self.probe.runs.fetch_add(1, Ordering::SeqCst);
-        let mut closed = self.probe.closed.lock().unwrap();
-        while *closed {
-            if stop.is_stopped() {
+        let name = self
+            .folder
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        self.probe.runs.lock().unwrap().push(name);
+        let mut permits = self.probe.permits.lock().unwrap();
+        while *permits == Some(0) {
+            if job.is_stopped() && !self.probe.stubborn.load(Ordering::SeqCst) {
                 self.probe.stopped.fetch_add(1, Ordering::SeqCst);
-                return Err("stopped".into());
+                return BuildOutcome::Stopped;
             }
-            closed = self
+            permits = self
                 .probe
                 .opened
-                .wait_timeout(closed, Duration::from_millis(20))
+                .wait_timeout(permits, Duration::from_millis(20))
                 .unwrap()
                 .0;
         }
-        drop(closed);
+        if let Some(permits) = permits.as_mut() {
+            *permits -= 1;
+        }
+        drop(permits);
         let source = source.trim();
         if source.starts_with("error") {
-            return Err(format!("   Compiling dev\n{source}\nfake build failed"));
+            job.line("   Compiling dev");
+            job.line(source);
+            return BuildOutcome::Failed("fake build failed".into());
         }
-        fs::copy(guest(source), self.folder.join("command.wasm")).unwrap();
-        Ok("built".into())
+        fs::copy(guest(source), job.staging().join("command.wasm")).unwrap();
+        BuildOutcome::Built
     }
 }
 
@@ -161,7 +193,7 @@ impl Dev {
         let sources = tempfile::tempdir().unwrap();
         let data = tempfile::tempdir().unwrap();
         let probe = Arc::new(Probe::default());
-        let (changes, _) = pane_core::develop::changes();
+        let (changes, _) = pane_core::changes::channel();
         let launcher = Launcher::with_packages(
             Ok(Runtime::start().unwrap()),
             vec![],
@@ -201,13 +233,35 @@ impl Dev {
         (folder, identity)
     }
 
-    /// Waits until the package's builds have ended `handled` times.
-    fn handled(&self, identity: &PackageIdentity, handled: u64) {
-        wait_until(&format!("{handled} builds handled"), || {
+    /// Waits until `finished` of the package's saves have been acted on.
+    fn finished(&self, identity: &PackageIdentity, finished: u64) {
+        wait_until(&format!("{finished} saves acted on"), || {
             self.launcher
                 .development(identity)
-                .is_some_and(|development| development.handled >= handled)
+                .is_some_and(|development| development.finished >= finished)
         });
+    }
+
+    /// Waits until the package's development says `what`.
+    fn until(&self, identity: &PackageIdentity, what: &str, done: impl Fn(&Development) -> bool) {
+        wait_until(what, || {
+            self.launcher
+                .development(identity)
+                .is_some_and(|d| done(&d))
+        });
+    }
+
+    /// Develops a second package, "Clock", whose builds mark time: once a
+    /// save of it has been built, the watchers have told of earlier saves.
+    fn clock(&self) -> (PathBuf, PackageIdentity) {
+        self.developing("Clock", "sample_rust")
+    }
+
+    /// Saves the clock and waits until its build was acted on.
+    fn tick(&self, clock: &(PathBuf, PackageIdentity), source: &str) {
+        let finished = self.launcher.development(&clock.1).unwrap().finished;
+        save(&clock.0, source);
+        self.finished(&clock.1, finished + 1);
     }
 }
 
@@ -291,7 +345,7 @@ fn saving_builds_and_reloads_only_that_package() {
     );
 
     save(&folder, "sample_ts");
-    dev.handled(&identity, 1);
+    dev.finished(&identity, 1);
     assert_eq!(
         dev.launcher.view().status,
         Status::Result("Reloaded Dev".into())
@@ -307,7 +361,7 @@ fn saving_builds_and_reloads_only_that_package() {
 
     // Each save builds again.
     save(&folder, "sample_js");
-    dev.handled(&identity, 2);
+    dev.finished(&identity, 2);
     assert_eq!(
         run(&dev.launcher, "Open Dev", "Say hello"),
         Status::Result(JAVASCRIPT.into())
@@ -321,20 +375,34 @@ fn a_build_that_fails_keeps_the_working_code_and_shows_its_diagnostics() {
     let (folder, identity) = dev.developing("Dev", "sample_rust");
 
     save(&folder, "error[E0308]: mismatched types");
-    dev.handled(&identity, 1);
+    dev.finished(&identity, 1);
     let message = error(dev.launcher.view().status);
     assert_eq!(
         message,
         "Dev did not build: error[E0308]: mismatched types. It keeps running its installed \
          code; the diagnostics are under \"Why Dev did not build\" in Manage extensions."
     );
+    let failure = dev
+        .launcher
+        .development(&identity)
+        .unwrap()
+        .failure
+        .unwrap();
+    assert_eq!(failure.summary, "error[E0308]: mismatched types");
     assert_eq!(
-        dev.launcher
-            .development(&identity)
-            .unwrap()
-            .failure
-            .as_deref(),
-        Some("   Compiling dev\nerror[E0308]: mismatched types\nfake build failed")
+        failure.output,
+        [
+            "   Compiling dev",
+            "error[E0308]: mismatched types",
+            "fake build failed"
+        ]
+    );
+    // The whole output is in a log file under Pane's data folder.
+    let log = failure.log.clone().unwrap();
+    assert!(log.starts_with(dev._data.path()), "{}", log.display());
+    assert_eq!(
+        fs::read_to_string(&log).unwrap(),
+        "   Compiling dev\nerror[E0308]: mismatched types\nfake build failed\n"
     );
     assert_eq!(
         run(&dev.launcher, "Open Dev", "Say hello"),
@@ -355,14 +423,18 @@ fn a_build_that_fails_keeps_the_working_code_and_shows_its_diagnostics() {
         details.contains(&"error[E0308]: mismatched types".to_string()),
         "{details:?}"
     );
+    assert!(
+        details.contains(&format!("The whole output is in {}", log.display())),
+        "{details:?}"
+    );
     assert_eq!(titles(&dev.launcher), ["Build Dev again"]);
     block_on(dev.launcher.activate_selected());
-    dev.handled(&identity, 2);
+    dev.finished(&identity, 2);
     assert_eq!(dev.probe.runs(), 2);
 
     // Fixing it reloads, and the failure is gone.
     save(&folder, "sample_ts");
-    dev.handled(&identity, 3);
+    dev.finished(&identity, 3);
     assert_eq!(dev.launcher.development(&identity).unwrap().failure, None);
     assert_eq!(
         run(&dev.launcher, "Open Dev", "Say hello"),
@@ -378,7 +450,7 @@ fn a_build_that_fails_to_start_is_paused_with_retry_and_not_rolled_back() {
     let (folder, identity) = dev.developing("Dev", "sample_rust");
 
     save(&folder, "failing_start");
-    dev.handled(&identity, 1);
+    dev.finished(&identity, 1);
     let message = error(dev.launcher.view().status);
     assert!(
         message
@@ -390,7 +462,7 @@ fn a_build_that_fails_to_start_is_paused_with_retry_and_not_rolled_back() {
 
     // A fixed save reloads it, which ends the pause.
     save(&folder, "sample_rust");
-    dev.handled(&identity, 2);
+    dev.finished(&identity, 2);
     assert_eq!(
         dev.launcher.view().status,
         Status::Result("Reloaded Dev".into())
@@ -412,31 +484,159 @@ fn a_save_during_a_build_makes_that_build_obsolete() {
     wait_until("the first build", || dev.probe.runs() == 1);
     assert!(dev.launcher.development(&identity).unwrap().building);
     save(&folder, "sample_ts");
+    dev.until(&identity, "the save during the build", |d| d.pending);
     // Let the first build finish: it built the older save.
-    std::thread::sleep(Duration::from_millis(300));
     dev.probe.open();
 
-    dev.handled(&identity, 1);
+    dev.finished(&identity, 1);
     let development = dev.launcher.development(&identity).unwrap();
-    assert_eq!((development.obsolete, development.handled), (1, 1));
+    assert_eq!((development.obsolete, development.finished), (1, 1));
     assert_eq!(dev.probe.runs(), 2);
-    // Only the newer build was reloaded.
+    // Only the newer build was reloaded, and it is in the source folder for
+    // a later Reload.
     assert_eq!(
         run(&dev.launcher, "Open Dev", "Say hello"),
         Status::Result(TYPESCRIPT.into())
     );
-    std::thread::sleep(Duration::from_millis(500));
-    let development = dev.launcher.development(&identity).unwrap();
-    assert_eq!((development.obsolete, development.handled), (1, 1));
+    assert_eq!(
+        fs::read(folder.join("command.wasm")).unwrap(),
+        fs::read(guest("sample_ts")).unwrap()
+    );
 }
 
 #[test]
-fn stopping_development_stops_its_build_and_its_watcher() {
+fn an_obsolete_build_leaves_the_installed_code_in_the_source_folder() {
+    let dev = Dev::new();
+    let (folder, identity) = dev.developing("Dev", "sample_rust");
+    dev.probe.close();
+    save(&folder, "sample_js");
+    wait_until("the first build", || dev.probe.runs() == 1);
+    // What a build that writes into the folder (cargo's target) leaves.
+    fs::copy(guest("sample_js"), folder.join("command.wasm")).unwrap();
+    save(&folder, "error: not yet");
+    dev.until(&identity, "the save during the build", |d| d.pending);
+    dev.probe.open();
+    dev.finished(&identity, 1);
+    assert!(
+        dev.launcher
+            .development(&identity)
+            .unwrap()
+            .failure
+            .is_some()
+    );
+
+    // A Reload reloads the installed code, not the obsolete build.
+    assert_eq!(
+        fs::read(folder.join("command.wasm")).unwrap(),
+        fs::read(guest("sample_rust")).unwrap()
+    );
+    block_on(dev.launcher.reload(&identity));
+    assert_eq!(
+        run(&dev.launcher, "Open Dev", "Say hello"),
+        Status::Result(RUST.into())
+    );
+}
+
+#[test]
+fn sources_that_keep_changing_stop_the_builds_until_the_next_save() {
+    let dev = Dev::new();
+    let (folder, identity) = dev.developing("Dev", "sample_rust");
+    dev.probe.close();
+    let sources = ["sample_js", "sample_ts", "sample_js", "sample_ts"];
+    save(&folder, sources[0]);
+    for (build, source) in sources[1..].iter().enumerate() {
+        wait_until("the build", || dev.probe.runs() == build + 1);
+        save(&folder, source);
+        dev.until(&identity, "the save during the build", |d| d.pending);
+        dev.probe.let_one_through();
+    }
+    dev.finished(&identity, 1);
+    let development = dev.launcher.development(&identity).unwrap();
+    assert_eq!((development.obsolete, dev.probe.runs()), (3, 3));
+    assert_eq!(
+        error(dev.launcher.view().status),
+        "Dev was not reloaded: its sources kept changing during 3 builds in a row. Save again \
+         to build it."
+    );
+    assert_eq!(
+        run(&dev.launcher, "Open Dev", "Say hello"),
+        Status::Result(RUST.into())
+    );
+
+    // The next save builds it.
+    dev.probe.open();
+    save(&folder, "sample_ts");
+    dev.finished(&identity, 2);
+    assert_eq!(
+        run(&dev.launcher, "Open Dev", "Say hello"),
+        Status::Result(TYPESCRIPT.into())
+    );
+}
+
+#[test]
+fn a_build_that_ends_during_a_reload_waits_for_it() {
     let dev = Dev::new();
     let (folder, identity) = dev.developing("Dev", "sample_rust");
     dev.probe.close();
     save(&folder, "sample_js");
     wait_until("the build", || dev.probe.runs() == 1);
+
+    // A Reload of the source folder holds the package until awaited.
+    let manual = dev.launcher.reload(&identity);
+    dev.probe.open();
+    dev.until(&identity, "the build to wait", |d| d.waiting);
+    block_on(manual);
+    dev.finished(&identity, 1);
+    assert_eq!(
+        dev.launcher.view().status,
+        Status::Result("Reloaded Dev".into())
+    );
+    assert_eq!(
+        run(&dev.launcher, "Open Dev", "Say hello"),
+        Status::Result(JAVASCRIPT.into())
+    );
+}
+
+#[test]
+fn a_build_that_ends_after_development_stopped_is_dropped() {
+    let dev = Dev::new();
+    let (folder, identity) = dev.developing("Dev", "sample_rust");
+    dev.probe.stubborn.store(true, Ordering::SeqCst);
+    dev.probe.close();
+    save(&folder, "sample_js");
+    wait_until("the build", || dev.probe.runs() == 1);
+    let manual = dev.launcher.reload(&identity);
+    dev.probe.open();
+    dev.until(&identity, "the build to wait", |d| d.waiting);
+
+    dev.launcher.stop_developing(&identity);
+    block_on(manual);
+    assert_eq!(
+        dev.launcher.view().status,
+        Status::Result("Reloaded Dev".into())
+    );
+    let clock = dev.clock();
+    dev.tick(&clock, "sample_ts");
+    // No word of the dropped build, and only the Reload, of the source
+    // folder, happened.
+    assert_eq!(
+        dev.launcher.view().status,
+        Status::Result("Reloaded Clock".into())
+    );
+    assert_eq!(
+        run(&dev.launcher, "Open Dev", "Say hello"),
+        Status::Result(RUST.into())
+    );
+}
+
+#[test]
+fn stopping_development_stops_its_build_and_its_watcher() {
+    let dev = Dev::new();
+    let clock = dev.clock();
+    let (folder, identity) = dev.developing("Dev", "sample_rust");
+    dev.probe.close();
+    save(&folder, "sample_js");
+    wait_until("the build", || dev.probe.runs_of("Dev") == 1);
 
     assert_eq!(
         press(&dev.launcher, "Stop developing Dev"),
@@ -449,8 +649,8 @@ fn stopping_development_stops_its_build_and_its_watcher() {
     // Nothing watches the folder any more.
     dev.probe.open();
     save(&folder, "sample_ts");
-    std::thread::sleep(Duration::from_millis(500));
-    assert_eq!(dev.probe.runs(), 1);
+    dev.tick(&clock, "sample_js");
+    assert_eq!(dev.probe.runs_of("Dev"), 1);
     assert_eq!(
         run(&dev.launcher, "Open Dev", "Say hello"),
         Status::Result(RUST.into())
@@ -460,10 +660,11 @@ fn stopping_development_stops_its_build_and_its_watcher() {
 #[test]
 fn disabling_or_uninstalling_a_package_ends_its_development() {
     let dev = Dev::new();
+    let clock = dev.clock();
     let (folder, identity) = dev.developing("Dev", "sample_rust");
     dev.probe.close();
     save(&folder, "sample_js");
-    wait_until("the build", || dev.probe.runs() == 1);
+    wait_until("the build", || dev.probe.runs_of("Dev") == 1);
 
     block_on(dev.launcher.set_enabled(&identity, false));
     wait_until("the build to stop", || dev.probe.stopped() == 1);
@@ -478,8 +679,48 @@ fn disabling_or_uninstalling_a_package_ends_its_development() {
     block_on(dev.launcher.uninstall(&identity, SavedData::Keep));
     assert!(dev.launcher.development(&identity).is_none());
     save(&folder, "sample_ts");
-    std::thread::sleep(Duration::from_millis(500));
-    assert_eq!(dev.probe.runs(), 1);
+    dev.tick(&clock, "sample_js");
+    assert_eq!(dev.probe.runs_of("Dev"), 1);
+}
+
+#[test]
+fn a_build_status_does_not_replace_what_another_screen_says() {
+    let dev = Dev::new();
+    dev.install("Other", "sample_js");
+    let (folder, identity) = dev.developing("Dev", "sample_rust");
+    let answer = run(&dev.launcher, "Open Other", "Say hello");
+    assert_eq!(answer, Status::Result(JAVASCRIPT.into()));
+
+    save(&folder, "sample_ts");
+    dev.finished(&identity, 1);
+    assert!(matches!(dev.launcher.view().screen, Screen::Command));
+    assert_eq!(dev.launcher.view().status, answer);
+    // Back at root search, it is shown.
+    to_root(&dev.launcher);
+    assert_eq!(
+        dev.launcher.view().status,
+        Status::Result("Reloaded Dev".into())
+    );
+}
+
+#[test]
+fn a_folder_moved_into_the_source_folder_is_watched() {
+    let dev = Dev::new();
+    let (folder, identity) = dev.developing("Dev", "sample_rust");
+    let outside = dev.sources.join("lib");
+    fs::create_dir(&outside).unwrap();
+    fs::rename(&outside, folder.join("lib")).unwrap();
+    dev.finished(&identity, 1);
+
+    fs::write(folder.join("lib/util.txt"), "saved").unwrap();
+    dev.finished(&identity, 2);
+    // Editors' temporary files are not saves.
+    let clock = dev.clock();
+    fs::write(folder.join("lib/4913"), "").unwrap();
+    fs::write(folder.join("lib/util.txt~"), "").unwrap();
+    fs::write(folder.join("lib/.util.txt.swp"), "").unwrap();
+    dev.tick(&clock, "sample_js");
+    assert_eq!(dev.probe.runs_of("Dev"), 2);
 }
 
 #[test]
@@ -514,7 +755,7 @@ fn a_published_copy_keeps_its_own_identity_and_code() {
     assert_ne!(published, identity);
 
     save(&folder, "sample_js");
-    dev.handled(&identity, 1);
+    dev.finished(&identity, 1);
     // Both are titled Dev: the first command is the published copy's.
     to_root(&dev.launcher);
     let answers: Vec<Status> = (0..2)
@@ -578,7 +819,7 @@ fn development_is_started_and_stopped_in_manage_extensions() {
     // Developing it again does nothing more.
     block_on(dev.launcher.start_developing(&identity));
     save(&folder, "sample_js");
-    dev.handled(&identity, 1);
+    dev.finished(&identity, 1);
     assert_eq!(dev.probe.runs(), 1);
 
     press(&dev.launcher, "Stop developing Dev");
@@ -600,7 +841,7 @@ fn a_launcher_that_develops_still_pauses_a_package_that_keeps_crashing() {
     // Developing it and saving a fix recovers it.
     block_on(dev.launcher.start_developing(&identity));
     save(&dev.sources.join("Dev"), "sample_rust");
-    dev.handled(&identity, 1);
+    dev.finished(&identity, 1);
     assert_eq!(
         run(&dev.launcher, "Open Dev", "Say hello"),
         Status::Result(RUST.into())
@@ -612,7 +853,7 @@ fn the_window_is_told_of_each_change() {
     let sources = tempfile::tempdir().unwrap();
     let data = tempfile::tempdir().unwrap();
     let probe = Arc::new(Probe::default());
-    let (sender, mut changes) = pane_core::develop::changes();
+    let (sender, mut changes) = pane_core::changes::channel();
     let launcher = Launcher::with_packages(
         Ok(Runtime::start().unwrap()),
         vec![],

@@ -500,4 +500,13 @@ def main(argv: list[str]) -> None:
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    try:
+        main(sys.argv[1:])
+    except SystemExit as failure:
+        # A failure is one line starting "pane-js: error:" on standard error,
+        # which Pane's development mode shows as a build's first error.
+        message = failure.code
+        if isinstance(message, str) and message.startswith("pane-js: "):
+            print("pane-js: error: " + message.removeprefix("pane-js: "), file=sys.stderr, flush=True)
+            raise SystemExit(1) from None
+        raise

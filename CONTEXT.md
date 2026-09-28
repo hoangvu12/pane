@@ -129,7 +129,7 @@ Replacing an installed package's code from its source folder while Pane and othe
 _Avoid_: Restart, hot swap, update (an update does not start the new code)
 
 **Development mode**:
-An installed local package whose source folder Pane watches while its author works on it: each save runs the package's documented build command in that folder, and a build that succeeds reloads the package, while one that fails keeps its working code and shows the build's diagnostics. It lasts until the author stops it, the package is disabled or uninstalled, or Pane quits; another installed copy of the package is never affected.
+An installed local package whose source folder Pane watches while its author works on it: each save runs the package's documented build command in that folder, staging the components under Pane's data folder, and a build that succeeds reloads the package from there, while one that fails keeps its working code and shows the build's diagnostics. It lasts until the author stops it, the package is disabled or uninstalled, or Pane quits, each of which kills a running build with the processes it started; another installed copy of the package is never affected.
 _Avoid_: Watch mode, hot reload, dev copy (a copy is an installation)
 
 **Build failure**:
@@ -137,7 +137,7 @@ A development build that did not succeed: nothing is replaced, and the package k
 _Avoid_: Crash, startup failure
 
 **Obsolete build**:
-A development build during which the source was saved again: it is never reloaded, and the folder is built again, so an older build cannot replace a newer one.
+A development build during which the source was saved again: it is never reloaded, what it left in the source folder is replaced with the installed components, and the folder is built again, so an older build cannot replace a newer one; after three in a row, Pane waits for the next save.
 _Avoid_: Cancelled build (it runs to its end)
 
 **Startup failure**:

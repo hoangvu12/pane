@@ -27,8 +27,8 @@ package would.
    last rows). The status says which command each save runs.
 4. Edit `GREETING` in `guests/hello-rust/src/lib.rs` and save. The status
    shows "Building Hello Rust: cargo build --release --target
-   wasm32-wasip2…", then "Reloaded Hello Rust"; "Say hello" answers with
-   the new text.
+   wasm32-wasip2 --message-format=json-render-diagnostics…", then
+   "Reloaded Hello Rust"; "Say hello" answers with the new text.
 5. Save something that does not compile (`const GREETING: &str = 42;`): the
    status says "Hello Rust did not build: error[E0308]: mismatched types.
    It keeps running its installed code; …", and **Why Hello Rust did not
@@ -57,48 +57,101 @@ Development is turned on per installed, enabled package, from its **Develop
 <title>** row, and runs in the background:
 
 1. **Watching.** Pane watches the package's source folder (its identity,
-   `local:` and the folder) with the system's file watcher ([notify](https://docs.rs/notify/8.2.0)
+   `local:` and the folder, resolved to its canonical path, as FSEvents
+   reports it) with the system's file watcher ([notify](https://docs.rs/notify/8.2.0)
    8.2: inotify on Linux, FSEvents on macOS, `ReadDirectoryChangesW` on
    Windows). It watches the folder itself and each top-level folder that is
-   not the build's (a new one is watched when it appears), so the build's
-   own writes never count as saves: not `target/`, `Cargo.lock` (Rust),
-   `node_modules/` (JS/TS), the components `pane.json` names or the
-   top-level folder they are in (`dist/`), hidden files and folders
-   (`.git`, an editor's `.swp`), and `name~` backups. Reading a file is not
-   a save.
+   not the build's; a folder created or moved to the top later is watched
+   when it appears. These are never saves, at any depth: anything inside a
+   `target/`, `node_modules/` or `dist/` folder; `Cargo.lock` (Rust); the
+   components `pane.json` names and the top-level folder they are in;
+   hidden files and folders (`.git`); and editors' temporary files (vim's
+   `4913` probe and `.swp`/`.swo`/`.swx` swap files, `name~` backups,
+   JetBrains' `___jb_tmp___` and `___jb_old___`, Emacs's `.#name` and
+   `#name#`). Reading a file is not a save.
 2. **Building.** After a save, once nothing more is saved for 150 ms (an
-   editor's several writes are one save), Pane runs the package's build in
-   its folder, one adapter per language, the command the guest README
-   documents:
+   editor's several writes are one save), Pane copies `pane.json` to a
+   staging folder of the build's own, under Pane's data folder
+   (`extensions/develop/<hash of the identity>/staging/build-<n>`), and runs
+   the package's build in the source folder, one adapter per language, the
+   command the guest README documents:
 
    | Folder has | Build |
    | --- | --- |
-   | `Cargo.toml` | `cargo build --release --target wasm32-wasip2` (rustup's `cargo`, so the folder's `rust-toolchain.toml` applies; the `CARGO_*`, `RUSTUP_TOOLCHAIN`, `RUSTC`, `RUSTFLAGS` Pane itself was started with are removed, as `pane_js.py` does) |
-   | `package.json` | `python3 <pane_js.py> build <folder> <folder>/<component>` for each component `pane.json` names (`PYTHON` names another interpreter; `python` on Windows) |
+   | `Cargo.toml` | `cargo build --release --target wasm32-wasip2 --message-format=json-render-diagnostics`. The component taken is the `.wasm` of that name that cargo's messages report built by this run, wherever the target folder is (a workspace member's, `CARGO_TARGET_DIR`, `build.target-dir`), never an older file where `pane.json` points; if cargo built none of that name, the build fails: "cargo built no <name> this time, …". |
+   | `package.json` | `python3 <pane_js.py> build <folder> <staging>/<component>` for each component `pane.json` names; a failure of `pane_js.py` itself is one line starting `pane-js: error:` |
    | neither | Not developed: "Cannot develop <title>: … has neither Cargo.toml (Rust) nor package.json (JavaScript or TypeScript) …" |
 
-   The status shows "Building <title>: <command>…". The build's output
-   (standard output and error) is kept.
+   **Tools.** Cargo is `cargo` on `PATH` (rustup's proxy, so the folder's
+   `rust-toolchain.toml` applies), else `~/.cargo/bin/cargo`
+   (`%USERPROFILE%\.cargo\bin\cargo.exe` on Windows). Python is
+   `PANE_PYTHON`, else `python3` on `PATH`, else on Windows `python`,
+   skipping the Microsoft Store stub in `WindowsApps`. Without one, "Cannot
+   develop <title>: Pane found no cargo … (it looked for …)" names where it
+   looked.
+
+   **Environment.** A build runs with Pane's environment, so the author's
+   cargo configuration applies (`CARGO_HOME`, `CARGO_TARGET_DIR`, registry
+   tokens, `CARGO_HTTP_*`, `CARGO_NET_OFFLINE`, proxies). Only what
+   `cargo run` or `cargo test` set for Pane itself is removed: `CARGO`,
+   `CARGO_MANIFEST_DIR`, `CARGO_MANIFEST_PATH`, `CARGO_PKG_*`,
+   `CARGO_BIN_NAME`, `CARGO_CRATE_NAME`, `CARGO_PRIMARY_PACKAGE`,
+   `CARGO_BIN_EXE_*`, `CARGO_TARGET_TMPDIR`, `CARGO_RUSTC_CURRENT_DIR`,
+   `OUT_DIR`, `RUSTUP_TOOLCHAIN`, `RUSTC` and `RUSTDOC`, and the
+   `LD_LIBRARY_PATH`/`DYLD_*` entries cargo added for Pane's target and
+   toolchain folders. (`pane_js.py` strips every `CARGO_*` but
+   `CARGO_HOME` for the toolchain it builds itself.)
+
+   **What a save runs.** Once development is on, any write to the folder
+   (an editor's autosave, `git pull`, a sync client) runs the build,
+   including a Rust package's `build.rs` and procedural macros, with the
+   author's rights. That is what the author asked for by developing that
+   package, for this session only; nothing is built for a package that is
+   not developed.
+
+   The status shows "Building <title>: <command>…". The build's standard
+   output and error are read line by line (each line whole); the last 2,000
+   lines (at most 256 KiB) are kept in memory, and all of it is written to
+   `extensions/develop/<hash>/build.log` in Pane's data folder.
 3. **A build that fails** replaces nothing: the package keeps running its
-   installed code. The status says "<title> did not build: <the first line
-   that reports an error>. It keeps running its installed code; the
-   diagnostics are under "Why <title> did not build" in Manage extensions."
-   That row opens the command, the folder and the last 60 lines of the
-   output, with **Build <title> again**; the whole output also goes to
-   Pane's standard error. The row goes once a build succeeds.
-4. **A build that succeeds** is reloaded exactly as **Reload <title>**
-   reloads it: checked as an install checks it (a component that does not
-   pass is "not reloaded", the code keeps running), then replacing the
-   managed copy and starting each available command. A start that fails
-   pauses the package with Retry and diagnostics, and **the earlier code is
-   not restored** (Q31, [pausing](pausing.md)); the next save that builds
-   reloads it, which ends the pause. Settings are kept; nothing live is
-   carried over.
+   installed code. The status says "<title> did not build: <first error>.
+   It keeps running its installed code; the diagnostics are under "Why
+   <title> did not build" in Manage extensions." The first error is the
+   first line that rustc or cargo (`error:`, `error[E0308]:`), TypeScript
+   (`error TS2322`) or `pane_js.py` (`pane-js: error:`) report as one; a
+   line such as `Compiling thiserror` is not; without one, why the build
+   failed (the command and its exit code). The log is kept as
+   `failed-build.log`, and **Why <title> did not build** opens the command,
+   the folder, the log's path and the last 60 lines of the output, with
+   **Build <title> again**. Pane's standard error gets one line: the first
+   error and the log's path. The row goes once a build succeeds.
+4. **A build that succeeds** is reloaded from its staging folder exactly as
+   **Reload <title>** reloads the source folder: checked as an install
+   checks it (a component that does not pass is "not reloaded", the code
+   keeps running), then replacing the managed copy and starting each
+   available command. A start that fails pauses the package with Retry and
+   diagnostics, and **the earlier code is not restored** (Q31,
+   [pausing](pausing.md)); the next save that builds reloads it, which ends
+   the pause. Settings are kept; nothing live is carried over. The
+   components are then copied to where `pane.json` names them in the source
+   folder, so a later **Reload** reloads the same build. If the package is
+   being changed otherwise when the build ends (a **Reload**, an update),
+   the build waits for that to end; a save meanwhile makes it obsolete.
 5. **Saving during a build** makes that build obsolete: it runs to its end
    (it is not killed), but is never reloaded, and the folder is built
    again. Builds of one package run one at a time, and each reload ends
    before the next build starts, so an older build never replaces a newer
-   one.
+   one. What an obsolete build left where `pane.json` names the components
+   (cargo's `target`) is replaced with the installed components, so a later
+   **Reload** cannot pick it up. After three obsolete builds in a row the
+   status says "<title> was not reloaded: its sources kept changing during
+   3 builds in a row. Save again to build it.", and Pane waits for the next
+   save.
+6. **The status line.** A development status is shown on Manage
+   extensions, a build's details and root search with nothing typed. On
+   another screen (an open command, a form, a query's results) it does not
+   replace what that screen says; the newest is shown when the user returns
+   to Manage extensions or root search.
 
 Only the developed package is built and reloaded; Pane and every other
 package keep running.
@@ -107,11 +160,23 @@ package keep running.
 
 When the author chooses **Stop developing <title>**, disables or
 uninstalls the package, or Pane quits (and when the launcher is dropped, as
-in tests). The watcher is dropped and a running build is stopped with every
-process it started: it runs in a process group of its own, killed with
-`SIGKILL` on macOS and Linux, and with `taskkill /T /F` on Windows (where it
-also runs without a console window). Enabling the package again does not
-develop it again.
+in tests). The watcher is dropped, and a running build's processes are
+killed before that action returns; a build that ends after it is dropped
+without a word. Enabling the package again does not develop it again.
+
+- **macOS and Linux:** the build runs in a process group of its own, killed
+  with `SIGKILL`. After its command exits, what is left of the group is
+  killed too, and its output is read for at most 2 more seconds, so a
+  daemon it started that holds the pipes cannot hold Pane. On Linux the
+  command also gets `SIGKILL` if Pane dies without quitting
+  (`PR_SET_PDEATHSIG`); macOS has no such signal, so there a build
+  outlives a Pane that is killed or crashes.
+- **Windows:** the build runs in a Job Object that kills its processes when
+  closed (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`), so they die when
+  development stops and when Pane ends however it ends; it also runs in a
+  new process group (`CREATE_NEW_PROCESS_GROUP`), without a console window.
+  A process the command starts in the instant before it is assigned to the
+  job escapes it.
 
 ## Local and published copies
 
@@ -133,9 +198,17 @@ These are implementation choices of #12/#13, not user decisions:
 - The build is chosen by the folder's `Cargo.toml` or `package.json`, with
   the documented commands; a package cannot declare a build of its own.
 - A save during a build lets that build finish and builds again, rather than
-  killing it.
+  killing it; after three obsolete builds in a row Pane waits for the next
+  save rather than reloading the last one that built.
 - A build failure is shown in the status line and a details row, not as a
-  separate notification; the details show the last 60 lines.
+  separate notification; the details show the last 60 lines and the log's
+  path.
+- **Build <title> again** on the details screen reruns the build without a
+  save.
+- A development status waits on screens other than Manage extensions, a
+  build's details and an empty root search.
+- `pane_js.py` runs `tsc` in the staged copy of the package, so a type
+  error names the file as the package has it (`src/index.ts(12,7)`).
 - Reloading on save starts every available command, as a manual reload does
   (the provisional exception to lazy activation in
   [current decisions](current-decisions.md)).
@@ -146,25 +219,41 @@ These are implementation choices of #12/#13, not user decisions:
 
 - [`crates/pane-core/tests/develop.rs`](../crates/pane-core/tests/develop.rs)
   drives development through the launcher with the system's file watcher
-  and a stand-in build that copies a real guest: a save reloads only that
-  package (another keeps its code); a build that fails keeps the code and
-  shows its diagnostics, which Build again reruns, and a fix reloads it; a
-  build that fails to start is paused with Retry and not rolled back, and
-  the next save recovers it; a save during a build makes it obsolete (only
-  the newer build is reloaded); stopping, disabling, uninstalling and
-  dropping the launcher each stop the running build and the watcher; a
-  published copy keeps its identity and code; the rows in Manage
-  extensions; the window is told of each change.
+  and a stand-in build that stages a real guest, waiting on what the
+  development reports (and on a second developed package's build, to know
+  that a save was not acted on) rather than on fixed pauses: a save
+  reloads only that package (another keeps its code); a build that fails
+  keeps the code and shows its first error, output and log, which Build
+  again reruns, and a fix reloads it; a build that fails to start is
+  paused with Retry and not rolled back, and the next save recovers it; a
+  save during a build makes it obsolete (only the newer build is reloaded
+  and copied to the source folder), and an obsolete build's leftovers are
+  replaced with the installed code for a later Reload; three obsolete
+  builds in a row wait for the next save; a build that ends during a
+  Reload waits for it, and one that ends after development stopped is
+  dropped without a word; stopping, disabling, uninstalling and dropping
+  the launcher each stop the running build and the watcher; a status does
+  not replace an open command's answer and is shown back at root search; a
+  folder moved into the source folder is watched, and editors' temporary
+  files are not saves; a published copy keeps its identity and code; the
+  rows in Manage extensions; the window is told of each change.
 - [`crates/pane-core/tests/develop_builds.rs`](../crates/pane-core/tests/develop_builds.rs)
   runs the real builds on copies of the samples: an edit is built and
   reloaded, a compile or type error keeps the code and shows the compiler's
-  output, a fix reloads it. The Rust test runs in `cargo xtask ci`; the
-  JavaScript and TypeScript ones need the JS toolchain and run with
+  first error and output, with the log, a fix reloads it; a Rust package
+  with its own `build.target-dir` reloads what cargo built this time, not
+  the older file where `pane.json` points, and a component cargo did not
+  build is refused. The Rust tests run in `cargo xtask ci`; the JavaScript
+  and TypeScript ones need the JS toolchain and run with
   `PANE_TEST_JS_BUILDS=1` (CI's JS/TS job sets it).
 - Unit tests in [`develop.rs`](../crates/pane-core/src/develop.rs): the
-  adapters' commands and ignored paths, a folder without a known build,
-  the first error line, and stopping a command kills the processes it
-  started (Unix).
+  adapters' commands (paths with spaces quoted) and ignored paths, a folder
+  without a known build or tool, the first error (not `thiserror`),
+  cargo's artifact messages, which variables are removed, the bounded
+  output and its log, whole lines from both pipes, and (Unix) stopping a
+  command kills what it started at once, a command whose child keeps the
+  pipes open still returns, and one whose daemon (outside the group) keeps
+  them open returns after the 2-second drain.
 - [`crates/pane/tests/develop.rs`](../crates/pane/tests/develop.rs): the
   window redraws by itself when a background build fails and when the fix
   is reloaded, and renders the diagnostics.
@@ -175,13 +264,12 @@ These are implementation choices of #12/#13, not user decisions:
 
 - A build has no timeout: one that hangs holds the package's development
   until it ends or development stops.
-- Pane ended without quitting (a signal such as `SIGTERM` or `SIGKILL`, a
-  crash) leaves a running build to finish on its own.
-- Only the folder's top level decides what is watched: sources kept inside
-  `target/`, `node_modules/` or the components' folder are not watched.
+- On macOS, a Pane that is killed or crashes leaves a running build to
+  finish on its own (see above); a daemon a build starts in a session of
+  its own (`setsid`) is not killed anywhere but Windows.
 - The JS/TS build needs a Pane checkout's `pane_js.py` (and its toolchain);
   an installed Pane without a checkout cannot build JS/TS on save.
 - Native evidence is from Linux (X11) only; the macOS and Windows smokes run
-  the same phase, not yet run there. The platform code (process groups,
-  kill, the watcher) was compile- and lint-checked for Windows and macOS
-  targets from Linux.
+  the same phase, not yet run there. The platform code (process groups, the
+  Job Object, the watcher) was compile- and lint-checked for Windows and
+  macOS targets from Linux.

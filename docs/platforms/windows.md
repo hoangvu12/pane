@@ -163,10 +163,12 @@ sample, develops it from Manage extensions, saves an edit, a change that
 does not build, two saves in a row and, after stopping, one more, checking
 the answers, the error and that nothing is built after stopping. The
 TypeScript and JavaScript samples run only where the JS toolchain is built,
-so CI's smoke runs the Rust one. The platform code (`ReadDirectoryChangesW` through notify, `taskkill /T /F` and builds without a console window) was only
-compile- and lint-checked for `x86_64-pc-windows-gnu` from Linux; **not run on Windows
-yet**, so the file watcher's events, the build's process tree being stopped
-and the whole phase are unverified natively.
+so CI's smoke runs the Rust one. The platform code (`ReadDirectoryChangesW` through notify, a Job Object
+with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, `CREATE_NEW_PROCESS_GROUP` and
+builds without a console window) was only compile- and lint-checked for
+`x86_64-pc-windows-gnu` from Linux; **not run on Windows yet**, so the file
+watcher's events, the build's processes being killed and the whole phase
+are unverified natively.
 
 ## Text input and accessibility findings
 

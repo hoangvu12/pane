@@ -183,10 +183,13 @@ sample, develops it from Manage extensions, saves an edit, a change that
 does not build, two saves in a row and, after stopping, one more, checking
 the answers, the error and that nothing is built after stopping. The
 TypeScript and JavaScript samples run only where the JS toolchain is built,
-so CI's smoke runs the Rust one. The platform code (FSEvents through notify, a process group killed with `SIGKILL`) was only
-compile- and lint-checked for `x86_64-apple-darwin` from Linux; **not run on macOS
-yet**, so the file watcher's events, the build's process tree being stopped
-and the whole phase are unverified natively.
+so CI's smoke runs the Rust one. The platform code (FSEvents through notify, with the folder and event
+paths made canonical, and a process group killed with `SIGKILL`) was only
+compile- and lint-checked for `x86_64-apple-darwin` from Linux; **not run on
+macOS yet**, so the file watcher's events, the build's processes being
+killed and the whole phase are unverified natively. macOS has no parent
+death signal, so a build outlives a Pane that is killed or crashes (one
+that quits kills it).
 
 ## Text input and accessibility findings
 

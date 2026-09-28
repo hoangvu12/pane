@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures::executor::block_on;
-use pane_core::develop::{BuildStop, Builder, Toolchains};
+use pane_core::develop::{BuildJob, BuildOutcome, Builder, Toolchains};
 use pane_core::{Launcher, PackageIdentity, Runtime, Status};
 
 fn repository() -> PathBuf {
@@ -48,8 +48,13 @@ impl Sample {
     /// what earlier runs built there; for Rust, with the path to
     /// `pane-guest` and the repository's toolchain file.
     fn copy(&self) -> PathBuf {
+        self.copy_as(&format!("develop-{}", self.name))
+    }
+
+    /// Like [`Sample::copy`], in the test folder's `name`.
+    fn copy_as(&self, name: &str) -> PathBuf {
         let from = repository().join("guests").join(self.name);
-        let to = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("develop-{}", self.name));
+        let to = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
         let _ = fs::remove_dir_all(to.join("src"));
         fs::create_dir_all(to.join("src")).unwrap();
         for file in self.files {
@@ -133,6 +138,35 @@ fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
     }
 }
 
+/// Builds the package in `folder` as development mode does, then puts its
+/// components in the folder, as its author would before installing it.
+fn build_once(folder: &Path) {
+    let build = toolchains().build_for(folder).unwrap();
+    let staging = tempfile::tempdir().unwrap();
+    fs::copy(folder.join("pane.json"), staging.path().join("pane.json")).unwrap();
+    let job = BuildJob::new(staging.path().to_path_buf());
+    let outcome = build.run(&job);
+    assert_eq!(outcome, BuildOutcome::Built, "{:#?}", job.output());
+    for command in pane_core::Manifest::read(staging.path()).unwrap().commands {
+        let component = command.component;
+        let target = folder.join(&component);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        let _ = fs::remove_file(&target);
+        fs::copy(staging.path().join(&component), target).unwrap();
+    }
+}
+
+/// A launcher that develops with Pane's builds, keeping its data in `data`.
+fn launcher(data: &Path) -> Launcher {
+    let (changes, _) = pane_core::changes::channel();
+    Launcher::with_packages(
+        Ok(Runtime::start().unwrap()),
+        vec![],
+        data.join("extensions"),
+    )
+    .with_development(Arc::new(toolchains()), changes)
+}
+
 /// Opens the sample's command from root search and runs "Say hello".
 fn say_hello(launcher: &Launcher, title: &str) -> Status {
     for _ in 0..3 {
@@ -162,17 +196,10 @@ fn say_hello(launcher: &Launcher, title: &str) -> Status {
 fn develop(sample: &Sample, greeting: &str, broken: &str, again: &str, fixed: &str) {
     let folder = sample.copy();
     sample.save(&folder, sample.greeting);
-    let build = toolchains().build_for(&folder).unwrap();
-    build.run(&BuildStop::default()).unwrap();
+    build_once(&folder);
 
     let data = tempfile::tempdir().unwrap();
-    let (changes, _) = pane_core::develop::changes();
-    let launcher = Launcher::with_packages(
-        Ok(Runtime::start().unwrap()),
-        vec![],
-        data.path().join("extensions"),
-    )
-    .with_development(Arc::new(toolchains()), changes);
+    let launcher = launcher(data.path());
     block_on(launcher.install_package(&folder));
     let identity = PackageIdentity::local(&folder).unwrap();
     block_on(launcher.start_developing(&identity));
@@ -184,8 +211,12 @@ fn develop(sample: &Sample, greeting: &str, broken: &str, again: &str, fixed: &s
         wait_until(&format!("build {count}"), || {
             launcher
                 .development(&identity)
-                .is_some_and(|development| development.handled >= count)
-        })
+                .is_some_and(|development| development.finished >= count)
+        });
+        // Its status is shown at root search.
+        for _ in 0..3 {
+            launcher.back();
+        }
     };
 
     sample.save(&folder, &again.replace("{}", "Hello again"));
@@ -210,9 +241,14 @@ fn develop(sample: &Sample, greeting: &str, broken: &str, again: &str, fixed: &s
     );
     assert!(message.contains("error"), "{message}");
     let failure = launcher.development(&identity).unwrap().failure.unwrap();
-    // The compiler's diagnostics, then which command failed.
-    assert!(failure.contains("error"), "{failure}");
-    assert!(failure.contains("` failed (exit code "), "{failure}");
+    // The compiler's first error, its diagnostics, then which command
+    // failed; all of it in the log.
+    assert!(message.contains(&failure.summary), "{message}");
+    let output = failure.output.join("\n");
+    assert!(output.contains("error"), "{output}");
+    assert!(output.contains("` failed (exit code "), "{output}");
+    let log = fs::read_to_string(failure.log.as_ref().unwrap()).unwrap();
+    assert!(log.contains(&failure.summary), "{log}");
     assert_eq!(
         say_hello(&launcher, sample.title),
         Status::Result("Hello again".into())
@@ -239,6 +275,71 @@ fn a_rust_package_is_built_with_cargo_and_reloaded_on_save() {
         r#"const GREETING: &str = 42;"#,
         r#"const GREETING: &str = "{}";"#,
         r#"const GREETING: &str = "Hello once more";"#,
+    );
+}
+
+#[test]
+fn a_rust_package_built_elsewhere_reloads_what_cargo_built_this_time() {
+    // Its own target folder, as a workspace member or `build.target-dir`
+    // has: nothing is built where pane.json names the component.
+    let folder = RUST.copy_as("develop-hello-rust-target-dir");
+    fs::create_dir_all(folder.join(".cargo")).unwrap();
+    fs::write(
+        folder.join(".cargo/config.toml"),
+        "[build]\ntarget-dir = \"../develop-hello-rust-elsewhere\"\n",
+    )
+    .unwrap();
+    RUST.save(&folder, RUST.greeting);
+    build_once(&folder);
+    let data = tempfile::tempdir().unwrap();
+    let launcher = launcher(data.path());
+    block_on(launcher.install_package(&folder));
+    let identity = PackageIdentity::local(&folder).unwrap();
+    block_on(launcher.start_developing(&identity));
+    let finished = |count: u64| {
+        wait_until(&format!("build {count}"), || {
+            launcher
+                .development(&identity)
+                .is_some_and(|development| development.finished >= count)
+        });
+        // Its status is shown at root search.
+        for _ in 0..3 {
+            launcher.back();
+        }
+    };
+
+    // The older file where pane.json points is not what is reloaded.
+    RUST.save(&folder, r#"const GREETING: &str = "Hello from elsewhere";"#);
+    finished(1);
+    assert_eq!(
+        say_hello(&launcher, RUST.title),
+        Status::Result("Hello from elsewhere".into())
+    );
+
+    // A component cargo does not build is refused, even with a file there.
+    let manifest = fs::read_to_string(folder.join("pane.json")).unwrap();
+    let stale = "target/wasm32-wasip2/release/stale.wasm";
+    fs::copy(
+        folder.join("target/wasm32-wasip2/release/hello_rust.wasm"),
+        folder.join(stale),
+    )
+    .unwrap();
+    fs::write(
+        folder.join("pane.json"),
+        manifest.replace("target/wasm32-wasip2/release/hello_rust.wasm", stale),
+    )
+    .unwrap();
+    finished(2);
+    let Status::Error(message) = launcher.view().status else {
+        panic!("{:?}", launcher.view().status);
+    };
+    assert!(
+        message.starts_with("Hello Rust did not build: cargo built no stale.wasm this time"),
+        "{message}"
+    );
+    assert_eq!(
+        say_hello(&launcher, RUST.title),
+        Status::Result("Hello from elsewhere".into())
     );
 }
 
