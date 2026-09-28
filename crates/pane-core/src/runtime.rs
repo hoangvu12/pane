@@ -19,7 +19,7 @@ use crate::platform::Platform;
 mod bindings {
     wasmtime::component::bindgen!({
         path: "../../wit",
-        world: "extension-with-settings",
+        world: "extension-with-data",
         exports: { default: async | store },
     });
 }
@@ -27,8 +27,8 @@ mod bindings {
 use bindings::exports::pane::extension::command;
 use bindings::pane::extension::{cache, content, credentials, settings};
 
+use crate::extension_data::{DataKind, PackageData};
 use crate::packages::EXTENSION_API;
-use crate::settings::{DataKind, PackageSettings};
 
 /// Interface-version prefix every imported WASI interface must carry.
 const WASI_VERSION: &str = "@0.3.";
@@ -299,13 +299,13 @@ pub struct Runtime {
 enum Request {
     GetView {
         component: PathBuf,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
         reply: oneshot::Sender<Result<View, CallError>>,
     },
     RunAction {
         component: PathBuf,
         item_id: String,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
         reply: oneshot::Sender<Result<String, CallError>>,
     },
     Check {
@@ -319,13 +319,13 @@ enum Request {
         component: PathBuf,
         item_id: String,
         values: Vec<FieldValue>,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
         reply: oneshot::Sender<Result<String, CallError>>,
     },
     OpenView {
         component: PathBuf,
         item_id: String,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
         reply: oneshot::Sender<Result<(ViewId, Frame), CallError>>,
     },
     ViewEvent {
@@ -384,45 +384,45 @@ impl Runtime {
     }
 
     /// Asks the command in `component` for its list view. The command has
-    /// no settings.
+    /// no extension data.
     pub async fn get_view(&self, component: &Path) -> Result<View, CallError> {
         self.get_view_with(component, None).await
     }
 
     /// Runs the action of `item_id` in the command in `component`. The
-    /// command has no settings.
+    /// command has no extension data.
     pub async fn run_action(&self, component: &Path, item_id: &str) -> Result<String, CallError> {
         self.run_action_with(component, item_id, None).await
     }
 
-    /// Like [`Runtime::get_view`]; the command reads and saves `settings`.
-    /// An instance keeps the settings it was started with.
+    /// Like [`Runtime::get_view`]; the command reads and saves `data`.
+    /// An instance keeps the data it was started with.
     pub(crate) async fn get_view_with(
         &self,
         component: &Path,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
     ) -> Result<View, CallError> {
         let (reply, response) = oneshot::channel();
         self.send(Request::GetView {
             component: component.to_path_buf(),
-            settings,
+            data,
             reply,
         })?;
         response.await.unwrap_or_else(|_| Err(stopped()))
     }
 
-    /// Like [`Runtime::run_action`]; the command reads and saves `settings`.
+    /// Like [`Runtime::run_action`]; the command reads and saves `data`.
     pub(crate) async fn run_action_with(
         &self,
         component: &Path,
         item_id: &str,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
     ) -> Result<String, CallError> {
         let (reply, response) = oneshot::channel();
         self.send(Request::RunAction {
             component: component.to_path_buf(),
             item_id: item_id.to_owned(),
-            settings,
+            data,
             reply,
         })?;
         response.await.unwrap_or_else(|_| Err(stopped()))
@@ -444,7 +444,7 @@ impl Runtime {
 
     /// Submits the form of `item_id` in the command in `component`. A
     /// rejection by the guest is [`CallError::Form`]. The command has no
-    /// settings.
+    /// extension data.
     pub async fn submit_form(
         &self,
         component: &Path,
@@ -455,20 +455,20 @@ impl Runtime {
             .await
     }
 
-    /// Like [`Runtime::submit_form`]; the command reads and saves `settings`.
+    /// Like [`Runtime::submit_form`]; the command reads and saves `data`.
     pub(crate) async fn submit_form_with(
         &self,
         component: &Path,
         item_id: &str,
         values: Vec<FieldValue>,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
     ) -> Result<String, CallError> {
         let (reply, response) = oneshot::channel();
         self.send(Request::SubmitForm {
             component: component.to_path_buf(),
             item_id: item_id.to_owned(),
             values,
-            settings,
+            data,
             reply,
         })?;
         response.await.unwrap_or_else(|_| Err(stopped()))
@@ -477,7 +477,7 @@ impl Runtime {
     /// Opens the custom view of `item_id` in the command in `component` and
     /// draws it. The view stays open, holding its state in the guest, until
     /// [`Runtime::close_view`] or until its instance stops.
-    /// The command has no settings.
+    /// The command has no extension data.
     pub async fn open_view(
         &self,
         component: &Path,
@@ -486,18 +486,18 @@ impl Runtime {
         self.open_view_with(component, item_id, None).await
     }
 
-    /// Like [`Runtime::open_view`]; the command reads and saves `settings`.
+    /// Like [`Runtime::open_view`]; the command reads and saves `data`.
     pub(crate) async fn open_view_with(
         &self,
         component: &Path,
         item_id: &str,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
     ) -> Result<(ViewId, Frame), CallError> {
         let (reply, response) = oneshot::channel();
         self.send(Request::OpenView {
             component: component.to_path_buf(),
             item_id: item_id.to_owned(),
-            settings,
+            data,
             reply,
         })?;
         response.await.unwrap_or_else(|_| Err(stopped()))
@@ -576,29 +576,29 @@ fn stopped() -> CallError {
 struct GuestState {
     wasi: WasiCtx,
     table: ResourceTable,
-    /// The settings of the package the command belongs to; `None` for a
+    /// The extension data of the package the command belongs to; `None` for a
     /// command built into Pane.
-    settings: Option<PackageSettings>,
+    data: Option<PackageData>,
 }
 
 impl GuestState {
-    fn settings(&self) -> Result<&PackageSettings, String> {
-        self.settings.as_ref().ok_or_else(|| {
+    fn data(&self) -> Result<&PackageData, String> {
+        self.data.as_ref().ok_or_else(|| {
             "only installed packages keep settings or data; this command is built into Pane".into()
         })
     }
 }
 
-/// Implements one kind of data's interface over the package's settings.
+/// Implements one kind of data's interface over the package's extension data.
 macro_rules! data_host {
     ($interface:ident, $kind:expr) => {
         impl $interface::Host for GuestState {
             fn get(&mut self, key: String) -> Result<Option<String>, String> {
-                self.settings()?.get($kind, &key)
+                self.data()?.get($kind, &key)
             }
 
             fn set(&mut self, key: String, value: String) -> Result<(), String> {
-                self.settings()?.set($kind, &key, &value)
+                self.data()?.set($kind, &key, &value)
             }
         }
     };
@@ -607,7 +607,7 @@ macro_rules! data_host {
 data_host!(settings, DataKind::Settings);
 data_host!(content, DataKind::Content);
 data_host!(cache, DataKind::Cache);
-data_host!(credentials, DataKind::Credentials);
+data_host!(credentials, DataKind::LocalCredentials);
 
 impl WasiView for GuestState {
     fn ctx(&mut self) -> WasiCtxView<'_> {
@@ -621,7 +621,7 @@ impl WasiView for GuestState {
 /// A running guest instance of one component.
 struct Instance {
     store: Store<GuestState>,
-    bindings: bindings::ExtensionWithSettings,
+    bindings: bindings::ExtensionWithData,
 }
 
 /// A custom view open in a guest instance.
@@ -675,19 +675,19 @@ impl Host {
             match request {
                 Request::GetView {
                     component,
-                    settings,
+                    data,
                     reply,
                 } => {
-                    let result = self.get_view(&component, settings).await;
+                    let result = self.get_view(&component, data).await;
                     let _ = reply.send(result);
                 }
                 Request::RunAction {
                     component,
                     item_id,
-                    settings,
+                    data,
                     reply,
                 } => {
-                    let result = self.run_action(&component, item_id, settings).await;
+                    let result = self.run_action(&component, item_id, data).await;
                     let _ = reply.send(result);
                 }
                 Request::Check { component, reply } => {
@@ -703,21 +703,19 @@ impl Host {
                     component,
                     item_id,
                     values,
-                    settings,
+                    data,
                     reply,
                 } => {
-                    let result = self
-                        .submit_form(&component, item_id, values, settings)
-                        .await;
+                    let result = self.submit_form(&component, item_id, values, data).await;
                     let _ = reply.send(result);
                 }
                 Request::OpenView {
                     component,
                     item_id,
-                    settings,
+                    data,
                     reply,
                 } => {
-                    let result = self.open_view(&component, item_id, settings).await;
+                    let result = self.open_view(&component, item_id, data).await;
                     let _ = reply.send(result);
                 }
                 Request::ViewEvent { view, event, reply } => {
@@ -738,9 +736,9 @@ impl Host {
     async fn get_view(
         &mut self,
         path: &Path,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
     ) -> Result<View, CallError> {
-        let instance = self.instance(path, settings).await?;
+        let instance = self.instance(path, data).await?;
         let command = instance.bindings.pane_extension_command();
         let result = instance
             .store
@@ -758,9 +756,9 @@ impl Host {
         path: &Path,
         item_id: String,
         values: Vec<FieldValue>,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
     ) -> Result<String, CallError> {
-        let instance = self.instance(path, settings).await?;
+        let instance = self.instance(path, data).await?;
         let command = instance.bindings.pane_extension_command();
         let values = values
             .into_iter()
@@ -782,9 +780,9 @@ impl Host {
         &mut self,
         path: &Path,
         item_id: String,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
     ) -> Result<(ViewId, Frame), CallError> {
-        let instance = self.instance(path, settings).await?;
+        let instance = self.instance(path, data).await?;
         let command = instance.bindings.pane_extension_command();
         let result = instance
             .store
@@ -882,9 +880,9 @@ impl Host {
         &mut self,
         path: &Path,
         item_id: String,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
     ) -> Result<String, CallError> {
-        let instance = self.instance(path, settings).await?;
+        let instance = self.instance(path, data).await?;
         let command = instance.bindings.pane_extension_command();
         let result = instance
             .store
@@ -917,9 +915,9 @@ impl Host {
     async fn instance(
         &mut self,
         path: &Path,
-        settings: Option<PackageSettings>,
+        data: Option<PackageData>,
     ) -> Result<&mut Instance, CallError> {
-        if settings.as_ref().is_some_and(PackageSettings::is_disabled) {
+        if data.as_ref().is_some_and(PackageData::is_disabled) {
             self.drop_instance(path);
             return Err(CallError::Disabled);
         }
@@ -930,10 +928,10 @@ impl Host {
                 GuestState {
                     wasi: WasiCtx::builder().build(),
                     table: ResourceTable::new(),
-                    settings,
+                    data,
                 },
             );
-            let bindings = bindings::ExtensionWithSettings::instantiate_async(
+            let bindings = bindings::ExtensionWithData::instantiate_async(
                 &mut store,
                 &component,
                 &self.linker,
@@ -1026,7 +1024,7 @@ impl Host {
         let component = self.compile(path)?;
         let interface = |error: wasmtime::Error| CallError::Interface(format!("{error:#}"));
         let pre = self.linker.instantiate_pre(&component).map_err(interface)?;
-        bindings::ExtensionWithSettingsPre::new(pre).map_err(interface)?;
+        bindings::ExtensionWithDataPre::new(pre).map_err(interface)?;
         Ok(())
     }
 }
@@ -1146,8 +1144,8 @@ impl From<command::Form> for Form {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::extension_data::ExtensionData;
     use crate::packages::PackageIdentity;
-    use crate::settings::Settings;
     use futures::executor::block_on;
 
     fn settings_sample() -> PathBuf {
@@ -1166,7 +1164,7 @@ mod tests {
     #[test]
     fn a_disabled_package_command_starts_no_instance() {
         let data = tempfile::tempdir().unwrap();
-        let settings = Settings::open(data.path());
+        let settings = ExtensionData::open(data.path());
         let identity = PackageIdentity::local(data.path()).unwrap();
         let owned = settings.owned_by(&identity);
         let component = settings_sample();

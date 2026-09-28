@@ -2,12 +2,12 @@
 //! runtime the launcher drives.
 
 mod atomic;
+mod extension_data;
 mod launcher;
 mod packages;
 mod platform;
 mod runtime;
 mod search;
-mod settings;
 
 pub use launcher::{
     CommandRegistration, CustomViewSnapshot, FormField, FormView, Launcher, LauncherView, Row,

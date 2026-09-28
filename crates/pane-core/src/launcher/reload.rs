@@ -240,8 +240,8 @@ impl Launcher {
         };
         let runtime = self.runtime()?;
         for component in &components {
-            let settings = self.settings_of(component);
-            match runtime.get_view_with(component, settings).await {
+            let data = self.data_of(component);
+            match runtime.get_view_with(component, data).await {
                 // Only a fatal initialization is a failure to start: an
                 // error the guest answers with, such as "sign in first", is
                 // an ordinary outcome of code that started (#16).

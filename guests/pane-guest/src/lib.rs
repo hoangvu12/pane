@@ -21,7 +21,7 @@ use core::ffi::c_void;
 
 wit_bindgen::generate!({
     path: "../../wit",
-    world: "extension-with-settings",
+    world: "extension-with-data",
     pub_export_macro: true,
     default_bindings_module: "pane_guest",
 });

@@ -2,11 +2,12 @@ package pane:extension@0.1.0;
 
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 //
-// Settings and other data an extension keeps between runs. Kept apart from
-// extension.wit so a component built for the `extension` world alone is
-// unchanged. Rust commands import them through pane-guest, JS/TS commands as
-// the modules "pane:extension/settings@0.1.0", ".../content@0.1.0",
-// ".../cache@0.1.0" and ".../credentials@0.1.0" (guests/js/settings.d.ts).
+// Extension data: settings and the other values an extension keeps between
+// runs. Kept apart from extension.wit so a component built for the
+// `extension` world alone is unchanged. Rust commands import them through
+// pane-guest, JS/TS commands as the modules "pane:extension/settings@0.1.0",
+// ".../content@0.1.0", ".../cache@0.1.0" and ".../credentials@0.1.0"
+// (guests/js/data.d.ts).
 //
 // Each interface is one kind of data, and the kind decides what Pane's
 // management actions do with it: clearing an extension's cache removes only
@@ -51,10 +52,12 @@ interface cache {
   set: func(key: string, value: string) -> result<_, string>;
 }
 
-/// Secrets the extension keeps on this computer, such as a sign-in token.
-/// Kept apart from settings and content so that clearing the cache keeps them
-/// and uninstalling can remove them. Pane stores them as plain text in its
-/// data folder, not in the system's keychain.
+/// Local credentials: secrets the extension keeps on this computer, such as
+/// a sign-in token. Kept apart from settings and content so that clearing the
+/// cache keeps them and uninstalling can remove them. Pane stores them as
+/// plain text in its data folder, in a file only the user can read on macOS
+/// and Linux, not in the system's keychain; any extension or program running
+/// as the user can read them.
 interface credentials {
   /// The value saved under `key`, if any.
   get: func(key: string) -> result<option<string>, string>;
@@ -64,9 +67,10 @@ interface credentials {
   set: func(key: string, value: string) -> result<_, string>;
 }
 
-/// A command that may also use settings and the other kinds of data. Pane
-/// hosts this world; a component built for `extension` alone runs unchanged.
-world extension-with-settings {
+/// A command that may also keep extension data: settings, content, cache
+/// and local credentials. Pane hosts this world; a component built for
+/// `extension` alone runs unchanged.
+world extension-with-data {
   include extension;
   import settings;
   import content;

@@ -9,10 +9,11 @@ credentials, controlled by Pane rather than by running the extension.
 ## Four kinds of data
 
 An installed package's commands keep string values by key through Pane, one
-`pane:extension` interface per kind ([`wit/settings.wit`](../wit/settings.wit);
+`pane:extension` interface per kind ([`wit/data.wit`](../wit/data.wit), world
+`extension-with-data`;
 Rust `pane_guest::{settings, content, cache, credentials}`, JS/TS modules
 `pane:extension/<kind>@0.1.0`, typed in
-[`guests/js/settings.d.ts`](../guests/js/settings.d.ts)). Each interface has
+[`guests/js/data.d.ts`](../guests/js/data.d.ts)). Each interface has
 the same `get` and `set`; the kind is what decides what Pane's management
 actions do with a value.
 
@@ -21,7 +22,7 @@ actions do with a value.
 | Settings | The user's choices for the extension | `settings.json` | kept |
 | Content | The extension's own durable records, such as notes or history | `content.json` | kept |
 | Cache | Values the extension can compute or download again | `cache.json` | removed |
-| Credentials | Secrets kept on this computer, such as a sign-in token | `credentials.json` | kept |
+| Local credentials (`credentials`) | Secrets kept on this computer, such as a sign-in token | `credentials.json`, readable only by the user on macOS and Linux (mode 0600) | kept |
 
 The settings sample in [Rust](../guests/sample-settings/src/lib.rs),
 [JavaScript](../guests/sample-settings-js/src/index.js) and
@@ -69,11 +70,15 @@ first: "Clear the cache of <title>?", the source, and "Pane deletes the data
 this extension keeps as its cache. Its settings, content and credentials are
 kept, and the extension does not run." Choosing Clear cache deletes that
 identity's entry from `cache.json` and returns to the list with "Cleared the
-cache of <title>"; Cancel or Esc returns without deleting.
+cache of <title>"; Cancel or Esc returns without deleting. Pane reads
+`cache.json` again just before, so another Pane process's values saved
+meanwhile are kept.
 
 - No guest runs: the package may be disabled, its component may not load and
   Pane's runtime may not have started. Its running instance, if any, is left
-  as it is; the next `cache.get` returns nothing.
+  as it is; the next `cache.get` returns nothing, but the instance may save a
+  value it still holds, so the outcome then reads "Cleared the cache of
+  <title>. A running instance may write it again until it stops."
 - Other identities' caches, every other kind of data and every file outside
   `cache.json` stay as they were.
 - If `cache.json` cannot be read, nothing is deleted and the error says so:
@@ -90,7 +95,10 @@ cache of <title>"; Cancel or Esc returns without deleting.
   two copies with the same title, with the source folders and a user document
   unchanged byte for byte; a disabled package whose managed component was
   replaced by garbage, cleared by a launcher without a runtime; an unreadable
-  `cache.json`, unchanged with every other file, then cleared once deleted.
+  `cache.json`, unchanged with every other file, then cleared once deleted;
+  another Pane's cache write between reading and clearing kept; the running
+  instance note; `credentials.json` created, and rewritten, with mode 0600
+  (Unix).
 - `crates/pane/tests/install.rs`: the rows, confirmation text, Esc and the
   outcome in the native window.
 - The native GUI smokes, screenshots 34 to 37: every kind shown, the
@@ -100,9 +108,14 @@ cache of <title>"; Cancel or Esc returns without deleting.
 ## Limits
 
 - `get` and `set` only: an extension cannot delete one value or list its keys.
-- Credentials are plain text in Pane's data folder, not in the system's
-  keychain, and are not protected from other programs of the same user.
-  Deleting a local credential never revokes a remote session.
+- Local credentials are plain text in Pane's data folder, not in the
+  system's keychain ([decision](current-decisions.md#cross-cutting-details-preserved)).
+  On macOS and Linux `credentials.json` is created with mode 0600, so other
+  users of the computer cannot read it; on Windows it has its folder's
+  permissions (normally the user's own profile). Nothing protects them from
+  other extensions or programs running as the same user: the policy is
+  lifecycle behavior, not secret isolation. Deleting a local credential never
+  revokes a remote session.
 - Clear cache covers `cache.json` only; an extension that writes cache files
   elsewhere has to manage them itself.
 - The files are replaced atomically but not locked, as with settings: two

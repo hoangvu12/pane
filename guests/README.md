@@ -118,7 +118,7 @@ host Wasmtime and wasmtime-wasi 49.0.1.
 
 A command of an installed package can keep string values between runs with
 the `pane:extension/settings` interface in
-[`wit/settings.wit`](../wit/settings.wit). The settings sample, in
+[`wit/data.wit`](../wit/data.wit). The settings sample, in
 [Rust](sample-settings/src/lib.rs), [JavaScript](sample-settings-js/src/index.js)
 and [TypeScript](sample-settings-ts/src/index.ts), saves the greeting style
 the user picks. In Rust it is `pane_guest::settings`:
@@ -131,7 +131,7 @@ let style: Option<String> = settings::get("greeting-style")?;
 ```
 
 In JavaScript and TypeScript it is a module (typed in
-[`js/settings.d.ts`](js/settings.d.ts)); an error is thrown as an `Error`
+[`js/data.d.ts`](js/data.d.ts)); an error is thrown as an `Error`
 whose message is the reason, so rethrowing it shows the reason to the user:
 
 ```ts
@@ -157,7 +157,7 @@ const style: string | null = get("greeting-style");
 - A command built into Pane rather than installed from a package has no
   settings: `get` and `set` return an error.
 - A component that does not import `settings` is unaffected; it is built for
-  the `extension` world as before. `extension-with-settings` adds the import
+  the `extension` world as before. `extension-with-data` adds the imports
   within extension API 0.1, so a component that uses settings needs a Pane
   with this change. JavaScript and TypeScript commands are built against a
   world that includes it, so the prebuilt JS/TS components list the import
@@ -165,7 +165,7 @@ const style: string | null = get("greeting-style");
 
 ### Keeping content, cache and credentials
 
-Next to `settings`, [`wit/settings.wit`](../wit/settings.wit) has three
+Next to `settings`, [`wit/data.wit`](../wit/data.wit) has three
 interfaces with the same `get` and `set`, one per other kind of
 [extension data](../docs/extension-data.md): `content` for the extension's own
 durable records, `cache` for values it can make again, and `credentials` for
@@ -188,7 +188,9 @@ cache.set("last-greeting", greeting);
   without the extension running: expect any cache value to be missing. Its
   settings, content and credentials are kept.
 - Credentials are plain text in Pane's data folder, not in the system's
-  keychain.
+  keychain; on macOS and Linux only the user can read their file. Other
+  extensions and programs running as the user can
+  ([limits](../docs/extension-data.md#limits)).
 - The extension migrates its own values between its versions; Pane keeps
   them unchanged across an update.
 

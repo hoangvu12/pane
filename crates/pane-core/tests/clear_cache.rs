@@ -1,7 +1,8 @@
 //! Clearing an installed package's cache through the launcher's public
 //! interface: Manage extensions asks first, then removes only the data the
 //! package keeps as cache, never its settings, content or credentials, without
-//! running the package. Every check runs against the settings sample in Rust,
+//! running the package; and local credentials kept readable only by the user.
+//! Every check runs against the settings sample in Rust,
 //! JavaScript and TypeScript, real guests from `cargo xtask guests`, which keeps
 //! one value of each kind of data.
 
@@ -18,6 +19,8 @@ const MANAGE_ROW: &str = "Manage extensions…";
 /// What "Show what Pane keeps" answers once every kind of data is saved.
 const EVERYTHING_KEPT: &str =
     "Style: formal · Note: Water the plants · Signed in: yes · Cached greeting: Good day to you";
+/// What clearing the cache adds while an instance of the package runs.
+const WHILE_RUNNING: &str = ". A running instance may write it again until it stops.";
 /// What it answers once the cache is cleared.
 const CACHE_CLEARED: &str =
     "Style: formal · Note: Water the plants · Signed in: yes · Cached greeting: none";
@@ -232,7 +235,9 @@ fn clearing_the_cache_keeps_settings_content_and_credentials(fixture: &Fixture) 
     assert!(matches!(view.screen, Screen::Extensions { .. }));
     assert_eq!(
         view.status,
-        Status::Result("Cleared the cache of Settings sample".into())
+        Status::Result(format!(
+            "Cleared the cache of Settings sample{WHILE_RUNNING}"
+        ))
     );
 
     assert_eq!(kept(&launcher), Status::Result(CACHE_CLEARED.into()));
@@ -304,7 +309,7 @@ fn clearing_one_copy_keeps_the_other_identity_and_external_files(fixture: &Fixtu
     block_on(launcher.activate_selected());
     assert_eq!(
         launcher.view().status,
-        Status::Result("Cleared the cache of Greeter".into())
+        Status::Result(format!("Cleared the cache of Greeter{WHILE_RUNNING}"))
     );
 
     let answers: Vec<Status> = (0..2)
@@ -406,6 +411,90 @@ fn an_unreadable_cache_is_explained_and_nothing_is_deleted(fixture: &Fixture) {
     assert_eq!(kept(&launcher), Status::Result(CACHE_CLEARED.into()));
 }
 
+/// From root search, runs `item` of the Greeting command of the `copy`th
+/// installed package (root lists each package's Greeting in install order).
+fn run_in_copy(launcher: &Launcher, copy: usize, item: &str) -> Status {
+    launcher.back();
+    launcher.back();
+    let greeting = titles(launcher)
+        .iter()
+        .enumerate()
+        .filter(|(_, title)| *title == "Greeting")
+        .map(|(index, _)| index)
+        .nth(copy)
+        .unwrap();
+    launcher.select(greeting);
+    block_on(launcher.activate_selected());
+    select_title(launcher, item);
+    block_on(launcher.activate_selected());
+    launcher.view().status
+}
+
+fn clearing_keeps_a_cache_another_pane_saved_meanwhile(fixture: &Fixture) {
+    let dirs = Dirs::new();
+    let first = settings_package(fixture, &dirs.source("first"), "First");
+    let second = settings_package(fixture, &dirs.source("second"), "Second");
+    let pane = dirs.launcher();
+    block_on(pane.install_package(&first));
+    block_on(pane.install_package(&second));
+    for item in ["Use a formal greeting", "Greet me"] {
+        assert!(matches!(run_in_copy(&pane, 0, item), Status::Result(_)));
+    }
+    // A second Pane on the same data folder caches Second's greeting.
+    let other = dirs.launcher();
+    for item in ["Use a formal greeting", "Greet me"] {
+        assert!(matches!(run_in_copy(&other, 1, item), Status::Result(_)));
+    }
+
+    assert_eq!(
+        clear_cache(&pane, "First"),
+        Status::Result(format!("Cleared the cache of First{WHILE_RUNNING}"))
+    );
+
+    let restarted = dirs.launcher();
+    let Status::Result(kept) = run_in_copy(&restarted, 1, "Show what Pane keeps") else {
+        panic!("{:?}", restarted.view().status);
+    };
+    assert!(kept.ends_with("Cached greeting: Good day to you"), "{kept}");
+    let Status::Result(kept) = run_in_copy(&restarted, 0, "Show what Pane keeps") else {
+        panic!("{:?}", restarted.view().status);
+    };
+    assert!(kept.ends_with("Cached greeting: none"), "{kept}");
+}
+
+/// The permission bits of `path` (Unix).
+#[cfg(unix)]
+fn mode(path: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    fs::metadata(path).unwrap().permissions().mode() & 0o777
+}
+
+#[cfg(unix)]
+fn local_credentials_are_readable_only_by_the_user(fixture: &Fixture) {
+    use std::os::unix::fs::PermissionsExt;
+    let dirs = Dirs::new();
+    let folder = settings_package(fixture, &dirs.source("settings"), "Settings sample");
+    let launcher = dirs.launcher();
+    block_on(launcher.install_package(&folder));
+    let credentials = dirs.packages_dir().join("credentials.json");
+
+    save_everything(&launcher);
+    assert_eq!(mode(&credentials), 0o600);
+
+    // A file an earlier Pane left readable by others becomes private at the
+    // next save.
+    let permissions = fs::Permissions::from_mode(0o644);
+    fs::set_permissions(&credentials, permissions).unwrap();
+    assert_eq!(
+        run(&launcher, "Greeting", "Sign in"),
+        Status::Result("Signed in on this computer".into())
+    );
+    assert_eq!(mode(&credentials), 0o600);
+}
+
+#[cfg(not(unix))]
+fn local_credentials_are_readable_only_by_the_user(_fixture: &Fixture) {}
+
 /// Declares one test per check for each language's settings sample.
 macro_rules! contract {
     ($($check:ident),* $(,)?) => {
@@ -427,4 +516,6 @@ contract!(
     clearing_one_copy_keeps_the_other_identity_and_external_files,
     a_disabled_broken_package_cache_clears_without_running_it,
     an_unreadable_cache_is_explained_and_nothing_is_deleted,
+    clearing_keeps_a_cache_another_pane_saved_meanwhile,
+    local_credentials_are_readable_only_by_the_user,
 );

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 //
-// Declarations for the interfaces in wit/settings.wit: `settings`, `content`,
+// Declarations for the interfaces in wit/data.wit: `settings`, `content`,
 // `cache` and `credentials`, each string values an installed package's
 // commands save under keys of their choosing. Pane keeps them for the
 // package's source identity while it is disabled, updated or Pane restarts;

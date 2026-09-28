@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use crate::extension_data::{ExtensionData, PackageData};
 use crate::packages::{
     InstalledPackage, PackageError, PackageIdentity, SourcePackage, Store, folder_name,
 };
@@ -25,7 +26,6 @@ use crate::runtime::{
     ViewEvent, ViewId,
 };
 use crate::search::{self, Keys, Query};
-use crate::settings::{PackageSettings, Settings};
 
 mod reload;
 
@@ -221,12 +221,13 @@ pub struct Launcher {
     state: Arc<Mutex<State>>,
 }
 
-/// Pane's managed package location and the installed packages' settings,
+/// Pane's managed package location and the installed packages' extension
+/// data,
 /// kept beside it.
 #[derive(Clone)]
 struct Installation {
     store: Arc<Mutex<Store>>,
-    settings: Settings,
+    data: ExtensionData,
 }
 
 struct State {
@@ -442,7 +443,7 @@ impl Launcher {
         packages_dir: PathBuf,
     ) -> Self {
         let installation = Installation {
-            settings: Settings::open(&packages_dir),
+            data: ExtensionData::open(&packages_dir),
             store: Arc::new(Mutex::new(Store::open(packages_dir))),
         };
         Launcher::create(runtime, commands, Some(installation))
@@ -477,7 +478,7 @@ impl Launcher {
         if let Some(installation) = &installation {
             for package in &state.packages {
                 installation
-                    .settings
+                    .data
                     .set_enabled(&package.identity, package.enabled);
             }
         }
@@ -839,7 +840,7 @@ impl Launcher {
         };
         package.enabled = enabled;
         if let Some(installation) = &self.installation {
-            installation.settings.set_enabled(identity, enabled);
+            installation.data.set_enabled(identity, enabled);
         }
         if !enabled {
             let components: Vec<PathBuf> = package
@@ -1173,11 +1174,11 @@ impl Launcher {
         item_id: String,
         values: Vec<FieldValue>,
     ) {
-        let settings = self.settings_of(&component);
+        let data = self.data_of(&component);
         let result = match self.runtime() {
             Ok(runtime) => {
                 runtime
-                    .submit_form_with(&component, &item_id, values.clone(), settings)
+                    .submit_form_with(&component, &item_id, values.clone(), data)
                     .await
             }
             Err(error) => Err(error),
@@ -1273,22 +1274,44 @@ impl Launcher {
     }
 
     /// Clears the cache of the installed package with `identity` without
-    /// running it, then shows the extension list with the outcome.
+    /// running it, then shows the extension list with the outcome. An
+    /// instance of it that is running keeps what it holds in memory and may
+    /// save it to its cache again, which the outcome then says.
     async fn clear_cache(&self, generation: u64, identity: PackageIdentity) {
         let cleared = match &self.installation {
             Some(installation) => {
-                let settings = installation.settings.clone();
+                let data = installation.data.clone();
                 let identity = identity.clone();
-                off_thread(move || settings.clear_cache(&identity)).await
+                off_thread(move || data.clear_cache(&identity)).await
             }
             None => Err("this launcher does not install packages".into()),
         };
+        let components: Vec<PathBuf> = {
+            let state = self.lock();
+            let package = state.package(&identity);
+            package.map_or_else(Vec::new, |package| {
+                package
+                    .commands()
+                    .into_iter()
+                    .map(|c| c.component)
+                    .collect()
+            })
+        };
+        let running = match self.runtime() {
+            Ok(runtime) => runtime.running().await,
+            Err(_) => Vec::new(),
+        };
+        let still_running = running.iter().any(|path| components.contains(path));
         let Some(mut state) = self.lock_if_current(generation) else {
             return;
         };
         let title = state.title_of(&identity);
         self.show_extensions_at_clear_cache(&mut state, &identity);
         state.view.status = match cleared {
+            Ok(()) if still_running => Status::Result(format!(
+                "Cleared the cache of {title}. A running instance may write it again until it \
+                 stops."
+            )),
             Ok(()) => Status::Result(format!("Cleared the cache of {title}")),
             Err(reason) => Status::Error(format!("Could not clear the cache of {title}: {reason}")),
         };
@@ -1334,9 +1357,9 @@ impl Launcher {
         item_id: String,
         info: CustomViewInfo,
     ) {
-        let settings = self.settings_of(&component);
+        let data = self.data_of(&component);
         let result = match self.runtime() {
-            Ok(runtime) => runtime.open_view_with(&component, &item_id, settings).await,
+            Ok(runtime) => runtime.open_view_with(&component, &item_id, data).await,
             Err(error) => Err(error),
         };
         let current = self.lock_if_current(generation);
@@ -1526,13 +1549,9 @@ impl Launcher {
     }
 
     async fn run_action(&self, generation: u64, component: PathBuf, item_id: String) {
-        let settings = self.settings_of(&component);
+        let data = self.data_of(&component);
         let result = match self.runtime() {
-            Ok(runtime) => {
-                runtime
-                    .run_action_with(&component, &item_id, settings)
-                    .await
-            }
+            Ok(runtime) => runtime.run_action_with(&component, &item_id, data).await,
             Err(error) => Err(error),
         };
         let Some(mut state) = self.lock_if_current(generation) else {
@@ -1547,9 +1566,9 @@ impl Launcher {
     }
 
     async fn open_command(&self, generation: u64, component: PathBuf) {
-        let settings = self.settings_of(&component);
+        let data = self.data_of(&component);
         let result = match self.runtime() {
-            Ok(runtime) => runtime.get_view_with(&component, settings).await,
+            Ok(runtime) => runtime.get_view_with(&component, data).await,
             Err(error) => Err(error),
         };
         let Some(mut state) = self.lock_if_current(generation) else {
@@ -1612,17 +1631,13 @@ impl Launcher {
         }
     }
 
-    /// The settings of the installed package `component` belongs to; `None`
+    /// The extension data of the installed package `component` belongs to;
+    /// `None`
     /// for a command built into Pane.
-    fn settings_of(&self, component: &Path) -> Option<PackageSettings> {
+    fn data_of(&self, component: &Path) -> Option<PackageData> {
         let state = self.lock();
         let package = owner(&state.packages, component)?;
-        Some(
-            self.installation
-                .as_ref()?
-                .settings
-                .owned_by(&package.identity),
-        )
+        Some(self.installation.as_ref()?.data.owned_by(&package.identity))
     }
 
     /// Whether `component` belongs to a managed copy that has since been
