@@ -421,12 +421,9 @@ lavapipe setup): all checks of the whole smoke passed.
 
 | Step | Evidence |
 | --- | --- |
-| The preview: "Requires: JavaScript operations sample, installed with it from local folder …", "Optional: `rust-greeter` from local folder …, not installed: …" | `66-dependencies-preview.png` (not committed: it shows the local checkout path) |
+| The preview: "Requires: JavaScript operations sample, installed with it from local:../sample-operations-js", "Optional: `rust-greeter` from local:../sample-operations, not installed: …" and the Install row | [66-dependencies-preview-cropped.png](evidence/linux-x11/66-dependencies-preview-cropped.png) (cropped below the title and the Source line, which shows the local checkout path; the smoke checks the whole frame) |
 | "Installed Dependencies sample with JavaScript operations sample, which it requires", its command selected | [67-dependencies-installed.png](evidence/linux-x11/67-dependencies-installed.png) |
 | "Hello, Pane, from JavaScript", from the dependency's guest | [68-dependency-answer.png](evidence/linux-x11/68-dependency-answer.png) |
-
-In the preview the long source paths push the Install row mostly below the
-list's visible area; it is still selected and Enter installs.
 
 ## Text input and accessibility findings
 

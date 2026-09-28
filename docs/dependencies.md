@@ -6,9 +6,9 @@ T14, G4), following the accepted Q26 direction in the
 A package that calls other packages' [operations](operations.md) declares
 them in its `pane.json`, required or optional. Installing it from a local
 folder shows them first and installs the missing required ones with it;
-optional, disabled and already installed dependencies are left as they are.
-Disabling or uninstalling a required dependency together with its dependents
-is [#43](https://github.com/hoangvu12/pane/issues/43) and
+optional, disabled, paused and already installed dependencies are left as
+they are. Disabling or uninstalling a required dependency together with its
+dependents is [#43](https://github.com/hoangvu12/pane/issues/43) and
 [#44](https://github.com/hoangvu12/pane/issues/44); npm sources are
 [#45](https://github.com/hoangvu12/pane/issues/45).
 
@@ -34,25 +34,43 @@ is [#43](https://github.com/hoangvu12/pane/issues/43) and
 | Field | Meaning |
 | --- | --- |
 | `id` | The name the package's code calls the dependency by, unique in the package: lowercase letters, digits and `-`. It has no `:`, so it is never mistaken for a package identity. |
-| `source` | Where it is installed from: `local:` and a folder path, relative to the declaring package's source folder or absolute. `npm:` and `git:` are accepted in the manifest but explained as not supported yet when Pane would have to install from them. Anything else is an invalid manifest. |
+| `source` | `local:` and a folder path, relative to the declaring package's folder or absolute. Anything else, `npm:` and `git:` included, is an invalid manifest ("… must be `local:` followed by a folder path; other sources are not supported yet"): #45 defines npm sources. |
 | `optional` | `false` (the default) for a required dependency, `true` for an optional one. |
-| `operations` | Every operation the package calls there, each with the version it calls; at least one. This is the compatibility requirement: an operation's version is the version of its input and result ([operations](operations.md#publishing)). |
+| `operations` | Every operation the package calls there, each with the version it calls; at least one. This is the compatibility requirement (an operation's version is the version of its input and result, [operations](operations.md#publishing)), and the only operations a call through the id reaches. |
 | `platforms` | Optional: the systems on which the package needs it. Elsewhere it is neither installed nor checked, and a call to it that finds it missing is `unavailable`. |
 
 There is no version range on the package itself: a package's `version` is
 free text, and what a dependent relies on is the operations it calls at
-their versions. Pins of published versions come with npm sources (#45),
-where a version exists apart from the identity.
+their versions.
+
+### Writing a local source
+
+A `local:` path is written the same way on every system: folders separated
+by `/`, as `local:../greeter` or `local:shared/greeter`, or absolute from
+`/` (meaningful on macOS and Linux). A path with `\`, a drive letter
+(`local:C:/…`) or a `//server` share is refused on every system, with "…
+must separate folders with `/`, without a drive letter, `\` or a
+`//server` share, so that every system reads it alike (such as
+`local:../greeter`)", so that a package written on Windows resolves alike on
+macOS and Linux.
 
 ## Addressing
 
 Pane resolves a `local:` source against the declaring package's source
-folder exactly as it resolves an installed folder (the operating system's
-resolved absolute path, [identity](../guests/README.md#packaging-and-installing-a-local-extension));
-a folder that does not exist is resolved from its spelling, `.` and `..`
-removed. What each dependency resolved to is recorded with the package in
-`installed.json` (`"dependencies": [{ "id": "greeter", "local": "/…" }]`),
-so a source folder moved or deleted after installing changes nothing.
+folder **as Pane resolved it**: a package installed through a symbolic link
+(or a Windows junction) is identified by the folder the link points to, and
+its relative sources are relative to that folder, not to the link's. A
+source folder that exists is resolved as an installed folder is (the
+operating system's absolute path, following links; [identity](../guests/README.md#packaging-and-installing-a-local-extension)).
+For one that does not exist yet, `.` and `..` are removed from its spelling
+and its deepest existing parent folder is resolved by the operating system,
+so it matches the identity the folder gets once it is created. What each
+dependency resolved to is recorded with the package in `installed.json`
+(`"dependencies": [{ "id": "greeter", "local": "/…" }]`), so a source folder
+moved or deleted after installing changes nothing. If no installed package
+has the recorded identity, a call resolves the recorded folder again, so a
+folder that became a link to an installed package after the dependent was
+installed still reaches it.
 
 A guest calls a dependency with its id where it would give an identity:
 
@@ -62,13 +80,15 @@ call("greeter".into(), "greet".into(), 1, input).await
 
 Pane finds the caller's package from the calling component, looks the id up
 in its manifest and uses the recorded identity; the call then behaves as a
-call by identity ([operations](operations.md#calling)). Calls by identity
-still work, declared or not. The errors for an id:
+call by identity ([operations](operations.md#calling)). Only the operations
+and versions the declaration lists are reached through the id; calls by
+identity are not limited. The errors for an id:
 
 | Kind | When |
 | --- | --- |
+| `refused` | The declaration does not list that operation at that version: "Caller declares that it calls `greet` version 1 through its dependency `greeter`, not `wait` version 1; declare it in its pane.json to call it". |
 | `not-found` | The caller declares no dependency with that id ("Caller declares no dependency `nobody` in its pane.json, …; it declares `greeter` and `helper`"), or it is not installed: for a required one "Caller requires `greeter` from local folder …, which is not installed; install Caller again to install it", for an optional one "Caller's optional dependency `helper` from local folder … is not installed; install it to use it". |
-| `unavailable` | Its source is not a local folder (npm, Git), or it is needed only on other systems and not installed. |
+| `unavailable` | It is needed only on other systems and not installed. |
 | `disabled` and the rest | As for any call once the target is found. |
 
 ## Installing
@@ -76,29 +96,50 @@ still work, declared or not. The errors for an id:
 Previewing a package (**Install extension from folder…** or
 `pane --install <folder>`) works out its dependencies before offering
 Install, reading only manifests and checking components without running
-them, and lists them under the package's details:
+them, and lists them under the package's details, each source as declared
+(relative to the Source line's folder):
 
-- "Requires: JavaScript operations sample, installed with it from local
-  folder …": missing, installed with it. The Install row then says "…, and
-  install JavaScript operations sample, which it requires" (or "the N
-  extensions it requires").
+- "Requires: JavaScript operations sample, installed with it from
+  local:../sample-operations-js": missing, installed with it. The Install
+  row then says "…, and install JavaScript operations sample, which it
+  requires" (or "the N extensions it requires").
 - "Requires: …, already installed": used as it is.
 - "Requires: …, which you disabled: it stays disabled, and <title> cannot
   use it until you enable it in Manage extensions": the package is
   installed, the dependency is not enabled, and the status after installing
   says so again. Calls to it answer `disabled`.
+- "Requires: …, installed but it is paused after an error; retry it in
+  Manage extensions": Pane [paused](pausing.md) it; it stays paused, and
+  the status after installing says so again.
 - "Requires (for B): C, …": a dependency of a dependency Pane installs.
-- "Optional: `rust-greeter` from local folder …, not installed: Pane does
-  not install it; install it yourself to use it", or "Optional: <title>,
-  installed" (or "installed but disabled").
+- "Optional: `rust-greeter` from local:../sample-operations, not installed:
+  Pane does not install it; install it yourself to use it", or "Optional:
+  <title>, installed" (or "installed but disabled").
 - "Not needed on this system: `x` from local:../x (only on Windows)".
 
-Installing (Enter on Install, or `Launcher::install_package`) works it out
-again from the current state, then installs the missing required packages,
-each after its own required dependencies, then the requested one, and shows
-"Installed Caller with JavaScript operations sample, which it requires". An
-Update does the same for a new copy that adds a required dependency
-("Updated Caller with …").
+### Installing what the preview showed
+
+The Install row carries what its plan assumed: the requested manifest, and
+for each package it relies on, either the manifest it would install from
+that folder, or the installed copy (managed folder, enabled, paused) it
+would use. Choosing Install checks that the installed packages are still as
+assumed and **claims** the requested package and every one it relies on:
+until the install ends, uninstalling, reloading, updating, enabling or
+disabling one, or deleting retained data it would reclaim, is refused with
+"<title> is part of an install in progress". The install then reads the
+folders and works the plan out again. If anything differs (a folder's
+`pane.json` changed, a package was installed, uninstalled or changed
+meanwhile), nothing is installed and the preview shows the new plan with
+"What installing <title> needs changed since it was shown; check it again
+and choose Install once more". An install without a preview
+(`Launcher::install_package`; `pane --install` opens the preview) works the
+plan out, then claims the same way before installing.
+
+Installing then adds the missing required packages, each after its own
+required dependencies, then the requested one, and shows "Installed Caller
+with JavaScript operations sample, which it requires". An Update does the
+same for a new copy that adds a required dependency ("Updated Caller with
+…").
 
 ### What stops an install
 
@@ -108,19 +149,20 @@ the status (also for an install without preview) starts "Nothing was
 installed:", listing each:
 
 - **Unavailable**: its folder is missing or not a package, it is
-  source-only, it is for other systems, its components do not pass Pane's
-  checks, or its source is npm or Git.
+  source-only, it is for other systems, or its components do not pass
+  Pane's checks.
 - **Incompatible**: it does not publish an operation the dependent calls, or
   publishes it at another version, or not on this system.
-- **Pinned**: an installed dependency that is incompatible is not replaced:
+- **Pinned**: an installed dependency that is incompatible is not replaced.
+  When a newer copy in its folder might publish what is called, Pane says
   "…; Pane does not replace the installed copy of <title> while installing
-  another extension: update it from its folder first". Installing never
-  updates another package.
+  another extension: update it from its folder if a newer copy publishes
+  it". Installing never updates another package.
 - **Conflicting**: two packages in the install need different versions of
   one operation from the same source: "A and C need different versions of
   `echo` from B (1 and 2); Pane installs one copy of each source, so they
   conflict". There is one installed copy per source and no solver choosing
-  among versions.
+  among versions, so no update advice is given.
 - **Itself**: a package naming its own folder as a dependency.
 - **Too many**: more than 16 packages would be installed with it
   (`MAX_INSTALLED_WITH`).
@@ -140,24 +182,39 @@ visited again: it was installed with them, or they were removed since
 Installing writes one package at a time. If one fails (a storage error, or
 another install of the same source finishing first), Pane removes again the
 packages this install added, most recent first, with their managed copies,
-restoring the record of [retained data](extension-data.md#retained-data)
-one of them had, so nothing is left installed without its required
-dependencies and nothing claims to be ready. The status names what failed:
-"Could not install C, which it requires: …". Only if removing one again
-fails does it stay installed, and the status says so ("Pane could not
-remove again what it had installed, which stays installed: B (…)"). None of
-the packages ran meanwhile, so none has data to lose.
+putting back the record of [retained data](extension-data.md#retained-data)
+one of them had at its place among the others, so nothing is left installed
+without its required dependencies and nothing claims to be ready. The
+status names what failed: "Could not install C, which it requires: …". Only
+if removing one again fails does it stay installed, and the status says so
+("Pane could not remove again what it had installed, which stays installed:
+B (…)"). None of the packages ran meanwhile, so none has data to lose.
+
+## For later slices
+
+A plan (`crates/pane-core/src/dependencies.rs`) is data: its required edges
+name the dependent and the target by identity with the target's state, its
+problems are a kind with identities, and its wording is only in `Display`
+and `Plan::lines`, so the dependent traversal of #43 and #44 can reuse the
+recorded graph (`InstalledPackage::dependency_identity`) without the
+wording.
 
 ## Checks
 
 - [`crates/pane-core/tests/dependencies.rs`](../crates/pane-core/tests/dependencies.rs)
   drives the preview, installing with a missing required dependency and the
-  cross-language call by id (JavaScript calling Rust), optional, installed,
-  disabled, pinned, conflicting and unavailable dependencies, cycles,
-  dependencies of dependencies, an update adding one, a dependency
-  uninstalled later, invalid declarations and the sample.
+  cross-language call by id (JavaScript calling Rust), calls limited to the
+  declared operations, optional, installed, disabled, paused, pinned,
+  conflicting and unavailable dependencies, cycles, dependencies of
+  dependencies, the 16-package limit, `.` and `..`, symbolic links (a
+  package installed through one, a dependency folder that became one),
+  refused Windows-style and non-local sources, an update adding a
+  dependency, a dependency uninstalled later, changes between the preview
+  and Install, packages refused to change during an install, and the
+  sample.
 - Unit tests in [`dependencies.rs`](../crates/pane-core/src/dependencies.rs)
-  inject a failing install to check the rollback, including retained data.
+  inject a failing install to check the rollback, including where retained
+  data is put back.
 - The native smokes install the [dependencies sample](../guests/sample-dependencies/src/lib.rs)
   and show "Hello, Pane, from JavaScript" in the real window (frames 66 to
   68; [Linux](platforms/linux.md#dependencies-42)).
@@ -168,5 +225,7 @@ the packages ran meanwhile, so none has data to lose.
 - One copy per source, no version ranges and no multi-version solving.
 - No Pane-side view yet of installed packages whose required dependency was
   disabled or removed later; their calls explain it (#43, #44).
-- The preview lists sources as full paths, which makes it long; the Install
-  row can be pushed below the fold on a small window (it stays selected).
+- A second install relying on a package an install in progress has claimed
+  is refused rather than waiting.
+- The symbolic-link tests are skipped where the system does not allow
+  links (Windows without the privilege); Windows junctions are untested.

@@ -66,7 +66,7 @@ call: async func(source: string, operation: string, version: u32, input: string)
   another scheme until Pane installs from npm or Git. A caller learns its
   targets' identities from its user or configuration (the samples ask in a
   form), or declares them: since #42 `source` may instead be the id of a
-  dependency the caller's `pane.json` declares, which Pane resolves to the
+  dependency the caller's `pane.json` declares (for the operations it declares there), which Pane resolves to the
   identity recorded when the caller was installed
   ([dependencies](dependencies.md#addressing)).
 - **Input and result** are JSON text (any JSON value), at most 1 MiB each

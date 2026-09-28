@@ -753,16 +753,19 @@ installing it installs what it needs
 
 - `id`: the name your code calls it by, `call("greeter", "greet", 1, input)`,
   in place of its identity; lowercase letters, digits and `-`.
-- `source`: `local:` and its folder, relative to your package's folder or
-  absolute. Pane resolves it as it resolves an installed folder and keeps
-  what it resolved to, so moving your source folder later does not change
-  it. `npm:` and `git:` sources are read but not installed yet.
+- `source`: `local:` and its folder, relative to your package's folder (the
+  folder a link to it points to) or absolute, with `/` between folders on
+  every system: `\`, drive letters and `//server` shares are refused. Pane
+  resolves it as it resolves an installed folder and keeps what it resolved
+  to, so moving your source folder later does not change it. Other sources
+  (npm, Git) are not supported yet.
 - `optional` (default `false`): a required dependency is installed with your
   package when it is missing; an optional one never is, and a call to it
   when it is not installed is `not-found` (the
   [sample](sample-dependencies/src/lib.rs) answers how to get it instead).
 - `operations`: every operation you call, at the version you call. Pane
-  checks them before installing anything.
+  checks them before installing anything, and a call through the id reaches
+  only these.
 - `platforms` (optional): the systems you need it on; elsewhere it is
   neither installed nor checked.
 
