@@ -68,12 +68,12 @@ _Avoid_: Item (an item belongs to a command's own list), search hit
 A root result an extension command computes from the query itself, such as the calculator's answer to "6*7", rather than one found by matching titles; it is listed above those (a file result below them), and invoking it performs its action, such as copying the answer. The search it answers owns the call asking for it: a newer query, or leaving root search, cancels a call still pending.
 _Avoid_: Suggestion, answer card, inline result
 
-**Searched folder**:
-The one folder the user chooses in the Files default extension's form, whose files root search finds by name; Pane's host lists it for the extension on each query under the scan policy, and invoking a file result opens the file with the system's handler for its type. It is kept in that extension's settings.
-_Avoid_: Index, library, search scope
+**Granted folder**:
+The one folder the user grants a package through Pane's own "Choose folder…" row, which Pane records itself (not as extension data) and lists for that package's commands under the scan policy; they name its files only by the ids Pane gave them, and Pane opens one after checking it again. The Files default extension's root results come from it.
+_Avoid_: Search scope, library, preopen, the extension's folder setting
 
 **Scan policy**:
-Pane's fixed bounds on listing a searched folder, the same on every system: regular files only, breadth first in name order, at most 8 folders deep, 5,000 files and 20,000 entries, skipping hidden entries, links and unreadable subfolders; a listing that reaches a bound says it stopped.
+Pane's fixed bounds on listing a granted folder, the same on every system: regular files only, breadth first in name order, at most 8 folders deep, 5,000 files and 20,000 entries, skipping hidden entries, links and unreadable subfolders; a listing that reaches a bound or skips a subfolder says it is partial. A listing is kept for one visit of root search.
 _Avoid_: Indexer, crawl, whole-disk search
 
 **Indexed result**:

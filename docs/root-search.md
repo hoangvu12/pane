@@ -142,7 +142,7 @@ comes from the extension, through the same guest boundary as its command:
   search owns these calls: once the query changes or root search is left,
   a call still pending is cancelled, never started if it was queued, and
   dropped with the command's instance if it was waiting inside the guest
-  (on an async import such as `files.list-folder`); that is not a failure
+  (on an async import); that is not a failure
   for [pausing](pausing.md), and the next query starts a fresh instance
   ([cancelling](files.md#cancelling-a-pending-search)). Calls still run one
   at a time on the runtime thread, so a command computing without yielding
@@ -164,8 +164,10 @@ comes from the extension, through the same guest boundary as its command:
   opens an `http://` or `https://` address with the launcher's link opener,
   the system's handler in the window; any other address is refused
   ([opening a link](quicklinks.md#opening-a-link)). **open-file** (since
-  #29): Enter opens an existing file, given by its absolute path, with the
-  system's handler for its type ([opening a file](files.md#opening-a-file)).
+  #29): Enter opens a file of the package's granted folder, named by the id
+  the host gave it, with the system's handler for its type, once the host
+  has checked it again; the row shows the host's name for the file
+  ([opening a file](files.md#opening-a-file)).
 - **No result is not a failure**: a query the command cannot answer (words,
   an incomplete or invalid expression) gives no results and the status is
   untouched. An error or crash of the extension is shown as a row titled
@@ -288,8 +290,9 @@ Since #24 to #26 a third provider kind exists:
 [results supplied ahead of the query](#results-supplied-ahead-of-the-query),
 which the core keeps and ranks like titles (the installed applications).
 Since #29 a computed result can come from a provider that searches outside
-Pane per query (the [files](files.md) of a chosen folder, listed by the
-host), and a search cancels its providers' pending work. What is *not*
+Pane per query (the [files](files.md) of a granted folder, listed by the
+host off the extension thread, the command asked again once the listing
+ends), and a search cancels its providers' pending work. What is *not*
 settled here, and is left to the tickets that need it: provider-supplied
 ranks and how they mix with title matching, and online providers, which
 stay inside their own command (US11, T03): nothing in root search queries

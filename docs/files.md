@@ -2,40 +2,34 @@
 
 Added for [#29](https://github.com/hoangvu12/pane/issues/29) (US03, US08,
 US12, US40, US44, US57; T01, T03, T09, T22; G3, G7, as contributions, not
-claims that they pass). A user chooses one folder, finds its files by
-typing their names into [root search](root-search.md), and opens one with
-the system's handler for its type. The feature is a **default extension**,
-Files, which the user can disable like any package.
+claims that they pass), and reworked after its security review. A user
+grants one folder, finds its files by typing their names into
+[root search](root-search.md), and opens one with the system's handler for
+its type. The feature is a **default extension**, Files, which the user can
+disable like any package.
 
 ## Where it lives
 
-As for [applications](applications.md), a pure WASI 0.3 guest cannot read
-the user's folders (its WASI context preopens none) or open a file, so the
-split, recorded as proposed in
-[ADR 0017](adr/0017-host-lists-a-chosen-folder-for-the-files-extension.md), is:
+A pure WASI 0.3 guest cannot read the user's folders (its WASI context
+preopens none) or open a file, so Pane's host does both, and owns every step
+that decides what is reached, as recorded (proposed) in
+[ADR 0017](adr/0017-host-lists-a-granted-folder-for-an-extension.md):
 
-- **Host capability**, in the core: `pane:extension/files`
-  ([`wit/files.wit`](../wit/files.wit)), a host import any command may use:
-  `list-folder(folder)` lists a folder under the [scan policy](#the-scan-policy).
-  It holds no state, keeps no index and does nothing until a guest asks.
-  The listing runs on a thread of its own, never on the extension thread,
-  and stops as soon as the guest's call is dropped
-  ([`pane_core::files`](../crates/pane-core/src/files.rs)).
-- **Opening a file**, in the core: a computed root result's new action
-  `open-file(path)` ([`wit/root-results.wit`](../wit/root-results.wit)),
-  which Pane performs with the system's handler, as it performs `open-url`.
+- **The grant**, in the core: a package declaring `"folderAccess": true` in
+  `pane.json` gets Pane's own "Choose folder…" row; Pane checks the folder
+  and records it in its own `folders.json`
+  ([`pane_core::files`](../crates/pane-core/src/files.rs),
+  [`launcher/files.rs`](../crates/pane-core/src/launcher/files.rs)).
+- **The listing**, in the core: `pane:extension/files`
+  ([`wit/files.wit`](../wit/files.wit)), `list-folder()` without a path,
+  answered at once from the listing Pane makes on the package's own worker.
+- **Opening**, in the core: a computed root result's action `open-file(id)`
+  ([`wit/root-results.wit`](../wit/root-results.wit)), naming a file by the
+  id Pane gave it; Pane shows its own name for it, checks it again and opens
+  it with the system's handler.
 - **Default extension**, [`guests/files`](../guests/files) (Rust), package
-  [`guests/packages/files`](../guests/packages/files): its command, "Files",
-  chooses the folder in a [form](forms.md), keeps it in its
-  [settings](extension-data.md), and answers root search's query with the
-  matching files as `open-file` results.
-- **Not a native helper** ([ADR 0014](adr/0014-optional-native-extension-helpers.md)):
-  the host already lists folders and opens files natively on every system.
-- **Not a preopened folder**: giving the guest a WASI preopen of the chosen
-  folder would let it walk the folder itself, but its walk would run on the
-  extension thread, where a large folder holds up every other extension's
-  calls, and it could not be stopped while it runs (see
-  [cancelling](#cancelling-a-pending-search)).
+  [`guests/packages/files`](../guests/packages/files): it only matches the
+  listing Pane gives it against the query and answers `open-file` results.
 
 Acquiring the package automatically at setup is
 [#51](https://github.com/hoangvu12/pane/issues/51) to
@@ -43,191 +37,231 @@ Acquiring the package automatically at setup is
 installed from its folder like the other default extensions
 (`pane --install target/guests/packages/files`).
 
-## Choosing the folder
+## Granting the folder
 
-The command **Files** lists:
+Every command of a package with `"folderAccess": true` starts with Pane's
+own rows, above the extension's items:
 
-- **Choose folder**, a form with one field, *Folder*, and a "Search this
-  folder" button. Its subtitle says which folder is searched, or that none
-  is chosen yet. Submitting an empty field keeps the current folder (forms
-  have no initial values yet); with none chosen, it asks for one.
-- **Stop searching the folder**, once one is chosen: root search then finds
-  no files; the folder itself is not touched.
-- **What is searched**, which states the scan policy.
+- **Choose folder…**, subtitled with the folder granted now ("Pane lets
+  Files list only /…/Documents") or that none is. Enter opens the system's
+  folder picker (`Launcher::folder_to_choose`, then the window calls
+  `Launcher::grant_folder`); cancelling changes nothing.
+- **Stop sharing the folder with <title>**, once one is granted: the grant
+  is taken back and recorded; the folder itself is not changed.
 
-The form lists the folder before saving it, so every problem is shown on
-the field and the form stays open ("Folder: …"):
+Pane checks the chosen folder before granting it
+([`files::check_grant`](../crates/pane-core/src/files.rs)) and says why not
+("Pane did not grant the folder: …"), keeping the earlier grant:
 
-| Typed | Message |
+| Chosen | Refused because |
 | --- | --- |
-| nothing, none chosen | Enter the folder's full path |
-| a relative path | “notes” is not a full path: enter the folder's whole path, such as /home/you/Documents |
-| a missing path | /…/missing does not exist |
-| a file | /…/todo.txt is a file, not a folder |
-| a folder the user may not read | Pane may not read /…/private |
+| `\\server\share`, `\\?\UNC\…`, `//server/share` (Windows) | a network location, told from the text before any file system call |
+| `/`, `C:\` | the whole disk |
+| the home folder itself (`HOME`, `USERPROFILE`) | choose a folder inside it |
+| a folder whose name starts with `.` (or hidden on Windows) | a hidden folder |
+| a file, a missing path, a folder the user may not read | as it says |
 
-Saved, the status says "Searching “<folder name>”: 4 files", with a note
-when Pane stopped at its limits. The folder is the package's settings, so
-it belongs to its identity, survives restarts, updates and disabling, and
-is not removed with its cache.
+A granted folder is recorded **canonically** (links resolved; on Windows
+without the `\\?\` prefix) in `folders.json` beside `installed.json`, by
+package identity key: `{"version": 1, "folders": {"<identity>": "<folder>"}}`.
+It is Pane's record, not extension data: the extension never supplies,
+saves or sees the path. It survives restarts and disabling; uninstalling
+the package forgets it, whether or not its saved data is kept.
 
 ## The scan policy
 
-The same on every system, enforced by the host whatever the extension asks
-([`files::walk`](../crates/pane-core/src/files.rs)):
+The same on every system, enforced by the host
+([`files::walk`](../crates/pane-core/src/files.rs)); the limits are defined
+once, as `pane_core::files::MAX_DEPTH`, `MAX_FILES` and `MAX_ENTRIES`, and
+extensions read them with `files.limits()`:
 
-- **Regular files only**, from the chosen folder and its subfolders,
+- **Regular files only**, from the granted folder and its subfolders,
   **breadth first** (a folder's own files before its subfolders'), each
-  folder's entries **in name order** (by the bytes of their names, so
-  capitals first on Linux and macOS).
-- **At most 8 folders deep** below the chosen one, **5,000 files** and
-  **20,000 entries** looked at (files, folders, links, anything). Reaching a
-  limit stops the listing, which says so (`truncated`): the Files form's
-  status and "What is searched" mention it.
-- **Skipped, neither listed nor entered**: hidden entries (a name starting
-  with `.`, and on Windows the hidden and system attributes), symbolic links
-  and other links (Windows junctions included), names that are not Unicode,
-  and a subfolder that cannot be read.
-- The chosen folder itself must be an absolute path to a folder the user
-  can read; it may be reached through a link.
-- **Every query lists the folder again**: no index, no file watching and no
-  cache, so a file saved a moment ago is found at the next keystroke. For a
-  folder near the limits each keystroke reads up to 20,000 entries; the
-  listing is cancelled as soon as the query changes.
+  folder's entries **in name order** (by the bytes of their names).
+- **At most 8 folders deep**, **5,000 files** and **20,000 entries** looked
+  at (files, folders, links, anything). Entries are counted, and
+  cancellation checked, *while* each folder is read, so a huge folder stops
+  at the entry limit rather than being read whole first; only the paths of
+  the folders still to list are queued, not open directory handles.
+- **Skipped, neither listed nor entered**, at every level: hidden entries (a
+  name starting with `.`, and on Windows the hidden and system attributes),
+  symbolic links and other links (Windows junctions included) and names
+  that are not Unicode.
+- A subfolder (or an entry) that cannot be read is skipped and makes the
+  listing **partial**: `truncated` is set, as when a limit is reached.
 
-Files in the chosen folder are found by name: a file is listed when each
-word of the query is in its name, and then, after those, when each word is
-in its name or the folders below the chosen one ("notes todo" finds
-`notes/todo.txt`), ignoring letter case (Unicode lowercasing, no accent
-folding), at most 20, in listing order. Each is a
-[computed result](root-search.md#results-computed-from-the-query) titled
-with the file's name and subtitled "File in <folder name>/<subfolders>".
+### When it is listed
 
-Unlike other computed results, **file results are listed after the results
-found by title** (commands and applications), before the rows explaining
-failures and the fallbacks: a folder can hold many files matching a short
-query, which should not push commands down. A blank query lists no files,
-and none are listed while no folder is chosen.
+`list-folder()` never waits. The first call in a visit of root search
+starts a listing on the package's **own worker thread** (one per package,
+started with its first listing) and answers `listing`; the extension
+answers no files yet. The worker waits 100 ms (`files::DEBOUNCE`) before it
+starts, and takes only the newest request. The listing is then **kept for
+the visit**: every later keystroke gets it at once, and only filters it. It
+is dropped when root search is left (a command, Manage extensions, a
+preview, a restart of the visit) and when the grant changes, so the next
+visit lists the folder again; there is no index and no file watching.
+
+Once a listing ends, the commands whose answer waited for it are asked
+again for the query then on screen, **after** every other result of that
+query was shown: computed results (the calculator, quicklinks), and the
+[indexed results](root-search.md#results-supplied-ahead-of-the-query) (the
+applications). A slow or huge folder therefore holds up no other
+extension's results; only its own files arrive later.
+
+A listing stops (its answer is dropped) when root search is left, when the
+grant changes, and when the package's generation ends (disable, reload,
+update, pause, uninstall). A new query does not restart it: the new search
+waits for the same listing, and the older search's wait is cancelled.
+
+**A hung folder** (an unresponsive disk or a network mount the host could
+not tell apart) holds only its package's worker: no new thread is started
+for later requests, which wait (only the newest is kept), other extensions
+are unaffected, and Files lists nothing until the listing returns. With
+UNC paths refused this should be rare; mapped network drives on Windows and
+network mounts on macOS and Linux are not detected.
+
+## In root search
+
+Files are found by name: a file is listed when each word of the query is in
+its name, and then, after those, when each word is in its name or the
+folders below the granted one ("notes todo" finds `notes/todo.txt`),
+ignoring letter case (Unicode lowercasing, no accent folding), at most 20.
+That matching is the extension's.
+
+Each row is a
+[computed result](root-search.md#results-computed-from-the-query) whose
+title and subtitle are **the host's**, not the extension's: the file's own
+name, and "File in <granted folder's name>/<subfolders>". A result naming an
+id the host did not give in the package's latest listing is not listed.
+File results are listed **after the results found by title** (commands and
+applications), unlike other computed results. A blank query lists no files,
+and none are listed while no folder is granted.
 
 ## Opening a file
 
-Enter (or a click) on a file result opens it. `Launcher::activate_selected`
-refuses a relative path at once; otherwise it shows "Running…" and, off the
-window's thread, checks that the path is still a file (a folder is refused:
-it would open a file manager) and hands it to the launcher's `LinkOpener`
-(`open_file`). The status then reads "Opened <file name>" or "Could not open
-<file name>: <reason>" ("it no longer exists", "it is a folder; Pane opens
-only files", the handler's own failure); root search keeps its query. The
-status names only the file, not its folders. Pane opens any file the
-extension offers, whatever its type: opening a program file runs it, as
-the file manager would (Q9's trust model).
+Enter (or a click) shows "Running…" and, off the window's thread, has the
+host check the file again (`FileAccess::checked_file`):
+
+1. The id is in the package's latest listing, and that listing's folder is
+   still the package's grant.
+2. The path is not a network path (Windows, before any file system call).
+3. `symlink_metadata`: a regular file, not a link ("it is now a link"),
+   still there ("it no longer exists").
+4. Its canonical path is inside the grant's canonical path (a folder above
+   it replaced by a link outside: "it is no longer inside the granted
+   folder").
+5. It is not a program or script ([`files::runs_as_program`](../crates/pane-core/src/files.rs)),
+   refused on every system: the Windows types `exe bat cmd com lnk js jse
+   vbs vbe wsf wsh hta msi msp scr pif ps1 cpl reg url`, the macOS types
+   `app command tool terminal workflow` and anything inside an `.app`
+   bundle, `.desktop` files, and on macOS and Linux any file with an
+   executable bit ("it is a program or script, which opening would run").
+
+Only then is the checked canonical path handed to the launcher's
+`LinkOpener::open_file`. The status reads "Opened <file name>" or "Could not
+open <file name>: <reason>", with the host's name for the file; root search
+keeps its query.
 
 The window's opener, `pane::SystemLinks`, runs the handler the `open` crate
-names for the system, without a shell, as for [links](quicklinks.md#opening-a-link):
+(5.4.4) names for the system, without a shell:
 
 | System | Handler | A missing handler |
 | --- | --- | --- |
 | Linux | `xdg-open <path>`, else `gio open`, `gnome-open`, `kde-open` | none installed: "no program to open this kind of file is installed"; xdg-open finding none (status 3): "no program to open this kind of file is set up"; the program failing (status 4): "the program for this kind of file refused or failed to open it" |
 | macOS | `/usr/bin/open -- <path>` (Launch Services) | its failure status |
-| Windows | PowerShell `Start-Process` (ShellExecute), the path passed in an environment variable, not on the command line; else `explorer.exe` | its failure status |
+| Windows | PowerShell with the path in an environment variable (not on its command line), which opens an existing path with `Invoke-Item -LiteralPath`; else `explorer.exe` | its failure status; an unassociated type may show the system's "Open with" dialog |
 
 A handler still running after three seconds counts as having opened the
 file. Tests replace the opener with a recording fake; a launcher given no
-opener, or an opener that opens no files, says "this Pane has no handler
-for files".
-
-## Cancelling a pending search
-
-A search owns its calls for computed results (root search's own calls,
-not those of commands, forms or views, which navigation only discards):
-
-- **The query changes**: the calls still pending for the older query are
-  cancelled. A call not started is never started; one waiting inside the
-  extension (here, on `list-folder`) is dropped where it waits, and so is the
-  extension's instance, since Wasmtime 49 cannot cancel a task the host
-  called ([generations](generations.md#what-stopping-costs)); the host's
-  listing thread is told to stop and its answer, if it still comes, goes
-  nowhere. The next query starts a fresh instance. A cancelled call is not a
-  failure: it never counts towards [pausing](pausing.md).
-- **Root search is left** (a command, Manage extensions, a package preview,
-  Escape back to an empty query): the same.
-- **The extension is disabled** (or reloaded, updated, paused or
-  uninstalled): its generation ends, which stops the call as before (#14).
-- **Delayed results never replace current ones**: an answer for an older
-  search is dropped, as before; and since the listing runs off the
-  extension thread, a listing that ignores cancelling holds up no other
-  extension's call.
-
-This applies to every command that computes root results (the calculator,
-quicklinks), not only to Files; their calls rarely wait, so only a queued
-call of theirs is ever skipped.
+opener says "this Pane has no handler for files".
 
 ## For authors
 
-Any command can list a folder and answer `open-file` results, in Rust,
-JavaScript and TypeScript alike ([author guide](../guests/README.md#files-of-a-folder)):
-`pane_guest::files::list_folder` in Rust; `listFolder` from
-`"pane:extension/files@0.1.0"` in JavaScript and TypeScript, which rejects
-with `payload` as the reason; and `RootAction::OpenFile(path)` or
-`{ tag: "open-file", val: path }`. The samples
+A package that lists a granted folder sets `"folderAccess": true` in
+`pane.json`, and its commands call `list-folder()` and answer `open-file`
+results with the ids, in Rust, JavaScript and TypeScript alike
+([author guide](../guests/README.md#files-of-a-granted-folder)):
+`pane_guest::files::list_folder()` and `RootAction::OpenFile(id)` in Rust;
+`listFolder()` from `"pane:extension/files@0.1.0"` and
+`{ tag: "open-file", val: id }` in JavaScript and TypeScript, whose
+`package.json` sets `"pane": { "files": true }` so that only such a
+component imports the interface. The samples
 [`guests/sample-files-js`](../guests/sample-files-js) and
 [`guests/sample-files-ts`](../guests/sample-files-ts) do what Files does,
 with a simpler match (every word in the name).
 
 ## Checks
 
-- Launcher public interface ([`crates/pane-core/tests/files.rs`](../crates/pane-core/tests/files.rs)),
+- Launcher public interface
+  ([`crates/pane-core/tests/files.rs`](../crates/pane-core/tests/files.rs)),
   with the real Files guest, a recording opener and a controlled fixture
-  folder named "Pane files — ñ" holding "Résumé plan ü.txt", a subfolder,
-  a hidden file and a hidden folder: nothing found and nothing failing
-  before a folder is chosen; a relative, blank, missing and file path each
-  marked on the field with the form open and nothing saved; the chosen
-  folder's files found by name, then by subfolder, case ignored, hidden ones
-  not; Enter opening the Unicode file (the path the opener got, resolved,
-  is the fixture's, resolved); file results after a command whose title
-  matches; a folder removed since it was chosen explained as a row; a file
-  removed after it was found explained on Enter; the folder kept across a
-  restart; disabling removing the results and enabling bringing them back;
-  and the JavaScript and TypeScript samples choosing the folder (a relative
-  one refused), finding and opening the same file.
-- Scan policy, on fixture folders (same file): breadth-first name order and
-  absolute paths; hidden entries skipped; links to a file and a folder not
-  listed or followed (macOS and Linux); each limit (depth, files, entries)
-  stopping the listing and saying so; a cancelled listing stopping; and the
-  errors for a relative path, a missing folder and a file.
-- Cancelling, with a folder lister the test holds up (same file): a new
-  query cancels the pending listing, its search ends at once and the next
-  query's results are shown, never the older ones; a listing that ignores
-  cancelling holds up nothing and its answer never shows; leaving root
-  search (a package preview) cancels it and drops the instance, and the next
-  query starts afresh; disabling Files cancels it, lists nothing and runs
-  nothing afterwards.
-- Native GUI smokes, one phase per system (screenshots 220 to 222), with a
+  folder named "Pane files — ñ" holding "Résumé plan ü.txt", a subfolder, a
+  hidden file and a hidden folder: nothing found before a folder is
+  granted; granting through Pane's row; the grant recorded in
+  `folders.json` by identity (parsed; both paths canonicalized) and not in
+  the extension's settings; a hidden folder refused, keeping the grant;
+  "Stop sharing" removing the files; the files found by name, then by
+  subfolder, case ignored, hidden ones not; Enter opening the Unicode file
+  (the opener's path and the fixture's, both resolved); file results after
+  a command whose title matches; a folder gone since it was granted
+  explained as a row; at Enter, a `.bat` file and an executable script
+  refused, a removed file, a file replaced by a link and a folder above it
+  replaced by a link outside the grant each refused, and nothing reaching
+  the opener; the grant kept across a restart, hidden while disabled, and
+  forgotten by uninstalling; the JavaScript and TypeScript samples; and
+  the `faulty` fixture naming `/etc/hosts` itself (not listed) and giving
+  each listed file the title "harmless.txt" (shown with the real names,
+  and opened as such).
+- Grants and the policy, on fixture folders: the root, the home folder, a
+  hidden folder, a file, a missing and a relative path refused, and UNC
+  forms on Windows; breadth-first name order; links not listed or followed
+  (macOS and Linux); hidden attributes and junctions (Windows, written, not
+  run); each limit; entries counted while a 50-file folder is read (11
+  checks for a limit of 10); a cancelled listing; an unreadable subfolder
+  making the listing partial (macOS and Linux, unless run as root); program
+  and script types told from documents.
+- The listing, with a folder lister the test holds up (same file): while
+  the Files folder is listing, the applications' result and the
+  calculator's answer are shown, then the files once it is released; one
+  listing per visit, later keystrokes filtering it; a new query waiting for
+  the same listing, the older search ending at once and only the newer
+  query's file shown; leaving root search stopping the listing and the next
+  visit listing again; disabling stopping it, with nothing arriving once it
+  has returned (waited on, not slept); a new grant stopping the old
+  listing.
+- Native GUI smokes, one phase per system (screenshots 220 to 223), with a
   data folder of its own and a fixture folder "Pane smoke files" (spaces)
-  holding "Résumé plan ü" (non-ASCII): install Files, choose the folder in
-  its form with real key events, type "plan", check the selected row, and
-  Enter. On Linux the file opens through the real `xdg-open` outside any
-  desktop session, whose only handler for plain text is a script of the
-  smoke's that records the path (XDG_CONFIG_HOME and XDG_DATA_HOME of the
-  smoke's own, BROWSER the same script), and the recorded path, resolved,
-  must be the fixture file's; it ran on Linux X11 on 2026-09-28
-  ([evidence](platforms/linux.md#files-29)). On macOS and Windows the file
-  has a type no application claims (`.panesmoke`), so the real handler
-  (`open`, `Start-Process`) runs and opens nothing, and Pane must report
-  that it could not open it; that is written but has not run yet.
+  holding "Résumé plan ü.txt" (non-ASCII) and an executable script or batch
+  file: install Files, Enter on "Choose folder…" (the debug build takes
+  the folder from `PANE_TEST_CHOOSE_FOLDER` instead of showing the picker),
+  type "plan", check the selected row, Enter; then type "runner" and Enter,
+  which must be refused, with the script neither handed over nor run. On
+  Linux the file opens through the real `xdg-open` outside any desktop
+  session, whose only handler for plain text is a script of the smoke's
+  that records the path (XDG_CONFIG_HOME, XDG_DATA_HOME and BROWSER of the
+  smoke's own), and the recorded path, resolved, must be the fixture
+  file's; it ran on Linux X11 on 2026-09-28
+  ([evidence](platforms/linux.md#files-29)). On macOS and Windows the debug
+  build's `PANE_TEST_OPEN_FILE_LOG` makes the opener record the path
+  instead of running `open` or `Invoke-Item` (which could open the user's
+  own program or show the "Open with" dialog), and the recorded path must
+  be the fixture file's; that is written but has not run yet.
 
 ## Limits
 
-- One folder; no whole-disk index, other scopes, content search, file
-  watching, icons, previews, recent files or ranking beyond name then path.
-- Every keystroke lists the folder again; a folder at the limits costs up to
-  20,000 entries per query, and results beyond the limits are not found.
-- Cancelling a waiting call drops the extension's instance, losing what it
-  keeps in memory (Files keeps nothing there).
+- One folder per package; no whole-disk index, other scopes, content search,
+  file watching, icons, previews, recent files or ranking beyond name then
+  path.
+- Each visit of root search lists the folder again; a folder at the limits
+  costs up to 20,000 entries per visit, and files beyond the limits are not
+  found.
+- Mapped network drives (Windows) and network mounts (macOS, Linux) are not
+  refused; a hung one holds up only its package's worker.
+- Programs and scripts are refused outright; there is no confirmation to
+  open one deliberately.
 - A handler slow to fail (over three seconds) is reported as having opened
-  the file; opening a program file runs it.
+  the file.
 - The positive native open ran only on Linux X11 (xdg-open with a recording
-  handler); macOS and Windows open through the same code and are checked
-  natively only for the handler reporting that no program opens the file,
-  and that phase has not run yet.
+  handler); on macOS and Windows the real handler is not run by the smoke.
 - Screen reader behaviour is unverified, as for all of root search.

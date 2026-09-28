@@ -254,20 +254,21 @@ disable); **not run on macOS yet**.
 
 ## Files (#29)
 
-The files phase (screenshots 220 to 222, [files](../files.md)), with a data
-folder of its own, installs Files, chooses a fixture folder "Pane smoke
-files" (spaces) in the system's temporary folder through its form, types
-"plan", which must list "Résumé plan ü.panesmoke" selected, and presses
-Return. `.panesmoke` is a type no application claims, so the real handler
-(`/usr/bin/open -- <path>`, Launch Services) runs and opens nothing: the
-status must be the error "Could not open …". A handler that does open a file
-(TextEdit, Preview) is not run, since it would open the user's own
-application, so a positive native open on macOS is checked only through the
-launcher tests' recording opener. Listing the folder and the scan policy
-use only `std::fs` (case-insensitive APFS sorts names by bytes like the
-other systems; links are skipped); the policy tests with symbolic links run
-on macOS in CI. **Not run on macOS yet**; whether `open` reports an
-unclaimed type without showing a dialog is unverified.
+The files phase (screenshots 220 to 223, [files](../files.md)), with a data
+folder of its own, installs Files and presses Return on Pane's own "Choose
+folder…" row; a debug build's `PANE_TEST_CHOOSE_FOLDER` names a fixture
+folder "Pane smoke files" (spaces) in the system's temporary folder instead
+of showing the system's picker. It types "plan", which must list "Résumé
+plan ü.txt" selected, and presses Return. A debug build's
+`PANE_TEST_OPEN_FILE_LOG` makes the opener record the path in a file instead
+of running `/usr/bin/open`, so no application of the user's opens it; the
+recorded path, resolved, must be the fixture file's, resolved. Last it types
+"runner" and presses Return on an executable script, which Pane must refuse
+without recording or running it. A positive native open on macOS is
+therefore not run by the smoke. Listing the folder and the scan policy use
+only `std::fs` (case-insensitive APFS sorts names by bytes like the other
+systems; links are skipped); the policy tests with symbolic links and the
+executable bit run on macOS in CI. **Not run on macOS yet.**
 
 ## Text input and accessibility findings
 

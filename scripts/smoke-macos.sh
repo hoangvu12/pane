@@ -1089,38 +1089,53 @@ grep -q '"disabled": true' "$PANE_DATA_DIR/extensions/installed.json" || { echo 
 if grep -q '"paused"' "$PANE_DATA_DIR/extensions/installed.json"; then echo "a package was paused for the runtime's crash"; exit 1; fi
 
 # File search (#29): Files, a default extension (its data folder is this
-# phase's own; Files is selected once installed, and "Choose folder" is its
-# first item). Its form takes a fixture folder whose path has spaces, and a
-# file in it has non-ASCII letters too; typing "plan" lists that file,
-# selected, and Enter asks the system's handler for files (/usr/bin/open,
-# Launch Services) to open it. The file's type is one no application claims
-# (.panesmoke), so the real handler runs but opens nothing: Pane must report
-# that it could not open it. (The Linux smoke opens a file through a
-# recording handler.) The fixture is in the system's temporary folder, so no
-# screenshot shows a home path.
+# phase's own; Files is selected once installed, and Pane's own "Choose
+# folder…" row is the first of its command). Enter on it would show the
+# system's folder picker; the smoke names the folder in
+# PANE_TEST_CHOOSE_FOLDER instead (a debug build's hook). The fixture folder's
+# path has spaces, and a file in it has non-ASCII letters too; typing "plan"
+# lists that file, selected, and Enter hands it to Pane's handler for files,
+# which PANE_TEST_OPEN_FILE_LOG (a debug build's hook) makes record the path
+# instead of asking /usr/bin/open, since any application that opened it would
+# be the user's own. An executable script in the folder is found but refused.
+# The fixture is in the system's temporary folder, so no screenshot shows a
+# home path.
 export PANE_DATA_DIR=$out/files-data
 rm -rf "$PANE_DATA_DIR"
 files_fixture=$(mktemp -d "${TMPDIR:-/tmp}/pane-smoke-files.XXXXXX")
 files_folder="$files_fixture/Pane smoke files"
 mkdir -p "$files_folder/notes"
-printf 'plan\n' >"$files_folder/Résumé plan ü.panesmoke"
+printf 'plan\n' >"$files_folder/Résumé plan ü.txt"
 printf 'todo\n' >"$files_folder/notes/todo.txt"
+printf '#!/bin/sh\ntouch "%s/runner-ran"\n' "$files_fixture" >"$files_folder/notes/runner.sh"
+chmod +x "$files_folder/notes/runner.sh"
+rm -f "$out/opened-file.txt"
+export PANE_TEST_CHOOSE_FOLDER=$files_folder PANE_TEST_OPEN_FILE_LOG=$out/opened-file.txt
 start_pane --install target/guests/packages/files
 key 36; sleep 2   # Install; Files is selected
-key 36; sleep 3   # open Files
-key 36; sleep 1   # Choose folder
-type_text "$files_folder"
-key 36; sleep 2
-capture 220-files-folder-chosen.png
-check 220-files-folder-chosen.png 9fd8a8   # "Searching “Pane smoke files”: 2 files"
-key 53; key 53; sleep 1
+key 36; sleep 3   # open Files; "Choose folder…" is selected
+key 36; sleep 2   # the folder PANE_TEST_CHOOSE_FOLDER names
+capture 220-files-folder-granted.png
+check 220-files-folder-granted.png 9fd8a8   # "Files may now list “Pane smoke files”"
+key 53; sleep 1
 type_text 'plan'; sleep 3
 capture 221-files-found.png
-check 221-files-found.png 364355 3000   # the selected file row, "Résumé plan ü.panesmoke"
-key 36; sleep 5
-capture 222-files-open-refused.png
-check 222-files-open-refused.png f08c8c   # "Could not open Résumé plan ü.panesmoke: the system's handler for files did not open it ..."
-python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{220-files-folder-chosen,221-files-found,222-files-open-refused}.png
+check 221-files-found.png 364355 3000   # the selected file row, "Résumé plan ü.txt"
+key 36; sleep 3
+capture 222-files-opened.png
+check 222-files-opened.png 9fd8a8   # "Opened Résumé plan ü.txt"
+[ -f "$out/opened-file.txt" ] || { echo "the handler for files was not asked to open anything"; exit 1; }
+[ "$(cd "$(dirname "$(head -1 "$out/opened-file.txt")")" && pwd -P)/$(basename "$(head -1 "$out/opened-file.txt")")" = "$(cd "$files_folder" && pwd -P)/Résumé plan ü.txt" ] || { echo "the handler for files was not asked to open the found file"; exit 1; }
+rm -f "$out/opened-file.txt"
+key 53; sleep 1
+type_text 'runner'; sleep 3
+key 36; sleep 2
+capture 223-files-program-refused.png
+check 223-files-program-refused.png f08c8c   # "Could not open runner.sh: it is a program or script, ..."
+[ ! -e "$out/opened-file.txt" ] || { echo "the script was handed to the handler"; exit 1; }
+[ ! -e "$files_fixture/runner-ran" ] || { echo "the script ran"; exit 1; }
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{220-files-folder-granted,221-files-found,222-files-opened,223-files-program-refused}.png
 stop_pane
+unset PANE_TEST_CHOOSE_FOLDER PANE_TEST_OPEN_FILE_LOG
 rm -rf "$files_fixture"
 echo "screenshots in $out"

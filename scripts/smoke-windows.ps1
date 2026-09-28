@@ -1145,14 +1145,16 @@ if (-not (Select-String -Quiet -SimpleMatch '"disabled": true' $record)) { throw
 if (Select-String -Quiet -SimpleMatch '"paused"' $record) { throw "a package was paused for the runtime's crash" }
 
 # File search (#29): Files, a default extension (its data folder is this
-# phase's own; Files is selected once installed, and "Choose folder" is its
-# first item). Its form takes a fixture folder whose path has spaces, and a
-# file in it has non-ASCII letters too; typing "plan" lists that file,
-# selected, and Enter asks the system's handler for files (PowerShell's
-# Start-Process, ShellExecute) to open it. The file's type is one no
-# application claims (.panesmoke), so the real handler runs but opens
-# nothing: Pane must report that it could not open it. (The Linux smoke
-# opens a file through a recording handler.)
+# phase's own; Files is selected once installed, and Pane's own "Choose
+# folder..." row is the first of its command). Enter on it would show the
+# system's folder picker; the smoke names the folder in
+# PANE_TEST_CHOOSE_FOLDER instead (a debug build's hook). The fixture folder's
+# path has spaces, and a file in it has non-ASCII letters too; typing "plan"
+# lists that file, selected, and Enter hands it to Pane's handler for files,
+# which PANE_TEST_OPEN_FILE_LOG (a debug build's hook) makes record the path
+# instead of running Invoke-Item, which could show the "Open with" dialog or
+# open the user's own program. A batch file in the folder is found but
+# refused.
 $data = Join-Path $OutDir "files-data"
 if (Test-Path $data) { Remove-Item -Recurse -Force $data }
 $env:PANE_DATA_DIR = $data
@@ -1160,27 +1162,44 @@ $filesFixture = Join-Path $OutDir "files-fixture"
 if (Test-Path $filesFixture) { Remove-Item -Recurse -Force $filesFixture }
 $filesFolder = Join-Path $filesFixture "Pane smoke files"
 New-Item -ItemType Directory -Force (Join-Path $filesFolder "notes") | Out-Null
-Set-Content -Encoding UTF8 -LiteralPath (Join-Path $filesFolder "R$([char]0xE9)sum$([char]0xE9) plan $([char]0xFC).panesmoke") "plan"
+$planName = "R$([char]0xE9)sum$([char]0xE9) plan $([char]0xFC).txt"
+Set-Content -Encoding UTF8 -LiteralPath (Join-Path $filesFolder $planName) "plan"
 Set-Content -Encoding UTF8 -LiteralPath (Join-Path $filesFolder "notes/todo.txt") "todo"
+Set-Content -Encoding ASCII -LiteralPath (Join-Path $filesFolder "notes/runner.bat") "@echo ran > `"$filesFixture\runner-ran`""
+$openLog = Join-Path $OutDir "opened-file.txt"
+if (Test-Path $openLog) { Remove-Item -Force $openLog }
+$env:PANE_TEST_CHOOSE_FOLDER = (Resolve-Path -LiteralPath $filesFolder).Path
+$env:PANE_TEST_OPEN_FILE_LOG = $openLog
 $process = Start-Pane "stderr-files.log" @("--install", "target/guests/packages/files")
 Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Files is selected
-Send "{ENTER}"; Start-Sleep -Seconds 3   # open Files
-Send "{ENTER}"; Start-Sleep -Seconds 1   # Choose folder
-# SendKeys reads + ^ % ~ ( ) { } [ ] as keys: each is typed in braces.
-Send ([regex]::Replace((Resolve-Path -LiteralPath $filesFolder).Path, '[+^%~(){}\[\]]', '{$0}'))
-Send "{ENTER}"; Start-Sleep -Seconds 2
-Capture "220-files-folder-chosen.png"
-Check "220-files-folder-chosen.png" "9fd8a8"   # "Searching "Pane smoke files": 2 files"
-Send "{ESC}"; Send "{ESC}"; Start-Sleep -Seconds 1
+Send "{ENTER}"; Start-Sleep -Seconds 3   # open Files; "Choose folder..." is selected
+Send "{ENTER}"; Start-Sleep -Seconds 2   # the folder PANE_TEST_CHOOSE_FOLDER names
+Capture "220-files-folder-granted.png"
+Check "220-files-folder-granted.png" "9fd8a8"   # "Files may now list "Pane smoke files""
+Send "{ESC}"; Start-Sleep -Seconds 1
 Send "plan"; Start-Sleep -Seconds 3
 Capture "221-files-found.png"
 Check "221-files-found.png" "364355" 3000   # the selected file row
-Send "{ENTER}"; Start-Sleep -Seconds 5
-Capture "222-files-open-refused.png"
-Check "222-files-open-refused.png" "f08c8c"   # "Could not open ...panesmoke: the system's handler for files did not open it ..."
-$shots = "220-files-folder-chosen", "221-files-found", "222-files-open-refused" | ForEach-Object { Join-Path $OutDir "$_.png" }
+Send "{ENTER}"; Start-Sleep -Seconds 3
+Capture "222-files-opened.png"
+Check "222-files-opened.png" "9fd8a8"   # "Opened Resume plan u.txt"
+if (-not (Test-Path $openLog)) { throw "the handler for files was not asked to open anything" }
+$recorded = (Get-Content -Encoding UTF8 -LiteralPath $openLog | Select-Object -First 1)
+$expected = (Resolve-Path -LiteralPath (Join-Path $filesFolder $planName)).Path
+if ((Resolve-Path -LiteralPath $recorded).Path -ne $expected) { throw "the handler for files was not asked to open the found file: $recorded" }
+Remove-Item -Force $openLog
+Send "{ESC}"; Start-Sleep -Seconds 1
+Send "runner"; Start-Sleep -Seconds 3
+Send "{ENTER}"; Start-Sleep -Seconds 2
+Capture "223-files-program-refused.png"
+Check "223-files-program-refused.png" "f08c8c"   # "Could not open runner.bat: it is a program or script, ..."
+if (Test-Path $openLog) { throw "the batch file was handed to the handler" }
+if (Test-Path (Join-Path $filesFixture "runner-ran")) { throw "the batch file ran" }
+$shots = "220-files-folder-granted", "221-files-found", "222-files-opened", "223-files-program-refused" | ForEach-Object { Join-Path $OutDir "$_.png" }
 python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: file search changed nothing" }
 Stop-Pane $process
+Remove-Item Env:PANE_TEST_CHOOSE_FOLDER
+Remove-Item Env:PANE_TEST_OPEN_FILE_LOG
 Remove-Item -Recurse -Force $filesFixture
 Write-Output "screenshots in $OutDir"
