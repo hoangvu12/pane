@@ -12,7 +12,7 @@ use gpui::{
     Pixels, Role, ScrollHandle, SharedString, Size, Stateful, Window, actions, div, prelude::*,
     rgb,
 };
-use pane_core::develop::Changes;
+use pane_core::changes::Changes;
 use pane_core::hotkeys::Shortcut;
 use pane_core::{CommandRegistration, Launcher, LauncherView, Row, Screen, Status};
 

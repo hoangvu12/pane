@@ -3,6 +3,7 @@
 
 pub mod applications;
 mod atomic;
+pub mod changes;
 pub mod develop;
 mod extension_data;
 mod generation;
@@ -16,8 +17,8 @@ mod runtime;
 mod search;
 
 pub use launcher::{
-    CommandRegistration, CustomViewSnapshot, Development, FormField, FormView, Launcher,
-    LauncherView, Question, Row, Screen, Status, Unavailable,
+    BuildFailure, CommandRegistration, CustomViewSnapshot, Development, FormField, FormView,
+    Launcher, LauncherView, Question, Row, Screen, Status, Unavailable,
 };
 pub use links::LinkOpener;
 pub use operations::{MAX_CALL_DEPTH, MAX_OPERATION_JSON};

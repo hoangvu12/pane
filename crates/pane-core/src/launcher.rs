@@ -45,7 +45,7 @@ use crate::runtime::{
 };
 use crate::search::{self, Keys, Query};
 
-mod develop;
+mod developing;
 mod pausing;
 mod reload;
 mod retained;
@@ -53,8 +53,8 @@ mod uninstall;
 
 use aliases::AliasChoices;
 use choices::Record;
-use develop::Developing;
-pub use develop::Development;
+use developing::Developing;
+pub use developing::{BuildFailure, Development};
 use hotkeys::Bindings;
 use pausing::{Pauses, Recorder};
 
@@ -411,6 +411,9 @@ struct State {
     /// command's answer to a query sent from it (or its sending), so that
     /// changing the query clears it.
     sent_from: Option<String>,
+    /// The newest status of a developed package's builds, kept while
+    /// another screen is shown (see `developing`).
+    development_status: Option<(PackageIdentity, Status)>,
 }
 
 /// What is happening to a package, which stops another change to it
@@ -742,6 +745,7 @@ impl Launcher {
             packages,
             retained,
             changing: HashMap::new(),
+            development_status: None,
             store_problem,
             paused: Pauses::default(),
             bindings,
@@ -1253,7 +1257,7 @@ impl Launcher {
             Some(Entry::Develop(identity)) => {
                 develop = self
                     .begin_developing(&mut state, &identity)
-                    .map(|s| (identity, s));
+                    .map(|start| (identity, start));
                 None
             }
             Some(Entry::StopDeveloping(identity)) => {
@@ -1350,8 +1354,8 @@ impl Launcher {
         drop(state);
         let launcher = self.clone();
         async move {
-            if let Some((identity, (builder, folder))) = develop {
-                launcher.finish_developing(identity, builder, folder).await;
+            if let Some((identity, start)) = develop {
+                launcher.finish_developing(identity, start).await;
             }
             if let Some(change) = change {
                 launcher.finish_change(epoch, change).await;
@@ -1580,7 +1584,7 @@ impl Launcher {
         self.sync_hotkeys(state);
         if !enabled {
             // Its development ends, with a build that is running.
-            self.developing.stop(identity);
+            self.developing.end(Some(identity));
             // Its results kept for root search go, and so does an answer
             // from it being awaited.
             Launcher::forget_indexes(state);
@@ -1728,6 +1732,25 @@ impl Launcher {
     /// runtime check each component without running it.
     async fn read_and_check(&self, folder: PathBuf) -> Result<SourcePackage, PackageError> {
         let package = off_thread(move || SourcePackage::read(&folder)).await?;
+        self.check_components(package).await
+    }
+
+    /// Like [`Launcher::read_and_check`], for a package staged in `folder`
+    /// (a development build) that belongs to the source `identity`.
+    async fn read_and_check_staged(
+        &self,
+        folder: PathBuf,
+        identity: PackageIdentity,
+    ) -> Result<SourcePackage, PackageError> {
+        let package = off_thread(move || SourcePackage::read_staged(&folder, identity)).await?;
+        self.check_components(package).await
+    }
+
+    /// Checks each component of `package` without running it.
+    async fn check_components(
+        &self,
+        package: SourcePackage,
+    ) -> Result<SourcePackage, PackageError> {
         let mut checked_components = Vec::new();
         for (name, component) in package.manifest.components() {
             // A component serving several commands or operations is checked
@@ -1782,6 +1805,7 @@ impl Launcher {
                 "Pane",
             )
         };
+        self.show_kept_development_status(state);
     }
 
     /// Updates root search or the extension list on screen after a package
@@ -2133,6 +2157,7 @@ impl Launcher {
         }
         state.view =
             LauncherView::new(Screen::Extensions { details }, "Extensions").with_rows(rows);
+        self.show_kept_development_status(state);
     }
 
     /// The extension list's rows: each package's state, reload and cache
