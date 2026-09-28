@@ -1229,4 +1229,43 @@ if ((Saved-Setting "greeting-style") -ne "formal") { throw "the fresh runtime di
 $record = Join-Path $data "extensions/installed.json"
 if (Select-String -Quiet -SimpleMatch '"paused"' $record) { throw "a package was paused for the runtime's hang" }
 
+# Uninstalling a required dependency: installed with the dependencies sample
+# (whose install and data folder are this phase's own), the JavaScript
+# operations sample's Uninstall row is the seventh of Manage extensions.
+# Enter asks first, listing the Dependencies sample, which requires it, and
+# each one's saved data, with Uninstall all keeping or deleting saved data
+# and Cancel; Cancel changes nothing, Uninstall all 2 (keeping) uninstalls
+# both, and installing the JavaScript operations sample again installs it
+# alone: the Dependencies sample is not restored, on record too.
+$data = Join-Path $OutDir "uninstall-dependents-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+$process = Start-Pane "stderr-uninstall-dependents.log" @("--install", "target/guests/packages/sample-dependencies")
+Send "{ENTER}"; Start-Sleep -Seconds 3   # Install
+for ($i = 0; $i -lt 10; $i++) { Send "{DOWN}" }   # Manage extensions...
+Send "{ENTER}"; Start-Sleep -Seconds 1
+for ($i = 0; $i -lt 6; $i++) { Send "{DOWN}" }   # Uninstall JavaScript operations sample
+Send "{ENTER}"; Start-Sleep -Seconds 1   # asks first
+Capture "180-uninstall-dependents-asked.png"
+Check "180-uninstall-dependents-asked.png" "aab4c0"   # "Dependencies sample, which requires JavaScript operations sample ..."
+Send "{DOWN}{DOWN}{ENTER}"; Start-Sleep -Seconds 1   # Cancel
+Capture "181-uninstall-dependents-cancelled.png"   # both still installed
+Send "{ENTER}"; Start-Sleep -Seconds 1   # asks again
+Send "{ENTER}"; Start-Sleep -Seconds 3   # Uninstall all 2 and keep saved data
+Capture "182-uninstall-dependents-uninstalled.png"
+Check "182-uninstall-dependents-uninstalled.png" "9fd8a8"   # "Uninstalled JavaScript operations sample and Dependencies sample, which requires it; ..."
+Stop-Pane $process
+$record = Join-Path $data "extensions/installed.json"
+if ((Select-String -SimpleMatch '"dir"' $record).Count -ne 0) { throw "not both uninstalled" }
+$process = Start-Pane "stderr-uninstall-dependents-again.log" @("--install", "target/guests/packages/sample-operations-js")
+Send "{ENTER}"; Start-Sleep -Seconds 3   # Install the dependency alone
+for ($i = 0; $i -lt 10; $i++) { Send "{DOWN}" }   # Manage extensions...
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Capture "183-uninstall-dependents-reinstalled-alone.png"   # only the JavaScript operations sample is listed
+Check "183-uninstall-dependents-reinstalled-alone.png" "aab4c0"
+$shots = "180-uninstall-dependents-asked", "181-uninstall-dependents-cancelled", "182-uninstall-dependents-uninstalled", "183-uninstall-dependents-reinstalled-alone" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: uninstalling with dependents changed nothing" }
+Stop-Pane $process
+if ((Select-String -SimpleMatch '"dir"' $record).Count -ne 1) { throw "not the dependency alone reinstalled" }
 Write-Output "screenshots in $OutDir"
