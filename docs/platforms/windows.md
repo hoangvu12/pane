@@ -68,6 +68,15 @@ background. This is most likely hover under wherever the runner's mouse pointer
 sits, since keyboard selection (the Rust row) opened the Rust command. This was
 not confirmed.
 
+## Platform availability (#19)
+
+The smoke also runs the platform-availability steps (screenshots 13 to 15,
+[platform availability](../platform-availability.md#checks)): the Rust
+command's Windows-only and macOS-and-Linux actions, then a package listing
+only the two other systems. **These steps have not run on this system yet**;
+only the Linux X11 run and the host-interface tests' expectations for this
+system exist, so the availability results here are unverified natively.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** the smoke now also opens the Rust command's
