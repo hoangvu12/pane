@@ -343,11 +343,11 @@ Xvfb/lavapipe setup): all checks of the whole smoke passed.
 | "Uninstalled Settings sample; its settings and content are kept" | `50-uninstalled.png` (not committed: the list's rows show the local checkout path) |
 | Reinstalled: "Style: formal · Note: Water the plants · Signed in: no · Cached greeting: none" | [51-reinstalled.png](evidence/linux-x11/51-reinstalled.png) |
 
-In the last run the confirmation's list showed the second and third choices,
-with the selected first one scrolled out of view above them (the list keeps
-its scroll position from the long extension list; an earlier run, with fewer
-packages, showed the first choice). Enter still chose it. The window's
-scrolling between screens is an open item, not specific to this phase.
+An earlier run showed the confirmation's list scrolled past its selected
+first choice: the first frame of a new screen scrolled with the long
+extension list's size and rows, and nothing asked for another frame. The
+window now asks for one whenever the screen or rows change and scrolls
+again; the rerun shows the first choice selected at the top of the list.
 
 The macOS and Windows smokes run the same phase (screenshots 49 to 51); it
 has not run there yet. A managed folder that Windows keeps in use is covered

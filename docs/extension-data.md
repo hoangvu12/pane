@@ -135,12 +135,15 @@ way. Then Pane:
 1. records the uninstall in `installed.json`. If it cannot, nothing else
    changes, the package is back as it was and the error ends "It is still
    installed and nothing was deleted.";
-2. removes each kind the choice covers, each file read again first like
-   Clear cache, so other identities' values and another Pane's writes are
-   kept;
-3. removes the managed copy. A folder that cannot be removed, as on Windows
+2. removes the managed copy. A folder that cannot be removed, as on Windows
    while a file in it is in use, is listed in `installed.json` like an
-   update's replaced copy and removed at the next start.
+   update's replaced copy and removed at the next start;
+3. removes each kind the choice covers, each file read again first like
+   Clear cache, so other identities' values and another Pane's writes are
+   kept.
+
+Recording first means a failure never leaves an installed package whose
+data was already deleted.
 
 It returns to the extension list with "Uninstalled <title>; its settings and
 content are kept" or "Uninstalled <title> and deleted its saved data". If
