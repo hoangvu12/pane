@@ -793,16 +793,20 @@ Uninstalling is not implemented yet.
 
 Known limits of local packages so far:
 
-- An update is not coordinated with a command that is running or open: the
-  replaced copy's code is dropped, so an open command of the package loses
-  its state and may fail until you open it again from root search.
-- A reload does not cancel a call of the old code that is already running;
-  it finishes first (its answer is not shown), since calls into extensions
-  run one at a time. Cancelling pending async work across a reload or
-  disable is #14.
-- Disabling does not cancel a call already running in the package: it
-  finishes (its answer is not shown, and it cannot save settings), then its
-  instance is dropped; a call that had not started is refused. Cancelling async work,
-  background services, timers and hotkeys are not part of the extension API
-  yet and come with their own tickets. Disabling does not yet consider
+- An update is not coordinated with a command that is open: the replaced
+  copy's code is dropped and its pending calls stop, so an open command of
+  the package loses its state.
+- Disabling, reloading or updating a package **stops its pending calls**
+  (see [generations](../docs/generations.md)): a call waiting inside the
+  command at an `await` (a clock, an operation, any async import) ends
+  there, nothing after that `await` runs, the instance is dropped and the
+  answer is never shown; a call that had not started is not started. The
+  settings samples' "Save after waiting" shows it: it saves "started",
+  waits ten seconds, then saves "finished", which a disable or reload
+  meanwhile prevents. So save what must survive before awaiting, and do
+  not count on code after an `await` running. A command computing without
+  awaiting is not interrupted: it runs until it awaits or returns, and
+  meanwhile its saves and operation calls are refused (#18 owns hangs).
+- Background services, timers and hotkeys are not part of the extension
+  API yet and come with their own tickets. Disabling does not yet consider
   packages that depend on the disabled one (#43).
