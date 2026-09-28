@@ -1097,7 +1097,11 @@ impl Launcher {
             state.packages.push(installed);
             return false;
         };
-        // The replaced copy's code is not run again.
+        // The replaced copy's code is not run again: its generation ends,
+        // which stops its pending calls, and the new code runs in a new one.
+        if let Some(installation) = &self.installation {
+            installation.data.replace_code(&installed.identity);
+        }
         let replaced: Vec<PathBuf> = package
             .commands()
             .into_iter()

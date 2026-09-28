@@ -295,6 +295,7 @@ name = "sample-settings"
 version = "0.1.0"
 dependencies = [
  "pane-guest",
+ "wasip3",
 ]
 
 [[package]]

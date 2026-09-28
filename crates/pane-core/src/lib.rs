@@ -3,6 +3,7 @@
 
 mod atomic;
 mod extension_data;
+mod generation;
 mod launcher;
 mod operations;
 mod packages;

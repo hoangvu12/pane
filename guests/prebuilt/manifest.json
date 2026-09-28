@@ -34,15 +34,15 @@
     },
     "sample_settings_js.wasm": {
       "source": "guests/sample-settings-js",
-      "inputs_sha256": "09d1258f66f3ff9f9177806fcb72111db7ef6573d5336339613372dfeeb80013",
-      "bytes": 4043425,
-      "sha256": "14db955518e4d84561bc9f59c54b899821ff8f03b51269189e61f251f5ba0ca9"
+      "inputs_sha256": "fdb83cb8d4f048ece439417e3405dc8d5f4541b4a8daab134f838279990258f4",
+      "bytes": 4047074,
+      "sha256": "4335f2e47cb44de99cbe997abb88cb1f48044b4563e051639954b305d3a94824"
     },
     "sample_settings_ts.wasm": {
       "source": "guests/sample-settings-ts",
-      "inputs_sha256": "b88ff4fadc08fd3993f491d6234842e56775072d51c69f5f1460586cf94872cf",
-      "bytes": 4043795,
-      "sha256": "076cee3ebf32d769447975a1dd24bdad1d3abbe8daeda03ae5913f15f13df927"
+      "inputs_sha256": "ff527e6b2683f41bde241438b2e90b4b86040368643b8a4867d59a450ab18d42",
+      "bytes": 4047408,
+      "sha256": "40dfc06577d6c7492ffaf0c407897fecd16b457abb320b982e17cc9b01b1d5cd"
     },
     "sample_operations_js.wasm": {
       "source": "guests/sample-operations-js",

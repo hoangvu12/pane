@@ -4,6 +4,9 @@
 //! keeps one value of each other kind of data: a note ([`content`]), the last
 //! greeting ([`cache`]) and a sign-in token ([`credentials`]), so clearing its
 //! cache in Manage extensions shows what is removed and what is kept.
+//! "Save after waiting" shows a call Pane stops: it notes in its settings
+//! that it started, waits ten seconds, then notes that it finished; disabling
+//! or reloading the package meanwhile stops it, so it never finishes.
 #![no_std]
 
 use pane_guest::alloc::{format, string::String, vec, vec::Vec};
@@ -20,6 +23,10 @@ const NOTE: &str = "note";
 const LAST_GREETING: &str = "last-greeting";
 /// The credentials key holding the sign-in token.
 const TOKEN: &str = "token";
+/// The settings key where "Save after waiting" notes how far it got.
+const SLOW_SAVE: &str = "slow-save";
+/// How long "Save after waiting" waits, in nanoseconds.
+const SLOW_WAIT: u64 = 10_000_000_000;
 
 struct Greeting;
 pane_guest::export!(Greeting);
@@ -65,6 +72,11 @@ impl Guest for Greeting {
                     "Show what Pane keeps",
                     "Settings, content, cache and credential",
                 ),
+                item(
+                    "slow",
+                    "Save after waiting",
+                    "Waits 10 seconds, then saves; disabling or reloading stops it",
+                ),
             ],
         })
     }
@@ -104,6 +116,14 @@ impl Guest for Greeting {
                     or_none(content::get(NOTE)?),
                     or_none(cache::get(LAST_GREETING)?),
                 ))
+            }
+            "slow" => {
+                settings::set(SLOW_SAVE, "started")?;
+                // The guest suspends here; if Pane stops the call meanwhile,
+                // nothing after this line runs.
+                wasip3::clocks::monotonic_clock::wait_for(SLOW_WAIT).await;
+                settings::set(SLOW_SAVE, "finished")?;
+                Ok("Saved after waiting 10 seconds".into())
             }
             other => Err(format!("unknown item: {other}")),
         }
