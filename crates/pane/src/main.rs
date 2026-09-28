@@ -46,7 +46,7 @@ fn main() {
             cx.new(|cx| {
                 let mut launcher = LauncherWindow::new(launcher, window, cx);
                 if let Some(folder) = &preview {
-                    launcher.preview_package(folder, cx);
+                    launcher.preview_package(folder, window, cx);
                 }
                 launcher
             })

@@ -6,6 +6,7 @@ mod launcher;
 mod packages;
 mod platform;
 mod runtime;
+mod search;
 mod settings;
 
 pub use launcher::{

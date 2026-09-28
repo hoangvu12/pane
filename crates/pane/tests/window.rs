@@ -956,3 +956,169 @@ fn leaving_the_window_during_a_drag_ends_it(cx: &mut TestAppContext) {
     wait_for_color(&window, cx, "2 events");
     assert!(!pointer_held(&window, cx));
 }
+
+/// The titles of the rows on screen.
+fn row_titles(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) -> Vec<String> {
+    let view = cx.read_entity(window, |window, _| window.launcher().view());
+    view.rows.into_iter().map(|row| row.title).collect()
+}
+
+/// Whether root search's query field has keyboard focus.
+fn query_has_focus(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) -> bool {
+    use gpui::Focusable;
+    let input = cx.read_entity(window, |window, _| window.query_field());
+    cx.update(|window, cx| input.focus_handle(cx).is_focused(window))
+}
+
+#[gpui::test]
+fn typing_in_root_search_narrows_the_results_and_enter_opens_the_best_match(
+    cx: &mut TestAppContext,
+) {
+    let (window, cx) = open_with(cx, pane::sample_commands());
+    assert!(
+        query_has_focus(&window, cx),
+        "root search opens ready to type"
+    );
+
+    cx.simulate_input("typescr");
+    let view = wait_for_answer(&window, cx);
+    assert_eq!(view.query.as_deref(), Some("typescr"));
+    assert_eq!(row_titles(&window, cx), ["TypeScript sample"]);
+    assert!(cx.debug_bounds("row-TypeScript sample").is_some());
+    assert!(cx.debug_bounds("row-Rust sample").is_none());
+
+    cx.simulate_keystrokes("enter");
+    let view = wait_for_answer(&window, cx);
+    assert_eq!(
+        (view.screen, view.title.as_str()),
+        (Screen::Command, "TypeScript sample")
+    );
+}
+
+#[gpui::test]
+fn arrow_keys_move_through_the_matches_while_the_query_keeps_focus(cx: &mut TestAppContext) {
+    let (window, cx) = open_with(cx, pane::sample_commands());
+    cx.simulate_input("script");
+    assert_eq!(
+        row_titles(&window, cx),
+        ["JavaScript sample", "TypeScript sample"]
+    );
+
+    cx.simulate_keystrokes("down");
+    assert_eq!(wait_for_answer(&window, cx).selected, Some(1));
+    cx.simulate_keystrokes("up");
+    assert_eq!(wait_for_answer(&window, cx).selected, Some(0));
+    assert!(query_has_focus(&window, cx));
+    // Editing keys still edit the query.
+    cx.simulate_keystrokes("backspace backspace backspace");
+    assert_eq!(wait_for_answer(&window, cx).query.as_deref(), Some("scr"));
+
+    cx.simulate_keystrokes("down enter");
+    assert_eq!(wait_for_answer(&window, cx).title, "TypeScript sample");
+}
+
+#[gpui::test]
+fn a_query_that_matches_nothing_says_so_and_escape_clears_it(cx: &mut TestAppContext) {
+    let (window, cx) = open_with(cx, pane::sample_commands());
+    cx.simulate_input("zzz");
+    let view = wait_for_answer(&window, cx);
+    assert!(view.rows.is_empty());
+    assert!(
+        cx.debug_bounds("no-results").is_some(),
+        "the empty state is shown"
+    );
+    cx.simulate_keystrokes("enter");
+    assert_eq!(wait_for_answer(&window, cx).status, Status::Idle);
+    assert!(cx.debug_bounds("status-idle").is_some(), "nothing failed");
+
+    cx.simulate_keystrokes("escape");
+    let view = wait_for_answer(&window, cx);
+    assert_eq!(view.query.as_deref(), Some(""));
+    assert_eq!(row_titles(&window, cx).len(), 3);
+    let text = cx.read_entity(&window, |window, cx| {
+        window.query_field().read(cx).as_str().to_owned()
+    });
+    assert_eq!(text, "", "the field shows the cleared query");
+}
+
+#[gpui::test]
+fn coming_back_to_root_search_starts_an_empty_search_with_focus(cx: &mut TestAppContext) {
+    let (window, cx) = open_with(cx, pane::sample_commands());
+    cx.simulate_input("rust");
+    cx.simulate_keystrokes("enter");
+    assert_eq!(wait_for_answer(&window, cx).screen, Screen::Command);
+    assert!(!query_has_focus(&window, cx));
+    // Typing in a command does not search root.
+    cx.simulate_input("x");
+
+    cx.simulate_keystrokes("escape");
+    let view = wait_for_answer(&window, cx);
+    assert_eq!(
+        (view.screen, view.query.as_deref()),
+        (Screen::Root, Some(""))
+    );
+    assert!(query_has_focus(&window, cx));
+    cx.simulate_input("java");
+    assert_eq!(row_titles(&window, cx), ["JavaScript sample"]);
+}
+
+/// Composition is driven on the query field's editing state, as in
+/// `input_method_composition_commits_into_the_text_field`, after checking
+/// that it is the focused one.
+#[gpui::test]
+fn input_method_composition_searches_root(cx: &mut TestAppContext) {
+    use gpui::EntityInputHandler;
+
+    let (window, cx) = open_with(
+        cx,
+        vec![
+            command("日本語の辞書", "sample_rust"),
+            command("English dictionary", "sample_js"),
+        ],
+    );
+    assert!(query_has_focus(&window, cx));
+    let input = cx.read_entity(&window, |window, _| window.query_field());
+    cx.update(|window, cx| {
+        input.update(cx, |input, cx| {
+            input.replace_and_mark_text_in_range(None, "にほ", None, window, cx);
+        })
+    });
+    assert_eq!(
+        wait_for_answer(&window, cx).query.as_deref(),
+        Some("にほ"),
+        "composing text is searched as it is typed"
+    );
+    cx.update(|window, cx| {
+        input.update(cx, |input, cx| {
+            input.replace_text_in_range(None, "日本", window, cx);
+            assert_eq!(input.marked_text_range(window, cx), None);
+        })
+    });
+    assert_eq!(row_titles(&window, cx), ["日本語の辞書"]);
+
+    cx.simulate_keystrokes("enter");
+    assert_eq!(wait_for_answer(&window, cx).title, "Rust sample");
+}
+
+#[gpui::test]
+fn assistive_technology_sees_the_search_field_and_the_selected_result(cx: &mut TestAppContext) {
+    let (window, cx) = open_with(cx, pane::sample_commands());
+    cx.simulate_input("script");
+    wait_for_answer(&window, cx);
+
+    let nodes = accessible_nodes(cx);
+    let search = node(&nodes, "EditableComboBox", "Search");
+    assert_eq!(
+        (&search["value"], &search["placeholder"]),
+        (&"script".into(), &"Search commands".into())
+    );
+    node(&nodes, "ListBox", "Results");
+    node(&nodes, "ListBoxOption", "TypeScript sample");
+    assert_eq!(focused_label(cx).as_deref(), Some("JavaScript sample"));
+    cx.simulate_keystrokes("down");
+    assert_eq!(focused_label(cx).as_deref(), Some("TypeScript sample"));
+
+    // With nothing selected, the search field itself is focused.
+    cx.simulate_input("zzz");
+    assert_eq!(focused_label(cx).as_deref(), Some("Search"));
+}
