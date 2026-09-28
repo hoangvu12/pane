@@ -4,6 +4,8 @@
 param([string]$OutDir = "smoke")
 $ErrorActionPreference = "Stop"
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+# The tested OS version and architecture
+"$([System.Environment]::OSVersion.VersionString) $env:PROCESSOR_ARCHITECTURE" | Set-Content (Join-Path $OutDir "system.txt")
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 Add-Type @"
 using System; using System.Runtime.InteropServices;
@@ -24,6 +26,11 @@ for ($i = 0; $i -lt 50 -and $process.MainWindowHandle -eq 0; $i++) {
 if ($process.MainWindowHandle -eq 0) { throw "Pane window did not appear" }
 Start-Sleep -Seconds 2
 Capture "1-root.png"
+function Check($name, $color) {
+    python "$PSScriptRoot/check_screenshot.py" (Join-Path $OutDir $name) $color
+    if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: $name" }
+}
+Check "1-root.png" "8a96a3"
 [Win]::SetForegroundWindow($process.MainWindowHandle) | Out-Null
 # Open each sample command (Rust, JavaScript, TypeScript) and run an item.
 foreach ($index in 0..2) {
@@ -32,8 +39,12 @@ foreach ($index in 0..2) {
     Capture "$($index + 2)-command-$index.png"
     [System.Windows.Forms.SendKeys]::SendWait("{DOWN}{ENTER}"); Start-Sleep -Seconds 2
     Capture "$($index + 2)-result-$index.png"
+    Check "$($index + 2)-result-$index.png" "9fd8a8"
     [System.Windows.Forms.SendKeys]::SendWait("{ESC}"); Start-Sleep -Seconds 1
 }
 Capture "5-back-to-root.png"
+# Each command must have answered from its own guest, not the same view twice.
+python "$PSScriptRoot/check_screenshot.py" --distinct @(2..4 | ForEach-Object { Join-Path $OutDir "$_-result-$($_ - 2).png" })
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: result screenshots are not distinct" }
 if ($process.HasExited) { throw "Pane exited during the smoke" }
 Stop-Process -Id $process.Id

@@ -9,7 +9,9 @@ rust-version.workspace = true
 [dependencies]
 pane-core = { path = "../pane-core" }
 gpui = { package = "gpui-ce", git = "https://github.com/gpui-ce/gpui-ce", rev = "17d9c8e8fdb30a329d817ca06bff424e8e848f1a", default-features = false }
-gpui_platform = { package = "gpui_ce_platform", git = "https://github.com/gpui-ce/gpui-ce", rev = "17d9c8e8fdb30a329d817ca06bff424e8e848f1a" }
+# font-kit is the macOS text system; without it no text renders on macOS.
+gpui_platform = { package = "gpui_ce_platform", git = "https://github.com/gpui-ce/gpui-ce", rev = "17d9c8e8fdb30a329d817ca06bff424e8e848f1a", features = ["font-kit"] }
 
 [dev-dependencies]
+serde_json = "1"
 gpui = { package = "gpui-ce", git = "https://github.com/gpui-ce/gpui-ce", rev = "17d9c8e8fdb30a329d817ca06bff424e8e848f1a", default-features = false, features = ["test-support"] }

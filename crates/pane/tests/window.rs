@@ -234,3 +234,67 @@ fn a_rejected_extension_shows_an_error_and_navigation_keeps_working(cx: &mut Tes
     cx.simulate_keystrokes("down enter");
     assert_eq!(wait_for_answer(&window, cx).title, "Rust sample");
 }
+
+/// The window's accessibility tree, as (role, label, description) per node,
+/// plus the label of the node assistive technology treats as focused.
+fn accessibility_tree(
+    cx: &mut VisualTestContext,
+) -> (Vec<(String, String, String)>, Option<String>) {
+    cx.update(|window, _| window.set_a11y_forced(true));
+    cx.run_until_parked();
+    let json = cx
+        .update(|window, _| window.debug_a11y_tree_json())
+        .expect("an accessibility tree");
+    let tree: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let field = |node: &serde_json::Value, key: &str| {
+        node["aria"][key].as_str().unwrap_or_default().to_owned()
+    };
+    let nodes = tree["nodes"].as_object().unwrap();
+    let focused = ["active_descendant_focus", "gpui_focus"]
+        .iter()
+        .find_map(|key| tree[key].as_str())
+        .map(|id| field(&nodes[id], "label"));
+    let nodes = nodes
+        .values()
+        .map(|node| {
+            (
+                field(node, "role"),
+                field(node, "label"),
+                field(node, "description"),
+            )
+        })
+        .collect();
+    (nodes, focused)
+}
+
+fn has(nodes: &[(String, String, String)], role: &str, label: &str) -> bool {
+    nodes.iter().any(|(r, l, _)| r == role && l == label)
+}
+
+#[gpui::test]
+fn assistive_technology_sees_the_list_the_selection_and_the_result(cx: &mut TestAppContext) {
+    let (window, cx) = open(cx, &RUST);
+    cx.simulate_keystrokes("enter");
+    wait_for_answer(&window, cx);
+
+    let (nodes, focused) = accessibility_tree(cx);
+    assert!(has(&nodes, "ListBox", "Rust sample"), "{nodes:?}");
+    assert!(has(&nodes, "ListBoxOption", "Say hello"), "{nodes:?}");
+    assert!(
+        nodes
+            .iter()
+            .any(|(_, label, description)| label == "Wait briefly"
+                && description == "Await a WASI 0.3 clock, then answer"),
+        "{nodes:?}"
+    );
+    assert_eq!(focused.as_deref(), Some("Say hello"));
+
+    cx.simulate_keystrokes("down enter");
+    wait_for_answer(&window, cx);
+    let (nodes, focused) = accessibility_tree(cx);
+    assert_eq!(focused.as_deref(), Some("Wait briefly"));
+    assert!(
+        has(&nodes, "Status", "Waited 50 ms inside the Rust guest"),
+        "{nodes:?}"
+    );
+}
