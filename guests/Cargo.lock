@@ -222,6 +222,7 @@ dependencies = [
  "futures",
  "pane-guest",
  "serde_json",
+ "wasip3",
 ]
 
 [[package]]

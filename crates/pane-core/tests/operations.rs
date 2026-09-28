@@ -8,6 +8,8 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use futures::executor::block_on;
 use pane_core::{Launcher, PackageIdentity, Runtime, Screen, Status};
@@ -808,4 +810,145 @@ fn a_package_preview_lists_its_operations() {
         details.contains(&"Operations: echo (version 1), forward (version 1)".to_owned()),
         "{details:?}"
     );
+}
+
+// Stopping calls in a chain: `a`'s item "Call b's wait" waits in `b`'s
+// `wait`, which saves "started", waits ten seconds and saves "finished".
+
+/// Well under the ten seconds `wait` waits.
+const STOPPED_WITHIN: Duration = Duration::from_secs(6);
+
+impl Dirs {
+    /// `a` with the command and `b` publishing `wait` too, installed.
+    fn a_and_waiting_b(&self) -> Launcher {
+        let waiting = format!(
+            r#"{PUBLISHED}, {{ "id": "wait", "version": 1, "component": "fixture.wasm" }}"#
+        );
+        self.fixture("a", COMMAND, PUBLISHED);
+        self.fixture("b", "", &waiting);
+        self.install_fixtures(&["a", "b"])
+    }
+
+    /// What `b`'s `wait` saved: "started", "finished" or nothing.
+    fn waiting(&self) -> Option<String> {
+        let text = fs::read_to_string(self.extensions().join("settings.json")).unwrap_or_default();
+        ["finished", "started"]
+            .into_iter()
+            .find(|progress| text.contains(&format!("\"waiting\": \"{progress}\"")))
+            .map(str::to_owned)
+    }
+
+    /// Whether a component of the installed package `name` is running.
+    fn is_running(&self, launcher: &Launcher, name: &str) -> bool {
+        let location = launcher
+            .packages()
+            .into_iter()
+            .find(|package| package.identity == self.identity(name))
+            .unwrap()
+            .location;
+        block_on(self.runtime.running())
+            .iter()
+            .any(|component| component.starts_with(&location))
+    }
+}
+
+/// Runs `a`'s "Call b's wait" on another thread, returning once `b` waits.
+fn start_waiting(dirs: &Dirs, launcher: &Launcher) -> (thread::JoinHandle<()>, Instant) {
+    launcher.back();
+    launcher.back();
+    select_title(launcher, "Operations fixture");
+    block_on(launcher.activate_selected());
+    select_title(launcher, "Call b's wait");
+    let calling = launcher.activate_selected();
+    let started = Instant::now();
+    let thread = thread::spawn(move || block_on(calling));
+    while dirs.waiting().as_deref() != Some("started") {
+        assert!(
+            started.elapsed() < STOPPED_WITHIN,
+            "b did not start waiting"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    (thread, started)
+}
+
+#[test]
+fn disabling_a_target_stops_the_call_it_serves_and_its_caller_is_told() {
+    let dirs = Dirs::new();
+    let launcher = dirs.a_and_waiting_b();
+    let (calling, started) = start_waiting(&dirs, &launcher);
+
+    block_on(launcher.set_enabled(&dirs.identity("b"), false));
+    calling.join().unwrap();
+
+    assert!(
+        started.elapsed() < STOPPED_WITHIN,
+        "{:?}",
+        started.elapsed()
+    );
+    // The caller carries on with the error and answers at once.
+    assert_eq!(
+        launcher.view().status,
+        error(
+            "disabled: Package b is disabled; Pane does not enable it for a call, enable it \
+             in Manage extensions"
+        )
+    );
+    assert_eq!(dirs.waiting().as_deref(), Some("started"));
+    assert!(!dirs.is_running(&launcher, "b"));
+    assert!(dirs.is_running(&launcher, "a"));
+}
+
+#[test]
+fn disabling_a_caller_stops_the_operation_it_waits_for() {
+    let dirs = Dirs::new();
+    let launcher = dirs.a_and_waiting_b();
+    let (calling, started) = start_waiting(&dirs, &launcher);
+
+    block_on(launcher.set_enabled(&dirs.identity("a"), false));
+    calling.join().unwrap();
+
+    assert!(
+        started.elapsed() < STOPPED_WITHIN,
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Disabled Package a".into())
+    );
+    // `b`'s abandoned call never finishes: its instance went with it.
+    assert_eq!(dirs.waiting().as_deref(), Some("started"));
+    assert!(!dirs.is_running(&launcher, "a"));
+    assert!(!dirs.is_running(&launcher, "b"));
+    // `b` itself is not disabled, and serves the next call afresh.
+    block_on(launcher.set_enabled(&dirs.identity("a"), true));
+    assert_eq!(
+        fixture_run(&launcher, "Call b's echo"),
+        result(r#"answered: {"hello":"world"}"#)
+    );
+    assert_eq!(dirs.waiting().as_deref(), Some("started"));
+}
+
+#[test]
+fn reloading_a_target_stops_the_call_it_serves_and_its_caller_is_told() {
+    let dirs = Dirs::new();
+    let launcher = dirs.a_and_waiting_b();
+    let (calling, started) = start_waiting(&dirs, &launcher);
+
+    block_on(launcher.reload(&dirs.identity("b")));
+    calling.join().unwrap();
+
+    assert!(
+        started.elapsed() < STOPPED_WITHIN,
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(
+        launcher.view().status,
+        error(
+            "unavailable: Package b was reloaded or updated while serving the call; call it again"
+        )
+    );
+    assert_eq!(dirs.waiting().as_deref(), Some("started"));
 }

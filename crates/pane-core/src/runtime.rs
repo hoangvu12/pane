@@ -3,6 +3,11 @@
 //! The runtime owns every engine, store and guest instance on one dedicated
 //! thread. Callers hold a cheap [`Runtime`] handle and await replies, so a slow
 //! or failing guest never blocks the caller's thread.
+//!
+//! Calls are served one at a time. A call into an installed package belongs
+//! to the package's generation (see `generation`): when it ends, a pending
+//! call of it stops where the guest waits, and one queued behind is never
+//! started. Component checks run on threads of their own.
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
@@ -655,8 +660,10 @@ impl Runtime {
     /// Drops the compiled code and live instances of `components`, for
     /// example after their files were replaced or removed; a later call
     /// loads the file again. Calls made afterwards see the effect; a call
-    /// already in progress finishes first. Nothing coordinates this with a
-    /// command the user has open: its instance's state is lost.
+    /// already in progress finishes first, unless its generation ends (as
+    /// the launcher does before forgetting a disabled or replaced package),
+    /// which stops it. Nothing coordinates this with a command the user has
+    /// open: its instance's state is lost.
     pub fn forget(&self, components: impl IntoIterator<Item = PathBuf>) {
         let components = components.into_iter().collect();
         // A stopped runtime holds nothing to forget.

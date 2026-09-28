@@ -337,3 +337,43 @@ fn read(path: &Path) -> Result<DataJson, String> {
     }
     .map_err(|reason| format!("Cannot read {}: {reason}", path.display()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Code whose generation ended saves nothing more, even though a newer
+    /// generation of the same package may.
+    #[test]
+    fn replaced_or_disabled_code_saves_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = ExtensionData::open(dir.path());
+        let identity = PackageIdentity::local(dir.path()).unwrap();
+        let old = data.owned_by(&identity);
+
+        data.replace_code(&identity);
+        let new = data.owned_by(&identity);
+
+        assert_eq!(
+            old.set(DataKind::Settings, "key", "old"),
+            Err(
+                "this code of the extension was replaced by a reload or an update; its \
+                 settings are kept unchanged"
+                    .into()
+            )
+        );
+        assert_eq!(new.set(DataKind::Settings, "key", "new"), Ok(()));
+        data.set_enabled(&identity, false);
+        assert_eq!(
+            new.set(DataKind::Content, "key", "late"),
+            Err("the extension is disabled; its content is kept unchanged".into())
+        );
+        data.set_enabled(&identity, true);
+        assert!(new.stopped().is_some());
+        assert_eq!(data.owned_by(&identity).stopped(), None);
+        assert_eq!(
+            data.owned_by(&identity).get(DataKind::Settings, "key"),
+            Ok(Some("new".into()))
+        );
+    }
+}
