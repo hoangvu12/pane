@@ -11,7 +11,7 @@
 //! the only thread of a run, and it ends once it has reaped the process.
 
 use std::fmt;
-use std::fs::{File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -144,6 +144,43 @@ pub(crate) fn check_file(folder: &Path, file: &Path, target: Target) -> Result<P
         Some(problem) => Err(problem),
         None => Ok(program),
     }
+}
+
+/// Distinguishes [`copy_executable`]'s temporary names within one process.
+static NEXT_COPY: AtomicU64 = AtomicU64::new(0);
+
+/// Copies the executable file at `source` to `target`: to a fresh temporary
+/// file beside `target` first, then renamed into place, so `target`'s name
+/// never exists half-written.
+///
+/// This closes the classic Linux `ETXTBSY` race: the kernel refuses to
+/// `exec` a file that any process, anywhere, still has open for writing, so
+/// writing straight onto the path a helper is about to run under (a fresh
+/// install run soon after, or a reinstall rewriting a helper another thread
+/// is starting) can make that `exec` fail while the copy is still in
+/// flight. `fs::copy` already opens its files the way Rust's `File` always
+/// does, with `O_CLOEXEC`, so an unrelated fork mid-copy never hands a
+/// child that descriptor across its own `exec`; what remains is `target`'s
+/// own name being exec'd while its bytes are still arriving, which the
+/// rename removes by only ever publishing a whole, already-closed file.
+/// [`Helpers::start`]'s retry is the remaining backstop, for a race this
+/// does not cover.
+pub(crate) fn copy_executable(source: &Path, target: &Path) -> io::Result<()> {
+    let dir = target.parent().unwrap_or_else(|| Path::new("."));
+    let name = target
+        .file_name()
+        .ok_or_else(|| io::Error::other(format!("{} names no file", target.display())))?;
+    let temporary = dir.join(format!(
+        ".{}.{}-{}.tmp",
+        name.to_string_lossy(),
+        std::process::id(),
+        NEXT_COPY.fetch_add(1, Ordering::Relaxed)
+    ));
+    let copied = fs::copy(source, &temporary).and_then(|_| fs::rename(&temporary, target));
+    if copied.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    copied.map(|_| ())
 }
 
 /// What a file is, as far as starting it goes, from its first bytes.
@@ -420,6 +457,34 @@ impl Run {
     }
 }
 
+/// How many times starting a helper retries after the system refuses to run
+/// its file because another process still has it open for writing
+/// (`ETXTBSY`), and the backoff before each retry, doubling from `10ms`:
+/// the standard mitigation for this Linux race, also used by cargo and
+/// rustup. [`copy_executable`] closes the window for Pane's own writes, but
+/// not one held open a moment longer by an antivirus scanner or another
+/// writer entirely.
+const SPAWN_BUSY_RETRIES: u32 = 5;
+const SPAWN_BUSY_BACKOFF: Duration = Duration::from_millis(10);
+
+/// Spawns `command`, retrying with [`SPAWN_BUSY_BACKOFF`] while the system
+/// answers `ETXTBSY`.
+fn spawn_retrying_busy(command: &mut Command) -> io::Result<Child> {
+    let mut attempt = 0;
+    loop {
+        match command.spawn() {
+            Err(error)
+                if attempt < SPAWN_BUSY_RETRIES
+                    && error.kind() == io::ErrorKind::ExecutableFileBusy =>
+            {
+                attempt += 1;
+                thread::sleep(SPAWN_BUSY_BACKOFF * attempt);
+            }
+            result => return result,
+        }
+    }
+}
+
 /// Asks every run in `runs` to stop, then waits for all of them together.
 fn stop_and_wait(runs: &[Arc<Run>]) {
     for run in runs {
@@ -527,8 +592,7 @@ impl Helpers {
             ));
         }
         let child = Owned(
-            command
-                .spawn()
+            spawn_retrying_busy(&mut command)
                 .map_err(|error| unavailable("the system did not start", error))?,
         );
         let run = Arc::new(Run {
@@ -1286,6 +1350,55 @@ mod tests {
             error.message
         );
         assert_eq!(helpers.running(), Vec::<u32>::new());
+    }
+
+    /// The classic Linux `ETXTBSY` race: a helper file rewritten (a fresh
+    /// install run soon after, or a reinstall) while it, or another
+    /// generation of it, is being spawned elsewhere. Many threads copy and
+    /// spawn the same few files at once; `copy_executable`'s rename and
+    /// `spawn_retrying_busy`'s retry (see [`super::spawn_retrying_busy`])
+    /// must mean none of it ever fails.
+    #[test]
+    fn many_threads_copying_and_spawning_the_same_helper_never_see_it_busy() {
+        let helpers = runs();
+        let file = exe("pane-echo");
+        // A few shared paths, so copies and spawns collide on the same
+        // file repeatedly rather than each getting its own.
+        let dirs: Vec<tempfile::TempDir> = (0..3).map(|_| tempfile::tempdir().unwrap()).collect();
+        let paths: Vec<PathBuf> = dirs
+            .iter()
+            .map(|dir| {
+                let path = dir.path().join(&file);
+                copy_executable(&echo(), &path).unwrap();
+                path
+            })
+            .collect();
+
+        thread::scope(|scope| {
+            for path in &paths {
+                scope.spawn(move || {
+                    for _ in 0..30 {
+                        copy_executable(&echo(), path).unwrap();
+                    }
+                });
+            }
+            for path in &paths {
+                let helpers = &helpers;
+                for _ in 0..4 {
+                    scope.spawn(move || {
+                        for _ in 0..10 {
+                            let mut one = spec(&[], None, 0);
+                            one.program = path.clone();
+                            let running = helpers.start(one).unwrap();
+                            let answer = futures::executor::block_on(running.finish()).unwrap();
+                            assert!(answer.starts_with("Echoed"), "{answer}");
+                        }
+                    });
+                }
+            }
+        });
+
+        until_none_run(&helpers);
     }
 
     #[test]
