@@ -279,9 +279,7 @@ fn uninstalling_a_required_dependency_shows_its_dependents_and_their_data_and_ca
             "Settings b, which requires Package c · {}",
             dirs.identity("b")
         ),
-        "Saved data of Package a: none".to_string(),
-        "Saved data of Package c: none".to_string(),
-        "Saved data of Settings b: 1 setting".to_string(),
+        "Saved data: Package a none · Package c none · Settings b 1 setting".to_string(),
     ] {
         assert!(details.contains(&line), "{line:?} not in {details:#?}");
     }

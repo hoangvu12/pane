@@ -192,8 +192,8 @@ impl Launcher {
         let mut details = vec![
             format!("From {identity}"),
             format!(
-                "These extensions require {title}, directly or through each other, and cannot \
-                 work without it, so they are uninstalled with it:"
+                "These extensions require {title}, directly or through each other, so they are \
+                 uninstalled with it; installing {title} again does not install them again:"
             ),
         ];
         details.extend(closure.iter().map(|dependent| {
@@ -203,12 +203,6 @@ impl Launcher {
                 dependent.package.title, dependent.requires.title, dependent.package.identity
             )
         }));
-        details.push(
-            "Pane removes the installed copy, cache and credentials of each on this computer, \
-             and none of them runs. Deleting a credential does not sign you out of an online \
-             service."
-                .into(),
-        );
         let kept = installation
             .data
             .kept_now(&[DataKind::Settings, DataKind::Content]);
@@ -217,14 +211,19 @@ impl Launcher {
                 .iter()
                 .map(|dependent| (&dependent.package.identity, dependent.package.title.clone())),
         );
-        details.extend(named.map(|(identity, title)| {
-            let saved = kept.describe(identity).unwrap_or_else(|| "none".into());
-            format!("Saved data of {title}: {saved}")
-        }));
-        details.push(format!(
-            "Their source folders and files they saved elsewhere are not touched. Installing \
-             {title} again does not install them again."
-        ));
+        let saved: Vec<String> = named
+            .map(|(identity, title)| {
+                let saved = kept.describe(identity).unwrap_or_else(|| "none".into());
+                format!("{title} {saved}")
+            })
+            .collect();
+        details.push(format!("Saved data: {}", saved.join(" · ")));
+        details.push(
+            "Pane removes the installed copy, cache and credentials of each, without running \
+             it; their source folders and files they saved elsewhere are not touched. Deleting \
+             a credential does not sign you out of an online service."
+                .into(),
+        );
         let count = closure.len() + 1;
         let choice = |id: &str, title: String, subtitle: String| Row {
             id: id.into(),
