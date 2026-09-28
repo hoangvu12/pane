@@ -1030,4 +1030,117 @@ if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: disabling with depend
 Stop-Pane $process
 $record = Join-Path $data "extensions/installed.json"
 if ((Select-String -SimpleMatch '"disabled": true' $record).Count -ne 1) { throw "not exactly the dependent left disabled" }
+
+# Recovering from a crash of Pane's extension runtime (#17): the runtime is
+# a thread of Pane, so the smoke has it panic on purpose through a fault
+# file (PANE_TEST_RUNTIME_FAULTS; nothing else sets it). With the settings
+# sample and the helper sample installed and the helper running, a crash
+# ends the helper, keeps the saved note and restarts the runtime; Count (the
+# settings sample's last item) then saves and loses its answer in a second
+# crash, which stops the runtime: the count is not run again. Root search
+# explains that nothing runs, Manage extensions shows why (its first rows),
+# a disable still works, and Restart runs extensions again, Count only when
+# asked. A data folder of its own keeps the rows in a known order.
+$data = Join-Path $OutDir "runtime-crash-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+$packages = [System.IO.Path]::GetFullPath((Join-Path $data "extensions/packages"))
+$fault = [System.IO.Path]::GetFullPath((Join-Path $OutDir "runtime-fault"))
+Remove-Item -Force -ErrorAction SilentlyContinue $fault, "$fault.tmp"
+# Asks Pane to inject a fault; it takes the file within 100 ms.
+function Inject-Fault($what) {
+    Set-Content -NoNewline -Path "$fault.tmp" -Value $what
+    Move-Item -Force "$fault.tmp" $fault
+    for ($i = 0; $i -lt 50 -and (Test-Path $fault); $i++) { Start-Sleep -Milliseconds 100 }
+    if (Test-Path $fault) { throw "Pane did not take the fault" }
+    Start-Sleep -Seconds 2
+}
+# The count Count keeps in the settings sample's content.
+function Saved-Count {
+    $content = Get-Content -Raw (Join-Path $data "extensions/content.json") | ConvertFrom-Json
+    foreach ($package in $content.packages.PSObject.Properties) {
+        if ($package.Value.count) { return $package.Value.count }
+    }
+    "none"
+}
+function Helpers-Running {
+    [bool](Get-Process -Name "pane-echo" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -and $_.Path.StartsWith($packages, [System.StringComparison]::OrdinalIgnoreCase) })
+}
+$process = Start-Pane "stderr-runtime-crash-install.log" @("--install", "target/guests/packages/sample-helper")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install
+Stop-Pane $process
+$env:PANE_TEST_RUNTIME_FAULTS = $fault
+$process = Start-Pane "stderr-runtime-crash.log" @("--install", "target/guests/packages/sample-settings")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Greeting is selected
+Send "{ENTER}"; Start-Sleep -Seconds 2   # open Greeting
+Send "{DOWN 8}"   # Count
+Send "{ENTER}"; Start-Sleep -Seconds 2
+Capture "200-runtime-counted.png"
+Check "200-runtime-counted.png" "9fd8a8"   # "Counted 1"
+if ((Saved-Count) -ne "1") { throw "Count did not count once" }
+Send "{ESC}"; Start-Sleep -Seconds 1
+Send "helper"; Start-Sleep -Seconds 1
+Send "{ENTER}"; Start-Sleep -Seconds 2   # open Helper sample
+Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2   # Echo after waiting
+if (-not (Helpers-Running)) { throw "the waiting helper is not running" }
+Capture "201-runtime-helper-waiting.png"
+Check "201-runtime-helper-waiting.png" "d6c27a"   # "Running…"
+$alive = Get-ChildItem -Recurse -Filter "pane-echo.alive" $packages | Select-Object -First 1
+if (-not $alive) { throw "the waiting helper does not beat" }
+Inject-Fault "crash"
+Capture "202-runtime-crashed.png"
+Check "202-runtime-crashed.png" "f08c8c"   # "Pane's extension runtime stopped unexpectedly and was started again; ..."
+if (Helpers-Running) { throw "the helper outlived the crashed runtime" }
+$beats = (Get-Item $alive.FullName).Length; Start-Sleep -Milliseconds 500
+if ((Get-Item $alive.FullName).Length -ne $beats) { throw "the helper still beats after the crash" }
+$settings = Join-Path $data "extensions/settings.json"
+if (-not (Select-String -Quiet -SimpleMatch '"helper-wait": "started"' $settings)) { throw "saved note lost" }
+if (Select-String -Quiet -SimpleMatch '"helper-wait": "finished"' $settings) { throw "the stopped call finished" }
+Send "{ESC}"; Start-Sleep -Seconds 1
+Send "greet"; Start-Sleep -Seconds 1
+Send "{ENTER}"; Start-Sleep -Seconds 2   # open Greeting in the restarted runtime
+Send "{DOWN 8}"   # Count
+Inject-Fault "crash-before-answer"
+Send "{ENTER}"; Start-Sleep -Seconds 3   # counts, then the runtime crashes before answering
+Capture "203-runtime-stopped.png"
+Check "203-runtime-stopped.png" "f08c8c"   # the runtime stopped; its answer is lost
+if ((Saved-Count) -ne "2") { throw "Count did not run once before the crash" }
+Send "{ESC}"; Start-Sleep -Seconds 1
+Send "greet"; Start-Sleep -Seconds 1
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Greeting: nothing runs
+Capture "204-runtime-refused.png"
+Check "204-runtime-refused.png" "f08c8c"   # "Extension runtime unavailable: it stopped after crashing ..."
+Send "{ESC}"; Start-Sleep -Seconds 1   # clears the query
+Send "{DOWN 10}"   # Manage extensions…
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Capture "205-runtime-manage.png"   # Restart the extension runtime, Why the extension runtime stopped
+Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 1   # Why the extension runtime stopped
+Capture "206-runtime-details.png"
+Check "206-runtime-details.png" "aab4c0"   # the details
+Send "{ESC}"; Start-Sleep -Seconds 1   # back at its row
+Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2   # disable Helper sample, the first package
+Capture "207-runtime-disabled.png"
+Check "207-runtime-disabled.png" "9fd8a8"   # "Disabled Helper sample"
+Send "{UP 2}{ENTER}"; Start-Sleep -Seconds 2   # Restart the extension runtime
+Capture "208-runtime-restarted.png"
+Check "208-runtime-restarted.png" "9fd8a8"   # "Restarted the extension runtime"
+if ((Saved-Count) -ne "2") { throw "Count was run again without asking" }
+Send "{ESC}"; Start-Sleep -Seconds 1
+Send "greet"; Start-Sleep -Seconds 1
+Send "{ENTER}"; Start-Sleep -Seconds 2   # open Greeting
+Send "{DOWN 8}"   # Count
+Send "{ENTER}"; Start-Sleep -Seconds 2
+Capture "209-runtime-counted-again.png"
+Check "209-runtime-counted-again.png" "9fd8a8"   # "Counted 3"
+if ((Saved-Count) -ne "3") { throw "Count did not count once more" }
+$shots = "200-runtime-counted", "202-runtime-crashed", "203-runtime-stopped", "204-runtime-refused", "205-runtime-manage", "206-runtime-details", "207-runtime-disabled", "208-runtime-restarted", "209-runtime-counted-again" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: recovering from a runtime crash changed nothing" }
+Stop-Pane $process
+Remove-Item Env:PANE_TEST_RUNTIME_FAULTS
+if (Helpers-Running) { throw "a helper outlived Pane" }
+$record = Join-Path $data "extensions/installed.json"
+if (-not (Select-String -Quiet -SimpleMatch '"disabled": true' $record)) { throw "disable not recorded" }
+if (Select-String -Quiet -SimpleMatch '"paused"' $record) { throw "a package was paused for the runtime's crash" }
 Write-Output "screenshots in $OutDir"

@@ -54,8 +54,9 @@ What is **not** a failure of the package:
 - A failure of the **runtime itself**, with no attributable package, pauses
   nothing: a reload or Retry that cannot start the package because Pane's
   runtime is unavailable (it could not start, or its thread has stopped)
-  says so, and a Retry leaves the pause as it was; recovering from it is [#17](https://github.com/hoangvu12/pane/issues/17),
-  and a guest that stops responding is
+  says so, and a Retry leaves the pause as it was. Recovering from a crash
+  of the runtime thread is described [below](#when-the-extension-runtime-itself-crashes)
+  (#17); a guest that stops responding is
   [#18](https://github.com/hoangvu12/pane/issues/18).
 
 ## What a paused package does
@@ -119,8 +120,79 @@ A reload whose new code fails to start ([#11](https://github.com/hoangvu12/pane/
 is now one such pause: the Retry and diagnostics it offered are these, and
 it holds across a restart. The earlier code is still not restored.
 
+## When the extension runtime itself crashes
+
+Added for [#17](https://github.com/hoangvu12/pane/issues/17) (US77, US78,
+US80, T18, T19, G3; contributions, not a claim that the whole scenario or
+gate passes). The [extension runtime](../CONTEXT.md) is one thread of
+Pane's process that runs every extension. A **runtime crash** is a panic of
+that thread: a fault in Pane's host code or in Wasmtime, not a guest trap
+(a trap is caught and counts as a crash of its package, above). Pane cannot
+tell which extension, if any, caused it, so:
+
+- **No extension is named or paused**, and no crash is counted towards
+  pausing one. The status line says "Pane's extension runtime stopped
+  unexpectedly and was started again; what was running was stopped and is
+  not run again. Saved data is kept; details are in Manage extensions."
+- **Every call the thread held stops**, running or queued, and answers
+  "Extension runtime unavailable: it stopped before answering and was
+  started again (or was not restarted, and why); Pane does not run this
+  again by itself". None is sent again: an action that saved before its
+  answer was lost stays done once, and running it again is the user's
+  choice. Its guest instances, custom views and streams go with the
+  thread; a custom view on screen closes, returning to its command; a
+  command's list and a form stay open (their next call starts a fresh
+  instance).
+- **The native helpers it ran are ended** and reaped before anything
+  else happens, since all of them were started by its guests
+  ([helpers](helpers.md)); development builds run outside the runtime and
+  are not affected.
+- **Saved data is kept**: Pane writes extension data itself, never through
+  the runtime thread's state.
+- **Navigation and management keep working**: root search, Manage
+  extensions, enabling and disabling, clearing a cache, uninstalling,
+  deleting retained data and the hotkey and alias screens run no
+  extension. Installing, updating and reloading check components on a
+  checker thread of their own, which answers a check that panics and
+  carries on.
+- **Restarting is suppressed after a repeat.** Pane starts a fresh runtime
+  thread (with a fresh engine) after a crash, unless the runtime crashed
+  within 5 minutes before (`RESTART_WINDOW` in
+  [`runtime/supervisor.rs`](../crates/pane-core/src/runtime/supervisor.rs)):
+  then it stays stopped, and every extension call answers "it stopped after
+  crashing and runs nothing until you restart it in Manage extensions".
+- **Manage extensions** then starts with **Restart the extension runtime**
+  (when Pane did not restart it) and **Why the extension runtime stopped**,
+  whose screen says what happened and what Pane did, and shows the panic
+  message ("Diagnostics"; the backtrace, if enabled, goes to standard error
+  with the rest of the report). Restarting forgets earlier crashes, so the
+  next one restarts it again by itself. The window redraws by itself when
+  the crash is reported.
+
+Faults are injected to check this, since no extension can crash the
+runtime thread: `Runtime::inject(Fault::Crash)` panics the thread wherever
+it waits (for the next request, or for a guest's clock, helper or
+operation), `Fault::CrashBeforeAnswer` panics it once the next guest call
+has returned, before its answer is sent (a lost response after a completed
+side effect). The native smokes set `PANE_TEST_RUNTIME_FAULTS` to a file
+whose appearance injects one (`crash` or `crash-before-answer`); nothing
+else sets it.
+
+Limits: a failure that ends Pane's whole process (an abort, a fault in
+native code, the system killing Pane) is not recovered: the runtime is a
+thread, not a process of its own. The crash history is in memory only. A
+lock held by the thread when it panics is taken over by the next user
+(every shared lock ignores poisoning), but the state it guarded is not
+checked. A crash that loses the answer of an operation call loses the
+caller's answer too; neither is sent again. A guest computing without
+yielding holds the thread, so an injected crash waits for it to yield
+(#18).
+
 ## Author example and tests
 
+- The Rust settings sample's **Count** adds one to a count in its content
+  and answers it: after a runtime crash lost its answer, the count shows
+  it ran once and was not run again.
 - The settings samples' **Crash** item
   ([Rust](../guests/sample-settings/src/lib.rs),
   [JavaScript](../guests/sample-settings-js/src/index.js),
@@ -142,6 +214,21 @@ it holds across a restart. The earlier code is still not restored.
   whose query ("crash") traps three times is paused, in Rust, JavaScript and
   TypeScript, and its alias row then explains the pause and runs nothing. Unit tests in `launcher/pausing.rs` cover the crash window with
   explicit times and crashes of code disabled meanwhile.
+- [`crates/pane-core/tests/runtime_crash.rs`](../crates/pane-core/tests/runtime_crash.rs)
+  (#17): with the settings and helper samples running, a crash ends the
+  waiting helper (Pane lists none and its heartbeat stops), names no
+  extension, pauses nothing, keeps saved data and restarts the runtime;
+  Manage extensions, disable and uninstall work; a second crash soon after
+  stops it until **Restart the extension runtime**; the settings sample's
+  **Count**, whose answer a crash lost after it saved, is not run again.
+  [`runtime.rs`](../crates/pane-core/src/runtime.rs) checks that a
+  restarted thread never reuses a view id; `runtime/supervisor.rs` tests
+  the restart window with explicit times.
+  [`crates/pane/tests/runtime_crash.rs`](../crates/pane/tests/runtime_crash.rs):
+  in the window, a crash closes the open custom view and redraws with the
+  explanation; the details and Restart rows render and work. The native
+  smokes' runtime-crash phase (frames 200 to 209) does the same with real
+  key events.
 - [`crates/pane-core/tests/operations.rs`](../crates/pane-core/tests/operations.rs):
   a target that keeps crashing is paused and its caller is not; a target
   stopped with its caller again and again is not paused.
