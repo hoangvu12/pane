@@ -822,16 +822,18 @@ fn a_development_build_reloaded_while_the_helper_runs_ends_its_process() {
     // A save: the build is staged with this system's helper file, and
     // reloading it stops the running helper before its copy is replaced.
     fs::write(installed.folder.join("notes.txt"), "saved").unwrap();
-    pending.assert_stopped(&installed.runtime);
     let started = Instant::now();
     while installed
         .launcher
         .development(&installed.identity)
         .is_none_or(|development| development.finished == 0)
     {
-        assert!(started.elapsed() < Duration::from_secs(30), "not reloaded");
+        assert!(started.elapsed() < Duration::from_secs(120), "not reloaded");
         thread::sleep(Duration::from_millis(5));
     }
+    // Once reloaded, as after a Reload: until the copy is replaced, a
+    // stopped helper's heartbeat file is still there.
+    pending.assert_stopped(&installed.runtime);
     // Pane's copy of the component into the folder did not start another
     // build, which would have been under way by now.
     thread::sleep(Duration::from_millis(500));

@@ -235,11 +235,19 @@ impl Dev {
 
     /// Waits until `finished` of the package's saves have been acted on.
     fn finished(&self, identity: &PackageIdentity, finished: u64) {
-        wait_until(&format!("{finished} saves acted on"), || {
-            self.launcher
-                .development(identity)
-                .is_some_and(|development| development.finished >= finished)
-        });
+        let deadline = Instant::now() + DEADLINE;
+        loop {
+            let development = self.launcher.development(identity);
+            if development.as_ref().is_some_and(|d| d.finished >= finished) {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for {finished} saves acted on: {development:?}, builds {:?}",
+                self.probe.runs.lock().unwrap()
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     /// Waits until the package's development has no build running or
@@ -273,8 +281,11 @@ impl Dev {
     }
 }
 
+/// How long a wait may take: long, as the tests may share a slow machine.
+const DEADLINE: Duration = Duration::from_secs(120);
+
 fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = Instant::now() + DEADLINE;
     while !done() {
         assert!(Instant::now() < deadline, "timed out waiting for {what}");
         std::thread::sleep(Duration::from_millis(20));
