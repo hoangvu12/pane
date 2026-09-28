@@ -164,17 +164,22 @@ The smoke's last phase (screenshots 90 to 93, data folder `helper-data`,
 x86-64), cancels a slow run after a second, starts the ten-second run,
 checks with `Get-Process` that the helper runs from the managed copy,
 disables the package and checks that the process is gone, that the saved
-"started" note is kept, and that no helper outlives Pane. The tests in
-`crates/pane-core/tests/helpers.rs` (a PE header, `tasklist` for the
-process) and the runner's unit tests run in `cargo xtask ci` there. Pane
+"started" note is kept, and that no helper outlives Pane. A second phase
+(screenshot 94, `helper-quit-data`) starts the waiting helper, closes
+Pane's window with `CloseMainWindow` (WM_CLOSE), and checks that Pane
+exits, no helper runs and its heartbeat file stops growing. The tests in
+`crates/pane-core/tests/helpers.rs` (Rust, JavaScript and TypeScript
+samples; a PE header) and the runner's unit tests (the `.exe` rule and
+absolute path are checked on every system) run in `cargo xtask ci` there,
+against the `pane-echo.exe` built natively on the runner. Pane
 starts a helper without a console window (`CREATE_NO_WINDOW`) and ends it
 with `TerminateProcess`; a helper's own children are not in a job object.
 The runner was only compile- and lint-checked for `x86_64-pc-windows-gnu`
 from Linux; **not run on Windows yet**, so starting, ending and reaping a
-helper natively, and the smoke's process check, are unverified there. An
-update while a helper runs may leave the old managed copy for removal at
-the next start (Windows keeps a running program's folder in use). No
-Windows arm64 build was made.
+helper natively, and the smoke's process checks, are unverified there. An
+update ends the old copy's helpers before removing its folder, so the
+folder is not in use; the removal at the next start remains a fallback.
+No Windows arm64 build was made.
 
 ## Text input and accessibility findings
 

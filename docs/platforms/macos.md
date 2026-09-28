@@ -184,12 +184,18 @@ The smoke's last phase (screenshots 90 to 93, data folder `helper-data`,
 after a second, starts the ten-second run, checks with `pgrep` that the
 helper runs from the managed copy, disables the package and checks that the
 process is gone, that the saved "started" note is kept, and that no helper
-outlives Pane. The tests in `crates/pane-core/tests/helpers.rs` and the
-runner's unit tests (a Mach-O header, `kill -0`) run in `cargo xtask ci`
-there. The runner was only compile- and lint-checked for
+outlives Pane. A second phase (screenshot 94, `helper-quit-data`) starts
+the waiting helper, asks Pane to quit with a quit Apple event
+(`NSRunningApplication.terminate`, through Python's ctypes), and checks
+that Pane exits, no helper runs and its heartbeat file stops growing. The
+tests in `crates/pane-core/tests/helpers.rs` (Rust, JavaScript and
+TypeScript samples) and the runner's unit tests (Mach-O headers) run in
+`cargo xtask ci` there, against the `pane-echo` built natively on the
+runner. The runner was only compile- and lint-checked for
 `x86_64-apple-darwin` from Linux; **not run on macOS yet**, so starting,
 ending and reaping a helper natively, and the executable permission of the
-copied file, are unverified there. No macOS x86-64 build was made.
+copied file, are unverified there, and whether GPUI runs Pane's quit
+handler for a quit Apple event is unverified until the smoke runs. No macOS x86-64 build was made.
 
 ## Text input and accessibility findings
 
