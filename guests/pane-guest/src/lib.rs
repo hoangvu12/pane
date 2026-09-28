@@ -24,7 +24,7 @@ wit_bindgen::generate!({
 });
 
 pub use exports::pane::extension::command::{
-    Choice, Field, FieldKind, FieldValue, Form, FormError, Guest, Item, TextField, View,
+    Choice, Field, FieldKind, FieldValue, Form, FormError, Guest, Item, Platform, TextField, View,
 };
 
 #[global_allocator]

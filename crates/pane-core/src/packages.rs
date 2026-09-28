@@ -16,6 +16,7 @@ use std::path::{Component as PathPart, Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::launcher::CommandRegistration;
+use crate::platform::{self, Platform};
 use crate::runtime::CallError;
 
 /// The manifest file at the root of every package.
@@ -125,6 +126,10 @@ pub struct Manifest {
     pub version: Option<String>,
     /// The extension API the package needs, such as `0.1`.
     pub api_version: String,
+    /// The operating systems the package supports; `None` when it does not
+    /// say, which means every system Pane runs on. A package that does not
+    /// support this system is explained instead of installed or loaded.
+    pub platforms: Option<Vec<Platform>>,
     pub commands: Vec<ManifestCommand>,
 }
 
@@ -145,6 +150,8 @@ struct ManifestJson {
     #[serde(default)]
     version: Option<String>,
     api_version: String,
+    #[serde(default)]
+    platforms: Option<Vec<String>>,
     commands: Vec<CommandJson>,
 }
 
@@ -158,8 +165,9 @@ struct CommandJson {
 }
 
 impl Manifest {
-    /// Reads and validates `pane.json` in `folder`, including that every
-    /// component it names is present. Runs no guest code.
+    /// Reads and validates `pane.json` in `folder`, including that the
+    /// package supports this operating system and that every component it
+    /// names is present. Runs no guest code.
     pub fn read(folder: &Path) -> Result<Manifest, PackageError> {
         Manifest::read_text(folder).map(|(manifest, _)| manifest)
     }
@@ -175,6 +183,11 @@ impl Manifest {
             Err(error) => return Err(PackageError::InvalidManifest(error.to_string())),
         };
         let manifest = Manifest::parse(&text)?;
+        if let Some(platforms) = &manifest.platforms
+            && platform::unavailable(Some(platforms), "this package").is_some()
+        {
+            return Err(PackageError::UnsupportedPlatform(platforms.clone()));
+        }
         for command in &manifest.commands {
             let component = folder.join(&command.component);
             if !component.is_file() {
@@ -209,6 +222,21 @@ impl Manifest {
         if json.title.trim().is_empty() {
             return Err(invalid("`title` is empty".into()));
         }
+        let platforms = match json.platforms {
+            None => None,
+            Some(ids) if ids.is_empty() => return Err(invalid("`platforms` is empty".into())),
+            Some(ids) => Some(
+                ids.iter()
+                    .map(|id| {
+                        Platform::from_id(id).ok_or_else(|| {
+                            invalid(format!(
+                                "unknown platform `{id}` in `platforms`; use windows, macos or linux"
+                            ))
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+        };
         if json.commands.is_empty() {
             return Err(invalid("`commands` is empty".into()));
         }
@@ -244,6 +272,7 @@ impl Manifest {
             title: json.title,
             version: json.version,
             api_version: json.api_version,
+            platforms,
             commands,
         })
     }
@@ -285,6 +314,8 @@ pub enum PackageError {
     NewerManifest(u64),
     /// The package needs an extension API this Pane does not provide.
     IncompatibleApi(String),
+    /// The package supports only these operating systems, not this one.
+    UnsupportedPlatform(Vec<Platform>),
     /// A component the manifest names is not in the folder.
     MissingComponent { command: String, component: PathBuf },
     /// A component is present but Pane cannot run it.
@@ -324,6 +355,9 @@ impl fmt::Display for PackageError {
                 f,
                 "Incompatible package: it needs Pane extension API {required}, but this Pane provides {}.{}",
                 EXTENSION_API.0, EXTENSION_API.1
+            ),
+            PackageError::UnsupportedPlatform(platforms) => f.write_str(
+                &platform::unavailable(Some(platforms), "this package").unwrap_or_default(),
             ),
             PackageError::MissingComponent { command, component } => write!(
                 f,

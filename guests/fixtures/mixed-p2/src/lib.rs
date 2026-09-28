@@ -17,6 +17,7 @@ impl Guest for Mixed {
                 title: "x".into(),
                 subtitle: None,
                 form: None,
+                platforms: None,
             }],
         })
     }

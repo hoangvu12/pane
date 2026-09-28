@@ -283,6 +283,32 @@ fn selecting_a_row_directly_ignores_indexes_past_the_list() {
 
     launcher.select(1);
     assert_eq!(launcher.view().selected, Some(1));
-    launcher.select(5);
+    launcher.select(7);
     assert_eq!(launcher.view().selected, Some(1));
+}
+
+#[test]
+fn an_unavailable_form_explains_itself_instead_of_opening() {
+    let launcher = launcher(vec![command("faulty", guest("faulty"))]);
+    // The fixture's "nowhere" item has a form and declares no operating
+    // system at all, so it is unavailable wherever the test runs.
+    open_faulty_item(&launcher, "nowhere");
+    let view = launcher.view();
+    let reason = view.rows[view.selected.unwrap()].unavailable.clone();
+    let reason = reason.expect("the row says why it is unavailable");
+    assert!(
+        reason.ends_with(": this action supports no operating system"),
+        "{reason}"
+    );
+
+    block_on(launcher.activate_selected());
+
+    let view = launcher.view();
+    assert_eq!(
+        (view.screen, view.form, view.status),
+        (Screen::Command, None, Status::Error(reason))
+    );
+    launcher.select(0);
+    block_on(launcher.activate_selected());
+    assert_eq!(launcher.view().status, Status::Result("fine".into()));
 }

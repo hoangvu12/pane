@@ -64,6 +64,10 @@ export const command = {
         { id: "validate", title: "Validate settings", subtitle: "Reject settings with an out-of-range port" },
         { id: "random", title: "Roll a number", subtitle: "A random number from this instance" },
         { id: "form", title: "Greet someone", subtitle: "Fill in a form the guest checks", form: GREETING_FORM },
+        // Elsewhere Pane lists these as unavailable, says why, and never calls
+        // runAction for them.
+        { id: "windows-only", title: "Windows-only action", subtitle: "Declared to work on Windows only", platforms: ["windows"] },
+        { id: "not-windows", title: "macOS and Linux action", subtitle: "Declared to work on macOS and Linux only", platforms: ["macos", "linux"] },
       ],
     };
   },
@@ -86,6 +90,10 @@ export const command = {
       }
       case "random":
         return String(Math.random());
+      case "windows-only":
+        return "Ran the Windows-only action in the JavaScript guest";
+      case "not-windows":
+        return "Ran the macOS and Linux action in the JavaScript guest";
       default:
         throw new Error(`unknown item: ${itemId}`);
     }

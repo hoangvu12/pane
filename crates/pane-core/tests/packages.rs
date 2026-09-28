@@ -694,3 +694,123 @@ fn a_sample_package_source_without_its_built_component_is_explained() {
 
     assert!(error(&launcher).contains("This looks like a source-only package"));
 }
+
+/// The system the test runs on, as `pane.json` names it and as Pane names
+/// it to people, and the two other systems, as `pane.json` names them and
+/// as Pane lists them.
+fn this_and_other_systems() -> (&'static str, &'static str, [&'static str; 2], &'static str) {
+    if cfg!(target_os = "windows") {
+        ("windows", "Windows", ["macos", "linux"], "macOS and Linux")
+    } else if cfg!(target_os = "macos") {
+        ("macos", "macOS", ["windows", "linux"], "Windows and Linux")
+    } else {
+        ("linux", "Linux", ["windows", "macos"], "Windows and macOS")
+    }
+}
+
+/// Writes the Hello package declaring `platforms` (a JSON array).
+fn package_for(folder: &Path, platforms: &str) -> PathBuf {
+    package(folder, "Hello", "1.0.0", "sample_rust");
+    let manifest = manifest("Hello", "1.0.0", "hello.wasm").replace(
+        r#""apiVersion": "0.1","#,
+        &format!(r#""apiVersion": "0.1", "platforms": {platforms},"#),
+    );
+    with_manifest(folder, &manifest);
+    folder.to_path_buf()
+}
+
+#[test]
+fn a_package_only_for_other_systems_is_explained_and_not_installed() {
+    let dirs = Dirs::new();
+    let (_, this, [first, second], others) = this_and_other_systems();
+    let folder = package_for(
+        &dirs.source("elsewhere"),
+        &format!(r#"["{first}", "{second}"]"#),
+    );
+    let launcher = dirs.launcher();
+    let explanation = format!("Not available on {this}: this package supports only {others}");
+
+    block_on(launcher.preview_package(&folder));
+    let view = launcher.view();
+    assert_eq!(view.screen, Screen::Package);
+    assert!(view.rows.is_empty(), "nothing to install");
+    assert_eq!(error(&launcher), explanation);
+
+    block_on(launcher.install_package(&folder));
+    assert_eq!(error(&launcher), explanation);
+    assert!(launcher.packages().is_empty());
+}
+
+#[test]
+fn a_package_for_this_system_shows_its_systems_and_installs() {
+    let dirs = Dirs::new();
+    let (this_id, this, [other_id, _], _) = this_and_other_systems();
+    let folder = package_for(
+        &dirs.source("here"),
+        &format!(r#"["{other_id}", "{this_id}"]"#),
+    );
+    let launcher = dirs.launcher();
+
+    block_on(launcher.preview_package(&folder));
+    let details = launcher.view().details;
+    let line = details
+        .iter()
+        .find(|line| line.starts_with("Supported systems: "))
+        .unwrap_or_else(|| panic!("{details:?}"));
+    assert!(
+        line.ends_with(&format!(" and {this} (this system)")),
+        "{line}"
+    );
+    block_on(launcher.activate_selected());
+
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Installed Hello".into())
+    );
+    assert_eq!(titles(&launcher), ["Say hello", INSTALL_ROW]);
+}
+
+#[test]
+fn an_installed_package_only_for_other_systems_is_listed_with_its_reason() {
+    let dirs = Dirs::new();
+    let (this_id, this, [other_id, _], _) = this_and_other_systems();
+    let folder = package_for(&dirs.source("hello"), &format!(r#"["{this_id}"]"#));
+    let launcher = dirs.launcher();
+    block_on(launcher.install_package(&folder));
+    // As if the data folder had been copied from another system.
+    let copy = launcher.packages()[0].location.join("pane.json");
+    let text = fs::read_to_string(&copy).unwrap();
+    fs::write(&copy, text.replace(this_id, other_id)).unwrap();
+
+    let restarted = dirs.launcher();
+
+    assert_eq!(titles(&restarted), ["hello", INSTALL_ROW]);
+    block_on(restarted.activate_selected());
+    let message = error(&restarted);
+    assert!(message.starts_with("hello cannot load from"), "{message}");
+    assert!(
+        message.contains(&format!(
+            "Not available on {this}: this package supports only"
+        )),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_platform_list_pane_does_not_know_is_an_invalid_manifest() {
+    for (platforms, explanation) in [
+        (r#"["windows", "beos"]"#, "unknown platform `beos`"),
+        ("[]", "`platforms` is empty"),
+        (r#""linux""#, "invalid type"),
+    ] {
+        let dirs = Dirs::new();
+        let folder = package_for(&dirs.source("hello"), platforms);
+        let launcher = dirs.launcher();
+
+        block_on(launcher.preview_package(&folder));
+
+        let message = error(&launcher);
+        assert!(message.starts_with("Invalid pane.json: "), "{message}");
+        assert!(message.contains(explanation), "{platforms}: {message}");
+    }
+}

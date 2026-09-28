@@ -9,6 +9,8 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use tokio::sync::{mpsc, oneshot};
+
+use crate::platform::Platform;
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime::{Cache, CacheConfig, Config, Engine, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
@@ -35,6 +37,9 @@ pub struct Item {
     /// When set, activating the item opens this form instead of running its
     /// action.
     pub form: Option<Form>,
+    /// The operating systems the item's action works on; `None` for every
+    /// system.
+    pub platforms: Option<Vec<Platform>>,
 }
 
 /// A form an item opens, as produced by the guest.
@@ -485,6 +490,16 @@ impl From<command::Item> for Item {
             title: item.title,
             subtitle: item.subtitle,
             form: item.form.map(Form::from),
+            platforms: item.platforms.map(|platforms| {
+                platforms
+                    .into_iter()
+                    .map(|platform| match platform {
+                        command::Platform::Windows => Platform::Windows,
+                        command::Platform::Macos => Platform::Macos,
+                        command::Platform::Linux => Platform::Linux,
+                    })
+                    .collect()
+            }),
         }
     }
 }

@@ -42,7 +42,7 @@ impl Guest for Hello {
     async fn get_view() -> Result<View, String> {
         Ok(View {
             title: "Hello".into(),
-            items: vec![Item { id: "hi".into(), title: "Say hi".into(), subtitle: None, form: None }],
+            items: vec![Item { id: "hi".into(), title: "Say hi".into(), subtitle: None, form: None, platforms: None }],
         })
     }
 
@@ -207,7 +207,7 @@ let form = Form {
     ],
     submit_label: "Greet".into(),
 };
-let item = Item { id: "form".into(), title: "Greet someone".into(), subtitle: None, form: Some(form) };
+let item = Item { id: "form".into(), title: "Greet someone".into(), subtitle: None, form: Some(form), platforms: None };
 
 // In `impl Guest`:
 async fn submit_form(item_id: String, values: Vec<FieldValue>) -> Result<String, FormError> {
@@ -247,6 +247,29 @@ Throwing an `Error` from `submitForm` is treated as a crash, not as a
 validation message. The samples validate with Zod and turn its first issue
 into a `FormError`.
 
+## Actions for some operating systems only
+
+An item can list the operating systems its action (or form) works on. On any
+other system Pane still lists it, shows why it is unavailable ("Not available
+on Linux: this action supports only Windows") and never calls the command for
+it, so the rest of the command keeps working:
+
+```rust
+Item {
+    platforms: Some(vec![Platform::Windows]), // pane_guest::Platform
+    ..item("windows-only", "Windows-only action", "Declared to work on Windows only")
+}
+```
+
+```js
+{ id: "windows-only", title: "Windows-only action", platforms: ["windows"] }
+```
+
+`platforms` is `None` / omitted for every system. The command cannot tell
+which system it runs on; Pane applies the declaration. The samples' last two
+items are the runnable example, and
+[platform availability](../docs/platform-availability.md) has the details.
+
 ## Packaging and installing a local extension
 
 A package is a folder with a `pane.json` manifest at its root and the built
@@ -278,6 +301,11 @@ and TypeScript: Pane sees only components.
   built against, `MAJOR.MINOR` (this Pane provides `0.1`, from
   [`wit/extension.wit`](../wit/extension.wit)). Before 1.0 the minor version
   must match; from 1.0, any minor version up to Pane's in the same major.
+- `platforms` (optional): the operating systems the package supports, from
+  `windows`, `macos` and `linux`; omitted means all of them. On a system it
+  does not list, Pane explains the package ("Not available on Linux: this
+  package supports only Windows") instead of installing it. See
+  [platform availability](../docs/platform-availability.md).
 - `commands` (required, at least one): `id` unique in the package, `title`,
   optional `subtitle`, and `component`, a relative path inside the package
   folder (no `..`, no absolute path) to a built component.
@@ -339,9 +367,6 @@ pick up a rebuilt component, choose the folder again and Update.
 
 Known limits of local packages so far:
 
-- The manifest cannot yet declare the operating systems a package supports
-  (Q34's supported-OS metadata); that is deferred to a later ticket, so a
-  package is offered on every OS.
 - An update is not coordinated with a command that is running or open: the
   replaced copy's code is dropped, so an open command of the package loses
   its state and may fail until you open it again from root search. Staged

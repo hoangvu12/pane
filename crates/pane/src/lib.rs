@@ -296,12 +296,35 @@ impl LauncherWindow {
                 row.aria_active_descendant().bg(rgb(0x364355))
             })
             .hover(|row| row.bg(rgb(0x2e3a48)))
-            .child(div().child(row.title))
-            .when_some(row.subtitle, |element, subtitle| {
-                element
-                    .aria_description(subtitle.clone())
-                    .child(div().text_sm().text_color(rgb(0xaab4c0)).child(subtitle))
+            .child(
+                div()
+                    .when(row.unavailable.is_some(), |title| {
+                        title.text_color(rgb(0x8a96a3))
+                    })
+                    .child(row.title),
+            )
+            .when_some(row.subtitle.clone(), |element, subtitle| {
+                element.child(div().text_sm().text_color(rgb(0xaab4c0)).child(subtitle))
             })
+            // An unavailable row stays listed and selectable; it says why it
+            // cannot run here, on screen and to assistive technology.
+            .when_some(row.unavailable.clone(), |element, reason| {
+                element.aria_disabled(true).child(
+                    div()
+                        .id(("unavailable", index))
+                        .debug_selector(|| "unavailable-reason".into())
+                        .text_sm()
+                        .text_color(rgb(0xd6a36a))
+                        .child(reason),
+                )
+            })
+            .when_some(
+                match (row.subtitle, row.unavailable) {
+                    (Some(subtitle), Some(reason)) => Some(format!("{subtitle}. {reason}")),
+                    (subtitle, reason) => subtitle.or(reason),
+                },
+                |element, description| element.aria_description(description),
+            )
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.launcher.select(index);
                 this.activate_selected(window, cx);
