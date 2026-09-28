@@ -1,10 +1,12 @@
 //! Pane's core: the launcher model, extension packages and the extension
 //! runtime the launcher drives.
 
+mod atomic;
 mod launcher;
 mod packages;
 mod platform;
 mod runtime;
+mod settings;
 
 pub use launcher::{
     CommandRegistration, FormField, FormView, Launcher, LauncherView, Row, Screen, Status,

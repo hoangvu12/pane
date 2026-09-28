@@ -107,6 +107,33 @@ the selected row visible:
 The macOS and Windows smokes run the same steps with their own expected
 results; they have not run there yet.
 
+### Disabling a package and keeping its settings (#10)
+
+The smoke then installs `target/guests/packages/sample-settings`, opens its
+Greeting command and chooses "Use a formal greeting" (the guest saves it with
+`pane:extension/settings`), and disables Settings sample in **Manage
+extensions…**. It checks that `installed.json` records `"disabled": true` and
+`settings.json` holds the saved style, restarts Pane, enables the package
+again, and runs "Greet me", which answers in the saved style and is an error
+when no style is saved. Run locally on 2026-09-28 (Ubuntu 26.04.1 LTS, kernel
+7.0.0-31-generic, x86_64, same Xvfb/lavapipe setup), all checks passed:
+
+| Step | Evidence |
+| --- | --- |
+| The guest saves the choice: "Saved the formal greeting" | [16-setting-saved.png](evidence/linux-x11/16-setting-saved.png) |
+| Manage extensions: Settings sample "Disabled", status "Disabled Settings sample" | `17-disabled.png` (not committed: it shows the local checkout path) |
+| After a restart root search no longer lists Greeting | [18-restarted-disabled.png](evidence/linux-x11/18-restarted-disabled.png) |
+| Enabled again: "Enabled Settings sample" | `19-enabled.png` (not committed: it shows the local checkout path) |
+| Greeting is back, titled "Greeting: formal", and "Greet me" answers "Good day to you" | [20-greeted.png](evidence/linux-x11/20-greeted.png) |
+
+The smoke asserts Greeting's absence after the restart by comparing the
+root screenshot with the one taken before the settings sample was installed
+(`check_screenshot.py --same`, pixel for pixel): Greeting would take the fifth
+visible row. The launcher tests (`crates/pane-core/tests/disable.rs`) assert it
+row by row, for the Rust, JavaScript and TypeScript settings samples.
+The macOS and Windows smokes run the same phase (screenshots 16 to 20); they
+have not been run for this change.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms have a text field (GPUI CE's

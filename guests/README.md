@@ -12,9 +12,15 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   JavaScript and TypeScript. All three show the same items, the same form, and
   give the same answers and errors; the contract tests in `crates/pane-core/tests/samples.rs`
   and `crates/pane/tests/window.rs` hold each of them to that.
+- `sample-settings`, `sample-settings-js`, `sample-settings-ts`: the same
+  command in Rust, JavaScript and TypeScript, which keeps a chosen greeting
+  style in Pane's settings ([Keeping settings](#keeping-settings)); the
+  fixtures for disabling and re-enabling a package, held alike by
+  `crates/pane-core/tests/disable.rs`.
 - `js`: `@pane/extension`, TypeScript declarations for the contract
   (`pane.d.ts`) and the WIT world JS/TS commands are built against.
-- `prebuilt`: the JS and TS sample components, committed so that tests and
+- `prebuilt`: the JS and TS sample components (both samples in each
+  language), committed so that tests and
   `cargo run -p pane` need no JavaScript toolchain, with `manifest.json`
   recording their hashes and build inputs.
 - `packages`: the samples' package manifests (`pane.json`). `cargo xtask
@@ -82,6 +88,55 @@ own command, make it a package and install it; see
 
 Toolchain used: Rust 1.98.1, `wit-bindgen` 0.62.0, `wasip3` 0.9.0+wasi-0.3.0;
 host Wasmtime and wasmtime-wasi 49.0.1.
+
+### Keeping settings
+
+A command of an installed package can keep string values between runs with
+the `pane:extension/settings` interface in
+[`wit/settings.wit`](../wit/settings.wit). The settings sample, in
+[Rust](sample-settings/src/lib.rs), [JavaScript](sample-settings-js/src/index.js)
+and [TypeScript](sample-settings-ts/src/index.ts), saves the greeting style
+the user picks. In Rust it is `pane_guest::settings`:
+
+```rust
+use pane_guest::settings;
+
+settings::set("greeting-style", "formal")?;          // Result<(), String>
+let style: Option<String> = settings::get("greeting-style")?;
+```
+
+In JavaScript and TypeScript it is a module (typed in
+[`js/settings.d.ts`](js/settings.d.ts)); an error is thrown as an `Error`
+whose message is the reason, so rethrowing it shows the reason to the user:
+
+```ts
+import { get, set } from "pane:extension/settings@0.1.0";
+
+set("greeting-style", "formal");
+const style: string | null = get("greeting-style");
+```
+
+- Values belong to the installed package's source identity, not its title
+  or managed copy: two installed copies of the same package have separate
+  settings, and an update keeps them.
+- They are kept while the package is disabled and while Pane is not running,
+  and the command sees them again when the package is enabled. While it is
+  disabled nothing of the package runs, and once it is disabled a call still
+  finishing from before cannot save: `set` fails instead of writing.
+- Pane keeps them in `extensions/settings.json` in its data folder. If that
+  file cannot be read, `get` and `set` return the reason and Pane does not
+  overwrite the file. Each `set` replaces the file whole (a crash leaves the
+  old or the new file), but it is not locked: two Pane processes using the
+  same data folder can lose each other's last write. Keeping to one running
+  Pane is a later concern.
+- A command built into Pane rather than installed from a package has no
+  settings: `get` and `set` return an error.
+- A component that does not import `settings` is unaffected; it is built for
+  the `extension` world as before. `extension-with-settings` adds the import
+  within extension API 0.1, so a component that uses settings needs a Pane
+  with this change. JavaScript and TypeScript commands are built against a
+  world that includes it, so the prebuilt JS/TS components list the import
+  whether or not they use it.
 
 ## Writing a JavaScript or TypeScript command
 
@@ -372,9 +427,24 @@ What installing does:
 - **Listing.** Installed commands are listed from the manifests alone; no
   guest runs until you open a command. A damaged installed copy stays listed
   with its problem.
+- **Disabling.** **Manage extensions…**, the last row of root search once a
+  package is installed, lists every installed package with whether it is
+  enabled and its source, so copies with the same title can be told apart.
+  Enter disables or enables the selected one; only that installation
+  changes. A disabled package's commands leave root search (they are not
+  shown greyed out), an open command of it closes, its running instances are
+  dropped and it can no longer save settings, so none of its code runs. This
+  happens as soon as you press Enter, before the choice is written; if it
+  cannot be written, the package is enabled again with the reason. Pressing
+  Enter again while the choice is being written does nothing. The choice is
+  recorded in
+  `installed.json` (`"disabled": true`) and holds after restarting Pane and
+  after an Update. Its settings are kept, and enabling it brings its
+  commands back with them. The package stays installed at the same identity;
+  choosing its folder again shows it as disabled.
 
-Disabling, uninstalling and rebuilding on save are not implemented yet; to
-pick up a rebuilt component, choose the folder again and Update.
+Uninstalling and rebuilding on save are not implemented yet; to pick up a
+rebuilt component, choose the folder again and Update.
 
 Known limits of local packages so far:
 
@@ -382,3 +452,9 @@ Known limits of local packages so far:
   replaced copy's code is dropped, so an open command of the package loses
   its state and may fail until you open it again from root search. Staged
   activation that waits for running commands comes with reload (#11, #14).
+- Disabling does not cancel a call already running in the package: it
+  finishes (its answer is not shown, and it cannot save settings), then its
+  instance is dropped; a call that had not started is refused. Cancelling async work,
+  background services, timers and hotkeys are not part of the extension API
+  yet and come with their own tickets. Disabling does not yet consider
+  packages that depend on the disabled one (#43).

@@ -5,8 +5,8 @@
 //! names. Installing copies exactly those files into Pane's managed location,
 //! so the user's folder is never written and the installed copy keeps working
 //! if the folder changes or disappears. Installed packages are recorded in
-//! `installed.json`; reading them back needs only the manifests, never the
-//! guests.
+//! `installed.json`, with whether the user disabled each; reading them back
+//! needs only the manifests, never the guests.
 
 use std::fmt;
 use std::fs;
@@ -15,6 +15,7 @@ use std::path::{Component as PathPart, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::atomic::write_atomically;
 use crate::launcher::CommandRegistration;
 use crate::platform::{self, Platform};
 use crate::runtime::CallError;
@@ -460,14 +461,18 @@ pub struct InstalledPackage {
     pub manifest: Result<Manifest, PackageError>,
     /// Where Pane keeps this package's files.
     pub location: PathBuf,
+    /// Whether the user has left the package enabled. A disabled package
+    /// contributes no commands and runs nothing, but keeps its settings.
+    pub enabled: bool,
 }
 
 impl InstalledPackage {
-    fn load(identity: PackageIdentity, location: PathBuf) -> InstalledPackage {
+    fn load(identity: PackageIdentity, location: PathBuf, enabled: bool) -> InstalledPackage {
         InstalledPackage {
             manifest: Manifest::read_installed(&location),
             identity,
             location,
+            enabled,
         }
     }
 
@@ -538,12 +543,17 @@ struct RecordJson {
     local: String,
     /// The managed folder under `packages/`.
     dir: String,
+    /// Set when the user disabled the package; absent means enabled.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    disabled: bool,
 }
 
 /// Pane's managed location for installed packages:
 ///
 /// ```text
-/// <dir>/installed.json      identities and their managed folders
+/// <dir>/installed.json      identities, their managed folders and whether
+///                           each is disabled
+/// <dir>/settings.json       each identity's extension settings
 /// <dir>/packages/<n>/       one managed copy: pane.json and its components
 /// ```
 pub(crate) struct Store {
@@ -599,6 +609,7 @@ impl Store {
                 InstalledPackage::load(
                     PackageIdentity(Source::Local(record.local.clone())),
                     self.dir.join(PACKAGES_DIR).join(&record.dir),
+                    !record.disabled,
                 )
             })
             .collect()
@@ -636,6 +647,29 @@ impl Store {
         self.write_copy(package, Some(old))
     }
 
+    /// Records whether the installed package with `identity` is enabled.
+    /// Its managed copy and settings are left as they are.
+    pub fn set_enabled(
+        &mut self,
+        identity: &PackageIdentity,
+        enabled: bool,
+    ) -> Result<(), PackageError> {
+        let registry = self
+            .registry
+            .as_mut()
+            .map_err(|reason| PackageError::Storage(reason.clone()))?;
+        let PackageIdentity(Source::Local(local)) = identity;
+        let mut updated = registry.clone();
+        let Some(record) = updated.packages.iter_mut().find(|r| &r.local == local) else {
+            return Err(PackageError::NotInstalled(identity.clone()));
+        };
+        record.disabled = !enabled;
+        write_registry(&self.dir, &updated)
+            .map_err(|error| PackageError::Storage(error.to_string()))?;
+        *registry = updated;
+        Ok(())
+    }
+
     /// Copies the package into a fresh managed folder, then records it,
     /// replacing `old`'s folder if given. A failure leaves the previous state.
     fn write_copy(
@@ -670,13 +704,21 @@ impl Store {
             next: number + 1,
             ..registry.clone()
         };
-        match updated.packages.iter_mut().find(|r| &r.local == local) {
-            Some(record) => record.dir = dir,
-            None => updated.packages.push(RecordJson {
-                local: local.clone(),
-                dir,
-            }),
-        }
+        // An update keeps the record, so a disabled package stays disabled.
+        let enabled = match updated.packages.iter_mut().find(|r| &r.local == local) {
+            Some(record) => {
+                record.dir = dir;
+                !record.disabled
+            }
+            None => {
+                updated.packages.push(RecordJson {
+                    local: local.clone(),
+                    dir,
+                    disabled: false,
+                });
+                true
+            }
+        };
         if let Err(error) = write_registry(&self.dir, &updated) {
             let _ = fs::remove_dir_all(&location);
             return Err(storage(error));
@@ -686,7 +728,11 @@ impl Store {
             // Best effort: a folder still in use (Windows) is left behind.
             let _ = fs::remove_dir_all(self.dir.join(PACKAGES_DIR).join(old));
         }
-        Ok(InstalledPackage::load(package.identity.clone(), location))
+        Ok(InstalledPackage::load(
+            package.identity.clone(),
+            location,
+            enabled,
+        ))
     }
 }
 
@@ -705,12 +751,9 @@ fn copy_package(package: &SourcePackage, location: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Writes the registry through a temporary file, so a crash leaves either
-/// the old or the new registry.
+/// Replaces the registry whole (see [`write_atomically`] for what a crash or
+/// a second Pane process can do to it).
 fn write_registry(dir: &Path, registry: &RegistryJson) -> io::Result<()> {
-    fs::create_dir_all(dir)?;
     let text = serde_json::to_string_pretty(registry).map_err(io::Error::other)?;
-    let temporary = dir.join(format!("{REGISTRY_FILE}.tmp"));
-    fs::write(&temporary, text)?;
-    fs::rename(&temporary, dir.join(REGISTRY_FILE))
+    write_atomically(&dir.join(REGISTRY_FILE), text.as_bytes())
 }

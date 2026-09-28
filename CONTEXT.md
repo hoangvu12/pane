@@ -24,6 +24,10 @@ _Avoid_: Mandatory feature, core feature
 An installed extension whose execution and contributed functionality are switched off, while its settings and unexpired saved data are retained.
 _Avoid_: Uninstalled extension
 
+**Extension settings**:
+Values an installed package's commands save through Pane, owned by its package identity and kept while it is disabled, updated or Pane is stopped.
+_Avoid_: Preferences, cache
+
 **Root search**:
 The launcher's main search and result view before a specific command is opened.
 _Avoid_: Every integration's internal search
