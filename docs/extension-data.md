@@ -282,7 +282,7 @@ The record is dropped only once every kind is deleted:
   package (its record kept); an installed package refused.
   `crates/pane/tests/install.rs`: the row, confirmation, Esc and outcome in
   the native window, with Enter on the selected Cancel keeping the data. The
-  native GUI smokes, screenshots 59 to 61: the
+  native GUI smokes, screenshots 63 to 65: the
   confirmation, the outcome, and after reinstalling the same folder nothing
   shown, with the files checked in between.
 - `crates/pane-core/tests/clear_cache.rs`, for each language's settings sample:

@@ -17,18 +17,42 @@ rm -rf "$out/data"
 export PANE_DATA_DIR=$out/data
 { grep PRETTY_NAME /etc/os-release; uname -srm; } >"$out/system.txt"   # the tested OS and architecture
 
-display=:$((90 + RANDOM % 100))
-"$xvfb" "$display" -screen 0 1280x800x24 -nolisten tcp 2>"$out/xvfb.log" &
-xvfb_pid=$!
+# Starts Xvfb on a display no other server uses, and uses it only once it
+# is up: its socket appeared after it started and it is still running. A
+# display another server has (the developer's own session, a parallel
+# smoke) is never used: Xvfb exits there, and another number is tried.
+xvfb_pid=
 pane_pid=
 cleanup() {
   [ -n "$pane_pid" ] && kill "$pane_pid" 2>/dev/null || true
-  kill "$xvfb_pid" 2>/dev/null || true
+  [ -n "$xvfb_pid" ] && kill "$xvfb_pid" 2>/dev/null || true
 }
 trap cleanup EXIT
+display=
+for _ in $(seq 10); do
+  number=$((90 + RANDOM % 100))
+  socket=/tmp/.X11-unix/X$number
+  [ -e "$socket" ] || [ -e "/tmp/.X$number-lock" ] && continue
+  "$xvfb" ":$number" -screen 0 1280x800x24 -nolisten tcp 2>"$out/xvfb.log" &
+  xvfb_pid=$!
+  for _ in $(seq 50); do
+    kill -0 "$xvfb_pid" 2>/dev/null || break
+    [ -S "$socket" ] && break
+    sleep 0.1
+  done
+  if kill -0 "$xvfb_pid" 2>/dev/null && [ -S "$socket" ]; then
+    display=:$number
+    break
+  fi
+  kill "$xvfb_pid" 2>/dev/null || true
+  xvfb_pid=
+done
+[ -n "$display" ] || { echo "Xvfb did not start (see $out/xvfb.log)"; exit 1; }
 export DISPLAY=$display
 unset WAYLAND_DISPLAY
-sleep 1
+if command -v xdpyinfo >/dev/null; then
+  xdpyinfo >/dev/null || { echo "Xvfb on $display does not answer"; exit 1; }
+fi
 
 capture() {
   if command -v import >/dev/null; then
@@ -587,6 +611,41 @@ capture 58-disabled-pressed.png   # still root search: nothing opened
 python3 "$(dirname "$0")/check_screenshot.py" --same "$out"/{57-disabled,58-disabled-pressed}.png
 stop_pane
 
+# Pausing a broken extension: the settings sample's last item, Crash, crashes
+# on purpose; the third crash within five minutes pauses the package and
+# returns to root search, where Greeting stays listed with why it does not
+# run. The pause holds after a restart. In Manage extensions, the package's
+# "Why ... is paused" row (after its Reload and Retry rows) shows the
+# details, whose only row, Retry, starts it again. A data folder of its own
+# keeps the rows in a known order.
+export PANE_DATA_DIR=$out/pausing-data
+rm -rf "$PANE_DATA_DIR"
+start_pane --install target/guests/packages/sample-settings
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 2   # Install; Greeting is selected
+"$xdotool" key Return; sleep 2   # open Greeting
+for ((i = 0; i < 7; i++)); do "$xdotool" key Down; done   # Crash
+for ((i = 0; i < 3; i++)); do "$xdotool" key Return; sleep 2; done
+capture 59-paused.png
+check 59-paused.png f08c8c   # "Settings sample crashed 3 times within 5 minutes and is paused ..."
+check 59-paused.png d6a36a   # Greeting: "Settings sample is paused after an error; ..."
+stop_pane
+grep -q '"paused"' "$PANE_DATA_DIR/extensions/installed.json" || { echo "pause not recorded"; exit 1; }
+start_pane
+capture 60-paused-after-restart.png
+check 60-paused-after-restart.png d6a36a   # Greeting is still paused
+for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+"$xdotool" key Return; sleep 1
+"$xdotool" key Down Down Down Return; sleep 1   # "Why Settings sample is paused"
+capture 61-pause-details.png
+check 61-pause-details.png aab4c0   # the details
+"$xdotool" key Return; sleep 2   # Retry Settings sample
+capture 62-pause-retried.png
+check 62-pause-retried.png 9fd8a8   # "Started Settings sample"
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{61-pause-details,62-pause-retried}.png
+stop_pane
+if grep -q '"paused"' "$PANE_DATA_DIR/extensions/installed.json"; then echo "pause not cleared"; exit 1; fi
+
 # Delete retained data: with a data folder of its own, the settings sample
 # saves a note and is uninstalled keeping it (its Uninstall row follows its
 # state, Reload and Clear cache rows); its retained data, the extension list's
@@ -621,12 +680,12 @@ for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions�
 wait_for "$registry" '"retained"' present; sleep 1
 for ((i = 0; i < 40; i++)); do "$xdotool" key Down; done
 "$xdotool" key Return; sleep 1   # "Delete retained data of Settings sample"
-capture 59-confirm-delete-retained.png
-check 59-confirm-delete-retained.png aab4c0   # what is kept and what is not touched
+capture 63-confirm-delete-retained.png
+check 63-confirm-delete-retained.png aab4c0   # what is kept and what is not touched
 "$xdotool" key Down Return   # "Delete retained data"
 wait_for "$registry" '"retained"' absent; sleep 1
-capture 60-retained-deleted.png
-check 60-retained-deleted.png 9fd8a8   # "Deleted the retained data of Settings sample"
+capture 64-retained-deleted.png
+check 64-retained-deleted.png 9fd8a8   # "Deleted the retained data of Settings sample"
 stop_pane
 if grep -q 'Water the plants' "$PANE_DATA_DIR/extensions/content.json"; then echo "note not deleted"; exit 1; fi
 start_pane --install target/guests/packages/sample-settings
@@ -636,9 +695,9 @@ wait_for "$registry" sample-settings present; sleep 1
 "$xdotool" key Return; sleep 3   # open Greeting
 for ((i = 0; i < 5; i++)); do "$xdotool" key Down; done
 "$xdotool" key Return; sleep 2   # "Show what Pane keeps"
-capture 61-reinstalled-empty.png
-check 61-reinstalled-empty.png 9fd8a8   # "Style: none · Note: none · Signed in: no ..."
-python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/51-reinstalled.png" "$out/61-reinstalled-empty.png"
+capture 65-reinstalled-empty.png
+check 65-reinstalled-empty.png 9fd8a8   # "Style: none · Note: none · Signed in: no ..."
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/51-reinstalled.png" "$out/65-reinstalled-empty.png"
 "$xdotool" key Escape; sleep 1
 stop_pane
 echo "screenshots in $out"

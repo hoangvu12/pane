@@ -136,6 +136,29 @@ impl MacHotkeys {
     }
 }
 
+impl Drop for MacHotkeys {
+    /// Releases its hot keys and stops reporting presses. (The crate's
+    /// manager removes Carbon's handler when it is dropped after this.)
+    fn drop(&mut self) {
+        let registered: Vec<Shortcut> = self
+            .routing
+            .registered
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .values()
+            .cloned()
+            .collect();
+        for shortcut in registered {
+            self.unregister(&shortcut);
+        }
+        *self
+            .routing
+            .presses
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = None;
+    }
+}
+
 impl Hotkeys for MacHotkeys {
     fn unavailable(&self) -> Option<String> {
         None

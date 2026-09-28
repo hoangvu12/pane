@@ -286,7 +286,10 @@ impl fmt::Display for HotkeyError {
 /// [`PressSender`] the adapter was made with.
 ///
 /// The launcher calls it on the window's thread (macOS registers hotkeys
-/// with the main run loop).
+/// with the main run loop). Pane keeps one adapter for the whole process;
+/// dropping a system adapter releases every shortcut it registered and
+/// stops its thread (Windows, X11), so tests and a replaced adapter leave no
+/// registration behind.
 pub trait Hotkeys: Send + Sync + 'static {
     /// Why global hotkeys cannot be used here at all, such as on Wayland;
     /// `None` when they can.

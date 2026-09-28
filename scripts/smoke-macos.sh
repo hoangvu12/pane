@@ -555,6 +555,40 @@ capture 58-disabled-pressed.png   # still root search: nothing opened
 python3 "$(dirname "$0")/check_screenshot.py" --same "$out"/{57-disabled,58-disabled-pressed}.png
 stop_pane
 
+# Pausing a broken extension: the settings sample's last item, Crash, crashes
+# on purpose; the third crash within five minutes pauses the package and
+# returns to root search, where Greeting stays listed with why it does not
+# run. The pause holds after a restart. In Manage extensions, the package's
+# "Why ... is paused" row (after its Reload and Retry rows) shows the
+# details, whose only row, Retry, starts it again. A data folder of its own
+# keeps the rows in a known order.
+export PANE_DATA_DIR=$out/pausing-data
+rm -rf "$PANE_DATA_DIR"
+start_pane --install target/guests/packages/sample-settings
+key 36; sleep 2   # Install; Greeting is selected
+key 36; sleep 2   # open Greeting
+for ((i = 0; i < 7; i++)); do key 125; done   # Crash
+for ((i = 0; i < 3; i++)); do key 36; sleep 2; done
+capture 59-paused.png
+check 59-paused.png f08c8c   # "Settings sample crashed 3 times within 5 minutes and is paused ..."
+check 59-paused.png d6a36a   # Greeting: "Settings sample is paused after an error; ..."
+stop_pane
+grep -q '"paused"' "$PANE_DATA_DIR/extensions/installed.json" || { echo "pause not recorded"; exit 1; }
+start_pane
+capture 60-paused-after-restart.png
+check 60-paused-after-restart.png d6a36a   # Greeting is still paused
+for ((i = 0; i < 10; i++)); do key 125; done   # Manage extensions…
+key 36; sleep 1
+key 125; key 125; key 125; key 36; sleep 1   # "Why Settings sample is paused"
+capture 61-pause-details.png
+check 61-pause-details.png aab4c0   # the details
+key 36; sleep 2   # Retry Settings sample
+capture 62-pause-retried.png
+check 62-pause-retried.png 9fd8a8   # "Started Settings sample"
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{61-pause-details,62-pause-retried}.png
+stop_pane
+if grep -q '"paused"' "$PANE_DATA_DIR/extensions/installed.json"; then echo "pause not cleared"; exit 1; fi
+
 # Delete retained data: with a data folder of its own, the settings sample
 # saves a note and is uninstalled keeping it (its Uninstall row follows its
 # state, Reload and Clear cache rows); its retained data, the extension list's
@@ -589,12 +623,12 @@ key 36   # "Uninstall and keep saved data"
 wait_for "$registry" '"retained"' present; sleep 1
 for ((i = 0; i < 40; i++)); do key 125; done
 key 36; sleep 1   # "Delete retained data of Settings sample"
-capture 59-confirm-delete-retained.png
-check 59-confirm-delete-retained.png aab4c0   # what is kept and what is not touched
+capture 63-confirm-delete-retained.png
+check 63-confirm-delete-retained.png aab4c0   # what is kept and what is not touched
 key 125; key 36   # "Delete retained data"
 wait_for "$registry" '"retained"' absent; sleep 1
-capture 60-retained-deleted.png
-check 60-retained-deleted.png 9fd8a8   # "Deleted the retained data of Settings sample"
+capture 64-retained-deleted.png
+check 64-retained-deleted.png 9fd8a8   # "Deleted the retained data of Settings sample"
 stop_pane
 if grep -q 'Water the plants' "$PANE_DATA_DIR/extensions/content.json"; then echo "note not deleted"; exit 1; fi
 start_pane --install target/guests/packages/sample-settings
@@ -603,9 +637,9 @@ wait_for "$registry" sample-settings present; sleep 1
 key 36; sleep 3   # open Greeting
 for ((i = 0; i < 5; i++)); do key 125; done
 key 36; sleep 2   # "Show what Pane keeps"
-capture 61-reinstalled-empty.png
-check 61-reinstalled-empty.png 9fd8a8   # "Style: none · Note: none · Signed in: no ..."
-python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/51-reinstalled.png" "$out/61-reinstalled-empty.png"
+capture 65-reinstalled-empty.png
+check 65-reinstalled-empty.png 9fd8a8   # "Style: none · Note: none · Signed in: no ..."
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/51-reinstalled.png" "$out/65-reinstalled-empty.png"
 key 53; sleep 1
 stop_pane
 echo "screenshots in $out"

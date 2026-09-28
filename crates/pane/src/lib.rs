@@ -270,16 +270,19 @@ impl LauncherWindow {
 
     /// Opens the command whose global hotkey `shortcut` is, as the system
     /// reported it pressed while any application had focus: the window
-    /// comes to the front and shows the command.
+    /// comes to the front and shows the command. A press that opens nothing
+    /// (a hotkey released meanwhile) leaves the window where it is.
     pub fn hotkey_pressed(
         &mut self,
         shortcut: &Shortcut,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Some(pending) = self.launcher.press_hotkey(shortcut) else {
+            return;
+        };
         window.activate_window();
         cx.activate(true);
-        let pending = self.launcher.press_hotkey(shortcut);
         self.show_until_done(pending, window, cx);
     }
 
@@ -441,18 +444,21 @@ impl LauncherWindow {
             })
             // An unavailable row stays listed and selectable; it says why it
             // cannot run here, on screen and to assistive technology.
-            .when_some(row.unavailable.clone(), |element, reason| {
-                element.aria_disabled(true).child(
-                    div()
-                        .id(("unavailable", index))
-                        .debug_selector(|| reason_selector)
-                        .text_sm()
-                        .text_color(rgb(0xd6a36a))
-                        .child(reason),
-                )
-            })
             .when_some(
-                match (row.subtitle, row.unavailable) {
+                row.unavailable.as_ref().map(|u| u.reason().to_owned()),
+                |element, reason| {
+                    element.aria_disabled(true).child(
+                        div()
+                            .id(("unavailable", index))
+                            .debug_selector(|| reason_selector)
+                            .text_sm()
+                            .text_color(rgb(0xd6a36a))
+                            .child(reason),
+                    )
+                },
+            )
+            .when_some(
+                match (row.subtitle, row.unavailable.map(|u| u.reason().to_owned())) {
                     (Some(subtitle), Some(reason)) => Some(format!("{subtitle}. {reason}")),
                     (subtitle, reason) => subtitle.or(reason),
                 },
@@ -487,6 +493,7 @@ impl Render for LauncherWindow {
             Screen::CustomView(_) => ("", "Keys and pointer go to the view · Esc back"),
             Screen::Confirm { .. } => ("", "↑↓ select · Enter choose · Esc cancel"),
             Screen::Hotkey { .. } => ("", "Press the new hotkey · Enter choose · Esc back"),
+            Screen::PauseDetails { .. } => ("", "Enter retry · Esc back"),
         };
         let details: Vec<_> = view
             .details()

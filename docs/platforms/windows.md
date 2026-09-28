@@ -136,7 +136,7 @@ transition (foreground rules) are unverified natively.
 
 ## Deleting retained data (#41)
 
-The smoke's last phase (screenshots 59 to 61, [deleting retained
+The smoke's last phase (screenshots 63 to 65, [deleting retained
 data](../extension-data.md#deleting-retained-data)), with a data folder of
 its own, saves a note with the settings sample, uninstalls it keeping its
 saved data, deletes its retained data from the extension list's last row

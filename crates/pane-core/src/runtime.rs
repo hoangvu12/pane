@@ -17,6 +17,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::{mpsc, oneshot};
+
+use crate::packages::paused_reason;
 use wasmtime::component::{Component, Linker, ResourceAny, ResourceTable};
 use wasmtime::{Cache, CacheConfig, Config, Engine, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
@@ -360,6 +362,11 @@ pub enum CallError {
     /// The command's package was uninstalled while the call was pending, so
     /// the call was stopped and its answer discarded.
     Uninstalled,
+    /// Pane paused the command's package after it failed (it could not
+    /// start, or crashed too often), so none of its code runs
+    /// until the user retries it. A call pending when it was paused is
+    /// stopped with this.
+    Paused,
     /// The custom view was closed, or its guest instance has stopped, so it
     /// cannot handle events any more.
     ViewClosed,
@@ -374,6 +381,7 @@ impl fmt::Display for CallError {
                 "The extension was reloaded or updated while this was running; try again"
             ),
             CallError::Uninstalled => write!(f, "The extension was uninstalled"),
+            CallError::Paused => f.write_str(&paused_reason("The extension")),
             CallError::RuntimeUnavailable(reason) => {
                 write!(f, "Extension runtime unavailable: {reason}")
             }
@@ -412,6 +420,27 @@ pub struct Runtime {
     /// from the runtime thread: a reload's check must not wait behind the
     /// guest call the reload is about to stop.
     checks: std::sync::mpsc::Sender<Check>,
+}
+
+/// A handle to the runtime thread that does not keep it running: the
+/// thread stops once every [`Runtime`] is dropped, even while something it
+/// holds (such as its health report) holds one of these.
+#[derive(Clone)]
+pub(crate) struct WeakRuntime {
+    requests: mpsc::WeakUnboundedSender<Request>,
+    applications: SharedApplications,
+    checks: std::sync::mpsc::Sender<Check>,
+}
+
+impl WeakRuntime {
+    /// The runtime, unless it has stopped.
+    pub(crate) fn upgrade(&self) -> Option<Runtime> {
+        Some(Runtime {
+            requests: self.requests.upgrade()?,
+            applications: self.applications.clone(),
+            checks: self.checks.clone(),
+        })
+    }
 }
 
 /// A component check for the checker thread.
@@ -477,9 +506,40 @@ enum Request {
     SetDirectory {
         directory: Directory,
     },
+    SetHealth {
+        health: HealthReport,
+    },
 }
 
+/// How a call into an installed package's code failed, for deciding
+/// whether to pause the package (see the launcher's `pausing`). Only the
+/// package's own failures are reported: an error the guest answers with is
+/// not one, nor is a call stopped because its generation, or that of a
+/// caller in its chain, ended.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Health {
+    /// The guest trapped while running: a crash.
+    Crashed(CallError),
+    /// The component could not be loaded or instantiated.
+    FailedToStart(CallError),
+}
+
+/// Told of each failure of a call into an installed package's code: its
+/// component, the extension data (and so the generation) it ran with, and
+/// how it failed. Called on the runtime thread before the call's answer is
+/// sent.
+pub(crate) type HealthReport = Arc<dyn Fn(&Path, &PackageData, Health) + Send + Sync>;
+
 impl Runtime {
+    /// A handle that does not keep the runtime thread running.
+    pub(crate) fn downgrade(&self) -> WeakRuntime {
+        WeakRuntime {
+            requests: self.requests.downgrade(),
+            applications: self.applications.clone(),
+            checks: self.checks.clone(),
+        }
+    }
+
     /// Starts the runtime thread. Extensions are compiled on every start.
     pub fn start() -> Result<Runtime, CallError> {
         Runtime::start_with(None)
@@ -796,6 +856,13 @@ impl Runtime {
         let _ = self.send(Request::SetDirectory { directory });
     }
 
+    /// Tells `health` of each later failure of a call into an installed
+    /// package's code (see [`Health`]).
+    pub(crate) fn set_health(&self, health: HealthReport) {
+        // A stopped runtime serves no calls.
+        let _ = self.send(Request::SetHealth { health });
+    }
+
     fn send(&self, request: Request) -> Result<(), CallError> {
         self.requests.send(request).map_err(|_| stopped())
     }
@@ -811,6 +878,7 @@ fn ended(end: End) -> CallError {
         End::Disabled => CallError::Disabled,
         End::Replaced => CallError::Replaced,
         End::Uninstalled => CallError::Uninstalled,
+        End::Paused => CallError::Paused,
     }
 }
 
@@ -958,6 +1026,8 @@ struct Host {
     next_view: u64,
     /// The installed packages operation calls are resolved against.
     directory: Option<Directory>,
+    /// Told of each failure of a call into an installed package's code.
+    health: Option<HealthReport>,
     /// Handed to every guest, for its operation calls.
     calls: mpsc::UnboundedSender<OperationCall>,
     /// Operation calls guests made, served while their callers wait.
@@ -1116,6 +1186,7 @@ impl Host {
             views: HashMap::new(),
             next_view: 0,
             directory: None,
+            health: None,
             calls,
             calls_sent,
             waiting_calls: VecDeque::new(),
@@ -1200,6 +1271,7 @@ impl Host {
                     let _ = reply.send(self.instances.keys().cloned().collect());
                 }
                 Request::SetDirectory { directory } => self.directory = Some(directory),
+                Request::SetHealth { health } => self.health = Some(health),
             }
         }
     }
@@ -1342,15 +1414,18 @@ impl Host {
         let Some(open) = self.views.remove(&view) else {
             return;
         };
-        if let Some(instance) = self.instances.get_mut(&open.component)
-            && open
-                .resource
-                .resource_drop_async(&mut instance.store)
-                .await
-                .is_err()
-        {
-            // The destructor trapped: the instance cannot be re-entered.
+        let Some(instance) = self.instances.get_mut(&open.component) else {
+            return;
+        };
+        let data = instance.store.data().data.clone();
+        if let Err(trap) = open.resource.resource_drop_async(&mut instance.store).await {
+            // The destructor trapped: the instance cannot be re-entered. It
+            // is a crash of the package, reported as any other.
             self.drop_instance(&open.component);
+            let error = CallError::Trap(format!("{trap:#}"));
+            if data.as_ref().is_some_and(|data| data.stopped().is_none()) {
+                self.report(&open.component, data.as_ref(), Health::Crashed(error));
+            }
         }
     }
 
@@ -1692,12 +1767,27 @@ impl Host {
         outcome: wasmtime::Result<wasmtime::Result<Result<T, E>>>,
         guest_error: impl FnOnce(E) -> CallError,
     ) -> Result<T, CallError> {
+        let data = self
+            .instances
+            .get(path)
+            .and_then(|instance| instance.store.data().data.clone());
         match outcome.and_then(|inner| inner) {
             Ok(result) => result.map_err(guest_error),
             Err(trap) => {
                 self.drop_instance(path);
-                Err(CallError::Trap(format!("{trap:#}")))
+                let error = CallError::Trap(format!("{trap:#}"));
+                self.report(path, data.as_ref(), Health::Crashed(error.clone()));
+                Err(error)
             }
+        }
+    }
+
+    /// Tells the health report how a call into `path`, of an installed
+    /// package whose extension data is `data`, failed; nothing for a command
+    /// built into Pane.
+    fn report(&self, path: &Path, data: Option<&PackageData>, health: Health) {
+        if let (Some(report), Some(data)) = (&self.health, data) {
+            report(path, data, health);
         }
     }
 
@@ -1723,49 +1813,62 @@ impl Host {
             return Err(ended(end));
         }
         if !self.instances.contains_key(path) {
-            let component = self.component(path)?.clone();
-            let mut store = Store::new(
-                &self.code.engine,
-                GuestState {
-                    wasi: WasiCtx::builder().build(),
-                    table: ResourceTable::new(),
-                    data,
-                    component: path.to_path_buf(),
-                    calls: self.calls.clone(),
-                    serving: false,
-                    applications: self.applications.clone(),
-                },
-            );
-            let load = |error: wasmtime::Error| CallError::Load(format!("{error:#}"));
-            let instance = self
-                .code
-                .linker
-                .instantiate_async(&mut store, &component)
-                .await
-                .map_err(load)?;
-            let bindings =
-                bindings::ExtensionWithApplications::new(&mut store, &instance).map_err(load)?;
-            // Only a command that computes root results exports them.
-            let root_results = root_bindings::RootResultsProvider::new(&mut store, &instance).ok();
-            // Only a command that supplies results ahead of the query exports
-            // them.
-            let indexed_results =
-                indexed_bindings::IndexedResultsProvider::new(&mut store, &instance).ok();
-            // Only a component serving published operations exports them.
-            let operations =
-                operations_bindings::OperationsProvider::new(&mut store, &instance).ok();
-            self.instances.insert(
-                path.to_path_buf(),
-                Instance {
-                    store,
-                    bindings,
-                    root_results,
-                    indexed_results,
-                    operations,
-                },
-            );
+            let started = self.start_instance(path, data.clone()).await;
+            if let Err(error) = &started {
+                self.report(path, data.as_ref(), Health::FailedToStart(error.clone()));
+            }
+            started?;
         }
         Ok(self.instances.get_mut(path).expect("inserted above"))
+    }
+
+    /// Loads and instantiates `path` as a live instance with `data`.
+    async fn start_instance(
+        &mut self,
+        path: &Path,
+        data: Option<PackageData>,
+    ) -> Result<(), CallError> {
+        let component = self.component(path)?.clone();
+        let mut store = Store::new(
+            &self.code.engine,
+            GuestState {
+                wasi: WasiCtx::builder().build(),
+                table: ResourceTable::new(),
+                data,
+                component: path.to_path_buf(),
+                calls: self.calls.clone(),
+                serving: false,
+                applications: self.applications.clone(),
+            },
+        );
+        let load = |error: wasmtime::Error| CallError::Load(format!("{error:#}"));
+        let instance = self
+            .code
+            .linker
+            .instantiate_async(&mut store, &component)
+            .await
+            .map_err(load)?;
+        let bindings =
+            bindings::ExtensionWithApplications::new(&mut store, &instance).map_err(load)?;
+        // Only a command that computes root results exports them.
+        let root_results = root_bindings::RootResultsProvider::new(&mut store, &instance).ok();
+        // Only a command that supplies results ahead of the query exports
+        // them.
+        let indexed_results =
+            indexed_bindings::IndexedResultsProvider::new(&mut store, &instance).ok();
+        // Only a component serving published operations exports them.
+        let operations = operations_bindings::OperationsProvider::new(&mut store, &instance).ok();
+        self.instances.insert(
+            path.to_path_buf(),
+            Instance {
+                store,
+                bindings,
+                root_results,
+                indexed_results,
+                operations,
+            },
+        );
+        Ok(())
     }
 
     /// Compiles `path` once (see [`Code::compile`]).

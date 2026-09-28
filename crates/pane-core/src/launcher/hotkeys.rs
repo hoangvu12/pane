@@ -19,10 +19,11 @@
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
-use super::{Entry, Launcher, LauncherView, Row, Screen, State, Status, off_thread};
+use super::{Entry, Launcher, LauncherView, Row, Screen, State, Status, Unavailable, off_thread};
 use crate::atomic::{Readers, write_atomically};
 use crate::hotkeys::Shortcut;
 use crate::launcher::CommandRegistration;
@@ -53,6 +54,10 @@ pub(super) struct Bindings {
     registered: HashMap<String, Shortcut>,
     /// Why a chosen hotkey that should be registered is not.
     problems: HashMap<String, String>,
+    /// The choices as last recorded (or read). Held while the record is
+    /// written, so writes happen one at a time; see
+    /// [`Launcher::save_hotkeys`].
+    recorded: Arc<Mutex<BTreeMap<String, Shortcut>>>,
 }
 
 impl Bindings {
@@ -91,6 +96,7 @@ impl Bindings {
                 bindings.unreadable = Some(format!("{} cannot be read: {error}", file.display()))
             }
         }
+        *bindings.recorded.lock().unwrap_or_else(|p| p.into_inner()) = bindings.chosen.clone();
         bindings
     }
 
@@ -102,7 +108,7 @@ impl Bindings {
             .map(|(command, _)| command.as_str())
     }
 
-    /// Records the choices, as they are now, to be written by
+    /// The record of the choices as they are now, to be written by
     /// [`save`]; `Err` if there is nowhere to write them.
     fn record(&self) -> Result<(PathBuf, String), String> {
         if let Some(problem) = &self.unreadable {
@@ -219,44 +225,73 @@ impl Launcher {
             return None;
         }
         self.sync_hotkeys(state);
-        let record = state.bindings.record();
-        Some(move || save(record))
+        let launcher = self.clone();
+        Some(move || launcher.save_hotkeys(None))
+    }
+
+    /// Writes the choices as they are when the write begins, blocking: run
+    /// it off the window's thread. Writes happen one at a time and each
+    /// writes the latest choices, so whatever order changes' writes run in,
+    /// the last one leaves the latest choices on disk.
+    ///
+    /// If it cannot write them and `undo` names a command, that command's
+    /// choice in Pane goes back to what was last recorded, so Pane and the
+    /// record agree (its registration follows with the next
+    /// [`Launcher::sync_hotkeys`]); a later change's write, done or still to
+    /// come, then writes the choices with it undone.
+    fn save_hotkeys(&self, undo: Option<&str>) -> Result<(), String> {
+        let recorded = self.lock().bindings.recorded.clone();
+        let mut recorded = recorded.lock().unwrap_or_else(|p| p.into_inner());
+        let (record, chosen) = {
+            let state = self.lock();
+            (state.bindings.record(), state.bindings.chosen.clone())
+        };
+        let saved = save(record);
+        match (&saved, undo) {
+            (Ok(()), _) => *recorded = chosen,
+            (Err(_), Some(command)) => {
+                let mut state = self.lock();
+                let chosen = &mut state.bindings.chosen;
+                match recorded.get(command) {
+                    Some(shortcut) => chosen.insert(command.to_owned(), shortcut.clone()),
+                    None => chosen.remove(command),
+                };
+            }
+            (Err(_), None) => {}
+        }
+        saved
     }
 
     /// Opens the command whose hotkey `shortcut` is, as the system reported
     /// it pressed, leaving whatever Pane shows (an open command, form or
-    /// view closes). Await the returned future to show the command. A
-    /// shortcut that opens nothing now, such as one released meanwhile, does
-    /// nothing.
-    pub fn press_hotkey(&self, shortcut: &Shortcut) -> impl Future<Output = ()> + Send + 'static {
+    /// view closes); await the returned future to show the command. A
+    /// shortcut that opens nothing now, such as one released meanwhile,
+    /// changes nothing and returns `None`, so the window is not raised for
+    /// it.
+    pub fn press_hotkey(
+        &self,
+        shortcut: &Shortcut,
+    ) -> Option<impl Future<Output = ()> + Send + 'static> {
         let mut state = self.lock();
         let command = state
             .bindings
             .registered
             .iter()
             .find(|(_, registered)| *registered == shortcut)
-            .map(|(command, _)| command.clone());
-        let component = command.and_then(|command| {
-            offered(&state.packages)
-                .into_iter()
-                .find(|(offered, unavailable)| offered.id == command && unavailable.is_none())
-                .map(|(offered, _)| offered.component)
-        });
-        let opening = component.map(|component| {
-            self.show_root(&mut state, Some(component.clone()));
-            state.view.status = Status::Running;
-            // Its data as the package is now, so a disable or reload
-            // meanwhile stops the opening.
-            let data = self.data_in(&state, &component);
-            (state.screen_epoch, component, data)
-        });
+            .map(|(command, _)| command.clone())?;
+        let component = offered(&state.packages)
+            .into_iter()
+            .find(|(offered, unavailable)| offered.id == command && unavailable.is_none())
+            .map(|(offered, _)| offered.component)?;
+        self.show_root(&mut state, Some(component.clone()));
+        state.view.status = Status::Running;
+        // Its data as the package is now, so a disable or reload meanwhile
+        // stops the opening.
+        let data = self.data_in(&state, &component);
+        let epoch = state.screen_epoch;
         drop(state);
         let launcher = self.clone();
-        async move {
-            if let Some((epoch, component, data)) = opening {
-                launcher.open_command(epoch, component, data).await;
-            }
-        }
+        Some(async move { launcher.open_command(epoch, component, data).await })
     }
 
     /// The hotkey rows of the extension list: one per command of each
@@ -285,9 +320,11 @@ impl Launcher {
                     None => "None · Choose keys that open it from any application".into(),
                 };
                 let subtitle = format!("{state} · {identity}");
-                let unavailable = unavailable.or_else(|| everywhere.clone());
+                let unavailable = unavailable
+                    .or_else(|| everywhere.clone())
+                    .map(Unavailable::OnThisSystem);
                 let entry = match &unavailable {
-                    Some(reason) => Entry::Unavailable(reason.clone()),
+                    Some(reason) => Entry::Unavailable(reason.reason().to_owned()),
                     None => Entry::AskHotkey(command.id.clone()),
                 };
                 let row = Row {
@@ -384,9 +421,8 @@ impl Launcher {
             ));
             return None;
         }
-        let previous = state.bindings.chosen.get(&command).cloned();
-        if previous.as_ref() == Some(&shortcut) && state.bindings.registered.contains_key(&command)
-        {
+        let previous = state.bindings.chosen.get(&command);
+        if previous == Some(&shortcut) && state.bindings.registered.contains_key(&command) {
             self.show_extensions_at_hotkey(state, &command);
             state.view.status = Status::Result(format!("{shortcut} already opens {title}"));
             return None;
@@ -411,13 +447,10 @@ impl Launcher {
         }
         bindings.problems.remove(&command);
         bindings.chosen.insert(command.clone(), shortcut.clone());
-        let record = bindings.record();
         self.show_extensions_at_hotkey(state, &command);
         state.view.status = Status::Running;
         Some(HotkeyChange {
             command,
-            previous,
-            record,
             done: format!("{shortcut} now opens {title}"),
             epoch: state.screen_epoch,
         })
@@ -426,39 +459,32 @@ impl Launcher {
     /// Removes the hotkey of `command`, releasing it; the future records it.
     pub(super) fn remove_hotkey(&self, state: &mut State, command: &str) -> Option<HotkeyChange> {
         let title = self.command_title(state, command);
-        let previous = state.bindings.chosen.remove(command);
-        previous.as_ref()?;
+        state.bindings.chosen.remove(command)?;
         self.sync_hotkeys(state);
-        let record = state.bindings.record();
         self.show_extensions_at_hotkey(state, command);
         state.view.status = Status::Running;
         Some(HotkeyChange {
             command: command.to_owned(),
-            previous,
-            record,
             done: format!("{title} has no hotkey now"),
             epoch: state.screen_epoch,
         })
     }
 
-    /// Records a hotkey change, restoring the earlier hotkey if it cannot.
+    /// Records a hotkey change, restoring what was last recorded if it
+    /// cannot (see [`Launcher::save_hotkeys`]).
     pub(super) async fn finish_hotkey_change(&self, change: HotkeyChange) {
         let HotkeyChange {
             command,
-            previous,
-            record,
             done,
             epoch,
         } = change;
-        let saved = off_thread(move || save(record)).await;
+        let launcher = self.clone();
+        let saved = off_thread(move || launcher.save_hotkeys(Some(&command))).await;
         let mut state = self.lock();
         let status = match saved {
             Ok(()) => Status::Result(done),
             Err(problem) => {
-                match previous {
-                    Some(previous) => state.bindings.chosen.insert(command, previous),
-                    None => state.bindings.chosen.remove(&command),
-                };
+                // On the window's thread, as registering must be (macOS).
                 self.sync_hotkeys(&mut state);
                 self.refresh(&mut state);
                 Status::Error(format!("Could not keep the hotkey: {problem}"))
@@ -493,9 +519,6 @@ impl Launcher {
 /// A hotkey change that has taken effect and is being recorded.
 pub(super) struct HotkeyChange {
     command: String,
-    /// The hotkey it replaced, restored if the change cannot be recorded.
-    previous: Option<Shortcut>,
-    record: Result<(PathBuf, String), String>,
     /// The outcome once recorded.
     done: String,
     epoch: u64,

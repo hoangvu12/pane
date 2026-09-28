@@ -215,8 +215,30 @@ impl ExtensionData {
             .entry(identity.key())
             .or_insert_with(Generation::new);
         if !enabled {
-            current.end(End::Disabled);
+            end_as(current, End::Disabled);
         } else if current.ended().is_some() {
+            *current = Generation::new();
+        }
+    }
+
+    /// Notes that Pane paused the package with `identity` after it failed:
+    /// its generation ends, which stops its pending calls, and its code can
+    /// no longer read or save values until it is resumed.
+    pub fn pause(&self, identity: &PackageIdentity) {
+        self.lock()
+            .generations
+            .entry(identity.key())
+            .or_insert_with(Generation::new)
+            .end(End::Paused);
+    }
+
+    /// Runs the package with `identity` again in a new generation, if Pane
+    /// had paused it; otherwise changes nothing.
+    pub fn resume(&self, identity: &PackageIdentity) {
+        let mut file = self.lock();
+        if let Some(current) = file.generations.get_mut(&identity.key())
+            && current.ended() == Some(End::Paused)
+        {
             *current = Generation::new();
         }
     }
@@ -230,9 +252,14 @@ impl ExtensionData {
         let Some(current) = file.generations.get_mut(&identity.key()) else {
             return;
         };
-        if current.ended().is_none() {
-            current.end(End::Replaced);
-            *current = Generation::new();
+        match current.ended() {
+            None => {
+                current.end(End::Replaced);
+                *current = Generation::new();
+            }
+            // Paused code is replaced by code that has not failed.
+            Some(End::Paused) => *current = Generation::new(),
+            Some(_) => {}
         }
     }
 
@@ -241,11 +268,12 @@ impl ExtensionData {
     /// longer read or save values. Installing it again starts a new one
     /// ([`ExtensionData::set_enabled`]).
     pub fn uninstall(&self, identity: &PackageIdentity) {
-        self.lock()
+        let mut file = self.lock();
+        let current = file
             .generations
             .entry(identity.key())
-            .or_insert_with(Generation::new)
-            .end(End::Uninstalled);
+            .or_insert_with(Generation::new);
+        end_as(current, End::Uninstalled);
     }
 
     /// Puts back the package with `identity` after its uninstall could not
@@ -464,6 +492,7 @@ impl PackageData {
                 Some("this code of the extension was replaced by a reload or an update")
             }
             End::Uninstalled => Some("the extension was uninstalled"),
+            End::Paused => Some("the extension is paused after an error"),
         }
     }
 
@@ -502,6 +531,16 @@ impl PackageData {
         data.file = Ok(updated);
         Ok(())
     }
+}
+
+/// Ends `current` for `why`. A generation Pane paused is replaced by one
+/// ended for `why`, so its calls say what the user did, not that it was
+/// paused.
+fn end_as(current: &mut Generation, why: End) {
+    if current.ended() == Some(End::Paused) {
+        *current = Generation::new();
+    }
+    current.end(why);
 }
 
 /// Reads one kind's file; a missing file holds no values.

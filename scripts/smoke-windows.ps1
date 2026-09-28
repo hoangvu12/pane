@@ -580,6 +580,43 @@ python "$PSScriptRoot/check_screenshot.py" --same @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the released hotkey still did something" }
 Stop-Pane $process
 
+# Pausing a broken extension: the settings sample's last item, Crash, crashes
+# on purpose; the third crash within five minutes pauses the package and
+# returns to root search, where Greeting stays listed with why it does not
+# run. The pause holds after a restart. In Manage extensions, the package's
+# "Why ... is paused" row (after its Reload and Retry rows) shows the
+# details, whose only row, Retry, starts it again. A data folder of its own
+# keeps the rows in a known order.
+$data = Join-Path $OutDir "pausing-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+$process = Start-Pane "stderr-pausing.log" @("--install", "target/guests/packages/sample-settings")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Greeting is selected
+Send "{ENTER}"; Start-Sleep -Seconds 2   # open Greeting
+Send "{DOWN 7}"   # Crash
+for ($i = 0; $i -lt 3; $i++) { Send "{ENTER}"; Start-Sleep -Seconds 2 }
+Capture "59-paused.png"
+Check "59-paused.png" "f08c8c"   # "Settings sample crashed 3 times within 5 minutes and is paused ..."
+Check "59-paused.png" "d6a36a"   # Greeting: "Settings sample is paused after an error; ..."
+Stop-Pane $process
+if (-not (Select-String -Quiet -SimpleMatch '"paused"' (Join-Path $data "extensions/installed.json"))) { throw "pause not recorded" }
+$process = Start-Pane "stderr-pausing-restart.log"
+Capture "60-paused-after-restart.png"
+Check "60-paused-after-restart.png" "d6a36a"   # Greeting is still paused
+Send "{DOWN 10}"   # Manage extensions…
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Send "{DOWN 3}{ENTER}"; Start-Sleep -Seconds 1   # "Why Settings sample is paused"
+Capture "61-pause-details.png"
+Check "61-pause-details.png" "aab4c0"   # the details
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Retry Settings sample
+Capture "62-pause-retried.png"
+Check "62-pause-retried.png" "9fd8a8"   # "Started Settings sample"
+$shots = "61-pause-details", "62-pause-retried" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: Retry changed nothing" }
+Stop-Pane $process
+if (Select-String -Quiet -SimpleMatch '"paused"' (Join-Path $data "extensions/installed.json")) { throw "pause not cleared" }
+
 # Delete retained data: with a data folder of its own, the settings sample
 # saves a note and is uninstalled keeping it (its Uninstall row follows its
 # state, Reload and Clear cache rows); its retained data, the extension list's
@@ -615,12 +652,12 @@ Send "{ENTER}"   # "Uninstall and keep saved data"
 Wait-For $registry '"retained"' $true; Start-Sleep -Seconds 1
 Send "{DOWN 40}"
 Send "{ENTER}"; Start-Sleep -Seconds 1   # "Delete retained data of Settings sample"
-Capture "59-confirm-delete-retained.png"
-Check "59-confirm-delete-retained.png" "aab4c0"   # what is kept and what is not touched
+Capture "63-confirm-delete-retained.png"
+Check "63-confirm-delete-retained.png" "aab4c0"   # what is kept and what is not touched
 Send "{DOWN}{ENTER}"   # "Delete retained data"
 Wait-For $registry '"retained"' $false; Start-Sleep -Seconds 1
-Capture "60-retained-deleted.png"
-Check "60-retained-deleted.png" "9fd8a8"   # "Deleted the retained data of Settings sample"
+Capture "64-retained-deleted.png"
+Check "64-retained-deleted.png" "9fd8a8"   # "Deleted the retained data of Settings sample"
 Stop-Pane $process
 if (Select-String -Quiet -SimpleMatch 'Water the plants' (Join-Path $data "extensions/content.json")) { throw "note not deleted" }
 $process = Start-Pane "stderr-reinstall-empty.log" @("--install", "target/guests/packages/sample-settings")
@@ -629,9 +666,9 @@ Wait-For $registry "sample-settings" $true; Start-Sleep -Seconds 1
 Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greeting
 Send "{DOWN 5}"
 Send "{ENTER}"; Start-Sleep -Seconds 2   # "Show what Pane keeps"
-Capture "61-reinstalled-empty.png"
-Check "61-reinstalled-empty.png" "9fd8a8"   # "Style: none · Note: none · Signed in: no ..."
-python "$PSScriptRoot/check_screenshot.py" --distinct (Join-Path $OutDir "51-reinstalled.png") (Join-Path $OutDir "61-reinstalled-empty.png")
+Capture "65-reinstalled-empty.png"
+Check "65-reinstalled-empty.png" "9fd8a8"   # "Style: none · Note: none · Signed in: no ..."
+python "$PSScriptRoot/check_screenshot.py" --distinct (Join-Path $OutDir "51-reinstalled.png") (Join-Path $OutDir "65-reinstalled-empty.png")
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the deleted data is still shown" }
 Send "{ESC}"; Start-Sleep -Seconds 1
 Stop-Pane $process
