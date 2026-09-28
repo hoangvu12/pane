@@ -7,7 +7,7 @@
     {
       "id": "call",
       "title": "Call from JavaScript",
-      "subtitle": "A JavaScript command calling the Rust sample's greet operation",
+      "subtitle": "A JavaScript command calling another extension's greet operation",
       "component": "sample_operations_js.wasm"
     }
   ],

@@ -595,7 +595,7 @@ you were written for and JSON input:
 ```rust
 use pane_guest::operations::call;
 
-let result = call("local:../sample-operations-js".into(), "greet".into(), 1, input)
+let result = call(source.into(), "greet".into(), 1, input) // "local:/…/sample-operations-js"
     .await
     .map_err(|error| error.explain())?; // "not-found: …", "failed: …"
 ```
@@ -604,15 +604,15 @@ let result = call("local:../sample-operations-js".into(), "greet".into(), 1, inp
 import { call, type CallError } from "pane:extension/operations@0.1.0";
 
 try {
-  const result = await call("local:../sample-operations", "greet", 1, JSON.stringify({ name }));
+  const result = await call(source, "greet", 1, JSON.stringify({ name })); // "local:/…"
 } catch (error) {
   const { kind, message } = (error as { payload: CallError }).payload;
 }
 ```
 
-A relative `local:` source is resolved from your package's own source
-folder, so packages kept side by side find each other wherever they are.
-Pane starts the target only when it is called, never enables a disabled one,
+`source` is the target's identity exactly as installed: `local:` and the
+absolute folder path it was installed from, the path Manage extensions shows
+after "local folder" (the samples ask for it in their form). Pane starts the target only when it is called, never enables a disabled one,
 keeps each package's settings apart, and refuses a call back into a package
 already waiting in the same chain instead of deadlocking.
 

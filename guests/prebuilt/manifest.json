@@ -24,37 +24,37 @@
       "source": "guests/sample-js",
       "inputs_sha256": "8407dd0dbf3cb6a213b0bd8911511cc3da7f8288c600ee98b4f79ecb31f38352",
       "bytes": 4391719,
-      "sha256": "4c4aac5a0840ec2335948d125667d823ed5b257637f21b82c626b1437d5bb3a2"
+      "sha256": "eb847be78b2fecd3e97a24fcf8b66e656657f2cd3f9ff0ba03ea71c61aa66df7"
     },
     "sample_ts.wasm": {
       "source": "guests/sample-ts",
       "inputs_sha256": "dbe478447a8ca3f8490cca7165136709aaa6e205d1da7e2d70fc4f3d918a917e",
-      "bytes": 4398305,
-      "sha256": "2c2a8dead6d69a3eefa64e00850608a8725228c4126c3772156a8e8929342eb4"
+      "bytes": 4398303,
+      "sha256": "985d5a888b1d1f5dc4faff8111226fb19b9f3521d8911733625bde781ac3ce63"
     },
     "sample_settings_js.wasm": {
       "source": "guests/sample-settings-js",
       "inputs_sha256": "09d1258f66f3ff9f9177806fcb72111db7ef6573d5336339613372dfeeb80013",
-      "bytes": 4043431,
-      "sha256": "c6d34f18b9b8668e59c2da0b0c34a41768e37b75d05b618f400516b986ad8d01"
+      "bytes": 4043425,
+      "sha256": "14db955518e4d84561bc9f59c54b899821ff8f03b51269189e61f251f5ba0ca9"
     },
     "sample_settings_ts.wasm": {
       "source": "guests/sample-settings-ts",
       "inputs_sha256": "b88ff4fadc08fd3993f491d6234842e56775072d51c69f5f1460586cf94872cf",
-      "bytes": 4043792,
-      "sha256": "4a9203db8eb8297f804f1c776c563d47e128d831f029744a0f6678681c24b566"
+      "bytes": 4043795,
+      "sha256": "076cee3ebf32d769447975a1dd24bdad1d3abbe8daeda03ae5913f15f13df927"
     },
     "sample_operations_js.wasm": {
       "source": "guests/sample-operations-js",
-      "inputs_sha256": "7547c5915bc09f67ac1a1e813d94ef540374fbec8a07e798ce8e6e0d598573ef",
-      "bytes": 4041563,
-      "sha256": "abadb36e7358bb391a81811a99fb88f75ce29e67afd2624ef6e44c2b789b3f08"
+      "inputs_sha256": "993cd837d45c20904a7f56f31c2071bab7df61b96ccd347f83a5eb8be453f25b",
+      "bytes": 4048803,
+      "sha256": "e48cb9f30def173206306f24a195ddfea9e91845696c1e810b9eeb6cb9ee9c03"
     },
     "sample_operations_ts.wasm": {
       "source": "guests/sample-operations-ts",
-      "inputs_sha256": "c5d4834e107722686495d8399fc74c4331ebb42fcf19f59592894df4d07774a3",
-      "bytes": 4042762,
-      "sha256": "99f590525b6bb444949aa0752492ebdb33b30e6c5082e0c2716c8ee72703db1b"
+      "inputs_sha256": "6929279d32b27a937e8f7881352d9232da6889f68b650c9e42e35359eabfa8e3",
+      "bytes": 4049928,
+      "sha256": "5d06483c107c2ddb674e2bd9116db0f8001562fdd335d936f75e719accf523fe"
     }
   }
 }

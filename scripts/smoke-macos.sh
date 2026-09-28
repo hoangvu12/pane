@@ -260,9 +260,10 @@ python3 "$(dirname "$0")/check_screenshot.py" --same "$out/29-typed.png" "$out/3
 stop_pane
 
 # Operations: install the JavaScript operations sample, then the Rust one,
-# whose command (Call from Rust, selected once installed) asks the JavaScript
-# package's greet operation: "JavaScript answered: Hello, Rust, from
-# JavaScript" comes from the other package's guest, started for the call.
+# whose command (Call from Rust, selected once installed) opens its form,
+# takes the JavaScript package's identity (local: and the folder's resolved
+# path) and a name, and calls that package's greet operation: "Hello, Rust,
+# from JavaScript" comes from the other package's guest, started for the call.
 start_pane --install target/guests/packages/sample-operations-js
 key 36; sleep 2   # Install
 capture 31-operations-target.png
@@ -271,7 +272,10 @@ stop_pane
 start_pane --install target/guests/packages/sample-operations
 key 36; sleep 2   # Install; Call from Rust is selected
 key 36; sleep 3   # open Call from Rust
-key 36; sleep 5   # "Ask JavaScript to greet"
+key 36; sleep 2   # "Greet through another extension": its form
+type_text "local:$(cd target/guests/packages/sample-operations-js && pwd -P)"
+key 48; type_text Rust
+key 36; sleep 5   # Greet
 capture 32-operation-answer.png
 check 32-operation-answer.png 9fd8a8   # the JavaScript guest's answer
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{31-operations-target,32-operation-answer}.png

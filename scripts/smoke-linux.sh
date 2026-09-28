@@ -264,9 +264,10 @@ python3 "$(dirname "$0")/check_screenshot.py" --same "$out/29-typed.png" "$out/3
 stop_pane
 
 # Operations: install the JavaScript operations sample, then the Rust one,
-# whose command (Call from Rust, selected once installed) asks the JavaScript
-# package's greet operation: "JavaScript answered: Hello, Rust, from
-# JavaScript" comes from the other package's guest, started for the call.
+# whose command (Call from Rust, selected once installed) opens its form,
+# takes the JavaScript package's identity (local: and the folder's resolved
+# path) and a name, and calls that package's greet operation: "Hello, Rust,
+# from JavaScript" comes from the other package's guest, started for the call.
 start_pane --install target/guests/packages/sample-operations-js
 "$xdotool" windowfocus --sync "$window"
 "$xdotool" key Return; sleep 2   # Install
@@ -277,7 +278,10 @@ start_pane --install target/guests/packages/sample-operations
 "$xdotool" windowfocus --sync "$window"
 "$xdotool" key Return; sleep 2   # Install; Call from Rust is selected
 "$xdotool" key Return; sleep 3   # open Call from Rust
-"$xdotool" key Return; sleep 5   # "Ask JavaScript to greet"
+"$xdotool" key Return; sleep 2   # "Greet through another extension": its form
+"$xdotool" type --delay 20 "local:$(realpath target/guests/packages/sample-operations-js)"
+"$xdotool" key Tab; "$xdotool" type --delay 50 Rust
+"$xdotool" key Return; sleep 5   # Greet
 capture 32-operation-answer.png
 check 32-operation-answer.png 9fd8a8   # the JavaScript guest's answer
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{31-operations-target,32-operation-answer}.png
