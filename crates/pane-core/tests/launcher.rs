@@ -30,6 +30,7 @@ fn command(id: &str, component: PathBuf) -> CommandRegistration {
         title: format!("{id} command"),
         subtitle: None,
         component,
+        takes_query: false,
     }
 }
 

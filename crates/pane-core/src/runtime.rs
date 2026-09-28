@@ -489,6 +489,7 @@ enum Request {
     },
     RunQuery {
         component: PathBuf,
+        command: String,
         query: String,
         data: Option<PackageData>,
         reply: oneshot::Sender<Result<String, CallError>>,
@@ -744,18 +745,20 @@ impl Runtime {
         response.await.unwrap_or_else(|_| Err(stopped()))
     }
 
-    /// Runs the command in `component`, which takes a query, with `query`;
-    /// the command reads and saves `data`. Starts its instance if it has
-    /// none.
+    /// Runs the command with manifest id `command` in `component`, which
+    /// takes a query, with `query`; the command reads and saves `data`.
+    /// Starts its instance if it has none.
     pub(crate) async fn run_query_with(
         &self,
         component: &Path,
+        command: &str,
         query: &str,
         data: Option<PackageData>,
     ) -> Result<String, CallError> {
         let (reply, response) = oneshot::channel();
         self.send(Request::RunQuery {
             component: component.to_path_buf(),
+            command: command.to_owned(),
             query: query.to_owned(),
             data,
             reply,
@@ -1285,11 +1288,12 @@ impl Host {
                 }
                 Request::RunQuery {
                     component,
+                    command,
                     query,
                     data,
                     reply,
                 } => {
-                    let result = self.run_query(&component, query, data).await;
+                    let result = self.run_query(&component, command, query, data).await;
                     let _ = reply.send(result);
                 }
                 Request::Forget { components } => {
@@ -1548,6 +1552,7 @@ impl Host {
     async fn run_query(
         &mut self,
         path: &Path,
+        id: String,
         query: String,
         data: Option<PackageData>,
     ) -> Result<String, CallError> {
@@ -1563,7 +1568,7 @@ impl Host {
             .run_guest(path, async |instance| {
                 instance
                     .store
-                    .run_concurrent(async |store| command.call_run_query(store, query).await)
+                    .run_concurrent(async |store| command.call_run_query(store, id, query).await)
                     .await
             })
             .await?;

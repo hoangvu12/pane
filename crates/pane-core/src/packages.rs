@@ -344,6 +344,14 @@ impl Manifest {
             if command.id.is_empty() || command.title.trim().is_empty() {
                 return Err(invalid("every command needs an `id` and a `title`".into()));
             }
+            // Pane's records name a command `<package identity>#<id>`; an id
+            // without `#` keeps the package's part of that unambiguous.
+            if command.id.contains('#') {
+                return Err(invalid(format!(
+                    "command id `{}` contains `#`, which command ids cannot",
+                    command.id
+                )));
+            }
             if commands
                 .iter()
                 .any(|seen: &ManifestCommand| seen.id == command.id)
@@ -635,6 +643,7 @@ impl InstalledPackage {
                         .clone()
                         .or_else(|| Some(manifest.title.clone())),
                     component: self.location.join(&command.component),
+                    takes_query: command.takes_query,
                 };
                 let unavailable = package.clone().or_else(|| {
                     platform::unavailable(command.platforms.as_deref(), "this command")

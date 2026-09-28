@@ -12,267 +12,228 @@
 //!   when the user chooses it.
 //!
 //! Nothing runs while the user types: the text is sent to the command only
-//! when its row is invoked. Both are Pane's own records, not extension data:
-//! `aliases.json` beside `installed.json`, by command id (the package
-//! identity's key and the command's id in the manifest), so copies of a
+//! when its row is invoked. Both are Pane's own records (see `choices`):
+//! `aliases.json` beside `installed.json`, by command id, so copies of a
 //! package from other sources, even with the same titles, are distinct, and
 //! a reinstalled or updated package keeps them. A disabled package's
 //! command offers neither (and they never enable it); an uninstalled one's
-//! are forgotten. A recorded choice whose command is gone, or no longer
-//! takes a query, is shown in Manage extensions as not active.
+//! are forgotten. A recorded choice that cannot be used now (its package is
+//! disabled, paused or cannot load, its command is unavailable here, gone or
+//! no longer takes a query) is shown in Manage extensions as not active,
+//! with why.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
-use super::{Entry, FormField, FormView, Launcher, LauncherView, OpenForm, Row, Screen, State};
-use super::{FormPurpose, Status, Unavailable, off_thread};
-use crate::atomic::{Readers, write_atomically};
+use super::choices::{Choices, Record, split};
+use super::{
+    CommandRegistration, Entry, FormField, FormPurpose, FormView, Launcher, LauncherView, OpenForm,
+    Row, Screen, State, Status, Unavailable, off_thread,
+};
 use crate::packages::{PackageIdentity, paused_reason};
 use crate::runtime::FieldKind;
-use crate::search::normalize;
-
-const ALIASES_FILE: &str = "aliases.json";
-const ALIASES_VERSION: u64 = 1;
+use crate::search::same_text;
 
 /// The longest alias, in characters.
 const MAX_ALIAS_CHARS: usize = 32;
 
-/// The id prefix of the rows that offer fallbacks in root search.
-const FALLBACK_ROW: &str = "fallback:";
-
 /// The alias form's only field.
 const ALIAS_FIELD: &str = "alias";
 
-#[derive(Serialize, Deserialize)]
-struct AliasesJson {
-    version: u64,
-    /// Each command's alias by command id.
-    #[serde(default)]
-    aliases: BTreeMap<String, String>,
-    /// The fallback commands' ids, in the order they are offered.
-    #[serde(default)]
-    fallbacks: Vec<String>,
-}
-
-/// The user's aliases and fallbacks.
+/// The user's aliases and fallbacks, recorded in `aliases.json` as
+/// `{ "version": 1, "aliases": { "<command id>": "ec" }, "fallbacks":
+/// ["<command id>"] }`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct Choices {
+pub(super) struct AliasChoices {
     /// Each command's alias, as the user typed it, by command id.
     aliases: BTreeMap<String, String>,
     /// The fallback commands' ids, in the order they are offered.
     fallbacks: Vec<String>,
 }
 
-impl Choices {
-    /// `command`'s choices from `other`, replacing its own.
-    fn restore(&mut self, command: &str, other: &Choices) {
+impl Choices for AliasChoices {
+    const FILE: &'static str = "aliases.json";
+    const VERSION: u64 = 1;
+    const WHAT: &'static str = "aliases";
+
+    fn read(fields: &Map<String, Value>) -> Result<Self, String> {
+        let mut choices = AliasChoices::default();
+        if let Some(aliases) = fields.get("aliases") {
+            let aliases = aliases.as_object().ok_or("`aliases` is not an object")?;
+            for (command, alias) in aliases {
+                match alias.as_str() {
+                    Some(alias) if !alias.trim().is_empty() => {
+                        choices.aliases.insert(command.clone(), alias.to_owned());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if let Some(fallbacks) = fields.get("fallbacks") {
+            let fallbacks = fallbacks.as_array().ok_or("`fallbacks` is not a list")?;
+            for command in fallbacks.iter().filter_map(Value::as_str) {
+                if !choices.is_fallback(command) {
+                    choices.fallbacks.push(command.to_owned());
+                }
+            }
+        }
+        Ok(choices)
+    }
+
+    fn write(&self) -> Map<String, Value> {
+        let aliases = self
+            .aliases
+            .iter()
+            .map(|(command, alias)| (command.clone(), Value::String(alias.clone())))
+            .collect();
+        let fallbacks = self.fallbacks.iter().cloned().map(Value::String).collect();
+        Map::from_iter([
+            ("aliases".to_string(), Value::Object(aliases)),
+            ("fallbacks".to_string(), Value::Array(fallbacks)),
+        ])
+    }
+
+    fn restore(&mut self, command: &str, other: &Self) {
         match other.aliases.get(command) {
             Some(alias) => self.aliases.insert(command.to_owned(), alias.clone()),
             None => self.aliases.remove(command),
         };
-        let was = other.fallbacks.iter().any(|id| id == command);
-        let is = self.fallbacks.iter().any(|id| id == command);
-        if was && !is {
-            self.fallbacks.push(command.to_owned());
-        } else if is && !was {
-            self.fallbacks.retain(|id| id != command);
+        match (other.is_fallback(command), self.is_fallback(command)) {
+            (true, false) => self.fallbacks.push(command.to_owned()),
+            (false, true) => self.fallbacks.retain(|id| id != command),
+            _ => {}
         }
+    }
+
+    fn retain(&mut self, keep: &dyn Fn(&str) -> bool) -> bool {
+        let before = (self.aliases.len(), self.fallbacks.len());
+        self.aliases.retain(|command, _| keep(command));
+        self.fallbacks.retain(|command| keep(command));
+        (self.aliases.len(), self.fallbacks.len()) != before
+    }
+
+    fn of(state: &mut State) -> &mut Record<Self> {
+        &mut state.aliases
     }
 }
 
-/// The aliases and fallbacks, and where they are recorded.
-#[derive(Default)]
-pub(super) struct Aliases {
-    /// Where they are recorded; `None` for a launcher that installs no
-    /// packages.
-    file: Option<PathBuf>,
-    chosen: Choices,
-    /// Why the record could not be read, if it could not; it is then never
-    /// overwritten.
-    unreadable: Option<String>,
-    /// The choices as last recorded (or read). Held while the record is
-    /// written, so writes happen one at a time; see
-    /// [`Launcher::save_aliases`].
-    recorded: Arc<Mutex<Choices>>,
-}
+impl AliasChoices {
+    fn is_fallback(&self, command: &str) -> bool {
+        self.fallbacks.iter().any(|id| id == command)
+    }
 
-impl Aliases {
-    /// Reads the aliases and fallbacks recorded in `dir`.
-    pub(super) fn open(dir: &Path) -> Aliases {
-        let file = dir.join(ALIASES_FILE);
-        let mut aliases = Aliases {
-            file: Some(file.clone()),
-            ..Aliases::default()
-        };
-        match std::fs::read_to_string(&file) {
-            Ok(text) => match serde_json::from_str::<AliasesJson>(&text) {
-                Ok(json) if json.version == ALIASES_VERSION => {
-                    let mut fallbacks: Vec<String> = Vec::new();
-                    for command in json.fallbacks {
-                        if !fallbacks.contains(&command) {
-                            fallbacks.push(command);
-                        }
-                    }
-                    aliases.chosen = Choices {
-                        aliases: json
-                            .aliases
-                            .into_iter()
-                            .filter(|(_, alias)| !alias.trim().is_empty())
-                            .collect(),
-                        fallbacks,
-                    };
-                }
-                Ok(json) => {
-                    aliases.unreadable = Some(format!(
-                        "{} has version {}, which this Pane does not read",
-                        file.display(),
-                        json.version
-                    ))
-                }
-                Err(error) => {
-                    aliases.unreadable = Some(format!("{} is invalid: {error}", file.display()))
-                }
-            },
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                aliases.unreadable = Some(format!("{} cannot be read: {error}", file.display()))
-            }
-        }
-        *aliases.recorded.lock().unwrap_or_else(|p| p.into_inner()) = aliases.chosen.clone();
-        aliases
+    fn has_any(&self, command: &str) -> bool {
+        self.aliases.contains_key(command) || self.is_fallback(command)
+    }
+
+    /// Another command whose alias is `alias`, compared caselessly (full
+    /// Unicode case folding after NFC, so "STRASSE" is "straße").
+    fn shared_with(&self, command: &str, alias: &str) -> Option<&str> {
+        self.aliases
+            .iter()
+            .find(|(other, chosen)| other.as_str() != command && same_text(chosen, alias))
+            .map(|(other, _)| other.as_str())
     }
 
     /// The alias of `command` as root search matches it: none if another
     /// command has the same one (only in a record edited by hand).
     pub(super) fn active_alias(&self, command: &str) -> Option<&str> {
-        let alias = self.chosen.aliases.get(command)?;
-        (self.shared_with(command, alias).is_none()).then_some(alias.as_str())
-    }
-
-    /// Another command whose alias is `alias`, compared as root search
-    /// compares text.
-    fn shared_with(&self, command: &str, alias: &str) -> Option<&str> {
-        let alias = normalize(alias);
-        self.chosen
-            .aliases
-            .iter()
-            .find(|(other, chosen)| other.as_str() != command && normalize(chosen) == alias)
-            .map(|(other, _)| other.as_str())
-    }
-
-    fn is_fallback(&self, command: &str) -> bool {
-        self.chosen.fallbacks.iter().any(|id| id == command)
-    }
-
-    /// The record of the choices as they are now, to be written by
-    /// [`save`]; `Err` if there is nowhere to write them.
-    fn record(&self) -> Result<(PathBuf, String), String> {
-        if let Some(problem) = &self.unreadable {
-            return Err(format!("Pane does not replace it: {problem}"));
-        }
-        let file = self
-            .file
-            .clone()
-            .ok_or_else(|| "this launcher does not keep aliases".to_string())?;
-        let json = AliasesJson {
-            version: ALIASES_VERSION,
-            aliases: self.chosen.aliases.clone(),
-            fallbacks: self.chosen.fallbacks.clone(),
-        };
-        let text = serde_json::to_string_pretty(&json).map_err(|error| error.to_string())?;
-        Ok((file, text))
+        let alias = self.aliases.get(command)?;
+        self.shared_with(command, alias)
+            .is_none()
+            .then_some(alias.as_str())
     }
 }
 
-/// Writes a record made by [`Aliases::record`].
-fn save(record: Result<(PathBuf, String), String>) -> Result<(), String> {
-    let (file, text) = record?;
-    write_atomically(&file, text.as_bytes(), Readers::Default).map_err(|error| error.to_string())
-}
-
-/// An installed command as its alias or fallback reaches it.
+/// An installed command of an enabled package as root search offers it,
+/// kept with its root result so aliases and fallbacks can reach it.
 #[derive(Clone, Debug)]
 pub(super) struct Target {
-    /// The command id: the package identity's key and the manifest's id.
-    id: String,
-    title: String,
-    component: PathBuf,
-    takes_query: bool,
+    pub(super) registration: CommandRegistration,
+    pub(super) identity: PackageIdentity,
     /// Why it cannot run now: paused, or unavailable on this system.
-    unavailable: Option<Unavailable>,
+    pub(super) unavailable: Option<Unavailable>,
 }
 
-/// Every command of an enabled package, as aliases and fallbacks reach it;
-/// a disabled package's commands are not reached.
-pub(super) fn targets(state: &State) -> Vec<Target> {
-    let mut targets = Vec::new();
-    for package in state.packages.iter().filter(|package| package.enabled) {
-        let Ok(manifest) = &package.manifest else {
-            continue;
-        };
-        let paused = state
-            .paused
-            .is_paused(&package.identity)
-            .then(|| Unavailable::Paused(paused_reason(&package.title())));
-        for ((registration, unavailable), command) in package
-            .available_commands()
-            .into_iter()
-            .zip(&manifest.commands)
-        {
-            targets.push(Target {
-                id: registration.id,
-                title: registration.title,
-                component: registration.component,
-                takes_query: command.takes_query,
-                unavailable: paused
-                    .clone()
-                    .or(unavailable.map(Unavailable::OnThisSystem)),
-            });
-        }
-    }
-    targets
+/// How a row sends the query to its command.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Via {
+    /// The query's first word is the command's alias; the rest is sent.
+    Alias,
+    /// The command is a fallback; the whole query is sent.
+    Fallback,
 }
 
-/// A row of root search that sends `text` to `target` when invoked, as an
-/// alias or a fallback.
-fn query_row(target: &Target, id: String, text: &str, how: &str) -> (Row, Entry) {
-    let entry = match &target.unavailable {
-        Some(reason) => Entry::Unavailable(reason.reason().to_owned()),
-        None => Entry::Query {
-            component: target.component.clone(),
-            query: text.to_owned(),
-        },
+/// A root search row's query, to send to a command that takes one.
+#[derive(Clone, Debug)]
+pub(super) struct Sending {
+    pub(super) component: PathBuf,
+    /// The command's id in its manifest.
+    pub(super) command: String,
+    pub(super) query: String,
+    pub(super) via: Via,
+    /// Why the command cannot run now; invoking the row shows it.
+    pub(super) unavailable: Option<String>,
+}
+
+/// The installed commands root search offers.
+fn targets(state: &State) -> impl Iterator<Item = &Target> {
+    state
+        .root
+        .iter()
+        .filter_map(|result| result.target.as_ref())
+}
+
+/// A root search row that sends `text` to `target` when invoked.
+fn send_row(state: &State, target: &Target, text: &str, via: Via, how: &str) -> (Row, Entry) {
+    let registration = &target.registration;
+    // Copies of a package share titles: then the row names its source.
+    let shared = targets(state)
+        .filter(|other| other.registration.title == registration.title)
+        .count()
+        > 1;
+    let source = if shared {
+        format!(" · {}", target.identity)
+    } else {
+        String::new()
+    };
+    let kind = match via {
+        Via::Alias => "alias",
+        Via::Fallback => "fallback",
     };
     let row = Row {
-        id,
-        title: target.title.clone(),
-        subtitle: Some(format!("Send “{text}” · {how}")),
+        id: format!("{kind}:{}", registration.id),
+        title: registration.title.clone(),
+        subtitle: Some(format!("Send “{text}” · {how}{source}")),
         unavailable: target.unavailable.clone(),
     };
+    let entry = Entry::Send(Sending {
+        component: registration.component.clone(),
+        command: registration.manifest_id().to_owned(),
+        query: text.to_owned(),
+        via,
+        unavailable: target.unavailable.as_ref().map(|u| u.reason().to_owned()),
+    });
     (row, entry)
 }
 
 /// The rows for `query` typed as an alias followed by text: for the command
 /// that takes a query whose alias is the query's first word, a row that
 /// sends it the rest.
-pub(super) fn alias_rows(state: &State, query: &str) -> Vec<(Row, Entry)> {
-    let query = query.trim();
-    let Some((word, text)) = query.split_once(char::is_whitespace) else {
+pub(super) fn rows_sending_after_alias(state: &State, query: &str) -> Vec<(Row, Entry)> {
+    let Some((word, text)) = query.trim().split_once(char::is_whitespace) else {
         return Vec::new();
     };
-    let (word, text) = (normalize(word), text.trim());
-    state
-        .targets
-        .iter()
-        .filter(|target| target.takes_query)
+    let text = text.trim();
+    targets(state)
+        .filter(|target| target.registration.takes_query)
         .filter_map(|target| {
-            let alias = state.aliases.active_alias(&target.id)?;
-            (normalize(alias) == word).then(|| {
+            let alias = state.aliases.chosen.active_alias(&target.registration.id)?;
+            same_text(alias, word).then(|| {
                 let how = format!("alias {alias}");
-                query_row(target, format!("alias:{}", target.id), text, &how)
+                send_row(state, target, text, Via::Alias, &how)
             })
         })
         .collect()
@@ -290,20 +251,24 @@ pub(super) fn fallback_rows(state: &State, query: &str) -> Vec<(Row, Entry)> {
         .chosen
         .fallbacks
         .iter()
-        .filter_map(|id| state.targets.iter().find(|target| target.id == *id))
-        .filter(|target| target.takes_query)
-        .map(|target| {
-            let id = format!("{FALLBACK_ROW}{}", target.id);
-            query_row(target, id, text, "fallback")
-        })
+        .filter_map(|id| targets(state).find(|target| target.registration.id == *id))
+        .filter(|target| target.registration.takes_query)
+        .map(|target| send_row(state, target, text, Via::Fallback, "fallback"))
         .collect()
 }
 
 /// The row root search selects by itself: the first one that is not a
 /// fallback, whose command the user must choose.
-pub(super) fn first_choice(rows: &[Row]) -> Option<usize> {
-    rows.iter()
-        .position(|row| !row.id.starts_with(FALLBACK_ROW))
+pub(super) fn first_choice(entries: &[Entry]) -> Option<usize> {
+    entries.iter().position(|entry| {
+        !matches!(
+            entry,
+            Entry::Send(Sending {
+                via: Via::Fallback,
+                ..
+            })
+        )
+    })
 }
 
 /// An installed command as Manage extensions lists its alias and fallback.
@@ -312,7 +277,8 @@ struct Configured<'a> {
     title: String,
     takes_query: bool,
     identity: &'a PackageIdentity,
-    /// Why its alias and fallback are not active, if they are not.
+    /// Why its alias and fallback are not active, if they are not: its
+    /// package is disabled or paused, or it is unavailable on this system.
     inactive: Option<String>,
 }
 
@@ -321,41 +287,52 @@ impl Launcher {
     /// of an enabled package, and of a disabled one with an alias or
     /// fallback, a row for its alias and, if it takes a query, one for
     /// whether it is a fallback; then one row for each recorded choice whose
-    /// command is gone. Each row names its package's source, since copies of
-    /// a package can share titles.
-    pub(super) fn alias_rows(&self, state: &State) -> Vec<(Row, Entry)> {
-        let aliases = &state.aliases;
-        let chosen = |id: &str| aliases.chosen.aliases.contains_key(id) || aliases.is_fallback(id);
+    /// command cannot be listed (gone, or its package cannot load or is not
+    /// installed). Each row names its package's source, since copies of a
+    /// package can share titles.
+    pub(super) fn choice_rows(&self, state: &State) -> Vec<(Row, Entry)> {
+        let chosen = &state.aliases.chosen;
         let mut configured = Vec::new();
         for package in &state.packages {
             let Ok(manifest) = &package.manifest else {
                 continue;
             };
-            let inactive = (!package.enabled).then(|| format!("{} is disabled", package.title()));
-            for (registration, command) in package.commands().into_iter().zip(&manifest.commands) {
-                if package.enabled || chosen(&registration.id) {
+            let title = package.title();
+            let package_inactive = if !package.enabled {
+                Some(format!("{title} is disabled"))
+            } else if state.paused.is_paused(&package.identity) {
+                Some(paused_reason(&title))
+            } else {
+                None
+            };
+            let commands = package.available_commands().into_iter();
+            for ((registration, unavailable), command) in commands.zip(&manifest.commands) {
+                if package.enabled || chosen.has_any(&registration.id) {
                     configured.push(Configured {
                         id: registration.id,
                         title: registration.title,
                         takes_query: command.takes_query,
                         identity: &package.identity,
-                        inactive: inactive.clone(),
+                        inactive: package_inactive.clone().or(unavailable),
                     });
                 }
             }
         }
         let mut rows = Vec::new();
         for command in &configured {
-            let inactive = |mut why: Option<String>| {
-                why = command.inactive.clone().or(why);
-                why.map_or_else(String::new, |why| format!(" · Not active: {why}"))
+            let not_active = |why: Option<String>| {
+                command
+                    .inactive
+                    .clone()
+                    .or(why)
+                    .map_or_else(String::new, |why| format!(" · Not active: {why}"))
             };
-            let alias = match aliases.chosen.aliases.get(&command.id) {
+            let alias = match chosen.aliases.get(&command.id) {
                 Some(alias) => {
-                    let shared = aliases
+                    let shared = chosen
                         .shared_with(&command.id, alias)
                         .map(|_| "another command has the same alias".to_string());
-                    format!("“{alias}”{}", inactive(shared))
+                    format!("“{alias}”{}", not_active(shared))
                 }
                 None => "None · A word that finds it in root search".into(),
             };
@@ -368,18 +345,18 @@ impl Launcher {
                 },
                 Entry::AskAlias(command.id.clone()),
             ));
-            let fallback = aliases.is_fallback(&command.id);
+            let fallback = chosen.is_fallback(&command.id);
             if !(command.takes_query || fallback) {
                 continue;
             }
             let state = match (fallback, command.takes_query) {
                 (true, true) => format!(
                     "On · Offered below the results for any text typed{}",
-                    inactive(None)
+                    not_active(None)
                 ),
                 (true, false) => format!(
                     "On{}",
-                    inactive(Some(format!("{} no longer takes a query", command.title)))
+                    not_active(Some(format!("{} no longer takes a query", command.title)))
                 ),
                 (false, _) => "Off · Offer it below the results for any text typed".into(),
             };
@@ -393,45 +370,58 @@ impl Launcher {
                 Entry::ToggleFallback(command.id.clone()),
             ));
         }
-        // Choices whose command is gone: dropped by an update, or recorded
-        // for a package that is not installed.
-        let mut missing: Vec<&String> = aliases
-            .chosen
+        // Choices whose command cannot be listed: dropped by an update, its
+        // package cannot load, or recorded for a package not installed.
+        let mut unlisted: Vec<&String> = chosen
             .aliases
             .keys()
-            .chain(&aliases.chosen.fallbacks)
+            .chain(&chosen.fallbacks)
             .filter(|id| !configured.iter().any(|command| command.id == **id))
             .collect();
-        missing.sort();
-        missing.dedup();
-        for id in missing {
-            let what = match (aliases.chosen.aliases.get(id), aliases.is_fallback(id)) {
+        unlisted.sort();
+        unlisted.dedup();
+        for id in unlisted {
+            let what = match (chosen.aliases.get(id), chosen.is_fallback(id)) {
                 (Some(alias), true) => format!("Alias “{alias}” and fallback"),
                 (Some(alias), false) => format!("Alias “{alias}”"),
                 (None, _) => "Fallback".into(),
             };
-            let (package, command) = id.rsplit_once('#').unwrap_or((id, ""));
-            let why = match state.packages.iter().find(|p| p.identity.key() == package) {
-                Some(owner) => format!("{} has no command `{command}` now", owner.title()),
-                None => "its extension is not installed".into(),
+            let (key, command) = split(id);
+            let owner = state.packages.iter().find(|p| p.identity.key() == key);
+            let (title, why) = match owner {
+                Some(owner) => match &owner.manifest {
+                    Err(error) => (
+                        format!("{what} of `{command}`"),
+                        format!("{} cannot load: {error}", owner.title()),
+                    ),
+                    Ok(_) => (
+                        format!("{what} of a missing command"),
+                        format!("{} has no command `{command}` now", owner.title()),
+                    ),
+                },
+                None => (
+                    format!("{what} of a missing command"),
+                    "its extension is not installed".into(),
+                ),
             };
             rows.push((
                 Row {
-                    id: format!("missing-setting:{id}"),
-                    title: format!("{what} of a missing command"),
+                    id: format!("unlisted-setting:{id}"),
+                    title,
                     subtitle: Some(format!("Not active: {why}; Enter forgets it · {id}")),
                     unavailable: None,
                 },
-                Entry::ForgetAlias(id.clone()),
+                Entry::ForgetChoices(id.clone()),
             ));
         }
         rows
     }
 
     /// Shows the form that sets the alias of the command `command`, with
-    /// its current alias filled in.
+    /// its current alias filled in (Pane's own form; an extension's form
+    /// starts empty).
     pub(super) fn show_alias_form(&self, state: &mut State, command: &str) {
-        let title = self.configured_title(state, command);
+        let title = self.command_title(state, command);
         let current = state
             .aliases
             .chosen
@@ -465,53 +455,55 @@ impl Launcher {
     /// the reason next to the field, if it is not one word, is too long or
     /// is another command's; else it takes effect at once and the extension
     /// list is shown, and the returned change records it.
-    pub(super) fn submit_alias(&self, state: &mut State, command: &str) -> Option<AliasChange> {
-        let Screen::Form(form) = &mut state.view.screen else {
+    pub(super) fn submit_alias(&self, state: &mut State, command: &str) -> Option<ChoiceChange> {
+        let Screen::Form(form) = &state.view.screen else {
             return None;
         };
-        let field = form.fields.first_mut()?;
-        let alias = field.value.trim().to_owned();
+        let alias = form.fields.first()?.value.trim().to_owned();
         let refusal = if alias.chars().any(char::is_whitespace) {
             Some("An alias is one word, without spaces".to_string())
         } else if alias.chars().count() > MAX_ALIAS_CHARS {
             Some(format!("An alias has at most {MAX_ALIAS_CHARS} characters"))
         } else {
-            state.aliases.shared_with(command, &alias).map(|other| {
-                let other = self.configured_title(state, other);
-                format!("“{alias}” is already the alias of {other}: change it there first, or choose another")
-            })
+            state
+                .aliases
+                .chosen
+                .shared_with(command, &alias)
+                .map(|other| {
+                    let other = self.command_title(state, other);
+                    format!(
+                        "“{alias}” is already the alias of {other}: change it there first, or \
+                         choose another"
+                    )
+                })
         };
         if let Some(refusal) = refusal.filter(|_| !alias.is_empty()) {
             let Screen::Form(form) = &mut state.view.screen else {
                 unreachable!("the alias form is open");
             };
-            let field = &mut form.fields[0];
+            form.fields[0].error = Some(refusal.clone());
             state.view.status = Status::Error(format!("Alias: {refusal}"));
-            field.error = Some(refusal);
             return None;
         }
-        let title = self.configured_title(state, command);
+        let title = self.command_title(state, command);
+        let aliases = &mut state.aliases.chosen.aliases;
         let done = if alias.is_empty() {
-            state.aliases.chosen.aliases.remove(command);
+            aliases.remove(command);
             format!("{title} has no alias now")
         } else {
             let done = format!("Typing “{alias}” now finds {title}");
-            state
-                .aliases
-                .chosen
-                .aliases
-                .insert(command.to_owned(), alias);
+            aliases.insert(command.to_owned(), alias);
             done
         };
         state.form = None;
         let at = |entry: &Entry| matches!(entry, Entry::AskAlias(id) if id == command);
-        Some(self.aliases_changed(state, at, command, done))
+        Some(self.choices_changed(state, at, command, done))
     }
 
     /// Makes the command `command` a fallback if it is not one, else no
     /// longer one.
-    pub(super) fn toggle_fallback(&self, state: &mut State, command: &str) -> AliasChange {
-        let title = self.configured_title(state, command);
+    pub(super) fn toggle_fallback(&self, state: &mut State, command: &str) -> ChoiceChange {
+        let title = self.command_title(state, command);
         let fallbacks = &mut state.aliases.chosen.fallbacks;
         let done = if fallbacks.iter().any(|id| id == command) {
             fallbacks.retain(|id| id != command);
@@ -521,30 +513,32 @@ impl Launcher {
             format!("{title} is now offered for any text typed in root search")
         };
         let at = |entry: &Entry| matches!(entry, Entry::ToggleFallback(id) if id == command);
-        self.aliases_changed(state, at, command, done)
+        self.choices_changed(state, at, command, done)
     }
 
-    /// Forgets the alias and fallback of `command`, whose command is gone.
-    pub(super) fn forget_alias(&self, state: &mut State, command: &str) -> AliasChange {
-        state.aliases.chosen.aliases.remove(command);
-        state.aliases.chosen.fallbacks.retain(|id| id != command);
-        let done = "Forgot the alias and fallback of a missing command".into();
-        let at = |entry: &Entry| matches!(entry, Entry::ForgetAlias(_));
-        self.aliases_changed(state, at, command, done)
+    /// Forgets the alias and fallback of `command`, whose command cannot be
+    /// listed.
+    pub(super) fn forget_choices(&self, state: &mut State, command: &str) -> ChoiceChange {
+        let chosen = &mut state.aliases.chosen;
+        chosen.aliases.remove(command);
+        chosen.fallbacks.retain(|id| id != command);
+        let done = "Forgot the alias and fallback".into();
+        let at = |entry: &Entry| matches!(entry, Entry::ForgetChoices(_));
+        self.choices_changed(state, at, command, done)
     }
 
     /// Shows the extension list at the first row `at` accepts after the
     /// choices of `command` changed, with the change to record.
-    fn aliases_changed(
+    fn choices_changed(
         &self,
         state: &mut State,
         at: impl Fn(&Entry) -> bool,
         command: &str,
         done: String,
-    ) -> AliasChange {
+    ) -> ChoiceChange {
         self.show_extensions_at(state, at);
         state.view.status = Status::Running;
-        AliasChange {
+        ChoiceChange {
             command: command.to_owned(),
             done,
             epoch: state.screen_epoch,
@@ -552,15 +546,15 @@ impl Launcher {
     }
 
     /// Records an alias or fallback change, restoring what was last
-    /// recorded if it cannot (see [`Launcher::save_aliases`]).
-    pub(super) async fn finish_alias_change(&self, change: AliasChange) {
-        let AliasChange {
+    /// recorded if it cannot (see [`Launcher::save`]).
+    pub(super) async fn finish_choice_change(&self, change: ChoiceChange) {
+        let ChoiceChange {
             command,
             done,
             epoch,
         } = change;
         let launcher = self.clone();
-        let saved = off_thread(move || launcher.save_aliases(Some(&command))).await;
+        let saved = off_thread(move || launcher.save::<AliasChoices>(Some(&command))).await;
         let mut state = self.lock();
         let status = match saved {
             Ok(()) => Status::Result(done),
@@ -574,27 +568,6 @@ impl Launcher {
         }
     }
 
-    /// Writes the choices as they are when the write begins, blocking: run
-    /// it off the window's thread. Writes happen one at a time and each
-    /// writes the latest choices, so the last one leaves the latest choices
-    /// on disk. If it cannot write them and `undo` names a command, that
-    /// command's choices in Pane go back to what was last recorded.
-    fn save_aliases(&self, undo: Option<&str>) -> Result<(), String> {
-        let recorded = self.lock().aliases.recorded.clone();
-        let mut recorded = recorded.lock().unwrap_or_else(|p| p.into_inner());
-        let (record, chosen) = {
-            let state = self.lock();
-            (state.aliases.record(), state.aliases.chosen.clone())
-        };
-        let saved = save(record);
-        match (&saved, undo) {
-            (Ok(()), _) => *recorded = chosen,
-            (Err(_), Some(command)) => self.lock().aliases.chosen.restore(command, &recorded),
-            (Err(_), None) => {}
-        }
-        saved
-    }
-
     /// Forgets the aliases and fallbacks of the uninstalled package with
     /// `identity`. Returns what writes the record without them, to run off
     /// the window's thread; nothing to write if it had none.
@@ -603,36 +576,16 @@ impl Launcher {
         state: &mut State,
         identity: &PackageIdentity,
     ) -> Option<impl FnOnce() -> Result<(), String> + Send + 'static> {
-        let prefix = format!("{}#", identity.key());
-        let chosen = &mut state.aliases.chosen;
-        let before = (chosen.aliases.len(), chosen.fallbacks.len());
-        chosen
-            .aliases
-            .retain(|command, _| !command.starts_with(&prefix));
-        chosen
-            .fallbacks
-            .retain(|command| !command.starts_with(&prefix));
-        if (chosen.aliases.len(), chosen.fallbacks.len()) == before {
+        if !state.aliases.forget(identity) {
             return None;
         }
         let launcher = self.clone();
-        Some(move || launcher.save_aliases(None))
-    }
-
-    /// The title of the installed command `command`, whatever its package's
-    /// state, or its id.
-    fn configured_title(&self, state: &State, command: &str) -> String {
-        state
-            .packages
-            .iter()
-            .flat_map(|package| package.commands())
-            .find(|registration| registration.id == command)
-            .map_or_else(|| command.to_owned(), |registration| registration.title)
+        Some(move || launcher.save::<AliasChoices>(None))
     }
 }
 
 /// An alias or fallback change that has taken effect and is being recorded.
-pub(super) struct AliasChange {
+pub(super) struct ChoiceChange {
     command: String,
     /// The outcome once recorded.
     done: String,

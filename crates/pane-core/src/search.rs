@@ -9,10 +9,8 @@
 //! and dotless I are out of scope.
 //!
 //! Every word of the query must appear in the title, subtitle or package
-//! title, unless the query is the result's alias. Matches are ranked by how
-//! well the title matches, best first:
+//! title. Matches are ranked by how well the title matches, best first:
 //!
-//! 0. the query is the alias the user gave the result;
 //! 1. the title is the query;
 //! 2. the title starts with the query;
 //! 3. every word of the query starts a word of the title;
@@ -24,13 +22,25 @@
 //! query lists every result in that order. This is a deliberately simple
 //! first ranking, not tuned relevance: no typo tolerance, abbreviations,
 //! frequency or recency.
+//!
+//! A query that is the alias the user gave a result ([`Query::is_alias_of`])
+//! is compared caselessly instead ([`same_text`]); the launcher lists such a
+//! result before every other.
 
+use unicase::UniCase;
 use unicode_normalization::UnicodeNormalization;
+
+/// Whether `a` and `b` are the same text caselessly: after NFC and collapsing
+/// whitespace, with full Unicode case folding (so "STRASSE" is "straße" and a
+/// final sigma is a sigma). Folding is not locale-aware: Turkish dotted and
+/// dotless I are not folded together.
+pub(crate) fn same_text(a: &str, b: &str) -> bool {
+    UniCase::unicode(normalize(a)) == UniCase::unicode(normalize(b))
+}
 
 /// How well a result matches a query; lower is better.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Rank {
-    Alias,
     Exact,
     Prefix,
     WordPrefixes,
@@ -41,7 +51,7 @@ enum Rank {
 
 /// `text` as it is compared: NFC, lowercase, its words separated by single
 /// spaces.
-pub(crate) fn normalize(text: &str) -> String {
+fn normalize(text: &str) -> String {
     let text: String = text.to_lowercase().nfc().collect();
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -103,9 +113,14 @@ impl Query {
         }
     }
 
-    /// Whether this query is the alias the user gave the result with `keys`.
+    /// Whether this query is the alias the user gave the result with `keys`,
+    /// compared caselessly ([`same_text`]).
     pub(crate) fn is_alias_of(&self, keys: &Keys) -> bool {
-        !self.text.is_empty() && keys.alias.as_deref() == Some(self.text.as_str())
+        !self.text.is_empty()
+            && keys
+                .alias
+                .as_deref()
+                .is_some_and(|alias| UniCase::unicode(alias) == UniCase::unicode(&self.text))
     }
 
     /// How well a result with `keys` matches this non-empty query; `None`
@@ -113,9 +128,7 @@ impl Query {
     fn rank(&self, keys: &Keys) -> Option<Rank> {
         let in_title = |word: &String| keys.title.contains(word.as_str());
         let in_subtitle = |word: &String| in_title(word) || keys.subtitle.contains(word.as_str());
-        let rank = if keys.alias.as_deref() == Some(self.text.as_str()) {
-            Rank::Alias
-        } else if keys.title == self.text {
+        let rank = if keys.title == self.text {
             Rank::Exact
         } else if keys.title.starts_with(&self.text) {
             Rank::Prefix

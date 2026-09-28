@@ -8,6 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use futures::executor::block_on;
 use gpui::{Entity, TestAppContext, VisualTestContext, prelude::*};
 use pane::LauncherWindow;
 use pane_core::{Launcher, LauncherView, Runtime, Screen, Status};
@@ -47,6 +48,23 @@ fn titles(view: &LauncherView) -> Vec<&str> {
     view.rows.iter().map(|row| row.title.as_str()).collect()
 }
 
+/// Selects the row titled `title` on the screen shown and presses Enter.
+fn press_enter_on(
+    window: &Entity<LauncherWindow>,
+    cx: &mut VisualTestContext,
+    title: &str,
+) -> LauncherView {
+    let launcher = cx.read_entity(window, |window, _| window.launcher().clone());
+    let view = launcher.view();
+    let index = titles(&view)
+        .iter()
+        .position(|row| *row == title)
+        .unwrap_or_else(|| panic!("no row {title:?} in {:?}", titles(&view)));
+    launcher.select(index);
+    cx.simulate_keystrokes("enter");
+    settle(window, cx)
+}
+
 #[gpui::test]
 fn an_alias_and_a_fallback_set_in_the_window_send_the_typed_text_to_the_command(
     cx: &mut TestAppContext,
@@ -55,8 +73,9 @@ fn an_alias_and_a_fallback_set_in_the_window_send_the_typed_text_to_the_command(
     let folder = package(&sources.path().join("query"));
     cx.executor().allow_parking();
     cx.update(pane::bind_keys);
+    let runtime = Runtime::start().unwrap();
     let launcher =
-        Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"));
+        Launcher::with_packages(Ok(runtime.clone()), vec![], data.path().join("extensions"));
     let (window, cx) = cx.add_window_view(|window, cx| {
         let mut launcher = LauncherWindow::new(launcher, window, cx);
         launcher.preview_package(&folder, window, cx);
@@ -66,17 +85,8 @@ fn an_alias_and_a_fallback_set_in_the_window_send_the_typed_text_to_the_command(
     cx.simulate_keystrokes("enter");
     settle(&window, cx);
 
-    // Root lists Echo, the install row, then Manage extensions…; the
-    // extension list holds the package's state, reload, cache and uninstall
-    // rows, Echo's hotkey, then its alias and fallback.
-    cx.simulate_keystrokes("down down enter");
-    let view = settle(&window, cx);
-    assert_eq!(
-        titles(&view)[4..],
-        ["Hotkey for Echo", "Alias for Echo", "Fallback: Echo"]
-    );
-    cx.simulate_keystrokes("down down down down down enter");
-    let view = settle(&window, cx);
+    press_enter_on(&window, cx, "Manage extensions…");
+    let view = press_enter_on(&window, cx, "Alias for Echo");
     assert_eq!(view.title, "Alias for Echo");
     assert!(matches!(view.screen, Screen::Form(_)));
     cx.simulate_input("ec");
@@ -86,7 +96,8 @@ fn an_alias_and_a_fallback_set_in_the_window_send_the_typed_text_to_the_command(
         view.status,
         Status::Result("Typing “ec” now finds Echo".into())
     );
-    assert_eq!(view.selected, Some(5));
+    let selected = view.selected.map(|index| view.rows[index].title.as_str());
+    assert_eq!(selected, Some("Alias for Echo"));
 
     // Its form starts with the alias.
     cx.simulate_keystrokes("enter");
@@ -97,8 +108,7 @@ fn an_alias_and_a_fallback_set_in_the_window_send_the_typed_text_to_the_command(
     cx.simulate_keystrokes("escape");
     settle(&window, cx);
 
-    cx.simulate_keystrokes("down enter");
-    let view = settle(&window, cx);
+    let view = press_enter_on(&window, cx, "Fallback: Echo");
     assert_eq!(
         view.status,
         Status::Result("Echo is now offered for any text typed in root search".into())
@@ -121,20 +131,31 @@ fn an_alias_and_a_fallback_set_in_the_window_send_the_typed_text_to_the_command(
     assert!(cx.debug_bounds("status-result").is_some());
 
     // Text nothing matches: "No results", then the fallback, which Enter
-    // does not choose by itself; Down does.
+    // does not choose by itself; Down does. Nothing was sent to Echo: it
+    // stopped with the query and has not started again once the runtime
+    // has served every call asked for before it answers.
     cx.simulate_keystrokes("escape");
     settle(&window, cx);
+    let echo = cx
+        .read_entity(&window, |window, _| {
+            window.launcher().packages()[0].location.clone()
+        })
+        .join("sample_query.wasm");
+    runtime.forget([echo.clone()]);
     cx.simulate_input("zqx");
     let view = settle(&window, cx);
     assert_eq!(titles(&view), ["Echo"]);
     assert_eq!(view.selected, None);
+    assert_eq!(view.status, Status::Idle);
     assert!(cx.debug_bounds("no-results").is_some());
-    let before = view.status.clone();
     cx.simulate_keystrokes("enter");
     let view = settle(&window, cx);
-    assert_eq!(view.status, before);
+    assert!(!block_on(runtime.running()).contains(&echo));
+    cx.run_until_parked();
+    assert_eq!(view.status, Status::Idle);
     cx.simulate_keystrokes("down enter");
     let view = settle(&window, cx);
     assert_eq!(view.status, Status::Result("Echo heard “zqx”".into()));
     assert_eq!(view.query(), Some("zqx"));
+    assert!(block_on(runtime.running()).contains(&echo));
 }

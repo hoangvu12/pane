@@ -25,6 +25,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 mod aliases;
+mod choices;
 mod hotkeys;
 mod indexed;
 
@@ -49,7 +50,8 @@ mod reload;
 mod retained;
 mod uninstall;
 
-use aliases::Aliases;
+use aliases::AliasChoices;
+use choices::Record;
 use hotkeys::Bindings;
 use pausing::{Pauses, Recorder};
 
@@ -67,6 +69,17 @@ pub struct CommandRegistration {
     pub title: String,
     pub subtitle: Option<String>,
     pub component: PathBuf,
+    /// Whether the command takes a query (`"takesQuery": true`): text typed
+    /// into root search, sent to it through its alias or as a fallback.
+    pub takes_query: bool,
+}
+
+impl CommandRegistration {
+    /// The command's id in its package manifest: the part of [`Self::id`]
+    /// after the package identity's key, for an installed command.
+    pub fn manifest_id(&self) -> &str {
+        choices::split(&self.id).1
+    }
 }
 
 /// Which screen the launcher shows, with what only that screen has.
@@ -375,9 +388,11 @@ struct State {
     /// The global hotkeys the user assigned to commands.
     bindings: Bindings,
     /// The aliases and fallbacks the user gave commands.
-    aliases: Aliases,
-    /// The commands aliases and fallbacks reach, built with `root`.
-    targets: Vec<aliases::Target>,
+    aliases: Record<AliasChoices>,
+    /// The query root search showed when the status line began showing a
+    /// command's answer to a query sent from it (or its sending), so that
+    /// changing the query clears it.
+    sent_from: Option<String>,
 }
 
 /// What is happening to a package, which stops another change to it
@@ -539,6 +554,8 @@ struct RootResult {
     row: Row,
     entry: Entry,
     keys: Keys,
+    /// The installed command it opens, for its alias and fallback.
+    target: Option<aliases::Target>,
 }
 
 /// A root result a command computed from the current query.
@@ -560,9 +577,9 @@ enum Entry {
     OpenApplication { id: String, name: String },
     /// Open the command with this component (root).
     Open(PathBuf),
-    /// Send `query` to the command with this component, which takes a
-    /// query, and show its answer (root: an alias or fallback).
-    Query { component: PathBuf, query: String },
+    /// Send a query to a command that takes one, and show its answer
+    /// (root: an alias or fallback).
+    Send(aliases::Sending),
     /// Explain why this installed package cannot load (root).
     Broken(String),
     /// Explain why this command (root) or this item's action (command view)
@@ -604,9 +621,9 @@ enum Entry {
     /// Make the command with this id a fallback, or no longer one
     /// (extension list).
     ToggleFallback(String),
-    /// Forget the alias and fallback of this missing command (extension
-    /// list).
-    ForgetAlias(String),
+    /// Forget the alias and fallback of the command with this id, which
+    /// cannot be listed (extension list).
+    ForgetChoices(String),
     /// Ask whether to uninstall this installed package, and whether to keep
     /// its saved data (extension list).
     AskUninstall(PackageIdentity),
@@ -663,7 +680,7 @@ impl Launcher {
             Some(installation) => {
                 let store = installation.store.lock().unwrap_or_else(|p| p.into_inner());
                 let bindings = Bindings::open(&installation.dir);
-                let aliases = Aliases::open(&installation.dir);
+                let aliases = Record::open(&installation.dir);
                 (
                     store.installed(),
                     store.retained(),
@@ -679,7 +696,7 @@ impl Launcher {
                 None,
                 Vec::new(),
                 Bindings::default(),
-                Aliases::default(),
+                Record::default(),
             ),
         };
         let mut state = State {
@@ -701,7 +718,7 @@ impl Launcher {
             paused: Pauses::default(),
             bindings,
             aliases,
-            targets: Vec::new(),
+            sent_from: None,
         };
         if let Some(installation) = &installation {
             for package in &state.packages {
@@ -972,11 +989,15 @@ impl Launcher {
     fn search(&self, state: &mut State, query: &str) {
         state.search_epoch += 1;
         state.computed.clear();
+        // A command's answer to the query sent is not an answer to this one.
+        if state.sent_from.take().is_some_and(|sent| sent != query) {
+            state.view.status = Status::Idle;
+        }
         let (rows, entries) = root_rows(state, query);
         state.view.screen = Screen::Root {
             query: query.to_owned(),
         };
-        state.view.selected = aliases::first_choice(&rows);
+        state.view.selected = aliases::first_choice(&entries);
         state.view.rows = rows;
         state.entries = entries;
     }
@@ -1140,10 +1161,23 @@ impl Launcher {
         let mut change = None;
         let mut reload = None;
         let mut hotkey_change = None;
-        let mut alias_change = None;
+        let mut choice_change = None;
         let mut uninstall = None;
         let mut delete_retained = None;
+        // The status line is about this action from now on.
+        state.sent_from = None;
         let entry = match entry {
+            Some(Entry::Send(sending)) => match &sending.unavailable {
+                Some(reason) => {
+                    state.view.status = Status::Error(reason.clone());
+                    None
+                }
+                None => {
+                    state.sent_from = state.view.query().map(str::to_owned);
+                    state.view.status = Status::Running;
+                    Some(Entry::Send(sending))
+                }
+            },
             Some(Entry::Broken(problem) | Entry::Unavailable(problem)) => {
                 state.view.status = Status::Error(problem);
                 None
@@ -1211,11 +1245,11 @@ impl Launcher {
                 None
             }
             Some(Entry::ToggleFallback(command)) => {
-                alias_change = Some(self.toggle_fallback(&mut state, &command));
+                choice_change = Some(self.toggle_fallback(&mut state, &command));
                 None
             }
-            Some(Entry::ForgetAlias(command)) => {
-                alias_change = Some(self.forget_alias(&mut state, &command));
+            Some(Entry::ForgetChoices(command)) => {
+                choice_change = Some(self.forget_choices(&mut state, &command));
                 None
             }
             Some(Entry::Toggle(identity)) => {
@@ -1249,7 +1283,9 @@ impl Launcher {
         // A call into the package belongs to its generation as of now, not
         // as of when the returned future first runs.
         let called = match &entry {
-            Some(Entry::Open(component) | Entry::Query { component, .. }) => Some(component),
+            Some(Entry::Open(component) | Entry::Send(aliases::Sending { component, .. })) => {
+                Some(component)
+            }
             Some(Entry::Run(_) | Entry::CustomView(..)) => open.as_ref(),
             _ => None,
         };
@@ -1266,8 +1302,8 @@ impl Launcher {
             if let Some(hotkey_change) = hotkey_change {
                 launcher.finish_hotkey_change(hotkey_change).await;
             }
-            if let Some(alias_change) = alias_change {
-                launcher.finish_alias_change(alias_change).await;
+            if let Some(choice_change) = choice_change {
+                launcher.finish_choice_change(choice_change).await;
             }
             if let Some(uninstall) = uninstall {
                 launcher.finish_uninstall(epoch, uninstall).await;
@@ -1277,9 +1313,7 @@ impl Launcher {
             }
             match entry {
                 Some(Entry::Open(component)) => launcher.open_command(epoch, component, data).await,
-                Some(Entry::Query { component, query }) => {
-                    launcher.run_query(epoch, component, query, data).await
-                }
+                Some(Entry::Send(sending)) => launcher.run_query(epoch, sending, data).await,
                 Some(Entry::OpenApplication { id, name }) => {
                     launcher.open_application(epoch, id, name).await
                 }
@@ -1313,7 +1347,7 @@ impl Launcher {
                     | Entry::RemoveHotkey(_)
                     | Entry::AskAlias(_)
                     | Entry::ToggleFallback(_)
-                    | Entry::ForgetAlias(_)
+                    | Entry::ForgetChoices(_)
                     | Entry::AskUninstall(_)
                     | Entry::Uninstall(..)
                     | Entry::AskDeleteRetained(_)
@@ -1655,7 +1689,7 @@ impl Launcher {
     /// command with component `select` if given, else the first row.
     fn show_root(&self, state: &mut State, select: Option<PathBuf>) {
         state.root = self.root_results(state);
-        state.targets = aliases::targets(state);
+        state.sent_from = None;
         state.computed.clear();
         state.indexes.stale();
         let (rows, entries) = root_rows(state, "");
@@ -1665,7 +1699,7 @@ impl Launcher {
                     .iter()
                     .position(|entry| matches!(entry, Entry::Open(c) if *c == component))
             })
-            .or_else(|| aliases::first_choice(&rows));
+            .or_else(|| aliases::first_choice(&entries));
         self.leave_command(state);
         state.entries = entries;
         state.view = LauncherView {
@@ -1723,7 +1757,6 @@ impl Launcher {
             .and_then(|index| state.view.rows.get(index))
             .map(|row| row.id.clone());
         state.root = self.root_results(state);
-        state.targets = aliases::targets(state);
         // A command that was disabled, paused or replaced contributes
         // nothing more; one enabled again answers from the next change of the
         // query.
@@ -1742,7 +1775,7 @@ impl Launcher {
         let (rows, entries) = root_rows(state, query);
         let selected = selected_id
             .and_then(|id| rows.iter().position(|row| row.id == id))
-            .or_else(|| aliases::first_choice(&rows));
+            .or_else(|| aliases::first_choice(&entries));
         state.entries = entries;
         state.view.rows = rows;
         state.view.selected = selected;
@@ -1753,10 +1786,15 @@ impl Launcher {
     /// Pane's own rows.
     fn root_results(&self, state: &State) -> Vec<RootResult> {
         let mut results = Vec::new();
-        let mut add = |row: Row, entry: Entry, package: Option<&str>| {
-            let alias = state.aliases.active_alias(&row.id);
+        let mut add = |row: Row, entry: Entry, package: Option<&str>, target| {
+            let alias = state.aliases.chosen.active_alias(&row.id);
             let keys = Keys::new(&row.title, row.subtitle.as_deref(), package).with_alias(alias);
-            results.push(RootResult { row, entry, keys });
+            results.push(RootResult {
+                row,
+                entry,
+                keys,
+                target,
+            });
         };
         let command = |(command, unavailable): (CommandRegistration, Option<Unavailable>)| {
             let entry = match &unavailable {
@@ -1775,7 +1813,7 @@ impl Launcher {
         let enabled = || state.packages.iter().filter(|package| package.enabled);
         for built in self.commands.iter().cloned() {
             let (row, entry) = command((built, None));
-            add(row, entry, None);
+            add(row, entry, None, None);
         }
         for package in enabled() {
             // Its commands are found by its title too, even those that show
@@ -1791,8 +1829,13 @@ impl Launcher {
                 let unavailable = paused
                     .clone()
                     .or(unavailable.map(Unavailable::OnThisSystem));
+                let target = aliases::Target {
+                    registration: registration.clone(),
+                    identity: package.identity.clone(),
+                    unavailable: unavailable.clone(),
+                };
                 let (row, entry) = command((registration, unavailable));
-                add(row, entry, Some(&title));
+                add(row, entry, Some(&title), Some(target));
             }
         }
         for package in enabled() {
@@ -1808,7 +1851,7 @@ impl Launcher {
                     package.title(),
                     package.location.display()
                 );
-                add(row, Entry::Broken(problem), None);
+                add(row, Entry::Broken(problem), None, None);
             }
         }
         if self.installation.is_some() {
@@ -1818,7 +1861,7 @@ impl Launcher {
                 subtitle: Some("Choose a local extension package to install".into()),
                 unavailable: None,
             };
-            add(row, Entry::InstallFromFolder, None);
+            add(row, Entry::InstallFromFolder, None, None);
         }
         // Retained data is managed there too, while nothing is installed.
         if self.installation.is_some() && !(state.packages.is_empty() && state.retained.is_empty())
@@ -1829,7 +1872,7 @@ impl Launcher {
                 subtitle: Some("Enable or disable installed extensions".into()),
                 unavailable: None,
             };
-            add(row, Entry::Manage, None);
+            add(row, Entry::Manage, None, None);
         }
         results
     }
@@ -1915,7 +1958,7 @@ impl Launcher {
         let launcher = self.clone();
         async move {
             if let Some(change) = alias_change {
-                launcher.finish_alias_change(change).await;
+                launcher.finish_choice_change(change).await;
             }
             if let Some((component, item_id, values)) = submission {
                 launcher
@@ -2026,7 +2069,7 @@ impl Launcher {
         for (row, entry) in self
             .hotkey_rows(state)
             .into_iter()
-            .chain(self.alias_rows(state))
+            .chain(self.choice_rows(state))
         {
             rows.push(row);
             entries.push(entry);
@@ -2435,20 +2478,21 @@ impl Launcher {
         };
     }
 
-    /// Sends `query` to the command in `component`, which takes a query,
-    /// and shows its answer while the screen is the one it was sent from;
-    /// root search stays as it was.
-    async fn run_query(
-        &self,
-        epoch: u64,
-        component: PathBuf,
-        query: String,
-        data: Option<PackageData>,
-    ) {
+    /// Sends the query of `sending` to its command, which takes a query,
+    /// and shows its answer while root search still shows the query it was
+    /// sent from; root search stays as it was. The answer to a query the
+    /// user has changed since is not shown.
+    async fn run_query(&self, epoch: u64, sending: aliases::Sending, data: Option<PackageData>) {
+        let aliases::Sending {
+            component,
+            command,
+            query,
+            ..
+        } = sending;
         let result = match self.runtime() {
             Ok(runtime) => {
                 runtime
-                    .run_query_with(&component, &query, data.clone())
+                    .run_query_with(&component, &command, &query, data.clone())
                     .await
             }
             Err(error) => Err(error),
@@ -2456,6 +2500,13 @@ impl Launcher {
         let Some(mut state) = self.lock_if_current(epoch) else {
             return;
         };
+        let Some(sent) = state.sent_from.clone() else {
+            // The query changed meanwhile, which cleared the status.
+            return;
+        };
+        if state.view.query() != Some(sent.as_str()) {
+            return;
+        }
         state.view.status = match (stopped(&state, &component, &data), result) {
             // Stopped while it was running: its answer is not shown.
             (Some(problem), _) => Status::Error(problem),
@@ -2861,10 +2912,12 @@ fn root_rows(state: &State, query: &str) -> (Vec<Row>, Vec<Entry>) {
         .collect();
     let keys: Vec<&Keys> = candidates.iter().map(|result| &result.keys).collect();
     let parsed = Query::new(query);
-    let (by_alias, matches): (Vec<usize>, Vec<usize>) =
-        search::ranked_matches(&parsed, keys.into_iter())
-            .into_iter()
-            .partition(|&index| parsed.is_alias_of(&candidates[index].keys));
+    let named = |index: &usize| parsed.is_alias_of(&candidates[*index].keys);
+    let by_alias: Vec<usize> = (0..candidates.len()).filter(named).collect();
+    let matches: Vec<usize> = search::ranked_matches(&parsed, keys.into_iter())
+        .into_iter()
+        .filter(|index| !named(index))
+        .collect();
     let found = |index: usize| {
         (
             candidates[index].row.clone(),
@@ -2878,7 +2931,7 @@ fn root_rows(state: &State, query: &str) -> (Vec<Row>, Vec<Entry>) {
         .map(|(row, entry)| (row.clone(), entry.clone()));
     // What the user's alias names comes first, even before computed
     // results; the fallbacks, which the user must choose, come last.
-    aliases::alias_rows(state, query)
+    aliases::rows_sending_after_alias(state, query)
         .into_iter()
         .chain(by_alias.into_iter().map(found))
         .chain(
@@ -2906,7 +2959,7 @@ fn relist_root(state: &mut State, query: &str) {
     let (rows, entries) = root_rows(state, query);
     state.view.selected = keep
         .and_then(|id| rows.iter().position(|row| row.id == id))
-        .or_else(|| aliases::first_choice(&rows));
+        .or_else(|| aliases::first_choice(&entries));
     state.view.rows = rows;
     state.entries = entries;
 }

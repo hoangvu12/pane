@@ -16,6 +16,9 @@ pane_guest::query::export!(Echo);
 /// The query Echo answers with an error, to show how a failure looks.
 const REFUSED: &str = "fail";
 
+/// The query Echo crashes on, to show how Pane pauses a crashing extension.
+const CRASH: &str = "crash";
+
 impl Guest for Echo {
     type CustomView = NoCustomView;
 
@@ -66,13 +69,18 @@ impl Guest for Echo {
 
 impl pane_guest::query::Guest for Echo {
     /// Answers with the text it was sent; "fail" is refused, to show how an
-    /// error looks.
-    async fn run_query(query: String) -> Result<String, String> {
-        if query.trim() == REFUSED {
-            return Err(format!(
-                "Echo refuses “{REFUSED}”, to show how an error looks"
-            ));
+    /// error looks, and "crash" crashes on purpose (three crashes within
+    /// five minutes pause the extension).
+    async fn run_query(command: String, query: String) -> Result<String, String> {
+        if command != "echo" {
+            return Err(format!("unknown command: {command}"));
         }
-        Ok(format!("Echo heard “{query}”"))
+        match query.as_str() {
+            REFUSED => Err(format!(
+                "Echo refuses “{REFUSED}”, to show how an error looks"
+            )),
+            CRASH => panic!("Echo crashes on purpose"),
+            _ => Ok(format!("Echo heard “{query}”")),
+        }
     }
 }
