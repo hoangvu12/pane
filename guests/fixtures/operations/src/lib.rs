@@ -10,8 +10,9 @@
 //! describes (`{"to", "operation", "input"}`, version 1) and answers its
 //! result; `crash` traps; `not-json` answers text that is not JSON;
 //! `remember` saves its input in the package's settings under `last`;
-//! Two items spin (compute without yielding for 1.5 seconds) after saving
-//! `spin` as "started": one then tries to save `spin` as "finished" and call
+//! Two items spin after saving `spin` as "started": they compute without
+//! yielding until Pane refuses them their settings (they were stopped), or
+//! for 20 seconds. One then tries to save `spin` as "finished" and call
 //! `b`'s `remember`, and answers; the other fails. Tests stop `a` while it
 //! spins: what it tries afterwards must be refused and its answer discarded.
 //!
@@ -108,13 +109,17 @@ fn chain(sources: &Value, from: u32) -> Value {
     })
 }
 
-/// Computes for 1.5 seconds without yielding, after saving `spin` as
-/// "started".
+/// Saves `spin` as "started", then computes without yielding until reading
+/// its settings is refused, which happens once Pane has stopped it, or for
+/// 20 seconds.
 fn spin() -> Result<(), String> {
     use wasip3::clocks::monotonic_clock::now;
     settings::set("spin", "started")?;
-    let end = now() + 1_500_000_000;
-    while now() < end {}
+    let end = now() + 20_000_000_000;
+    while now() < end && settings::get("spin").is_ok() {
+        let next = now() + 1_000_000;
+        while now() < next {}
+    }
     Ok(())
 }
 
