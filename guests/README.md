@@ -299,7 +299,8 @@ Rust. npm dependencies are bundled into the component; the samples use
 [Zod](https://zod.dev) 4.6.5 (`zod/mini`) and show its validation failure as a
 normal error. Only ECMAScript built-ins are available, not Node.js or browser
 APIs; WASI 0.3 imports declared by [the world](js/wit/world.wit) (currently
-`wasi:clocks/monotonic-clock` and `wasi:http/client`) are imported by name;
+`wasi:clocks/monotonic-clock`, and `wasi:http/client` for a command whose
+bundle imports it) are imported by name;
 the clock is typed in [`js/wasi.d.ts`](js/wasi.d.ts), and web requests have
 a typed helper, [`@pane/extension/http`](#searching-inside-a-command). `Math.random`, `Date.now()` and
 `performance.now()` are fresh in each instance.
@@ -351,9 +352,11 @@ Toolchain used: upstream [componentize-qjs](https://github.com/andreiltd/compone
 [`tools/componentize-js/patches`](../tools/componentize-js/patches), its
 QuickJS runtime built with `nightly-2026-09-27` for `wasm32-wasip3` against
 wasi-sdk 34, the componentizer built with Rust 1.98.1, esbuild 0.28.2 and
-TypeScript 7.0.2. Every JS component imports the same 22 WASI 0.3 interfaces
-(20 through its libc, and `wasi:http`'s `types` and `client`), whatever the
-source uses, and is about 4.4 MB. Only Linux x86_64 builds have been run; the scripts avoid OS-specific paths, but Windows
+TypeScript 7.0.2. Every JS component imports the same 20 WASI 0.3 interfaces
+through its libc, whatever the source uses, and `wasi:http`'s `types` and
+`client` too if its bundle imports `wasi:http` (itself or through
+`@pane/extension/http`), which Pane then lists as using the network; it is
+about 4.4 MB. Only Linux x86_64 builds have been run; the scripts avoid OS-specific paths, but Windows
 and macOS builds are unverified. See
 [tools/componentize-js](../tools/componentize-js/README.md) for the patch queue.
 
@@ -739,17 +742,25 @@ and calls `search(command, query)` with the text typed there (trimmed,
 never empty); the results (`id`, `title`, optional `subtitle`) replace the
 command's list, and activating one calls `run-action` with its id. Root
 search never calls it, so nothing typed there reaches the command or its
-service. Pane stops a search it no longer needs (the text changed, the user
-left) where it waits, dropping the instance with its web request: code
-after that `await` never runs and in-memory state is lost, so make result
-ids say which result they are. An error it answers with (a service down or
-unreachable) is shown in place of results and never pauses the extension.
-See [docs/command-search.md](../docs/command-search.md).
+service. Pane waits 150 ms before it starts a search, and stops one it no
+longer needs (the text changed, the user left) where it waits, dropping the
+instance with its web request: code after that `await` never runs and
+in-memory state is lost, so make result ids say which result they are. An
+error it answers with (a service down or unreachable) is shown in place of
+results and never pauses the extension. A command cannot set both
+`"search"` and `"rootResults"`. See
+[docs/command-search.md](../docs/command-search.md).
 
 **Web requests** go through `wasi:http@0.3.0`'s client, which Pane links for
 every command and sends from the host (`http` and `https` over HTTP/1.1,
-trusting the system's certificates; 10 s to connect, 30 s for the response
-head unless the request's options say otherwise). The SDKs wrap it:
+trusting the system's certificates, no redirects followed). Pane bounds each
+request, whatever its options ask: 10 s to connect, 20 s for the response
+head, 10 s between two pieces of the body, 30 s in all, a body of at most
+4 MiB, and four connections open at once per package; past a limit the
+request fails with an error saying so. Any address is allowed, this
+computer's and the local network's too; Manage extensions shows which
+packages use the network and the addresses each tried to reach this
+session. The SDKs wrap it:
 
 ```rust
 // Rust (no_std): pane_guest::http, the generated wasi:http bindings beside it.
@@ -766,8 +777,10 @@ const found = response.json();
 ```
 
 A failure to get a response is an error whose message says why
-("connection refused", "the address could not be resolved"); any status is
-a response. For other methods, request bodies or streaming, use the
+("connection refused", "the address could not be resolved", "the host's
+certificate is not trusted", "the service did not answer in time", "the
+answer is larger than the 4194304 bytes Pane accepts"); any status is a
+response. For other methods, request bodies or streaming, use the
 standard bindings (`pane_guest::http::wasi::http`, or
 `wasi:http/types@0.3.0` and `wasi:http/client@0.3.0` in JS, untyped).
 Libraries built on `wasi:http` work; ones opening sockets themselves, or
@@ -779,7 +792,8 @@ The samples ([Rust](sample-search/src/lib.rs),
 [TypeScript](sample-search-ts/src/index.ts)) search the fixture service, a
 made-up package registry on this computer: run
 `cargo run -p pane-core --example fixture_service` (port 8740, their
-default address; its item "Service address" changes it), install
+default address; `-- --port N` for another, which their item "Service
+address" then sets), install
 `target/guests/packages/sample-search`, open Package search and type.
 
 ## Custom views

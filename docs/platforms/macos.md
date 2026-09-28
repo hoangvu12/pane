@@ -286,12 +286,13 @@ executable bit run on macOS in CI. **Not run on macOS yet.**
 
 ## Searching inside a command (#30)
 
-The smoke's search phase (screenshots 160 to 168, [command search](../command-search.md#checks)),
-with a data folder of its own, builds and starts the fixture service
-(`fixture_service --port 8740`, 127.0.0.1 only) and installs Package
-search, the Rust search sample. "aurora" typed in root search must leave the
-service's log without a request; opened, the command's search field sends
-it (results listed, Enter shows a package's details); "slow" then "ember"
+The smoke's search phase (screenshots 160 to 169, [command search](../command-search.md#checks)),
+with a data folder of its own, builds and starts the fixture service on a
+free port of 127.0.0.1 (`fixture_service --port 0`, the port read from its
+log) and installs Package search, the Rust search sample. "aurora" typed in
+root search must leave the service's log without a request; opened, the
+command's "Service address" form is set to the service; its search field
+sends "aurora" (results listed, Enter shows a package's details); "slow" then "ember"
 must log the held search as abandoned; the service's 503, then the service
 stopped, are errors; restarted, a search lists results again.
 **Not run on macOS yet.**

@@ -108,6 +108,10 @@ _Avoid_: Argument (Raycast's per-field input), search provider (a provider is as
 The search field an opened command has when it searches as the user types, such as one searching an online service; Pane sends the text typed there only to that command, stops a search the text has replaced, and never asks the command from root search.
 _Avoid_: Search provider (root search asks those), query-taking command (sent text from root search once, when invoked)
 
+**Network use**:
+What Pane shows of an installed package's web requests, which it does not gate: whether its component imports `wasi:http`, and the addresses it tried to reach since Pane started.
+_Avoid_: Network permission (nothing is granted or refused)
+
 **Search provider**:
 A source of matching results for a query, such as applications, files or an online service.
 _Avoid_: The entire search interface
