@@ -89,6 +89,24 @@ does not run, so the smoke uses `--install`; the picker flow is covered by the
 GPUI window tests (`crates/pane/tests/install.rs`). The macOS and Windows
 smokes run the same phase (screenshots 9 to 12); it has not run there yet.
 
+### Platform availability (#19)
+
+After the restart the smoke opens the Rust command again and activates its
+sixth item, declared for Windows only, then its seventh, declared for macOS
+and Linux; finally it starts `pane --install` on a package whose `pane.json`
+lists only Windows and macOS. Run locally on 2026-09-28 (same Ubuntu 26.04.1,
+Xvfb/lavapipe setup), all screenshot checks passed. The list scrolls to keep
+the selected row visible:
+
+| Step | Evidence |
+| --- | --- |
+| "Windows-only action" listed with "Not available on Linux: this action supports only Windows"; Enter shows the reason as the error | [13-windows-only.png](evidence/linux-x11/13-windows-only.png) |
+| "macOS and Linux action" runs: "Ran the macOS and Linux action in the Rust guest" | [14-not-windows.png](evidence/linux-x11/14-not-windows.png) |
+| The Windows/macOS package: "Not available on Linux: this package supports only Windows and macOS", nothing to install | `15-no-compatible-package.png` (not committed: it shows the local path) |
+
+The macOS and Windows smokes run the same steps with their own expected
+results; they have not run there yet.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms have a text field (GPUI CE's

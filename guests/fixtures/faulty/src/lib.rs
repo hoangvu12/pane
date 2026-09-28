@@ -13,6 +13,7 @@ fn item(id: &str) -> Item {
         title: id.into(),
         subtitle: None,
         form: None,
+        platforms: None,
     }
 }
 
@@ -35,8 +36,15 @@ impl Guest for Faulty {
                 item("error"),
                 item("trap"),
                 Item {
-                    form: Some(form),
+                    form: Some(form.clone()),
                     ..item("form")
+                },
+                // Declares no operating system, so it is unavailable on
+                // every system; activating it must not open its form.
+                Item {
+                    form: Some(form),
+                    platforms: Some(vec![]),
+                    ..item("nowhere")
                 },
             ],
         })

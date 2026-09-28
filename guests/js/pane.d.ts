@@ -18,7 +18,17 @@ export interface Item {
    * none.
    */
   form?: Form | null;
+  /**
+   * The operating systems the item's action (or form) works on; omitted or
+   * `null` for every system Pane runs on. Elsewhere Pane still lists the
+   * item but shows it as unavailable with the reason, and never calls
+   * `runAction` or opens the form for it.
+   */
+  platforms?: Platform[] | null;
 }
+
+/** An operating system Pane runs on. */
+export type Platform = "windows" | "macos" | "linux";
 
 /** A command's list view. */
 export interface View {

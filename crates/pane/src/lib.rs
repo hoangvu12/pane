@@ -7,8 +7,8 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 
 use gpui::{
-    App, Context, Div, FocusHandle, KeyBinding, PathPromptOptions, Role, SharedString, Stateful,
-    Window, actions, div, prelude::*, rgb,
+    App, Context, Div, FocusHandle, KeyBinding, PathPromptOptions, Role, ScrollHandle,
+    SharedString, Stateful, Window, actions, div, prelude::*, rgb,
 };
 use pane_core::{CommandRegistration, Launcher, Row, Screen, Status};
 
@@ -140,6 +140,11 @@ pub struct LauncherWindow {
     focus_handle: FocusHandle,
     /// The open form's controls; `Some` exactly on the form screen.
     form: Option<form::FormControls>,
+    /// The list's scroll position.
+    scroll: ScrollHandle,
+    /// The screen, title and selection the list was last scrolled for; when
+    /// they change, the list scrolls to keep the selected row visible.
+    scrolled_for: Option<(Screen, String, Option<usize>)>,
 }
 
 impl LauncherWindow {
@@ -150,6 +155,8 @@ impl LauncherWindow {
             launcher,
             focus_handle,
             form: None,
+            scroll: ScrollHandle::new(),
+            scrolled_for: None,
         }
     }
 
@@ -289,12 +296,35 @@ impl LauncherWindow {
                 row.aria_active_descendant().bg(rgb(0x364355))
             })
             .hover(|row| row.bg(rgb(0x2e3a48)))
-            .child(div().child(row.title))
-            .when_some(row.subtitle, |element, subtitle| {
-                element
-                    .aria_description(subtitle.clone())
-                    .child(div().text_sm().text_color(rgb(0xaab4c0)).child(subtitle))
+            .child(
+                div()
+                    .when(row.unavailable.is_some(), |title| {
+                        title.text_color(rgb(0x8a96a3))
+                    })
+                    .child(row.title),
+            )
+            .when_some(row.subtitle.clone(), |element, subtitle| {
+                element.child(div().text_sm().text_color(rgb(0xaab4c0)).child(subtitle))
             })
+            // An unavailable row stays listed and selectable; it says why it
+            // cannot run here, on screen and to assistive technology.
+            .when_some(row.unavailable.clone(), |element, reason| {
+                element.aria_disabled(true).child(
+                    div()
+                        .id(("unavailable", index))
+                        .debug_selector(|| "unavailable-reason".into())
+                        .text_sm()
+                        .text_color(rgb(0xd6a36a))
+                        .child(reason),
+                )
+            })
+            .when_some(
+                match (row.subtitle, row.unavailable) {
+                    (Some(subtitle), Some(reason)) => Some(format!("{subtitle}. {reason}")),
+                    (subtitle, reason) => subtitle.or(reason),
+                },
+                |element, description| element.aria_description(description),
+            )
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.launcher.select(index);
                 this.activate_selected(window, cx);
@@ -305,6 +335,13 @@ impl LauncherWindow {
 impl Render for LauncherWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let view = self.launcher.view();
+        let shown = (view.screen, view.title.clone(), view.selected);
+        if self.scrolled_for.as_ref() != Some(&shown) {
+            if let Some(selected) = view.selected {
+                self.scroll.scroll_to_item(selected);
+            }
+            self.scrolled_for = Some(shown);
+        }
         let (empty, hint) = match view.screen {
             Screen::Root => ("No commands are installed.", "↑↓ select · Enter open"),
             Screen::Command => (
@@ -342,6 +379,7 @@ impl Render for LauncherWindow {
             Some(form) => self.render_form(view.title.clone(), form, cx),
             None => div()
                 .id("rows")
+                .debug_selector(|| "rows".into())
                 // The list holds keyboard focus; the selected row is its
                 // active descendant, and key actions bubble to the root.
                 .track_focus(&self.focus_handle)
@@ -352,6 +390,7 @@ impl Render for LauncherWindow {
                 .flex_col()
                 .gap_1()
                 .overflow_y_scroll()
+                .track_scroll(&self.scroll)
                 .children(rows)
                 .when(view.selected.is_none(), |rows| {
                     rows.child(div().text_color(rgb(0x8a96a3)).child(empty))

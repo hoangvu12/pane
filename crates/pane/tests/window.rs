@@ -225,6 +225,99 @@ fn a_rejected_field_shows_its_error_and_takes_focus(cx: &mut TestAppContext, sam
     );
 }
 
+/// The sample's item declared for other systems than this one, the reason
+/// Pane gives for it here, and the item declared for this system with its
+/// answer.
+fn platform_items(sample: &Sample) -> (&'static str, &'static str, &'static str, String) {
+    let (unavailable, reason, available, action) = if cfg!(target_os = "windows") {
+        (
+            "macOS and Linux action",
+            "Not available on Windows: this action supports only macOS and Linux",
+            "Windows-only action",
+            "Windows-only action",
+        )
+    } else if cfg!(target_os = "macos") {
+        (
+            "Windows-only action",
+            "Not available on macOS: this action supports only Windows",
+            "macOS and Linux action",
+            "macOS and Linux action",
+        )
+    } else {
+        (
+            "Windows-only action",
+            "Not available on Linux: this action supports only Windows",
+            "macOS and Linux action",
+            "macOS and Linux action",
+        )
+    };
+    let answer = format!("Ran the {action} in the {} guest", sample.language);
+    (unavailable, reason, available, answer)
+}
+
+fn an_unavailable_action_is_listed_with_its_reason_and_others_still_run(
+    cx: &mut TestAppContext,
+    sample: &Sample,
+) {
+    let (unavailable, reason, available, answer) = platform_items(sample);
+    let (window, cx) = open(cx, sample);
+    cx.simulate_resize(gpui::size(gpui::px(640.), gpui::px(420.)));
+    cx.simulate_keystrokes("enter");
+    let view = wait_for_answer(&window, cx);
+    let index = |title: &str| view.rows.iter().position(|row| row.title == title).unwrap();
+
+    // Select the unavailable item with the keyboard: it is still listed,
+    // scrolled into view, and says why it cannot run here.
+    for _ in 0..index(unavailable) {
+        cx.simulate_keystrokes("down");
+    }
+    cx.run_until_parked();
+    let selector = if unavailable == "Windows-only action" {
+        "row-Windows-only action"
+    } else {
+        "row-macOS and Linux action"
+    };
+    assert!(row_is_visible(cx, selector));
+    assert!(
+        cx.debug_bounds("unavailable-reason").is_some(),
+        "the reason is rendered in the row"
+    );
+    let nodes = accessible_nodes(cx);
+    let option = node(&nodes, "ListBoxOption", unavailable);
+    let description = option["description"].as_str().unwrap_or_default();
+    // The row is also marked disabled, which GPUI CE's debug tree does not
+    // report, so only the description is checked.
+    assert!(description.ends_with(reason), "{option:#}");
+    assert_eq!(focused_label(cx).as_deref(), Some(unavailable));
+
+    // Enter explains instead of running the action.
+    cx.simulate_keystrokes("enter");
+    let view = wait_for_answer(&window, cx);
+    assert_eq!(
+        (view.screen, view.status),
+        (Screen::Command, Status::Error(reason.into()))
+    );
+    let (nodes, _) = accessibility_tree(cx);
+    assert!(has(&nodes, "Status", reason), "{nodes:?}");
+
+    // The action declared for this system, and the others, still run.
+    let delta = index(available) as isize - index(unavailable) as isize;
+    let key = if delta > 0 { "down" } else { "up" };
+    for _ in 0..delta.abs() {
+        cx.simulate_keystrokes(key);
+    }
+    cx.simulate_keystrokes("enter");
+    assert_eq!(wait_for_answer(&window, cx).status, Status::Result(answer));
+    for _ in 0..index(available) {
+        cx.simulate_keystrokes("up");
+    }
+    cx.simulate_keystrokes("enter");
+    assert_eq!(
+        wait_for_answer(&window, cx).status,
+        Status::Result(format!("Hello from the {} guest", sample.language))
+    );
+}
+
 /// Declares one window test per check for each sample.
 macro_rules! for_each_sample {
     ($($check:ident),* $(,)?) => {
@@ -246,6 +339,7 @@ for_each_sample!(
     a_validation_error_is_rendered,
     the_keyboard_fills_in_and_submits_the_form,
     a_rejected_field_shows_its_error_and_takes_focus,
+    an_unavailable_action_is_listed_with_its_reason_and_others_still_run,
 );
 
 /// The label of the node assistive technology treats as focused.
@@ -466,6 +560,48 @@ fn arrow_keys_move_the_selection(cx: &mut TestAppContext) {
     assert_eq!(wait_for_answer(&window, cx).selected, Some(1));
     cx.simulate_keystrokes("up");
     assert_eq!(wait_for_answer(&window, cx).selected, Some(0));
+}
+
+/// Whether the element with debug selector `row` lies wholly inside the list.
+fn row_is_visible(cx: &mut VisualTestContext, row: &'static str) -> bool {
+    let list = cx.debug_bounds("rows").expect("the list is rendered");
+    let row = cx.debug_bounds(row).expect("the row is rendered");
+    row.top() >= list.top() && row.bottom() <= list.bottom()
+}
+
+#[gpui::test]
+fn the_list_scrolls_to_keep_the_selected_row_visible(cx: &mut TestAppContext) {
+    const TITLES: [&str; 12] = [
+        "Row 1", "Row 2", "Row 3", "Row 4", "Row 5", "Row 6", "Row 7", "Row 8", "Row 9", "Row 10",
+        "Row 11", "Row 12",
+    ];
+    let commands = TITLES
+        .iter()
+        .map(|title| command(title, "sample_rust"))
+        .collect();
+    let (window, cx) = open_with(cx, commands);
+    // The size of Pane's window: fewer than half of the rows fit.
+    cx.simulate_resize(gpui::size(gpui::px(640.), gpui::px(420.)));
+    cx.run_until_parked();
+    assert!(row_is_visible(cx, "row-Row 1"));
+    assert!(!row_is_visible(cx, "row-Row 12"), "the list overflows");
+
+    for _ in 1..TITLES.len() {
+        cx.simulate_keystrokes("down");
+    }
+    cx.run_until_parked();
+    assert_eq!(wait_for_answer(&window, cx).selected, Some(11));
+    assert!(
+        row_is_visible(cx, "row-Row 12"),
+        "the last row is scrolled into view"
+    );
+    assert!(!row_is_visible(cx, "row-Row 1"));
+
+    for _ in 1..TITLES.len() {
+        cx.simulate_keystrokes("up");
+    }
+    cx.run_until_parked();
+    assert!(row_is_visible(cx, "row-Row 1"), "and back to the first");
 }
 
 #[gpui::test]

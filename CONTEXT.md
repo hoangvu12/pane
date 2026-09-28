@@ -56,6 +56,14 @@ _Avoid_: Cache (it is not disposable)
 Replacing the managed copy of an installed package from its source while keeping its package identity. A second explicit install of the same identity is rejected instead.
 _Avoid_: Reinstall
 
+**Supported platforms**:
+The operating systems a package or an action declares it works on: a plain list, not a rule language. A declaration is not evidence of native support.
+_Avoid_: Compatibility rules, target matrix
+
+**Unavailable action**:
+An action whose supported platforms exclude the current system; Pane keeps it listed, explains why and never runs it, so the extension's other actions stay usable.
+_Avoid_: Hidden action, disabled extension
+
 **Form**:
 A set of fields an extension command asks the user to fill in and submit; the launcher renders its standard controls and the extension validates the submitted values.
 _Avoid_: Dialog, custom view

@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::packages::{InstalledPackage, PackageError, SourcePackage, Store, folder_name};
+use crate::platform::{self, Platform};
 use crate::runtime::{CallError, FieldKind, FieldValue, Form, Runtime};
 
 /// The id of the root row that installs a package from a local folder.
@@ -44,6 +45,10 @@ pub struct Row {
     pub id: String,
     pub title: String,
     pub subtitle: Option<String>,
+    /// Why the row's action cannot be used on this system; `None` when it
+    /// can. An unavailable row stays listed and selectable, and activating
+    /// it shows this reason instead of calling the extension.
+    pub unavailable: Option<String>,
 }
 
 /// Feedback about the most recent action.
@@ -140,6 +145,9 @@ enum Entry {
     Open(PathBuf),
     /// Explain why this installed package cannot load (root).
     Broken(String),
+    /// Explain why this item's action is unavailable on this system
+    /// (command view); the extension is not called.
+    Unavailable(String),
     /// Nothing in the launcher: the window asks for a folder (root).
     InstallFromFolder,
     /// Run the open command's item with this id.
@@ -276,7 +284,8 @@ impl Launcher {
     /// package. Await the returned future to apply the reply.
     ///
     /// A row that [asks for a folder](Launcher::selected_asks_for_folder)
-    /// does nothing here.
+    /// does nothing here. An [unavailable](Row::unavailable) item shows its
+    /// reason as the status error without calling the extension.
     pub fn activate_selected(&self) -> impl Future<Output = ()> + Send + 'static {
         let mut state = self.lock();
         let entry = state
@@ -284,7 +293,7 @@ impl Launcher {
             .selected
             .and_then(|index| state.entries.get(index).cloned());
         let entry = match entry {
-            Some(Entry::Broken(problem)) => {
+            Some(Entry::Broken(problem) | Entry::Unavailable(problem)) => {
                 state.view.status = Status::Error(problem);
                 None
             }
@@ -313,7 +322,13 @@ impl Launcher {
                 Some(Entry::Install(folder, mode)) => {
                     launcher.install(generation, folder, mode).await
                 }
-                Some(Entry::Broken(_) | Entry::InstallFromFolder | Entry::Form(..)) | None => {}
+                Some(
+                    Entry::Broken(_)
+                    | Entry::Unavailable(_)
+                    | Entry::InstallFromFolder
+                    | Entry::Form(..),
+                )
+                | None => {}
             }
         }
     }
@@ -504,6 +519,7 @@ impl Launcher {
                 id: command.id,
                 title: command.title,
                 subtitle: command.subtitle,
+                unavailable: None,
             };
             add(row, entry);
         }
@@ -513,6 +529,7 @@ impl Launcher {
                     id: package.identity.key(),
                     title: package.title(),
                     subtitle: Some("Cannot load this installed extension".into()),
+                    unavailable: None,
                 };
                 let problem = format!(
                     "{} cannot load from {}: {error}",
@@ -527,6 +544,7 @@ impl Launcher {
                 id: INSTALL_FROM_FOLDER.into(),
                 title: "Install extension from folder…".into(),
                 subtitle: Some("Choose a local extension package to install".into()),
+                unavailable: None,
             };
             add(row, Entry::InstallFromFolder);
         }
@@ -672,14 +690,18 @@ impl Launcher {
                     .items
                     .into_iter()
                     .map(|item| {
-                        let entry = match item.form {
-                            Some(form) => Entry::Form(item.id.clone(), form),
-                            None => Entry::Run(item.id.clone()),
+                        let unavailable =
+                            platform::unavailable(item.platforms.as_deref(), "this action");
+                        let entry = match (&unavailable, item.form) {
+                            (Some(reason), _) => Entry::Unavailable(reason.clone()),
+                            (None, Some(form)) => Entry::Form(item.id.clone(), form),
+                            (None, None) => Entry::Run(item.id.clone()),
                         };
                         let row = Row {
                             id: item.id,
                             title: item.title,
                             subtitle: item.subtitle,
+                            unavailable,
                         };
                         (row, entry)
                     })
@@ -751,6 +773,20 @@ fn preview_view(
         "Compatible: needs extension API {}, and its components import only WASI 0.3",
         manifest.api_version
     ));
+    if let Some(platforms) = &manifest.platforms {
+        // A package that does not support this system is explained instead.
+        let names: Vec<String> = platforms
+            .iter()
+            .map(|&platform| {
+                if Some(platform) == Platform::current() {
+                    format!("{platform} (this system)")
+                } else {
+                    platform.to_string()
+                }
+            })
+            .collect();
+        details.push(format!("Supported systems: {}", platform::join(&names)));
+    }
     let (row, entry) = match installed {
         Some(installed) => {
             details.push(match installed.version() {
@@ -761,6 +797,7 @@ fn preview_view(
                 id: "update".into(),
                 title: "Update".into(),
                 subtitle: Some("Replace the installed copy with this folder's contents".into()),
+                unavailable: None,
             };
             (row, Entry::Install(package.folder.clone(), Mode::Update))
         }
@@ -769,6 +806,7 @@ fn preview_view(
                 id: "install".into(),
                 title: "Install".into(),
                 subtitle: Some("Copy the package into Pane and add its commands".into()),
+                unavailable: None,
             };
             (row, Entry::Install(package.folder.clone(), Mode::Install))
         }

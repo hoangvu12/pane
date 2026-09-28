@@ -104,5 +104,37 @@ $process = Start-Pane "stderr-restart.log"
 Capture "12-restarted.png"
 Check "12-restarted.png" "8a96a3"
 if (-not (Test-Path (Join-Path $data "extensions/installed.json"))) { throw "no install record" }
+
+# The Rust command's sixth item is declared for Windows only, its seventh
+# for macOS and Linux only. Here the first runs and the second is explained
+# without running.
+Send "{ENTER}"; Start-Sleep -Seconds 3
+Send "{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{ENTER}"; Start-Sleep -Seconds 2
+Capture "13-windows-only.png"
+Check "13-windows-only.png" "9fd8a8"   # Windows: the guest's answer
+Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2
+Capture "14-not-windows.png"
+Check "14-not-windows.png" "d6a36a"   # the row's reason
+Check "14-not-windows.png" "f08c8c"   # Windows: the reason as the error
+Send "{ESC}"; Start-Sleep -Seconds 1
+Stop-Pane $process
+
+# A package that supports only the other two systems has nothing for this
+# one: it is explained instead of offered for installation.
+$elsewhere = Join-Path $OutDir "elsewhere"
+New-Item -ItemType Directory -Force -Path $elsewhere | Out-Null
+Copy-Item "target/guests/sample_rust.wasm" $elsewhere
+@'
+{
+  "manifestVersion": 1,
+  "title": "Elsewhere",
+  "apiVersion": "0.1",
+  "platforms": ["macos", "linux"],
+  "commands": [{ "id": "sample", "title": "Elsewhere sample", "component": "sample_rust.wasm" }]
+}
+'@ | Set-Content -Encoding ascii (Join-Path $elsewhere "pane.json")
+$process = Start-Pane "stderr-elsewhere.log" @("--install", $elsewhere)
+Capture "15-no-compatible-package.png"
+Check "15-no-compatible-package.png" "f08c8c"   # "Not available on Windows: ..."
 Stop-Pane $process
 Write-Output "screenshots in $OutDir"
