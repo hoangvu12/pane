@@ -25,16 +25,22 @@ alias now"). Refused, with the reason next to the field and the form kept:
 | --- | --- |
 | With a space | "An alias is one word, without spaces" |
 | Over 32 characters | "An alias has at most 32 characters" |
-| Another command's, compared as root search compares text (case, NFC) | "“GR” is already the alias of Greeting: change it there first, or choose another" |
+| Another command's, compared caselessly: NFC, then full Unicode case folding ("STRASSE" is "straße"; not locale-aware, so Turkish dotted and dotless I stay apart) | "“STRASSE” is already the alias of Greeting: change it there first, or choose another" |
 
-In root search, a query that is the alias lists the command first, above
-every other result, computed results included; Enter opens it as usual.
+In root search, a query that is the alias, compared the same caseless way,
+lists the command first, above every other result, computed results
+included; Enter opens it as usual.
 For a command that takes a query, the alias, a space and more text ("ec
 hello world") list a row titled with the command, subtitled "Send “hello
 world” · alias ec", first and selected; Enter sends "hello world" (the text
 after the alias, trimmed) and shows the command's answer as the result,
-root search staying as it was. Text after the alias of a command that takes
-no query sends nothing (the query is then matched as usual).
+root search staying as it was. The answer is cleared from the status line as
+soon as the query changes, and an answer that arrives after it changed is
+not shown. Text after the alias of a command that takes no query sends
+nothing (the query is then matched as usual). When another command offered
+has the same title (copies of a package from other sources), the row's
+subtitle also names its source ("Send “hi” · alias ec · local folder …"),
+and so does a fallback row.
 
 ## Making a command a fallback
 
@@ -56,8 +62,15 @@ query, trimmed.
   manifest's command id), `{ "version": 1, "aliases": { "local:/…#echo":
   "ec" }, "fallbacks": ["local:/…#echo"] }`. Written atomically, one change
   at a time, each write holding the latest choices; a change that cannot be
-  written goes back to what was last recorded. An unreadable file is not
-  overwritten (a change then explains why).
+  written goes back to what was last recorded, unless its package was
+  uninstalled meanwhile: an uninstalled package's choices never come back.
+  An unreadable file is not overwritten (a change then explains why). The
+  global hotkeys' `hotkeys.json` is kept the same way (one shared record
+  type, `launcher/choices.rs`).
+- A command id is `<package identity key>#<manifest id>`, and a manifest
+  command id cannot contain `#`, so the package's part is exact:
+  uninstalling `local:/x` forgets `local:/x#echo`, never `local:/x#y#echo`
+  (hotkeys alike).
 - By command id, so copies of a package from other sources, even with the
   same titles, have their own; each is told apart by its source in Manage
   extensions.
@@ -65,9 +78,16 @@ query, trimmed.
   root search at once; they stay recorded, and their rows stay in Manage
   extensions with "Not active: Query sample is disabled". Changing them
   there does not enable the package, and nothing else does: only the user's
-  enable in Manage extensions brings them back. A **paused** package's
-  command stays reachable by its alias and fallback rows, which explain the
-  pause and run nothing, as its own row does.
+  enable in Manage extensions brings them back.
+- A **paused** package's command, and a command **unavailable on this
+  system**, stay reachable by their alias and fallback rows, which explain
+  why and run nothing, as the command's own row does; in Manage extensions
+  their rows say "Not active: Query sample is paused after an error; retry
+  it in Manage extensions" or "Not active: Not available on Linux: this
+  command supports only Windows".
+- A package whose managed copy **cannot load** lists its recorded choices
+  as "Alias “ec” of `echo` · Not active: query cannot load: …; Enter
+  forgets it", not as a missing command.
 - An **update** or **reload** keeps them. A command the new copy no longer
   has, or one that no longer takes a query, is shown as not active: "Alias
   “gn” and fallback of a missing command · Not active: Query sample has no
@@ -86,19 +106,23 @@ Any installed command can be given an alias, in Rust, JavaScript or
 TypeScript alike; nothing is declared. Taking a query needs `"takesQuery":
 true` on the command in `pane.json` and the export
 `pane:extension/query-command` ([`wit/query.wit`](../wit/query.wit)),
-`run-query(query) -> result<string, string>`, checked at install without
-running it ("its manifest says it takes a query, but it does not export
-pane:extension/query-command@0.1.0 …"). The [author guide](../guests/README.md#a-command-that-takes-a-query)
-shows it in Rust (`pane_guest::query`); [`guests/sample-query`](../guests/sample-query)
-is Echo, the query sample. An optional export, so the extension API stays
-0.1 and no earlier component is refused. JavaScript and TypeScript cannot
-export it yet (their build does not include it; adding it rebuilds every
-prebuilt JS/TS sample).
+`run-query(command, query) -> result<string, string>` (the command's
+manifest id, so one component can serve several), checked at install
+without running it ("its manifest says it takes a query, but it does not
+export pane:extension/query-command@0.1.0 …"). The [author guide](../guests/README.md#a-command-that-takes-a-query)
+shows it in Rust (`pane_guest::query`) and in JavaScript and TypeScript
+(`"pane": { "takesQuery": true }` and `export const queryCommand`);
+Echo, the query sample, is [`guests/sample-query`](../guests/sample-query),
+[`sample-query-js`](../guests/sample-query-js) and
+[`sample-query-ts`](../guests/sample-query-ts). An optional export, so the
+extension API stays 0.1 and no earlier component is refused. A trap in
+`run-query` counts towards [pausing](pausing.md).
 
 ## Checks
 
 - Launcher public interface ([`crates/pane-core/tests/aliases.rs`](../crates/pane-core/tests/aliases.rs)),
-  with the real query sample: an alias set in its form is recorded; the
+  with the real query sample in Rust, JavaScript and TypeScript for the
+  alias, fallback, cleared answer, disable, copies and pausing checks: an alias set in its form is recorded; the
   alias alone lists Echo first and "ec hello  world " lists the row that
   sends "hello  world", with Echo's guest not started while typing; Enter
   shows its answer and keeps root search; an error answer is shown; kept
@@ -106,22 +130,31 @@ prebuilt JS/TS sample).
   it; an alias ranks above a computed result (the calculator's). A fallback
   is listed last for any text, not selected, Enter then does nothing and
   Echo does not start; Down and Enter send the query; not for a blank query;
-  turned off again. Refusals (another command's alias in other case, a
-  space, 33 characters); a command that takes no query found by its alias,
+  turned off again. The answer cleared when the query changes, and one
+  arriving after the change not shown. Three crashes of the query "crash"
+  pause the package; its alias row explains it and runs nothing. Refusals
+  (another command's alias "straße" given as "STRASSE", a space, 33
+  characters); a command that takes no query found by its alias,
   with no row for text after it and no fallback row. A conflict in a record
   edited by hand shown and neither alias used. Disabling removes both from
   root search and shows them as not active; changing them does not enable
   the package, nor does a restart; enabling brings both back. Two copies of
   the package from different folders: the alias finds and runs only the
-  copy it was given to (checked with the runtime's running components). A
-  missing command's choices shown and forgotten; uninstall forgets them; a
-  manifest declaring `takesQuery` for a component without the export
-  refused at install.
+  copy it was given to (checked with the runtime's running components), and
+  the alias and fallback rows name their sources. A command unavailable on
+  this system and a package that cannot load shown as not active with why. A
+  missing command's choices shown and forgotten; uninstall forgets them,
+  exactly its own (a copy from folder `x#y` keeps its alias when `x` is
+  uninstalled; the same for hotkeys in `hotkeys.rs`); a write that fails
+  after an uninstall does not bring the alias back; a manifest declaring
+  `takesQuery` for a component without the export refused at install.
 - Window ([`crates/pane/tests/aliases.rs`](../crates/pane/tests/aliases.rs)),
   on GPUI's test platform with real key events: the alias typed in its form
   and saved, the form reopened filled with it, the fallback turned on; "ec
   hello" and Enter show Echo's answer; "zqx" shows "No results" and the
-  fallback unselected, Enter changes nothing, Down and Enter send "zqx".
+  fallback unselected, Enter changes nothing (checked once the runtime has
+  served every call: Echo, stopped before, has not started again), Down and
+  Enter send "zqx". Rows are chosen by title.
 - Native GUI smokes, one identical phase on all three systems (screenshots
   66 to 74): with data folders of their own, install the query sample, set
   the alias "ec" and the fallback in Manage extensions, send "ec hello" and,
@@ -136,18 +169,16 @@ prebuilt JS/TS sample).
 ## Limits
 
 - One alias per command, only for installed packages' commands (not the
-  samples this build supplies), one word, compared after lowercasing and NFC
-  like titles; no aliases for indexed or computed results (applications,
-  quicklinks).
+  samples this build supplies), one word, compared caselessly (above); no
+  aliases for indexed or computed results (applications, quicklinks).
 - The fallback rows are not ranked or limited: every fallback is listed for
   every non-blank query. No per-command placeholder or argument parsing: the
   command gets one string.
 - The answer is shown as text on the status line; a command that takes a
   query cannot open its view with the query, or a form or list for it.
 - The query is sent when the row is invoked and the call is not cancelled
-  when the user types on (a late answer is still shown, like "Opened …");
-  calls run one at a time on the runtime thread (#29, #18).
-- JavaScript and TypeScript commands cannot take a query (above).
+  when the user types on (its late answer is discarded); calls run one at a
+  time on the runtime thread (#29, #18).
 - Screen readers: fallback rows are ordinary options of the results list;
   with none selected, the combo box itself is reported as focused. No
   screen reader was run ([root search](root-search.md#accessibility)).
