@@ -1,10 +1,10 @@
 //! Calling an operation another installed package publishes, through the
 //! launcher's public interface: a command of one package calls an operation
-//! of another, across Rust, JavaScript and TypeScript, and shows its result or
-//! why the call failed. The operations samples (`guests/sample-operations*`)
-//! show what authors write; the operations fixture (`guests/fixtures/
-//! operations`) drives the failures, cycles and limits. Real guests from
-//! `cargo xtask guests`.
+//! of another by that package's identity, across Rust, JavaScript and
+//! TypeScript, and shows its result or why the call failed. The operations
+//! samples (`guests/sample-operations*`) show what authors write; the
+//! operations fixture (`guests/fixtures/operations`) drives the failures,
+//! cycles, concurrency and limits. Real guests from `cargo xtask guests`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,11 +13,14 @@ use futures::executor::block_on;
 use pane_core::{Launcher, PackageIdentity, Runtime, Screen, Status};
 use tempfile::TempDir;
 
-/// Where `cargo xtask guests` assembles the sample packages.
-fn assembled(package: &str) -> PathBuf {
+#[path = "support/platforms.rs"]
+mod platforms;
+
+/// A guest component `cargo xtask guests` put in `target/guests`.
+fn guest(file: &str) -> PathBuf {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/guests/packages")
-        .join(package);
+        .join("../../target/guests")
+        .join(file);
     assert!(
         path.exists(),
         "{} is missing; run `cargo xtask guests`",
@@ -26,18 +29,7 @@ fn assembled(package: &str) -> PathBuf {
     path
 }
 
-/// Copies the assembled package `package` into `folder`.
-fn copy_package(package: &str, folder: &Path) -> PathBuf {
-    fs::create_dir_all(folder).unwrap();
-    for entry in fs::read_dir(assembled(package)).unwrap() {
-        let entry = entry.unwrap();
-        fs::copy(entry.path(), folder.join(entry.file_name())).unwrap();
-    }
-    folder.to_path_buf()
-}
-
-/// Source folders side by side, as the samples expect (`local:../<name>`),
-/// and Pane's data folder.
+/// Source folders, Pane's data folder and the runtime the launchers share.
 struct Dirs {
     sources: TempDir,
     data: TempDir,
@@ -53,36 +45,39 @@ impl Dirs {
         }
     }
 
-    /// Copies the assembled package `package` into a source folder `name`.
-    fn source(&self, package: &str, name: &str) -> PathBuf {
-        copy_package(package, &self.sources.path().join(name))
+    fn folder(&self, name: &str) -> PathBuf {
+        self.sources.path().join(name)
     }
 
     fn launcher(&self) -> Launcher {
-        Launcher::with_packages(
-            Ok(self.runtime.clone()),
-            vec![],
-            self.data.path().join("extensions"),
-        )
+        Launcher::with_packages(Ok(self.runtime.clone()), vec![], self.extensions())
     }
 
-    /// A launcher with the packages in source folders `names` installed.
-    fn installed(&self, packages: &[(&str, &str)]) -> Launcher {
-        let launcher = self.launcher();
-        for (package, name) in packages {
-            let folder = self.source(package, name);
-            block_on(launcher.install_package(&folder));
-            let status = launcher.view().status;
-            assert!(
-                matches!(&status, Status::Result(text) if text.starts_with("Installed")),
-                "installing {package}: {status:?}"
-            );
-        }
-        launcher
+    fn extensions(&self) -> PathBuf {
+        self.data.path().join("extensions")
     }
 
     fn identity(&self, name: &str) -> PackageIdentity {
-        PackageIdentity::local(&self.sources.path().join(name)).unwrap()
+        PackageIdentity::local(&self.folder(name)).unwrap()
+    }
+
+    /// The source other packages call the package in folder `name` by: its
+    /// identity, as Pane shows it.
+    fn source(&self, name: &str) -> String {
+        self.identity(name).key()
+    }
+
+    /// Copies the assembled sample package `package` into source folder
+    /// `package`.
+    fn sample(&self, package: &str) -> PathBuf {
+        let assembled = guest("packages").join(package);
+        let folder = self.folder(package);
+        fs::create_dir_all(&folder).unwrap();
+        for entry in fs::read_dir(assembled).unwrap() {
+            let entry = entry.unwrap();
+            fs::copy(entry.path(), folder.join(entry.file_name())).unwrap();
+        }
+        folder
     }
 
     /// The components with a running instance, as file names.
@@ -94,6 +89,16 @@ impl Dirs {
         running.sort();
         running
     }
+}
+
+fn install(launcher: &Launcher, folder: &Path) {
+    block_on(launcher.install_package(folder));
+    let status = launcher.view().status;
+    assert!(
+        matches!(&status, Status::Result(text) if text.starts_with("Installed")),
+        "installing {}: {status:?}",
+        folder.display()
+    );
 }
 
 fn titles(launcher: &Launcher) -> Vec<String> {
@@ -113,38 +118,47 @@ fn select_title(launcher: &Launcher, title: &str) {
     launcher.select(index);
 }
 
-/// From root search, opens the command titled `command` and runs its item
-/// titled `item`, returning the outcome.
-fn run(launcher: &Launcher, command: &str, item: &str) -> Status {
+/// From root search, opens the command titled `command` and activates its
+/// item titled `item`.
+fn open_item(launcher: &Launcher, command: &str, item: &str) {
+    launcher.back();
     launcher.back();
     select_title(launcher, command);
     block_on(launcher.activate_selected());
     assert_eq!(launcher.view().screen, Screen::Command, "{command} opened");
     select_title(launcher, item);
     block_on(launcher.activate_selected());
-    let status = launcher.view().status;
-    launcher.back();
-    status
 }
 
-fn result(text: &str) -> Status {
-    Status::Result(text.into())
-}
-
-fn error(text: &str) -> Status {
-    Status::Error(format!("The extension reported an error: {text}"))
-}
+// The samples: each command's form calls `greet` of the package whose
+// source is typed in.
 
 const RUST: &str = "sample-operations";
 const JAVASCRIPT: &str = "sample-operations-js";
 const TYPESCRIPT: &str = "sample-operations-ts";
 
 fn samples(dirs: &Dirs) -> Launcher {
-    dirs.installed(&[
-        (RUST, RUST),
-        (JAVASCRIPT, JAVASCRIPT),
-        (TYPESCRIPT, TYPESCRIPT),
-    ])
+    let launcher = dirs.launcher();
+    for package in [RUST, JAVASCRIPT, TYPESCRIPT] {
+        install(&launcher, &dirs.sample(package));
+    }
+    launcher
+}
+
+/// Submits the greet form of `command` with `source`, `name` and `times`
+/// ("once" or "twice"), returning the outcome.
+fn greet(launcher: &Launcher, command: &str, source: &str, name: &str, times: &str) -> Status {
+    open_item(launcher, command, "Greet through another extension");
+    assert!(launcher.view().form().is_some(), "{command}: no form");
+    launcher.set_field_value("source", source);
+    launcher.set_field_value("name", name);
+    launcher.set_field_value("times", times);
+    block_on(launcher.submit_form());
+    launcher.view().status
+}
+
+fn result(text: &str) -> Status {
+    Status::Result(text.into())
 }
 
 #[test]
@@ -153,12 +167,24 @@ fn a_rust_command_calls_a_javascript_and_a_typescript_operation() {
     let launcher = samples(&dirs);
 
     assert_eq!(
-        run(&launcher, "Call from Rust", "Ask JavaScript to greet"),
-        result("JavaScript answered: Hello, Rust, from JavaScript")
+        greet(
+            &launcher,
+            "Call from Rust",
+            &dirs.source(JAVASCRIPT),
+            "Rust",
+            "once"
+        ),
+        result("Hello, Rust, from JavaScript")
     );
     assert_eq!(
-        run(&launcher, "Call from Rust", "Ask TypeScript to greet"),
-        result("TypeScript answered: Hello, Rust, from TypeScript")
+        greet(
+            &launcher,
+            "Call from Rust",
+            &dirs.source(TYPESCRIPT),
+            "Rust",
+            "once"
+        ),
+        result("Hello, Rust, from TypeScript")
     );
 }
 
@@ -167,14 +193,34 @@ fn javascript_and_typescript_commands_call_a_rust_operation() {
     let dirs = Dirs::new();
     let launcher = samples(&dirs);
 
-    assert_eq!(
-        run(&launcher, "Call from JavaScript", "Ask Rust to greet"),
-        result("Rust answered: Hello, JavaScript, from Rust")
-    );
-    assert_eq!(
-        run(&launcher, "Call from TypeScript", "Ask Rust to greet"),
-        result("Rust answered: Hello, TypeScript, from Rust")
-    );
+    for (command, name) in [
+        ("Call from JavaScript", "JavaScript"),
+        ("Call from TypeScript", "TypeScript"),
+    ] {
+        assert_eq!(
+            greet(&launcher, command, &dirs.source(RUST), name, "once"),
+            result(&format!("Hello, {name}, from Rust"))
+        );
+    }
+}
+
+#[test]
+fn two_calls_made_at_once_are_both_served_in_every_language() {
+    let dirs = Dirs::new();
+    let launcher = samples(&dirs);
+
+    // Rust joins two calls; JavaScript and TypeScript use Promise.all.
+    for (command, target, answer) in [
+        ("Call from Rust", JAVASCRIPT, "Hello, Ada, from JavaScript"),
+        ("Call from JavaScript", RUST, "Hello, Ada, from Rust"),
+        ("Call from TypeScript", RUST, "Hello, Ada, from Rust"),
+    ] {
+        assert_eq!(
+            greet(&launcher, command, &dirs.source(target), "Ada", "twice"),
+            result(&format!("{answer} / {answer}")),
+            "{command}"
+        );
+    }
 }
 
 #[test]
@@ -182,14 +228,14 @@ fn the_operation_s_own_error_reaches_the_caller_in_every_language() {
     let dirs = Dirs::new();
     let launcher = samples(&dirs);
 
-    for (command, item) in [
-        ("Call from Rust", "Ask JavaScript with no name"),
-        ("Call from JavaScript", "Ask Rust with no name"),
-        ("Call from TypeScript", "Ask Rust with no name"),
+    for (command, target) in [
+        ("Call from Rust", JAVASCRIPT),
+        ("Call from JavaScript", RUST),
+        ("Call from TypeScript", RUST),
     ] {
         assert_eq!(
-            run(&launcher, command, item),
-            error("failed: a name is needed"),
+            greet(&launcher, command, &dirs.source(target), "", "once"),
+            Status::Error("failed: a name is needed".into()),
             "{command}"
         );
     }
@@ -199,7 +245,7 @@ fn the_operation_s_own_error_reaches_the_caller_in_every_language() {
 fn a_package_that_is_not_installed_is_reported_in_every_language() {
     let dirs = Dirs::new();
     let launcher = samples(&dirs);
-    let missing = dirs.sources.path().join("no-such-extension");
+    let missing = format!("local:{}", dirs.folder("no-such-extension").display());
 
     for command in [
         "Call from Rust",
@@ -207,10 +253,9 @@ fn a_package_that_is_not_installed_is_reported_in_every_language() {
         "Call from TypeScript",
     ] {
         assert_eq!(
-            run(&launcher, command, "Ask an extension that is not installed"),
-            error(&format!(
-                "not-found: no installed extension has the source local folder {}",
-                missing.display()
+            greet(&launcher, command, &missing, "Ada", "once"),
+            Status::Error(format!(
+                "not-found: no installed extension has the source {missing}"
             )),
             "{command}"
         );
@@ -223,91 +268,122 @@ fn a_target_starts_only_when_it_is_called() {
     let launcher = samples(&dirs);
     assert!(dirs.running().is_empty(), "{:?}", dirs.running());
 
-    launcher.back();
-    select_title(&launcher, "Call from Rust");
-    block_on(launcher.activate_selected());
+    open_item(
+        &launcher,
+        "Call from Rust",
+        "Greet through another extension",
+    );
     assert_eq!(dirs.running(), ["sample_operations.wasm"]);
 
-    select_title(&launcher, "Ask JavaScript to greet");
-    block_on(launcher.activate_selected());
+    launcher.set_field_value("source", &dirs.source(JAVASCRIPT));
+    launcher.set_field_value("name", "Rust");
+    block_on(launcher.submit_form());
     assert_eq!(
         dirs.running(),
         ["sample_operations.wasm", "sample_operations_js.wasm"]
     );
 }
 
-/// The operations fixture component, built by `cargo xtask guests`.
-fn fixture_component() -> PathBuf {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/guests/operations_fixture.wasm");
-    assert!(
-        path.exists(),
-        "{} is missing; run `cargo xtask guests`",
-        path.display()
-    );
-    path
-}
+// The fixture: package `a` has the command; the others only publish.
 
 /// What the fixture packages publish, unless a test says otherwise: every
 /// operation of the component but `secret`.
-const PUBLISHED: [&str; 5] = ["echo", "forward", "crash", "not-json", "remember"];
+const PUBLISHED: &str = r#"
+    { "id": "echo", "version": 1, "component": "fixture.wasm" },
+    { "id": "forward", "version": 1, "component": "fixture.wasm" },
+    { "id": "crash", "version": 1, "component": "fixture.wasm" },
+    { "id": "not-json", "version": 1, "component": "fixture.wasm" },
+    { "id": "remember", "version": 1, "component": "fixture.wasm" }
+"#;
+
+/// The fixture's command, as `a` lists it.
+const COMMAND: &str =
+    r#"{ "id": "fixture", "title": "Operations fixture", "component": "fixture.wasm" }"#;
 
 impl Dirs {
-    /// Writes an operations fixture package in source folder `name`, titled
-    /// "Package <name>", publishing `operations` at version 1, with the
-    /// fixture's command if `command`.
-    fn fixture(&self, name: &str, operations: &[&str], command: bool) -> PathBuf {
-        let folder = self.sources.path().join(name);
+    /// Writes a fixture package in source folder `name`, titled
+    /// "Package <name>", with `commands` and `operations` (JSON array
+    /// contents) and the fixture component as `fixture.wasm`.
+    fn fixture(&self, name: &str, commands: &str, operations: &str) -> PathBuf {
+        let folder = self.folder(name);
         fs::create_dir_all(&folder).unwrap();
-        fs::copy(fixture_component(), folder.join("fixture.wasm")).unwrap();
-        let operations: Vec<String> = operations
-            .iter()
-            .map(|id| format!(r#"{{ "id": "{id}", "version": 1, "component": "fixture.wasm" }}"#))
-            .collect();
-        let commands = if command {
-            r#"{ "id": "fixture", "title": "Operations fixture", "component": "fixture.wasm" }"#
-        } else {
-            ""
-        };
+        fs::copy(
+            guest("operations_fixture.wasm"),
+            folder.join("fixture.wasm"),
+        )
+        .unwrap();
         let manifest = format!(
             r#"{{
                 "manifestVersion": 1,
                 "title": "Package {name}",
                 "apiVersion": "0.1",
                 "commands": [{commands}],
-                "operations": [{}]
-            }}"#,
-            operations.join(", ")
+                "operations": [{operations}]
+            }}"#
         );
         fs::write(folder.join("pane.json"), manifest).unwrap();
         folder
     }
 
-    /// A launcher with fixture packages `a` (with the command) and `b`
-    /// installed, both publishing [`PUBLISHED`].
-    fn a_and_b(&self) -> Launcher {
+    /// Saves, as `a`'s settings, the sources the fixture calls by name:
+    /// those of `names` and of a missing folder. Before any launcher opens
+    /// the data folder.
+    fn save_sources(&self, names: &[&str]) {
+        let mut sources = serde_json::Map::new();
+        for name in names {
+            sources.insert((*name).into(), self.source(name).into());
+        }
+        let missing = format!("local:{}", self.folder("missing").display());
+        sources.insert("missing".into(), missing.into());
+        let settings = serde_json::json!({
+            "version": 1,
+            "packages": {
+                self.source("a"): { "sources": serde_json::Value::Object(sources).to_string() }
+            }
+        });
+        fs::create_dir_all(self.extensions()).unwrap();
+        fs::write(
+            self.extensions().join("settings.json"),
+            settings.to_string(),
+        )
+        .unwrap();
+    }
+
+    /// Installs the fixture packages written in folders `names`, `a` first,
+    /// after saving their sources for `a`.
+    fn install_fixtures(&self, names: &[&str]) -> Launcher {
+        self.save_sources(names);
         let launcher = self.launcher();
-        for (name, command) in [("a", true), ("b", false)] {
-            let folder = self.fixture(name, &PUBLISHED, command);
-            install(&launcher, &folder);
+        for name in names {
+            install(&launcher, &self.folder(name));
         }
         launcher
     }
-}
 
-fn install(launcher: &Launcher, folder: &Path) {
-    block_on(launcher.install_package(folder));
-    let status = launcher.view().status;
-    assert!(
-        matches!(&status, Status::Result(text) if text.starts_with("Installed")),
-        "installing {}: {status:?}",
-        folder.display()
-    );
+    /// `a` with the command and `b`, both publishing [`PUBLISHED`], installed.
+    fn a_and_b(&self) -> Launcher {
+        self.fixture("a", COMMAND, PUBLISHED);
+        self.fixture("b", "", PUBLISHED);
+        self.install_fixtures(&["a", "b"])
+    }
 }
 
 /// Runs the fixture command's item `item` from package `a`.
 fn fixture_run(launcher: &Launcher, item: &str) -> Status {
-    run(launcher, "Operations fixture", item)
+    open_item(launcher, "Operations fixture", item);
+    launcher.view().status
+}
+
+fn error(text: &str) -> Status {
+    Status::Error(format!("The extension reported an error: {text}"))
+}
+
+fn assert_error_starts(status: &Status, start: &str) {
+    assert!(
+        matches!(status, Status::Error(text)
+            if text.starts_with(&format!("The extension reported an error: {start}"))),
+        "{status:?} does not start with {start:?}"
+    );
 }
 
 #[test]
@@ -341,6 +417,71 @@ fn an_operation_of_another_version_is_incompatible() {
 }
 
 #[test]
+fn a_target_whose_component_pane_cannot_run_is_incompatible() {
+    for (replacement, start) in [
+        (
+            "mixed_p2.wasm",
+            "incompatible: Package c: Incompatible extension: Pane supports only WASI 0.3, but it \
+             imports wasi:",
+        ),
+        (
+            "old_api.wasm",
+            "incompatible: Package c: Incompatible extension: it was built for an older \
+             extension API shape",
+        ),
+    ] {
+        let dirs = Dirs::new();
+        dirs.fixture("a", COMMAND, PUBLISHED);
+        dirs.fixture("c", "", PUBLISHED);
+        let launcher = dirs.install_fixtures(&["a", "c"]);
+        // Its installed copy is replaced behind Pane's back: installing
+        // would have refused it.
+        let c = launcher
+            .packages()
+            .into_iter()
+            .find(|package| package.identity == dirs.identity("c"))
+            .unwrap();
+        fs::copy(guest(replacement), c.location.join("fixture.wasm")).unwrap();
+
+        assert_error_starts(&fixture_run(&launcher, "Call c's echo"), start);
+        // The caller keeps working.
+        assert_eq!(
+            fixture_run(&launcher, "Call myself"),
+            error(
+                "refused: Package a is already serving a call in this chain; an extension \
+                 cannot be called back while its own call waits"
+            )
+        );
+    }
+}
+
+#[test]
+fn an_operation_for_other_systems_is_unavailable() {
+    let dirs = Dirs::new();
+    let [other, _] = platforms::other_systems();
+    dirs.fixture("a", COMMAND, PUBLISHED);
+    dirs.fixture(
+        "c",
+        "",
+        &format!(
+            r#"{{ "id": "echo", "version": 1, "component": "fixture.wasm", "platforms": ["{}"] }}"#,
+            other.id()
+        ),
+    );
+    let launcher = dirs.install_fixtures(&["a", "c"]);
+
+    assert_eq!(
+        fixture_run(&launcher, "Call c's echo"),
+        error(&format!(
+            "unavailable: Package c: {}",
+            platforms::only("this operation", platforms::name(other))
+        ))
+    );
+    // Only the caller runs.
+    assert_eq!(dirs.running(), ["fixture.wasm"]);
+}
+
+#[test]
 fn a_disabled_target_is_reported_and_stays_disabled() {
     let dirs = Dirs::new();
     let launcher = dirs.a_and_b();
@@ -370,23 +511,30 @@ fn a_disabled_target_is_reported_and_stays_disabled() {
 }
 
 #[test]
-fn missing_and_unknown_sources_are_not_found() {
+fn a_package_is_called_by_its_identity_only() {
     let dirs = Dirs::new();
     let launcher = dirs.a_and_b();
-    let missing = dirs.sources.path().join("missing");
 
     assert_eq!(
         fixture_run(&launcher, "Call a missing package"),
         error(&format!(
-            "not-found: no installed extension has the source local folder {}",
-            missing.display()
+            "not-found: no installed extension has the source local:{}",
+            dirs.folder("missing").display()
         ))
+    );
+    // A path relative to anything is not an identity.
+    assert_eq!(
+        fixture_run(&launcher, "Call a relative source"),
+        error(
+            "not-found: `local:../b` is not a package identity; use `local:` followed by \
+             the absolute folder path Pane shows for the package"
+        )
     );
     assert_eq!(
         fixture_run(&launcher, "Call a source that is not local"),
         error(
-            "not-found: `npm:left-pad` is not a package source; use `local:` followed by the \
-             package folder's path"
+            "not-found: `npm:left-pad` is not a package identity; use `local:` followed by \
+             the absolute folder path Pane shows for the package"
         )
     );
 }
@@ -396,11 +544,9 @@ fn a_crashed_target_is_reported_and_the_caller_keeps_working() {
     let dirs = Dirs::new();
     let launcher = dirs.a_and_b();
 
-    let crashed = fixture_run(&launcher, "Call b's crash");
-    assert!(
-        matches!(&crashed, Status::Error(text)
-            if text.starts_with("The extension reported an error: crashed: Package b crashed:")),
-        "{crashed:?}"
+    assert_error_starts(
+        &fixture_run(&launcher, "Call b's crash"),
+        "crashed: Package b crashed:",
     );
     // The caller stays usable, and the target starts afresh.
     assert_eq!(
@@ -414,20 +560,13 @@ fn input_and_results_that_are_not_json_are_refused() {
     let dirs = Dirs::new();
     let launcher = dirs.a_and_b();
 
-    let refused = |status: Status, start: &str| {
-        assert!(
-            matches!(&status, Status::Error(text)
-                if text.starts_with(&format!("The extension reported an error: refused: {start}"))),
-            "{status:?}"
-        );
-    };
-    refused(
-        fixture_run(&launcher, "Call b with input that is not JSON"),
-        "the input is not JSON",
+    assert_error_starts(
+        &fixture_run(&launcher, "Call b with input that is not JSON"),
+        "refused: the input is not JSON",
     );
-    refused(
-        fixture_run(&launcher, "Call b's not-json"),
-        "the result of Package b is not JSON",
+    assert_error_starts(
+        &fixture_run(&launcher, "Call b's not-json"),
+        "refused: the result of Package b is not JSON",
     );
 }
 
@@ -459,16 +598,70 @@ fn calling_back_into_a_package_in_the_chain_is_refused_without_waiting() {
 }
 
 #[test]
+fn a_package_in_the_chain_is_refused_whichever_component_serves_it() {
+    let dirs = Dirs::new();
+    // a's operations are served by a second copy of the component, not by
+    // its command's.
+    let folder = dirs.fixture(
+        "a",
+        COMMAND,
+        &PUBLISHED.replace("fixture.wasm", "serve.wasm"),
+    );
+    fs::copy(guest("operations_fixture.wasm"), folder.join("serve.wasm")).unwrap();
+    let launcher = dirs.install_fixtures(&["a"]);
+
+    assert_eq!(
+        fixture_run(&launcher, "Call my own package's other component"),
+        error(
+            "refused: Package a is already serving a call in this chain; an extension cannot \
+             be called back while its own call waits"
+        )
+    );
+}
+
+#[test]
+fn calls_a_guest_makes_at_once_are_served_one_after_another() {
+    let dirs = Dirs::new();
+    dirs.fixture("a", COMMAND, PUBLISHED);
+    dirs.fixture("b", "", PUBLISHED);
+    dirs.fixture("c", "", PUBLISHED);
+    let launcher = dirs.install_fixtures(&["a", "b", "c"]);
+
+    // While b waits on c for the first, the second is not taken for a call
+    // of b's (which would find b in the chain): a's frame serves it next.
+    assert_eq!(
+        fixture_run(&launcher, "Call b twice at once, which calls c"),
+        result(r#"answered: "first" and "second""#)
+    );
+}
+
+#[test]
+fn a_call_its_caller_gives_up_on_before_it_starts_never_runs() {
+    let dirs = Dirs::new();
+    let launcher = dirs.a_and_b();
+
+    assert_eq!(
+        fixture_run(&launcher, "Call b's remember and give up at once"),
+        result("gave up: true")
+    );
+    // b never ran: it neither started nor saved anything.
+    assert_eq!(dirs.running(), ["fixture.wasm"]);
+    let settings = fs::read_to_string(dirs.extensions().join("settings.json")).unwrap();
+    assert!(!settings.contains("given up"), "{settings}");
+}
+
+#[test]
 fn a_chain_deeper_than_the_limit_is_refused() {
     let dirs = Dirs::new();
-    let launcher = dirs.launcher();
-    install(&launcher, &dirs.fixture("a", &PUBLISHED, true));
+    dirs.fixture("a", COMMAND, PUBLISHED);
+    let mut names = vec!["a".to_owned()];
     for index in 1..=9 {
-        install(
-            &launcher,
-            &dirs.fixture(&format!("p{index}"), &PUBLISHED, false),
-        );
+        let name = format!("p{index}");
+        dirs.fixture(&name, "", PUBLISHED);
+        names.push(name);
     }
+    let names: Vec<&str> = names.iter().map(String::as_str).collect();
+    let launcher = dirs.install_fixtures(&names);
 
     let status = fixture_run(&launcher, "Call a chain of nine");
     // a, p1 ... p7 hold the chain of eight; p7's call to p8 is refused.
@@ -491,17 +684,16 @@ fn each_package_keeps_its_own_settings() {
         fixture_run(&launcher, "Call b's remember"),
         result("answered: true; mine: None")
     );
-    let settings: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(dirs.data.path().join("extensions/settings.json")).unwrap(),
-    )
-    .unwrap();
+    let settings: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(dirs.extensions().join("settings.json")).unwrap())
+            .unwrap();
     let packages = &settings["packages"];
     assert_eq!(
-        packages[dirs.identity("b").key()]["last"],
+        packages[dirs.source("b")]["last"],
         serde_json::json!(r#""from a""#)
     );
     assert!(
-        packages.get(dirs.identity("a").key()).is_none(),
+        packages[dirs.source("a")].get("last").is_none(),
         "{packages}"
     );
 }
@@ -510,7 +702,7 @@ fn each_package_keeps_its_own_settings() {
 fn a_package_that_only_publishes_operations_adds_no_command() {
     let dirs = Dirs::new();
     let launcher = dirs.launcher();
-    install(&launcher, &dirs.fixture("b", &PUBLISHED, false));
+    install(&launcher, &dirs.fixture("b", "", PUBLISHED));
 
     assert_eq!(
         titles(&launcher),
@@ -541,17 +733,15 @@ fn invalid_operations_are_explained_and_not_installed() {
              missing. This looks like a source-only package; build its component before \
              installing",
         ),
+        (
+            r#"{ "id": "echo", "version": 1, "component": "fixture.wasm", "platforms": ["amiga"] }"#,
+            "Invalid pane.json: unknown platform `amiga` in `platforms` of operation `echo`; \
+             use windows, macos or linux",
+        ),
     ];
     for (operations, explanation) in cases {
         let dirs = Dirs::new();
-        let folder = dirs.fixture("b", &[], false);
-        let manifest = fs::read_to_string(folder.join("pane.json"))
-            .unwrap()
-            .replace(
-                r#""operations": []"#,
-                &format!(r#""operations": [{operations}]"#),
-            );
-        fs::write(folder.join("pane.json"), manifest).unwrap();
+        let folder = dirs.fixture("b", "", operations);
         let launcher = dirs.launcher();
 
         block_on(launcher.install_package(&folder));
@@ -568,10 +758,13 @@ fn invalid_operations_are_explained_and_not_installed() {
 #[test]
 fn a_component_that_serves_no_operations_cannot_publish_one() {
     let dirs = Dirs::new();
-    let folder = dirs.fixture("b", &["echo"], false);
+    let folder = dirs.fixture(
+        "b",
+        "",
+        r#"{ "id": "echo", "version": 1, "component": "fixture.wasm" }"#,
+    );
     // The Rust sample command exports `command` only.
-    let command_only = fixture_component().with_file_name("sample_rust.wasm");
-    fs::copy(command_only, folder.join("fixture.wasm")).unwrap();
+    fs::copy(guest("sample_rust.wasm"), folder.join("fixture.wasm")).unwrap();
     let launcher = dirs.launcher();
 
     block_on(launcher.install_package(&folder));
@@ -592,7 +785,12 @@ fn a_component_that_serves_no_operations_cannot_publish_one() {
 fn a_package_preview_lists_its_operations() {
     let dirs = Dirs::new();
     let launcher = dirs.launcher();
-    let folder = dirs.fixture("b", &["echo", "forward"], false);
+    let folder = dirs.fixture(
+        "b",
+        "",
+        r#"{ "id": "echo", "version": 1, "component": "fixture.wasm" },
+           { "id": "forward", "version": 1, "component": "fixture.wasm" }"#,
+    );
 
     block_on(launcher.preview_package(&folder));
 

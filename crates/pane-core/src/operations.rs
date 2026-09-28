@@ -4,9 +4,10 @@
 //! A package publishes operations under `operations` in its `pane.json`;
 //! nothing else is callable, so a command is never an operation by accident.
 //! A guest calls one with `pane:extension/operations.call`, naming the
-//! target by its package source (`local:<folder>`), the operation and the
-//! version it was written for. Pane resolves the source among the installed
-//! packages by identity, never by title, refuses a missing, disabled or
+//! target by its package identity as Pane shows it (`local:` and the
+//! absolute folder it was installed from), the operation and the version it
+//! was written for. Pane finds that identity among the installed packages,
+//! never a title or a path relative to anything, refuses a missing, disabled or
 //! incompatible target without enabling anything, starts the target's
 //! instance only if it is not running, and passes the target's JSON result
 //! or its error back.
@@ -15,11 +16,13 @@
 //! operation is suspended inside its own call, and the runtime serves the
 //! operation in the meantime (see `Host::run_guest` in the runtime), so a
 //! call chain never waits on itself. Each package in a chain is busy until
-//! its call returns: a call that would reach one again is refused, as is a
-//! chain deeper than [`MAX_CALL_DEPTH`].
+//! its call returns, whichever of its components serves it: a call that
+//! would reach one again is refused, as is a chain deeper than
+//! [`MAX_CALL_DEPTH`]. A call a guest makes while Pane is not running a call
+//! of it has no frame to serve it, and is refused.
 
 use std::fmt;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tokio::sync::{mpsc, oneshot};
@@ -80,8 +83,11 @@ impl OperationError {
             | CallError::Incompatible(_)
             | CallError::Interface(_)
             | CallError::OlderApiShape(_) => (Incompatible, format!("{title}: {error}")),
-            // Not answers to an operation call.
-            CallError::Form(_) | CallError::ViewClosed => (Failed, error.to_string()),
+            // A form's rejection answers only `submit-form`, and a live
+            // instance (started just before the call) is never missing.
+            CallError::Form(_) | CallError::ViewClosed => {
+                unreachable!("an operation call cannot end with {error:?}")
+            }
         };
         OperationError { kind, message }
     }
@@ -116,6 +122,7 @@ pub(crate) struct OperationCall {
 
 /// The installed package serving a call, as resolved by a [`Directory`].
 pub(crate) struct Target {
+    pub identity: PackageIdentity,
     /// The package's display title, for explanations.
     pub title: String,
     pub component: PathBuf,
@@ -136,29 +143,35 @@ pub(crate) struct Installed {
 }
 
 impl Installed {
-    /// Resolves a call from the guest in `caller` to the package with
-    /// `source` and its `operation` at `version`.
+    /// Resolves a call to the package with identity `source` and its
+    /// `operation` at `version`.
     pub fn resolve(
         &self,
-        caller: &Path,
         source: &str,
         operation: &str,
         version: u32,
     ) -> Result<Target, OperationError> {
         use OperationErrorKind::*;
-        let caller = self
-            .packages
-            .iter()
-            .find(|package| caller.starts_with(&package.location));
-        let identity = identity_of(source, caller.map(|package| &package.identity))?;
+        let is_identity = source
+            .strip_prefix("local:")
+            .is_some_and(|path| Path::new(path).is_absolute());
+        if !is_identity {
+            return Err(OperationError::new(
+                NotFound,
+                format!(
+                    "`{source}` is not a package identity; use `local:` followed by the \
+                     absolute folder path Pane shows for the package"
+                ),
+            ));
+        }
         let Some(package) = self
             .packages
             .iter()
-            .find(|package| package.identity == identity)
+            .find(|package| package.identity.key() == source)
         else {
             return Err(OperationError::new(
                 NotFound,
-                format!("no installed extension has the source {identity}"),
+                format!("no installed extension has the source {source}"),
             ));
         };
         let title = package.title();
@@ -198,7 +211,9 @@ impl Installed {
                 ),
             ));
         }
-        if let Some(reason) = platform::unavailable(manifest.platforms.as_deref(), "this package") {
+        let unavailable = platform::unavailable(manifest.platforms.as_deref(), "this package")
+            .or_else(|| platform::unavailable(published.platforms.as_deref(), "this operation"));
+        if let Some(reason) = unavailable {
             return Err(OperationError::new(
                 Unavailable,
                 format!("{title}: {reason}"),
@@ -210,55 +225,19 @@ impl Installed {
                 .settings
                 .as_ref()
                 .map(|settings| settings.owned_by(&package.identity)),
+            identity: package.identity.clone(),
             title,
         })
     }
-}
 
-/// The identity `source` names: `local:` and a folder path, absolute or
-/// relative to the calling package's source folder.
-fn identity_of(
-    source: &str,
-    caller: Option<&PackageIdentity>,
-) -> Result<PackageIdentity, OperationError> {
-    let not_found = |message: String| OperationError::new(OperationErrorKind::NotFound, message);
-    let Some(path) = source
-        .strip_prefix("local:")
-        .filter(|path| !path.is_empty())
-    else {
-        return Err(not_found(format!(
-            "`{source}` is not a package source; use `local:` followed by the package folder's path"
-        )));
-    };
-    let path = Path::new(path);
-    let folder = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        let Some(base) = caller.and_then(PackageIdentity::local_folder) else {
-            return Err(not_found(format!(
-                "`{source}` is relative, but only an installed package has a source folder to resolve it from"
-            )));
-        };
-        normalize(&base.join(path))
-    };
-    // An existing folder resolves as it did when it was installed; one that
-    // is gone (the installed copy is Pane's own) by its path alone.
-    Ok(PackageIdentity::local(&folder).unwrap_or_else(|_| PackageIdentity::from_path(&folder)))
-}
-
-/// `path` with `.` and `..` resolved without the file system.
-fn normalize(path: &Path) -> PathBuf {
-    let mut normal = PathBuf::new();
-    for part in path.components() {
-        match part {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normal.pop();
-            }
-            other => normal.push(other),
-        }
+    /// The identity of the installed package whose managed copy holds
+    /// `component`.
+    pub fn package_of(&self, component: &Path) -> Option<&PackageIdentity> {
+        self.packages
+            .iter()
+            .find(|package| component.starts_with(&package.location))
+            .map(|package| &package.identity)
     }
-    normal
 }
 
 /// Checks an operation's input or result: JSON text within Pane's limit.
@@ -295,21 +274,33 @@ impl<T> operations::HostWithStore<T> for Calls {
         let (reply, response) = oneshot::channel();
         let sent = accessor.with(|mut view| {
             let state = view.get();
-            state.calls.send(OperationCall {
-                caller: state.component.clone(),
-                source,
-                operation,
-                version,
-                input,
-                reply,
-            })
+            if !state.serving {
+                return Err(outside_a_call());
+            }
+            state
+                .calls
+                .send(OperationCall {
+                    caller: state.component.clone(),
+                    source,
+                    operation,
+                    version,
+                    input,
+                    reply,
+                })
+                .map_err(|_| stopped())
         });
         let result = match sent {
             Ok(()) => response.await.unwrap_or_else(|_| Err(stopped())),
-            Err(_) => Err(stopped()),
+            Err(error) => Err(error),
         };
         result.map_err(operations::CallError::from)
     }
+}
+
+/// Why a call made while Pane is not running a call of the guest, such as
+/// while its component starts or after its call returned, is refused.
+pub(crate) fn outside_a_call() -> OperationError {
+    OperationError::refused("operations can only be called while serving a Pane call")
 }
 
 fn stopped() -> OperationError {

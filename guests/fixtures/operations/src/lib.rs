@@ -1,7 +1,10 @@
 //! Test fixture: operations that fail in each way Pane must report, and a
-//! command whose items call them. Tests install it several times, side by
-//! side as `a`, `b` and `p1` to `p9`, each with its own pane.json saying
-//! which operations it publishes; the command is run from `a`.
+//! command whose items call them. Tests install it several times, as `a`,
+//! `b`, `c` and `p1` to `p9`, each with its own pane.json saying which
+//! operations it publishes; the command is run from `a`. Pane addresses a
+//! package by its identity, the absolute source path known only once a test
+//! has made its folders, so the test saves `a`'s settings key `sources`
+//! beforehand: a JSON object from those names (and `missing`) to sources.
 //!
 //! Operations: `echo` answers its input; `forward` makes the call its input
 //! describes (`{"to", "operation", "input"}`, version 1) and answers its
@@ -10,6 +13,7 @@
 //! `secret` answers, but tests leave it out of the manifest.
 #![no_std]
 
+use futures::FutureExt;
 use pane_guest::alloc::{format, string::String, string::ToString, vec::Vec};
 use pane_guest::operations::call;
 use pane_guest::{
@@ -21,40 +25,26 @@ struct Fixture;
 pane_guest::export!(Fixture);
 pane_guest::publish::export!(Fixture);
 
-/// Each item: (title, the call it makes: source, operation, version, input).
-const ITEMS: [(&str, &str, &str, u32, &str); 12] = [
+/// Each item: (title, the package it calls: a name in `sources` or a source
+/// as written, operation, version, input).
+const ITEMS: [(&str, &str, &str, u32, &str); 17] = [
+    ("Call b's echo", "b", "echo", 1, r#"{"hello":"world"}"#),
+    ("Call b's echo at version 2", "b", "echo", 2, "{}"),
+    ("Call b's secret", "b", "secret", 1, "{}"),
+    ("Call b's crash", "b", "crash", 1, "{}"),
+    ("Call b's not-json", "b", "not-json", 1, "{}"),
+    ("Call b's remember", "b", "remember", 1, r#""from a""#),
+    ("Call b with input that is not JSON", "b", "echo", 1, "{"),
+    ("Call b twice at once, which calls c", "b", "forward", 1, ""),
     (
-        "Call b's echo",
-        "local:../b",
-        "echo",
-        1,
-        r#"{"hello":"world"}"#,
-    ),
-    ("Call b's echo at version 2", "local:../b", "echo", 2, "{}"),
-    ("Call b's secret", "local:../b", "secret", 1, "{}"),
-    ("Call b's crash", "local:../b", "crash", 1, "{}"),
-    ("Call b's not-json", "local:../b", "not-json", 1, "{}"),
-    (
-        "Call b's remember",
-        "local:../b",
+        "Call b's remember and give up at once",
+        "b",
         "remember",
         1,
-        r#""from a""#,
+        r#""given up""#,
     ),
-    (
-        "Call b with input that is not JSON",
-        "local:../b",
-        "echo",
-        1,
-        "{",
-    ),
-    (
-        "Call a missing package",
-        "local:../missing",
-        "echo",
-        1,
-        "{}",
-    ),
+    ("Call c's echo", "c", "echo", 1, "{}"),
+    ("Call a missing package", "missing", "echo", 1, "{}"),
     (
         "Call a source that is not local",
         "npm:left-pad",
@@ -62,27 +52,43 @@ const ITEMS: [(&str, &str, &str, u32, &str); 12] = [
         1,
         "{}",
     ),
-    ("Call myself", "local:.", "echo", 1, "{}"),
+    ("Call a relative source", "local:../b", "echo", 1, "{}"),
+    ("Call myself", "a", "echo", 1, "{}"),
+    ("Call b, which calls me back", "b", "forward", 1, ""),
+    ("Call a chain of nine", "p1", "forward", 1, ""),
     (
-        "Call b, which calls me back",
-        "local:../b",
-        "forward",
+        "Call my own package's other component",
+        "a",
+        "echo",
         1,
-        r#"{"to":"local:../a","operation":"echo","input":{}}"#,
+        "{}",
     ),
-    ("Call a chain of nine", "local:../p1", "forward", 1, ""),
 ];
 
+/// The sources the test saved, by name.
+fn sources() -> Result<Value, String> {
+    let saved = settings::get("sources")?.ok_or("no sources are saved")?;
+    serde_json::from_str(&saved).map_err(|error| format!("{error}"))
+}
+
+/// The source `name` stands for: a saved one, or `name` itself.
+fn source(sources: &Value, name: &str) -> String {
+    match sources.get(name).and_then(Value::as_str) {
+        Some(source) => source.into(),
+        None => name.into(),
+    }
+}
+
 /// `forward`'s input for a chain from `p<from>` to `p9`, which echoes.
-fn chain(from: u32) -> Value {
+fn chain(sources: &Value, from: u32) -> Value {
     if from == 9 {
-        return json!({ "to": "local:../p9", "operation": "echo", "input": { "end": true } });
+        return json!({ "to": source(sources, "p9"), "operation": "echo", "input": { "end": true } });
     }
     let next = from + 1;
     json!({
-        "to": format!("local:../p{next}"),
+        "to": source(sources, &format!("p{next}")),
         "operation": "forward",
-        "input": chain(next),
+        "input": chain(sources, next),
     })
 }
 
@@ -119,17 +125,43 @@ impl Guest for Fixture {
     }
 
     async fn run_action(item_id: String) -> Result<String, String> {
-        let Some(&(title, source, operation, version, input)) =
+        let Some(&(title, target, operation, version, input)) =
             ITEMS.iter().find(|(title, ..)| *title == item_id)
         else {
             return Err(format!("unknown item: {item_id}"));
         };
+        let sources = sources()?;
+        let target = source(&sources, target);
         let input = match title {
+            "Call b, which calls me back" => {
+                json!({ "to": source(&sources, "a"), "operation": "echo", "input": {} }).to_string()
+            }
             // p1 forwards to p2, and so on to p9.
-            "Call a chain of nine" => chain(1).to_string(),
+            "Call a chain of nine" => chain(&sources, 1).to_string(),
             _ => input.into(),
         };
-        let answer = call_as_text(source, operation, version, input).await?;
+        match title {
+            "Call b twice at once, which calls c" => {
+                // b forwards each to c's echo, so it is still waiting on c
+                // when Pane takes the second call.
+                let forward = |word: &str| {
+                    json!({ "to": source(&sources, "c"), "operation": "echo", "input": word })
+                        .to_string()
+                };
+                let (first, second) = futures::join!(
+                    call_as_text(&target, operation, version, forward("first")),
+                    call_as_text(&target, operation, version, forward("second")),
+                );
+                return Ok(format!("answered: {} and {}", first?, second?));
+            }
+            "Call b's remember and give up at once" => {
+                // Polled once, so the call is sent, then dropped.
+                let dropped = call_as_text(&target, operation, version, input).now_or_never();
+                return Ok(format!("gave up: {}", dropped.is_none()));
+            }
+            _ => {}
+        }
+        let answer = call_as_text(&target, operation, version, input).await?;
         if operation == "remember" {
             let mine = settings::get("last")?;
             return Ok(format!("answered: {answer}; mine: {mine:?}"));

@@ -205,17 +205,18 @@ calculator is covered by the launcher tests, not natively.
 
 The last phase installs the JavaScript operations sample, then the Rust one
 (`--install target/guests/packages/sample-operations-js`, then
-`sample-operations`), opens the Rust sample's command and runs "Ask
-JavaScript to greet" with real X11 key events: the Rust guest calls the
-JavaScript package's `greet` operation through Pane, which starts that
-package's guest for the call. Run locally on 2026-09-28 (Ubuntu 26.04.1 LTS,
+`sample-operations`), opens the Rust sample's command and fills its form with
+real X11 key events: the JavaScript package's identity (`local:` and the
+resolved folder path) and the name "Rust". The Rust guest calls that
+package's `greet` operation through Pane, which starts its guest for the
+call. Run locally on 2026-09-28 (Ubuntu 26.04.1 LTS,
 kernel 7.0.0-31-generic, x86_64, same Xvfb/lavapipe setup): all checks of
 the whole smoke passed.
 
 | Step | Evidence |
 | --- | --- |
 | JavaScript operations sample installed | [31-operations-target.png](evidence/linux-x11/31-operations-target.png) |
-| "JavaScript answered: Hello, Rust, from JavaScript", from the other package's guest | [32-operation-answer.png](evidence/linux-x11/32-operation-answer.png) |
+| "Hello, Rust, from JavaScript", from the other package's guest | [32-operation-answer.png](evidence/linux-x11/32-operation-answer.png) |
 
 The macOS and Windows smokes run the same phase (screenshots 31 and 32); it
 has not run there yet. The other directions (JavaScript and TypeScript

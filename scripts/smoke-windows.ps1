@@ -274,9 +274,10 @@ if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: pasting did not give 
 Stop-Pane $process
 
 # Operations: install the JavaScript operations sample, then the Rust one,
-# whose command (Call from Rust, selected once installed) asks the JavaScript
-# package's greet operation: "JavaScript answered: Hello, Rust, from
-# JavaScript" comes from the other package's guest, started for the call.
+# whose command (Call from Rust, selected once installed) opens its form,
+# takes the JavaScript package's identity (local: and the folder's resolved
+# path) and a name, and calls that package's greet operation: "Hello, Rust,
+# from JavaScript" comes from the other package's guest, started for the call.
 $process = Start-Pane "stderr-operations-target.log" @("--install", "target/guests/packages/sample-operations-js")
 Send "{ENTER}"; Start-Sleep -Seconds 2   # Install
 Capture "31-operations-target.png"
@@ -285,7 +286,10 @@ Stop-Pane $process
 $process = Start-Pane "stderr-operations.log" @("--install", "target/guests/packages/sample-operations")
 Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Call from Rust is selected
 Send "{ENTER}"; Start-Sleep -Seconds 3   # open Call from Rust
-Send "{ENTER}"; Start-Sleep -Seconds 5   # "Ask JavaScript to greet"
+Send "{ENTER}"; Start-Sleep -Seconds 2   # "Greet through another extension": its form
+Send ("local:" + (Resolve-Path "target/guests/packages/sample-operations-js").Path)
+Send "{TAB}Rust"
+Send "{ENTER}"; Start-Sleep -Seconds 5   # Greet
 Capture "32-operation-answer.png"
 Check "32-operation-answer.png" "9fd8a8"   # the JavaScript guest's answer
 $shots = "31-operations-target", "32-operation-answer" | ForEach-Object { Join-Path $OutDir "$_.png" }

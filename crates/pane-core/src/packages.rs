@@ -69,14 +69,6 @@ impl PackageIdentity {
         Ok(PackageIdentity(Source::Local(path.to_owned())))
     }
 
-    /// The identity of a local package folder at `path` as it is spelled,
-    /// for a folder that no longer exists to be resolved. `path` is
-    /// absolute and normalized.
-    pub(crate) fn from_path(path: &Path) -> PackageIdentity {
-        let path = without_verbatim_prefix(path.to_path_buf());
-        PackageIdentity(Source::Local(path.to_string_lossy().into_owned()))
-    }
-
     /// A stable key for this identity, for ids and records rather than for
     /// people to read: `local:` followed by the folder's resolved path. The
     /// [`Display`](fmt::Display) form is the wording shown to users.
@@ -159,6 +151,9 @@ pub struct ManifestOperation {
     /// The component serving it, relative to the package folder; often a
     /// command's component too.
     pub component: PathBuf,
+    /// The operating systems it works on; `None` for every system the
+    /// package supports. Elsewhere a call to it is unavailable.
+    pub platforms: Option<Vec<Platform>>,
 }
 
 /// A command a package contributes to root search.
@@ -199,6 +194,8 @@ struct OperationJson {
     id: String,
     version: u32,
     component: String,
+    #[serde(default)]
+    platforms: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -367,7 +364,12 @@ impl Manifest {
                     operation.id
                 )));
             }
+            let platforms = parse_platforms(
+                operation.platforms,
+                &format!("`platforms` of operation `{}`", operation.id),
+            )?;
             operations.push(ManifestOperation {
+                platforms,
                 component: inside_package(&operation.component)?,
                 id: operation.id,
                 version: operation.version,
