@@ -402,7 +402,7 @@ impl Render for LauncherWindow {
             Screen::Form => ("", "Tab next field · Enter submit · Esc back"),
             Screen::Extensions => (
                 "No extensions are installed.",
-                "↑↓ select · Enter enable or disable · Esc back",
+                "↑↓ select · Enter enable, disable, reload or retry · Esc back",
             ),
             Screen::CustomView => ("", "Keys and pointer go to the view · Esc back"),
         };
