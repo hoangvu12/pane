@@ -2199,8 +2199,8 @@ impl Launcher {
             "Clearing an extension's cache keeps its settings, content and credentials.".into(),
             "Uninstalling an extension asks whether to keep its settings and content.".into(),
             format!(
-                "An extension that cannot start, or crashes {}, is paused until you retry it; \
-                 it keeps its settings.",
+                "An extension that cannot start, or crashes or stops responding {}, is paused \
+                 until you retry it; it keeps its settings.",
                 pausing::within()
             ),
         ];
