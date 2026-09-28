@@ -82,7 +82,7 @@ stop_pane
 
 # Install the assembled Rust sample package (the folder the picker would
 # return), then run its command. Root lists the three samples, the installed
-# command, then the install row.
+# command, then the install and Manage extensions… rows.
 start_pane --install target/guests/packages/sample-rust
 "$xdotool" windowfocus --sync "$window"
 capture 6-package.png
@@ -101,5 +101,46 @@ start_pane
 capture 9-restarted.png
 check 9-restarted.png 8a96a3
 [ -f "$out/data/extensions/installed.json" ] || { echo "no install record"; exit 1; }
+stop_pane
+
+# Install the settings sample, save a choice with it, then disable it in
+# Manage extensions. Root lists the three samples, Rust sample, Greeting, the
+# install row, then Manage extensions… last; the extension list holds Rust
+# sample, then Settings sample.
+start_pane --install target/guests/packages/sample-settings
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 2   # Install; Greeting is selected
+"$xdotool" key Return; sleep 3   # open Greeting
+"$xdotool" key Return; sleep 2   # "Use a formal greeting"
+capture 10-setting-saved.png
+check 10-setting-saved.png 9fd8a8   # "Saved the formal greeting"
+"$xdotool" key Escape; sleep 1
+for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # the last row
+"$xdotool" key Return; sleep 1
+"$xdotool" key Down key Return; sleep 2
+capture 11-disabled.png
+check 11-disabled.png 9fd8a8   # "Disabled Settings sample"
+stop_pane
+grep -q '"disabled": true' "$out/data/extensions/installed.json" || { echo "disabled state not recorded"; exit 1; }
+grep -q '"greeting-style": "formal"' "$out/data/extensions/settings.json" || { echo "setting not saved"; exit 1; }
+
+# After a restart Greeting is no longer in root search. Enabling the package
+# again brings it back with its setting: "Greet me" answers in the saved
+# formal style, where without a saved style it reports an error.
+start_pane
+"$xdotool" windowfocus --sync "$window"
+capture 12-restarted-disabled.png
+check 12-restarted-disabled.png 8a96a3
+for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done
+"$xdotool" key Return; sleep 1
+"$xdotool" key Down key Return; sleep 2
+capture 13-enabled.png
+check 13-enabled.png 9fd8a8   # "Enabled Settings sample"
+"$xdotool" key Escape; sleep 1
+for ((i = 0; i < 4; i++)); do "$xdotool" key Down; done   # Greeting
+"$xdotool" key Return; sleep 3
+"$xdotool" key Down key Down key Return; sleep 2   # "Greet me"
+capture 14-greeted.png
+check 14-greeted.png 9fd8a8   # "Good day to you"
 stop_pane
 echo "screenshots in $out"

@@ -83,7 +83,7 @@ These remain open design/validation work in the specification and implementation
 
 1. Final JS engine, upstream patch/fork strategy, runtime packaging/topology and initialization fixes.
 2. Public WIT/SDK contracts, language parity, UI/event/custom drawing, input/IME/accessibility and host/helper IPC.
-3. Cancellation, hangs, concurrent work, stale generation replies, reload/disable resource cleanup and fatal shared-runtime recovery.
+3. Cancellation, hangs, concurrent work, stale generation replies, reload/disable resource cleanup and fatal shared-runtime recovery. #10 disables a local package persistently, keeps its [extension settings](../guests/README.md#keeping-settings) and drops its instances, but a call already running finishes rather than being cancelled.
 4. Package manifest/artifact format beyond the minimal local `pane.json` v1 of #9 (title, version, extension API, one component per command; [format](../guests/README.md#packaging-and-installing-a-local-extension)), dependency/resource/operation addressing, dependency cycles/partial installation, Git tracking and staged update activation. #9 does not implement Q34's supported-OS manifest metadata (deferred to a later ticket), and its update is not coordinated with a running or open command of the package.
 5. API version signaling, deprecation/migration details, persisted-state schema/migration ownership and recovery limits.
 6. Supported OS versions/architectures/Linux desktops, release validation matrix and measured resource/startup/interaction targets.

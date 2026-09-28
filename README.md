@@ -25,7 +25,7 @@ cargo xtask ci       # build guests, check the prebuilt JS/TS samples, then form
 
 No JavaScript toolchain is needed for these: the JS and TS sample components are committed prebuilt in `guests/prebuilt/`. Rebuilding them from source with `cargo xtask js-guests` also needs Python 3.12+, git and Node.js 22+ on any of the three OSes; see [guests/README.md](guests/README.md#writing-a-javascript-or-typescript-command).
 
-In the window, use the arrow keys to select, Enter to open a command or run an item, and Escape to go back; clicking a row runs it too. **Install extension from folder…**, the last row, installs a local extension package; see [Packaging and installing a local extension](guests/README.md#packaging-and-installing-a-local-extension).
+In the window, use the arrow keys to select, Enter to open a command or run an item, and Escape to go back; clicking a row runs it too. **Install extension from folder…**, the last row, installs a local extension package; see [Packaging and installing a local extension](guests/README.md#packaging-and-installing-a-local-extension). Once a package is installed, **Manage extensions…** after it lists the installed packages; Enter disables or enables the selected one, and a disabled package keeps its settings across restarts.
 
 To try a package without the folder picker, open the launcher on its install screen, then press Enter to install it:
 

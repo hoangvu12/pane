@@ -72,7 +72,7 @@ Stop-Pane $process
 
 # Install the assembled Rust sample package (the folder the picker would
 # return), then run its command. Root lists the three samples, the installed
-# command, then the install row.
+# command, then the install and Manage extensions rows.
 $process = Start-Pane "stderr-install.log" @("--install", "target/guests/packages/sample-rust")
 Capture "6-package.png"
 Check "6-package.png" "aab4c0"   # the package's identity and compatibility lines
@@ -90,5 +90,44 @@ $process = Start-Pane "stderr-restart.log"
 Capture "9-restarted.png"
 Check "9-restarted.png" "8a96a3"
 if (-not (Test-Path (Join-Path $data "extensions/installed.json"))) { throw "no install record" }
+Stop-Pane $process
+
+# Install the settings sample, save a choice with it, then disable it in
+# Manage extensions. Root lists the three samples, Rust sample, Greeting, the
+# install row, then Manage extensions... last; the extension list holds Rust
+# sample, then Settings sample.
+$process = Start-Pane "stderr-settings.log" @("--install", "target/guests/packages/sample-settings")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Greeting is selected
+Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greeting
+Send "{ENTER}"; Start-Sleep -Seconds 2   # "Use a formal greeting"
+Capture "10-setting-saved.png"
+Check "10-setting-saved.png" "9fd8a8"   # "Saved the formal greeting"
+Send "{ESC}"; Start-Sleep -Seconds 1
+Send "{DOWN 10}"   # the last row
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2
+Capture "11-disabled.png"
+Check "11-disabled.png" "9fd8a8"   # "Disabled Settings sample"
+Stop-Pane $process
+if (-not (Select-String -Quiet -SimpleMatch '"disabled": true' (Join-Path $data "extensions/installed.json"))) { throw "disabled state not recorded" }
+if (-not (Select-String -Quiet -SimpleMatch '"greeting-style": "formal"' (Join-Path $data "extensions/settings.json"))) { throw "setting not saved" }
+
+# After a restart Greeting is no longer in root search. Enabling the package
+# again brings it back with its setting: "Greet me" answers in the saved
+# formal style, where without a saved style it reports an error.
+$process = Start-Pane "stderr-reenable.log"
+Capture "12-restarted-disabled.png"
+Check "12-restarted-disabled.png" "8a96a3"
+Send "{DOWN 10}"
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2
+Capture "13-enabled.png"
+Check "13-enabled.png" "9fd8a8"   # "Enabled Settings sample"
+Send "{ESC}"; Start-Sleep -Seconds 1
+Send "{DOWN 4}"   # Greeting
+Send "{ENTER}"; Start-Sleep -Seconds 3
+Send "{DOWN}{DOWN}{ENTER}"; Start-Sleep -Seconds 2   # "Greet me"
+Capture "14-greeted.png"
+Check "14-greeted.png" "9fd8a8"   # "Good day to you"
 Stop-Pane $process
 Write-Output "screenshots in $OutDir"
