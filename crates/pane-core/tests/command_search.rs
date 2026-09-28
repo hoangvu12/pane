@@ -414,7 +414,8 @@ fn an_offline_or_failing_service_is_an_error_that_does_not_pause_the_extension()
 
         // Nothing listens there: more errors than would pause a crashing
         // extension (three within five minutes).
-        let offline = format!("http://127.0.0.1:{}", service::closed_port());
+        let closed = service::ClosedPort::new();
+        let offline = closed.url();
         pane.use_service(&offline);
         for text in ["aurora", "basalt", "cobalt", "driftwood"] {
             pane.search(text);

@@ -172,11 +172,28 @@ impl Drop for Service {
     }
 }
 
-/// A port of 127.0.0.1 nothing listens on, for an address that refuses
-/// connections: bound, then released.
-pub fn closed_port() -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("a free port");
-    listener.local_addr().unwrap().port()
+/// A port of 127.0.0.1 that refuses connections for as long as this is
+/// kept: a socket bound to it that never listens, so nothing else can take
+/// the port meanwhile (as it could once a listener was released).
+pub struct ClosedPort(tokio::net::TcpSocket);
+
+impl ClosedPort {
+    pub fn new() -> ClosedPort {
+        let socket = tokio::net::TcpSocket::new_v4().expect("a socket");
+        socket
+            .bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+            .expect("a free port");
+        ClosedPort(socket)
+    }
+
+    pub fn port(&self) -> u16 {
+        self.0.local_addr().unwrap().port()
+    }
+
+    /// `http://127.0.0.1:<port>`.
+    pub fn url(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port())
+    }
 }
 
 fn serve(mut stream: TcpStream, log: &Log) -> io::Result<()> {
