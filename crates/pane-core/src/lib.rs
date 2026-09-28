@@ -4,6 +4,7 @@
 mod launcher;
 mod packages;
 mod runtime;
+mod settings;
 
 pub use launcher::{CommandRegistration, Launcher, LauncherView, Row, Screen, Status};
 pub use packages::{

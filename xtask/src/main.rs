@@ -63,7 +63,7 @@ fn guests() -> Result<(), String> {
     std::fs::create_dir_all(&out).map_err(|error| error.to_string())?;
     // (workspace directory, component file names)
     let workspaces: [(&str, &[&str]); 2] = [
-        ("guests", &["sample_rust", "faulty"]),
+        ("guests", &["sample_rust", "sample_settings", "faulty"]),
         ("guests/fixtures/mixed-p2", &["mixed_p2"]),
     ];
     for (dir, components) in workspaces {
@@ -112,8 +112,9 @@ fn guests() -> Result<(), String> {
 }
 
 /// (package folder in `guests/packages`, component) of each sample package.
-const SAMPLE_PACKAGES: [(&str, &str); 3] = [
+const SAMPLE_PACKAGES: [(&str, &str); 4] = [
     ("sample-rust", "sample_rust"),
+    ("sample-settings", "sample_settings"),
     ("sample-js", "sample_js"),
     ("sample-ts", "sample_ts"),
 ];

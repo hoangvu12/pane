@@ -10,11 +10,18 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use crate::packages::{InstalledPackage, PackageError, SourcePackage, Store, folder_name};
+use crate::packages::{
+    InstalledPackage, PackageError, PackageIdentity, SourcePackage, Store, folder_name,
+};
 use crate::runtime::{CallError, Runtime};
+use crate::settings::{PackageSettings, Settings};
 
 /// The id of the root row that installs a package from a local folder.
 const INSTALL_FROM_FOLDER: &str = "pane.install-from-folder";
+
+/// The id of the root row that lists installed packages to enable or
+/// disable them.
+const MANAGE_EXTENSIONS: &str = "pane.manage-extensions";
 
 /// A command offered in root search, backed by one extension component.
 #[derive(Clone, Debug)]
@@ -34,6 +41,8 @@ pub enum Screen {
     Command,
     /// A package folder's identity and compatibility, before installing it.
     Package,
+    /// The installed packages, each enabled or disabled.
+    Extensions,
 }
 
 /// A selectable row.
@@ -78,6 +87,8 @@ pub struct Launcher {
     commands: Arc<[CommandRegistration]>,
     /// Pane's managed package location, when installing packages is on.
     store: Option<Arc<Mutex<Store>>>,
+    /// The installed packages' settings, kept with `store`.
+    settings: Option<Settings>,
     state: Arc<Mutex<State>>,
 }
 
@@ -109,6 +120,10 @@ enum Entry {
     /// Install the previewed package from this folder, or replace its
     /// installed copy.
     Install(PathBuf, Mode),
+    /// Show the installed packages (root).
+    Manage,
+    /// Enable this installed package if it is disabled, else disable it.
+    Toggle(PackageIdentity),
 }
 
 #[derive(Clone, Copy)]
@@ -132,14 +147,20 @@ impl Launcher {
         commands: Vec<CommandRegistration>,
         packages_dir: PathBuf,
     ) -> Self {
-        Launcher::create(runtime, commands, Some(Store::open(packages_dir)))
+        let settings = Settings::open(&packages_dir);
+        Launcher::create(
+            runtime,
+            commands,
+            Some((Store::open(packages_dir), settings)),
+        )
     }
 
     fn create(
         runtime: Result<Runtime, CallError>,
         commands: Vec<CommandRegistration>,
-        store: Option<Store>,
+        store: Option<(Store, Settings)>,
     ) -> Self {
+        let (store, settings) = store.unzip();
         let state = State {
             view: LauncherView {
                 screen: Screen::Root,
@@ -155,10 +176,16 @@ impl Launcher {
             packages: store.as_ref().map(Store::installed).unwrap_or_default(),
             store_problem: store.as_ref().and_then(Store::problem),
         };
+        if let Some(settings) = &settings {
+            for package in state.packages.iter().filter(|package| !package.enabled) {
+                settings.set_enabled(&package.identity, false);
+            }
+        }
         let launcher = Launcher {
             runtime,
             commands: commands.into(),
             store: store.map(|store| Arc::new(Mutex::new(store))),
+            settings,
             state: Arc::new(Mutex::new(state)),
         };
         launcher.show_root(&mut launcher.lock(), None);
@@ -211,7 +238,8 @@ impl Launcher {
         matches!(entry, Some(Entry::InstallFromFolder))
     }
 
-    /// Leaves an open command or package preview for root search.
+    /// Leaves an open command, package preview or the extension list for
+    /// root search.
     pub fn back(&self) {
         let mut state = self.lock();
         if state.view.screen != Screen::Root {
@@ -236,6 +264,10 @@ impl Launcher {
                 state.view.status = Status::Error(problem);
                 None
             }
+            Some(Entry::Manage) => {
+                self.show_extensions(&mut state);
+                None
+            }
             Some(Entry::InstallFromFolder) | None => None,
             Some(entry) => {
                 state.view.status = Status::Running;
@@ -257,7 +289,18 @@ impl Launcher {
                 Some(Entry::Install(folder, mode)) => {
                     launcher.install(generation, folder, mode).await
                 }
-                Some(Entry::Broken(_) | Entry::InstallFromFolder) | None => {}
+                Some(Entry::Toggle(identity)) => {
+                    let enabled = launcher
+                        .lock()
+                        .packages
+                        .iter()
+                        .find(|package| package.identity == identity)
+                        .is_some_and(|package| package.enabled);
+                    launcher
+                        .change_enabled(generation, identity, !enabled)
+                        .await
+                }
+                Some(Entry::Broken(_) | Entry::InstallFromFolder | Entry::Manage) | None => {}
             }
         }
     }
@@ -299,6 +342,91 @@ impl Launcher {
         let launcher = self.clone();
         let folder = folder.to_path_buf();
         async move { launcher.install(generation, folder, Mode::Install).await }
+    }
+
+    /// Enables or disables the installed package with `identity` and
+    /// records the choice, so it holds after a restart. A disabled package's
+    /// commands leave root search, an open one closes, and its running
+    /// instances are dropped; its settings are kept for when it is enabled
+    /// again. Other installations, even with the same title, are unaffected.
+    pub fn set_enabled(
+        &self,
+        identity: &PackageIdentity,
+        enabled: bool,
+    ) -> impl Future<Output = ()> + Send + 'static {
+        let generation = self.start_running();
+        let launcher = self.clone();
+        let identity = identity.clone();
+        async move { launcher.change_enabled(generation, identity, enabled).await }
+    }
+
+    async fn change_enabled(&self, generation: u64, identity: PackageIdentity, enabled: bool) {
+        let result = match &self.store {
+            None => Err(PackageError::Storage(
+                "this launcher does not install packages".into(),
+            )),
+            Some(store) => {
+                let store = store.clone();
+                let identity = identity.clone();
+                off_thread(move || {
+                    let mut store = store.lock().unwrap_or_else(|p| p.into_inner());
+                    store.set_enabled(&identity, enabled)
+                })
+                .await
+            }
+        };
+        let mut state = self.lock();
+        let current = state.screen_generation == generation;
+        if let Err(error) = result {
+            if current {
+                state.view.status = Status::Error(error.to_string());
+            }
+            return;
+        }
+        if let Some(settings) = &self.settings {
+            settings.set_enabled(&identity, enabled);
+        }
+        let Some(package) = state
+            .packages
+            .iter_mut()
+            .find(|package| package.identity == identity)
+        else {
+            return;
+        };
+        package.enabled = enabled;
+        let message = match enabled {
+            true => format!("Enabled {}", package.title()),
+            false => format!("Disabled {}", package.title()),
+        };
+        let components: Vec<PathBuf> = package
+            .commands()
+            .into_iter()
+            .map(|c| c.component)
+            .collect();
+        if !enabled {
+            // Its instances stop; enabling it again starts fresh ones.
+            if let Ok(runtime) = self.runtime() {
+                runtime.forget(components.iter().cloned());
+            }
+            if state
+                .open
+                .as_ref()
+                .is_some_and(|open| components.contains(open))
+            {
+                self.show_root(&mut state, None);
+                state.view.status = Status::Result(message);
+                return;
+            }
+        }
+        match state.view.screen {
+            Screen::Root => self.refresh_root(&mut state),
+            Screen::Extensions => self.refresh_extensions(&mut state),
+            // Other screens show no package state.
+            _ => {}
+        }
+        if current {
+            state.view.status = Status::Result(message);
+        }
     }
 
     fn start_running(&self) -> u64 {
@@ -438,7 +566,9 @@ impl Launcher {
             rows.push(row);
             entries.push(entry);
         };
-        let installed = state.packages.iter().flat_map(InstalledPackage::commands);
+        // A disabled package contributes nothing to root search.
+        let enabled = || state.packages.iter().filter(|package| package.enabled);
+        let installed = enabled().flat_map(InstalledPackage::commands);
         for command in self.commands.iter().cloned().chain(installed) {
             let entry = Entry::Open(command.component);
             let row = Row {
@@ -448,7 +578,7 @@ impl Launcher {
             };
             add(row, entry);
         }
-        for package in &state.packages {
+        for package in enabled() {
             if let Err(error) = &package.manifest {
                 let row = Row {
                     id: package.identity.key(),
@@ -471,12 +601,52 @@ impl Launcher {
             };
             add(row, Entry::InstallFromFolder);
         }
+        if self.store.is_some() && !state.packages.is_empty() {
+            let row = Row {
+                id: MANAGE_EXTENSIONS.into(),
+                title: "Manage extensions…".into(),
+                subtitle: Some("Enable or disable installed extensions".into()),
+            };
+            add(row, Entry::Manage);
+        }
         (rows, entries)
     }
 
+    /// Shows the installed packages, each enabled or disabled.
+    fn show_extensions(&self, state: &mut State) {
+        let (rows, entries) = extension_rows(&state.packages);
+        state.open = None;
+        state.screen_generation += 1;
+        state.entries = entries;
+        state.view = LauncherView {
+            screen: Screen::Extensions,
+            title: "Extensions".into(),
+            details: vec![
+                "A disabled extension adds no commands and runs nothing; it keeps its settings."
+                    .into(),
+            ],
+            selected: first_index(&rows),
+            rows,
+            status: Status::Idle,
+        };
+    }
+
+    /// Updates the installed packages on screen after one was enabled or
+    /// disabled; the rows stay in place, and so does the selection.
+    fn refresh_extensions(&self, state: &mut State) {
+        let (rows, entries) = extension_rows(&state.packages);
+        state.entries = entries;
+        state.view.rows = rows;
+    }
+
     async fn run_action(&self, generation: u64, component: PathBuf, item_id: String) {
+        let settings = self.settings_of(&component);
         let result = match self.runtime() {
-            Ok(runtime) => runtime.run_action(&component, &item_id).await,
+            Ok(runtime) => {
+                runtime
+                    .run_action_with(&component, &item_id, settings)
+                    .await
+            }
             Err(error) => Err(error),
         };
         let Some(mut state) = self.lock_if_current(generation) else {
@@ -489,13 +659,21 @@ impl Launcher {
     }
 
     async fn open_command(&self, generation: u64, component: PathBuf) {
+        let settings = self.settings_of(&component);
         let result = match self.runtime() {
-            Ok(runtime) => runtime.get_view(&component).await,
+            Ok(runtime) => runtime.get_view_with(&component, settings).await,
             Err(error) => Err(error),
         };
         let Some(mut state) = self.lock_if_current(generation) else {
             return;
         };
+        if let Some(package) = owner(&state.packages, &component)
+            && !package.enabled
+        {
+            // Disabled while it was opening.
+            state.view.status = Status::Error(format!("{} is disabled", package.title()));
+            return;
+        }
         match result {
             Ok(view) => {
                 let rows: Vec<Row> = view
@@ -523,6 +701,14 @@ impl Launcher {
         }
     }
 
+    /// The settings of the installed package `component` belongs to; `None`
+    /// for a command built into Pane.
+    fn settings_of(&self, component: &Path) -> Option<PackageSettings> {
+        let state = self.lock();
+        let package = owner(&state.packages, component)?;
+        Some(self.settings.as_ref()?.owned_by(&package.identity))
+    }
+
     fn runtime(&self) -> Result<&Runtime, CallError> {
         self.runtime.as_ref().map_err(Clone::clone)
     }
@@ -538,6 +724,33 @@ impl Launcher {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
+}
+
+/// The installed package whose managed copy holds `component`.
+fn owner<'a>(packages: &'a [InstalledPackage], component: &Path) -> Option<&'a InstalledPackage> {
+    packages
+        .iter()
+        .find(|package| component.starts_with(&package.location))
+}
+
+/// One row per installed package, saying whether it is enabled and which
+/// source it is, so copies with the same title can be told apart.
+fn extension_rows(packages: &[InstalledPackage]) -> (Vec<Row>, Vec<Entry>) {
+    packages
+        .iter()
+        .map(|package| {
+            let state = match package.enabled {
+                true => "Enabled",
+                false => "Disabled",
+            };
+            let row = Row {
+                id: package.identity.key(),
+                title: package.title(),
+                subtitle: Some(format!("{state} · {}", package.identity)),
+            };
+            (row, Entry::Toggle(package.identity.clone()))
+        })
+        .unzip()
 }
 
 /// The package screen for `folder`: what the package is and whether it can
@@ -578,6 +791,9 @@ fn preview_view(
                 Some(version) => format!("Installed: version {version} from this folder"),
                 None => "Installed from this folder".into(),
             });
+            if !installed.enabled {
+                details.push("Disabled: enable it in Manage extensions".into());
+            }
             let row = Row {
                 id: "update".into(),
                 title: "Update".into(),

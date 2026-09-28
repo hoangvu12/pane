@@ -262,6 +262,10 @@ impl Render for LauncherWindow {
                 "↑↓ select · Enter run · Esc back",
             ),
             Screen::Package => ("Nothing to install.", "Enter confirm · Esc back"),
+            Screen::Extensions => (
+                "No extensions are installed.",
+                "↑↓ select · Enter enable or disable · Esc back",
+            ),
         };
         let details = view.details.into_iter().enumerate().map(|(index, line)| {
             div()

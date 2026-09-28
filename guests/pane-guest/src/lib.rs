@@ -1,6 +1,7 @@
 //! Guest-side bindings for Pane's `pane:extension` contract.
 //!
-//! An extension implements [`Guest`] and calls [`export!`]. The crate is
+//! An extension implements [`Guest`] and calls [`export!`]. It may keep
+//! values between runs with [`settings`]. The crate is
 //! `no_std` so the component imports only WASI 0.3 interfaces; it supplies the
 //! allocator and a panic handler that traps, which the host reports as a
 //! runtime error.
@@ -10,12 +11,13 @@ pub extern crate alloc;
 
 wit_bindgen::generate!({
     path: "../../wit",
-    world: "extension",
+    world: "extension-with-settings",
     pub_export_macro: true,
     default_bindings_module: "pane_guest",
 });
 
 pub use exports::pane::extension::command::{Guest, Item, View};
+pub use pane::extension::settings;
 
 #[global_allocator]
 static ALLOC: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;
