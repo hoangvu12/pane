@@ -120,6 +120,20 @@ form, restarts Pane and types "pane iss", which must list it selected. It
 stops before Enter, which would open the default browser; opening a link
 here is checked only through the tests' recording opener. Not run yet.
 
+## Global hotkeys (#32)
+
+The smoke's hotkey phase (screenshots 52 to 58, [global hotkeys](../hotkeys.md#checks))
+assigns Ctrl+Alt+G to Greeting on its hotkey screen, minimizes Pane,
+presses it with `SendKeys` and checks that Pane's window is the foreground
+window again with Greeting open; then again after a restart; then, with the
+extension disabled, that pressing it leaves Pane minimized and unchanged.
+`RegisterHotKey` needs no permission. `hotkey_adapters.rs` registers a
+shortcut on the test session, checks that a second registration is refused
+as taken and that the released shortcut can be registered again. The
+adapter was only compile- and lint-checked for `x86_64-pc-windows-gnu` from
+Linux; **not run on Windows yet**, so registration, delivery and the focus
+transition (foreground rules) are unverified natively.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** the smoke now also opens the Rust command's

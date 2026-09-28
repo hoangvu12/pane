@@ -354,6 +354,36 @@ has not run there yet. A managed folder that Windows keeps in use is covered
 only by the leftover mechanism's Unix test (a read-only folder), not
 natively.
 
+### Global hotkeys (#32, #33, #34)
+
+The last phase, after the uninstall phase ([global hotkeys](../hotkeys.md#checks)), with a data folder
+of its own, installs the settings sample, opens "Hotkey for Greeting" in
+Manage extensions and presses Ctrl+Alt+G with real X11 key events, then
+moves X input focus to the root window (checked with `xdotool
+getwindowfocus`) and presses Ctrl+Alt+G again through XTEST: the X server
+delivers it to Pane's passive grab and Greeting opens. After a restart the
+hotkey (read from `hotkeys.json`) opens Greeting the same way; after
+disabling the extension the press changes nothing. Pane's grab is on the
+smoke's Xvfb display only (`DISPLAY`; `WAYLAND_DISPLAY` unset). Run locally
+on 2026-09-28 (Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64, same
+Xvfb/lavapipe setup): all checks of the whole smoke passed. The adapter test
+also grabs, conflicts, receives an `xdotool` press and releases on an Xvfb
+of its own.
+
+| Step | Evidence |
+| --- | --- |
+| The hotkey screen of Greeting | [52-hotkey-screen.png](evidence/linux-x11/52-hotkey-screen.png) |
+| Pane unfocused at root search before the press | [54-unfocused.png](evidence/linux-x11/54-unfocused.png) |
+| Ctrl+Alt+G pressed elsewhere: Greeting open in Pane | [55-hotkey-opened.png](evidence/linux-x11/55-hotkey-opened.png) |
+| After a restart, the same | [56-hotkey-after-restart.png](evidence/linux-x11/56-hotkey-after-restart.png) |
+| Extension disabled: root search before and after the press | [57-disabled.png](evidence/linux-x11/57-disabled.png), [58-disabled-pressed.png](evidence/linux-x11/58-disabled-pressed.png) |
+
+(Screenshot 53, "Ctrl+Alt+G now opens Greeting" on the extension list, is
+checked but not kept here: it shows the local package paths.) Xvfb has no
+window manager, so raising and focusing Pane's window
+(`_NET_ACTIVE_WINDOW`) is not verified; Wayland is explained as unavailable
+(tested with a fake, not natively), and no real desktop session ran.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms have a text field (GPUI CE's

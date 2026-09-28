@@ -179,6 +179,8 @@ impl Launcher {
             runtime.forget(all);
         }
         state.failed.forget(&identity);
+        // Its hotkeys are released now, and forgotten once it is uninstalled.
+        self.sync_hotkeys(state);
         // Its results kept for root search go, and so does an answer from it
         // being awaited.
         Launcher::forget_indexes(state);
@@ -239,6 +241,7 @@ impl Launcher {
                 let at = index.min(state.packages.len());
                 state.packages.insert(at, package);
                 installation.data.reinstate(&identity, enabled);
+                self.sync_hotkeys(&mut state);
                 self.end_uninstall(
                     &mut state,
                     epoch,
@@ -251,6 +254,7 @@ impl Launcher {
                 return;
             }
             Ok(leftover) => {
+                let forget_hotkeys = self.forget_hotkeys_of(&mut self.lock(), &identity);
                 let problems = {
                     let data = installation.data.clone();
                     let store = installation.store.clone();
@@ -258,6 +262,9 @@ impl Launcher {
                     let title = title.clone();
                     off_thread(move || {
                         let mut problems = data.remove_uninstalled(&identity, saved);
+                        if let Some(Err(error)) = forget_hotkeys.map(|forget| forget()) {
+                            problems.push(format!("could not forget its hotkeys: {error}"));
+                        }
                         let store = &mut store.lock().unwrap_or_else(|p| p.into_inner());
                         let recorded = store.retained().iter().any(|r| r.identity == identity);
                         if !recorded
