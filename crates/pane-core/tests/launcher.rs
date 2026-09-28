@@ -6,6 +6,9 @@ use std::path::PathBuf;
 use futures::executor::block_on;
 use pane_core::{CallError, CommandRegistration, Launcher, Runtime, Screen, Status};
 
+#[path = "support/platforms.rs"]
+mod platforms;
+
 fn guest(name: &str) -> PathBuf {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/guests")
@@ -296,10 +299,7 @@ fn an_unavailable_form_explains_itself_instead_of_opening() {
     let view = launcher.view();
     let reason = view.rows[view.selected.unwrap()].unavailable.clone();
     let reason = reason.expect("the row says why it is unavailable");
-    assert!(
-        reason.ends_with(": this action supports no operating system"),
-        "{reason}"
-    );
+    assert_eq!(reason, platforms::nowhere("this action"));
 
     block_on(launcher.activate_selected());
 

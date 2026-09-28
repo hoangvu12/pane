@@ -9,11 +9,11 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use tokio::sync::{mpsc, oneshot};
-
-use crate::platform::Platform;
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime::{Cache, CacheConfig, Config, Engine, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
+
+use crate::platform::Platform;
 
 mod bindings {
     wasmtime::component::bindgen!({
@@ -490,16 +490,19 @@ impl From<command::Item> for Item {
             title: item.title,
             subtitle: item.subtitle,
             form: item.form.map(Form::from),
-            platforms: item.platforms.map(|platforms| {
-                platforms
-                    .into_iter()
-                    .map(|platform| match platform {
-                        command::Platform::Windows => Platform::Windows,
-                        command::Platform::Macos => Platform::Macos,
-                        command::Platform::Linux => Platform::Linux,
-                    })
-                    .collect()
-            }),
+            platforms: item
+                .platforms
+                .map(|platforms| platforms.into_iter().map(Platform::from).collect()),
+        }
+    }
+}
+
+impl From<command::Platform> for Platform {
+    fn from(platform: command::Platform) -> Platform {
+        match platform {
+            command::Platform::Windows => Platform::Windows,
+            command::Platform::Macos => Platform::Macos,
+            command::Platform::Linux => Platform::Linux,
         }
     }
 }

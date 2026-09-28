@@ -145,8 +145,8 @@ enum Entry {
     Open(PathBuf),
     /// Explain why this installed package cannot load (root).
     Broken(String),
-    /// Explain why this item's action is unavailable on this system
-    /// (command view); the extension is not called.
+    /// Explain why this command (root) or this item's action (command view)
+    /// is unavailable on this system; the extension is not called.
     Unavailable(String),
     /// Nothing in the launcher: the window asks for a folder (root).
     InstallFromFolder,
@@ -512,14 +512,21 @@ impl Launcher {
             rows.push(row);
             entries.push(entry);
         };
-        let installed = state.packages.iter().flat_map(InstalledPackage::commands);
-        for command in self.commands.iter().cloned().chain(installed) {
-            let entry = Entry::Open(command.component);
+        let built = self.commands.iter().cloned().map(|command| (command, None));
+        let installed = state
+            .packages
+            .iter()
+            .flat_map(InstalledPackage::available_commands);
+        for (command, unavailable) in built.chain(installed) {
+            let entry = match &unavailable {
+                Some(reason) => Entry::Unavailable(reason.clone()),
+                None => Entry::Open(command.component),
+            };
             let row = Row {
                 id: command.id,
                 title: command.title,
                 subtitle: command.subtitle,
-                unavailable: None,
+                unavailable,
             };
             add(row, entry);
         }

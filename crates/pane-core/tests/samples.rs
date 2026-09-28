@@ -17,6 +17,9 @@ use pane_core::{
 use wasmtime::component::Component;
 use wasmtime::{Config, Engine};
 
+#[path = "support/platforms.rs"]
+mod platforms;
+
 struct Sample {
     component: &'static str,
     language: &'static str,
@@ -326,32 +329,14 @@ fn a_platform_limited_action_runs_only_on_its_declared_systems(sample: &Sample) 
     };
     let ran =
         |title: &str| Status::Result(format!("Ran the {title} in the {} guest", sample.language));
-    let (available, unavailable, explanation) = if cfg!(target_os = "windows") {
-        (
-            ("windows-only", "Windows-only action"),
-            "not-windows",
-            "Not available on Windows: this action supports only macOS and Linux",
-        )
-    } else if cfg!(target_os = "macos") {
-        (
-            ("not-windows", "macOS and Linux action"),
-            "windows-only",
-            "Not available on macOS: this action supports only Windows",
-        )
-    } else {
-        (
-            ("not-windows", "macOS and Linux action"),
-            "windows-only",
-            "Not available on Linux: this action supports only Windows",
-        )
-    };
+    let (available, (unavailable, _), explanation) = platforms::sample_items();
 
     assert_eq!(reason(available.0), None);
-    assert_eq!(reason(unavailable).as_deref(), Some(explanation));
+    assert_eq!(reason(unavailable), Some(explanation.clone()));
     assert_eq!(sample.run(&launcher, available.0), ran(available.1));
     assert_eq!(
         sample.run(&launcher, unavailable),
-        Status::Error(explanation.into())
+        Status::Error(explanation)
     );
     assert_eq!(launcher.view().screen, Screen::Command);
     assert_eq!(
