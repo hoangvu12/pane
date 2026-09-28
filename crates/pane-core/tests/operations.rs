@@ -878,7 +878,9 @@ fn disabling_a_target_stops_the_call_it_serves_and_its_caller_is_told() {
     let launcher = dirs.a_and_waiting_b();
     let (calling, started) = start_waiting(&dirs, &launcher);
 
-    block_on(launcher.set_enabled(&dirs.identity("b"), false));
+    // Disabling applies at once; recording it (and reporting that) waits,
+    // so the caller's answer is seen first.
+    let disabling = launcher.set_enabled(&dirs.identity("b"), false);
     calling.join().unwrap();
 
     assert!(
@@ -894,6 +896,7 @@ fn disabling_a_target_stops_the_call_it_serves_and_its_caller_is_told() {
              in Manage extensions"
         )
     );
+    block_on(disabling);
     assert_eq!(dirs.waiting().as_deref(), Some("started"));
     assert!(!dirs.is_running(&launcher, "b"));
     assert!(dirs.is_running(&launcher, "a"));
@@ -951,4 +954,175 @@ fn reloading_a_target_stops_the_call_it_serves_and_its_caller_is_told() {
         )
     );
     assert_eq!(dirs.waiting().as_deref(), Some("started"));
+}
+
+// Stopped code that is still running: `a` computes without yielding, so it
+// is not interrupted, but what it tries once its generation has ended is
+// refused and its answer is discarded.
+
+impl Dirs {
+    /// What `a`'s spinning items saved: "started", "finished" or nothing.
+    fn spin(&self) -> Option<String> {
+        let text = fs::read_to_string(self.extensions().join("settings.json")).unwrap_or_default();
+        ["finished", "started"]
+            .into_iter()
+            .find(|progress| text.contains(&format!("\"spin\": \"{progress}\"")))
+            .map(str::to_owned)
+    }
+}
+
+/// Runs `a`'s item `item`, which spins, on another thread, returning once
+/// it spins.
+fn start_spinning(dirs: &Dirs, launcher: &Launcher, item: &str) -> thread::JoinHandle<()> {
+    launcher.back();
+    launcher.back();
+    select_title(launcher, "Operations fixture");
+    block_on(launcher.activate_selected());
+    select_title(launcher, item);
+    let running = launcher.activate_selected();
+    let started = Instant::now();
+    let thread = thread::spawn(move || block_on(running));
+    while dirs.spin().as_deref() != Some("started") {
+        assert!(
+            started.elapsed() < STOPPED_WITHIN,
+            "a did not start spinning"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    thread
+}
+
+/// `a` saves nothing and calls nothing once it is stopped, and neither its
+/// answer nor its error is shown.
+fn stopped_code_that_keeps_running_is_refused(stop: impl Fn(&Dirs, &Launcher), shown: Status) {
+    for item in ["Spin, then save and call b's remember", "Spin, then fail"] {
+        let dirs = Dirs::new();
+        let launcher = dirs.a_and_b();
+        let spinning = start_spinning(&dirs, &launcher, item);
+
+        stop(&dirs, &launcher);
+        spinning.join().unwrap();
+
+        assert_eq!(launcher.view().status, shown, "{item}");
+        assert_eq!(dirs.spin().as_deref(), Some("started"), "{item}");
+        let saved = fs::read_to_string(dirs.extensions().join("settings.json")).unwrap();
+        assert!(!saved.contains("from a spinning caller"), "{saved}");
+        assert!(!dirs.is_running(&launcher, "b"), "{item}");
+    }
+}
+
+#[test]
+fn disabled_code_that_keeps_running_saves_and_calls_nothing() {
+    stopped_code_that_keeps_running_is_refused(
+        |dirs, launcher| block_on(launcher.set_enabled(&dirs.identity("a"), false)),
+        Status::Result("Disabled Package a".into()),
+    );
+}
+
+#[test]
+fn replaced_code_that_keeps_running_saves_and_calls_nothing() {
+    stopped_code_that_keeps_running_is_refused(
+        |dirs, launcher| block_on(launcher.reload(&dirs.identity("a"))),
+        Status::Result("Reloaded Package a".into()),
+    );
+}
+
+// Stopping a chain across languages with the samples' `wait`, which saves
+// `waiting` as "started", waits ten seconds and saves "finished".
+
+/// The samples' package titles and commands, by package folder.
+fn sample_titles(package: &str) -> (&'static str, &'static str) {
+    match package {
+        RUST => ("Rust operations sample", "Call from Rust"),
+        JAVASCRIPT => ("JavaScript operations sample", "Call from JavaScript"),
+        TYPESCRIPT => ("TypeScript operations sample", "Call from TypeScript"),
+        other => panic!("no sample {other}"),
+    }
+}
+
+/// Submits `caller`'s "Wait in another extension" form for `target` on
+/// another thread, returning once the target waits.
+fn start_sample_wait(dirs: &Dirs, launcher: &Launcher, caller: &str, target: &str) -> Pending {
+    open_item(
+        launcher,
+        sample_titles(caller).1,
+        "Wait in another extension",
+    );
+    launcher.set_field_value("source", &dirs.source(target));
+    let submitting = launcher.submit_form();
+    let started = Instant::now();
+    let thread = thread::spawn(move || block_on(submitting));
+    while dirs.waiting().as_deref() != Some("started") {
+        assert!(
+            started.elapsed() < STOPPED_WITHIN,
+            "{target} did not start waiting"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    Pending { thread, started }
+}
+
+struct Pending {
+    thread: thread::JoinHandle<()>,
+    started: Instant,
+}
+
+impl Pending {
+    fn assert_stopped(self) {
+        self.thread.join().unwrap();
+        let took = self.started.elapsed();
+        assert!(took < STOPPED_WITHIN, "the call ran for {took:?}");
+    }
+}
+
+/// (caller, target): each language calls another.
+const SAMPLE_CHAINS: [(&str, &str); 3] = [
+    (RUST, JAVASCRIPT),
+    (JAVASCRIPT, TYPESCRIPT),
+    (TYPESCRIPT, RUST),
+];
+
+#[test]
+fn disabling_a_sample_target_stops_its_wait_in_every_language() {
+    for (caller, target) in SAMPLE_CHAINS {
+        let dirs = Dirs::new();
+        let launcher = samples(&dirs);
+        let pending = start_sample_wait(&dirs, &launcher, caller, target);
+
+        // Recorded after the caller answered, so its answer is seen first.
+        let disabling = launcher.set_enabled(&dirs.identity(target), false);
+        pending.assert_stopped();
+
+        assert_eq!(
+            launcher.view().status,
+            Status::Error(format!(
+                "disabled: {} is disabled; Pane does not enable it for a call, enable it in \
+                 Manage extensions",
+                sample_titles(target).0
+            )),
+            "{caller} calling {target}"
+        );
+        block_on(disabling);
+        assert_eq!(dirs.waiting().as_deref(), Some("started"));
+    }
+}
+
+#[test]
+fn disabling_a_sample_caller_stops_the_wait_it_asked_for_in_every_language() {
+    for (caller, target) in SAMPLE_CHAINS {
+        let dirs = Dirs::new();
+        let launcher = samples(&dirs);
+        let pending = start_sample_wait(&dirs, &launcher, caller, target);
+
+        block_on(launcher.set_enabled(&dirs.identity(caller), false));
+        pending.assert_stopped();
+
+        assert_eq!(
+            launcher.view().status,
+            Status::Result(format!("Disabled {}", sample_titles(caller).0)),
+            "{caller} calling {target}"
+        );
+        assert_eq!(dirs.waiting().as_deref(), Some("started"));
+        assert!(dirs.running().is_empty(), "{:?}", dirs.running());
+    }
 }

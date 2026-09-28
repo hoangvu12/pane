@@ -10,6 +10,11 @@
 //! describes (`{"to", "operation", "input"}`, version 1) and answers its
 //! result; `crash` traps; `not-json` answers text that is not JSON;
 //! `remember` saves its input in the package's settings under `last`;
+//! Two items spin (compute without yielding for 1.5 seconds) after saving
+//! `spin` as "started": one then tries to save `spin` as "finished" and call
+//! `b`'s `remember`, and answers; the other fails. Tests stop `a` while it
+//! spins: what it tries afterwards must be refused and its answer discarded.
+//!
 //! `wait` saves `waiting` as "started", waits ten seconds, then saves it as
 //! "finished" (tests stop it before); `secret` answers, but tests leave it
 //! and `wait` out of the manifest unless they need them.
@@ -29,7 +34,7 @@ pane_guest::publish::export!(Fixture);
 
 /// Each item: (title, the package it calls: a name in `sources` or a source
 /// as written, operation, version, input).
-const ITEMS: [(&str, &str, &str, u32, &str); 18] = [
+const ITEMS: [(&str, &str, &str, u32, &str); 20] = [
     ("Call b's echo", "b", "echo", 1, r#"{"hello":"world"}"#),
     ("Call b's echo at version 2", "b", "echo", 2, "{}"),
     ("Call b's secret", "b", "secret", 1, "{}"),
@@ -47,6 +52,14 @@ const ITEMS: [(&str, &str, &str, u32, &str); 18] = [
     ),
     ("Call c's echo", "c", "echo", 1, "{}"),
     ("Call b's wait", "b", "wait", 1, "{}"),
+    (
+        "Spin, then save and call b's remember",
+        "b",
+        "remember",
+        1,
+        r#""from a spinning caller""#,
+    ),
+    ("Spin, then fail", "b", "echo", 1, "{}"),
     ("Call a missing package", "missing", "echo", 1, "{}"),
     (
         "Call a source that is not local",
@@ -93,6 +106,16 @@ fn chain(sources: &Value, from: u32) -> Value {
         "operation": "forward",
         "input": chain(sources, next),
     })
+}
+
+/// Computes for 1.5 seconds without yielding, after saving `spin` as
+/// "started".
+fn spin() -> Result<(), String> {
+    use wasip3::clocks::monotonic_clock::now;
+    settings::set("spin", "started")?;
+    let end = now() + 1_500_000_000;
+    while now() < end {}
+    Ok(())
 }
 
 async fn call_as_text(
@@ -144,6 +167,16 @@ impl Guest for Fixture {
             _ => input.into(),
         };
         match title {
+            "Spin, then save and call b's remember" => {
+                spin()?;
+                let saved = settings::set("spin", "finished");
+                let called = call_as_text(&target, operation, version, input).await;
+                return Ok(format!("spun: saved {saved:?}, called {called:?}"));
+            }
+            "Spin, then fail" => {
+                spin()?;
+                return Err("failed after spinning".into());
+            }
             "Call b twice at once, which calls c" => {
                 // b forwards each to c's echo, so it is still waiting on c
                 // when Pane takes the second call.

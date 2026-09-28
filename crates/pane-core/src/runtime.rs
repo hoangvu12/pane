@@ -1910,6 +1910,51 @@ mod tests {
         path
     }
 
+    /// Stopping a call releases what its instance holds: a stream open to
+    /// the host with the future of its write pending, the clock the call
+    /// awaits and a custom view open in the same instance.
+    #[test]
+    fn stopping_a_call_releases_the_stream_future_and_view_its_instance_holds() {
+        use std::time::{Duration, Instant};
+
+        let data = tempfile::tempdir().unwrap();
+        let packages = ExtensionData::open(data.path());
+        let identity = PackageIdentity::local(data.path()).unwrap();
+        let owned = packages.owned_by(&identity);
+        let component = guest("faulty.wasm");
+        let runtime = Runtime::start().unwrap();
+        let (view, _) =
+            block_on(runtime.open_view_with(&component, "view", Some(owned.clone()))).unwrap();
+        let holding = {
+            let (runtime, component) = (runtime.clone(), component.clone());
+            std::thread::spawn(move || {
+                block_on(runtime.run_action_with(&component, "hold", Some(owned)))
+            })
+        };
+        let started = Instant::now();
+        let saved =
+            || std::fs::read_to_string(data.path().join("settings.json")).unwrap_or_default();
+        while !saved().contains("\"holding\": \"started\"") {
+            assert!(
+                started.elapsed() < Duration::from_secs(6),
+                "it did not start"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        packages.set_enabled(&identity, false);
+
+        assert_eq!(holding.join().unwrap(), Err(CallError::Disabled));
+        assert!(started.elapsed() < Duration::from_secs(6));
+        assert!(!saved().contains("finished"));
+        assert_eq!(block_on(runtime.running()), Vec::<PathBuf>::new());
+        assert_eq!(block_on(runtime.view_count()), 0);
+        assert_eq!(
+            block_on(runtime.view_event(view, ViewEvent::Key(Key::Up))),
+            Err(CallError::ViewClosed)
+        );
+    }
+
     /// A call of an ended generation served after the package's next
     /// generation started an instance at the same component is refused, and
     /// leaves that instance and its open view alone.

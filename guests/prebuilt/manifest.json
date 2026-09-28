@@ -46,15 +46,15 @@
     },
     "sample_operations_js.wasm": {
       "source": "guests/sample-operations-js",
-      "inputs_sha256": "a241d6368edd43ea893822fc8df8c2e08a40a49aaf04f5e7e2c1c59e777888d6",
-      "bytes": 4048805,
-      "sha256": "b01d0c901ad9fa455ef228d89d2bf86cf2d10b9a1c8401ea8b2d824a21e0beed"
+      "inputs_sha256": "1a585b9d7f6cbc47e66ae34e906b685efdef900aa9b13953a98bee7e38d560f1",
+      "bytes": 4059962,
+      "sha256": "d848a02e08bfd5ac65b54bb2be99943ae6e1649cb713e5dcff05f6282a3b18be"
     },
     "sample_operations_ts.wasm": {
       "source": "guests/sample-operations-ts",
-      "inputs_sha256": "9c30e70431bafec1824905c1c79202077cae20134413de0313fdff9cfab93fdb",
-      "bytes": 4049926,
-      "sha256": "974ce47d20e5ec1077209e4e1730fff28ec3a33ed892dff4aa31058b58bfd05c"
+      "inputs_sha256": "992bf060b0b5aabccb4bb14455ec265eb89f682244301e914407e6fea5f64995",
+      "bytes": 4060089,
+      "sha256": "9cbd52d11c98b7bb370a6bdc7aaeb2763134fa03ff82494765e5d57c15737f34"
     }
   }
 }

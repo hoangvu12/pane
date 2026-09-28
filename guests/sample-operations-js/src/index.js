@@ -13,8 +13,15 @@
 // `greet` version 1 takes `{"name": "<name>"}` and answers
 // `{"greeting": "Hello, <name>, from JavaScript"}`, or the error "a name is
 // needed".
+//
+// `wait` version 1 shows a call Pane stops: it saves `waiting` as "started"
+// in its settings, waits ten seconds, saves "finished" and answers
+// `{"waited": true}`. Disabling or reloading either package meanwhile stops
+// it; the "wait" item calls it.
 // @ts-check
 import { call } from "pane:extension/operations@0.1.0";
+import { set } from "pane:extension/settings@0.1.0";
+import { waitFor } from "wasi:clocks/monotonic-clock@0.3.0";
 
 /**
  * Calls `greet` version 1 of the package with `source` for `name`, and
@@ -64,6 +71,19 @@ const greetForm = {
   submitLabel: "Greet",
 };
 
+/** @type {import("@pane/extension").Form} */
+const waitForm = {
+  title: "Wait in another extension",
+  fields: [
+    {
+      id: "source",
+      label: "Package source",
+      kind: { tag: "text", val: { placeholder: "local:/path/to/sample-operations" } },
+    },
+  ],
+  submitLabel: "Wait",
+};
+
 /** @type {import("@pane/extension").Command} */
 export const command = {
   async getView() {
@@ -76,6 +96,12 @@ export const command = {
           subtitle: "Calls its greet operation through Pane",
           form: greetForm,
         },
+        {
+          id: "wait",
+          title: "Wait in another extension",
+          subtitle: "Calls its wait operation, which takes ten seconds",
+          form: waitForm,
+        },
       ],
     };
   },
@@ -85,7 +111,7 @@ export const command = {
   },
 
   async submitForm(itemId, values) {
-    if (itemId !== "greet") {
+    if (itemId !== "greet" && itemId !== "wait") {
       throw { message: `unknown form: ${itemId}` };
     }
     /** @param {string} id */
@@ -93,6 +119,15 @@ export const command = {
     const source = value("source").trim();
     if (source === "") {
       throw { field: "source", message: "Enter the package's source" };
+    }
+    if (itemId === "wait") {
+      try {
+        await call(source, "wait", 1, "{}");
+      } catch (error) {
+        const { kind, message } = /** @type {any} */ (error).payload;
+        throw { message: `${kind}: ${message}` };
+      }
+      return "Waited in the other extension";
     }
     const name = value("name");
     try {
@@ -115,6 +150,13 @@ export const command = {
 /** @type {import("@pane/extension").PublishedOperations} */
 export const publishedOperations = {
   async runOperation(operation, input) {
+    if (operation === "wait") {
+      set("waiting", "started");
+      // If Pane stops the call meanwhile, nothing after this runs.
+      await waitFor(10_000_000_000);
+      set("waiting", "finished");
+      return JSON.stringify({ waited: true });
+    }
     if (operation !== "greet") {
       throw new Error(`unknown operation: ${operation}`);
     }

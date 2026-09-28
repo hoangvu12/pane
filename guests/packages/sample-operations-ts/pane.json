@@ -12,6 +12,7 @@
     }
   ],
   "operations": [
-    { "id": "greet", "version": 1, "component": "sample_operations_ts.wasm" }
+    { "id": "greet", "version": 1, "component": "sample_operations_ts.wasm" },
+    { "id": "wait", "version": 1, "component": "sample_operations_ts.wasm" }
   ]
 }

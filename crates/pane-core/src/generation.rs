@@ -71,9 +71,4 @@ impl Generation {
             }
         }
     }
-
-    /// Whether `other` is this same generation.
-    pub fn is(&self, other: &Generation) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
-    }
 }
