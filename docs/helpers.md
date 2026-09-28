@@ -111,6 +111,7 @@ for all.
 | The **Pane call** that started it returns while it still runs | The runtime ends the helpers the instance started when the call ends: a helper runs no longer than the call that started it. |
 | The package is **disabled, reloaded, updated, paused or uninstalled** | Its [generation](generations.md) ends. The supervising thread checks the generation itself, every 10 ms, so this holds even while the runtime thread is busy in another guest that does not yield; the call is also stopped and its instance dropped as for any call. |
 | The guest **instance** goes (it crashed, was forgotten, the runtime stopped) | Dropping the instance's state ends the helpers it started. |
+| The **runtime thread crashes** (#17) | Unwinding drops its instances, which ask their helpers to end; then the crashed thread ends and reaps every helper still running, before Pane restarts the runtime or reports it stopped ([runtime crashes](pausing.md#when-the-extension-runtime-itself-crashes)). |
 | **Pane quits** | The app's quit handler ends every helper and waits for each to be reaped; from then on no helper starts ("Pane is quitting; helper `echo` does not start"), even one whose call was already under way. Dropping the last runtime handle does the same. |
 
 A helper that writes more than 1 MiB of output is ended too. Saved data is
