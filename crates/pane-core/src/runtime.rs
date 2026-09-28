@@ -1679,18 +1679,17 @@ impl Host {
         path: &Path,
         data: Option<PackageData>,
     ) -> Result<&mut Instance, CallError> {
-        if let Some(end) = data.as_ref().and_then(PackageData::stopped) {
+        // An instance of an ended generation goes; one of the package's
+        // current generation stays, even for a stale call, which is refused.
+        let stopped = self
+            .instances
+            .get(path)
+            .is_some_and(|instance| instance.store.data().stopped().is_some());
+        if stopped {
             self.drop_instance(path);
-            return Err(ended(end));
         }
-        let earlier = self.instances.get(path).is_some_and(|instance| {
-            match (instance.store.data().generation(), &data) {
-                (Some(running), Some(data)) => !running.is(data.generation()),
-                _ => false,
-            }
-        });
-        if earlier {
-            self.drop_instance(path);
+        if let Some(end) = data.as_ref().and_then(PackageData::stopped) {
+            return Err(ended(end));
         }
         if !self.instances.contains_key(path) {
             let component = self.component(path)?.clone();
@@ -1895,5 +1894,37 @@ mod tests {
         let queued = runtime.get_view_with(&component, Some(owned));
 
         assert_eq!(block_on(queued), Err(CallError::Disabled));
+    }
+
+    fn guest(file: &str) -> PathBuf {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/guests")
+            .join(file);
+        assert!(path.exists(), "{} is missing", path.display());
+        path
+    }
+
+    /// A call of an ended generation served after the package's next
+    /// generation started an instance at the same component is refused, and
+    /// leaves that instance and its open view alone.
+    #[test]
+    fn a_stale_call_leaves_the_current_generation_running() {
+        let data = tempfile::tempdir().unwrap();
+        let packages = ExtensionData::open(data.path());
+        let identity = PackageIdentity::local(data.path()).unwrap();
+        let old = packages.owned_by(&identity);
+        packages.set_enabled(&identity, false);
+        packages.set_enabled(&identity, true);
+        let current = packages.owned_by(&identity);
+        let component = guest("sample_rust.wasm");
+        let runtime = Runtime::start().unwrap();
+        let (view, _) =
+            block_on(runtime.open_view_with(&component, "color", Some(current))).unwrap();
+
+        let stale = runtime.get_view_with(&component, Some(old));
+
+        assert_eq!(block_on(stale), Err(CallError::Disabled));
+        assert_eq!(block_on(runtime.view_count()), 1);
+        assert!(block_on(runtime.view_event(view, ViewEvent::Key(Key::Right))).is_ok());
     }
 }
