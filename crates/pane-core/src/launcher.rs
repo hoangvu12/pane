@@ -30,6 +30,7 @@ mod command_search;
 mod hotkeys;
 mod indexed;
 
+use crate::changes::ChangeSender;
 use crate::dependencies;
 use crate::extension_data::{ExtensionData, PackageData};
 use crate::generation::End;
@@ -52,6 +53,7 @@ mod dependents;
 mod developing;
 mod install;
 mod pausing;
+mod recovery;
 mod reload;
 mod retained;
 mod uninstall;
@@ -138,6 +140,10 @@ pub enum Screen {
         question: Question,
         details: Vec<String>,
     },
+    /// Why Pane's extension runtime stopped after its thread crashed, and
+    /// what Pane did, as lines of information under the title, with a row
+    /// that restarts it when Pane did not.
+    RuntimeDetails { details: Vec<String> },
     /// Asks for the keys of a global hotkey that opens the installed command
     /// with id `command` from any application, with lines of information
     /// under the title. The window sends the keys pressed to
@@ -163,6 +169,10 @@ pub enum Question {
     /// Whether to disable the installed package with this identity together
     /// with the enabled packages that require it.
     DisableDependents(PackageIdentity),
+    /// Whether to uninstall the installed package with this identity
+    /// together with the installed packages that require it, and whether to
+    /// keep their saved data.
+    UninstallDependents(PackageIdentity),
 }
 
 /// A selectable row.
@@ -306,6 +316,7 @@ impl LauncherView {
             | Screen::Confirm { details, .. }
             | Screen::PauseDetails { details, .. }
             | Screen::BuildDetails { details, .. }
+            | Screen::RuntimeDetails { details }
             | Screen::Hotkey { details, .. } => details,
             _ => &[],
         }
@@ -342,6 +353,10 @@ pub struct Launcher {
     hotkeys: Arc<dyn Hotkeys>,
     /// The packages being developed: built and reloaded on save.
     developing: Arc<Developing>,
+    /// Tells the window that the launcher changed in the background, such
+    /// as after a runtime crash; given with development
+    /// ([`Launcher::with_development`]).
+    changes: Option<ChangeSender>,
     state: Arc<Mutex<State>>,
 }
 
@@ -354,6 +369,7 @@ struct WeakLauncher {
     links: Arc<dyn LinkOpener>,
     hotkeys: Arc<dyn Hotkeys>,
     developing: std::sync::Weak<Developing>,
+    changes: Option<ChangeSender>,
     state: std::sync::Weak<Mutex<State>>,
 }
 
@@ -371,6 +387,7 @@ impl WeakLauncher {
             links: self.links.clone(),
             hotkeys: self.hotkeys.clone(),
             developing: self.developing.upgrade()?,
+            changes: self.changes.clone(),
             state: self.state.upgrade()?,
         })
     }
@@ -682,6 +699,11 @@ enum Entry {
     Retry(PackageIdentity),
     /// Show why Pane paused this package (extension list).
     PauseDetails(PackageIdentity),
+    /// Show why Pane's extension runtime stopped (extension list).
+    RuntimeDetails,
+    /// Start Pane's extension runtime again after it crashed and Pane did
+    /// not restart it (extension list, runtime details).
+    RestartRuntime,
     /// Build and reload this package after each save in its source folder
     /// (extension list).
     Develop(PackageIdentity),
@@ -716,6 +738,10 @@ enum Entry {
     /// Uninstall this installed package, keeping or deleting its saved data
     /// (confirmation).
     Uninstall(PackageIdentity, SavedData),
+    /// Uninstall this installed package and the packages that require it,
+    /// which the confirmation showed, keeping or deleting their saved data
+    /// (confirmation).
+    UninstallAll(PackageIdentity, Vec<PackageIdentity>, SavedData),
     /// Ask whether to delete the retained data of this identity, which is
     /// not installed (extension list).
     AskDeleteRetained(PackageIdentity),
@@ -851,6 +877,7 @@ impl Launcher {
             links: Arc::new(NoOpener),
             hotkeys: system_hotkeys::none(),
             developing: Arc::new(Developing::new(None, None)),
+            changes: None,
             state: Arc::new(Mutex::new(state)),
         };
         if let (Ok(runtime), Some(installation)) = (&launcher.runtime, &launcher.installation) {
@@ -895,6 +922,7 @@ impl Launcher {
     /// runtime holds it weakly: it does not keep this launcher, or itself,
     /// running.
     fn report_failures(&self) {
+        self.report_runtime_crashes();
         let (Ok(runtime), Some(_)) = (&self.runtime, &self.installation) else {
             return;
         };
@@ -918,6 +946,7 @@ impl Launcher {
             links: self.links.clone(),
             hotkeys: self.hotkeys.clone(),
             developing: Arc::downgrade(&self.developing),
+            changes: self.changes.clone(),
             state: Arc::downgrade(&self.state),
         }
     }
@@ -1263,6 +1292,9 @@ impl Launcher {
                     |entry| matches!(entry, Entry::BuildDetails(shown) if *shown == identity),
                 );
             }
+            Screen::RuntimeDetails { .. } => {
+                self.show_extensions_at(&mut state, |entry| matches!(entry, Entry::RuntimeDetails));
+            }
             // Escape clears the command's search before leaving it, as it
             // clears root search's query.
             Screen::CommandSearch { query } if !query.is_empty() => {
@@ -1349,6 +1381,14 @@ impl Launcher {
                 self.show_pause_details(&mut state, &identity);
                 None
             }
+            Some(Entry::RuntimeDetails) => {
+                self.show_runtime_details(&mut state);
+                None
+            }
+            Some(Entry::RestartRuntime) => {
+                self.restart_runtime(&mut state);
+                None
+            }
             Some(Entry::Develop(identity)) => {
                 develop = self
                     .begin_developing(&mut state, &identity)
@@ -1369,11 +1409,20 @@ impl Launcher {
                 None
             }
             Some(Entry::AskUninstall(identity)) => {
-                self.show_uninstall(&mut state, &identity);
+                let closure = dependencies::required_dependents(&state.packages, &identity);
+                if closure.is_empty() {
+                    self.show_uninstall(&mut state, &identity);
+                } else {
+                    self.show_uninstall_dependents(&mut state, &identity, closure);
+                }
                 None
             }
             Some(Entry::Uninstall(identity, saved)) => {
-                uninstall = self.begin_uninstall(&mut state, identity, saved);
+                uninstall = self.begin_uninstall(&mut state, vec![identity], saved);
+                None
+            }
+            Some(Entry::UninstallAll(identity, shown, saved)) => {
+                uninstall = self.begin_uninstall_all(&mut state, identity, &shown, saved);
                 None
             }
             Some(Entry::AskDeleteRetained(identity)) => {
@@ -1517,6 +1566,8 @@ impl Launcher {
                     | Entry::Reload(_)
                     | Entry::Retry(_)
                     | Entry::PauseDetails(_)
+                    | Entry::RuntimeDetails
+                    | Entry::RestartRuntime
                     | Entry::Develop(_)
                     | Entry::StopDeveloping(_)
                     | Entry::BuildDetails(_)
@@ -1529,6 +1580,7 @@ impl Launcher {
                     | Entry::ForgetChoices(_)
                     | Entry::AskUninstall(_)
                     | Entry::Uninstall(..)
+                    | Entry::UninstallAll(..)
                     | Entry::AskDeleteRetained(_)
                     | Entry::DeleteRetained(_)
                     | Entry::Cancel
@@ -1904,6 +1956,7 @@ impl Launcher {
             | Screen::CustomView(_)
             | Screen::Confirm { .. }
             | Screen::Hotkey { .. } => {}
+            Screen::RuntimeDetails { .. } => self.keep_runtime_details(state),
             // Once the build succeeded or development ended, the extension
             // list; else the latest failure. The screen epoch is kept.
             Screen::BuildDetails { identity, .. } => {
@@ -2249,7 +2302,12 @@ impl Launcher {
     /// one row per identity with retained data.
     fn extension_rows(&self, state: &State) -> (Vec<Row>, Vec<Entry>) {
         let developed = |identity: &PackageIdentity| self.is_developed(identity);
-        let (mut rows, mut entries) = extension_rows(&state.packages, &state.paused, developed);
+        let (mut rows, mut entries): (Vec<Row>, Vec<Entry>) =
+            self.runtime_rows().into_iter().unzip();
+        let (package_rows, package_entries) =
+            extension_rows(&state.packages, &state.paused, developed);
+        rows.extend(package_rows);
+        entries.extend(package_entries);
         let development = self.development_rows(&state.packages);
         for (row, entry) in self
             .hotkey_rows(state)
@@ -2396,10 +2454,11 @@ impl Launcher {
         };
         match question.clone() {
             Question::ClearCache(identity) => self.show_extensions_at_clear_cache(state, &identity),
-            Question::Uninstall(identity) => self.show_extensions_at(
-                state,
-                |entry| matches!(entry, Entry::AskUninstall(asked) if *asked == identity),
-            ),
+            Question::Uninstall(identity) | Question::UninstallDependents(identity) => self
+                .show_extensions_at(
+                    state,
+                    |entry| matches!(entry, Entry::AskUninstall(asked) if *asked == identity),
+                ),
             Question::DeleteRetained(identity) => self.show_extensions_at(
                 state,
                 |entry| matches!(entry, Entry::AskDeleteRetained(asked) if *asked == identity),
@@ -2866,10 +2925,27 @@ impl Launcher {
         (state.screen_epoch == epoch).then_some(state)
     }
 
+    /// Locks the launcher's state. If a thread panicked while holding it
+    /// (such as the runtime thread crashing while it noted a failure), the
+    /// state is taken over and first put back into a known state (see
+    /// [`Launcher::recover_state`]).
     fn lock(&self) -> MutexGuard<'_, State> {
-        self.state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        match self.state.lock() {
+            Ok(state) => state,
+            Err(poisoned) => {
+                let mut state = poisoned.into_inner();
+                self.state.clear_poison();
+                self.recover_state(&mut state);
+                state
+            }
+        }
+    }
+
+    /// Tells the window that the launcher changed in the background.
+    fn changed(&self) {
+        if let Some(changes) = &self.changes {
+            changes.changed();
+        }
     }
 }
 

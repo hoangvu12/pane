@@ -441,6 +441,16 @@ So report expected failures, such as a missing sign-in, as errors, never by
 crashing. The settings samples' **Crash** item shows a crash in each
 language.
 
+Pane's extension runtime itself can crash too (a fault in Pane, not in any
+extension). Pane then stops every call in progress and never runs one again
+by itself, so an action that did its work (saving, sending a request) may
+have lost only its answer: the user sees that the runtime stopped and runs
+it again only if they want it done again
+([runtime crashes](../docs/pausing.md#when-the-extension-runtime-itself-crashes)).
+Write an action whose repetition matters so the user can tell whether it
+ran, as the Rust settings sample's **Count** does by answering the count it
+saved.
+
 ## Actions for some operating systems only
 
 An item can list the operating systems its action (or form) works on. On any

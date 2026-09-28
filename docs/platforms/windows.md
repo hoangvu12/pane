@@ -222,6 +222,36 @@ Nothing in it is specific to Windows (no system API is involved; the
 closure reuses the dependency identities recorded at install); **not run on
 Windows yet**.
 
+## Runtime crashes (#17)
+
+The runtime-crash phase (screenshots 200 to 209, data folder
+`runtime-crash-data`, [runtime crashes](../pausing.md#when-the-extension-runtime-itself-crashes))
+installs the helper and settings samples, starts Pane with
+`PANE_TEST_RUNTIME_FAULTS` naming a fault file, runs the settings sample's
+Count, starts the waiting helper and has the runtime crash: the helper must
+be gone (`Get-Process`, and its heartbeat must stop growing), the note it saved kept,
+and the status line the error color. A second crash, injected before
+Count's answer, must leave the count at 2 and the runtime stopped; root
+search explains it, Manage extensions shows why (the details color), a
+disable works, **Restart the extension runtime** runs extensions again and
+Count then counts 3; no package may be recorded as paused. Nothing in it is
+specific to Windows (the runtime is a thread; helpers are ended as for a
+disable); **not run on Windows yet**.
+
+## Uninstalling required dependents (#44)
+
+A phase of the smoke (screenshots 180 to 183, [uninstalling a required dependency](../dependencies.md#uninstalling-a-required-dependency)),
+with a data folder of its own, installs the dependencies sample, presses
+Enter on "Uninstall JavaScript operations sample" in Manage extensions,
+which must ask first (the details color), cancels, then chooses Uninstall
+all 2 keeping saved data (the result color); `installed.json` must then hold
+no package. Pane is started again to install the JavaScript operations
+sample alone, and `installed.json` must then hold exactly one package.
+Removing a managed copy uses the same `remove_dir_all` as a single
+uninstall; a folder still in use (a file open on Windows) is listed and removed at the next start,
+reported against its own package. Nothing else in it is specific to
+Windows; **not run on Windows yet**.
+
 ## Searching inside a command (#30)
 
 The smoke's search phase (screenshots 160 to 168, [command search](../command-search.md#checks)),

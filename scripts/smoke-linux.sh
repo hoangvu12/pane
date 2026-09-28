@@ -1034,6 +1034,150 @@ python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{140-disable-dep
 stop_pane
 [ "$(grep -c '"disabled": true' "$PANE_DATA_DIR/extensions/installed.json")" = 1 ] || { echo "not exactly the dependent left disabled"; exit 1; }
 
+# Recovering from a crash of Pane's extension runtime (#17): the runtime is
+# a thread of Pane, so the smoke has it panic on purpose through a fault
+# file (PANE_TEST_RUNTIME_FAULTS; nothing else sets it). With the settings
+# sample and the helper sample installed and the helper running, a crash
+# ends the helper, keeps the saved note and restarts the runtime; Count (the
+# settings sample's last item) then saves and loses its answer in a second
+# crash, which stops the runtime: the count is not run again. Root search
+# explains that nothing runs, Manage extensions shows why (its first rows),
+# a disable still works, and Restart runs extensions again, Count only when
+# asked. A data folder of its own keeps the rows in a known order.
+export PANE_DATA_DIR=$out/runtime-crash-data
+rm -rf "$PANE_DATA_DIR"
+fault=$out/runtime-fault
+rm -f "$fault" "$fault.tmp"
+# Asks Pane to inject a fault; it takes the file within 100 ms.
+inject() {
+  printf %s "$1" >"$fault.tmp"
+  mv "$fault.tmp" "$fault"
+  for _ in $(seq 50); do [ -e "$fault" ] || break; sleep 0.1; done
+  [ ! -e "$fault" ] || { echo "Pane did not take the fault"; exit 1; }
+  sleep 2
+}
+# The count Count keeps in the settings sample's content.
+count() {
+  python3 - "$PANE_DATA_DIR/extensions/content.json" <<'PY'
+import json, sys
+packages = json.load(open(sys.argv[1], encoding="utf-8"))["packages"]
+print(next((values["count"] for values in packages.values() if "count" in values), "none"))
+PY
+}
+helpers_running() { pgrep -f "$PANE_DATA_DIR/extensions/packages/.*/pane-echo" >/dev/null; }
+start_pane --install target/guests/packages/sample-helper
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 2   # Install
+stop_pane
+export PANE_TEST_RUNTIME_FAULTS=$fault
+start_pane --install target/guests/packages/sample-settings
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 2   # Install; Greeting is selected
+"$xdotool" key Return; sleep 2   # open Greeting
+for ((i = 0; i < 8; i++)); do "$xdotool" key Down; done   # Count
+"$xdotool" key Return; sleep 2
+capture 200-runtime-counted.png
+check 200-runtime-counted.png 9fd8a8   # "Counted 1"
+[ "$(count)" = 1 ] || { echo "Count did not count once"; exit 1; }
+"$xdotool" key Escape; sleep 1
+"$xdotool" type --delay 50 helper; sleep 1
+"$xdotool" key Return; sleep 2   # open Helper sample
+"$xdotool" key Down Return; sleep 2   # Echo after waiting
+helpers_running || { echo "the waiting helper is not running"; exit 1; }
+capture 201-runtime-helper-waiting.png
+check 201-runtime-helper-waiting.png d6c27a   # "Running…"
+alive=$(find "$PANE_DATA_DIR/extensions/packages" -name pane-echo.alive | head -1)
+[ -n "$alive" ] || { echo "the waiting helper does not beat"; exit 1; }
+inject crash
+capture 202-runtime-crashed.png
+check 202-runtime-crashed.png f08c8c   # "Pane's extension runtime stopped unexpectedly and was started again; ..."
+if helpers_running; then echo "the helper outlived the crashed runtime"; exit 1; fi
+beats=$(stat -c %s "$alive"); sleep 0.5
+[ "$(stat -c %s "$alive")" = "$beats" ] || { echo "the helper still beats after the crash"; exit 1; }
+grep -q '"helper-wait": "started"' "$PANE_DATA_DIR/extensions/settings.json" || { echo "saved note lost"; exit 1; }
+if grep -q '"helper-wait": "finished"' "$PANE_DATA_DIR/extensions/settings.json"; then echo "the stopped call finished"; exit 1; fi
+"$xdotool" key Escape; sleep 1
+"$xdotool" type --delay 50 greet; sleep 1
+"$xdotool" key Return; sleep 2   # open Greeting in the restarted runtime
+for ((i = 0; i < 8; i++)); do "$xdotool" key Down; done   # Count
+inject crash-before-answer:count
+"$xdotool" key Return; sleep 3   # counts, then the runtime crashes before answering
+capture 203-runtime-stopped.png
+check 203-runtime-stopped.png f08c8c   # the runtime stopped; its answer is lost
+[ "$(count)" = 2 ] || { echo "Count did not run once before the crash"; exit 1; }
+"$xdotool" key Escape; sleep 1
+"$xdotool" type --delay 50 greet; sleep 1
+"$xdotool" key Return; sleep 2   # Greeting: nothing runs
+capture 204-runtime-refused.png
+check 204-runtime-refused.png f08c8c   # "Extension runtime unavailable: it stopped after crashing ..."
+"$xdotool" key Escape; sleep 1   # clears the query
+for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+"$xdotool" key Return; sleep 1
+capture 205-runtime-manage.png   # Restart the extension runtime, Why the extension runtime stopped
+"$xdotool" key Down Return; sleep 1   # Why the extension runtime stopped
+capture 206-runtime-details.png
+check 206-runtime-details.png aab4c0   # the details
+"$xdotool" key Escape; sleep 1   # back at its row
+"$xdotool" key Down Return; sleep 2   # disable Helper sample, the first package
+capture 207-runtime-disabled.png
+check 207-runtime-disabled.png 9fd8a8   # "Disabled Helper sample"
+"$xdotool" key Up Up Return; sleep 2   # Restart the extension runtime
+capture 208-runtime-restarted.png
+check 208-runtime-restarted.png 9fd8a8   # "Restarted the extension runtime"
+[ "$(count)" = 2 ] || { echo "Count was run again without asking"; exit 1; }
+"$xdotool" key Escape; sleep 1
+"$xdotool" type --delay 50 greet; sleep 1
+"$xdotool" key Return; sleep 2   # open Greeting
+for ((i = 0; i < 8; i++)); do "$xdotool" key Down; done   # Count
+"$xdotool" key Return; sleep 2
+capture 209-runtime-counted-again.png
+check 209-runtime-counted-again.png 9fd8a8   # "Counted 3"
+[ "$(count)" = 3 ] || { echo "Count did not count once more"; exit 1; }
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{200-runtime-counted,202-runtime-crashed,203-runtime-stopped,204-runtime-refused,205-runtime-manage,206-runtime-details,207-runtime-disabled,208-runtime-restarted,209-runtime-counted-again}.png
+stop_pane
+unset PANE_TEST_RUNTIME_FAULTS
+if helpers_running; then echo "a helper outlived Pane"; exit 1; fi
+grep -q '"disabled": true' "$PANE_DATA_DIR/extensions/installed.json" || { echo "disable not recorded"; exit 1; }
+if grep -q '"paused"' "$PANE_DATA_DIR/extensions/installed.json"; then echo "a package was paused for the runtime's crash"; exit 1; fi
+
+# Uninstalling a required dependency: installed with the dependencies sample
+# (whose install and data folder are this phase's own), the JavaScript
+# operations sample's Uninstall row is the seventh of Manage extensions.
+# Enter asks first, listing the Dependencies sample, which requires it, and
+# each one's saved data, with Uninstall all keeping or deleting saved data
+# and Cancel; Cancel changes nothing, Uninstall all 2 (keeping) uninstalls
+# both, and installing the JavaScript operations sample again installs it
+# alone: the Dependencies sample is not restored, on record too.
+export PANE_DATA_DIR=$out/uninstall-dependents-data
+rm -rf "$PANE_DATA_DIR"
+start_pane --install target/guests/packages/sample-dependencies
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 3   # Install
+for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+"$xdotool" key Return; sleep 1
+for ((i = 0; i < 6; i++)); do "$xdotool" key Down; done   # Uninstall JavaScript operations sample
+"$xdotool" key Return; sleep 1   # asks first
+capture 180-uninstall-dependents-asked.png
+check 180-uninstall-dependents-asked.png aab4c0   # "Dependencies sample, which requires JavaScript operations sample · …"
+"$xdotool" key Down Down Return; sleep 1   # Cancel
+capture 181-uninstall-dependents-cancelled.png   # both still installed
+"$xdotool" key Return; sleep 1   # asks again
+"$xdotool" key Return; sleep 3   # Uninstall all 2 and keep saved data
+capture 182-uninstall-dependents-uninstalled.png
+check 182-uninstall-dependents-uninstalled.png 9fd8a8   # "Uninstalled JavaScript operations sample and Dependencies sample, which requires it; …"
+stop_pane
+[ "$(grep -c '"dir"' "$PANE_DATA_DIR/extensions/installed.json")" = 0 ] || { echo "not both uninstalled"; exit 1; }
+start_pane --install target/guests/packages/sample-operations-js
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 3   # Install the dependency alone
+for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+"$xdotool" key Return; sleep 1
+capture 183-uninstall-dependents-reinstalled-alone.png   # only the JavaScript operations sample is listed
+check 183-uninstall-dependents-reinstalled-alone.png aab4c0
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{180-uninstall-dependents-asked,181-uninstall-dependents-cancelled,182-uninstall-dependents-uninstalled,183-uninstall-dependents-reinstalled-alone}.png
+stop_pane
+[ "$(grep -c '"dir"' "$PANE_DATA_DIR/extensions/installed.json")" = 1 ] || { echo "not the dependency alone reinstalled"; exit 1; }
+
 # Searching an online service inside its command: Package search, the Rust
 # search sample, queries the fixture service (a made-up package registry on
 # 127.0.0.1:8740, the sample's default address; nothing leaves this
