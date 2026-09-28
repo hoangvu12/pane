@@ -524,6 +524,31 @@ the extension list) are checked but not kept here: they show local package
 paths; the other steps of each language (116, 120 to 122, 124, 125, 129 to 131, 133,
 134) match those above.
 
+### Disabling required dependents (#43)
+
+A phase of its own, after the development-mode phase, with its own data folder
+([disabling a required dependency](../dependencies.md#disabling-a-required-dependency)),
+installs the dependencies sample with the JavaScript operations sample,
+opens Manage extensions and presses Enter on the JavaScript operations
+sample (the first row). Pane asks first, listing the Dependencies sample;
+Down and Enter (Cancel) returns to the list with both enabled; Enter and
+Enter (Disable all 2) disables both; Enter again enables the JavaScript
+operations sample alone. Afterwards `installed.json` must record exactly one
+disabled package. Run locally on 2026-09-28 (same Ubuntu 26.04.1 / Xvfb /
+lavapipe setup): all checks of the whole smoke passed, and frames 140 to
+143 were looked at.
+
+| Step | Evidence |
+| --- | --- |
+| The question: "Disable JavaScript operations sample and the extensions that require it?", "Dependencies sample, which requires JavaScript operations sample", Disable all 2 selected | [140-disable-dependents-asked-masked.png](evidence/linux-x11/140-disable-dependents-asked-masked.png) |
+| Disable all: both rows "Disabled", "Disabled JavaScript operations sample and Dependencies sample, which requires it" | [142-disable-dependents-disabled-masked.png](evidence/linux-x11/142-disable-dependents-disabled-masked.png) |
+| Enter: "Enabled JavaScript operations sample"; the Dependencies sample stays "Disabled" | [143-disable-dependents-enabled-alone-masked.png](evidence/linux-x11/143-disable-dependents-enabled-alone-masked.png) |
+
+(The kept frames are cropped to Pane's window and the local package paths
+are painted over with the background; the smoke checks the whole frames.
+Frame 141, the list after Cancel with both enabled, is checked to differ
+from the others but not kept, as it shows those paths.)
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms have a text field (GPUI CE's

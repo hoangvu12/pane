@@ -1267,7 +1267,9 @@ mod tests {
         let (job, output) = job(dir.path());
         let outcome = job.run_command(shell("echo built && echo warned 1>&2"), "echo", None);
         assert_eq!(outcome, BuildOutcome::Built);
-        let (mut lines, _) = output.tail();
+        let (lines, _) = output.tail();
+        // cmd keeps the space before `&&` and `1>&2` in what it echoes.
+        let mut lines: Vec<&str> = lines.iter().map(|line| line.trim_end()).collect();
         lines.sort();
         assert_eq!(lines, ["built", "warned"]);
         let failed = job.run_command(shell("echo broken && exit 3"), "fail", None);
@@ -1358,8 +1360,10 @@ mod tests {
         let pid_file = dir.path().join("pid");
         // setsid moves the sleeper to a session of its own, as a daemon
         // does: killing the group misses it, and it keeps the pipes open.
+        // Perl's, since macOS has no setsid command.
         let script = format!(
-            "setsid sh -c 'echo $$ > {}; exec sleep 30' & sleep 0.2; echo done",
+            "perl -MPOSIX -e 'POSIX::setsid(); open(my $f, \">\", $ARGV[0]) or die; \
+             print $f $$; close $f; exec(\"sleep\", \"30\")' '{}' & sleep 0.2; echo done",
             pid_file.display()
         );
         let (job, _) = job(dir.path());
