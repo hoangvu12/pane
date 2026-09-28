@@ -19,13 +19,113 @@ use std::path::PathBuf;
 
 use super::{Changing, Launcher, Mode, State, Status, off_thread};
 use crate::dependencies::{self, Assumptions, Plan, RequiredState};
+use crate::npm::{self, NpmSpec, Registry};
 use crate::packages::{InstalledPackage, PackageError, PackageIdentity, SourcePackage};
 use crate::platform;
+
+/// Where a package to preview or install comes from.
+#[derive(Clone, Debug)]
+pub(in crate::launcher) enum Request {
+    /// A local package folder.
+    Folder(PathBuf),
+    /// A package from npm, at the version named or else the latest.
+    Npm(NpmSpec),
+}
+
+impl Request {
+    /// How the preview names what was asked for when it cannot be read:
+    /// "Folder: …" or "npm package: …", and the title's name for it.
+    pub(in crate::launcher) fn describe(&self) -> (String, String) {
+        match self {
+            Request::Folder(folder) => (
+                format!("Folder: {}", folder.display()),
+                crate::packages::folder_name(folder),
+            ),
+            Request::Npm(spec) => (format!("npm package: {spec}"), spec.name.clone()),
+        }
+    }
+}
+
+/// Reads packages from their sources: local folders, and npm packages,
+/// which it downloads from its registry into its downloads folder.
+#[derive(Clone)]
+pub(in crate::launcher) struct Sources {
+    pub registry: Registry,
+    /// Where downloaded packages are unpacked; `None` when this launcher
+    /// installs nothing, and so downloads nothing.
+    pub downloads: Option<PathBuf>,
+}
+
+impl Sources {
+    /// Reads and validates the package `request` names. Blocks on the file
+    /// system, and for npm on the network.
+    pub fn read(&self, request: &Request) -> Result<SourcePackage, PackageError> {
+        match request {
+            Request::Folder(folder) => SourcePackage::read(folder),
+            Request::Npm(spec) => self.fetch(spec),
+        }
+    }
+
+    /// Reads the package with `identity`, a dependency declared with the
+    /// source `source` (for npm, possibly naming a version).
+    pub fn read_dependency(
+        &self,
+        identity: &PackageIdentity,
+        source: &str,
+    ) -> Result<SourcePackage, PackageError> {
+        match (identity.local_folder(), source.strip_prefix("npm:")) {
+            (Some(folder), _) => SourcePackage::read(folder),
+            (None, Some(spec)) => {
+                let spec = NpmSpec::parse(spec).map_err(PackageError::Npm)?;
+                self.fetch(&spec)
+            }
+            (None, None) => Err(PackageError::Npm(format!(
+                "{identity} is not a source Pane can install from"
+            ))),
+        }
+    }
+
+    fn fetch(&self, spec: &NpmSpec) -> Result<SourcePackage, PackageError> {
+        let Some(downloads) = &self.downloads else {
+            return Err(PackageError::Storage(
+                "this launcher does not install packages".into(),
+            ));
+        };
+        let fetched = npm::fetch(&self.registry, spec, downloads).map_err(PackageError::Npm)?;
+        let folder = fetched.folder.clone();
+        let read = SourcePackage::read_npm(&spec.name, fetched);
+        if read.is_err() {
+            // Nothing will install from it.
+            npm::remove_download(downloads, &folder);
+        }
+        read
+    }
+
+    /// Removes, in the background, the downloads of `packages` from npm,
+    /// which are no longer needed once they are installed or not.
+    fn remove_downloads<'a>(&self, packages: impl Iterator<Item = &'a SourcePackage>) {
+        let Some(downloads) = self.downloads.clone() else {
+            return;
+        };
+        let folders: Vec<PathBuf> = packages
+            .filter(|package| package.npm.is_some())
+            .map(|package| package.folder.clone())
+            .collect();
+        if folders.is_empty() {
+            return;
+        }
+        std::thread::spawn(move || {
+            for folder in folders {
+                npm::remove_download(&downloads, &folder);
+            }
+        });
+    }
+}
 
 /// An install begun by choosing Install or Update on a preview, or asked
 /// for without one.
 pub(in crate::launcher) struct Begun {
-    folder: PathBuf,
+    request: Request,
     mode: Mode,
     /// The assumptions of the plan the preview showed, if there was one.
     shown: Option<Assumptions>,
@@ -34,10 +134,10 @@ pub(in crate::launcher) struct Begun {
 }
 
 impl Begun {
-    /// An install of the package in `folder` without a preview.
-    pub(in crate::launcher) fn unplanned(folder: PathBuf) -> Begun {
+    /// An install of the package `request` names without a preview.
+    pub(in crate::launcher) fn unplanned(request: Request) -> Begun {
         Begun {
-            folder,
+            request,
             mode: Mode::Install,
             shown: None,
             claimed: Vec::new(),
@@ -128,13 +228,13 @@ fn changed(title: &str) -> String {
 }
 
 impl Launcher {
-    /// Begins installing the package in `folder` as the preview's plan with
-    /// `assumptions` showed it: claims what it relies on, or explains why
-    /// not and returns `None`.
+    /// Begins installing the package `request` names as the preview's plan
+    /// with `assumptions` showed it: claims what it relies on, or explains
+    /// why not and returns `None`.
     pub(in crate::launcher) fn begin_install(
         &self,
         state: &mut State,
-        folder: PathBuf,
+        request: Request,
         mode: Mode,
         assumptions: Assumptions,
     ) -> Option<Begun> {
@@ -154,7 +254,7 @@ impl Launcher {
         };
         state.view.status = Status::Running;
         Some(Begun {
-            folder,
+            request,
             mode,
             shown: Some(assumptions),
             claimed,
@@ -165,13 +265,13 @@ impl Launcher {
     /// is missing, or explains why not, or shows how its plan changed.
     pub(in crate::launcher) async fn finish_install(&self, epoch: u64, begun: Begun) {
         let Begun {
-            folder,
+            request,
             mode,
             shown,
             mut claimed,
         } = begun;
         let result = self
-            .install_planned(folder.clone(), &mode, shown.as_ref(), &mut claimed)
+            .install_planned(request.clone(), &mode, shown.as_ref(), &mut claimed)
             .await;
         let mut state = self.lock();
         for identity in &claimed {
@@ -227,7 +327,7 @@ impl Launcher {
                 let (package, plan) = *changed_plan;
                 if current {
                     let title = package.manifest.title.clone();
-                    self.show_preview(&mut state, &folder, Ok((package, plan)));
+                    self.show_preview(&mut state, &request, Ok((package, plan)));
                     state.view.status = Status::Error(changed(&title));
                 }
             }
@@ -256,14 +356,15 @@ impl Launcher {
         }
     }
 
-    /// Reads and checks the package in `folder`, plans its dependencies and,
-    /// if the plan is the one `shown` (when a preview showed one) and can be
-    /// installed, claims what it relies on (unless `claimed` already holds
-    /// it), then installs or updates it with those it is missing: all of
-    /// them or, removing again what it installed when one fails, none.
+    /// Reads and checks the package `request` names, plans its dependencies
+    /// and, if the plan is the one `shown` (when a preview showed one) and
+    /// can be installed, claims what it relies on (unless `claimed` already
+    /// holds it), then installs or updates it with those it is missing: all
+    /// of them or, removing again what it installed when one fails, none.
+    /// What it downloaded from npm is removed again afterwards.
     async fn install_planned(
         &self,
-        folder: PathBuf,
+        request: Request,
         mode: &Mode,
         shown: Option<&Assumptions>,
         claimed: &mut Vec<PackageIdentity>,
@@ -273,8 +374,32 @@ impl Launcher {
                 "this launcher does not install packages".into(),
             )));
         };
-        let package = self.read_and_check(folder).await.map_err(failed)?;
+        let package = self.read_and_check(request).await.map_err(failed)?;
         let (package, plan) = self.plan_dependencies(package).await;
+        let sources = self.sources();
+        let downloaded: Vec<SourcePackage> = std::iter::once(&package)
+            .chain(&plan.install)
+            .filter(|package| package.npm.is_some())
+            .cloned()
+            .collect();
+        let result = self
+            .install_plan(store, package, plan, mode, shown, claimed)
+            .await;
+        sources.remove_downloads(downloaded.iter());
+        result
+    }
+
+    /// Installs `package` with `plan`, as [`Launcher::install_planned`]
+    /// describes, once it has been read and planned.
+    async fn install_plan(
+        &self,
+        store: std::sync::Arc<std::sync::Mutex<crate::packages::Store>>,
+        package: SourcePackage,
+        plan: Plan,
+        mode: &Mode,
+        shown: Option<&Assumptions>,
+        claimed: &mut Vec<PackageIdentity>,
+    ) -> Result<Outcome, Stopped> {
         if shown.is_some_and(|shown| *shown != plan.assumptions) {
             return Err(Stopped::Changed(Box::new((package, plan))));
         }
@@ -328,8 +453,12 @@ impl Launcher {
                 .collect();
             (state.packages.clone(), paused)
         };
+        let sources = self.sources();
         let (package, mut plan) = off_thread(move || {
-            let plan = dependencies::plan(&package, &installed, &paused, SourcePackage::read);
+            let read = |identity: &PackageIdentity, source: &str| {
+                sources.read_dependency(identity, source)
+            };
+            let plan = dependencies::plan(&package, &installed, &paused, read);
             (package, plan)
         })
         .await;
@@ -344,7 +473,7 @@ impl Launcher {
                     dependent: required.dependent.clone(),
                     id: required.id.clone(),
                     kind: dependencies::ProblemKind::CannotInstall {
-                        folder: dependency.folder.clone(),
+                        from: dependencies::source_name(&dependency.identity),
                         error,
                     },
                 });

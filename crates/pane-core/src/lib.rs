@@ -12,6 +12,7 @@ mod helpers;
 pub mod hotkeys;
 mod launcher;
 mod links;
+pub mod npm;
 mod operations;
 mod packages;
 mod platform;

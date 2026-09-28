@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::atomic::{Readers, write_atomically};
 use crate::helpers::runner;
 use crate::launcher::CommandRegistration;
+use crate::npm::{Fetched, NpmOrigin, NpmSpec};
 use crate::platform::{self, Platform};
 use crate::runtime::{CallError, Exports};
 use pane_target::Target;
@@ -44,9 +45,13 @@ const PACKAGES_DIR: &str = "packages";
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PackageIdentity(Source);
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// A package's source, as `installed.json` records it: `"local": "<folder>"`
+/// or `"npm": "<package name>"`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(untagged)]
 enum Source {
-    Local(String),
+    Local { local: String },
+    Npm { npm: String },
 }
 
 impl PackageIdentity {
@@ -70,7 +75,9 @@ impl PackageIdentity {
         let path = resolved
             .to_str()
             .ok_or_else(|| PackageError::NotUnicode(resolved.clone()))?;
-        Ok(PackageIdentity(Source::Local(path.to_owned())))
+        Ok(PackageIdentity(Source::Local {
+            local: path.to_owned(),
+        }))
     }
 
     /// A stable key for this identity, for ids and records rather than for
@@ -78,14 +85,32 @@ impl PackageIdentity {
     /// [`Display`](fmt::Display) form is the wording shown to users.
     pub fn key(&self) -> String {
         match &self.0 {
-            Source::Local(path) => format!("local:{path}"),
+            Source::Local { local } => format!("local:{local}"),
+            Source::Npm { npm } => format!("npm:{npm}"),
+        }
+    }
+
+    /// The identity of the npm package `name` (checked by
+    /// [`NpmSpec::parse`]), whatever its version.
+    pub fn npm(name: &str) -> PackageIdentity {
+        PackageIdentity(Source::Npm {
+            npm: name.to_owned(),
+        })
+    }
+
+    /// The package name of an npm package.
+    pub fn npm_name(&self) -> Option<&str> {
+        match &self.0 {
+            Source::Npm { npm } => Some(npm),
+            Source::Local { .. } => None,
         }
     }
 
     /// The source folder of a local package.
     pub fn local_folder(&self) -> Option<&Path> {
         match &self.0 {
-            Source::Local(path) => Some(Path::new(path)),
+            Source::Local { local } => Some(Path::new(local)),
+            Source::Npm { .. } => None,
         }
     }
 
@@ -102,11 +127,21 @@ impl PackageIdentity {
     /// [`PackageIdentity::resolved_again`] covers when calls are matched.
     /// Fails, with the path, only for a path that cannot be an identity (not
     /// absolute or not Unicode).
+    ///
+    /// An `npm:` source is the npm package it names, whatever its version.
+    /// A package from npm cannot name a `local:` folder: its folder is on its
+    /// author's computer, not the user's.
     pub(crate) fn dependency(&self, source: &str) -> Result<PackageIdentity, PathBuf> {
+        if let Some(spec) = source.strip_prefix("npm:") {
+            return match NpmSpec::parse(spec) {
+                Ok(spec) => Ok(PackageIdentity::npm(&spec.name)),
+                Err(_) => Err(PathBuf::from(source)),
+            };
+        }
         let path = source.strip_prefix("local:").unwrap_or(source);
-        let folder = match self.local_folder() {
-            Some(base) => base.join(path),
-            None => PathBuf::from(path),
+        let folder = match &self.0 {
+            Source::Local { local } => Path::new(local).join(path),
+            Source::Npm { .. } => return Err(PathBuf::from(path)),
         };
         if let Ok(identity) = PackageIdentity::local(&folder) {
             return Ok(identity);
@@ -143,9 +178,9 @@ impl PackageIdentity {
         };
         let resolved = without_verbatim_prefix(resolved);
         match resolved.to_str() {
-            Some(text) if resolved.is_absolute() => {
-                Ok(PackageIdentity(Source::Local(text.to_owned())))
-            }
+            Some(text) if resolved.is_absolute() => Ok(PackageIdentity(Source::Local {
+                local: text.to_owned(),
+            })),
             _ => Err(resolved),
         }
     }
@@ -173,7 +208,8 @@ pub(crate) fn installed_as<'a>(
 impl fmt::Display for PackageIdentity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.0 {
-            Source::Local(path) => write!(f, "local folder {path}"),
+            Source::Local { local } => write!(f, "local folder {local}"),
+            Source::Npm { npm } => write!(f, "npm package {npm}"),
         }
     }
 }
@@ -263,7 +299,9 @@ pub struct ManifestDependency {
     pub id: String,
     /// Where it is installed from, as written: `local:` and a folder path
     /// separated by `/`, relative to the declaring package's folder or
-    /// absolute (`/…`). Other sources are not supported yet.
+    /// absolute (`/…`), or `npm:` and a package name, optionally with an
+    /// exact version (`npm:@scope/name@1.2.3`). Other sources are not
+    /// supported yet.
     pub source: String,
     /// Whether the package needs it (the default) or only uses it when it is
     /// installed (`"optional": true`).
@@ -679,19 +717,27 @@ impl Manifest {
     }
 }
 
-/// Checks that `source`, of dependency `id`, is `local:` and a folder path
-/// written the same way on every system: `/` between folders, relative or
-/// absolute from `/`, never with `\`, a drive letter or a `//server` share,
-/// which one system would read differently from another.
-fn check_local_source(source: &str, id: &str) -> Result<(), PackageError> {
+/// Checks that `source`, of dependency `id`, is either `npm:` and a package
+/// name with an optional exact version (`npm:greeter@1.2.3`), or `local:` and
+/// a folder path written the same way on every system: `/` between folders,
+/// relative or absolute from `/`, never with `\`, a drive letter or a
+/// `//server` share, which one system would read differently from another.
+fn check_source(source: &str, id: &str) -> Result<(), PackageError> {
     let invalid = |reason: &str| {
         Err(PackageError::InvalidManifest(format!(
             "the source `{source}` of dependency `{id}` {reason}"
         )))
     };
+    if let Some(spec) = source.strip_prefix("npm:") {
+        return match NpmSpec::parse(spec) {
+            Ok(_) => Ok(()),
+            Err(why) => invalid(&format!("is not an npm package: {why}")),
+        };
+    }
     let Some(path) = source.strip_prefix("local:") else {
         return invalid(
-            "must be `local:` followed by a folder path; other sources are not supported yet",
+            "must be `local:` followed by a folder path or `npm:` followed by a package name; \
+             other sources are not supported yet",
         );
     };
     if path.is_empty() {
@@ -725,7 +771,7 @@ fn parse_dependencies(json: Vec<DependencyJson>) -> Result<Vec<ManifestDependenc
         if dependencies.iter().any(|seen| seen.id == id) {
             return Err(invalid(format!("dependency id `{id}` is repeated")));
         }
-        check_local_source(&dependency.source, &id)?;
+        check_source(&dependency.source, &id)?;
         let mut operations: Vec<RequiredOperation> = Vec::new();
         for operation in dependency.operations {
             if operation.id.is_empty() || operation.version == 0 {
@@ -858,6 +904,9 @@ pub enum PackageError {
     /// A required dependency cannot be installed or used, for these
     /// reasons.
     Dependencies(Vec<String>),
+    /// A package from npm cannot be downloaded, unpacked or installed; the
+    /// message says why.
+    Npm(String),
 }
 
 impl fmt::Display for PackageError {
@@ -916,6 +965,7 @@ impl fmt::Display for PackageError {
             PackageError::Dependencies(problems) => {
                 write!(f, "Nothing was installed: {}", problems.join("; "))
             }
+            PackageError::Npm(message) => f.write_str(message),
         }
     }
 }
@@ -931,9 +981,58 @@ pub(crate) struct SourcePackage {
     /// The `pane.json` text `manifest` was validated from; the managed copy
     /// gets exactly this, even if the source changes meanwhile.
     manifest_text: String,
+    /// Where a package from npm was downloaded from; `None` for a local
+    /// folder.
+    pub npm: Option<NpmOrigin>,
 }
 
 impl SourcePackage {
+    /// Reads the npm package `name` that Pane downloaded and unpacked, as
+    /// the package with its npm identity. Explains, rather than as for a
+    /// folder, a tarball without `pane.json` (an ordinary npm package, which
+    /// Pane does not run) and one without its built components.
+    pub(crate) fn read_npm(name: &str, fetched: Fetched) -> Result<SourcePackage, PackageError> {
+        let Fetched { folder, origin } = fetched;
+        let spec = format!("{name}@{}", origin.version);
+        let (manifest, manifest_text) = match Manifest::read_text(&folder) {
+            Ok(read) => read,
+            Err(PackageError::NoManifest(_)) => {
+                return Err(PackageError::Npm(format!(
+                    "npm package {spec} is not a Pane extension: it has no {MANIFEST_FILE}. Pane \
+                     installs npm packages published as Pane extensions (a {MANIFEST_FILE} and \
+                     the WebAssembly components it names); it does not run other npm packages, \
+                     which need Node.js and npm"
+                )));
+            }
+            Err(PackageError::MissingComponent { command, component }) => {
+                let scripts = match origin.scripts.as_slice() {
+                    [] => String::new(),
+                    scripts => format!(
+                        " (its package.json has {}, which Pane never runs)",
+                        crate::platform::join(
+                            &scripts.iter().map(|s| format!("`{s}`")).collect::<Vec<_>>()
+                        )
+                    ),
+                };
+                return Err(PackageError::Npm(format!(
+                    "npm package {spec} was published without the built component {} of \
+                     \"{command}\": its author must build it and include it in the package \
+                     before publishing. Pane does not build npm packages or run their install \
+                     scripts{scripts}",
+                    component.display()
+                )));
+            }
+            Err(error) => return Err(error),
+        };
+        Ok(SourcePackage {
+            identity: PackageIdentity::npm(name),
+            folder,
+            manifest,
+            manifest_text,
+            npm: Some(origin),
+        })
+    }
+
     /// Reads the package staged in `folder`, such as a development build,
     /// as the package with the source `identity`.
     pub fn read_staged(
@@ -946,6 +1045,7 @@ impl SourcePackage {
             folder: folder.to_path_buf(),
             manifest,
             manifest_text,
+            npm: None,
         })
     }
 
@@ -961,6 +1061,7 @@ impl SourcePackage {
             folder,
             manifest,
             manifest_text,
+            npm: None,
         })
     }
 
@@ -981,8 +1082,11 @@ pub struct InstalledPackage {
     /// Whether the user has left the package enabled. A disabled package
     /// contributes no commands and runs nothing, but keeps its settings.
     pub enabled: bool,
-    /// The identity each `local:` dependency the manifest declares was
-    /// resolved to when the package was installed, by dependency id.
+    /// For a package from npm, the npm version installed and whether it is
+    /// pinned to it.
+    pub npm: Option<NpmInstalled>,
+    /// The identity each dependency the manifest declares was resolved to
+    /// when the package was installed, by dependency id.
     dependencies: Vec<(String, PackageIdentity)>,
 }
 
@@ -995,6 +1099,7 @@ impl InstalledPackage {
         location: PathBuf,
         enabled: bool,
         recorded: &[ResolvedJson],
+        npm: Option<&NpmRecordJson>,
     ) -> InstalledPackage {
         let manifest = Manifest::read_installed(&location);
         let dependencies = match &manifest {
@@ -1003,7 +1108,7 @@ impl InstalledPackage {
                 .iter()
                 .filter_map(|dependency| {
                     let resolved = match recorded.iter().find(|r| r.id == dependency.id) {
-                        Some(record) => PackageIdentity(Source::Local(record.local.clone())),
+                        Some(record) => PackageIdentity(record.source.clone()),
                         None => identity.dependency(&dependency.source).ok()?,
                     };
                     Some((dependency.id.clone(), resolved))
@@ -1016,6 +1121,10 @@ impl InstalledPackage {
             identity,
             location,
             enabled,
+            npm: npm.map(|npm| NpmInstalled {
+                version: npm.version.clone(),
+                pinned: npm.pinned,
+            }),
             dependencies,
         }
     }
@@ -1034,9 +1143,10 @@ impl InstalledPackage {
     pub fn title(&self) -> String {
         match &self.manifest {
             Ok(manifest) => manifest.title.clone(),
-            Err(_) => match self.identity.local_folder() {
-                Some(folder) => folder_name(folder),
-                None => self.identity.to_string(),
+            Err(_) => match (self.identity.local_folder(), self.identity.npm_name()) {
+                (Some(folder), _) => folder_name(folder),
+                (None, Some(name)) => name.to_owned(),
+                (None, None) => self.identity.to_string(),
             },
         }
     }
@@ -1136,8 +1246,9 @@ struct RegistryJson {
 
 #[derive(Clone, Serialize, Deserialize)]
 struct RetainedJson {
-    /// The local source folder, the identity the data belongs to.
-    local: String,
+    /// The source, the identity the data belongs to.
+    #[serde(flatten)]
+    source: Source,
     /// The package's title when it was uninstalled.
     title: String,
 }
@@ -1194,8 +1305,13 @@ pub(crate) enum Leftover {
 
 #[derive(Clone, Serialize, Deserialize)]
 struct RecordJson {
-    /// The local source folder, the package's identity.
-    local: String,
+    /// The source, the package's identity: its local folder or npm name.
+    #[serde(flatten)]
+    source: Source,
+    /// For a package from npm, the version installed and whether the user
+    /// (or the dependency that installed it) pinned it to that version.
+    #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
+    npm: Option<NpmRecordJson>,
     /// The managed folder under `packages/`.
     dir: String,
     /// Set when the user disabled the package; absent means enabled.
@@ -1211,26 +1327,44 @@ struct RecordJson {
     dependencies: Vec<ResolvedJson>,
 }
 
-/// A dependency id and the local source folder it resolved to.
+/// The npm version of an installed npm package, recorded beside its name:
+/// `"npm": "greeter", "npmVersion": "1.2.3", "pinned": true`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct NpmRecordJson {
+    #[serde(rename = "npmVersion")]
+    version: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pinned: bool,
+}
+
+/// The npm version installed of a package from npm, and whether it is
+/// pinned to it: the user named that exact version to install or update it
+/// (or a dependency's source did), rather than taking the latest.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NpmInstalled {
+    pub version: String,
+    pub pinned: bool,
+}
+
+/// A dependency id and the source it resolved to.
 #[derive(Clone, Serialize, Deserialize)]
 struct ResolvedJson {
     id: String,
-    local: String,
+    #[serde(flatten)]
+    source: Source,
 }
 
-/// The records of `package`'s `local:` dependencies, resolved from its
-/// source folder.
+/// The records of `package`'s dependencies, resolved from its source.
 fn resolved_dependencies(package: &SourcePackage) -> Vec<ResolvedJson> {
     package
         .manifest
         .dependencies
         .iter()
         .filter_map(|dependency| {
-            let identity = package.identity.dependency(&dependency.source).ok()?;
-            let PackageIdentity(Source::Local(local)) = identity;
+            let PackageIdentity(source) = package.identity.dependency(&dependency.source).ok()?;
             Some(ResolvedJson {
                 id: dependency.id.clone(),
-                local,
+                source,
             })
         })
         .collect()
@@ -1302,10 +1436,10 @@ impl Store {
     /// this one read it.
     pub fn standing_on_disk(&self, identity: &PackageIdentity) -> Result<Standing, PackageError> {
         let registry = read_registry(&self.dir).map_err(PackageError::Storage)?;
-        let PackageIdentity(Source::Local(local)) = identity;
-        Ok(if registry.packages.iter().any(|r| &r.local == local) {
+        let PackageIdentity(source) = identity;
+        Ok(if registry.packages.iter().any(|r| &r.source == source) {
             Standing::Installed
-        } else if registry.retained.iter().any(|r| &r.local == local) {
+        } else if registry.retained.iter().any(|r| &r.source == source) {
             Standing::Retained
         } else {
             Standing::Neither
@@ -1359,10 +1493,11 @@ impl Store {
             .iter()
             .map(|record| {
                 InstalledPackage::load(
-                    PackageIdentity(Source::Local(record.local.clone())),
+                    PackageIdentity(record.source.clone()),
                     self.dir.join(PACKAGES_DIR).join(&record.dir),
                     !record.disabled,
                     &record.dependencies,
+                    record.npm.as_ref(),
                 )
             })
             .collect()
@@ -1373,13 +1508,13 @@ impl Store {
     }
 
     fn record(&self, identity: &PackageIdentity) -> Option<&RecordJson> {
-        let PackageIdentity(Source::Local(path)) = identity;
+        let PackageIdentity(source) = identity;
         self.registry
             .as_ref()
             .ok()?
             .packages
             .iter()
-            .find(|record| &record.local == path)
+            .find(|record| &record.source == source)
     }
 
     /// Installs a package whose identity is not installed yet.
@@ -1422,8 +1557,8 @@ impl Store {
             .map_err(|reason| PackageError::Storage(reason.clone()))?;
         let mut updated = registry.clone();
         for identity in identities {
-            let PackageIdentity(Source::Local(local)) = identity;
-            let Some(record) = updated.packages.iter_mut().find(|r| &r.local == local) else {
+            let PackageIdentity(source) = identity;
+            let Some(record) = updated.packages.iter_mut().find(|r| &r.source == source) else {
                 return Err(PackageError::NotInstalled(identity.clone()));
             };
             record.disabled = !enabled;
@@ -1447,12 +1582,8 @@ impl Store {
             .iter()
             .filter_map(|record| {
                 let paused = record.paused.as_ref()?;
-                (paused.code == record.dir).then(|| {
-                    (
-                        PackageIdentity(Source::Local(record.local.clone())),
-                        paused.pause.clone(),
-                    )
-                })
+                (paused.code == record.dir)
+                    .then(|| (PackageIdentity(record.source.clone()), paused.pause.clone()))
             })
             .collect()
     }
@@ -1468,9 +1599,9 @@ impl Store {
             .registry
             .as_mut()
             .map_err(|reason| PackageError::Storage(reason.clone()))?;
-        let PackageIdentity(Source::Local(local)) = identity;
+        let PackageIdentity(source) = identity;
         let mut updated = registry.clone();
-        let Some(record) = updated.packages.iter_mut().find(|r| &r.local == local) else {
+        let Some(record) = updated.packages.iter_mut().find(|r| &r.source == source) else {
             return Err(PackageError::NotInstalled(identity.clone()));
         };
         let paused = pause.map(|pause| PausedJson {
@@ -1497,7 +1628,7 @@ impl Store {
             .retained
             .iter()
             .map(|record| RetainedData {
-                identity: PackageIdentity(Source::Local(record.local.clone())),
+                identity: PackageIdentity(record.source.clone()),
                 title: record.title.clone(),
             })
             .collect()
@@ -1569,7 +1700,7 @@ impl Store {
         let mut updated = registry.clone();
         let mut dirs = Vec::new();
         for (identity, retain) in removals {
-            let PackageIdentity(Source::Local(local)) = identity;
+            let PackageIdentity(local) = identity;
             let missing = || PackageError::NotInstalled(identity.clone());
             take_record(&mut updated, local).ok_or_else(missing)?;
             // Its managed copy as recorded now: another Pane may have
@@ -1628,14 +1759,18 @@ impl Store {
             .registry
             .as_mut()
             .map_err(|reason| PackageError::Storage(reason.clone()))?;
-        let PackageIdentity(Source::Local(local)) = identity;
+        let PackageIdentity(source) = identity;
         let mut on_disk = read_registry(&self.dir).map_err(PackageError::Storage)?;
-        if on_disk.retained.iter().any(|record| &record.local == local) {
-            on_disk.retained.retain(|record| &record.local != local);
+        if on_disk
+            .retained
+            .iter()
+            .any(|record| &record.source == source)
+        {
+            on_disk.retained.retain(|record| &record.source != source);
             write_registry(&self.dir, &on_disk)
                 .map_err(|error| PackageError::Storage(error.to_string()))?;
         }
-        registry.retained.retain(|record| &record.local != local);
+        registry.retained.retain(|record| &record.source != source);
         Ok(())
     }
 
@@ -1650,7 +1785,7 @@ impl Store {
             .registry
             .as_mut()
             .map_err(|reason| PackageError::Storage(reason.clone()))?;
-        let PackageIdentity(Source::Local(local)) = identity;
+        let PackageIdentity(local) = identity;
         let mut updated = registry.clone();
         put_retained(&mut updated, local, title, None);
         write_registry(&self.dir, &updated)
@@ -1689,27 +1824,33 @@ impl Store {
             let _ = fs::remove_dir_all(&location);
             return Err(storage(error));
         }
-        let PackageIdentity(Source::Local(local)) = &package.identity;
+        let PackageIdentity(local) = &package.identity;
         let mut updated = RegistryJson {
             next: number + 1,
             ..registry.clone()
         };
         let dependencies = resolved_dependencies(package);
+        let npm = package.npm.as_ref().map(|origin| NpmRecordJson {
+            version: origin.version.clone(),
+            pinned: origin.pinned,
+        });
         // An update keeps the record, so a disabled package stays disabled.
-        let enabled = match updated.packages.iter_mut().find(|r| &r.local == local) {
+        let enabled = match updated.packages.iter_mut().find(|r| &r.source == local) {
             Some(record) => {
                 record.dir = dir;
                 // New code has not failed.
                 record.paused = None;
                 record.dependencies = dependencies.clone();
+                record.npm = npm.clone();
                 !record.disabled
             }
             None => {
                 // Data kept from an earlier installation of this identity
                 // is its own again.
-                updated.retained.retain(|record| &record.local != local);
+                updated.retained.retain(|record| &record.source != local);
                 updated.packages.push(RecordJson {
-                    local: local.clone(),
+                    source: local.clone(),
+                    npm: npm.clone(),
                     dir,
                     disabled: false,
                     paused: None,
@@ -1743,6 +1884,7 @@ impl Store {
             location,
             enabled,
             &dependencies,
+            npm.as_ref(),
         ))
     }
 }
@@ -1751,15 +1893,15 @@ impl Store {
 /// last uninstalled as `title`: at position `at` among the records if
 /// given, else last.
 /// Removes and returns the record of the installed package from `local`.
-fn take_record(registry: &mut RegistryJson, local: &str) -> Option<RecordJson> {
-    let index = registry.packages.iter().position(|r| r.local == local)?;
+fn take_record(registry: &mut RegistryJson, source: &Source) -> Option<RecordJson> {
+    let index = registry.packages.iter().position(|r| r.source == *source)?;
     Some(registry.packages.remove(index))
 }
 
-fn put_retained(registry: &mut RegistryJson, local: &str, title: String, at: Option<usize>) {
-    registry.retained.retain(|record| record.local != local);
+fn put_retained(registry: &mut RegistryJson, source: &Source, title: String, at: Option<usize>) {
+    registry.retained.retain(|record| record.source != *source);
     let record = RetainedJson {
-        local: local.to_owned(),
+        source: source.clone(),
         title,
     };
     match at {
@@ -1887,6 +2029,74 @@ mod tests {
         );
         fs::write(folder.join(MANIFEST_FILE), manifest).unwrap();
         folder
+    }
+
+    #[test]
+    fn records_of_local_and_npm_packages_are_read_back() {
+        // As #42 wrote them, and one from npm with its pinned version and a
+        // dependency on another npm package.
+        let text = r#"{
+            "version": 1, "next": 3,
+            "packages": [
+                { "local": "/src/a", "dir": "1", "dependencies": [{ "id": "b", "local": "/src/b" }] },
+                { "npm": "@pane-samples/greeter", "npmVersion": "0.1.0", "pinned": true, "dir": "2",
+                  "dependencies": [{ "id": "c", "npm": "c" }] }
+            ],
+            "retained": [{ "npm": "gone", "title": "Gone" }, { "local": "/src/x", "title": "X" }]
+        }"#;
+        let registry: RegistryJson = serde_json::from_str(text).unwrap();
+        let [a, greeter] = registry.packages.as_slice() else {
+            panic!("two records")
+        };
+        assert_eq!(
+            a.source,
+            Source::Local {
+                local: "/src/a".into()
+            }
+        );
+        assert_eq!(a.npm, None);
+        assert_eq!(
+            a.dependencies[0].source,
+            Source::Local {
+                local: "/src/b".into()
+            }
+        );
+        assert_eq!(
+            greeter.source,
+            Source::Npm {
+                npm: "@pane-samples/greeter".into()
+            }
+        );
+        assert_eq!(
+            greeter.npm,
+            Some(NpmRecordJson {
+                version: "0.1.0".into(),
+                pinned: true
+            })
+        );
+        assert_eq!(
+            greeter.dependencies[0].source,
+            Source::Npm { npm: "c".into() }
+        );
+        assert_eq!(
+            registry.retained[0].source,
+            Source::Npm { npm: "gone".into() }
+        );
+
+        let written = serde_json::to_value(&registry).unwrap();
+        assert_eq!(
+            written["packages"][1],
+            serde_json::json!({
+                "npm": "@pane-samples/greeter", "npmVersion": "0.1.0", "pinned": true, "dir": "2",
+                "dependencies": [{ "id": "c", "npm": "c" }]
+            })
+        );
+        assert_eq!(
+            written["packages"][0],
+            serde_json::json!({
+                "local": "/src/a", "dir": "1", "dependencies": [{ "id": "b", "local": "/src/b" }]
+            })
+        );
     }
 
     /// This test binary: a program for this system's target.

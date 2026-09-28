@@ -30,7 +30,7 @@
 //! `Display` implementations and [`Plan::lines`].
 
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::packages::{
     InstalledPackage, Manifest, ManifestDependency, PackageError, PackageIdentity, SourcePackage,
@@ -132,11 +132,12 @@ pub(crate) enum ProblemKind {
     Unresolvable(PathBuf),
     /// The package names its own folder.
     Itself,
-    /// It is not installed and its folder cannot be installed.
-    CannotInstall {
-        folder: PathBuf,
-        error: PackageError,
-    },
+    /// It is not installed and its source cannot be installed: `from` names
+    /// that source (a folder, or "npm package <name>").
+    CannotInstall { from: String, error: PackageError },
+    /// The dependent comes from npm and names a local folder, which is on
+    /// its author's computer, not the user's.
+    LocalFromNpm { source: String },
     /// More than [`MAX_INSTALLED_WITH`] packages would be installed.
     TooMany,
     /// Its installed copy cannot be read.
@@ -197,10 +198,15 @@ impl fmt::Display for Problem {
                 path.display()
             ),
             ProblemKind::Itself => write!(f, "{dependent} names itself as its dependency `{id}`"),
-            ProblemKind::CannotInstall { folder, error } => write!(
+            ProblemKind::CannotInstall { from, error } => write!(
                 f,
-                "{dependent} requires `{id}` from {}, which cannot be installed: {error}",
-                folder.display()
+                "{dependent} requires `{id}` from {from}, which cannot be installed: {error}"
+            ),
+            ProblemKind::LocalFromNpm { source } => write!(
+                f,
+                "{dependent} comes from npm but names the local folder `{source}` as its \
+                 dependency `{id}`; a package published to npm can depend only on packages from \
+                 npm"
             ),
             ProblemKind::TooMany => write!(
                 f,
@@ -275,13 +281,17 @@ impl fmt::Display for Problem {
 pub(crate) struct Assumptions {
     pub requested: PackageIdentity,
     requested_manifest: String,
+    /// The integrity of the requested package's npm tarball, if it comes
+    /// from npm: a new tarball with the same `pane.json` is another plan.
+    requested_tarball: Option<String>,
     pub packages: Vec<(PackageIdentity, Assumed)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Assumed {
-    /// Not installed; installed from a folder holding this `pane.json`.
-    Installs(String),
+    /// Not installed; installed from a source holding this `pane.json`, and,
+    /// from npm, the tarball with this integrity.
+    Installs(String, Option<String>),
     /// Installed at this managed location, enabled or not, paused or not.
     Installed {
         location: PathBuf,
@@ -300,7 +310,7 @@ impl Assumptions {
     ) -> bool {
         self.packages.iter().all(|(identity, assumed)| {
             match (assumed, installed_as(installed, identity)) {
-                (Assumed::Installs(_), None) => true,
+                (Assumed::Installs(..), None) => true,
                 (
                     Assumed::Installed {
                         location,
@@ -417,12 +427,13 @@ impl Plan {
 
 /// Works out what installing `requested` means for its dependencies, given
 /// the `installed` packages, those of them Pane `paused`, and `read`, which
-/// reads and validates the package in a folder. Changes nothing.
+/// reads and validates the package with an identity from the source a
+/// dependency declares (a folder, or a download from npm). Changes nothing.
 pub(crate) fn plan(
     requested: &SourcePackage,
     installed: &[InstalledPackage],
     paused: &[PackageIdentity],
-    read: impl FnMut(&Path) -> Result<SourcePackage, PackageError>,
+    read: impl FnMut(&PackageIdentity, &str) -> Result<SourcePackage, PackageError>,
 ) -> Plan {
     let named = Named {
         identity: requested.identity.clone(),
@@ -443,6 +454,7 @@ pub(crate) fn plan(
             assumptions: Assumptions {
                 requested: requested.identity.clone(),
                 requested_manifest: requested.manifest_text().to_owned(),
+                requested_tarball: requested.npm.as_ref().map(|npm| npm.integrity.clone()),
                 packages: Vec::new(),
             },
             requested_manifest: requested.manifest.clone(),
@@ -452,6 +464,15 @@ pub(crate) fn plan(
     planner.visit(requested);
     planner.check_demands(requested);
     planner.plan
+}
+
+/// The source of the package with `identity` as a problem names it: its
+/// folder, or "npm package <name>".
+pub(crate) fn source_name(identity: &PackageIdentity) -> String {
+    match identity.local_folder() {
+        Some(folder) => folder.display().to_string(),
+        None => identity.to_string(),
+    }
 }
 
 /// One package's need of the operations of another.
@@ -472,7 +493,7 @@ struct Planner<'a, R> {
     too_many: bool,
 }
 
-impl<R: FnMut(&Path) -> Result<SourcePackage, PackageError>> Planner<'_, R> {
+impl<R: FnMut(&PackageIdentity, &str) -> Result<SourcePackage, PackageError>> Planner<'_, R> {
     fn visit(&mut self, package: &SourcePackage) {
         let dependent = Named {
             identity: package.identity.clone(),
@@ -494,6 +515,14 @@ impl<R: FnMut(&Path) -> Result<SourcePackage, PackageError>> Planner<'_, R> {
                         state: OptionalState::NotNeededHere(only_on),
                     });
                 }
+                continue;
+            }
+            let local_from_npm =
+                package.identity.npm_name().is_some() && dependency.source.starts_with("local:");
+            if local_from_npm && dependency.required {
+                self.plan.problems.push(problem(ProblemKind::LocalFromNpm {
+                    source: dependency.source.clone(),
+                }));
                 continue;
             }
             let target = package.identity.dependency(&dependency.source);
@@ -579,28 +608,25 @@ impl<R: FnMut(&Path) -> Result<SourcePackage, PackageError>> Planner<'_, R> {
                 }
                 continue;
             }
-            let folder = target
-                .local_folder()
-                .expect("a local dependency has a folder")
-                .to_path_buf();
-            match (self.read)(&folder) {
+            match (self.read)(&target, &dependency.source) {
                 Ok(source) => {
                     let named = Named {
                         identity: target.clone(),
                         title: source.manifest.title.clone(),
                     };
                     self.plan.required.push(edge(named, RequiredState::Install));
-                    self.plan
-                        .assumptions
-                        .packages
-                        .push((target, Assumed::Installs(source.manifest_text().to_owned())));
+                    let tarball = source.npm.as_ref().map(|npm| npm.integrity.clone());
+                    self.plan.assumptions.packages.push((
+                        target,
+                        Assumed::Installs(source.manifest_text().to_owned(), tarball),
+                    ));
                     self.visit(&source);
                     self.plan.install.push(source);
                 }
-                Err(error) => self
-                    .plan
-                    .problems
-                    .push(problem(ProblemKind::CannotInstall { folder, error })),
+                Err(error) => self.plan.problems.push(problem(ProblemKind::CannotInstall {
+                    from: source_name(&target),
+                    error,
+                })),
             }
         }
     }
@@ -613,7 +639,7 @@ impl<R: FnMut(&Path) -> Result<SourcePackage, PackageError>> Planner<'_, R> {
             .assumptions
             .packages
             .iter()
-            .filter(|(_, assumed)| matches!(assumed, Assumed::Installs(_)))
+            .filter(|(_, assumed)| matches!(assumed, Assumed::Installs(..)))
             .count();
         installs - self.plan.install.len()
     }
@@ -939,6 +965,7 @@ fn undo(
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::Path;
 
     use super::*;
 

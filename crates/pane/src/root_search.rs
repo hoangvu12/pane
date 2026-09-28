@@ -112,7 +112,9 @@ impl LauncherWindow {
                     self.query.focus(window, cx);
                 }
             }
-            None if was_shown => window.focus(&self.focus_handle, cx),
+            // Leaving it for a form of Pane's own (the npm package form)
+            // keeps the focus the form gave its first field.
+            None if was_shown && self.form.is_none() => window.focus(&self.focus_handle, cx),
             None => {}
         }
     }

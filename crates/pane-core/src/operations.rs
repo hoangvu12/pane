@@ -172,15 +172,18 @@ impl Installed {
             dependency = self.dependency(caller, source, operation, version)?;
             dependency.as_str()
         };
-        let is_identity = source
-            .strip_prefix("local:")
-            .is_some_and(|path| Path::new(path).is_absolute());
+        let is_identity = match source.split_once(':') {
+            Some(("local", path)) => Path::new(path).is_absolute(),
+            Some(("npm", name)) => crate::npm::check_name(name).is_ok(),
+            _ => false,
+        };
         if !is_identity {
             return Err(OperationError::new(
                 NotFound,
                 format!(
                     "`{source}` is not a package identity; use `local:` followed by the \
-                     absolute folder path Pane shows for the package"
+                     absolute folder path Pane shows for the package, or `npm:` followed by \
+                     its npm package name"
                 ),
             ));
         }
@@ -266,8 +269,8 @@ impl Installed {
                 NotFound,
                 format!(
                     "`{id}` is not a package identity; use `local:` followed by the absolute \
-                     folder path Pane shows for the package, or the id of a dependency the \
-                     caller's pane.json declares"
+                     folder path Pane shows for the package, `npm:` followed by its npm package \
+                     name, or the id of a dependency the caller's pane.json declares"
                 ),
             )
         };

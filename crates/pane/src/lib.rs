@@ -268,6 +268,13 @@ impl LauncherWindow {
         self.show_until_done(pending, window, cx);
     }
 
+    /// Downloads and shows the npm package `spec` names, as
+    /// [`LauncherWindow::preview_package`] shows a folder.
+    pub fn preview_npm(&mut self, spec: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let pending = self.launcher.preview_npm(spec);
+        self.show_until_done(pending, window, cx);
+    }
+
     /// Asks for a package folder with the platform's folder picker, then
     /// previews it. Cancelling leaves root search as it was.
     fn choose_package_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
