@@ -89,6 +89,30 @@ does not run, so the smoke uses `--install`; the picker flow is covered by the
 GPUI window tests (`crates/pane/tests/install.rs`). The macOS and Windows
 smokes run the same phase (screenshots 9 to 12); it has not run there yet.
 
+### Custom view (#21)
+
+After the restart, the smoke opens the Rust command's "Choose a color", a
+color picker the guest draws ([custom views](../custom-views.md)), presses
+Right with a real X11 key event, then moves the real pointer onto the dark
+green swatch (found in the screenshot by its color with
+`check_screenshot.py --locate`) and clicks it with `xdotool`. Each screenshot
+must show the chosen color over at least 3000 pixels: its swatch and the
+preview together cover about 5100, any other swatch about 1000. Run locally on
+2026-09-28 (Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64, same
+Xvfb/lavapipe setup), all checks of the whole smoke passed. Its other
+screenshots came out identical to those above: the commands' new sixth item
+is below the visible part of the list.
+
+| Step | Evidence |
+| --- | --- |
+| View opened with focus (focus ring); blue chosen, its hex code under the preview | [13-color.png](evidence/linux-x11/13-color.png) |
+| Right: purple chosen, "#8E24AA" | [14-color-key.png](evidence/linux-x11/14-color-key.png) |
+| Click on the dark green swatch: dark green chosen, "#1B5E20" | [15-color-click.png](evidence/linux-x11/15-color-click.png) |
+
+A drag is not driven natively; it is covered by the window tests. The macOS
+and Windows smokes run the same phase (screenshots 13 to 15), with their own
+click helpers; it has not run there yet.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms have a text field (GPUI CE's
@@ -115,7 +139,8 @@ smokes run the same phase (screenshots 9 to 12); it has not run there yet.
   (`assistive_technology_sees_the_list_the_selection_and_the_result`), which is
   platform-independent. **No screen reader (Orca/AT-SPI) was run**, so
   announcement behaviour on Linux is unverified. Forms are covered in
-  [accessibility of forms](../forms.md#accessibility), which applies to all
+  [accessibility of forms](../forms.md#accessibility) and custom views in
+  [their accessibility](../custom-views.md#accessibility), which apply to all
   three platforms.
 
 ## Remaining limits

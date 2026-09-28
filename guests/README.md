@@ -9,9 +9,10 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   imported; it supplies the allocator, a trapping panic handler,
   `cabi_realloc` and `memcmp`/`bcmp` (which string comparisons need).
 - `sample-rust`, `sample-js`, `sample-ts`: the same sample command in Rust,
-  JavaScript and TypeScript. All three show the same items, the same form, and
-  give the same answers and errors; the contract tests in `crates/pane-core/tests/samples.rs`
-  and `crates/pane/tests/window.rs` hold each of them to that.
+  JavaScript and TypeScript. All three show the same items, the same form and
+  the same color picker, and give the same answers and errors; the contract
+  tests in `crates/pane-core/tests/samples.rs` and `crates/pane/tests/window.rs`
+  hold each of them to that.
 - `js`: `@pane/extension`, TypeScript declarations for the contract
   (`pane.d.ts`) and the WIT world JS/TS commands are built against.
 - `prebuilt`: the JS and TS sample components, committed so that tests and
@@ -20,30 +21,38 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
 - `packages`: the samples' package manifests (`pane.json`). `cargo xtask
   guests` puts each one with its built component in
   `target/guests/packages/<name>/`, a ready-to-install package.
-- `fixtures/faulty`: test fixture whose actions return an error or trap.
+- `fixtures/faulty`: test fixture whose actions, form and custom view return
+  an error or trap.
 - `fixtures/mixed-p2`: negative control that imports WASI 0.2 and must be rejected.
 
 ## Writing a Rust command
 
 The [sample](sample-rust/src/lib.rs) is the complete example. A command is a
-`cdylib` crate depending on `pane-guest` that implements three async
-functions (see [Forms](#forms) for the third):
+`cdylib` crate depending on `pane-guest` that implements four async
+functions and names its custom view type (see [Forms](#forms) and
+[Custom views](#custom-views) for the last two):
 
 ```rust
 #![no_std]
 
 use pane_guest::alloc::{string::String, vec, vec::Vec};
-use pane_guest::{FieldValue, FormError, Guest, Item, View};
+use pane_guest::{CustomView, FieldValue, FormError, Guest, Item, NoCustomView, View};
 
 struct Hello;
 pane_guest::export!(Hello);
 
 impl Guest for Hello {
+    type CustomView = NoCustomView;
+
     async fn get_view() -> Result<View, String> {
-        Ok(View {
-            title: "Hello".into(),
-            items: vec![Item { id: "hi".into(), title: "Say hi".into(), subtitle: None, form: None }],
-        })
+        let item = Item {
+            id: "hi".into(),
+            title: "Say hi".into(),
+            subtitle: None,
+            form: None,
+            custom_view: None,
+        };
+        Ok(View { title: "Hello".into(), items: vec![item] })
     }
 
     async fn run_action(_item_id: String) -> Result<String, String> {
@@ -52,6 +61,10 @@ impl Guest for Hello {
 
     async fn submit_form(_item_id: String, _values: Vec<FieldValue>) -> Result<String, FormError> {
         Err(FormError { field: None, message: "this command has no forms".into() })
+    }
+
+    async fn open_view(_item_id: String) -> Result<CustomView, String> {
+        Err("this command has no custom views".into())
     }
 }
 ```
@@ -84,8 +97,9 @@ host Wasmtime and wasmtime-wasi 49.0.1.
 
 The [JavaScript](sample-js/src/index.js) and
 [TypeScript](sample-ts/src/index.ts) samples are complete examples. A command
-is an npm package whose `main` module exports `command` with three async
-functions (see [Forms](#forms) for the third). Pane's types come from
+is an npm package whose `main` module exports `command` with four async
+functions (see [Forms](#forms) and [Custom views](#custom-views) for the last
+two). Pane's types come from
 `@pane/extension` (a `file:../js` development dependency); they describe plain
 values, not engine objects:
 
@@ -104,6 +118,9 @@ export const command: Command = {
   },
   async submitForm() {
     throw { message: "this command has no forms" };
+  },
+  async openView() {
+    throw new Error("this command has no custom views");
   },
 };
 ```
@@ -246,6 +263,95 @@ In JS/TS, reject a submission by throwing a plain `FormError` object as above.
 Throwing an `Error` from `submitForm` is treated as a crash, not as a
 validation message. The samples validate with Zod and turn its first issue
 into a `FormError`.
+
+## Custom views
+
+An item can open a custom view that the command draws itself: filled
+rectangles and one-line text in a fixed-size area, redrawn after each key
+(arrows, Home, End) or pointer event (press over the view, drag, release).
+Pane keeps focus and the focus ring, and exposes the view to assistive
+technology as one control with the item's label and role and the value the
+view reports. The command keeps each open view's state in a `custom-view`
+resource that `open-view` returns; Pane drops it when the view closes. The
+contract, input, lifecycle and accessibility are described in
+[docs/custom-views.md](../docs/custom-views.md). The "Choose a color" item of
+each sample is the complete example.
+
+Rust (the view is a type implementing `GuestCustomView`; its methods take
+`&self`, so state goes in `Cell`s or `RefCell`s):
+
+```rust
+use core::cell::Cell;
+use pane_guest::alloc::{format, string::String, vec};
+use pane_guest::{
+    CustomView, CustomViewInfo, CustomViewRole, Frame, GuestCustomView, Key, Rect, Shape, ViewEvent,
+};
+
+struct Picker { column: Cell<i32> }
+
+impl GuestCustomView for Picker {
+    async fn render(&self) -> Frame {
+        let x = self.column.get() * 36;
+        Frame {
+            width: 288,
+            height: 36,
+            shapes: vec![Shape::Rect(Rect { x, y: 0, width: 36, height: 36, fill: 0x1e88e5 })],
+            value: format!("Column {}", self.column.get() + 1),
+        }
+    }
+
+    async fn handle_event(&self, event: ViewEvent) -> Result<(), String> {
+        match event {
+            ViewEvent::Key(Key::Right) => self.column.set((self.column.get() + 1).min(7)),
+            ViewEvent::Key(Key::Left) => self.column.set((self.column.get() - 1).max(0)),
+            ViewEvent::PointerDown(at) => self.column.set((at.x / 36).clamp(0, 7)),
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+// The item: `custom_view: Some(CustomViewInfo { title: "Pick".into(), label:
+// "Column".into(), role: CustomViewRole::ColorWell })`. In `impl Guest`:
+type CustomView = Picker;
+
+async fn open_view(_item_id: String) -> Result<CustomView, String> {
+    Ok(CustomView::new(Picker { column: Cell::new(0) }))
+}
+```
+
+JavaScript or TypeScript (a view is any object with `async render()` and
+`async handleEvent(event)`; shapes and events are tagged values):
+
+```ts
+class Picker implements CustomView {
+  column = 0;
+  async render(): Promise<Frame> {
+    return {
+      width: 288,
+      height: 36,
+      shapes: [{ tag: "rect", val: { x: this.column * 36, y: 0, width: 36, height: 36, fill: 0x1e88e5 } }],
+      value: `Column ${this.column + 1}`,
+    };
+  }
+  async handleEvent(event: ViewEvent) {
+    if (event.tag === "key" && event.val === "right") this.column = Math.min(this.column + 1, 7);
+    if (event.tag === "key" && event.val === "left") this.column = Math.max(this.column - 1, 0);
+    if (event.tag === "pointer-down") this.column = Math.min(Math.max(Math.floor(event.val.x / 36), 0), 7);
+  }
+}
+// items: [{ id: "pick", title: "Pick", customView: { title: "Pick", label: "Column", role: "color-well" } }]
+
+async openView(itemId) {
+  return new Picker();
+},
+```
+
+Both methods must be `async` in JS/TS (see the
+[contract notes](../docs/custom-views.md#contract)). Throwing from
+`handleEvent` shows the error and keeps the view; a crash closes it. A
+command without custom views uses `type CustomView = NoCustomView;` in Rust
+and makes `open_view`/`openView` fail.
 
 ## Packaging and installing a local extension
 

@@ -25,7 +25,7 @@ cargo xtask ci       # build guests, check the prebuilt JS/TS samples, then form
 
 No JavaScript toolchain is needed for these: the JS and TS sample components are committed prebuilt in `guests/prebuilt/`. Rebuilding them from source with `cargo xtask js-guests` also needs Python 3.12+, git and Node.js 22+ on any of the three OSes; see [guests/README.md](guests/README.md#writing-a-javascript-or-typescript-command).
 
-In the window, use the arrow keys to select, Enter to open a command or run an item, and Escape to go back; clicking a row runs it too. In each sample command, the last item, "Greet someone", opens a form: type a name, Tab to the greeting, arrow keys to choose, Enter to submit. **Install extension from folder…**, the last row, installs a local extension package; see [Packaging and installing a local extension](guests/README.md#packaging-and-installing-a-local-extension).
+In the window, use the arrow keys to select, Enter to open a command or run an item, and Escape to go back; clicking a row runs it too. In each sample command, "Greet someone" opens a form: type a name, Tab to the greeting, arrow keys to choose, Enter to submit. The last item, "Choose a color", opens a color picker the extension draws itself: arrow keys, Home and End, or a click or drag on the swatches, choose a color. **Install extension from folder…**, the last row, installs a local extension package; see [Packaging and installing a local extension](guests/README.md#packaging-and-installing-a-local-extension).
 
 To try a package without the folder picker, open the launcher on its install screen, then press Enter to install it:
 
@@ -37,7 +37,7 @@ Installed packages go in Pane's data folder (`%LOCALAPPDATA%\Pane\data` on Windo
 
 Layout:
 
-- `wit/extension.wit`: the host/guest contract for one extension command: a list view, item actions and [forms](docs/forms.md).
+- `wit/extension.wit`: the host/guest contract for one extension command: a list view, item actions, [forms](docs/forms.md) and [custom views](docs/custom-views.md).
 - `crates/pane-core`: the launcher model (the public host interface the tests drive), extension packages (manifest, identity, managed copies) and the extension runtime, a Wasmtime 49.0.1 engine registering only WASI 0.3.
 - `crates/pane`: the GPUI CE window.
 - `guests/`: extension guests, including [the Rust, JavaScript and TypeScript sample commands](guests/README.md), TypeScript declarations for the contract, the prebuilt JS/TS components and test fixtures.

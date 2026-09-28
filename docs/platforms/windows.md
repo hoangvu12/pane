@@ -79,8 +79,15 @@ not confirmed.
   (TSF) composition, for example with Microsoft Japanese IME, is unverified;
   the window tests cover composition only on the field's editing state
   ([what that proves](../forms.md#checks)).
-- **Accessibility:** see [accessibility of forms](../forms.md#accessibility).
-  Narrator/NVDA were not run.
+- **Accessibility:** see [accessibility of forms](../forms.md#accessibility)
+  and [of custom views](../custom-views.md#accessibility). Narrator/NVDA were
+  not run.
+- **Custom view (#21):** after the restart the smoke opens the Rust command's
+  color picker, presses Right and clicks the dark green swatch with `user32`
+  `SetCursorPos` and `mouse_event`, at the screenshot's pixel position. Each
+  step must show the chosen color over at least 3000 pixels. **This phase has
+  not run on Windows yet**; display scaling other than 100 % could put the
+  click elsewhere, and is unverified.
 
 ## Remaining limits
 

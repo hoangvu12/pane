@@ -38,7 +38,11 @@ capture() {
       "$display" "$out/$1"
   fi
 }
-check() { python3 "$(dirname "$0")/check_screenshot.py" "$out/$1" "$2"; }
+check() { python3 "$(dirname "$0")/check_screenshot.py" "$out/$1" "$2" ${3:+"$3"}; }
+# Prints "x y": where the screenshot shows the given color.
+locate() { python3 "$(dirname "$0")/check_screenshot.py" --locate "$out/$1" "$2"; }
+# Clicks the primary button at x y in the pixels of screenshot $3.
+click_at() { "$xdotool" mousemove "$1" "$2" click 1; }
 
 # Starts Pane with the given arguments and focuses its window.
 start_pane() {
@@ -117,5 +121,24 @@ start_pane
 capture 12-restarted.png
 check 12-restarted.png 8a96a3
 [ -f "$out/data/extensions/installed.json" ] || { echo "no install record"; exit 1; }
+
+# The Rust command's color picker (its sixth item), which the guest draws:
+# Right chooses purple, and a click on the dark green swatch chooses it. The
+# chosen color fills its swatch and the preview, far more pixels than any
+# other swatch covers.
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 3
+for _ in 1 2 3 4 5; do "$xdotool" key Down; done
+"$xdotool" key Return; sleep 2
+capture 13-color.png
+check 13-color.png 1e88e5 3000   # blue, chosen when the view opens
+"$xdotool" key Right; sleep 1
+capture 14-color-key.png
+check 14-color-key.png 8e24aa 3000   # purple
+read -r x y < <(locate 14-color-key.png 1b5e20)
+click_at "$x" "$y" 14-color-key.png; sleep 1
+capture 15-color-click.png
+check 15-color-click.png 1b5e20 3000   # dark green
+"$xdotool" key Escape key Escape; sleep 1
 stop_pane
 echo "screenshots in $out"

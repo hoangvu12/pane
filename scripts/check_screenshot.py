@@ -11,8 +11,13 @@ With --distinct, asserts instead that the Pane window looks different in every
 given screenshot, so steps that should show different content (each guest's
 answer) cannot silently show the same view.
 
+With --locate, prints the center of the pixels drawn exactly in the given
+color (such as one swatch of a custom view), as "x y" screenshot pixels, so a
+smoke can click there.
+
 Usage: python3 scripts/check_screenshot.py <png> <hex color> [min pixels]
        python3 scripts/check_screenshot.py --distinct <png> <png>...
+       python3 scripts/check_screenshot.py --locate <png> <hex color>
 """
 import sys
 
@@ -56,6 +61,19 @@ def distinct(paths: list[str]) -> None:
     print(f"{len(paths)} screenshots show different Pane windows")
 
 
+def locate(path: str, color: str) -> None:
+    image = Image.open(path).convert("RGB")
+    target = rgb(color)
+    width = image.width
+    pixels = getattr(image, "get_flattened_data", image.getdata)()
+    found = [i for i, pixel in enumerate(pixels) if near(pixel, target, 4)]
+    if not found:
+        raise SystemExit(f"{path}: no pixels of #{color.lstrip('#')}")
+    xs = sorted(i % width for i in found)
+    ys = sorted(i // width for i in found)
+    print(xs[len(xs) // 2], ys[len(ys) // 2])
+
+
 def main(path: str, color: str, minimum: int = 20) -> None:
     window = pane_window(path)
     target = rgb(color)
@@ -76,5 +94,7 @@ def main(path: str, color: str, minimum: int = 20) -> None:
 if __name__ == "__main__":
     if sys.argv[1] == "--distinct":
         distinct(sys.argv[2:])
+    elif sys.argv[1] == "--locate":
+        locate(sys.argv[2], sys.argv[3])
     else:
         main(sys.argv[1], sys.argv[2], *(int(n) for n in sys.argv[3:4]))

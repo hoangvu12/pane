@@ -59,3 +59,7 @@ _Avoid_: Reinstall
 **Form**:
 A set of fields an extension command asks the user to fill in and submit; the launcher renders its standard controls and the extension validates the submitted values.
 _Avoid_: Dialog, custom view
+
+**Custom view**:
+An interactive view an extension draws itself from shapes the launcher paints, receiving the user's key and pointer input while it is open; the launcher keeps focus and its accessible representation.
+_Avoid_: Canvas, webview, custom control
