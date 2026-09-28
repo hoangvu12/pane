@@ -453,20 +453,46 @@ python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: opening the application changed nothing" }
 Stop-Pane $process
 
+# Quicklinks, a default extension: installed, its command's form saves a
+# quicklink (Quicklinks is selected once installed, and "Create quicklink" is
+# its first item). After a restart, typing part of its name lists it,
+# selected. Enter would open the default browser, so this smoke stops there
+# (the Linux smoke opens it through a recording handler).
+$process = Start-Pane "stderr-quicklinks.log" @("--install", "target/guests/packages/quicklinks")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install
+Send "{ENTER}"; Start-Sleep -Seconds 3   # open Quicklinks
+Send "{ENTER}"; Start-Sleep -Seconds 1   # Create quicklink
+Send "Pane issues"
+Send "{TAB}"
+Send "https://example.com/pane-issues"
+Send "{ENTER}"; Start-Sleep -Seconds 2
+Capture "46-quicklink-saved.png"
+Check "46-quicklink-saved.png" "9fd8a8"   # "Saved quicklink “Pane issues”"
+Send "{ESC}"; Send "{ESC}"; Start-Sleep -Seconds 1
+Stop-Pane $process
+$process = Start-Pane "stderr-quicklinks-restart.log"
+Send "pane iss"; Start-Sleep -Seconds 2
+Capture "47-quicklink-found.png"
+Check "47-quicklink-found.png" "364355" 3000   # the selected quicklink row
+$shots = "46-quicklink-saved", "47-quicklink-found" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the quicklink was not found" }
+Stop-Pane $process
+
 # Uninstall the settings sample, keeping its saved data: its row follows the
-# seven Clear cache rows. Pane asks first, showing its saved data, and the first
+# eight Clear cache rows. Pane asks first, showing its saved data, and the first
 # choice keeps its settings and content while its copy and credential go.
 # Installing the same folder again finds its formal style and note, signed out.
 $process = Start-Pane "stderr-uninstall.log"
-Send "{DOWN 13}"   # the last row
+Send "{DOWN 20}"   # the last row
 Send "{ENTER}"; Start-Sleep -Seconds 1
-Send "{DOWN 22}"
+Send "{DOWN 25}"
 Send "{ENTER}"; Start-Sleep -Seconds 1   # "Uninstall Settings sample"
-Capture "46-confirm-uninstall.png"
-Check "46-confirm-uninstall.png" "aab4c0"   # what is removed and the saved data
+Capture "49-confirm-uninstall.png"
+Check "49-confirm-uninstall.png" "aab4c0"   # what is removed and the saved data
 Send "{ENTER}"; Start-Sleep -Seconds 2   # "Uninstall and keep saved data"
-Capture "47-uninstalled.png"
-Check "47-uninstalled.png" "9fd8a8"   # "Uninstalled Settings sample; its settings and content are kept"
+Capture "50-uninstalled.png"
+Check "50-uninstalled.png" "9fd8a8"   # "Uninstalled Settings sample; its settings and content are kept"
 Stop-Pane $process
 if (-not (Select-String -Quiet -SimpleMatch '"retained"' (Join-Path $data "extensions/installed.json"))) { throw "kept data not recorded" }
 if (Select-String -Quiet -SimpleMatch 'sample-token' (Join-Path $data "extensions/credentials.json")) { throw "credential not removed" }
@@ -477,9 +503,9 @@ Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Greeting is selected
 Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greeting
 Send "{DOWN 5}"
 Send "{ENTER}"; Start-Sleep -Seconds 2   # "Show what Pane keeps"
-Capture "48-reinstalled.png"
-Check "48-reinstalled.png" "9fd8a8"   # "Style: formal · Note: Water the plants · Signed in: no ..."
-python "$PSScriptRoot/check_screenshot.py" --distinct (Join-Path $OutDir "43-kept-after-clear.png") (Join-Path $OutDir "48-reinstalled.png")
+Capture "51-reinstalled.png"
+Check "51-reinstalled.png" "9fd8a8"   # "Style: formal · Note: Water the plants · Signed in: no ..."
+python "$PSScriptRoot/check_screenshot.py" --distinct (Join-Path $OutDir "43-kept-after-clear.png") (Join-Path $OutDir "51-reinstalled.png")
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the credential is still shown" }
 Send "{ESC}"; Start-Sleep -Seconds 1
 Stop-Pane $process

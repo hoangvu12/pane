@@ -125,9 +125,10 @@ and three rows: **Uninstall and keep saved data** (first, so Enter keeps),
 
 Choosing a row applies at once in the launcher: the package leaves root
 search, Manage extensions and the targets of [operations](operations.md)
-(a call to it is then "not-found"), its instances stop (a call already
-running finishes first, as for disable), an open command, form or view of
-it closes, and it can no longer save any data. No guest runs, so a broken or
+(a call to it is then "not-found"), its instances and pending calls stop as
+for disable (its generation ends; a call it was serving answers "was
+uninstalled while serving the call"), an open command, form or view of it
+closes, and it can no longer read or save any data. No guest runs, so a broken or
 disabled package, or a Pane whose runtime did not start, uninstalls the same
 way. Then Pane:
 
@@ -183,10 +184,12 @@ reads this list; `Launcher::retained_data` returns it):
   (nothing changes); an unreadable `cache.json` (explained, the rest deleted,
   recorded as retained); on Unix, a managed folder that cannot be removed
   (explained, removed at the next start).
+  `crates/pane-core/tests/stopping.rs`: a call waiting inside the guest is
+  stopped by the uninstall and saves nothing more, in each language.
   `crates/pane-core/tests/operations.rs`: an uninstalled target is not found
   and its instance stops. `crates/pane/tests/install.rs`: the rows, the
   confirmation, Esc and the outcome in the native window. The native GUI
-  smokes, screenshots 46 to 48: the confirmation, the outcome, and after
+  smokes, screenshots 49 to 51: the confirmation, the outcome, and after
   reinstalling the same folder its style and note shown, signed out, with
   the files checked in between.
 - `crates/pane-core/tests/clear_cache.rs`, for each language's settings sample:

@@ -101,6 +101,11 @@ fn desktop_entries_a_launcher_does_not_show_are_not_found() {
         &entry("Missing", "TryExec=/nonexistent/pane-test-program"),
     );
     write(&apps.join("other.txt"), &entry("Not an entry", ""));
+    // Field codes used against the specification: skipped, not guessed.
+    write(
+        &apps.join("badexec.desktop"),
+        &entry("Bad exec", "").replace("Exec=true", "Exec=viewer %f%u"),
+    );
     // Keys of other groups are not the entry's.
     write(
         &apps.join("actions.desktop"),
@@ -250,10 +255,16 @@ mod linux {
             entries.open(&missing),
             Err("cannot find the program pane-no-such-program".into())
         );
-        let terminal = desktop_file(dir.path(), "top.desktop", &entry("Top", "Terminal=true"));
+        // Which terminal emulator runs a `Terminal=true` entry depends on
+        // what is installed; choosing one is unit tested.
+        let invalid = desktop_file(
+            dir.path(),
+            "invalid.desktop",
+            &entry("Invalid", "").replace("Exec=true", "Exec=viewer --icon=%i"),
+        );
         assert_eq!(
-            entries.open(&terminal),
-            Err("Top runs in a terminal, and Pane does not open terminal applications yet".into())
+            entries.open(&invalid),
+            Err("its Exec key uses %i inside an argument (--icon=%i)".into())
         );
     }
 
@@ -357,8 +368,22 @@ mod windows {
     }
 
     #[test]
-    fn this_systems_start_menu_can_be_listed() {
-        pane_core::applications::native().installed().unwrap();
+    fn this_systems_start_menu_and_packaged_apps_are_listed() {
+        let found = pane_core::applications::StartMenu::from_env()
+            .installed()
+            .unwrap();
+        // Inbox packaged apps (Calculator on Windows 11, Settings on Windows
+        // Server) have no Start menu shortcut; the Apps folder finds them.
+        let packaged: Vec<&Application> = found
+            .iter()
+            .filter(|app| app.id.starts_with(r"shell:AppsFolder\"))
+            .collect();
+        assert!(
+            packaged
+                .iter()
+                .any(|app| app.name == "Calculator" || app.name == "Settings"),
+            "no inbox packaged app among {packaged:?}"
+        );
     }
 }
 

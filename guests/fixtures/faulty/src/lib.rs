@@ -133,6 +133,20 @@ impl Guest for Faulty {
 
     async fn run_action(item_id: String) -> Result<String, String> {
         match item_id.as_str() {
+            // Holds a stream open to the host (its stdout), with the future of
+            // that write pending, saves `holding` as "started", then waits ten
+            // seconds before closing them and saving "finished". Tests stop it
+            // meanwhile; it is not listed.
+            "hold" => {
+                let (writer, reader) = wasip3::wit_stream::new::<u8>();
+                let written = wasip3::cli::stdout::write_via_stream(reader);
+                pane_guest::settings::set("holding", "started")?;
+                wasip3::clocks::monotonic_clock::wait_for(10_000_000_000).await;
+                drop(writer);
+                let _ = written.await;
+                pane_guest::settings::set("holding", "finished")?;
+                Ok("held".into())
+            }
             "error" => Err("the guest refused".into()),
             "trap" => panic!("guest trap"),
             _ => Ok("fine".into()),
@@ -159,6 +173,12 @@ impl pane_guest::root::Guest for Faulty {
     async fn results_for(query: String) -> Result<Vec<pane_guest::root::RootResult>, String> {
         match query.as_str() {
             "error" => Err("the guest refused the query".into()),
+            "file link" => Ok(vec![pane_guest::root::RootResult {
+                id: "file".into(),
+                title: "A local file".into(),
+                subtitle: None,
+                action: pane_guest::root::RootAction::OpenUrl("file:///etc/hosts".into()),
+            }]),
             "trap" => panic!("trap requested"),
             "0 + 0" => {
                 let mut sum = 0u64;

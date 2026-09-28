@@ -10,13 +10,18 @@
 //! `greet` version 1 takes `{"name": "<name>"}` and answers
 //! `{"greeting": "Hello, <name>, from Rust"}`, or the error "a name is
 //! needed".
+//!
+//! `wait` version 1 shows a call Pane stops: it saves `waiting` as
+//! "started" in its settings, waits ten seconds, saves "finished" and
+//! answers `{"waited": true}`. Disabling or reloading either package
+//! meanwhile stops it; the "wait" item calls it.
 #![no_std]
 
 use pane_guest::alloc::{format, string::String, string::ToString, vec, vec::Vec};
 use pane_guest::operations::call;
 use pane_guest::{
     Choice, CustomView, Field, FieldKind, FieldValue, Form, FormError, Guest, Item, NoCustomView,
-    TextField, View, publish,
+    TextField, View, publish, settings,
 };
 use serde_json::{Value, json};
 
@@ -73,6 +78,21 @@ fn greet_form() -> Form {
     }
 }
 
+/// The form of the "wait" item.
+fn wait_form() -> Form {
+    Form {
+        title: "Wait in another extension".into(),
+        fields: vec![Field {
+            id: "source".into(),
+            label: "Package source".into(),
+            kind: FieldKind::Text(TextField {
+                placeholder: Some("local:/path/to/sample-operations-js".into()),
+            }),
+        }],
+        submit_label: "Wait".into(),
+    }
+}
+
 fn form_error(message: String) -> FormError {
     FormError {
         field: None,
@@ -86,14 +106,24 @@ impl Guest for Operations {
     async fn get_view() -> Result<View, String> {
         Ok(View {
             title: "Call from Rust".into(),
-            items: vec![Item {
-                id: "greet".into(),
-                title: "Greet through another extension".into(),
-                subtitle: Some("Calls its greet operation through Pane".into()),
-                form: Some(greet_form()),
-                platforms: None,
-                custom_view: None,
-            }],
+            items: vec![
+                Item {
+                    id: "greet".into(),
+                    title: "Greet through another extension".into(),
+                    subtitle: Some("Calls its greet operation through Pane".into()),
+                    form: Some(greet_form()),
+                    platforms: None,
+                    custom_view: None,
+                },
+                Item {
+                    id: "wait".into(),
+                    title: "Wait in another extension".into(),
+                    subtitle: Some("Calls its wait operation, which takes ten seconds".into()),
+                    form: Some(wait_form()),
+                    platforms: None,
+                    custom_view: None,
+                },
+            ],
         })
     }
 
@@ -102,7 +132,7 @@ impl Guest for Operations {
     }
 
     async fn submit_form(item_id: String, values: Vec<FieldValue>) -> Result<String, FormError> {
-        if item_id != "greet" {
+        if item_id != "greet" && item_id != "wait" {
             return Err(form_error(format!("unknown form: {item_id}")));
         }
         let value = |id: &str| {
@@ -117,6 +147,12 @@ impl Guest for Operations {
                 field: Some("source".into()),
                 message: "Enter the package's source".into(),
             });
+        }
+        if item_id == "wait" {
+            call(source.into(), "wait".into(), 1, "{}".into())
+                .await
+                .map_err(|error| form_error(error.explain()))?;
+            return Ok("Waited in the other extension".into());
         }
         let name = value("name");
         if value("times") == "twice" {
@@ -133,9 +169,16 @@ impl Guest for Operations {
     }
 }
 
-/// The operations the package publishes: `greet`.
+/// The operations the package publishes: `greet` and `wait`.
 impl publish::Guest for Operations {
     async fn run_operation(operation: String, input: String) -> Result<String, String> {
+        if operation == "wait" {
+            settings::set("waiting", "started")?;
+            // If Pane stops the call meanwhile, nothing after this runs.
+            wasip3::clocks::monotonic_clock::wait_for(10_000_000_000).await;
+            settings::set("waiting", "finished")?;
+            return Ok(json!({ "waited": true }).to_string());
+        }
         if operation != "greet" {
             return Err(format!("unknown operation: {operation}"));
         }

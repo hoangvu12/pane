@@ -15,7 +15,10 @@ use pane_core::{CommandRegistration, Launcher, LauncherView, Row, Screen, Status
 
 mod custom_view;
 mod form;
+mod links;
 mod root_search;
+
+pub use links::SystemLinks;
 
 actions!(
     launcher,

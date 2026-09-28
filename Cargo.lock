@@ -4169,6 +4169,7 @@ dependencies = [
  "gpui-ce",
  "gpui_ce_elements",
  "gpui_ce_platform",
+ "open",
  "pane-core",
  "serde_json",
  "tempfile",
@@ -4186,7 +4187,7 @@ dependencies = [
  "unicode-normalization",
  "wasmtime",
  "wasmtime-wasi",
- "windows-sys 0.60.2",
+ "windows 0.62.2",
 ]
 
 [[package]]

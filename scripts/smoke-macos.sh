@@ -437,20 +437,44 @@ for _ in $(seq 50); do [ -f "$apps/launched" ] && break; sleep 0.2; done
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{44-application,45-opened}.png
 stop_pane
 
+# Quicklinks, a default extension: installed, its command's form saves a
+# quicklink (Quicklinks is selected once installed, and "Create quicklink" is
+# its first item). After a restart, typing part of its name lists it,
+# selected. Enter would open the default browser, so this smoke stops there
+# (the Linux smoke opens it through a recording handler).
+start_pane --install target/guests/packages/quicklinks
+key 36; sleep 2   # Install
+key 36; sleep 3   # open Quicklinks
+key 36; sleep 1   # Create quicklink
+type_text 'Pane issues'
+key 48
+type_text 'https://example.com/pane-issues'
+key 36; sleep 2
+capture 46-quicklink-saved.png
+check 46-quicklink-saved.png 9fd8a8   # "Saved quicklink “Pane issues”"
+key 53; key 53; sleep 1
+stop_pane
+start_pane
+type_text 'pane iss'; sleep 2
+capture 47-quicklink-found.png
+check 47-quicklink-found.png 364355 3000   # the selected quicklink row
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{46-quicklink-saved,47-quicklink-found}.png
+stop_pane
+
 # Uninstall the settings sample, keeping its saved data: its row follows the
-# seven Clear cache rows. Pane asks first, showing its saved data, and the first
+# eight Clear cache rows. Pane asks first, showing its saved data, and the first
 # choice keeps its settings and content while its copy and credential go.
 # Installing the same folder again finds its formal style and note, signed out.
 start_pane
-for ((i = 0; i < 13; i++)); do key 125; done   # the last row
+for ((i = 0; i < 20; i++)); do key 125; done   # the last row
 key 36; sleep 1
-for ((i = 0; i < 22; i++)); do key 125; done
+for ((i = 0; i < 25; i++)); do key 125; done
 key 36; sleep 1   # "Uninstall Settings sample"
-capture 46-confirm-uninstall.png
-check 46-confirm-uninstall.png aab4c0   # what is removed and the saved data
+capture 49-confirm-uninstall.png
+check 49-confirm-uninstall.png aab4c0   # what is removed and the saved data
 key 36; sleep 2   # "Uninstall and keep saved data"
-capture 47-uninstalled.png
-check 47-uninstalled.png 9fd8a8   # "Uninstalled Settings sample; its settings and content are kept"
+capture 50-uninstalled.png
+check 50-uninstalled.png 9fd8a8   # "Uninstalled Settings sample; its settings and content are kept"
 stop_pane
 grep -q '"retained"' "$out/data/extensions/installed.json" || { echo "kept data not recorded"; exit 1; }
 if grep -q 'sample-token' "$out/data/extensions/credentials.json"; then echo "credential not removed"; exit 1; fi
@@ -461,9 +485,9 @@ key 36; sleep 2   # Install; Greeting is selected
 key 36; sleep 3   # open Greeting
 for ((i = 0; i < 5; i++)); do key 125; done
 key 36; sleep 2   # "Show what Pane keeps"
-capture 48-reinstalled.png
-check 48-reinstalled.png 9fd8a8   # "Style: formal · Note: Water the plants · Signed in: no ..."
-python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/43-kept-after-clear.png" "$out/48-reinstalled.png"
+capture 51-reinstalled.png
+check 51-reinstalled.png 9fd8a8   # "Style: formal · Note: Water the plants · Signed in: no ..."
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/43-kept-after-clear.png" "$out/51-reinstalled.png"
 key 53; sleep 1
 stop_pane
 if grep -q '"retained"' "$out/data/extensions/installed.json"; then echo "retained record not dropped"; exit 1; fi

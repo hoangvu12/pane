@@ -76,6 +76,10 @@ _Avoid_: Index entry, cached result
 A program the operating system lists as installed where Pane looks for it (Start menu shortcuts, application bundles, desktop entries); Pane's host finds and opens it for an extension, which a WASI guest cannot do itself.
 _Avoid_: App (ambiguous with Pane itself), program
 
+**Quicklink**:
+A named web address the user saves through the Quicklinks default extension's form and finds in root search, where invoking it opens the address with the system's handler for web links; it is kept in that extension's content.
+_Avoid_: Bookmark, shortcut, alias
+
 **Search provider**:
 A source of matching results for a query, such as applications, files or an online service.
 _Avoid_: The entire search interface
@@ -111,6 +115,10 @@ _Avoid_: Restart, hot swap, update (an update does not start the new code)
 **Startup failure**:
 A reload whose checked replacement was installed but could not start: a command trapped, or its component could not load or be instantiated (an error the command returns for its view is not one); Pane stops its instances, reports it with Retry and diagnostics and does not restore the earlier code. Distinct from a replacement that fails its checks, which leaves the working code in place.
 _Avoid_: Build failure, rollback
+
+**Generation**:
+One run of an installed package's code, from when it is installed, enabled or Pane starts until it is disabled or its code is replaced by a reload or an update. Every call into the package belongs to the generation current when it was asked for, and is stopped when that generation ends; its late result is discarded.
+_Avoid_: Version (a package's version is its manifest's), session, instance (one generation can start several), screen or search epoch (the launcher's counters of screens and searches, which only decide whether an answer is shown)
 
 **Supported platforms**:
 The operating systems a package, a command or an action declares it works on: a plain list, not a rule language. A declaration is not evidence of native support.

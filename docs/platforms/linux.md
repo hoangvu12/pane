@@ -252,6 +252,7 @@ same Xvfb/lavapipe setup), all checks of the whole smoke passed:
 | Retry starting Dev: "Started Dev" | `39-retried.png` (not committed: it shows local paths) |
 
 The macOS and Windows smokes run the same phase (screenshots 33 to 39); it
+has not run there yet.
 
 ### Clearing an extension's cache (#39)
 
@@ -300,9 +301,33 @@ Only X11 (Xvfb, no desktop session) ran; Wayland and real desktops'
 `XDG_CURRENT_DESKTOP`, Flatpak and Snap folders are untested. Disabling is
 covered by the launcher tests, not natively.
 
+### Quicklinks (#28)
+
+The quicklinks phase, after the applications phase, installs the Quicklinks package
+(`--install target/guests/packages/quicklinks`), opens its command, and in
+"Create quicklink" types "Pane issues", Tab and
+"https://example.com/pane-issues" with real X11 key events, then Return.
+After a restart it types "pane iss" (the selected row's color must appear)
+and presses Return: `xdg-open` runs with no desktop session variables, every
+XDG configuration and data location in the smoke's output folder and
+`BROWSER` set to a script that records its argument, so no real browser
+starts; the script must have received the URL. Run locally on 2026-09-28
+(Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64, same Xvfb/lavapipe
+setup): all checks of the whole smoke passed.
+
+| Step | Evidence |
+| --- | --- |
+| Form submitted: "Saved quicklink “Pane issues”" | [46-quicklink-saved.png](evidence/linux-x11/46-quicklink-saved.png) |
+| Restarted, "pane iss" typed: the quicklink, first and selected | [47-quicklink-found.png](evidence/linux-x11/47-quicklink-found.png) |
+| Return: "Opened https://example.com/pane-issues", the URL received by the handler | [48-quicklink-opened.png](evidence/linux-x11/48-quicklink-opened.png) |
+
+A real desktop's handler (GNOME's `gio open`, a browser chosen in the
+desktop settings) was not run. The macOS and Windows smokes run the phase up
+to screenshot 47; it has not run there yet.
+
 ### Uninstalling an extension (#40)
 
-The last phase restarts Pane, chooses "Uninstall Settings sample" in
+The last phase, after the quicklinks phase, restarts Pane, chooses "Uninstall Settings sample" in
 **Manage extensions…** and the first choice, "Uninstall and keep saved
 data". It then checks that `installed.json` records the retained data, that
 the token is gone from `credentials.json` and that the style and note are
@@ -314,11 +339,17 @@ Xvfb/lavapipe setup): all checks of the whole smoke passed.
 
 | Step | Evidence |
 | --- | --- |
-| "Uninstall Settings sample?", its source, what is removed, "Saved data: 1 setting and 1 content record", the source folder kept; the three choices | `46-confirm-uninstall.png` (not committed: it shows the local checkout path) |
-| "Uninstalled Settings sample; its settings and content are kept" | `47-uninstalled.png` (not committed: the list's rows show the local checkout path) |
-| Reinstalled: "Style: formal · Note: Water the plants · Signed in: no · Cached greeting: none" | [48-reinstalled.png](evidence/linux-x11/48-reinstalled.png) |
+| "Uninstall Settings sample?", its source, what is removed, "Saved data: 1 setting and 1 content record", the source folder kept; the three choices | `49-confirm-uninstall.png` (not committed: it shows the local checkout path) |
+| "Uninstalled Settings sample; its settings and content are kept" | `50-uninstalled.png` (not committed: the list's rows show the local checkout path) |
+| Reinstalled: "Style: formal · Note: Water the plants · Signed in: no · Cached greeting: none" | [51-reinstalled.png](evidence/linux-x11/51-reinstalled.png) |
 
-The macOS and Windows smokes run the same phase (screenshots 46 to 48); it
+In the last run the confirmation's list showed the second and third choices,
+with the selected first one scrolled out of view above them (the list keeps
+its scroll position from the long extension list; an earlier run, with fewer
+packages, showed the first choice). Enter still chose it. The window's
+scrolling between screens is an open item, not specific to this phase.
+
+The macOS and Windows smokes run the same phase (screenshots 49 to 51); it
 has not run there yet. A managed folder that Windows keeps in use is covered
 only by the leftover mechanism's Unix test (a read-only folder), not
 natively.

@@ -55,12 +55,12 @@ impl Launcher {
     ) -> impl Future<Output = ()> + Send + 'static {
         let mut state = self.lock();
         let uninstall = self.begin_uninstall(&mut state, identity.clone(), saved);
-        let generation = state.screen_generation;
+        let epoch = state.screen_epoch;
         drop(state);
         let launcher = self.clone();
         async move {
             if let Some(uninstall) = uninstall {
-                launcher.finish_uninstall(generation, uninstall).await;
+                launcher.finish_uninstall(epoch, uninstall).await;
             }
         }
     }
@@ -91,7 +91,7 @@ impl Launcher {
             subtitle: Some(subtitle.into()),
             unavailable: None,
         };
-        state.screen_generation += 1;
+        state.screen_epoch += 1;
         state.entries = vec![
             Entry::Uninstall(identity.clone(), SavedData::Keep),
             Entry::Uninstall(identity.clone(), SavedData::Delete),
@@ -155,7 +155,7 @@ impl Launcher {
             return None;
         }
         let package = state.packages.remove(index);
-        installation.data.set_enabled(&identity, false);
+        installation.data.uninstall(&identity);
         let components: Vec<PathBuf> = package
             .commands()
             .into_iter()
@@ -175,6 +175,9 @@ impl Launcher {
             runtime.forget(all);
         }
         state.failed.forget(&identity);
+        // Its results kept for root search go, and so does an answer from it
+        // being awaited.
+        Launcher::forget_indexes(state);
         let open = state
             .open
             .as_ref()
@@ -195,7 +198,7 @@ impl Launcher {
     /// Uninstalls the package removed by [`Launcher::begin_uninstall`] from
     /// Pane's files, putting it back if that cannot be recorded, and shows
     /// the outcome.
-    pub(super) async fn finish_uninstall(&self, generation: u64, uninstall: Uninstall) {
+    pub(super) async fn finish_uninstall(&self, epoch: u64, uninstall: Uninstall) {
         let Uninstall {
             package,
             index,
@@ -207,8 +210,8 @@ impl Launcher {
             .installation
             .clone()
             .expect("begin_uninstall checked there is an installation");
-        // The runtime has dropped its instances before its files go; a call
-        // already running finishes first.
+        // The runtime has dropped its instances before its files go; its
+        // pending calls were stopped when its generation ended.
         if let Ok(runtime) = self.runtime() {
             runtime.running().await;
         }
@@ -231,10 +234,10 @@ impl Launcher {
                 let enabled = package.enabled;
                 let at = index.min(state.packages.len());
                 state.packages.insert(at, package);
-                installation.data.set_enabled(&identity, enabled);
+                installation.data.reinstate(&identity, enabled);
                 self.end_uninstall(
                     &mut state,
-                    generation,
+                    epoch,
                     &identity,
                     Status::Error(format!(
                         "Could not uninstall {title}: {error}. It is still installed and \
@@ -269,20 +272,20 @@ impl Launcher {
             }
         };
         let mut state = self.lock();
-        self.end_uninstall(&mut state, generation, &identity, status);
+        self.end_uninstall(&mut state, epoch, &identity, status);
     }
 
     /// Ends an uninstall with `status`, shown if the screen is still the one
-    /// of `generation`: from its confirmation, on the extension list.
+    /// of `epoch`: from its confirmation, on the extension list.
     fn end_uninstall(
         &self,
         state: &mut State,
-        generation: u64,
+        epoch: u64,
         identity: &PackageIdentity,
         status: Status,
     ) {
         state.release(identity);
-        if state.screen_generation != generation {
+        if state.screen_epoch != epoch {
             self.refresh(state);
             return;
         }

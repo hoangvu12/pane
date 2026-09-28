@@ -6,6 +6,7 @@
 /// <reference path="./wasi.d.ts" />
 /// <reference path="./data.d.ts" />
 /// <reference path="./operations.d.ts" />
+/// <reference path="./applications.d.ts" />
 
 /** One entry in a command's list view. */
 export interface Item {
@@ -221,7 +222,7 @@ export interface Command {
 }
 
 /** What invoking a root result does; Pane performs it. */
-export type RootAction = { tag: "copy"; val: string };
+export type RootAction = { tag: "copy"; val: string } | { tag: "open-url"; val: string };
 
 /**
  * One result computed from root search's query, listed above the results
@@ -233,7 +234,11 @@ export interface RootResult {
   title: string;
   /** A second line under the title; omitted or `null` for none. */
   subtitle?: string | null;
-  /** `{ tag: "copy", val: text }` copies `text` to the clipboard. */
+  /**
+   * `{ tag: "copy", val: text }` copies `text` to the clipboard;
+   * `{ tag: "open-url", val: url }` opens `url`, an `http://` or `https://`
+   * address, with the system's handler for web links (Pane refuses others).
+   */
   action: RootAction;
 }
 
@@ -260,6 +265,50 @@ export interface RootResults {
    * query and discards an answer once the query has changed.
    */
   resultsFor(query: string): Promise<RootResult[]>;
+}
+
+/**
+ * What invoking an indexed result does; Pane performs it.
+ * `{ tag: "open-application", val: id }` opens the installed application
+ * with `id`, as `open` in `pane:extension/applications@0.1.0` does.
+ */
+export type IndexedAction = { tag: "open-application"; val: string };
+
+/**
+ * One root result a command supplies ahead of the query, which root search
+ * matches and ranks by title like commands.
+ */
+export interface IndexedResult {
+  /** Identifies the result among this command's results. */
+  id: string;
+  title: string;
+  /** A second line under the title; omitted or `null` for none. */
+  subtitle?: string | null;
+  action: IndexedAction;
+}
+
+/**
+ * Root results a command supplies ahead of the query, such as the installed
+ * applications (`pane:extension/indexed-results` in wit/applications.wit).
+ * A command that supplies them sets `"indexedResults": true` on its entry in
+ * `pane.json`, and `"pane": { "indexedResults": true }` in its
+ * `package.json` so that it is built with the interface; its module exports
+ * them as `indexedResults`:
+ *
+ * ```ts
+ * export const indexedResults: IndexedResults = {
+ *   async results() { return []; },
+ * };
+ * ```
+ */
+export interface IndexedResults {
+  /**
+   * Every result the command supplies, whatever the query. Pane asks once
+   * root search is used and again after each return to it, and keeps the
+   * answer. Throwing is the extension failing; Pane lists a result
+   * explaining it.
+   */
+  results(): Promise<IndexedResult[]>;
 }
 
 /**
