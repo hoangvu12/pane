@@ -214,6 +214,7 @@ fn clearing_the_cache_keeps_settings_content_and_credentials(fixture: &Fixture) 
             "Settings sample",
             "Reload Settings sample",
             "Clear cache of Settings sample",
+            "Uninstall Settings sample",
             "Hotkey for Greeting"
         ]
     );

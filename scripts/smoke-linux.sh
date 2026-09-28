@@ -478,11 +478,44 @@ check 48-quicklink-opened.png 9fd8a8   # "Opened https://example.com/pane-issues
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{46-quicklink-saved,47-quicklink-found,48-quicklink-opened}.png
 stop_pane
 
+# Uninstall the settings sample, keeping its saved data: its row follows the
+# eight Clear cache rows. Pane asks first, showing its saved data, and the first
+# choice keeps its settings and content while its copy and credential go.
+# Installing the same folder again finds its formal style and note, signed out.
+start_pane
+"$xdotool" windowfocus --sync "$window"
+for ((i = 0; i < 20; i++)); do "$xdotool" key Down; done   # the last row
+"$xdotool" key Return; sleep 1
+for ((i = 0; i < 25; i++)); do "$xdotool" key Down; done
+"$xdotool" key Return; sleep 1   # "Uninstall Settings sample"
+capture 49-confirm-uninstall.png
+check 49-confirm-uninstall.png aab4c0   # what is removed and the saved data
+"$xdotool" key Return; sleep 2   # "Uninstall and keep saved data"
+capture 50-uninstalled.png
+check 50-uninstalled.png 9fd8a8   # "Uninstalled Settings sample; its settings and content are kept"
+stop_pane
+grep -q '"retained"' "$out/data/extensions/installed.json" || { echo "kept data not recorded"; exit 1; }
+if grep -q 'sample-token' "$out/data/extensions/credentials.json"; then echo "credential not removed"; exit 1; fi
+grep -q '"greeting-style": "formal"' "$out/data/extensions/settings.json" || { echo "setting not kept"; exit 1; }
+grep -q '"note": "Water the plants"' "$out/data/extensions/content.json" || { echo "note not kept"; exit 1; }
+start_pane --install target/guests/packages/sample-settings
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 2   # Install; Greeting is selected
+"$xdotool" key Return; sleep 3   # open Greeting
+for ((i = 0; i < 5; i++)); do "$xdotool" key Down; done
+"$xdotool" key Return; sleep 2   # "Show what Pane keeps"
+capture 51-reinstalled.png
+check 51-reinstalled.png 9fd8a8   # "Style: formal · Note: Water the plants · Signed in: no ..."
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/43-kept-after-clear.png" "$out/51-reinstalled.png"
+"$xdotool" key Escape; sleep 1
+stop_pane
+if grep -q '"retained"' "$out/data/extensions/installed.json"; then echo "retained record not dropped"; exit 1; fi
+
 # Global hotkeys: in Manage extensions, the settings sample's command,
 # Greeting, is given Ctrl+Alt+G by pressing it on its hotkey screen (its row
-# follows the package's state, Reload and Clear cache rows). With Pane no
-# longer focused, pressing the hotkey opens Greeting in Pane's window, also
-# after a restart; once the extension is disabled, pressing it does nothing.
+# follows the package's state, Reload, Clear cache and Uninstall rows).
+# With Pane no longer focused, pressing the hotkey opens Greeting in Pane's
+# window, also after a restart; once the extension is disabled, pressing it does nothing.
 # A data folder of its own keeps the rows in a known order. Only the Xvfb
 # display is touched: Pane's key grab is on DISPLAY, and WAYLAND_DISPLAY is
 # unset for the whole smoke.
@@ -498,38 +531,38 @@ start_pane --install target/guests/packages/sample-settings
 "$xdotool" key Return; sleep 2   # Install; Greeting is selected
 for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
 "$xdotool" key Return; sleep 1
-"$xdotool" key Down Down Down Return; sleep 1   # "Hotkey for Greeting"
-capture 49-hotkey-screen.png
-check 49-hotkey-screen.png aab4c0   # "Press the keys that should open Greeting ..."
+"$xdotool" key Down Down Down Down Return; sleep 1   # "Hotkey for Greeting"
+capture 52-hotkey-screen.png
+check 52-hotkey-screen.png aab4c0   # "Press the keys that should open Greeting ..."
 "$xdotool" key ctrl+alt+g; sleep 2
-capture 50-hotkey-assigned.png
-check 50-hotkey-assigned.png 9fd8a8   # "Ctrl+Alt+G now opens Greeting"
+capture 53-hotkey-assigned.png
+check 53-hotkey-assigned.png 9fd8a8   # "Ctrl+Alt+G now opens Greeting"
 "$xdotool" key Escape; sleep 1   # root search
 unfocus_pane
-capture 51-unfocused.png
+capture 54-unfocused.png
 press_hotkey
-capture 52-hotkey-opened.png
-check 52-hotkey-opened.png 364355 3000   # Greeting's first item, selected
-python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{50-hotkey-assigned,52-hotkey-opened}.png
+capture 55-hotkey-opened.png
+check 55-hotkey-opened.png 364355 3000   # Greeting's first item, selected
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{53-hotkey-assigned,55-hotkey-opened}.png
 stop_pane
 grep -q '"ctrl+alt+g"' "$PANE_DATA_DIR/extensions/hotkeys.json" || { echo "hotkey not recorded"; exit 1; }
 start_pane
 unfocus_pane
 press_hotkey
-capture 53-hotkey-after-restart.png
-check 53-hotkey-after-restart.png 364355 3000   # Greeting's first item, selected
-python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{51-unfocused,53-hotkey-after-restart}.png
+capture 56-hotkey-after-restart.png
+check 56-hotkey-after-restart.png 364355 3000   # Greeting's first item, selected
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{54-unfocused,56-hotkey-after-restart}.png
 "$xdotool" windowfocus --sync "$window"   # no window manager: Pane is focused here
 "$xdotool" key Escape; sleep 1
 for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
 "$xdotool" key Return; sleep 1
 "$xdotool" key Return; sleep 2   # disable Settings sample
 "$xdotool" key Escape; sleep 1
-capture 54-disabled.png   # root search
+capture 57-disabled.png   # root search
 unfocus_pane
 press_hotkey
 "$xdotool" windowfocus --sync "$window"; sleep 1
-capture 55-disabled-pressed.png   # still root search: nothing opened
-python3 "$(dirname "$0")/check_screenshot.py" --same "$out"/{54-disabled,55-disabled-pressed}.png
+capture 58-disabled-pressed.png   # still root search: nothing opened
+python3 "$(dirname "$0")/check_screenshot.py" --same "$out"/{57-disabled,58-disabled-pressed}.png
 stop_pane
 echo "screenshots in $out"

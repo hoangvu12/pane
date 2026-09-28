@@ -13,7 +13,7 @@ shortcut with the system. The architecture is recorded in
 
 ## Assigning one
 
-In **Manage extensions…**, after each package's state, Reload and Clear cache
+In **Manage extensions…**, after each package's state, Reload, Clear cache and Uninstall
 rows, every command of an enabled package has a row "Hotkey for
 &lt;command&gt;", subtitled with its hotkey ("Ctrl+Alt+G · Opens it from any
 application"), "None · …", or why it is not active, then its package's source (copies of a package may share titles). Enter opens the hotkey
@@ -68,8 +68,8 @@ released, reaches Pane no more.
   registers them again. They are registered again at every start.
 - An **update** or **reload** keeps a command's hotkey; a command the new copy
   no longer has releases its hotkey (the choice stays recorded).
-- **Uninstall** (#40, not built yet) is to forget the package's hotkeys
-  through `Launcher::forget_hotkeys_of`.
+- **Uninstall** (#40) releases the package's hotkeys at once and forgets
+  them, whether its saved data is kept or deleted (they are Pane's records).
 - A hotkey another application took meanwhile is shown on its row as "Not
   active: another application or the system already uses it" and tried again
   with every change to the installed packages and at the next start; the
@@ -122,8 +122,8 @@ cannot assign, read or declare one (no WIT or manifest change).
   registration as taken, and free again once released. macOS registers with
   the main run loop, which a test thread does not run, so only the GUI smoke
   checks it.
-- Native GUI smokes, one identical phase on all three systems (screenshots 49
-  to 55; 48 is the Linux-only opened quicklink): with a data folder of its
+- Native GUI smokes, one identical phase on all three systems (screenshots 52
+  to 58; 48 is the Linux-only opened quicklink): with a data folder of its
   own, install the settings sample, open "Hotkey for Greeting" in Manage
   extensions and press Ctrl+Alt+G (Control+Option+G), checking the hotkey
   screen and "… now opens Greeting"; with Pane unfocused (Linux: focus on the

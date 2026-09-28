@@ -211,6 +211,10 @@ cache.set("last-greeting", greeting);
 - The user can clear an extension's cache in Manage extensions at any time,
   without the extension running: expect any cache value to be missing. Its
   settings, content and credentials are kept.
+- Uninstalling removes the cache and credentials; the user chooses whether
+  the settings and content are kept for a later install of the same source.
+  An extension installed again may therefore find settings and content
+  without a cache or a credential.
 - Credentials are plain text in Pane's data folder, not in the system's
   keychain; on macOS and Linux only the user can read their file. Other
   extensions and programs running as the user can
@@ -823,6 +827,15 @@ What installing does:
   after an Update. Its settings are kept, and enabling it brings its
   commands back with them. The package stays installed at the same identity;
   choosing its folder again shows it as disabled.
+- **Uninstalling.** **Uninstall <title>** in Manage extensions asks first,
+  showing how many settings and content records the package keeps, and
+  offers **Uninstall and keep saved data**, **Uninstall and delete saved
+  data** or **Cancel**. Either way Pane removes the installed copy, the
+  package's cache and its local credentials, without running it, and leaves
+  its source folder and anything outside Pane's data folder alone. Kept
+  settings and content stay with the source identity: installing the same
+  folder again finds them; another folder never does
+  ([details](../docs/extension-data.md#uninstalling-an-extension)).
 
 ### Reloading a package while Pane stays open
 

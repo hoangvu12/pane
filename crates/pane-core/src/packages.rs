@@ -678,6 +678,53 @@ struct RegistryJson {
     /// registry never recorded, as after it was lost, is left alone.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     leftovers: Vec<String>,
+    /// Identities that are not installed but whose extension data Pane
+    /// still keeps: the user uninstalled them keeping their saved data, or
+    /// some of it could not be deleted. Installing the same source again
+    /// uses that data and drops the record.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    retained: Vec<RetainedJson>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct RetainedJson {
+    /// The local source folder, the identity the data belongs to.
+    local: String,
+    /// The package's title when it was uninstalled.
+    title: String,
+}
+
+/// Whether uninstalling a package keeps its saved data: its extension
+/// settings and content. Its cache and local credentials are removed either
+/// way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SavedData {
+    /// Keep them with the package identity, for when the same source is
+    /// installed again.
+    Keep,
+    /// Delete them with the package.
+    Delete,
+}
+
+/// Extension data Pane keeps for a package identity that is not installed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RetainedData {
+    pub identity: PackageIdentity,
+    /// The package's title when it was uninstalled.
+    pub title: String,
+}
+
+/// What uninstalling left behind of the managed copy.
+#[derive(Debug)]
+pub(crate) enum Leftover {
+    /// The managed copy is gone.
+    None,
+    /// The folder of the managed copy could not be removed, for this
+    /// reason; Pane tries again when it next starts.
+    Listed(PathBuf, String),
+    /// The folder could not be removed, nor listed for removal at the next
+    /// start.
+    Unlisted(PathBuf, String),
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -726,6 +773,7 @@ impl Store {
                 next: 1,
                 packages: Vec::new(),
                 leftovers: Vec::new(),
+                retained: Vec::new(),
             }),
             Err(error) => Err(error.to_string()),
         }
@@ -845,6 +893,87 @@ impl Store {
         Ok(())
     }
 
+    /// The identities that are not installed but whose extension data Pane
+    /// keeps, in the order they were uninstalled.
+    pub fn retained(&self) -> Vec<RetainedData> {
+        let Ok(registry) = &self.registry else {
+            return Vec::new();
+        };
+        registry
+            .retained
+            .iter()
+            .map(|record| RetainedData {
+                identity: PackageIdentity(Source::Local(record.local.clone())),
+                title: record.title.clone(),
+            })
+            .collect()
+    }
+
+    /// Uninstalls the package with `identity`: its record goes, then its
+    /// managed copy. With `retain`, the identity is recorded as keeping
+    /// extension data under that title, in the same write. A failure to
+    /// record it leaves everything as it was. A managed folder that cannot
+    /// be removed (one in use on Windows) is listed so that the next start
+    /// removes it, as an update's replaced copy is.
+    pub fn uninstall(
+        &mut self,
+        identity: &PackageIdentity,
+        retain: Option<String>,
+    ) -> Result<Leftover, PackageError> {
+        let registry = self
+            .registry
+            .as_mut()
+            .map_err(|reason| PackageError::Storage(reason.clone()))?;
+        let PackageIdentity(Source::Local(local)) = identity;
+        let mut updated = registry.clone();
+        let Some(index) = updated.packages.iter().position(|r| &r.local == local) else {
+            return Err(PackageError::NotInstalled(identity.clone()));
+        };
+        let record = updated.packages.remove(index);
+        if let Some(title) = retain {
+            put_retained(&mut updated, local, title);
+        }
+        write_registry(&self.dir, &updated)
+            .map_err(|error| PackageError::Storage(error.to_string()))?;
+        *registry = updated;
+        let location = self.dir.join(PACKAGES_DIR).join(&record.dir);
+        let Err(error) = fs::remove_dir_all(&location) else {
+            return Ok(Leftover::None);
+        };
+        if error.kind() == io::ErrorKind::NotFound {
+            return Ok(Leftover::None);
+        }
+        let mut listed = registry.clone();
+        listed.leftovers.push(record.dir);
+        Ok(match write_registry(&self.dir, &listed) {
+            Ok(()) => {
+                *registry = listed;
+                Leftover::Listed(location, error.to_string())
+            }
+            Err(_) => Leftover::Unlisted(location, error.to_string()),
+        })
+    }
+
+    /// Records that Pane keeps extension data for `identity`, which is not
+    /// installed, under `title`.
+    pub fn retain(
+        &mut self,
+        identity: &PackageIdentity,
+        title: String,
+    ) -> Result<(), PackageError> {
+        let registry = self
+            .registry
+            .as_mut()
+            .map_err(|reason| PackageError::Storage(reason.clone()))?;
+        let PackageIdentity(Source::Local(local)) = identity;
+        let mut updated = registry.clone();
+        put_retained(&mut updated, local, title);
+        write_registry(&self.dir, &updated)
+            .map_err(|error| PackageError::Storage(error.to_string()))?;
+        *registry = updated;
+        Ok(())
+    }
+
     /// Copies the package into a fresh managed folder, then records it,
     /// replacing `old`'s folder if given. A failure leaves the previous state.
     fn write_copy(
@@ -886,6 +1015,9 @@ impl Store {
                 !record.disabled
             }
             None => {
+                // Data kept from an earlier installation of this identity
+                // is its own again.
+                updated.retained.retain(|record| &record.local != local);
                 updated.packages.push(RecordJson {
                     local: local.clone(),
                     dir,
@@ -917,6 +1049,16 @@ impl Store {
             enabled,
         ))
     }
+}
+
+/// Records in `registry` that data is kept for the local source `local`,
+/// last uninstalled as `title`.
+fn put_retained(registry: &mut RegistryJson, local: &str, title: String) {
+    registry.retained.retain(|record| record.local != local);
+    registry.retained.push(RetainedJson {
+        local: local.to_owned(),
+        title,
+    });
 }
 
 /// Writes the validated `pane.json` and copies the components it names,

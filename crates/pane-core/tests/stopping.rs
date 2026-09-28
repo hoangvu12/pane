@@ -12,7 +12,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use futures::executor::block_on;
-use pane_core::{Launcher, PackageIdentity, Runtime, Screen, Status};
+use pane_core::{Launcher, PackageIdentity, Runtime, SavedData, Screen, Status};
 use tempfile::TempDir;
 
 /// Well under the ten seconds "Save after waiting" waits: a call that is
@@ -239,6 +239,31 @@ fn updating_stops_a_pending_call(fixture: &Fixture) {
     assert_eq!(installed.slow_save().as_deref(), Some("started"));
 }
 
+fn uninstalling_stops_a_pending_call_and_it_saves_nothing_more(fixture: &Fixture) {
+    let installed = Installed::new(fixture);
+    let pending = installed.start_slow_save();
+
+    block_on(
+        installed
+            .launcher
+            .uninstall(&installed.identity, SavedData::Keep),
+    );
+    pending.assert_stopped();
+
+    let view = installed.launcher.view();
+    assert!(
+        matches!(view.screen, Screen::Root { .. }),
+        "{:?}",
+        view.screen
+    );
+    assert_eq!(
+        view.status,
+        Status::Result("Uninstalled Settings sample; its settings and content are kept".into())
+    );
+    assert_eq!(installed.slow_save().as_deref(), Some("started"));
+    assert_eq!(block_on(installed.runtime.running()), Vec::<PathBuf>::new());
+}
+
 fn repeated_disables_and_reloads_leave_nothing_running(fixture: &Fixture) {
     let installed = Installed::new(fixture);
     for _ in 0..3 {
@@ -308,6 +333,7 @@ contract!(
     disabling_stops_a_pending_call_and_discards_its_result,
     reloading_stops_a_pending_call_and_the_new_code_runs,
     updating_stops_a_pending_call,
+    uninstalling_stops_a_pending_call_and_it_saves_nothing_more,
     repeated_disables_and_reloads_leave_nothing_running,
     a_call_waiting_behind_a_stopped_one_is_served_at_once,
 );

@@ -143,7 +143,7 @@ here is checked only through the tests' recording opener. Not run yet.
 
 ## Global hotkeys (#33)
 
-The smoke's hotkey phase (screenshots 49 to 55, [global hotkeys](../hotkeys.md#checks))
+The smoke's hotkey phase (screenshots 52 to 58, [global hotkeys](../hotkeys.md#checks))
 assigns Control+Option+G to Greeting on its hotkey screen, brings Finder to
 the front, presses it through System Events and checks that Pane is the
 frontmost process with Greeting open; then again after a restart; then,
