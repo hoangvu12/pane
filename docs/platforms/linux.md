@@ -384,6 +384,32 @@ window manager, so raising and focusing Pane's window
 (`_NET_ACTIVE_WINDOW`) is not verified; Wayland is explained as unavailable
 (tested with a fake, not natively), and no real desktop session ran.
 
+### Aliases and fallbacks (#31)
+
+The phase after the pausing phase ([aliases and fallbacks](../aliases.md#checks)),
+with data folders of its own, installs the query sample, gives Echo the
+alias "ec" in its alias form (typed with real X11 key events) and makes it a
+fallback, then in root search types "ec hello" (the row sending "hello" to
+Echo is listed and selected) and presses Enter ("Echo heard “hello”");
+types "zqx" ("No results", then the fallback, not selected), presses Down
+(now selected) and Enter ("Echo heard “zqx”"). It checks `aliases.json`,
+restarts, disables the extension and types "ec hello": the screen is pixel
+for pixel the one a Pane with nothing installed shows for it. Run locally on
+2026-09-28 (Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64, same
+Xvfb/lavapipe setup): all checks of the whole smoke passed.
+
+| Step | Evidence |
+| --- | --- |
+| "ec hello": the alias row selected, the fallback below | [65-alias-row.png](evidence/linux-x11/65-alias-row.png) |
+| Enter: Echo's answer | [66-alias-answer.png](evidence/linux-x11/66-alias-answer.png) |
+| "zqx": no results, the fallback not selected | [67-fallback-listed.png](evidence/linux-x11/67-fallback-listed.png) |
+| Down and Enter: Echo's answer to "zqx" | [69-fallback-answer.png](evidence/linux-x11/69-fallback-answer.png) |
+| Extension disabled: "ec hello" lists nothing | [70-alias-disabled.png](evidence/linux-x11/70-alias-disabled.png) |
+
+(Screenshots 63 and 64, the extension list after saving the alias and the
+fallback, are checked but not kept here: they show the local package
+paths.)
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms have a text field (GPUI CE's

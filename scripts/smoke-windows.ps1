@@ -616,4 +616,75 @@ python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: Retry changed nothing" }
 Stop-Pane $process
 if (Select-String -Quiet -SimpleMatch '"paused"' (Join-Path $data "extensions/installed.json")) { throw "pause not cleared" }
+# Aliases and fallbacks: in Manage extensions, the query sample's command,
+# Echo, is given the alias "ec" (its row follows the package's state, Reload,
+# Clear cache, Uninstall and hotkey rows) and made a fallback (the next row).
+# In root search, "ec hello" lists the row that sends "hello" to Echo,
+# selected, and Enter shows Echo's answer; text nothing matches lists "No
+# results" with Echo below it, not selected, until Down selects it and Enter
+# sends the text. After a restart with the extension disabled, "ec hello"
+# lists nothing: the same screen as a Pane with nothing installed. Data
+# folders of their own keep the rows in a known order.
+$data = Join-Path $OutDir "aliases-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+$process = Start-Pane "stderr-aliases.log" @("--install", "target/guests/packages/sample-query")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Echo is selected
+Send "{DOWN 10}"   # Manage extensions…
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Send "{DOWN 5}{ENTER}"; Start-Sleep -Seconds 1   # "Alias for Echo"
+Send "ec"
+Send "{ENTER}"; Start-Sleep -Seconds 2
+Capture "63-alias-saved.png"
+Check "63-alias-saved.png" "9fd8a8"   # "Typing “ec” now finds Echo"
+Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2   # "Fallback: Echo"
+Capture "64-fallback-on.png"
+Check "64-fallback-on.png" "9fd8a8"   # "Echo is now offered for any text typed in root search"
+$shots = "63-alias-saved", "64-fallback-on" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the fallback row changed nothing" }
+Send "{ESC}"; Start-Sleep -Seconds 1   # root search
+Send "ec hello"; Start-Sleep -Seconds 1
+Capture "65-alias-row.png"
+Check "65-alias-row.png" "364355" 3000   # Echo, sending “hello”, selected
+Send "{ENTER}"; Start-Sleep -Seconds 3
+Capture "66-alias-answer.png"
+Check "66-alias-answer.png" "9fd8a8"   # "Echo heard “hello”"
+Send "{ESC}"; Start-Sleep -Seconds 1   # clears the query
+Send "zqx"; Start-Sleep -Seconds 1
+Capture "67-fallback-listed.png"   # "No results for “zqx”", then Echo, not selected
+Send "{DOWN}"; Start-Sleep -Seconds 1
+Capture "68-fallback-chosen.png"
+Check "68-fallback-chosen.png" "364355" 3000   # Echo, now selected
+$shots = "67-fallback-listed", "68-fallback-chosen" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: Down did not select the fallback" }
+Send "{ENTER}"; Start-Sleep -Seconds 3
+Capture "69-fallback-answer.png"
+Check "69-fallback-answer.png" "9fd8a8"   # "Echo heard “zqx”"
+$shots = "66-alias-answer", "69-fallback-answer" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the fallback got the alias's text" }
+Stop-Pane $process
+$aliases = Join-Path $data "extensions/aliases.json"
+if (-not (Select-String -Quiet -SimpleMatch '"ec"' $aliases)) { throw "alias not recorded" }
+if (-not (Select-String -Quiet -SimpleMatch '#echo"' $aliases)) { throw "fallback not recorded" }
+$process = Start-Pane "stderr-aliases-restart.log"
+Send "{DOWN 10}"   # Manage extensions…
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Send "{ENTER}"; Start-Sleep -Seconds 2   # disable Query sample
+Send "{ESC}"; Start-Sleep -Seconds 1
+Send "ec hello"; Start-Sleep -Seconds 1
+Capture "70-alias-disabled.png"   # "No results for “ec hello”"
+Stop-Pane $process
+if (-not (Select-String -Quiet -SimpleMatch '"disabled": true' (Join-Path $data "extensions/installed.json"))) { throw "not disabled" }
+$data = Join-Path $OutDir "aliases-empty-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+$process = Start-Pane "stderr-aliases-empty.log"
+Send "ec hello"; Start-Sleep -Seconds 1
+Capture "71-nothing-installed.png"   # "No results for “ec hello”"
+python "$PSScriptRoot/check_screenshot.py" --same (Join-Path $OutDir "70-alias-disabled.png") (Join-Path $OutDir "71-nothing-installed.png")
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: a disabled extension's alias still lists a row" }
+Stop-Pane $process
 Write-Output "screenshots in $OutDir"

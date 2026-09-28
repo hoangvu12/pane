@@ -134,6 +134,15 @@ adapter was only compile- and lint-checked for `x86_64-pc-windows-gnu` from
 Linux; **not run on Windows yet**, so registration, delivery and the focus
 transition (foreground rules) are unverified natively.
 
+## Aliases and fallbacks (#31)
+
+The smoke's alias phase (screenshots 63 to 71, [aliases and fallbacks](../aliases.md#checks))
+gives Echo, the query sample's command, the alias "ec" and makes it a
+fallback in Manage extensions, sends "ec hello" and, from the unselected
+fallback row chosen with Down, "zqx" to it, and checks that with the
+extension disabled "ec hello" lists nothing. Nothing in it is specific to
+Windows (no system API is involved); **not run on Windows yet**.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** the smoke now also opens the Rust command's

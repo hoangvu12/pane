@@ -156,6 +156,15 @@ compile- and lint-checked for `x86_64-apple-darwin` from Linux; **not run
 on macOS yet**, so registration, delivery on the main run loop and the
 focus transition are unverified natively.
 
+## Aliases and fallbacks (#31)
+
+The smoke's alias phase (screenshots 63 to 71, [aliases and fallbacks](../aliases.md#checks))
+gives Echo, the query sample's command, the alias "ec" and makes it a
+fallback in Manage extensions, sends "ec hello" and, from the unselected
+fallback row chosen with Down, "zqx" to it, and checks that with the
+extension disabled "ec hello" lists nothing. Nothing in it is specific to
+macOS (no system API is involved); **not run on macOS yet**.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms now have a text field. The
