@@ -435,7 +435,7 @@ paths.)
 
 ### Dependencies (#42)
 
-The last phase, after the alias phase ([dependencies](../dependencies.md#checks)), with a data
+The phase after the alias phase ([dependencies](../dependencies.md#checks)), with a data
 folder of its own, previews the dependencies sample, which requires the
 JavaScript operations sample (`local:../sample-operations-js`) and can use
 the Rust one (optional); the preview lists both. Enter on Install installs
@@ -450,6 +450,31 @@ lavapipe setup): all checks of the whole smoke passed.
 | The preview: "Requires: JavaScript operations sample, installed with it from local:../sample-operations-js", "Optional: `rust-greeter` from local:../sample-operations, not installed: …" and the Install row | [75-dependencies-preview-cropped.png](evidence/linux-x11/75-dependencies-preview-cropped.png) (cropped below the title and the Source line, which shows the local checkout path; the smoke checks the whole frame) |
 | "Installed Dependencies sample with JavaScript operations sample, which it requires", its command selected | [76-dependencies-installed.png](evidence/linux-x11/76-dependencies-installed.png) |
 | "Hello, Pane, from JavaScript", from the dependency's guest | [77-dependency-answer.png](evidence/linux-x11/77-dependency-answer.png) |
+
+### Disabling required dependents (#43)
+
+A phase of its own, after the dependencies phase, with its own data folder
+([disabling a required dependency](../dependencies.md#disabling-a-required-dependency)),
+installs the dependencies sample with the JavaScript operations sample,
+opens Manage extensions and presses Enter on the JavaScript operations
+sample (the first row). Pane asks first, listing the Dependencies sample;
+Down and Enter (Cancel) returns to the list with both enabled; Enter and
+Enter (Disable all 2) disables both; Enter again enables the JavaScript
+operations sample alone. Afterwards `installed.json` must record exactly one
+disabled package. Run locally on 2026-09-28 (same Ubuntu 26.04.1 / Xvfb /
+lavapipe setup): all checks of the whole smoke passed, and frames 140 to
+143 were looked at.
+
+| Step | Evidence |
+| --- | --- |
+| The question: "Disable JavaScript operations sample and the extensions that require it?", "Dependencies sample, which requires JavaScript operations sample", Disable all 2 selected | [140-disable-dependents-asked-masked.png](evidence/linux-x11/140-disable-dependents-asked-masked.png) |
+| Disable all: both rows "Disabled", "Disabled JavaScript operations sample and Dependencies sample, which requires it" | [142-disable-dependents-disabled-masked.png](evidence/linux-x11/142-disable-dependents-disabled-masked.png) |
+| Enter: "Enabled JavaScript operations sample"; the Dependencies sample stays "Disabled" | [143-disable-dependents-enabled-alone-masked.png](evidence/linux-x11/143-disable-dependents-enabled-alone-masked.png) |
+
+(The kept frames are cropped to Pane's window and the local package paths
+are painted over with the background; the smoke checks the whole frames.
+Frame 141, the list after Cancel with both enabled, is checked to differ
+from the others but not kept, as it shows those paths.)
 
 ## Text input and accessibility findings
 

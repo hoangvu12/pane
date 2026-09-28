@@ -160,6 +160,10 @@ _Avoid_: Library dependency (an npm or Cargo library bundled into a component), 
 A dependency a package needs: installing the package shows it and installs it first if it is missing, but never replaces an installed copy (which counts as pinned) or enables a disabled one; a required dependency that cannot be installed or does not publish what is called stops the install before anything changes.
 _Avoid_: Hard dependency, prerequisite
 
+**Required dependent**:
+An installed package that requires another on this system, directly or through other installed packages that do (its required dependent closure; optional dependencies never count). Disabling the package it requires first shows the enabled ones, which are disabled together or not at all (Disable all or Cancel); enabling that package again does not enable them.
+_Avoid_: Reverse dependency, child extension
+
 **Optional dependency**:
 A dependency a package uses only when the user installed it; installing the package lists it but never installs it.
 _Avoid_: Soft dependency, suggestion, recommended extension

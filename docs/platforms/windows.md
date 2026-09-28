@@ -157,7 +157,7 @@ Windows (no system API is involved); **not run on Windows yet**.
 
 ## Dependencies (#42)
 
-The smoke's last phase (screenshots 75 to 77, [dependencies](../dependencies.md#checks)),
+The smoke's dependencies phase (screenshots 75 to 77, [dependencies](../dependencies.md#checks)),
 with a data folder of its own, previews the dependencies sample (its
 required JavaScript operations sample and optional Rust one listed),
 installs it with the JavaScript sample and runs "Greet through the required
@@ -168,6 +168,18 @@ resolved with the same `canonicalize` (without the `\\?\` prefix) as
 package identity; a folder that does not exist is resolved from its
 spelling. **Not run on Windows yet**, so `..` across drive-letter and UNC
 paths is untested natively.
+
+## Disabling required dependents (#43)
+
+The smoke's phase after it (screenshots 140 to 143, [disabling a required dependency](../dependencies.md#disabling-a-required-dependency)),
+with a data folder of its own, installs the dependencies sample, presses
+Enter on the JavaScript operations sample in Manage extensions, which must
+ask first (the details color), cancels, then chooses Disable all (the
+result color) and enables the JavaScript sample again alone (the result
+color); `installed.json` must then record exactly one disabled package.
+Nothing in it is specific to Windows (no system API is involved; the
+closure reuses the dependency identities recorded at install); **not run on
+Windows yet**.
 
 ## Text input and accessibility findings
 
