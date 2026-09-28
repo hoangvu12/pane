@@ -85,6 +85,7 @@ fn guests() -> Result<(), String> {
                 "calculator",
                 "applications",
                 "quicklinks",
+                "clipboard_history",
                 "sample_operations",
                 "sample_dependencies",
                 "sample_query",
@@ -177,7 +178,7 @@ fn echo_helper(root: &Path, out: &Path) -> Result<(), String> {
 /// (package folder in `guests/packages`, component) of each sample package,
 /// and of the default extensions (the calculator, applications and
 /// quicklinks).
-const SAMPLE_PACKAGES: [(&str, &str); 21] = [
+const SAMPLE_PACKAGES: [(&str, &str); 22] = [
     ("sample-rust", "sample_rust"),
     ("sample-settings", "sample_settings"),
     ("sample-js", "sample_js"),
@@ -187,6 +188,7 @@ const SAMPLE_PACKAGES: [(&str, &str); 21] = [
     ("calculator", "calculator"),
     ("applications", "applications"),
     ("quicklinks", "quicklinks"),
+    ("clipboard-history", "clipboard_history"),
     ("sample-operations", "sample_operations"),
     ("sample-operations-js", "sample_operations_js"),
     ("sample-operations-ts", "sample_operations_ts"),

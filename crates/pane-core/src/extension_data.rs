@@ -1,6 +1,7 @@
 //! Extension data: the values an installed package's commands save through
 //! Pane, string values by key, of four kinds, each through its own
-//! `pane:extension` interface (`wit/data.wit`).
+//! `pane:extension` interface (`wit/data.wit`), and the package's clipboard
+//! history, which Pane keeps for it (`wit/clipboard.wit`, see `clipboard`).
 //!
 //! | Kind | File | Clear cache | Uninstall | Readable by |
 //! |---|---|---|---|---|
@@ -8,6 +9,7 @@
 //! | Content | `content.json` | kept | the user's choice | default |
 //! | Cache | `cache.json` | removed | removed | default |
 //! | Local credentials | `credentials.json` | kept | removed | the user only (Unix: 0600) |
+//! | Clipboard history | `clipboard-history.json` | kept | the user's choice | the user only (Unix: 0600) |
 //!
 //! Each kind has one file next to `installed.json`, holding every package's
 //! values under the package identity's key, so they belong to the source
@@ -27,6 +29,7 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 
 use crate::atomic::{Readers, write_atomically};
+use crate::clipboard::{self, CaptureState, Observation};
 use crate::generation::{End, Generation};
 use crate::packages::{PackageIdentity, SavedData};
 
@@ -44,14 +47,27 @@ pub(crate) enum DataKind {
     Cache,
     /// Secrets kept on this computer, such as a sign-in token.
     LocalCredentials,
+    /// The text the user copied while the package kept clipboard history,
+    /// and whether it keeps it; written by Pane, never by the package's
+    /// code directly (see `clipboard`).
+    ClipboardHistory,
 }
 
 impl DataKind {
-    pub const ALL: [DataKind; 4] = [
+    pub const ALL: [DataKind; 5] = [
         DataKind::Settings,
         DataKind::Content,
         DataKind::Cache,
         DataKind::LocalCredentials,
+        DataKind::ClipboardHistory,
+    ];
+
+    /// The kinds that are a package's saved data: what the user chooses to
+    /// keep or delete when uninstalling it.
+    pub const SAVED: [DataKind; 3] = [
+        DataKind::Settings,
+        DataKind::Content,
+        DataKind::ClipboardHistory,
     ];
 
     /// All of a package's values of this kind, as people call them.
@@ -61,6 +77,7 @@ impl DataKind {
             DataKind::Content => "its content",
             DataKind::Cache => "its cache",
             DataKind::LocalCredentials => "its credentials",
+            DataKind::ClipboardHistory => "its clipboard history",
         }
     }
 
@@ -70,13 +87,15 @@ impl DataKind {
             DataKind::Content => "content.json",
             DataKind::Cache => "cache.json",
             DataKind::LocalCredentials => "credentials.json",
+            DataKind::ClipboardHistory => "clipboard-history.json",
         }
     }
 
-    /// Who may read this kind's file: local credentials are secrets.
+    /// Who may read this kind's file: local credentials are secrets, and
+    /// copied text may be.
     fn readers(self) -> Readers {
         match self {
-            DataKind::LocalCredentials => Readers::OwnerOnly,
+            DataKind::LocalCredentials | DataKind::ClipboardHistory => Readers::OwnerOnly,
             DataKind::Settings | DataKind::Content | DataKind::Cache => Readers::Default,
         }
     }
@@ -88,6 +107,7 @@ impl DataKind {
             DataKind::Content => "the content",
             DataKind::Cache => "the cache value",
             DataKind::LocalCredentials => "the credential",
+            DataKind::ClipboardHistory => "the clipboard history",
         }
     }
 
@@ -99,6 +119,7 @@ impl DataKind {
             DataKind::Content => ("content record", "content records"),
             DataKind::Cache => ("cache value", "cache values"),
             DataKind::LocalCredentials => ("credential", "credentials"),
+            DataKind::ClipboardHistory => ("clipboard history item", "clipboard history items"),
         }
     }
 
@@ -109,6 +130,7 @@ impl DataKind {
             DataKind::Content => "its content is kept unchanged",
             DataKind::Cache => "its cache is kept unchanged",
             DataKind::LocalCredentials => "its credentials are kept unchanged",
+            DataKind::ClipboardHistory => "its clipboard history is kept unchanged",
         }
     }
 }
@@ -151,12 +173,19 @@ struct DataFile {
     content: KindFile,
     cache: KindFile,
     local_credentials: KindFile,
+    clipboard_history: KindFile,
     /// The current generation of each package by identity key; a disabled
     /// package's has ended, so its commands may not run or save values. The
     /// launcher keeps it in step with its packages; the runtime reads it
     /// here, on its own thread.
     generations: HashMap<String, Generation>,
+    /// Told after a generation or a clipboard capture state changed, with
+    /// the files unlocked (see `clipboard::Capture`).
+    changed: Option<Changed>,
 }
+
+/// What [`ExtensionData::set_changed`] calls.
+pub(crate) type Changed = Arc<dyn Fn() + Send + Sync>;
 
 impl DataFile {
     fn of(&mut self, kind: DataKind) -> &mut KindFile {
@@ -165,6 +194,7 @@ impl DataFile {
             DataKind::Content => &mut self.content,
             DataKind::Cache => &mut self.cache,
             DataKind::LocalCredentials => &mut self.local_credentials,
+            DataKind::ClipboardHistory => &mut self.clipboard_history,
         }
     }
 }
@@ -183,7 +213,9 @@ impl ExtensionData {
             content: KindFile::open(dir, DataKind::Content),
             cache: KindFile::open(dir, DataKind::Cache),
             local_credentials: KindFile::open(dir, DataKind::LocalCredentials),
+            clipboard_history: KindFile::open(dir, DataKind::ClipboardHistory),
             generations: HashMap::new(),
+            changed: None,
         })))
     }
 
@@ -219,6 +251,8 @@ impl ExtensionData {
         } else if current.ended().is_some() {
             *current = Generation::new();
         }
+        drop(file);
+        self.notify();
     }
 
     /// Notes that Pane paused the package with `identity` after it failed:
@@ -230,6 +264,7 @@ impl ExtensionData {
             .entry(identity.key())
             .or_insert_with(Generation::new)
             .end(End::Paused);
+        self.notify();
     }
 
     /// Runs the package with `identity` again in a new generation, if Pane
@@ -241,6 +276,8 @@ impl ExtensionData {
         {
             *current = Generation::new();
         }
+        drop(file);
+        self.notify();
     }
 
     /// Notes that the code of the package with `identity` was replaced (a
@@ -261,6 +298,8 @@ impl ExtensionData {
             Some(End::Paused) => *current = Generation::new(),
             Some(_) => {}
         }
+        drop(file);
+        self.notify();
     }
 
     /// Notes that the package with `identity` is being uninstalled: its
@@ -274,6 +313,8 @@ impl ExtensionData {
             .entry(identity.key())
             .or_insert_with(Generation::new);
         end_as(current, End::Uninstalled);
+        drop(file);
+        self.notify();
     }
 
     /// Puts back the package with `identity` after its uninstall could not
@@ -284,6 +325,79 @@ impl ExtensionData {
             generation.end(End::Disabled);
         }
         self.lock().generations.insert(identity.key(), generation);
+        self.notify();
+    }
+
+    /// Has `changed` called after each change of a package's generation or
+    /// clipboard capture state, with the files unlocked.
+    pub fn set_changed(&self, changed: Changed) {
+        self.lock().changed = Some(changed);
+    }
+
+    /// Calls what [`ExtensionData::set_changed`] set, if anything.
+    fn notify(&self) {
+        let changed = self.lock().changed.clone();
+        if let Some(changed) = changed {
+            changed();
+        }
+    }
+
+    /// The identity keys whose code may run now: their generation has not
+    /// ended.
+    fn running(file: &DataFile) -> Vec<String> {
+        file.generations
+            .iter()
+            .filter(|(_, generation)| generation.ended().is_none())
+            .map(|(owner, _)| owner.clone())
+            .collect()
+    }
+
+    /// Whether some package keeps clipboard history now: its capture is on
+    /// and its code may run.
+    pub fn capturing(&self) -> bool {
+        let mut file = self.lock();
+        let running = ExtensionData::running(&file);
+        let Ok(history) = &file.of(DataKind::ClipboardHistory).file else {
+            return false;
+        };
+        history.packages.iter().any(|(owner, values)| {
+            running.contains(owner) && clipboard::capture_state(values) == CaptureState::On
+        })
+    }
+
+    /// Keeps what `observation` saw copied at `now` for each package that
+    /// keeps clipboard history now and accepts it ([`clipboard::accept`]).
+    /// Nothing is kept if the file cannot be read or written; what was
+    /// copied is never reported.
+    pub fn capture(&self, observation: &Observation, now: u64) {
+        let mut file = self.lock();
+        let running = ExtensionData::running(&file);
+        let data = file.of(DataKind::ClipboardHistory);
+        let Ok(history) = &data.file else {
+            return;
+        };
+        let mut updated = history.clone();
+        let mut changed = false;
+        for (owner, values) in &mut updated.packages {
+            if !running.contains(owner) || clipboard::capture_state(values) != CaptureState::On {
+                continue;
+            }
+            let excluded = clipboard::excluded(values);
+            if let Ok(text) = clipboard::accept(observation, &excluded) {
+                clipboard::add(values, text, observation.source.as_deref(), now);
+                changed = true;
+            }
+        }
+        if !changed {
+            return;
+        }
+        match data.write(&updated) {
+            Ok(()) => data.file = Ok(updated),
+            Err(error) => eprintln!(
+                "Pane could not keep a copied text in {}: {error}",
+                data.path.display()
+            ),
+        }
     }
 
     /// Removes every cache value of the package with `identity`, and nothing
@@ -309,15 +423,16 @@ impl ExtensionData {
     }
 
     /// Removes the data of an uninstalled package with `identity`, without
-    /// running it: its cache and local credentials, and its settings and
-    /// content too when `saved` is [`SavedData::Delete`]. Each kind is
+    /// running it: its cache and local credentials, and its saved data
+    /// (settings, content and clipboard history) too when `saved` is
+    /// [`SavedData::Delete`]. Each kind is
     /// removed on its own, as [`ExtensionData::clear_cache`] removes the
     /// cache. Returns why each kind that could not be removed was not; its
     /// values remain where they were.
     pub fn remove_uninstalled(&self, identity: &PackageIdentity, saved: SavedData) -> Vec<String> {
         let mut kinds = vec![DataKind::Cache, DataKind::LocalCredentials];
         if saved == SavedData::Delete {
-            kinds.extend([DataKind::Settings, DataKind::Content]);
+            kinds.extend(DataKind::SAVED);
         }
         self.remove_kinds(identity, &kinds)
     }
@@ -434,9 +549,20 @@ impl Kept {
             .iter()
             .filter_map(|(kind, file)| {
                 let (one, many) = kind.counted();
-                let count = file
-                    .as_ref()
-                    .map(|file| file.packages.get(&key).map_or(0, BTreeMap::len));
+                let values = file.as_ref().map(|file| file.packages.get(&key));
+                if *kind == DataKind::ClipboardHistory
+                    && let Ok(Some(values)) = values
+                    && !values.is_empty()
+                    && clipboard::count(values) == 0
+                {
+                    // Only whether it keeps history, and the excluded programs.
+                    return Some("clipboard history settings".into());
+                }
+                let count = values.map(|values| match (kind, values) {
+                    (_, None) => 0,
+                    (DataKind::ClipboardHistory, Some(values)) => clipboard::count(values),
+                    (_, Some(values)) => values.len(),
+                });
                 match count {
                     Ok(0) => None,
                     Ok(1) => Some(format!("1 {one}")),
@@ -531,6 +657,49 @@ impl PackageData {
         data.file = Ok(updated);
         Ok(())
     }
+
+    /// Hands `change` this package's clipboard history values (see
+    /// `clipboard`) and keeps what it changed, unless this data's
+    /// generation has ended: stopped code reads and changes nothing more. A
+    /// change of the capture state then starts or stops watching the
+    /// clipboard (see [`ExtensionData::set_changed`]).
+    pub fn clipboard<R>(
+        &self,
+        change: impl FnOnce(&mut BTreeMap<String, String>) -> Result<R, String>,
+    ) -> Result<R, String> {
+        let mut store = self.data.lock();
+        if let Some(refusal) = self.refusal() {
+            return Err(refusal.into());
+        }
+        let data = store.of(DataKind::ClipboardHistory);
+        let file = data.file.as_ref().map_err(Clone::clone)?;
+        let before = file.packages.get(&self.owner).cloned().unwrap_or_default();
+        let mut values = before.clone();
+        let answer = change(&mut values)?;
+        if values == before {
+            return Ok(answer);
+        }
+        let capture_changed =
+            clipboard::capture_state(&values) != clipboard::capture_state(&before);
+        let mut updated = file.clone();
+        if values.is_empty() {
+            updated.packages.remove(&self.owner);
+        } else {
+            updated.packages.insert(self.owner.clone(), values);
+        }
+        data.write(&updated).map_err(|error| {
+            format!(
+                "Could not save {}: {error}",
+                DataKind::ClipboardHistory.value()
+            )
+        })?;
+        data.file = Ok(updated);
+        drop(store);
+        if capture_changed {
+            self.data.notify();
+        }
+        Ok(answer)
+    }
 }
 
 /// Ends `current` for `why`. A generation Pane paused is replaced by one
@@ -570,6 +739,63 @@ fn read(path: &Path) -> Result<DataJson, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Clipboard history is kept exactly while the package's capture is on
+    /// and its code may run, and each change says so.
+    #[test]
+    fn clipboard_history_is_kept_only_while_on_and_running() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let dir = tempfile::tempdir().unwrap();
+        let data = ExtensionData::open(dir.path());
+        let identity = PackageIdentity::local(dir.path()).unwrap();
+        let changes = Arc::new(AtomicUsize::new(0));
+        let counted = changes.clone();
+        data.set_changed(Arc::new(move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+        }));
+        data.set_enabled(&identity, true);
+        let copied = |text: &str| Observation {
+            content: clipboard::Content::Text(text.into()),
+            markers: clipboard::Markers::default(),
+            source: None,
+        };
+        let kept = |data: &ExtensionData| {
+            data.owned_by(&identity)
+                .clipboard(|values| Ok(clipboard::items(values).len()))
+                .unwrap()
+        };
+        data.capture(&copied("off"), 1);
+        assert!(!data.capturing());
+        assert_eq!(kept(&data), 0);
+
+        let before = changes.load(Ordering::SeqCst);
+        data.owned_by(&identity)
+            .clipboard(|values| {
+                clipboard::set_capture_state(values, CaptureState::On);
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(changes.load(Ordering::SeqCst), before + 1);
+        assert!(data.capturing());
+        data.capture(&copied("on"), 2);
+        assert_eq!(kept(&data), 1);
+
+        for stop in [
+            ExtensionData::pause as fn(&ExtensionData, &PackageIdentity),
+            ExtensionData::uninstall,
+        ] {
+            stop(&data, &identity);
+            assert!(!data.capturing());
+            data.capture(&copied("stopped"), 3);
+            data.reinstate(&identity, true);
+            assert!(data.capturing());
+        }
+        data.replace_code(&identity);
+        assert!(data.capturing());
+        assert_eq!(kept(&data), 1);
+        let file = fs::read_to_string(dir.path().join("clipboard-history.json")).unwrap();
+        assert!(!file.contains("stopped") && !file.contains("off"));
+    }
 
     /// Code whose generation ended reads and saves nothing more, even though a newer
     /// generation of the same package may.

@@ -46,7 +46,7 @@ use supervisor::{NotSent, Shared};
 pub(crate) mod bindings {
     wasmtime::component::bindgen!({
         path: "../../wit",
-        world: "extension-with-helpers",
+        world: "extension-with-clipboard",
         imports: { "pane:extension/operations": store, "pane:extension/helpers": store },
         exports: { default: async | store },
     });
@@ -90,11 +90,14 @@ mod operations_bindings {
 }
 
 use bindings::exports::pane::extension::command;
-use bindings::pane::extension::{applications, cache, content, credentials, settings};
+use bindings::pane::extension::{
+    applications, cache, clipboard_history, content, credentials, settings,
+};
 use indexed_bindings::exports::pane::extension::indexed_results;
 use root_bindings::exports::pane::extension::root_results;
 
 use crate::applications::Applications;
+use crate::clipboard::{self, Capture, CaptureState};
 use crate::extension_data::{DataKind, PackageData};
 use crate::generation::{End, Generation};
 use crate::helpers;
@@ -172,6 +175,11 @@ pub(crate) struct Exports {
 /// The system's applications as the runtime's guests and the launcher see
 /// them; replaceable, for tests.
 type SharedApplications = Arc<Mutex<Arc<dyn Applications>>>;
+
+/// Where the runtime's guests keep clipboard history, once the launcher
+/// said (see [`Runtime::set_clipboard`]); held weakly, since the launcher
+/// owns it and Pane stops watching the clipboard once it is dropped.
+type SharedClipboard = Arc<Mutex<Option<std::sync::Weak<Capture>>>>;
 
 /// The installed packages as the launcher has them, once it has said, for
 /// resolving operation calls and finding a guest's helpers.
@@ -804,6 +812,13 @@ impl Runtime {
         lock(&self.shared.applications).clone()
     }
 
+    /// Has the runtime's guests keep clipboard history through `capture`
+    /// from now on; until then they are told that this Pane does not watch
+    /// the clipboard.
+    pub(crate) fn set_clipboard(&self, capture: &Arc<Capture>) {
+        *lock(&self.shared.clipboard) = Some(Arc::downgrade(capture));
+    }
+
     /// Asks the command in `component`, which computes root results, for
     /// its results for `query`; the command reads and saves `data`.
     /// Starts its instance if it has none.
@@ -1108,6 +1123,8 @@ pub(crate) struct GuestState {
     pub(crate) serving: bool,
     /// Finds and opens the system's applications for the guest.
     applications: SharedApplications,
+    /// Keeps clipboard history for the guest's package.
+    clipboard: SharedClipboard,
     /// The installed packages, for finding the guest's helpers.
     directory: SharedDirectory,
     /// The runtime's helper processes; those of this instance are ended
@@ -1235,6 +1252,112 @@ impl applications::Host for GuestState {
     }
 }
 
+impl GuestState {
+    /// The data of the guest's package, which keeps its clipboard history.
+    fn history(&self) -> Result<&PackageData, String> {
+        self.data.as_ref().ok_or_else(|| {
+            "only installed packages keep clipboard history; this command is built into Pane".into()
+        })
+    }
+
+    /// Where the guest's package keeps clipboard history, and its data; or
+    /// why it cannot.
+    fn clipboard(&self) -> Result<(Arc<Capture>, &PackageData), String> {
+        let data = self.history()?;
+        let capture = lock(&self.clipboard)
+            .as_ref()
+            .and_then(std::sync::Weak::upgrade)
+            .ok_or_else(|| clipboard::none().unavailable().unwrap_or_default())?;
+        Ok((capture, data))
+    }
+}
+
+fn to_capture(state: CaptureState) -> clipboard_history::Capture {
+    match state {
+        CaptureState::Off => clipboard_history::Capture::Off,
+        CaptureState::On => clipboard_history::Capture::On,
+        CaptureState::Paused => clipboard_history::Capture::Paused,
+    }
+}
+
+impl clipboard_history::Host for GuestState {
+    fn status(&mut self) -> Result<clipboard_history::HistoryStatus, String> {
+        let data = self.history()?;
+        let problem = match self.clipboard() {
+            Ok((capture, _)) => capture.problem(),
+            Err(problem) => Some(problem),
+        };
+        let (state, excluded, items) = data.clipboard(|values| {
+            Ok((
+                clipboard::capture_state(values),
+                clipboard::excluded(values),
+                clipboard::count(values),
+            ))
+        })?;
+        Ok(clipboard_history::HistoryStatus {
+            capture: to_capture(state),
+            problem,
+            excluded,
+            items: u32::try_from(items).unwrap_or(u32::MAX),
+        })
+    }
+
+    fn set_capture(&mut self, wanted: clipboard_history::Capture) -> Result<(), String> {
+        let (capture, data) = self.clipboard()?;
+        let state = match wanted {
+            clipboard_history::Capture::Off => CaptureState::Off,
+            clipboard_history::Capture::On => CaptureState::On,
+            clipboard_history::Capture::Paused => CaptureState::Paused,
+        };
+        if state == CaptureState::On
+            && let Some(reason) = capture.system().unavailable()
+        {
+            return Err(reason);
+        }
+        data.clipboard(|values| {
+            clipboard::set_capture_state(values, state);
+            Ok(())
+        })
+    }
+
+    fn set_excluded(&mut self, programs: Vec<String>) -> Result<(), String> {
+        let data = self.history()?;
+        data.clipboard(|values| clipboard::set_excluded(values, &programs))
+    }
+
+    fn entries(&mut self) -> Result<Vec<clipboard_history::Entry>, String> {
+        let data = self.history()?;
+        let now = clipboard::now();
+        let items = data.clipboard(|values| Ok(clipboard::items(values)))?;
+        Ok(items
+            .into_iter()
+            .map(|item| clipboard_history::Entry {
+                id: item.id,
+                text: item.text,
+                copied_at: item.copied_at,
+                age_seconds: now.saturating_sub(item.copied_at) / 1000,
+                source: item.source,
+            })
+            .collect())
+    }
+
+    fn copy(&mut self, id: String) -> Result<(), String> {
+        let (capture, data) = self.clipboard()?;
+        let items = data.clipboard(|values| Ok(clipboard::items(values)))?;
+        let item = items
+            .into_iter()
+            .find(|item| item.id == id)
+            .ok_or("that item is no longer kept")?;
+        capture.system().write_text(&item.text)
+    }
+
+    fn clear(&mut self) -> Result<u32, String> {
+        let data = self.history()?;
+        let cleared = data.clipboard(|values| Ok(clipboard::clear(values)))?;
+        Ok(u32::try_from(cleared).unwrap_or(u32::MAX))
+    }
+}
+
 impl WasiView for GuestState {
     fn ctx(&mut self) -> WasiCtxView<'_> {
         WasiCtxView {
@@ -1247,7 +1370,7 @@ impl WasiView for GuestState {
 /// A running guest instance of one component.
 struct Instance {
     store: Store<GuestState>,
-    bindings: bindings::ExtensionWithHelpers,
+    bindings: bindings::ExtensionWithClipboard,
     /// Its root results export, if it has one.
     root_results: Option<root_bindings::RootResultsProvider>,
     /// Its indexed results export, if it has one.
@@ -1308,6 +1431,8 @@ struct Host {
     owners: Vec<Generation>,
     /// Finds and opens the system's applications for guests.
     applications: SharedApplications,
+    /// Keeps clipboard history for guests' packages.
+    clipboard: SharedClipboard,
 }
 
 impl Code {
@@ -1336,6 +1461,11 @@ impl Code {
             state
         })
         .expect("registering applications in a fresh linker cannot conflict");
+        clipboard_history::add_to_linker::<_, wasmtime::component::HasSelf<_>>(
+            &mut linker,
+            |state| state,
+        )
+        .expect("registering clipboard history in a fresh linker cannot conflict");
         bindings::pane::extension::helpers::add_to_linker::<_, helpers::Runs>(
             &mut linker,
             |state| state,
@@ -1449,7 +1579,7 @@ impl Code {
                 ))
             })?;
         }
-        bindings::ExtensionWithHelpersPre::new(pre).map_err(interface)?;
+        bindings::ExtensionWithClipboardPre::new(pre).map_err(interface)?;
         Ok(())
     }
 }
@@ -1474,6 +1604,7 @@ impl Host {
             chain: Vec::new(),
             owners: Vec::new(),
             applications: shared.applications.clone(),
+            clipboard: shared.clipboard.clone(),
         }
     }
 
@@ -2184,6 +2315,7 @@ impl Host {
                 calls: self.calls.clone(),
                 serving: false,
                 applications: self.applications.clone(),
+                clipboard: self.clipboard.clone(),
                 directory: self.directory.clone(),
                 owner: self.helpers.new_owner(),
                 helpers: self.helpers.clone(),
@@ -2196,7 +2328,8 @@ impl Host {
             .instantiate_async(&mut store, &component)
             .await
             .map_err(load)?;
-        let bindings = bindings::ExtensionWithHelpers::new(&mut store, &instance).map_err(load)?;
+        let bindings =
+            bindings::ExtensionWithClipboard::new(&mut store, &instance).map_err(load)?;
         // Only a command that computes root results exports them.
         let root_results = root_bindings::RootResultsProvider::new(&mut store, &instance).ok();
         // Only a command that supplies results ahead of the query exports

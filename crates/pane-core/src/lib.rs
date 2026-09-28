@@ -4,6 +4,7 @@
 pub mod applications;
 mod atomic;
 pub mod changes;
+pub mod clipboard;
 mod dependencies;
 pub mod develop;
 mod extension_data;

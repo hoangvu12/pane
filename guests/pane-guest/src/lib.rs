@@ -8,8 +8,9 @@
 //! operations other packages publish with [`operations::call`], serve those
 //! its own package publishes with [`publish`], find and open installed
 //! applications with [`applications`], supply root results ahead of the
-//! query with [`indexed`] and run its package's native helpers with
-//! [`helpers`]. The crate is
+//! query with [`indexed`], run its package's native helpers with
+//! [`helpers`] and keep clipboard history with [`clipboard_history`]. The
+//! crate is
 //! `no_std` so the component imports only WASI 0.3 interfaces; it supplies the
 //! allocator and a panic handler that traps, which the host reports as a
 //! runtime error.
@@ -137,6 +138,24 @@ pub mod applications {
     });
 
     pub use pane::extension::applications::{Application, installed, open};
+}
+
+/// Clipboard history (`pane:extension/clipboard-history`), which Pane keeps
+/// for the command's package once the user turned it on: plain text the
+/// user copies while the package runs and the history is not paused, except
+/// what the copying application marked as not to be kept or what came from
+/// a program the user excluded. [`clipboard_history::set_capture`] turns it
+/// on, off or pauses it; [`clipboard_history::entries`] lists what is kept.
+pub mod clipboard_history {
+    wit_bindgen::generate!({
+        path: "../../wit",
+        world: "clipboard-history-user",
+        default_bindings_module: "pane_guest::clipboard_history",
+    });
+
+    pub use pane::extension::clipboard_history::{
+        Capture, Entry, HistoryStatus, clear, copy, entries, set_capture, set_excluded, status,
+    };
 }
 
 /// Native helpers (`pane:extension/helpers`): prebuilt programs the
