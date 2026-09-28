@@ -1340,11 +1340,20 @@ impl Launcher {
         }
     }
 
-    /// Updates the installed packages on screen after one was enabled or
-    /// disabled; the rows stay in place, and so does the selection.
+    /// Updates the installed packages on screen after one changed, keeping
+    /// the selection on the same row.
     fn refresh_extensions(&self, state: &mut State) {
         let (rows, entries) = extension_rows(&state.packages, &state.failed);
+        // The same row stays selected; if it is gone (a Retry row once the
+        // package started), the row before it.
+        let selected = state.view.selected.and_then(|index| {
+            let id = &state.view.rows.get(index)?.id;
+            rows.iter()
+                .position(|row| row.id == *id)
+                .or_else(|| Some(index.saturating_sub(1).min(rows.len().checked_sub(1)?)))
+        });
         state.entries = entries;
+        state.view.selected = selected.or_else(|| first_index(&rows));
         state.view.rows = rows;
     }
 

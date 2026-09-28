@@ -307,6 +307,12 @@ fn a_replacement_that_fails_to_start_is_reported_and_retried() {
         Status::Result("Started Dev".into())
     );
     assert!(!titles(&launcher).iter().any(|t| t.starts_with("Retry")));
+    // The Retry row is gone; the selection moves to the Reload row before it.
+    let view = launcher.view();
+    assert_eq!(
+        view.selected.map(|index| view.rows[index].title.as_str()),
+        Some("Reload Dev")
+    );
     assert_eq!(open(&launcher, "Open Dev"), "Started");
 
     // Fixing it and reloading works as ever.
