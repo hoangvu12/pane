@@ -2,8 +2,8 @@
 # Native GUI smoke on X11: starts a virtual X server (Xvfb), launches Pane,
 # drives it with real key events and captures screenshots.
 #
-# Requires Xvfb, xdotool and either ImageMagick (`import`) or Python 3 with
-# Pillow for screenshots, plus a Vulkan driver (Mesa's lavapipe works without
+# Requires Xvfb, xdotool, Python 3 with Pillow (screenshot checks and, without
+# ImageMagick's `import`, capture), plus a Vulkan driver (Mesa's lavapipe works without
 # a GPU). Set PANE_XVFB / PANE_XDOTOOL to use binaries outside PATH.
 # Usage: scripts/smoke-linux.sh <output-dir> [pane-binary]
 set -euo pipefail
@@ -39,12 +39,14 @@ capture() {
 pane_pid=$!
 window=
 for _ in $(seq 100); do
-  window=$("$xdotool" search --pid "$pane_pid" 2>/dev/null | head -1) && [ -n "$window" ] && break
+  window=$("$xdotool" search --onlyvisible --pid "$pane_pid" 2>/dev/null | head -1) && [ -n "$window" ] && break
   sleep 0.2
 done
 [ -n "$window" ] || { echo "Pane window did not appear"; exit 1; }
 sleep 2
 capture 1-root.png
+check() { python3 "$(dirname "$0")/check_screenshot.py" "$out/$1" "$2"; }
+check 1-root.png 8a96a3   # the hint line: text renders
 "$xdotool" windowfocus --sync "$window"
 
 # Open each sample command (Rust, JavaScript, TypeScript) and run an item.
@@ -54,6 +56,7 @@ for index in 0 1 2; do
   capture "$((index + 2))-command-$index.png"
   "$xdotool" key Down key Return; sleep 2
   capture "$((index + 2))-result-$index.png"
+  check "$((index + 2))-result-$index.png" 9fd8a8   # the guest's answer
   "$xdotool" key Escape; sleep 1
 done
 capture 5-back-to-root.png
