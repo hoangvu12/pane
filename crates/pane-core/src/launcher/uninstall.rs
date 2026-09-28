@@ -32,7 +32,7 @@ use super::{
 };
 use crate::extension_data::{DataKind, ExtensionData};
 use crate::packages::{
-    InstalledPackage, Leftover, PackageError, PackageIdentity, RetainedData, SavedData,
+    InstalledPackage, Leftover, PackageError, PackageIdentity, Pause, RetainedData, SavedData,
 };
 
 /// An uninstall begun by [`Launcher::begin_uninstall`]: the package, already
@@ -42,6 +42,8 @@ pub(super) struct Uninstall {
     package: InstalledPackage,
     index: usize,
     saved: SavedData,
+    /// Why Pane had paused it, if it had.
+    pause: Option<Pause>,
 }
 
 impl Launcher {
@@ -178,7 +180,9 @@ impl Launcher {
             }
             runtime.forget(all);
         }
-        state.failed.forget(&identity);
+        // Its pause goes with it, in memory only: if the uninstall cannot be
+        // recorded, it is put back, as `installed.json` still has it.
+        let pause = state.paused.forget(&identity);
         // Its hotkeys are released now, and forgotten once it is uninstalled.
         self.sync_hotkeys(state);
         // Its results kept for root search go, and so does an answer from it
@@ -198,6 +202,7 @@ impl Launcher {
             package,
             index,
             saved,
+            pause,
         })
     }
 
@@ -209,6 +214,7 @@ impl Launcher {
             package,
             index,
             saved,
+            pause,
         } = uninstall;
         let identity = package.identity.clone();
         let title = package.title();
@@ -241,6 +247,11 @@ impl Launcher {
                 let at = index.min(state.packages.len());
                 state.packages.insert(at, package);
                 installation.data.reinstate(&identity, enabled);
+                // Still paused, as `installed.json` still records it.
+                if let Some(pause) = pause {
+                    installation.data.pause(&identity);
+                    state.paused.restore(identity.clone(), pause);
+                }
                 self.sync_hotkeys(&mut state);
                 self.end_uninstall(
                     &mut state,

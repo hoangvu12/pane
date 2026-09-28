@@ -354,7 +354,10 @@ def build(package: Path, out: Path, toolchain: Toolchain) -> dict:
         log(f"type-checking {package.name}")
         run([node, modules / "typescript" / "bin" / "tsc", "-p", staged / "tsconfig.json"])
     bundle = work / "bundle.mjs"
-    run([node, HERE / "bundle.mjs", modules, staged / entry, bundle])
+    adapted = work / "pane-entry.mjs"
+    adapted.write_text(adapted_entry(staged / entry, types / "adapt.js", manifest.get("pane", {})),
+                       encoding="utf-8")
+    run([node, HERE / "bundle.mjs", modules, adapted, bundle])
 
     wit = types / "wit"
     (wit / "deps" / "pane-extension").mkdir(parents=True, exist_ok=True)
@@ -367,6 +370,32 @@ def build(package: Path, out: Path, toolchain: Toolchain) -> dict:
     result = json.loads(report.strip().splitlines()[-1])
     log(f"built {out} ({result['component_bytes']} bytes in {result['componentize_ms']} ms)")
     return result
+
+
+# The exports the adapter wraps, by `pane` option (None: always), each with
+# the handler that answers errors as text (see guests/js/adapt.js).
+ADAPTED_PROVIDERS = {
+    "rootResults": ("rootResults", "resultsFor"),
+    "indexedResults": ("indexedResults", "results"),
+    "operations": ("publishedOperations", "runOperation"),
+}
+
+
+def adapted_entry(entry: Path, adapter: Path, options: dict) -> str:
+    """The module bundled for `entry`: its exports, with the ones Pane calls
+    wrapped by `adapter` so that what a handler throws is an error, not a
+    crash."""
+    entry_js, adapter_js = json.dumps(entry.as_posix()), json.dumps(adapter.as_posix())
+    lines = [
+        f"import * as extension from {entry_js};",
+        f"import {{ adaptCommand, adaptProvider }} from {adapter_js};",
+        f"export * from {entry_js};",
+        "export const command = adaptCommand(extension.command);",
+    ]
+    for option, (name, handler) in ADAPTED_PROVIDERS.items():
+        if options.get(option):
+            lines.append(f"export const {name} = adaptProvider(extension.{name}, {json.dumps(handler)});")
+    return "\n".join(lines) + "\n"
 
 
 def command_world(options: dict) -> str:

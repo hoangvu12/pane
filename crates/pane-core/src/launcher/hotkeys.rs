@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
-use super::{Entry, Launcher, LauncherView, Row, Screen, State, Status, off_thread};
+use super::{Entry, Launcher, LauncherView, Row, Screen, State, Status, Unavailable, off_thread};
 use crate::atomic::{Readers, write_atomically};
 use crate::hotkeys::Shortcut;
 use crate::launcher::CommandRegistration;
@@ -320,9 +320,11 @@ impl Launcher {
                     None => "None · Choose keys that open it from any application".into(),
                 };
                 let subtitle = format!("{state} · {identity}");
-                let unavailable = unavailable.or_else(|| everywhere.clone());
+                let unavailable = unavailable
+                    .or_else(|| everywhere.clone())
+                    .map(Unavailable::OnThisSystem);
                 let entry = match &unavailable {
-                    Some(reason) => Entry::Unavailable(reason.clone()),
+                    Some(reason) => Entry::Unavailable(reason.reason().to_owned()),
                     None => Entry::AskHotkey(command.id.clone()),
                 };
                 let row = Row {

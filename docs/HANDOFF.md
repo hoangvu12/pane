@@ -23,7 +23,7 @@ The [Pane specification](https://github.com/hoangvu12/pane/issues/1) and [52 imp
 - Default app launching, calculator, quicklinks, file search and optional clipboard history are disableable. AI belongs in extensions.
 - Internet-first runtime/default-feature acquisition is preferred over bundling their payloads in the installer. Ordinary supported-package users install no runtime/compiler manually.
 - Compatible extension updates are automatic with controls; Pane application updates notify the user, who chooses installation.
-- Automatic UI recovery should skip an identified broken extension and notify the user. Detailed attribution/pausing/retry is proposed, not validated; shared runtime crashes may have no identifiable single culprit.
+- Automatic UI recovery skips an identified broken extension and notifies the user: since #16 a package that cannot start or crashes three times within five minutes is [paused](pausing.md) with Retry, across restarts. Shared runtime crashes may have no identifiable single culprit (#17); hangs are #18.
 - Licensing follows Zed's primarily GPL-3.0-or-later direction provisionally; exact component/SDK split and dependency review remain open. This does not prohibit compliant paid forks.
 
 Detailed identity, dependency, disable/data, API stability, search, reload and update decisions are in the [decision index](current-decisions.md). Do not replace them with generic assumptions about Pi, Raycast or VS Code.

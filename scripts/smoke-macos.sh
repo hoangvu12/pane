@@ -554,4 +554,38 @@ focus_pane
 capture 58-disabled-pressed.png   # still root search: nothing opened
 python3 "$(dirname "$0")/check_screenshot.py" --same "$out"/{57-disabled,58-disabled-pressed}.png
 stop_pane
+
+# Pausing a broken extension: the settings sample's last item, Crash, crashes
+# on purpose; the third crash within five minutes pauses the package and
+# returns to root search, where Greeting stays listed with why it does not
+# run. The pause holds after a restart. In Manage extensions, the package's
+# "Why ... is paused" row (after its Reload and Retry rows) shows the
+# details, whose only row, Retry, starts it again. A data folder of its own
+# keeps the rows in a known order.
+export PANE_DATA_DIR=$out/pausing-data
+rm -rf "$PANE_DATA_DIR"
+start_pane --install target/guests/packages/sample-settings
+key 36; sleep 2   # Install; Greeting is selected
+key 36; sleep 2   # open Greeting
+for ((i = 0; i < 7; i++)); do key 125; done   # Crash
+for ((i = 0; i < 3; i++)); do key 36; sleep 2; done
+capture 59-paused.png
+check 59-paused.png f08c8c   # "Settings sample crashed 3 times within 5 minutes and is paused ..."
+check 59-paused.png d6a36a   # Greeting: "Settings sample is paused after an error; ..."
+stop_pane
+grep -q '"paused"' "$PANE_DATA_DIR/extensions/installed.json" || { echo "pause not recorded"; exit 1; }
+start_pane
+capture 60-paused-after-restart.png
+check 60-paused-after-restart.png d6a36a   # Greeting is still paused
+for ((i = 0; i < 10; i++)); do key 125; done   # Manage extensions…
+key 36; sleep 1
+key 125; key 125; key 125; key 36; sleep 1   # "Why Settings sample is paused"
+capture 61-pause-details.png
+check 61-pause-details.png aab4c0   # the details
+key 36; sleep 2   # Retry Settings sample
+capture 62-pause-retried.png
+check 62-pause-retried.png 9fd8a8   # "Started Settings sample"
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{61-pause-details,62-pause-retried}.png
+stop_pane
+if grep -q '"paused"' "$PANE_DATA_DIR/extensions/installed.json"; then echo "pause not cleared"; exit 1; fi
 echo "screenshots in $out"

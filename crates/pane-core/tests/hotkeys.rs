@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 
 use futures::executor::block_on;
 use pane_core::hotkeys::{HotkeyError, Hotkeys, Shortcut};
-use pane_core::{Launcher, PackageIdentity, Runtime, SavedData, Screen, Status};
+use pane_core::{Launcher, PackageIdentity, Runtime, SavedData, Screen, Status, Unavailable};
 use tempfile::TempDir;
 
 const MANAGE_ROW: &str = "Manage extensions…";
@@ -350,6 +350,30 @@ fn disabling_the_extension_releases_its_hotkey_and_enabling_restores_it() {
 }
 
 #[test]
+fn the_hotkey_of_a_paused_extension_explains_the_pause() {
+    let dirs = Dirs::new();
+    let system = FakeSystem::new();
+    let launcher = dirs.launcher(&system);
+    dirs.install(&launcher, "sample-settings");
+    assign(&launcher, "Greeting", "ctrl+alt+g");
+    // Three crashes pause the settings sample.
+    for _ in 0..3 {
+        assert!(system.press(&launcher, "ctrl+alt+g"));
+        activate(&launcher, "Crash");
+    }
+
+    // The hotkey stays the user's and registered; pressed, it says why the
+    // command does not open, and runs nothing.
+    assert_eq!(system.registered(), ["ctrl+alt+g"]);
+    assert!(system.press(&launcher, "ctrl+alt+g"));
+    assert!(matches!(launcher.view().screen, Screen::Root { .. }));
+    assert_eq!(
+        error(&launcher),
+        "Settings sample is paused after an error; retry it in Manage extensions"
+    );
+}
+
+#[test]
 fn a_shortcut_another_application_uses_is_explained_and_not_assigned() {
     let dirs = Dirs::new();
     let system = FakeSystem::new();
@@ -445,7 +469,10 @@ fn where_global_hotkeys_are_unavailable_the_rows_say_why_and_nothing_else_change
         .iter()
         .find(|row| row.title == "Hotkey for Greeting")
         .unwrap();
-    assert_eq!(row.unavailable, Some(reason.clone()));
+    assert_eq!(
+        row.unavailable,
+        Some(Unavailable::OnThisSystem(reason.clone()))
+    );
     activate(&launcher, "Hotkey for Greeting");
     assert!(matches!(launcher.view().screen, Screen::Extensions { .. }));
     assert_eq!(launcher.view().status, Status::Error(reason));

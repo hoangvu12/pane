@@ -13,8 +13,8 @@ responding (#18), uninstall (#40) and cancelling a pending search (#29, #30).
 
 A **generation** ([glossary](../CONTEXT.md)) is one run of an installed
 package's code: it begins when the package is installed, enabled or Pane
-starts, and ends when the package is disabled or its code is replaced by a
-reload or an update (a reload's or update's new code runs in a new
+starts, and ends when the package is disabled, [paused](pausing.md) after it
+failed, or its code is replaced by a reload or an update (a reload's or update's new code runs in a new
 generation). A disabled package stays in an ended generation until it is
 enabled again. Commands built into Pane have no generation: they run as long
 as Pane.
@@ -97,9 +97,9 @@ resume in the store. So:
   stopping calls, or waiting for component-model cancellation of a task
   the host called (`task.cancel` from the host) in a later Wasmtime.
 - **A package serving an operation for a stopped caller restarts fresh**
-  on its next call, although it was not disabled, as after a crash. For
-  #16's detection of repeated failed activations, such a restart is not a
-  failure of that package and must not count as one.
+  on its next call, although it was not disabled, as after a crash. It is
+  not a failure of that package: [pausing](pausing.md) (#16) counts only
+  crashes and failures to start, never a stopped call.
 
 ## What stopping cannot do yet
 
