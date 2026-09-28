@@ -649,29 +649,32 @@ natively.
 ### Searching inside a command (#30)
 
 The last phase ([command search](../command-search.md#checks)), with a data
-folder of its own, builds and starts the fixture service
-(`fixture_service --port 8740`, 127.0.0.1 only, its log in the smoke's
-output) and installs Package search, the Rust search sample. "aurora" typed
-in root search lists nothing and the service's log must hold no request;
-opened, the command's own search field (the same query field) sends
-"aurora" (the log must hold `GET /search?q=aurora`), Down and Enter show
-aurora-cli's details; "slow" (held by the service) then "ember" must show
-ember-tz and log `ABANDONED /search?q=slow`; "down" shows the service's 503
-as an error; with the service stopped, "basalt" shows "connection refused";
-restarted, "cobalt" lists cobalt-http: the extension was not paused. Run
-locally on 2026-09-28 (Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64,
-same Xvfb/lavapipe setup): all checks of the whole smoke passed.
+folder of its own, builds and starts the fixture service on a free port of
+127.0.0.1 (`fixture_service --port 0`, its log in the smoke's output, the
+port read from it) and installs Package search, the Rust search sample.
+"aurora" typed in root search lists nothing and the service's log must hold
+no request; opened, the command's "Service address" form is set to the
+service; its own search field (the same query field) sends "aurora" (the
+log must hold `GET /search?q=aurora`), Down and Enter show aurora-cli's
+details; "slow" (held by the service) then "ember" must show ember-tz and
+log `ABANDONED /search?q=slow`; "down" shows the service's 503 as an error;
+with the service stopped, "basalt" shows "connection refused"; restarted on
+the same port, "cobalt" lists cobalt-http: the extension was not paused.
+Run locally on 2026-09-29 after the #30 review (Ubuntu 26.04.1 LTS, kernel
+7.0.0-31-generic, x86_64, same Xvfb/lavapipe setup): all checks of the
+whole smoke passed, and frames 160 to 169 were looked at.
 
 | Step | Evidence |
 | --- | --- |
 | Root search, "aurora": no results, nothing sent | [161-root-typed.png](evidence/linux-x11/161-root-typed.png) |
 | Package search opened: its own list, its search field empty | [162-command-opened.png](evidence/linux-x11/162-command-opened.png) |
-| "aurora": the service's results | [163-search-results.png](evidence/linux-x11/163-search-results.png) |
-| Enter: aurora-cli's details, fetched from the service | [164-details.png](evidence/linux-x11/164-details.png) |
-| "slow" replaced by "ember": the newer results | [165-newer-search.png](evidence/linux-x11/165-newer-search.png) |
-| "down": the service's 503 as an error | [166-service-error.png](evidence/linux-x11/166-service-error.png) |
-| Service stopped: "connection refused" | [167-offline.png](evidence/linux-x11/167-offline.png) |
-| Service back: results again | [168-back-online.png](evidence/linux-x11/168-back-online.png) |
+| Its "Service address" form set to the fixture service's free port | [163-service-set.png](evidence/linux-x11/163-service-set.png) |
+| "aurora": the service's results | [164-search-results.png](evidence/linux-x11/164-search-results.png) |
+| Enter: aurora-cli's details, fetched from the service | [165-details.png](evidence/linux-x11/165-details.png) |
+| "slow" replaced by "ember": the newer results | [166-newer-search.png](evidence/linux-x11/166-newer-search.png) |
+| "down": the service's 503 as an error | [167-service-error.png](evidence/linux-x11/167-service-error.png) |
+| Service stopped: "connection refused" | [168-offline.png](evidence/linux-x11/168-offline.png) |
+| Service back: results again | [169-back-online.png](evidence/linux-x11/169-back-online.png) |
 
 ## Text input and accessibility findings
 
