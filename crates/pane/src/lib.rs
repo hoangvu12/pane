@@ -41,8 +41,9 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("tab", FocusNext, Some(KEY_CONTEXT)),
         KeyBinding::new("shift-tab", FocusPrevious, Some(KEY_CONTEXT)),
     ]);
-    form::bind_keys(cx);
-    root_search::bind_keys(cx);
+    let text_editing = form::bind_text_editing(cx);
+    form::bind_keys(cx, &text_editing);
+    root_search::bind_keys(cx, &text_editing);
     custom_view::bind_keys(cx);
 }
 
