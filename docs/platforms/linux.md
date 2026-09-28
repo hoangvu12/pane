@@ -638,7 +638,11 @@ out of Pane's window by the preview's longer details; a package preview's
 details now scroll within 40% of the window, as a confirmation's do. The
 same phase, serving instead the tarball `npm pack` (npm 11.19.0) made of the
 assembled sample folder, also passed: it holds the same four files as
-Pane's own packing.
+Pane's own packing. After merging #30 a run failed at frame 261 with "Peer
+disconnected": the smoke's registry (Python's HTTP/1.0 server) closed the
+connection kept from the metadata request as the tarball's was sent on it,
+about one download in forty. Pane now opens a connection per npm request;
+the whole smoke then passed again and frames 260 to 266 were looked at.
 
 | Step | Evidence |
 | --- | --- |
