@@ -342,3 +342,126 @@ fn unreadable_settings_are_explained_to_the_command_and_never_overwritten() {
     }
     assert_eq!(fs::read_to_string(&file).unwrap(), "not settings");
 }
+
+/// Opens the installed Greeting command from root search and selects its
+/// item titled `item`.
+fn open_greeting_at(launcher: &Launcher, item: &str) {
+    launcher.back();
+    select_title(launcher, "Greeting");
+    block_on(launcher.activate_selected());
+    assert_eq!(launcher.view().screen, Screen::Command);
+    select_title(launcher, item);
+}
+
+#[test]
+fn a_setting_saved_while_the_package_is_being_disabled_is_refused() {
+    let dirs = Dirs::new();
+    let folder = settings_package(&dirs.source("settings"), "Settings sample");
+    let launcher = dirs.launcher();
+    block_on(launcher.install_package(&folder));
+    let identity = PackageIdentity::local(&folder).unwrap();
+    open_greeting_at(&launcher, "Use a formal greeting");
+
+    // The action runs after the user disabled the package but before the
+    // choice is on disk.
+    let saving = launcher.activate_selected();
+    let disabling = launcher.set_enabled(&identity, false);
+    block_on(saving);
+    block_on(disabling);
+
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Disabled Settings sample".into())
+    );
+    let saved = fs::read_to_string(dirs.packages_dir().join("settings.json")).unwrap_or_default();
+    assert!(!saved.contains("formal"), "{saved}");
+    let restarted = dirs.launcher();
+    block_on(restarted.set_enabled(&identity, true));
+    assert_eq!(
+        run(&restarted, "Greeting", "Greet me"),
+        Status::Error(
+            "The extension reported an error: No greeting style is saved yet; choose one first"
+                .into()
+        )
+    );
+}
+
+#[test]
+fn an_action_result_that_arrives_after_its_package_was_disabled_is_not_shown() {
+    let dirs = Dirs::new();
+    let folder = settings_package(&dirs.source("settings"), "Settings sample");
+    let launcher = dirs.launcher();
+    block_on(launcher.install_package(&folder));
+    let identity = PackageIdentity::local(&folder).unwrap();
+    open_greeting_at(&launcher, "Greet me");
+
+    let greeting = launcher.activate_selected();
+    let disabling = launcher.set_enabled(&identity, false);
+    block_on(futures::future::join(greeting, disabling));
+
+    let view = launcher.view();
+    assert_eq!(view.screen, Screen::Root);
+    assert_eq!(
+        view.status,
+        Status::Result("Disabled Settings sample".into())
+    );
+}
+
+#[test]
+fn a_second_change_while_one_is_pending_is_ignored() {
+    let dirs = Dirs::new();
+    let folder = settings_package(&dirs.source("settings"), "Settings sample");
+    let launcher = dirs.launcher();
+    block_on(launcher.install_package(&folder));
+    let identity = PackageIdentity::local(&folder).unwrap();
+
+    let disabling = launcher.set_enabled(&identity, false);
+    let enabling = launcher.set_enabled(&identity, true);
+    block_on(futures::future::join(disabling, enabling));
+
+    assert_eq!(enabled(&launcher), [(identity.clone(), false)]);
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Disabled Settings sample".into())
+    );
+    // What Pane shows is what it recorded.
+    assert_eq!(enabled(&dirs.launcher()), [(identity, false)]);
+}
+
+#[test]
+fn pressing_enter_twice_on_an_extension_row_changes_it_once() {
+    let dirs = Dirs::new();
+    let folder = settings_package(&dirs.source("settings"), "Settings sample");
+    let launcher = dirs.launcher();
+    block_on(launcher.install_package(&folder));
+    let identity = PackageIdentity::local(&folder).unwrap();
+    manage(&launcher);
+
+    let first = launcher.activate_selected();
+    let second = launcher.activate_selected();
+    block_on(futures::future::join(first, second));
+
+    assert_eq!(enabled(&launcher), [(identity.clone(), false)]);
+    assert!(subtitles(&launcher)[0].starts_with("Disabled"));
+    assert_eq!(enabled(&dirs.launcher()), [(identity.clone(), false)]);
+    // Once the change is done, Enter changes it back.
+    block_on(launcher.activate_selected());
+    assert_eq!(enabled(&launcher), [(identity, true)]);
+}
+
+#[test]
+fn a_launcher_without_a_package_location_explains_it_cannot_disable() {
+    let dirs = Dirs::new();
+    let folder = settings_package(&dirs.source("settings"), "Settings sample");
+    let launcher = Launcher::new(Runtime::start(), vec![]);
+
+    block_on(launcher.set_enabled(&PackageIdentity::local(&folder).unwrap(), false));
+
+    assert_eq!(
+        launcher.view().status,
+        Status::Error(
+            "Could not update Pane's installed extensions: this launcher does not install packages"
+                .into()
+        )
+    );
+}

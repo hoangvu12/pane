@@ -111,11 +111,14 @@ pub enum CallError {
     Form(FormError),
     /// The guest trapped or otherwise failed while running.
     Trap(String),
+    /// The command's package is disabled, so none of its code runs.
+    Disabled,
 }
 
 impl fmt::Display for CallError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            CallError::Disabled => write!(f, "The extension is disabled"),
             CallError::RuntimeUnavailable(reason) => {
                 write!(f, "Extension runtime unavailable: {reason}")
             }
@@ -508,11 +511,17 @@ impl Host {
     }
 
     /// Returns the live instance for `path`, instantiating it on first use.
+    /// A disabled package's command gets none: a call that was on its way
+    /// when the package was disabled cannot bring its instance back.
     async fn instance(
         &mut self,
         path: &Path,
         settings: Option<PackageSettings>,
     ) -> Result<&mut Instance, CallError> {
+        if settings.as_ref().is_some_and(PackageSettings::is_disabled) {
+            self.instances.remove(path);
+            return Err(CallError::Disabled);
+        }
         if !self.instances.contains_key(path) {
             let component = self.component(path)?.clone();
             let mut store = Store::new(
@@ -611,5 +620,43 @@ impl From<command::Form> for Form {
             fields,
             submit_label: form.submit_label,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::packages::PackageIdentity;
+    use crate::settings::Settings;
+    use futures::executor::block_on;
+
+    fn settings_sample() -> PathBuf {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/guests/sample_settings.wasm");
+        assert!(
+            path.exists(),
+            "{} is missing; run `cargo xtask guests`",
+            path.display()
+        );
+        path
+    }
+
+    /// A call for a package that was disabled, served after its instances
+    /// were dropped, must not start a new instance of it.
+    #[test]
+    fn a_disabled_package_command_starts_no_instance() {
+        let data = tempfile::tempdir().unwrap();
+        let settings = Settings::open(data.path());
+        let identity = PackageIdentity::local(data.path()).unwrap();
+        let owned = settings.owned_by(&identity);
+        let component = settings_sample();
+        let runtime = Runtime::start().unwrap();
+        block_on(runtime.get_view_with(&component, Some(owned.clone()))).unwrap();
+
+        settings.set_enabled(&identity, false);
+        runtime.forget([component.clone()]);
+        let queued = runtime.get_view_with(&component, Some(owned));
+
+        assert_eq!(block_on(queued), Err(CallError::Disabled));
     }
 }

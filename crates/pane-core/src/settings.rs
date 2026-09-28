@@ -28,17 +28,20 @@ struct SettingsJson {
     packages: BTreeMap<String, BTreeMap<String, String>>,
 }
 
-struct Store {
+/// The settings file as Pane last read or wrote it.
+struct SettingsFile {
     path: PathBuf,
     /// The saved settings, or why they could not be read.
     file: Result<SettingsJson, String>,
-    /// Identity keys of disabled packages, whose commands may not write.
+    /// Identity keys of disabled packages, whose commands may not run or
+    /// save values. The launcher keeps it in step with its packages; the
+    /// runtime reads it here, on its own thread.
     disabled: HashSet<String>,
 }
 
-/// Every installed package's settings. Cloning shares the same store.
+/// Every installed package's settings. Cloning shares the same file.
 #[derive(Clone)]
-pub(crate) struct Settings(Arc<Mutex<Store>>);
+pub(crate) struct Settings(Arc<Mutex<SettingsFile>>);
 
 impl Settings {
     /// Opens the settings kept in `dir`. Nothing is written until a command
@@ -65,7 +68,7 @@ impl Settings {
             Err(error) => Err(error.to_string()),
         }
         .map_err(|reason| format!("Cannot read {}: {reason}", path.display()));
-        Settings(Arc::new(Mutex::new(Store {
+        Settings(Arc::new(Mutex::new(SettingsFile {
             path,
             file,
             disabled: HashSet::new(),
@@ -81,17 +84,17 @@ impl Settings {
     }
 
     /// Records whether the package with `identity` is enabled; a disabled
-    /// package's commands cannot save values.
+    /// package's commands cannot run or save values.
     pub fn set_enabled(&self, identity: &PackageIdentity, enabled: bool) {
-        let mut store = self.lock();
+        let mut file = self.lock();
         if enabled {
-            store.disabled.remove(&identity.key());
+            file.disabled.remove(&identity.key());
         } else {
-            store.disabled.insert(identity.key());
+            file.disabled.insert(identity.key());
         }
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Store> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, SettingsFile> {
         self.0
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -107,6 +110,11 @@ pub(crate) struct PackageSettings {
 }
 
 impl PackageSettings {
+    /// Whether the package is disabled, so its commands may not run.
+    pub fn is_disabled(&self) -> bool {
+        self.settings.lock().disabled.contains(&self.owner)
+    }
+
     pub fn get(&self, key: &str) -> Result<Option<String>, String> {
         let store = self.settings.lock();
         let file = store.file.as_ref().map_err(Clone::clone)?;
