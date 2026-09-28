@@ -8,7 +8,10 @@
 // WASI 0.3 imports JS source may use: a JS module can import only what this
 // world declares. WASI's own WIT (wit/deps: clocks, and `wasi:http` for web
 // requests, with the packages it names) is copied into deps/ too. The host
-// bindings are unchanged.
+// bindings are unchanged. `wasi:http`'s client is imported only by a command
+// whose bundle uses it (itself or through `@pane/extension/http`): the build
+// adds it to `js-command`, so a command that makes no web requests does not
+// import it, and Pane does not list it as using the network.
 //
 // A command whose package.json sets `"pane": { ... }` options also exports
 // the interfaces they name: `rootResults` (wit/root-results.wit),
@@ -23,5 +26,4 @@ world js-extension {
   import pane:extension/applications@0.1.0;
   import pane:extension/helpers@0.1.0;
   import wasi:clocks/monotonic-clock@0.3.0;
-  import wasi:http/client@0.3.0;
 }

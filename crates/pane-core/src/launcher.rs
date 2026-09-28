@@ -29,6 +29,7 @@ mod choices;
 mod command_search;
 mod hotkeys;
 mod indexed;
+mod network;
 
 use crate::changes::ChangeSender;
 use crate::dependencies;
@@ -121,6 +122,13 @@ pub enum Screen {
     /// A custom view opened from an item of the command's list view. It has
     /// no rows.
     CustomView(CustomViewSnapshot),
+    /// What an installed package that uses the network did on it this
+    /// session (the addresses it tried to reach), as lines of information
+    /// under the title. It has no rows.
+    NetworkDetails {
+        identity: PackageIdentity,
+        details: Vec<String>,
+    },
     /// Why Pane paused an installed package, as lines of information under
     /// the title, with a row that retries it.
     PauseDetails {
@@ -366,6 +374,7 @@ impl LauncherView {
             | Screen::Extensions { details }
             | Screen::Confirm { details, .. }
             | Screen::PauseDetails { details, .. }
+            | Screen::NetworkDetails { details, .. }
             | Screen::BuildDetails { details, .. }
             | Screen::RuntimeDetails { details }
             | Screen::Hotkey { details, .. } => details,
@@ -750,6 +759,9 @@ enum Entry {
     Retry(PackageIdentity),
     /// Show why Pane paused this package (extension list).
     PauseDetails(PackageIdentity),
+    /// Show what this package did on the network this session (extension
+    /// list).
+    NetworkDetails(PackageIdentity),
     /// Show why Pane's extension runtime stopped (extension list).
     RuntimeDetails,
     /// Start Pane's extension runtime again after it crashed and Pane did
@@ -1339,6 +1351,13 @@ impl Launcher {
                     |entry| matches!(entry, Entry::PauseDetails(shown) if *shown == identity),
                 );
             }
+            Screen::NetworkDetails { identity, .. } => {
+                let identity = identity.clone();
+                self.show_extensions_at(
+                    &mut state,
+                    |entry| matches!(entry, Entry::NetworkDetails(shown) if *shown == identity),
+                );
+            }
             Screen::BuildDetails { identity, .. } => {
                 let identity = identity.clone();
                 self.show_extensions_at(
@@ -1429,6 +1448,10 @@ impl Launcher {
             }
             Some(Entry::AskClearCache(identity)) => {
                 self.show_clear_cache(&mut state, &identity);
+                None
+            }
+            Some(Entry::NetworkDetails(identity)) => {
+                self.show_network_details(&mut state, &identity);
                 None
             }
             Some(Entry::PauseDetails(identity)) => {
@@ -1620,6 +1643,7 @@ impl Launcher {
                     | Entry::Reload(_)
                     | Entry::Retry(_)
                     | Entry::PauseDetails(_)
+                    | Entry::NetworkDetails(_)
                     | Entry::RuntimeDetails
                     | Entry::RestartRuntime
                     | Entry::Develop(_)
@@ -1920,8 +1944,8 @@ impl Launcher {
     /// Reads the package in `folder` off the calling thread, then has the
     /// runtime check each component without running it.
     async fn read_and_check(&self, folder: PathBuf) -> Result<SourcePackage, PackageError> {
-        let package = off_thread(move || SourcePackage::read(&folder)).await?;
-        self.check_components(&package).await?;
+        let mut package = off_thread(move || SourcePackage::read(&folder)).await?;
+        package.network = self.check_components(&package).await?;
         Ok(package)
     }
 
@@ -1932,14 +1956,15 @@ impl Launcher {
         folder: PathBuf,
         identity: PackageIdentity,
     ) -> Result<SourcePackage, PackageError> {
-        let package = off_thread(move || SourcePackage::read_staged(&folder, identity)).await?;
-        self.check_components(&package).await?;
+        let mut package = off_thread(move || SourcePackage::read_staged(&folder, identity)).await?;
+        package.network = self.check_components(&package).await?;
         Ok(package)
     }
 
     /// Has the runtime check each component of `package` without running
-    /// it.
-    async fn check_components(&self, package: &SourcePackage) -> Result<(), PackageError> {
+    /// it; whether any imports `wasi:http` (it can make web requests).
+    async fn check_components(&self, package: &SourcePackage) -> Result<bool, PackageError> {
+        let mut network = false;
         let mut checked_components = Vec::new();
         for (name, component) in package.manifest.components() {
             // A component serving several commands or operations is checked
@@ -1954,12 +1979,13 @@ impl Launcher {
                 Ok(runtime) => runtime.check_with(&source, exports).await,
                 Err(error) => Err(error),
             };
-            checked.map_err(|error| PackageError::Component {
+            let checked = checked.map_err(|error| PackageError::Component {
                 command: name.clone(),
                 error,
             })?;
+            network |= checked.network;
         }
-        Ok(())
+        Ok(network)
     }
 
     /// Shows root search with an empty query: this build's commands, then
@@ -2032,6 +2058,14 @@ impl Launcher {
                 state.screen_epoch = epoch;
             }
             Screen::PauseDetails { .. } => {}
+            // What it reached since, or the extension list once it is gone,
+            // keeping the screen epoch.
+            Screen::NetworkDetails { identity, .. } => {
+                let identity = identity.clone();
+                let epoch = state.screen_epoch;
+                self.show_network_details(state, &identity);
+                state.screen_epoch = epoch;
+            }
         }
     }
 
@@ -2362,6 +2396,10 @@ impl Launcher {
             extension_rows(&state.packages, &state.paused, developed);
         rows.extend(package_rows);
         entries.extend(package_entries);
+        for (row, entry) in self.network_rows(state) {
+            rows.push(row);
+            entries.push(entry);
+        }
         let development = self.development_rows(&state.packages);
         for (row, entry) in self
             .hotkey_rows(state)
@@ -3044,7 +3082,15 @@ fn extension_rows(
         let row = Row {
             id: package.identity.key(),
             title: package.title(),
-            subtitle: Some(format!("{state}{developing} · {}", package.identity)),
+            subtitle: Some(format!(
+                "{state}{developing}{network} · {}",
+                package.identity,
+                network = if package.uses_network {
+                    format!(" · {}", network::USES_THE_NETWORK)
+                } else {
+                    String::new()
+                }
+            )),
             unavailable: None,
         };
         (row, Entry::Toggle(package.identity.clone()))

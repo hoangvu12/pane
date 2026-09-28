@@ -569,7 +569,15 @@ impl WeakRuntime {
 struct Check {
     component: PathBuf,
     exports: Exports,
-    reply: oneshot::Sender<Result<(), CallError>>,
+    reply: oneshot::Sender<Result<Checked, CallError>>,
+}
+
+/// What checking a component found out about it besides that Pane can run
+/// it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Checked {
+    /// It imports `wasi:http`: its code can make web requests.
+    pub network: bool,
 }
 
 enum Request {
@@ -844,7 +852,9 @@ impl Runtime {
     /// time: it does not wait for guest calls in progress, such as one a
     /// reload is about to stop.
     pub async fn check(&self, component: &Path) -> Result<(), CallError> {
-        self.check_with(component, Exports::default()).await
+        self.check_with(component, Exports::default())
+            .await
+            .map(|_| ())
     }
 
     /// Like [`Runtime::check`]; the component must also export each
@@ -853,7 +863,7 @@ impl Runtime {
         &self,
         component: &Path,
         exports: Exports,
-    ) -> Result<(), CallError> {
+    ) -> Result<Checked, CallError> {
         let (reply, response) = oneshot::channel();
         self.checks
             .send(Check {
@@ -1573,8 +1583,12 @@ impl Code {
     /// Type-checks `path` against the linker and the extension world, and
     /// against each interface `exports` names too, without instantiating it,
     /// so no guest code runs.
-    fn check(&self, path: &Path, exports: Exports) -> Result<(), CallError> {
+    fn check(&self, path: &Path, exports: Exports) -> Result<Checked, CallError> {
         let component = self.compile(path)?;
+        let network = component
+            .component_type()
+            .imports(&self.engine)
+            .any(|(name, _)| name.starts_with("wasi:http/"));
         let interface = |error: wasmtime::Error| CallError::Interface(format!("{error:#}"));
         let pre = self.linker.instantiate_pre(&component).map_err(interface)?;
         if exports.root_results {
@@ -1618,7 +1632,7 @@ impl Code {
             })?;
         }
         bindings::ExtensionWithHelpersPre::new(pre).map_err(interface)?;
-        Ok(())
+        Ok(Checked { network })
     }
 }
 

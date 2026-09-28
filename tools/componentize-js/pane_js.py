@@ -380,7 +380,8 @@ def build(package: Path, out: Path, toolchain: Toolchain) -> dict:
     for path in WASI_WIT:
         shutil.copyfile(path, wit / "deps" / path.name)
     out.parent.mkdir(parents=True, exist_ok=True)
-    (wit / "command.wit").write_text(command_world(manifest.get("pane", {})), encoding="utf-8")
+    world = command_world(manifest.get("pane", {}), uses_http(bundle.read_text(encoding="utf-8")))
+    (wit / "command.wit").write_text(world, encoding="utf-8")
     report = run([toolchain.componentizer, wit, COMMAND_WORLD, bundle, toolchain.runtime, out],
                  env=clean_env(QJS_P3_LIBC=str(toolchain.libc)), capture=True)
     result = json.loads(report.strip().splitlines()[-1])
@@ -416,14 +417,29 @@ def adapted_entry(entry: Path, adapter: Path, options: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def command_world(options: dict) -> str:
-    """The world `js-command`: `js-extension` exporting what `options` name."""
+# `wasi:http`'s client, which a command imports only if its bundle uses it
+# (itself, or through `@pane/extension/http`), as a Rust command's component
+# imports only what its code calls: Pane lists a package whose component
+# imports it as one that uses the network.
+HTTP_IMPORT = "wasi:http/client@0.3.0"
+
+
+def uses_http(bundle: str) -> bool:
+    """Whether the bundled module imports any `wasi:http` interface."""
+    return re.search(r"""(?:from|import)\s*\(?\s*["']wasi:http/""", bundle) is not None
+
+
+def command_world(options: dict, http: bool) -> str:
+    """The world `js-command`: `js-extension` exporting what `options` name,
+    importing `wasi:http`'s client if `http`."""
     unknown = sorted(set(options) - set(EXPORT_OPTIONS))
     if unknown:
         raise SystemExit(f"pane-js: unknown \"pane\" options in package.json: {', '.join(unknown)}")
     exports = "".join(f"  export {interface};\n" for option, interface in EXPORT_OPTIONS.items()
                       if options.get(option))
-    return f"package pane:js-guest@0.1.0;\n\nworld {COMMAND_WORLD} {{\n  include {WORLD};\n{exports}}}\n"
+    imports = f"  import {HTTP_IMPORT};\n" if http else ""
+    return (f"package pane:js-guest@0.1.0;\n\nworld {COMMAND_WORLD} {{\n  include {WORLD};\n"
+            f"{imports}{exports}}}\n")
 
 
 def component_inputs(source: str) -> str:

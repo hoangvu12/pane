@@ -949,6 +949,10 @@ pub(crate) struct SourcePackage {
     /// The `pane.json` text `manifest` was validated from; the managed copy
     /// gets exactly this, even if the source changes meanwhile.
     manifest_text: String,
+    /// Whether a component of it imports `wasi:http` (it can make web
+    /// requests), as checking its components found; `false` until they are
+    /// checked.
+    pub network: bool,
 }
 
 impl SourcePackage {
@@ -964,6 +968,7 @@ impl SourcePackage {
             folder: folder.to_path_buf(),
             manifest,
             manifest_text,
+            network: false,
         })
     }
 
@@ -979,6 +984,7 @@ impl SourcePackage {
             folder,
             manifest,
             manifest_text,
+            network: false,
         })
     }
 
@@ -999,6 +1005,9 @@ pub struct InstalledPackage {
     /// Whether the user has left the package enabled. A disabled package
     /// contributes no commands and runs nothing, but keeps its settings.
     pub enabled: bool,
+    /// Whether a component of it imports `wasi:http`, so its code can make
+    /// web requests, as found when it was installed, updated or reloaded.
+    pub uses_network: bool,
     /// The identity each `local:` dependency the manifest declares was
     /// resolved to when the package was installed, by dependency id.
     dependencies: Vec<(String, PackageIdentity)>,
@@ -1012,6 +1021,7 @@ impl InstalledPackage {
         identity: PackageIdentity,
         location: PathBuf,
         enabled: bool,
+        uses_network: bool,
         recorded: &[ResolvedJson],
     ) -> InstalledPackage {
         let manifest = Manifest::read_installed(&location);
@@ -1034,6 +1044,7 @@ impl InstalledPackage {
             identity,
             location,
             enabled,
+            uses_network,
             dependencies,
         }
     }
@@ -1228,6 +1239,11 @@ struct RecordJson {
     /// to when it was installed or updated.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     dependencies: Vec<ResolvedJson>,
+    /// Set when a component of its current code imports `wasi:http`;
+    /// absent means none does (or it was installed before Pane recorded
+    /// it, until it is reloaded or updated).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    network: bool,
 }
 
 /// A dependency id and the local source folder it resolved to.
@@ -1381,6 +1397,7 @@ impl Store {
                     PackageIdentity(Source::Local(record.local.clone())),
                     self.dir.join(PACKAGES_DIR).join(&record.dir),
                     !record.disabled,
+                    record.network,
                     &record.dependencies,
                 )
             })
@@ -1721,6 +1738,7 @@ impl Store {
                 // New code has not failed.
                 record.paused = None;
                 record.dependencies = dependencies.clone();
+                record.network = package.network;
                 !record.disabled
             }
             None => {
@@ -1733,6 +1751,7 @@ impl Store {
                     disabled: false,
                     paused: None,
                     dependencies: dependencies.clone(),
+                    network: package.network,
                 });
                 true
             }
@@ -1761,6 +1780,7 @@ impl Store {
             package.identity.clone(),
             location,
             enabled,
+            package.network,
             &dependencies,
         ))
     }

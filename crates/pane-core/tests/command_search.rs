@@ -9,6 +9,8 @@
 
 #[path = "support/service.rs"]
 mod service;
+#[path = "support/unreachable.rs"]
+mod unreachable;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -22,17 +24,28 @@ use tempfile::TempDir;
 struct Fixture {
     /// The assembled package under `target/guests/packages`.
     package: &'static str,
+    /// Its title.
+    title: &'static str,
+    /// An assembled package in the same language that makes no web
+    /// requests.
+    offline: &'static str,
 }
 
 const RUST: Fixture = Fixture {
     package: "sample-search",
+    title: "Search sample",
+    offline: "sample-query",
 };
 
 const JAVASCRIPT: Fixture = Fixture {
     package: "sample-search-js",
+    title: "JavaScript search sample",
+    offline: "sample-query-js",
 };
 const TYPESCRIPT: Fixture = Fixture {
     package: "sample-search-ts",
+    title: "TypeScript search sample",
+    offline: "sample-query-ts",
 };
 
 const ALL: [Fixture; 3] = [RUST, JAVASCRIPT, TYPESCRIPT];
@@ -94,6 +107,17 @@ impl Pane {
             _sources: sources,
             _data: data,
         }
+    }
+
+    /// Installs the assembled package `name` too.
+    fn install(&self, name: &str) {
+        let folder = package(name, &self._sources.path().join(name));
+        block_on(self.launcher.install_package(&folder));
+        assert!(
+            matches!(self.view().status, Status::Result(_)),
+            "{:?}",
+            self.view().status
+        );
     }
 
     fn view(&self) -> pane_core::LauncherView {
@@ -458,7 +482,7 @@ fn an_offline_or_failing_service_is_an_error_that_does_not_pause_the_extension()
 
         // Nothing listens there: more errors than would pause a crashing
         // extension (three within five minutes).
-        let closed = service::ClosedPort::new();
+        let closed = unreachable::ClosedPort::new();
         let offline = closed.url();
         pane.use_service(&offline);
         for text in ["aurora", "basalt", "cobalt", "driftwood"] {
@@ -613,7 +637,7 @@ fn a_service_that_stalls_is_given_up_on_within_the_limits() {
 #[test]
 fn a_service_whose_certificate_is_not_trusted_is_an_error() {
     for fixture in &ALL {
-        let service = service::UntrustedService::start();
+        let service = unreachable::UntrustedService::start();
         let pane = Pane::with(fixture);
         pane.use_service(&service.url());
         // Twice: a failed handshake leaves nothing behind for the next.
@@ -630,6 +654,65 @@ fn a_service_whose_certificate_is_not_trusted_is_an_error() {
                 fixture.package
             );
         }
+    }
+}
+
+#[test]
+fn the_extension_list_says_which_packages_use_the_network_and_what_they_reached() {
+    for fixture in &ALL {
+        let service = Service::start();
+        let pane = Pane::with(fixture);
+        pane.install(fixture.offline);
+        pane.use_service(&service.url());
+        pane.search("aurora");
+
+        pane.to_root();
+        pane.search("manage extensions");
+        pane.activate("Manage extensions…");
+        let view = pane.view();
+        assert!(matches!(view.screen, Screen::Extensions { .. }));
+        // Its row says so; the other package's does not.
+        let using: Vec<&str> = view
+            .rows
+            .iter()
+            .filter(|row| {
+                row.subtitle
+                    .as_deref()
+                    .is_some_and(|subtitle| subtitle.contains("Uses the network"))
+            })
+            .map(|row| row.title.as_str())
+            .collect();
+        assert_eq!(using, [fixture.title], "{}", fixture.package);
+        let network: Vec<&str> = view
+            .rows
+            .iter()
+            .filter(|row| row.title.starts_with("Network use of"))
+            .map(|row| row.title.as_str())
+            .collect();
+        let details = format!("Network use of {}", fixture.title);
+        assert_eq!(network, [details.as_str()]);
+
+        // Its details list the address it reached this session.
+        pane.activate(&details);
+        let view = pane.view();
+        assert!(
+            matches!(view.screen, Screen::NetworkDetails { .. }),
+            "{:?}",
+            view.screen
+        );
+        assert_eq!(view.title, details);
+        let reached = format!("127.0.0.1:{}", service.port());
+        let lines = view.details().to_vec();
+        assert_eq!(
+            lines.iter().skip(2).map(String::as_str).collect::<Vec<_>>(),
+            [
+                "Addresses it tried to reach this session:",
+                reached.as_str()
+            ],
+            "{lines:?}"
+        );
+        pane.launcher.back();
+        assert!(matches!(pane.view().screen, Screen::Extensions { .. }));
     }
 }
 
