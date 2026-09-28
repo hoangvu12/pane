@@ -384,6 +384,42 @@ window manager, so raising and focusing Pane's window
 (`_NET_ACTIVE_WINDOW`) is not verified; Wayland is explained as unavailable
 (tested with a fake, not natively), and no real desktop session ran.
 
+### Development mode (#12, #13)
+
+The last phase ([development mode](../development-mode.md#checks)) takes a
+copy of each development sample in `<output-dir>/develop-<sample>`, builds
+it once with its documented command, installs it with a data folder of its
+own and chooses **Develop <title>** in Manage extensions. It then edits the
+greeting in the copy's source as an editor would save it and waits until
+the managed copy holds the new build, and checks the answer; saves a
+greeting that does not compile or type-check and checks the error and that
+the old answer stays, pixel for pixel; saves twice in a row (the second
+while the first builds) and checks the newer greeting; and after **Stop
+developing** saves again and checks that nothing was built. The Rust sample
+builds with `cargo build --release --target wasm32-wasip2`; the TypeScript
+and JavaScript samples with `pane_js.py`, and only where the JS toolchain is
+built (not in CI's smoke, which skips them). Run locally on 2026-09-28
+(Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64, same Xvfb/lavapipe
+setup, with the JS toolchain): all checks of the whole smoke passed.
+
+| Step | Evidence |
+| --- | --- |
+| Hello Rust as installed | [64-hello-rust-greeting-before.png](evidence/linux-x11/64-hello-rust-greeting-before.png) |
+| Its source saved: "Reloaded Hello Rust", with Pane open | [65-hello-rust-rebuilt.png](evidence/linux-x11/65-hello-rust-rebuilt.png) |
+| The new greeting (`--distinct` from 64) | [66-hello-rust-greeting-after.png](evidence/linux-x11/66-hello-rust-greeting-after.png) |
+| A save that does not compile: "Hello Rust did not build: error[E0308]: mismatched types. It keeps running its installed code; …" | [67-hello-rust-build-failed.png](evidence/linux-x11/67-hello-rust-build-failed.png) |
+| The working code still answers (`--same` as 66) | [68-hello-rust-kept.png](evidence/linux-x11/68-hello-rust-kept.png) |
+| Two saves, the second during the build: the newer greeting | [70-hello-rust-greeting-fixed.png](evidence/linux-x11/70-hello-rust-greeting-fixed.png) |
+| TypeScript: "Hello TypeScript did not build: src/index.ts(12,7): error TS2322: …" | [76-hello-ts-build-failed.png](evidence/linux-x11/76-hello-ts-build-failed.png) |
+| TypeScript after the two saves | [79-hello-ts-greeting-fixed.png](evidence/linux-x11/79-hello-ts-greeting-fixed.png) |
+| JavaScript (checked through JSDoc): "Hello JavaScript did not build: src/index.js(15,7): error TS2322: …" | [85-hello-js-build-failed.png](evidence/linux-x11/85-hello-js-build-failed.png) |
+| JavaScript after the two saves | [88-hello-js-greeting-fixed.png](evidence/linux-x11/88-hello-js-greeting-fixed.png) |
+
+Screenshots 63, 71, 72, 80, 81 and 89 (developing started and stopped, on
+the extension list) are checked but not kept here: they show local package
+paths; the other steps of each language (69, 73 to 75, 77, 78, 82 to 84, 86,
+87) match those above.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms have a text field (GPUI CE's

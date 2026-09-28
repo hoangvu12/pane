@@ -352,7 +352,9 @@ def build(package: Path, out: Path, toolchain: Toolchain) -> dict:
     modules = toolchain.node / "node_modules"
     if (staged / "tsconfig.json").exists():
         log(f"type-checking {package.name}")
-        run([node, modules / "typescript" / "bin" / "tsc", "-p", staged / "tsconfig.json"])
+        # From the staged package, so errors name its files as the author
+        # does ("src/index.ts(3,7): error ...").
+        run([node, modules / "typescript" / "bin" / "tsc", "-p", staged / "tsconfig.json"], cwd=staged)
     bundle = work / "bundle.mjs"
     adapted = work / "pane-entry.mjs"
     adapted.write_text(adapted_entry(staged / entry, types / "adapt.js", manifest.get("pane", {})),

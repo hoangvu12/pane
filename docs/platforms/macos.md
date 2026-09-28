@@ -156,6 +156,19 @@ compile- and lint-checked for `x86_64-apple-darwin` from Linux; **not run
 on macOS yet**, so registration, delivery on the main run loop and the
 focus transition are unverified natively.
 
+## Development mode (#12, #13)
+
+The smoke's last phase (screenshots 63 to 89, [development
+mode](../development-mode.md#checks)) builds a copy of each development
+sample, develops it from Manage extensions, saves an edit, a change that
+does not build, two saves in a row and, after stopping, one more, checking
+the answers, the error and that nothing is built after stopping. The
+TypeScript and JavaScript samples run only where the JS toolchain is built,
+so CI's smoke runs the Rust one. The platform code (FSEvents through notify, a process group killed with `SIGKILL`) was only
+compile- and lint-checked for `x86_64-apple-darwin` from Linux; **not run on macOS
+yet**, so the file watcher's events, the build's process tree being stopped
+and the whole phase are unverified natively.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms now have a text field. The
