@@ -279,9 +279,31 @@ of the whole smoke passed.
 The macOS and Windows smokes run the same phase (screenshots 40 to 43); it
 has not run there yet.
 
+### Applications (#24, #25, #26)
+
+The last phase adds a desktop entry "Pane Smoke App" whose `Exec` writes a
+marker file, in an `XDG_DATA_HOME` given to Pane only (the system's
+`XDG_DATA_DIRS` entries are searched too), installs the
+[applications](../applications.md) package, types "pane smoke" with real
+X11 key events, checks the selected row, presses Return and checks "Opened
+Pane Smoke App" and that the marker was written. Run locally on 2026-09-28
+(Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64, same Xvfb/lavapipe
+setup): all checks of the whole smoke passed. The adapter tests also run a
+desktop entry's program natively and explain a missing program and a
+terminal application.
+
+| Step | Evidence |
+| --- | --- |
+| "pane smoke" typed: the application found by name, selected | [44-application.png](evidence/linux-x11/44-application.png) |
+| Return: "Opened Pane Smoke App"; its program wrote the marker | [45-opened.png](evidence/linux-x11/45-opened.png) |
+
+Only X11 (Xvfb, no desktop session) ran; Wayland and real desktops'
+`XDG_CURRENT_DESKTOP`, Flatpak and Snap folders are untested. Disabling is
+covered by the launcher tests, not natively.
+
 ### Quicklinks (#28)
 
-The last phase, after clearing the cache, installs the Quicklinks package
+The last phase, after the applications phase, installs the Quicklinks package
 (`--install target/guests/packages/quicklinks`), opens its command, and in
 "Create quicklink" types "Pane issues", Tab and
 "https://example.com/pane-issues" with real X11 key events, then Return.
@@ -295,13 +317,13 @@ setup): all checks of the whole smoke passed.
 
 | Step | Evidence |
 | --- | --- |
-| Form submitted: "Saved quicklink “Pane issues”" | [44-quicklink-saved.png](evidence/linux-x11/44-quicklink-saved.png) |
-| Restarted, "pane iss" typed: the quicklink, first and selected | [45-quicklink-found.png](evidence/linux-x11/45-quicklink-found.png) |
-| Return: "Opened https://example.com/pane-issues", the URL received by the handler | [46-quicklink-opened.png](evidence/linux-x11/46-quicklink-opened.png) |
+| Form submitted: "Saved quicklink “Pane issues”" | [46-quicklink-saved.png](evidence/linux-x11/46-quicklink-saved.png) |
+| Restarted, "pane iss" typed: the quicklink, first and selected | [47-quicklink-found.png](evidence/linux-x11/47-quicklink-found.png) |
+| Return: "Opened https://example.com/pane-issues", the URL received by the handler | [48-quicklink-opened.png](evidence/linux-x11/48-quicklink-opened.png) |
 
 A real desktop's handler (GNOME's `gio open`, a browser chosen in the
 desktop settings) was not run. The macOS and Windows smokes run the phase up
-to screenshot 45; it has not run there yet.
+to screenshot 47; it has not run there yet.
 
 ## Text input and accessibility findings
 
