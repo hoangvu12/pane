@@ -64,7 +64,7 @@ use crate::develop::{
     Build, BuildJob, BuildOutcome, BuildOutput, BuildStop, Builder, components, first_error,
     is_save, stage_package,
 };
-use crate::packages::{InstalledPackage, Manifest, PackageIdentity};
+use crate::packages::{InstalledPackage, Manifest, PackageIdentity, canonical};
 
 /// How long the folder must stay unchanged after a save before it is built,
 /// so that an editor's several writes are one save.
@@ -364,7 +364,7 @@ impl Launcher {
             let work = work.clone();
             off_thread(move || {
                 // FSEvents reports canonical paths.
-                let folder = folder.canonicalize().unwrap_or(folder);
+                let folder = canonical(&folder).unwrap_or(folder);
                 let build = builder.build_for(&folder)?;
                 let watcher = watch(&folder, build.clone(), signals)?;
                 // What an earlier session left, such as after a crash.
@@ -711,12 +711,12 @@ fn relative_to(root: &Path, path: &Path) -> Option<PathBuf> {
     if let Ok(relative) = path.strip_prefix(root) {
         return Some(relative.to_path_buf());
     }
-    let canonical = path.canonicalize().ok().or_else(|| {
+    let resolved = canonical(path).ok().or_else(|| {
         // Removed: its folder still exists.
-        let parent = path.parent()?.canonicalize().ok()?;
+        let parent = canonical(path.parent()?).ok()?;
         Some(parent.join(path.file_name()?))
     })?;
-    canonical.strip_prefix(root).ok().map(Path::to_path_buf)
+    resolved.strip_prefix(root).ok().map(Path::to_path_buf)
 }
 
 /// Watches `root` (canonical) for saves, as `build` tells them from its
