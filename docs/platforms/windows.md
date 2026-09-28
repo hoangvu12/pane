@@ -86,9 +86,7 @@ only the two other systems. In run [36372625940](https://github.com/wasimysaid/p
 Root search has a query field with focus ([root search](../root-search.md)).
 The smoke's last phase (screenshots 24 to 26) types "typescr" with
 `SendKeys`, opens the only match and runs "Wait briefly", which must look
-exactly like step 4, then types "zzz" and presses Enter on no results. **It
-has not run on Windows yet**; typing into the query field through the
-window's text input (TSF) is therefore unverified here, as is any IME.
+exactly like step 4, then types "zzz" and presses Enter on no results. In run [36420611977](https://github.com/wasimysaid/pane/actions/runs/36420611977) (commit `6d73d18`) every step passed: typing "typescr" left only TypeScript sample and Enter ran it, and "zzz" showed No results ([24-search.png](evidence/windows/24-search.png), [26-no-results.png](evidence/windows/26-no-results.png)). Input-method composition in the query field is still unverified here.
 
 ## Calculator (#27)
 
