@@ -34,8 +34,8 @@ use crate::hotkeys::{self as system_hotkeys, Hotkeys};
 use crate::links::{self, LinkOpener, NoOpener};
 use crate::operations::{self, Installed};
 use crate::packages::{
-    InstalledPackage, PackageError, PackageIdentity, PauseCause, SavedData, SourcePackage, Store,
-    folder_name, paused_reason,
+    InstalledPackage, PackageError, PackageIdentity, PauseCause, RetainedData, SavedData,
+    SourcePackage, Store, folder_name, paused_reason,
 };
 use crate::platform::{self, Platform};
 use crate::runtime::{
@@ -46,6 +46,7 @@ use crate::search::{self, Keys, Query};
 
 mod pausing;
 mod reload;
+mod retained;
 mod uninstall;
 
 use hotkeys::Bindings;
@@ -118,6 +119,9 @@ pub enum Question {
     /// Whether to uninstall the installed package with this identity, and
     /// whether to keep its saved data.
     Uninstall(PackageIdentity),
+    /// Whether to delete the retained data of this identity, which is not
+    /// installed.
+    DeleteRetained(PackageIdentity),
 }
 
 /// A selectable row.
@@ -355,6 +359,9 @@ struct State {
     /// latest choice, which applies at once, even while it is still being
     /// recorded.
     packages: Vec<InstalledPackage>,
+    /// The identities that are not installed but whose data Pane keeps, as
+    /// last recorded in the store.
+    retained: Vec<RetainedData>,
     /// Packages being enabled or disabled, reloaded or updated, with which;
     /// another change to one of them is refused meanwhile (see
     /// [`State::claim`]).
@@ -380,6 +387,20 @@ enum Changing {
     Updating,
     /// It is being uninstalled.
     Uninstalling,
+    /// It is not installed, and its retained data is being deleted.
+    DeletingRetained,
+}
+
+impl Changing {
+    /// Why installing the same source must wait, if it must: its data is
+    /// being removed.
+    fn refuses_install(self) -> Option<&'static str> {
+        match self {
+            Changing::Uninstalling => Some("is being uninstalled"),
+            Changing::DeletingRetained => Some("is having its retained data deleted"),
+            Changing::Recording | Changing::Reloading | Changing::Updating => None,
+        }
+    }
 }
 
 impl State {
@@ -395,11 +416,18 @@ impl State {
         package.enabled && !self.paused.is_paused(&package.identity)
     }
 
-    /// The title of the installed package with `identity`, or its identity if
-    /// it is no longer installed.
+    /// The title of the installed package with `identity`, the title its
+    /// retained data was kept under if it is not installed, or else its
+    /// identity.
     fn title_of(&self, identity: &PackageIdentity) -> String {
         self.package(identity)
             .map(InstalledPackage::title)
+            .or_else(|| {
+                self.retained
+                    .iter()
+                    .find(|retained| retained.identity == *identity)
+                    .map(|retained| retained.title.clone())
+            })
             .unwrap_or_else(|| identity.to_string())
     }
 
@@ -417,6 +445,7 @@ impl State {
             Some(Changing::Reloading) => "is reloading",
             Some(Changing::Updating) => "is updating",
             Some(Changing::Uninstalling) => "is being uninstalled",
+            Some(Changing::DeletingRetained) => "is having its retained data deleted",
         };
         self.view.status = Status::Error(format!("{} {busy}", self.title_of(identity)));
         false
@@ -559,6 +588,11 @@ enum Entry {
     /// Uninstall this installed package, keeping or deleting its saved data
     /// (confirmation).
     Uninstall(PackageIdentity, SavedData),
+    /// Ask whether to delete the retained data of this identity, which is
+    /// not installed (extension list).
+    AskDeleteRetained(PackageIdentity),
+    /// Delete the retained data of this identity (confirmation).
+    DeleteRetained(PackageIdentity),
     /// Return to the extension list without acting (confirmation).
     Cancel,
 }
@@ -600,13 +634,25 @@ impl Launcher {
         commands: Vec<CommandRegistration>,
         installation: Option<Installation>,
     ) -> Self {
-        let (packages, store_problem, paused, bindings) = match &installation {
+        let (packages, retained, store_problem, paused, bindings) = match &installation {
             Some(installation) => {
                 let store = installation.store.lock().unwrap_or_else(|p| p.into_inner());
                 let bindings = Bindings::open(&installation.dir);
-                (store.installed(), store.problem(), store.paused(), bindings)
+                (
+                    store.installed(),
+                    store.retained(),
+                    store.problem(),
+                    store.paused(),
+                    bindings,
+                )
             }
-            None => (Vec::new(), None, Vec::new(), Bindings::default()),
+            None => (
+                Vec::new(),
+                Vec::new(),
+                None,
+                Vec::new(),
+                Bindings::default(),
+            ),
         };
         let mut state = State {
             // Replaced by root search below.
@@ -621,6 +667,7 @@ impl Launcher {
             custom_view: None,
             screen_epoch: 0,
             packages,
+            retained,
             changing: HashMap::new(),
             store_problem,
             paused: Pauses::default(),
@@ -1057,6 +1104,7 @@ impl Launcher {
         let mut reload = None;
         let mut hotkey_change = None;
         let mut uninstall = None;
+        let mut delete_retained = None;
         let entry = match entry {
             Some(Entry::Broken(problem) | Entry::Unavailable(problem)) => {
                 state.view.status = Status::Error(problem);
@@ -1098,6 +1146,14 @@ impl Launcher {
             }
             Some(Entry::Uninstall(identity, saved)) => {
                 uninstall = self.begin_uninstall(&mut state, identity, saved);
+                None
+            }
+            Some(Entry::AskDeleteRetained(identity)) => {
+                self.show_delete_retained(&mut state, &identity);
+                None
+            }
+            Some(Entry::DeleteRetained(identity)) => {
+                delete_retained = self.begin_delete_retained(&mut state, identity);
                 None
             }
             Some(Entry::Cancel) => {
@@ -1163,6 +1219,9 @@ impl Launcher {
             if let Some(uninstall) = uninstall {
                 launcher.finish_uninstall(epoch, uninstall).await;
             }
+            if let Some(retained) = delete_retained {
+                launcher.finish_delete_retained(epoch, retained).await;
+            }
             match entry {
                 Some(Entry::Open(component)) => launcher.open_command(epoch, component, data).await,
                 Some(Entry::OpenApplication { id, name }) => {
@@ -1198,6 +1257,8 @@ impl Launcher {
                     | Entry::RemoveHotkey(_)
                     | Entry::AskUninstall(_)
                     | Entry::Uninstall(..)
+                    | Entry::AskDeleteRetained(_)
+                    | Entry::DeleteRetained(_)
                     | Entry::Cancel
                     | Entry::Form(..),
                 )
@@ -1383,6 +1444,11 @@ impl Launcher {
         self.refresh(state);
     }
 
+    /// What is happening to the package with `identity`, if anything.
+    fn changing_as(&self, identity: &PackageIdentity) -> Option<Changing> {
+        self.lock().changing.get(identity).copied()
+    }
+
     fn start_running(&self) -> u64 {
         let mut state = self.lock();
         state.view.status = Status::Running;
@@ -1488,14 +1554,20 @@ impl Launcher {
             let error = PackageError::Dependencies(plan.problems);
             return (Err(failed(error)), Vec::new());
         }
-        // Not installed again while its data is being removed.
-        let uninstalling = std::iter::once(&package)
+        // Not installed again while the data it would find is being
+        // removed, nor is a dependency.
+        let busy = std::iter::once(&package)
             .chain(&plan.install)
-            .find(|package| self.is_uninstalling(&package.identity));
-        if let Some(uninstalling) = uninstalling {
+            .find_map(|package| {
+                let busy = self
+                    .changing_as(&package.identity)
+                    .and_then(Changing::refuses_install)?;
+                Some((package, busy))
+            });
+        if let Some((package, busy)) = busy {
             let error = PackageError::Storage(format!(
-                "{} is being uninstalled; install it again once that is done",
-                uninstalling.manifest.title
+                "{} {busy}; install it again once that is done",
+                package.manifest.title
             ));
             return (Err(failed(error)), Vec::new());
         }
@@ -1555,7 +1627,10 @@ impl Launcher {
             .find(|package| package.identity == installed.identity)
         else {
             // An identity installed again after it was uninstalled may save
-            // data again.
+            // data again, and data retained for it is its own again.
+            state
+                .retained
+                .retain(|retained| retained.identity != installed.identity);
             if let Some(installation) = &self.installation {
                 installation
                     .data
@@ -1791,7 +1866,9 @@ impl Launcher {
             };
             add(row, Entry::InstallFromFolder, None);
         }
-        if self.installation.is_some() && !state.packages.is_empty() {
+        // Retained data is managed there too, while nothing is installed.
+        if self.installation.is_some() && !(state.packages.is_empty() && state.retained.is_empty())
+        {
             let row = Row {
                 id: MANAGE_EXTENSIONS.into(),
                 title: "Manage extensions…".into(),
@@ -1931,7 +2008,7 @@ impl Launcher {
         let (rows, entries) = self.extension_rows(state);
         self.leave_command(state);
         state.entries = entries;
-        let details = vec![
+        let mut details = vec![
             "A disabled extension adds no commands and runs nothing; it keeps its settings.".into(),
             "Reloading replaces an extension's code with its source folder's current build; it \
              keeps its settings."
@@ -1944,17 +2021,31 @@ impl Launcher {
                 pausing::within()
             ),
         ];
+        if !state.retained.is_empty() {
+            details.push(
+                "Data kept for an uninstalled extension is listed until you delete it or install \
+                 it again from the same source."
+                    .into(),
+            );
+        }
         state.view =
             LauncherView::new(Screen::Extensions { details }, "Extensions").with_rows(rows);
     }
 
     /// The extension list's rows: each package's state, reload and cache
-    /// rows, then the hotkey of each command of the enabled packages.
+    /// rows, then the hotkey of each command of the enabled packages, then
+    /// one row per identity with retained data.
     fn extension_rows(&self, state: &State) -> (Vec<Row>, Vec<Entry>) {
         let (mut rows, mut entries) = extension_rows(&state.packages, &state.paused);
         for (row, entry) in self.hotkey_rows(state) {
             rows.push(row);
             entries.push(entry);
+        }
+        if let Some(installation) = &self.installation {
+            let (retained_rows, retained_entries) =
+                retained::rows(&state.retained, &installation.data);
+            rows.extend(retained_rows);
+            entries.extend(retained_entries);
         }
         (rows, entries)
     }
@@ -2089,6 +2180,10 @@ impl Launcher {
             Question::Uninstall(identity) => self.show_extensions_at(
                 state,
                 |entry| matches!(entry, Entry::AskUninstall(asked) if *asked == identity),
+            ),
+            Question::DeleteRetained(identity) => self.show_extensions_at(
+                state,
+                |entry| matches!(entry, Entry::AskDeleteRetained(asked) if *asked == identity),
             ),
         }
     }

@@ -617,6 +617,62 @@ if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: Retry changed nothing
 Stop-Pane $process
 if (Select-String -Quiet -SimpleMatch '"paused"' (Join-Path $data "extensions/installed.json")) { throw "pause not cleared" }
 
+# Delete retained data: with a data folder of its own, the settings sample
+# saves a note and is uninstalled keeping it (its Uninstall row follows its
+# state, Reload and Clear cache rows); its retained data, the extension list's
+# last row, is deleted after confirming (Cancel is selected first, so Down
+# then Enter), without the extension. Installing the same folder again finds
+# nothing. Steps that change Pane's files wait for the change instead of a
+# fixed time.
+$data = Join-Path $OutDir "retained-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+# Waits until $file contains $text ($present) or no longer does (-not $present).
+function Wait-For($file, $text, [bool]$present) {
+    for ($i = 0; $i -lt 100; $i++) {
+        $found = (Test-Path $file) -and (Select-String -Quiet -SimpleMatch $text $file)
+        if ($found -eq $present) { return }
+        Start-Sleep -Milliseconds 100
+    }
+    throw "${file}: $text is not $(if ($present) { 'present' } else { 'absent' })"
+}
+$registry = Join-Path $data "extensions/installed.json"
+$process = Start-Pane "stderr-retained.log" @("--install", "target/guests/packages/sample-settings")
+Send "{ENTER}"   # Install; Greeting is selected
+Wait-For $registry "sample-settings" $true; Start-Sleep -Seconds 1
+Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greeting
+Send "{DOWN 3}"
+Send "{ENTER}"   # "Save a note"
+Wait-For (Join-Path $data "extensions/content.json") '"note": "Water the plants"' $true
+Send "{ESC}"; Start-Sleep -Seconds 1   # root search
+Send "{DOWN 10}"   # Manage extensions…
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Send "{DOWN 3}{ENTER}"; Start-Sleep -Seconds 1   # "Uninstall Settings sample"
+Send "{ENTER}"   # "Uninstall and keep saved data"
+Wait-For $registry '"retained"' $true; Start-Sleep -Seconds 1
+Send "{DOWN 40}"
+Send "{ENTER}"; Start-Sleep -Seconds 1   # "Delete retained data of Settings sample"
+Capture "63-confirm-delete-retained.png"
+Check "63-confirm-delete-retained.png" "aab4c0"   # what is kept and what is not touched
+Send "{DOWN}{ENTER}"   # "Delete retained data"
+Wait-For $registry '"retained"' $false; Start-Sleep -Seconds 1
+Capture "64-retained-deleted.png"
+Check "64-retained-deleted.png" "9fd8a8"   # "Deleted the retained data of Settings sample"
+Stop-Pane $process
+if (Select-String -Quiet -SimpleMatch 'Water the plants' (Join-Path $data "extensions/content.json")) { throw "note not deleted" }
+$process = Start-Pane "stderr-reinstall-empty.log" @("--install", "target/guests/packages/sample-settings")
+Send "{ENTER}"   # Install; Greeting is selected
+Wait-For $registry "sample-settings" $true; Start-Sleep -Seconds 1
+Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greeting
+Send "{DOWN 5}"
+Send "{ENTER}"; Start-Sleep -Seconds 2   # "Show what Pane keeps"
+Capture "65-reinstalled-empty.png"
+Check "65-reinstalled-empty.png" "9fd8a8"   # "Style: none · Note: none · Signed in: no ..."
+python "$PSScriptRoot/check_screenshot.py" --distinct (Join-Path $OutDir "51-reinstalled.png") (Join-Path $OutDir "65-reinstalled-empty.png")
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the deleted data is still shown" }
+Send "{ESC}"; Start-Sleep -Seconds 1
+Stop-Pane $process
+
 # Dependencies: the dependencies sample requires the JavaScript operations
 # sample (from ../sample-operations-js) and can use the Rust one, which is
 # optional. Its preview lists both; Install installs it with the JavaScript
@@ -628,16 +684,16 @@ $data = Join-Path $OutDir "dependencies-data"
 if (Test-Path $data) { Remove-Item -Recurse -Force $data }
 $env:PANE_DATA_DIR = $data
 $process = Start-Pane "stderr-dependencies.log" @("--install", "target/guests/packages/sample-dependencies")
-Capture "63-dependencies-preview.png"
-Check "63-dependencies-preview.png" "aab4c0"   # "Requires: JavaScript operations sample, installed with it ..."
+Capture "66-dependencies-preview.png"
+Check "66-dependencies-preview.png" "aab4c0"   # "Requires: JavaScript operations sample, installed with it ..."
 Send "{ENTER}"; Start-Sleep -Seconds 3   # Install; Greet through dependencies is selected
-Capture "64-dependencies-installed.png"
-Check "64-dependencies-installed.png" "9fd8a8"   # "Installed Dependencies sample with JavaScript operations sample, which it requires"
+Capture "67-dependencies-installed.png"
+Check "67-dependencies-installed.png" "9fd8a8"   # "Installed Dependencies sample with JavaScript operations sample, which it requires"
 Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greet through dependencies
 Send "{ENTER}"; Start-Sleep -Seconds 5   # Greet through the required greeter
-Capture "65-dependency-answer.png"
-Check "65-dependency-answer.png" "9fd8a8"   # the JavaScript guest's answer
-$shots = "63-dependencies-preview", "64-dependencies-installed", "65-dependency-answer" | ForEach-Object { Join-Path $OutDir "$_.png" }
+Capture "68-dependency-answer.png"
+Check "68-dependency-answer.png" "9fd8a8"   # the JavaScript guest's answer
+$shots = "66-dependencies-preview", "67-dependencies-installed", "68-dependency-answer" | ForEach-Object { Join-Path $OutDir "$_.png" }
 python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: installing with dependencies changed nothing" }
 Stop-Pane $process

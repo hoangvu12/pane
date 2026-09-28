@@ -159,8 +159,8 @@ the packages ran meanwhile, so none has data to lose.
 - Unit tests in [`dependencies.rs`](../crates/pane-core/src/dependencies.rs)
   inject a failing install to check the rollback, including retained data.
 - The native smokes install the [dependencies sample](../guests/sample-dependencies/src/lib.rs)
-  and show "Hello, Pane, from JavaScript" in the real window (frames 63 to
-  65; [Linux](platforms/linux.md#dependencies-42)).
+  and show "Hello, Pane, from JavaScript" in the real window (frames 66 to
+  68; [Linux](platforms/linux.md#dependencies-42)).
 
 ## Limits
 

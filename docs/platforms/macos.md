@@ -156,9 +156,19 @@ compile- and lint-checked for `x86_64-apple-darwin` from Linux; **not run
 on macOS yet**, so registration, delivery on the main run loop and the
 focus transition are unverified natively.
 
+## Deleting retained data (#41)
+
+The phase before it (screenshots 63 to 65, [deleting retained
+data](../extension-data.md#deleting-retained-data)), with a data folder of
+its own, saves a note with the settings sample, uninstalls it keeping its
+saved data, deletes its retained data from the extension list's last row
+(Down from the selected Cancel, then Return), checks that `installed.json`
+and `content.json` no longer hold it, and reinstalls the same folder, which
+must show nothing kept. **Not run on macOS yet.**
+
 ## Dependencies (#42)
 
-The smoke's last phase (screenshots 63 to 65, [dependencies](../dependencies.md#checks)),
+The smoke's last phase (screenshots 66 to 68, [dependencies](../dependencies.md#checks)),
 with a data folder of its own, previews the dependencies sample (its
 required JavaScript operations sample and optional Rust one listed),
 installs it with the JavaScript sample and runs "Greet through the required

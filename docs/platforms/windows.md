@@ -134,9 +134,21 @@ adapter was only compile- and lint-checked for `x86_64-pc-windows-gnu` from
 Linux; **not run on Windows yet**, so registration, delivery and the focus
 transition (foreground rules) are unverified natively.
 
+## Deleting retained data (#41)
+
+The phase before it (screenshots 63 to 65, [deleting retained
+data](../extension-data.md#deleting-retained-data)), with a data folder of
+its own, saves a note with the settings sample, uninstalls it keeping its
+saved data, deletes its retained data from the extension list's last row
+(Down from the selected Cancel, then Enter), checks that `installed.json`
+and `content.json` no longer hold it, and reinstalls the same folder, which
+must show nothing kept. **Not run on Windows yet.** A data file locked by
+another program is covered only by the tests' unreadable files, and a
+record that cannot be written after the data is deleted only by a Unix test.
+
 ## Dependencies (#42)
 
-The smoke's last phase (screenshots 63 to 65, [dependencies](../dependencies.md#checks)),
+The smoke's last phase (screenshots 66 to 68, [dependencies](../dependencies.md#checks)),
 with a data folder of its own, previews the dependencies sample (its
 required JavaScript operations sample and optional Rust one listed),
 installs it with the JavaScript sample and runs "Greet through the required
