@@ -3,6 +3,7 @@
 
 pub mod applications;
 mod atomic;
+mod dependencies;
 mod extension_data;
 mod generation;
 mod helpers;

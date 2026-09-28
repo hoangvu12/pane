@@ -576,8 +576,10 @@ check 59-paused.png d6a36a   # Greeting: "Settings sample is paused after an err
 stop_pane
 grep -q '"paused"' "$PANE_DATA_DIR/extensions/installed.json" || { echo "pause not recorded"; exit 1; }
 start_pane
+type_text greet; sleep 1
 capture 60-paused-after-restart.png
 check 60-paused-after-restart.png d6a36a   # Greeting is still paused
+key 53; sleep 1   # Escape clears the query
 for ((i = 0; i < 10; i++)); do key 125; done   # Manage extensions…
 key 36; sleep 1
 key 125; key 125; key 125; key 36; sleep 1   # "Why Settings sample is paused"
@@ -706,6 +708,30 @@ type_text 'ec hello'; sleep 1
 capture 74-nothing-installed.png   # "No results for “ec hello”"
 python3 "$(dirname "$0")/check_screenshot.py" --same "$out"/{73-alias-disabled,74-nothing-installed}.png
 stop_pane
+
+# Dependencies: the dependencies sample requires the JavaScript operations
+# sample (from ../sample-operations-js) and can use the Rust one, which is
+# optional. Its preview lists both; Install installs it with the JavaScript
+# sample only, and its command (selected once installed) calls that
+# package's greet operation by its dependency id: "Hello, Pane, from
+# JavaScript" comes from the other package's guest. A data folder of its own
+# starts with nothing installed.
+export PANE_DATA_DIR=$out/dependencies-data
+rm -rf "$PANE_DATA_DIR"
+start_pane --install target/guests/packages/sample-dependencies
+capture 75-dependencies-preview.png
+check 75-dependencies-preview.png aab4c0   # "Requires: JavaScript operations sample, installed with it ..."
+key 36; sleep 3   # Install; Greet through dependencies is selected
+capture 76-dependencies-installed.png
+check 76-dependencies-installed.png 9fd8a8   # "Installed Dependencies sample with JavaScript operations sample, which it requires"
+key 36; sleep 3   # open Greet through dependencies
+key 36; sleep 5   # Greet through the required greeter
+capture 77-dependency-answer.png
+check 77-dependency-answer.png 9fd8a8   # the JavaScript guest's answer
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{75-dependencies-preview,76-dependencies-installed,77-dependency-answer}.png
+stop_pane
+grep -q '"id": "greeter"' "$PANE_DATA_DIR/extensions/installed.json" || { echo "dependency not recorded"; exit 1; }
+[ "$(grep -c '"dir"' "$PANE_DATA_DIR/extensions/installed.json")" = 2 ] || { echo "not exactly two packages installed"; exit 1; }
 
 # Native helpers: the helper sample's command runs pane-echo, the file its
 # package ships for this system (built by `cargo xtask guests`). Its first

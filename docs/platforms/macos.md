@@ -175,9 +175,20 @@ fallback row chosen with Down, "zqx" to it, and checks that with the
 extension disabled "ec hello" lists nothing. Nothing in it is specific to
 macOS (no system API is involved); **not run on macOS yet**.
 
+## Dependencies (#42)
+
+The dependencies phase (screenshots 75 to 77, [dependencies](../dependencies.md#checks)),
+with a data folder of its own, previews the dependencies sample (its
+required JavaScript operations sample and optional Rust one listed),
+installs it with the JavaScript sample and runs "Greet through the required
+greeter", which must answer from the JavaScript guest; `installed.json`
+must then hold exactly two packages and the recorded dependency. The logic
+is platform-independent except path resolution, which uses the same
+`canonicalize` as package identity. **Not run on macOS yet.**
+
 ## Native helpers (#15)
 
-The smoke's last phase (screenshots 90 to 93, data folder `helper-data`,
+The first native-helper phase (screenshots 90 to 93, data folder `helper-data`,
 [native helpers](../helpers.md#checks)) installs the helper sample, whose
 `pane-echo` `cargo xtask guests` builds for the runner (`macos-aarch64` on
 `macos-15`), runs it (the answer must name macOS arm64), cancels a slow run

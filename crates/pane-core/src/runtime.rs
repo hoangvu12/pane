@@ -1916,7 +1916,8 @@ impl Host {
             Some(directory) => directory(),
             None => operations::Installed::default(),
         };
-        let target = installed.resolve(&call.source, &call.operation, call.version)?;
+        let target =
+            installed.resolve(&call.caller, &call.source, &call.operation, call.version)?;
         let in_chain = self.chain.iter().any(|component| {
             *component == target.component
                 || installed.package_of(component) == Some(&target.identity)

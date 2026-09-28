@@ -602,8 +602,10 @@ Check "59-paused.png" "d6a36a"   # Greeting: "Settings sample is paused after an
 Stop-Pane $process
 if (-not (Select-String -Quiet -SimpleMatch '"paused"' (Join-Path $data "extensions/installed.json"))) { throw "pause not recorded" }
 $process = Start-Pane "stderr-pausing-restart.log"
+Send "greet"; Start-Sleep -Seconds 1
 Capture "60-paused-after-restart.png"
 Check "60-paused-after-restart.png" "d6a36a"   # Greeting is still paused
+Send "{ESC}"; Start-Sleep -Seconds 1   # clears the query
 Send "{DOWN 10}"   # Manage extensions…
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{DOWN 3}{ENTER}"; Start-Sleep -Seconds 1   # "Why Settings sample is paused"
@@ -745,6 +747,34 @@ Capture "74-nothing-installed.png"   # "No results for “ec hello”"
 python "$PSScriptRoot/check_screenshot.py" --same (Join-Path $OutDir "73-alias-disabled.png") (Join-Path $OutDir "74-nothing-installed.png")
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: a disabled extension's alias still lists a row" }
 Stop-Pane $process
+
+# Dependencies: the dependencies sample requires the JavaScript operations
+# sample (from ../sample-operations-js) and can use the Rust one, which is
+# optional. Its preview lists both; Install installs it with the JavaScript
+# sample only, and its command (selected once installed) calls that
+# package's greet operation by its dependency id: "Hello, Pane, from
+# JavaScript" comes from the other package's guest. A data folder of its own
+# starts with nothing installed.
+$data = Join-Path $OutDir "dependencies-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+$process = Start-Pane "stderr-dependencies.log" @("--install", "target/guests/packages/sample-dependencies")
+Capture "75-dependencies-preview.png"
+Check "75-dependencies-preview.png" "aab4c0"   # "Requires: JavaScript operations sample, installed with it ..."
+Send "{ENTER}"; Start-Sleep -Seconds 3   # Install; Greet through dependencies is selected
+Capture "76-dependencies-installed.png"
+Check "76-dependencies-installed.png" "9fd8a8"   # "Installed Dependencies sample with JavaScript operations sample, which it requires"
+Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greet through dependencies
+Send "{ENTER}"; Start-Sleep -Seconds 5   # Greet through the required greeter
+Capture "77-dependency-answer.png"
+Check "77-dependency-answer.png" "9fd8a8"   # the JavaScript guest's answer
+$shots = "75-dependencies-preview", "76-dependencies-installed", "77-dependency-answer" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: installing with dependencies changed nothing" }
+Stop-Pane $process
+$record = Join-Path $data "extensions/installed.json"
+if (-not (Select-String -Quiet -SimpleMatch '"id": "greeter"' $record)) { throw "dependency not recorded" }
+if ((Select-String -SimpleMatch '"dir"' $record).Count -ne 2) { throw "not exactly two packages installed" }
 
 # Native helpers: the helper sample's command runs pane-echo, the file its
 # package ships for this system (built by `cargo xtask guests`). Its first

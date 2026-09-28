@@ -11,6 +11,7 @@ members = [
     "applications",
     "quicklinks",
     "sample-operations",
+    "sample-dependencies",
     "sample-query",
     "sample-helper",
     "fixtures/faulty",

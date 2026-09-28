@@ -155,9 +155,23 @@ fallback row chosen with Down, "zqx" to it, and checks that with the
 extension disabled "ec hello" lists nothing. Nothing in it is specific to
 Windows (no system API is involved); **not run on Windows yet**.
 
+## Dependencies (#42)
+
+The dependencies phase (screenshots 75 to 77, [dependencies](../dependencies.md#checks)),
+with a data folder of its own, previews the dependencies sample (its
+required JavaScript operations sample and optional Rust one listed),
+installs it with the JavaScript sample and runs "Greet through the required
+greeter", which must answer from the JavaScript guest; `installed.json`
+must then hold exactly two packages and the recorded dependency. A
+dependency's `local:../…` source is joined to the package folder and
+resolved with the same `canonicalize` (without the `\\?\` prefix) as
+package identity; a folder that does not exist is resolved from its
+spelling. **Not run on Windows yet**, so `..` across drive-letter and UNC
+paths is untested natively.
+
 ## Native helpers (#15)
 
-The smoke's last phase (screenshots 90 to 93, data folder `helper-data`,
+The first native-helper phase (screenshots 90 to 93, data folder `helper-data`,
 [native helpers](../helpers.md#checks)) installs the helper sample, whose
 `pane-echo.exe` `cargo xtask guests` builds for the runner
 (`windows-x86_64` on `windows-2025`), runs it (the answer must name Windows
