@@ -249,4 +249,24 @@ $shots = "1-root", "24-search", "25-search-result", "26-no-results" | ForEach-Ob
 python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: root search showed the same window twice" }
 Stop-Pane $process
+
+# Operations: install the JavaScript operations sample, then the Rust one,
+# whose command (Call from Rust, selected once installed) asks the JavaScript
+# package's greet operation: "JavaScript answered: Hello, Rust, from
+# JavaScript" comes from the other package's guest, started for the call.
+$process = Start-Pane "stderr-operations-target.log" @("--install", "target/guests/packages/sample-operations-js")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install
+Capture "27-operations-target.png"
+Check "27-operations-target.png" "9fd8a8"   # "Installed JavaScript operations sample"
+Stop-Pane $process
+$process = Start-Pane "stderr-operations.log" @("--install", "target/guests/packages/sample-operations")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Call from Rust is selected
+Send "{ENTER}"; Start-Sleep -Seconds 3   # open Call from Rust
+Send "{ENTER}"; Start-Sleep -Seconds 5   # "Ask JavaScript to greet"
+Capture "28-operation-answer.png"
+Check "28-operation-answer.png" "9fd8a8"   # the JavaScript guest's answer
+$shots = "27-operations-target", "28-operation-answer" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the operation's answer did not appear" }
+Stop-Pane $process
 Write-Output "screenshots in $OutDir"

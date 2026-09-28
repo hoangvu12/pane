@@ -51,4 +51,8 @@ impl Guest for Mixed {
     async fn open_view(item_id: String) -> Result<CustomView, String> {
         Err(item_id)
     }
+
+    async fn run_operation(operation: String, _input: String) -> Result<String, String> {
+        Err(operation)
+    }
 }

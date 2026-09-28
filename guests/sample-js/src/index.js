@@ -235,4 +235,8 @@ export const command = {
     }
     return new ColorPicker();
   },
+
+  async runOperation(operation) {
+    throw new Error(`unknown operation: ${operation}`);
+  },
 };

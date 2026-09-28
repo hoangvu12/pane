@@ -16,10 +16,11 @@ use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 
 use crate::platform::Platform;
 
-mod bindings {
+pub(crate) mod bindings {
     wasmtime::component::bindgen!({
         path: "../../wit",
         world: "extension-with-settings",
+        imports: { "pane:extension/operations": store },
         exports: { default: async | store },
     });
 }
@@ -27,6 +28,7 @@ mod bindings {
 use bindings::exports::pane::extension::command;
 use bindings::pane::extension::settings;
 
+use crate::operations::{self, Directory, OperationCall, OperationError, Target};
 use crate::packages::EXTENSION_API;
 use crate::settings::PackageSettings;
 
@@ -342,6 +344,9 @@ enum Request {
     Running {
         reply: oneshot::Sender<Vec<PathBuf>>,
     },
+    SetDirectory {
+        directory: Directory,
+    },
 }
 
 impl Runtime {
@@ -564,6 +569,14 @@ impl Runtime {
         let _ = self.send(Request::Forget { components });
     }
 
+    /// Resolves the operation calls guests make against `directory` from
+    /// now on. Without one, every call is answered that nothing is
+    /// installed.
+    pub(crate) fn set_directory(&self, directory: Directory) {
+        // A stopped runtime serves no calls.
+        let _ = self.send(Request::SetDirectory { directory });
+    }
+
     fn send(&self, request: Request) -> Result<(), CallError> {
         self.requests.send(request).map_err(|_| stopped())
     }
@@ -573,12 +586,16 @@ fn stopped() -> CallError {
     CallError::RuntimeUnavailable("the runtime has stopped".into())
 }
 
-struct GuestState {
+pub(crate) struct GuestState {
     wasi: WasiCtx,
     table: ResourceTable,
     /// The settings of the package the command belongs to; `None` for a
     /// command built into Pane.
     settings: Option<PackageSettings>,
+    /// The guest's component, which identifies it as a caller.
+    pub(crate) component: PathBuf,
+    /// Where the guest's operation calls go, to be served while it waits.
+    pub(crate) calls: mpsc::UnboundedSender<OperationCall>,
 }
 
 impl GuestState {
@@ -631,6 +648,15 @@ struct Host {
     instances: HashMap<PathBuf, Instance>,
     views: HashMap<ViewId, LiveView>,
     next_view: u64,
+    /// The installed packages operation calls are resolved against.
+    directory: Option<Directory>,
+    /// Handed to every guest, for its operation calls.
+    calls: mpsc::UnboundedSender<OperationCall>,
+    /// Operation calls guests made, served while their callers wait.
+    pending_calls: mpsc::UnboundedReceiver<OperationCall>,
+    /// The components running a guest call, outermost first: a chain of
+    /// operation calls. Each is busy until its call returns.
+    chain: Vec<PathBuf>,
 }
 
 impl Host {
@@ -642,6 +668,12 @@ impl Host {
             .expect("registering WASI 0.3 in a fresh linker cannot conflict");
         settings::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| state)
             .expect("registering settings in a fresh linker cannot conflict");
+        bindings::pane::extension::operations::add_to_linker::<_, operations::Calls>(
+            &mut linker,
+            |state| state,
+        )
+        .expect("registering operations in a fresh linker cannot conflict");
+        let (calls, pending_calls) = operations::channel();
         Host {
             engine,
             linker,
@@ -649,6 +681,10 @@ impl Host {
             instances: HashMap::new(),
             views: HashMap::new(),
             next_view: 0,
+            directory: None,
+            calls,
+            pending_calls,
+            chain: Vec::new(),
         }
     }
 
@@ -713,6 +749,7 @@ impl Host {
                 Request::Running { reply } => {
                     let _ = reply.send(self.instances.keys().cloned().collect());
                 }
+                Request::SetDirectory { directory } => self.directory = Some(directory),
             }
         }
     }
@@ -722,12 +759,16 @@ impl Host {
         path: &Path,
         settings: Option<PackageSettings>,
     ) -> Result<View, CallError> {
-        let instance = self.instance(path, settings).await?;
-        let command = instance.bindings.pane_extension_command();
-        let result = instance
-            .store
-            .run_concurrent(async |store| command.call_get_view(store).await)
-            .await;
+        self.instance(path, settings).await?;
+        let result = self
+            .run_guest(path, async |instance| {
+                let command = instance.bindings.pane_extension_command();
+                instance
+                    .store
+                    .run_concurrent(async |store| command.call_get_view(store).await)
+                    .await
+            })
+            .await?;
         let view = self.settle(path, result, CallError::Guest)?;
         Ok(View {
             title: view.title,
@@ -742,16 +783,22 @@ impl Host {
         values: Vec<FieldValue>,
         settings: Option<PackageSettings>,
     ) -> Result<String, CallError> {
-        let instance = self.instance(path, settings).await?;
-        let command = instance.bindings.pane_extension_command();
+        self.instance(path, settings).await?;
         let values = values
             .into_iter()
             .map(|FieldValue { id, value }| command::FieldValue { id, value })
             .collect();
-        let result = instance
-            .store
-            .run_concurrent(async |store| command.call_submit_form(store, item_id, values).await)
-            .await;
+        let result = self
+            .run_guest(path, async |instance| {
+                let command = instance.bindings.pane_extension_command();
+                instance
+                    .store
+                    .run_concurrent(async |store| {
+                        command.call_submit_form(store, item_id, values).await
+                    })
+                    .await
+            })
+            .await?;
         self.settle(path, result, |error: command::FormError| {
             CallError::Form(FormError {
                 field: error.field,
@@ -766,12 +813,16 @@ impl Host {
         item_id: String,
         settings: Option<PackageSettings>,
     ) -> Result<(ViewId, Frame), CallError> {
-        let instance = self.instance(path, settings).await?;
-        let command = instance.bindings.pane_extension_command();
-        let result = instance
-            .store
-            .run_concurrent(async |store| command.call_open_view(store, item_id).await)
-            .await;
+        self.instance(path, settings).await?;
+        let result = self
+            .run_guest(path, async |instance| {
+                let command = instance.bindings.pane_extension_command();
+                instance
+                    .store
+                    .run_concurrent(async |store| command.call_open_view(store, item_id).await)
+                    .await
+            })
+            .await?;
         let resource = self.settle(path, result, CallError::Guest)?;
         let view = ViewId(self.next_view);
         self.next_view += 1;
@@ -793,15 +844,18 @@ impl Host {
 
     async fn view_event(&mut self, view: ViewId, event: ViewEvent) -> Result<Frame, CallError> {
         let (path, resource) = self.view(view)?;
-        let instance = self.live_instance(&path)?;
-        let custom_view = instance.bindings.pane_extension_command().custom_view();
         let event = command::ViewEvent::from(event);
-        let result = instance
-            .store
-            .run_concurrent(async |store| {
-                custom_view.call_handle_event(store, resource, event).await
+        let result = self
+            .run_guest(&path, async |instance| {
+                let custom_view = instance.bindings.pane_extension_command().custom_view();
+                instance
+                    .store
+                    .run_concurrent(async |store| {
+                        custom_view.call_handle_event(store, resource, event).await
+                    })
+                    .await
             })
-            .await;
+            .await?;
         self.settle(&path, result, CallError::Guest)?;
         self.render(view).await
     }
@@ -809,12 +863,15 @@ impl Host {
     /// Asks the guest to draw the open view `view`.
     async fn render(&mut self, view: ViewId) -> Result<Frame, CallError> {
         let (path, resource) = self.view(view)?;
-        let instance = self.live_instance(&path)?;
-        let custom_view = instance.bindings.pane_extension_command().custom_view();
-        let result = instance
-            .store
-            .run_concurrent(async |store| custom_view.call_render(store, resource).await)
-            .await;
+        let result = self
+            .run_guest(&path, async |instance| {
+                let custom_view = instance.bindings.pane_extension_command().custom_view();
+                instance
+                    .store
+                    .run_concurrent(async |store| custom_view.call_render(store, resource).await)
+                    .await
+            })
+            .await?;
         let frame = self.settle(&path, result.map(|frame| frame.map(Ok)), |never| never)?;
         let frame = Frame::from(frame);
         match frame.over_limits() {
@@ -828,12 +885,6 @@ impl Host {
     fn view(&self, view: ViewId) -> Result<(PathBuf, ResourceAny), CallError> {
         let open = self.views.get(&view).ok_or(CallError::ViewClosed)?;
         Ok((open.component.clone(), open.resource))
-    }
-
-    /// The live instance holding an open view. Views go with their instance,
-    /// so an open view always has one.
-    fn live_instance(&mut self, path: &Path) -> Result<&mut Instance, CallError> {
-        self.instances.get_mut(path).ok_or(CallError::ViewClosed)
     }
 
     /// Drops the guest's view `view`, running its destructor.
@@ -866,13 +917,142 @@ impl Host {
         item_id: String,
         settings: Option<PackageSettings>,
     ) -> Result<String, CallError> {
-        let instance = self.instance(path, settings).await?;
-        let command = instance.bindings.pane_extension_command();
-        let result = instance
-            .store
-            .run_concurrent(async |store| command.call_run_action(store, item_id).await)
-            .await;
+        self.instance(path, settings).await?;
+        let result = self
+            .run_guest(path, async |instance| {
+                let command = instance.bindings.pane_extension_command();
+                instance
+                    .store
+                    .run_concurrent(async |store| command.call_run_action(store, item_id).await)
+                    .await
+            })
+            .await?;
         self.settle(path, result, CallError::Guest)
+    }
+
+    /// Runs `call` on the live instance of `path`, serving the operation
+    /// calls guests make while it runs. Without a live instance (a view's
+    /// instance has stopped) it is [`CallError::ViewClosed`].
+    ///
+    /// The instance is taken out of the host for the call, so the host can
+    /// serve an operation call its guest makes, on this same thread, while
+    /// the guest waits for the answer: the guest's call is not polled until
+    /// the operation's answer is sent, and then resumes. The component is on
+    /// the call chain meanwhile, so a call back into it is refused rather
+    /// than waiting on itself.
+    async fn run_guest<R>(
+        &mut self,
+        path: &Path,
+        call: impl AsyncFnOnce(&mut Instance) -> R,
+    ) -> Result<R, CallError> {
+        use std::task::Poll;
+
+        let mut instance = self.instances.remove(path).ok_or(CallError::ViewClosed)?;
+        self.chain.push(path.to_path_buf());
+        let result = {
+            let mut running = std::pin::pin!(call(&mut instance));
+            loop {
+                let next = std::future::poll_fn(|cx| {
+                    if let Poll::Ready(result) = running.as_mut().poll(cx) {
+                        return Poll::Ready(Ok(result));
+                    }
+                    self.pending_calls
+                        .poll_recv(cx)
+                        .map(|call| Err(call.expect("the host keeps a sender, so calls never end")))
+                })
+                .await;
+                match next {
+                    Ok(result) => break result,
+                    Err(operation_call) => {
+                        Box::pin(self.serve_operation(operation_call)).await;
+                    }
+                }
+            }
+        };
+        self.chain.pop();
+        self.instances.insert(path.to_path_buf(), instance);
+        Ok(result)
+    }
+
+    /// Serves one operation call a guest made, answering it.
+    async fn serve_operation(&mut self, call: OperationCall) {
+        // Its caller gave up on it before it started: it is not started.
+        if call.reply.is_closed() {
+            return;
+        }
+        let OperationCall {
+            caller,
+            source,
+            operation,
+            version,
+            input,
+            reply,
+        } = call;
+        let result = self
+            .operation(&caller, &source, &operation, version, input)
+            .await;
+        let _ = reply.send(result);
+    }
+
+    /// Calls `operation` at `version` of the package with `source` for the
+    /// guest in `caller`, starting the target if it is not running.
+    async fn operation(
+        &mut self,
+        caller: &Path,
+        source: &str,
+        operation: &str,
+        version: u32,
+        input: String,
+    ) -> Result<String, OperationError> {
+        operations::check_json(&input, "input")?;
+        if self.chain.len() >= operations::MAX_CALL_DEPTH {
+            return Err(OperationError::refused(format!(
+                "the chain of calls is {} deep; Pane allows at most {}",
+                self.chain.len(),
+                operations::MAX_CALL_DEPTH
+            )));
+        }
+        let installed = match &self.directory {
+            Some(directory) => directory(),
+            None => operations::Installed::default(),
+        };
+        let Target {
+            title,
+            component,
+            settings,
+        } = installed.resolve(caller, source, operation, version)?;
+        if self.chain.contains(&component) {
+            return Err(OperationError::refused(format!(
+                "{title} is already serving a call in this chain; an extension cannot be \
+                 called back while its own call waits"
+            )));
+        }
+        let failed = |error| OperationError::from_call(&title, error);
+        self.instance(&component, settings.clone())
+            .await
+            .map_err(failed)?;
+        let name = operation.to_owned();
+        let result = self
+            .run_guest(&component, async |instance| {
+                let command = instance.bindings.pane_extension_command();
+                instance
+                    .store
+                    .run_concurrent(async |store| {
+                        command.call_run_operation(store, name, input).await
+                    })
+                    .await
+            })
+            .await
+            .map_err(failed)?;
+        let answer = self
+            .settle(&component, result, CallError::Guest)
+            .map_err(failed)?;
+        // Disabled while it was serving the call: its answer is not passed on.
+        if settings.as_ref().is_some_and(PackageSettings::is_disabled) {
+            return Err(failed(CallError::Disabled));
+        }
+        operations::check_json(&answer, &format!("result of {title}"))?;
+        Ok(answer)
     }
 
     /// Maps a call outcome to the caller's result, turning the guest's own
@@ -913,6 +1093,8 @@ impl Host {
                     wasi: WasiCtx::builder().build(),
                     table: ResourceTable::new(),
                     settings,
+                    component: path.to_path_buf(),
+                    calls: self.calls.clone(),
                 },
             );
             let bindings = bindings::ExtensionWithSettings::instantiate_async(
@@ -998,6 +1180,11 @@ impl Host {
         check::<(ResourceAny, command::ViewEvent), (Result<(), String>,)>(
             handle_event,
             func(handle_event)?,
+            &cx,
+        )?;
+        check::<(String, String), (Result<String, String>,)>(
+            "run-operation",
+            func("run-operation")?,
             &cx,
         )
     }

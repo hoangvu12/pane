@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use crate::operations::{self, Installed};
 use crate::packages::{
     InstalledPackage, PackageError, PackageIdentity, SourcePackage, Store, folder_name,
 };
@@ -399,6 +400,18 @@ impl Launcher {
             installation,
             state: Arc::new(Mutex::new(state)),
         };
+        if let (Ok(runtime), Some(installation)) = (&launcher.runtime, &launcher.installation) {
+            // Operation calls see the packages as the launcher has them.
+            let state = Arc::downgrade(&launcher.state);
+            let settings = installation.settings.clone();
+            runtime.set_directory(Arc::new(move || Installed {
+                packages: state.upgrade().map_or_else(Vec::new, |state| {
+                    let state = state.lock().unwrap_or_else(|p| p.into_inner());
+                    state.packages.clone()
+                }),
+                settings: Some(settings.clone()),
+            }));
+        }
         launcher.show_root(&mut launcher.lock(), None);
         launcher
     }
@@ -844,13 +857,19 @@ impl Launcher {
     /// runtime check each component without running it.
     async fn read_and_check(&self, folder: PathBuf) -> Result<SourcePackage, PackageError> {
         let package = off_thread(move || SourcePackage::read(&folder)).await?;
-        for (command, component) in package.components() {
+        let mut checked_components = Vec::new();
+        for (name, component) in package.components() {
+            // A component serving a command and an operation is checked once.
+            if checked_components.contains(&component) {
+                continue;
+            }
+            checked_components.push(component.clone());
             let checked = match self.runtime() {
                 Ok(runtime) => runtime.check(&component).await,
                 Err(error) => Err(error),
             };
             checked.map_err(|error| PackageError::Component {
-                command: command.title.clone(),
+                command: name.clone(),
                 error,
             })?;
         }
@@ -1483,7 +1502,12 @@ fn preview_view(
         details.push(format!("Version: {version}"));
     }
     let titles: Vec<&str> = manifest.commands.iter().map(|c| c.title.as_str()).collect();
-    details.push(format!("Commands: {}", titles.join(", ")));
+    if !titles.is_empty() {
+        details.push(format!("Commands: {}", titles.join(", ")));
+    }
+    if let Some(operations) = operations::describe(&manifest.operations) {
+        details.push(operations);
+    }
     details.push(format!(
         "Compatible: needs extension API {}, and its components import only WASI 0.3",
         manifest.api_version

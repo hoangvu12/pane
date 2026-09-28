@@ -71,4 +71,8 @@ impl Guest for Greeting {
     async fn open_view(item_id: String) -> Result<CustomView, String> {
         Err(format!("unknown view: {item_id}"))
     }
+
+    async fn run_operation(operation: String, _input: String) -> Result<String, String> {
+        Err(format!("unknown operation: {operation}"))
+    }
 }

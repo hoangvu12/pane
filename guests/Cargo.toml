@@ -7,7 +7,9 @@ members = [
     "pane-guest",
     "sample-rust",
     "sample-settings",
+    "sample-operations",
     "fixtures/faulty",
+    "fixtures/operations",
     "fixtures/old-api",
     "fixtures/mismatched-api",
 ]
