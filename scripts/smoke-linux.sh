@@ -38,7 +38,11 @@ capture() {
       "$display" "$out/$1"
   fi
 }
-check() { python3 "$(dirname "$0")/check_screenshot.py" "$out/$1" "$2"; }
+check() { python3 "$(dirname "$0")/check_screenshot.py" "$out/$1" "$2" ${3:+"$3"}; }
+# Prints "x y": where the screenshot shows the given color.
+locate() { python3 "$(dirname "$0")/check_screenshot.py" --locate "$out/$1" "$2"; }
+# Clicks the primary button at x y in the pixels of screenshot $3.
+click_at() { "$xdotool" mousemove "$1" "$2" click 1; }
 
 # Starts Pane with the given arguments and focuses its window.
 start_pane() {
@@ -119,11 +123,11 @@ check 12-restarted.png 8a96a3
 [ -f "$out/data/extensions/installed.json" ] || { echo "no install record"; exit 1; }
 "$xdotool" windowfocus --sync "$window"
 
-# The Rust command's sixth item is declared for Windows only, its seventh
+# The Rust command's seventh item is declared for Windows only, its eighth
 # for macOS and Linux only. Here the first is explained without running and
 # the second runs.
 "$xdotool" key Return; sleep 3
-for _ in 1 2 3 4 5; do "$xdotool" key Down; done
+for _ in 1 2 3 4 5 6; do "$xdotool" key Down; done
 "$xdotool" key Return; sleep 2
 capture 13-windows-only.png
 check 13-windows-only.png d6a36a   # the row's reason
@@ -193,5 +197,28 @@ for ((i = 0; i < 4; i++)); do "$xdotool" key Down; done   # Greeting
 "$xdotool" key Down key Down key Return; sleep 2   # "Greet me"
 capture 20-greeted.png
 check 20-greeted.png 9fd8a8   # "Good day to you"
+stop_pane
+
+# Restarted, root lists Greeting again, after Rust sample.
+start_pane
+"$xdotool" windowfocus --sync "$window"
+
+# The Rust command's color picker (its sixth item), which the guest draws:
+# Right chooses purple, and a click on the dark green swatch chooses it. The
+# chosen color fills its swatch and the preview, far more pixels than any
+# other swatch covers.
+"$xdotool" key Return; sleep 3
+for _ in 1 2 3 4 5; do "$xdotool" key Down; done
+"$xdotool" key Return; sleep 2
+capture 21-color.png
+check 21-color.png 1e88e5 3000   # blue, chosen when the view opens
+"$xdotool" key Right; sleep 1
+capture 22-color-key.png
+check 22-color-key.png 8e24aa 3000   # purple
+read -r x y < <(locate 22-color-key.png 1b5e20)
+click_at "$x" "$y" 22-color-key.png; sleep 1
+capture 23-color-click.png
+check 23-color-click.png 1b5e20 3000   # dark green
+"$xdotool" key Escape key Escape; sleep 1
 stop_pane
 echo "screenshots in $out"

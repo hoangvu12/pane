@@ -12,6 +12,7 @@ use gpui::{
 };
 use pane_core::{CommandRegistration, Launcher, LauncherView, Row, Screen, Status};
 
+mod custom_view;
 mod form;
 
 actions!(
@@ -39,6 +40,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("shift-tab", FocusPrevious, Some(KEY_CONTEXT)),
     ]);
     form::bind_keys(cx);
+    custom_view::bind_keys(cx);
 }
 
 /// The sample commands: (id, title, subtitle, component file name). Each
@@ -140,6 +142,9 @@ pub struct LauncherWindow {
     focus_handle: FocusHandle,
     /// The open form's controls; `Some` exactly on the form screen.
     form: Option<form::FormControls>,
+    /// The open custom view's focus and layout; `Some` exactly on the
+    /// custom view screen.
+    custom_view: Option<custom_view::CustomViewControls>,
     /// The list's scroll position.
     scroll: ScrollHandle,
     /// What the list was last scrolled for.
@@ -171,6 +176,7 @@ impl LauncherWindow {
             form: None,
             scroll: ScrollHandle::new(),
             scrolled_for: None,
+            custom_view: None,
         }
     }
 
@@ -198,7 +204,7 @@ impl LauncherWindow {
 
     fn back(&mut self, _: &Back, window: &mut Window, cx: &mut Context<Self>) {
         self.launcher.back();
-        self.sync_form(window, cx);
+        self.sync_screen(window, cx);
         cx.notify();
     }
 
@@ -266,20 +272,21 @@ impl LauncherWindow {
 
     /// Shows the launcher's state now and again when `pending`, a launcher
     /// action's reply, has been applied, without blocking the window
-    /// meanwhile. Each time the form's controls follow the launcher's screen
-    /// (opening a form needs no guest call, so its controls appear at once).
+    /// meanwhile. Each time the form's and custom view's controls follow the
+    /// launcher's screen (opening a form needs no guest call, so its controls
+    /// appear at once).
     fn show_until_done(
         &mut self,
         pending: impl Future<Output = ()> + 'static,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.sync_form(window, cx);
+        self.sync_screen(window, cx);
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
             pending.await;
             this.update_in(cx, |this, window, cx| {
-                this.sync_form(window, cx);
+                this.sync_screen(window, cx);
                 cx.notify();
             })
             .ok();
@@ -312,6 +319,13 @@ impl LauncherWindow {
             self.scroll.scroll_to_item(selected);
         }
         self.scrolled_for = Some(shown);
+    }
+
+    /// Makes the form's and custom view's controls, and focus, follow the
+    /// launcher's screen.
+    fn sync_screen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_form(window, cx);
+        self.sync_custom_view(window, cx);
     }
 
     fn render_row(
@@ -390,6 +404,7 @@ impl Render for LauncherWindow {
                 "No extensions are installed.",
                 "↑↓ select · Enter enable or disable · Esc back",
             ),
+            Screen::CustomView => ("", "Keys and pointer go to the view · Esc back"),
         };
         let details = view.details.into_iter().enumerate().map(|(index, line)| {
             div()
@@ -415,9 +430,10 @@ impl Render for LauncherWindow {
                 self.render_row(index, row, selected, cx)
             })
             .collect();
-        let body = match view.form {
-            Some(form) => self.render_form(view.title.clone(), form, cx),
-            None => div()
+        let body = match (view.form, view.custom_view) {
+            (Some(form), _) => self.render_form(view.title.clone(), form, cx),
+            (None, Some(custom_view)) => self.render_custom_view(custom_view, cx),
+            (None, None) => div()
                 .id("rows")
                 .debug_selector(|| "rows".into())
                 // The list holds keyboard focus; the selected row is its

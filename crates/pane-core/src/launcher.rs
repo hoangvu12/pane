@@ -5,6 +5,10 @@
 //! snapshot of what the window should show. Actions that call into an
 //! extension update the snapshot immediately (for example to "running") and
 //! return a future that applies the extension's reply when awaited.
+//!
+//! Every reply is checked against the screen it was requested from: once the
+//! user has left that screen, the reply is discarded, and a custom view that
+//! opened after the user left is closed again.
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -14,7 +18,10 @@ use crate::packages::{
     InstalledPackage, PackageError, PackageIdentity, SourcePackage, Store, folder_name,
 };
 use crate::platform::{self, Platform};
-use crate::runtime::{CallError, FieldKind, FieldValue, Form, Runtime};
+use crate::runtime::{
+    CallError, CustomViewInfo, CustomViewRole, FieldKind, FieldValue, Form, Frame, Runtime,
+    ViewEvent, ViewId,
+};
 use crate::settings::{PackageSettings, Settings};
 
 /// The id of the root row that installs a package from a local folder.
@@ -46,6 +53,8 @@ pub enum Screen {
     Form,
     /// The installed packages, each enabled or disabled.
     Extensions,
+    /// A custom view opened from an item of the command's list view.
+    CustomView,
 }
 
 /// A selectable row.
@@ -92,6 +101,17 @@ pub struct FormField {
     pub error: Option<String>,
 }
 
+/// An open custom view as the extension last drew it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CustomViewSnapshot {
+    /// Names the view to assistive technology.
+    pub label: String,
+    pub role: CustomViewRole,
+    /// The latest drawing: the answer to the most recent event whose answer
+    /// has arrived, or the first drawing.
+    pub frame: Frame,
+}
+
 /// A snapshot of what the launcher shows.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LauncherView {
@@ -107,6 +127,8 @@ pub struct LauncherView {
     pub status: Status,
     /// The open form; `Some` exactly on the form screen.
     pub form: Option<FormView>,
+    /// The open custom view; `Some` exactly on the custom view screen.
+    pub custom_view: Option<CustomViewSnapshot>,
 }
 
 /// The launcher. Cloning shares the same state.
@@ -136,6 +158,8 @@ struct State {
     open: Option<PathBuf>,
     /// The form on screen, if one is open.
     form: Option<OpenForm>,
+    /// The custom view on screen, if one is open.
+    custom_view: Option<OpenCustomView>,
     /// Incremented on every navigation, so a reply that arrives after the
     /// user has left the screen it was requested from is discarded.
     screen_generation: u64,
@@ -167,6 +191,22 @@ struct OpenForm {
     submitting: bool,
 }
 
+/// What the launcher keeps about the open custom view besides its snapshot.
+struct OpenCustomView {
+    /// The view in the runtime; closed when the view leaves the screen.
+    id: ViewId,
+    /// The command view that Back returns to.
+    return_to: LauncherView,
+    /// Whether the primary pointer button was pressed over the view and is
+    /// still held; pointer moves and the release are sent only meanwhile.
+    pressed: bool,
+    /// How many events were sent to the view.
+    sent: u64,
+    /// The number of the event whose answer is on screen, so an older answer
+    /// arriving late does not replace a newer one.
+    shown: u64,
+}
+
 /// What activating a row does.
 #[derive(Clone)]
 enum Entry {
@@ -183,6 +223,8 @@ enum Entry {
     Run(String),
     /// Open this form of the open command's item with this id.
     Form(String, Form),
+    /// Open the custom view of the open command's item with this id.
+    CustomView(String, CustomViewInfo),
     /// Install the previewed package from this folder, or replace its
     /// installed copy.
     Install(PathBuf, Mode),
@@ -241,10 +283,12 @@ impl Launcher {
                 selected: None,
                 status: Status::Idle,
                 form: None,
+                custom_view: None,
             },
             entries: Vec::new(),
             open: None,
             form: None,
+            custom_view: None,
             screen_generation: 0,
             packages,
             changing: Vec::new(),
@@ -313,8 +357,9 @@ impl Launcher {
         matches!(entry, Some(Entry::InstallFromFolder))
     }
 
-    /// Leaves an open form for its command's list, or an open command,
-    /// package preview or the extension list for root search.
+    /// Leaves an open form or custom view for its command's list, or an open
+    /// command, package preview or the extension list for root search. A
+    /// custom view is closed.
     pub fn back(&self) {
         let mut state = self.lock();
         match state.view.screen {
@@ -324,6 +369,14 @@ impl Launcher {
                 state.view = LauncherView {
                     status: Status::Idle,
                     ..form.return_to
+                };
+            }
+            Screen::CustomView => {
+                let return_to = self.close_custom_view(&mut state).expect("a view is open");
+                state.screen_generation += 1;
+                state.view = LauncherView {
+                    status: Status::Idle,
+                    ..return_to
                 };
             }
             Screen::Command | Screen::Package | Screen::Extensions => {
@@ -395,6 +448,13 @@ impl Launcher {
                 Some(Entry::Install(folder, mode)) => {
                     launcher.install(generation, folder, mode).await
                 }
+                Some(Entry::CustomView(item_id, info)) => {
+                    if let Some(component) = open {
+                        launcher
+                            .open_custom_view(generation, component, item_id, info)
+                            .await
+                    }
+                }
                 Some(
                     Entry::Broken(_)
                     | Entry::Unavailable(_)
@@ -431,6 +491,7 @@ impl Launcher {
             });
             let (view, entries) = preview_view(&folder, checked, installed);
             state.screen_generation += 1;
+            launcher.close_custom_view(&mut state);
             state.open = None;
             state.form = None;
             state.view = view;
@@ -590,7 +651,7 @@ impl Launcher {
             Screen::Root => self.refresh_root(state),
             Screen::Extensions => self.refresh_extensions(state),
             // Other screens show no package state.
-            Screen::Command | Screen::Package | Screen::Form => {}
+            Screen::Command | Screen::Package | Screen::Form | Screen::CustomView => {}
         }
     }
 
@@ -688,6 +749,7 @@ impl Launcher {
                     .position(|entry| matches!(entry, Entry::Open(c) if *c == component))
             })
             .or_else(|| first_index(&rows));
+        self.close_custom_view(state);
         state.open = None;
         state.form = None;
         state.screen_generation += 1;
@@ -703,6 +765,7 @@ impl Launcher {
                 None => Status::Idle,
             },
             form: None,
+            custom_view: None,
         };
     }
 
@@ -922,6 +985,7 @@ impl Launcher {
             rows,
             status: Status::Idle,
             form: None,
+            custom_view: None,
         };
     }
 
@@ -931,6 +995,148 @@ impl Launcher {
         let (rows, entries) = extension_rows(&state.packages);
         state.entries = entries;
         state.view.rows = rows;
+    }
+
+    /// Opens the custom view of `item_id` and shows its first drawing, or
+    /// closes it again if the user has left the command meanwhile.
+    async fn open_custom_view(
+        &self,
+        generation: u64,
+        component: PathBuf,
+        item_id: String,
+        info: CustomViewInfo,
+    ) {
+        let settings = self.settings_of(&component);
+        let result = match self.runtime() {
+            Ok(runtime) => runtime.open_view_with(&component, &item_id, settings).await,
+            Err(error) => Err(error),
+        };
+        let current = self.lock_if_current(generation);
+        let disabled = current
+            .as_ref()
+            .and_then(|state| disabled_owner(state, &component));
+        let Some(mut state) = current.filter(|_| disabled.is_none()) else {
+            if let (Ok((id, _)), Ok(runtime)) = (result, self.runtime()) {
+                runtime.close_view(id);
+            }
+            if let Some(problem) = disabled {
+                // Disabled while it was opening.
+                self.lock().view.status = Status::Error(problem);
+            }
+            return;
+        };
+        match result {
+            Ok((id, frame)) => {
+                let view = LauncherView {
+                    screen: Screen::CustomView,
+                    title: info.title,
+                    details: Vec::new(),
+                    rows: Vec::new(),
+                    selected: None,
+                    status: Status::Idle,
+                    form: None,
+                    custom_view: Some(CustomViewSnapshot {
+                        label: info.label,
+                        role: info.role,
+                        frame,
+                    }),
+                };
+                let return_to = LauncherView {
+                    status: Status::Idle,
+                    ..std::mem::replace(&mut state.view, view)
+                };
+                state.custom_view = Some(OpenCustomView {
+                    id,
+                    return_to,
+                    pressed: false,
+                    sent: 0,
+                    shown: 0,
+                });
+                state.screen_generation += 1;
+            }
+            Err(error) => state.view.status = Status::Error(error.to_string()),
+        }
+    }
+
+    /// Sends the user's input to the open custom view. Await the returned
+    /// future to show the view's new drawing. A pointer move or release is
+    /// sent only while the button pressed over the view is held; anything
+    /// sent when no view is open is ignored.
+    ///
+    /// Events are handled in order, and a drawing is shown only if no later
+    /// event's drawing is on screen yet. An error the extension reports is
+    /// shown while the view stays open; a crash closes the view.
+    pub fn send_view_event(&self, event: ViewEvent) -> impl Future<Output = ()> + Send + 'static {
+        let mut state = self.lock();
+        let generation = state.screen_generation;
+        let runtime = self.runtime.as_ref().ok();
+        // Sent now, so the view handles events in the order of these calls
+        // whenever the returned futures are awaited.
+        let sent = state
+            .custom_view
+            .as_mut()
+            .zip(runtime)
+            .and_then(|(open, runtime)| {
+                match event {
+                    ViewEvent::PointerDown(_) => open.pressed = true,
+                    ViewEvent::PointerMove(_) if !open.pressed => return None,
+                    ViewEvent::PointerUp(_) if !open.pressed => return None,
+                    ViewEvent::PointerUp(_) => open.pressed = false,
+                    ViewEvent::PointerMove(_) | ViewEvent::Key(_) => {}
+                }
+                open.sent += 1;
+                Some((open.sent, runtime.view_event(open.id, event)))
+            });
+        drop(state);
+        let launcher = self.clone();
+        async move {
+            if let Some((number, reply)) = sent {
+                launcher.show_view_answer(generation, number, reply.await)
+            }
+        }
+    }
+
+    /// Shows the open view's answer to its event number `number`.
+    fn show_view_answer(&self, generation: u64, number: u64, result: Result<Frame, CallError>) {
+        let Some(mut state) = self.lock_if_current(generation) else {
+            return;
+        };
+        let state = &mut *state;
+        let open = state.custom_view.as_mut().expect("a view is open");
+        match result {
+            // An answer to an event older than the one on screen is stale.
+            Ok(_) | Err(CallError::Guest(_)) if number <= open.shown => {}
+            Ok(frame) => {
+                open.shown = number;
+                let snapshot = state.view.custom_view.as_mut().expect("a view is open");
+                snapshot.frame = frame;
+                state.view.status = Status::Idle;
+            }
+            // The view refused the event and keeps its drawing.
+            Err(error @ CallError::Guest(_)) => {
+                open.shown = number;
+                state.view.status = Status::Error(error.to_string());
+            }
+            // The guest instance, and the view with it, is gone.
+            Err(error) => {
+                let return_to = self.close_custom_view(state).expect("a view is open");
+                state.screen_generation += 1;
+                state.view = LauncherView {
+                    status: Status::Error(error.to_string()),
+                    ..return_to
+                };
+            }
+        }
+    }
+
+    /// Closes the open custom view, if there is one, and returns the command
+    /// view it was opened from.
+    fn close_custom_view(&self, state: &mut State) -> Option<LauncherView> {
+        let open = state.custom_view.take()?;
+        if let Ok(runtime) = self.runtime() {
+            runtime.close_view(open.id);
+        }
+        Some(open.return_to)
     }
 
     async fn run_action(&self, generation: u64, component: PathBuf, item_id: String) {
@@ -976,10 +1182,11 @@ impl Launcher {
                     .map(|item| {
                         let unavailable =
                             platform::unavailable(item.platforms.as_deref(), "this action");
-                        let entry = match (&unavailable, item.form) {
-                            (Some(reason), _) => Entry::Unavailable(reason.clone()),
-                            (None, Some(form)) => Entry::Form(item.id.clone(), form),
-                            (None, None) => Entry::Run(item.id.clone()),
+                        let entry = match (&unavailable, item.form, item.custom_view) {
+                            (Some(reason), _, _) => Entry::Unavailable(reason.clone()),
+                            (None, Some(form), _) => Entry::Form(item.id.clone(), form),
+                            (None, None, Some(info)) => Entry::CustomView(item.id.clone(), info),
+                            (None, None, None) => Entry::Run(item.id.clone()),
                         };
                         let row = Row {
                             id: item.id,
@@ -1001,6 +1208,7 @@ impl Launcher {
                     rows,
                     status: Status::Idle,
                     form: None,
+                    custom_view: None,
                 };
             }
             Err(error) => state.view.status = Status::Error(error.to_string()),
@@ -1091,6 +1299,7 @@ fn preview_view(
                 selected: None,
                 status: Status::Error(error.to_string()),
                 form: None,
+                custom_view: None,
             };
             return (view, Vec::new());
         }
@@ -1155,6 +1364,7 @@ fn preview_view(
         selected: Some(0),
         status: Status::Idle,
         form: None,
+        custom_view: None,
     };
     (view, vec![entry])
 }
@@ -1193,6 +1403,7 @@ fn open_form(state: &mut State, item_id: String, form: Form) {
             fields,
             submit_label: form.submit_label,
         }),
+        custom_view: None,
     };
     let return_to = std::mem::replace(&mut state.view, form_view);
     state.form = Some(OpenForm {

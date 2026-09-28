@@ -1,7 +1,8 @@
 //! Contract checks every sample command passes alike, whether it is written
 //! in Rust, JavaScript or TypeScript: the same items, answers and errors
 //! through the launcher's public interface, a native WASI 0.3 async wait,
-//! fresh state per instance, a form the guest validates, and WASI 0.3-only
+//! fresh state per instance, a form the guest validates, a color picker the
+//! guest draws and changes on keys and pointer input, and WASI 0.3-only
 //! imports.
 //!
 //! Components come from `cargo xtask guests`; the JavaScript and TypeScript
@@ -11,8 +12,8 @@ use std::path::PathBuf;
 
 use futures::executor::block_on;
 use pane_core::{
-    CallError, Choice, CommandRegistration, FieldKind, FieldValue, FormError, FormField, Launcher,
-    Runtime, Screen, Status,
+    CallError, Choice, CommandRegistration, CustomViewRole, FieldKind, FieldValue, FormError,
+    FormField, Key, Launcher, Point, Runtime, Screen, Shape, Status, ViewEvent,
 };
 use wasmtime::component::Component;
 use wasmtime::{Config, Engine};
@@ -39,12 +40,13 @@ const TYPESCRIPT: Sample = Sample {
 };
 
 /// (item id, title) of every sample, in order.
-const ITEMS: [(&str, &str); 7] = [
+const ITEMS: [(&str, &str); 8] = [
     ("greet", "Say hello"),
     ("wait", "Wait briefly"),
     ("validate", "Validate settings"),
     ("random", "Roll a number"),
     ("form", "Greet someone"),
+    ("color", "Choose a color"),
     ("windows-only", "Windows-only action"),
     ("not-windows", "macOS and Linux action"),
 ];
@@ -109,6 +111,14 @@ impl Sample {
         launcher.set_field_value("greeting", greeting);
         block_on(launcher.submit_form());
         launcher.view().status
+    }
+
+    /// A launcher with this sample's color picker opened.
+    fn open_color(&self) -> Launcher {
+        let launcher = self.open();
+        assert_eq!(self.run(&launcher, "color"), Status::Idle);
+        assert_eq!(launcher.view().screen, Screen::CustomView);
+        launcher
     }
 
     /// The random item's answer in a runtime of its own.
@@ -348,6 +358,164 @@ fn a_platform_limited_action_runs_only_on_its_declared_systems(sample: &Sample) 
     );
 }
 
+/// The open color picker's value: the chosen color's name and hex code.
+fn color(launcher: &Launcher) -> String {
+    launcher
+        .view()
+        .custom_view
+        .expect("a view is open")
+        .frame
+        .value
+}
+
+/// Sends `event` to the open view and returns the color it then shows.
+fn send(launcher: &Launcher, event: ViewEvent) -> String {
+    block_on(launcher.send_view_event(event));
+    assert_eq!(launcher.view().status, Status::Idle);
+    color(launcher)
+}
+
+fn press(launcher: &Launcher, key: Key) -> String {
+    send(launcher, ViewEvent::Key(key))
+}
+
+fn at(x: i32, y: i32) -> Point {
+    Point { x, y }
+}
+
+fn opening_the_color_view_draws_the_picker(sample: &Sample) {
+    let view = sample.open_color().view();
+
+    assert_eq!(view.title, "Choose a color");
+    let custom = view.custom_view.expect("a view is open");
+    assert_eq!(
+        (custom.label.as_str(), custom.role),
+        ("Color", CustomViewRole::ColorWell)
+    );
+    let frame = custom.frame;
+    assert_eq!(
+        (frame.width, frame.height, frame.value.as_str()),
+        (376, 108, "Blue, #1E88E5")
+    );
+    let rect = |x, y, size, fill| Shape::Rect {
+        x,
+        y,
+        width: size,
+        height: size,
+        fill,
+    };
+    // The frame around the chosen swatch, 8 x 3 swatches, the preview and
+    // its hex code.
+    assert_eq!(frame.shapes.len(), 1 + 24 + 2);
+    assert_eq!(frame.shapes[0], rect(180, 36, 36, 0xf1f3f5));
+    assert_eq!(frame.shapes[1], rect(2, 2, 32, 0xef9a9a));
+    assert_eq!(frame.shapes[24], rect(254, 74, 32, 0x880e4f));
+    assert_eq!(frame.shapes[25], rect(300, 2, 64, 0x1e88e5));
+    assert_eq!(
+        frame.shapes[26],
+        Shape::Text {
+            x: 300,
+            y: 74,
+            content: "#1E88E5".into(),
+            color: 0xf1f3f5,
+        }
+    );
+}
+
+fn keys_move_the_chosen_color(sample: &Sample) {
+    let launcher = sample.open_color();
+
+    assert_eq!(press(&launcher, Key::Right), "Purple, #8E24AA");
+    assert_eq!(press(&launcher, Key::Down), "Dark purple, #4A148C");
+    assert_eq!(press(&launcher, Key::Home), "Dark red, #B71C1C");
+    assert_eq!(press(&launcher, Key::Left), "Dark red, #B71C1C");
+    assert_eq!(press(&launcher, Key::End), "Dark pink, #880E4F");
+    assert_eq!(press(&launcher, Key::Up), "Pink, #D81B60");
+    assert_eq!(press(&launcher, Key::Up), "Light pink, #F48FB1");
+    assert_eq!(press(&launcher, Key::Up), "Light pink, #F48FB1");
+    // The preview shows the chosen color too.
+    let frame = launcher.view().custom_view.unwrap().frame;
+    assert!(matches!(
+        frame.shapes[25],
+        Shape::Rect { fill: 0xf48fb1, .. }
+    ));
+}
+
+fn pressing_and_dragging_the_pointer_chooses_swatches(sample: &Sample) {
+    let launcher = sample.open_color();
+
+    assert_eq!(
+        send(&launcher, ViewEvent::PointerDown(at(10, 10))),
+        "Light red, #EF9A9A"
+    );
+    assert_eq!(
+        send(&launcher, ViewEvent::PointerMove(at(80, 80))),
+        "Dark yellow, #F57F17"
+    );
+    // A drag past the grid chooses the nearest swatch.
+    assert_eq!(
+        send(&launcher, ViewEvent::PointerMove(at(-50, 500))),
+        "Dark red, #B71C1C"
+    );
+    send(&launcher, ViewEvent::PointerUp(at(-50, 500)));
+    assert_eq!(
+        send(&launcher, ViewEvent::PointerMove(at(200, 40))),
+        "Dark red, #B71C1C"
+    );
+    // A press on the preview, outside the grid, chooses nothing.
+    assert_eq!(
+        send(&launcher, ViewEvent::PointerDown(at(330, 10))),
+        "Dark red, #B71C1C"
+    );
+    assert_eq!(
+        send(&launcher, ViewEvent::PointerMove(at(10, 10))),
+        "Dark red, #B71C1C"
+    );
+}
+
+fn each_opened_color_view_starts_afresh(sample: &Sample) {
+    let launcher = sample.open_color();
+    assert_eq!(press(&launcher, Key::Right), "Purple, #8E24AA");
+
+    launcher.back();
+    assert_eq!(launcher.view().screen, Screen::Command);
+    block_on(launcher.activate_selected());
+
+    assert_eq!(color(&launcher), "Blue, #1E88E5");
+}
+
+fn views_open_at_once_keep_their_own_state(sample: &Sample) {
+    let runtime = Runtime::start().unwrap();
+    let open = || block_on(runtime.open_view(&sample.path(), "color")).unwrap();
+    let ((first, _), (second, _)) = (open(), open());
+
+    let event = ViewEvent::Key(Key::Right);
+    let first_frame = block_on(runtime.view_event(first, event)).unwrap();
+    let second_frame = block_on(runtime.view_event(second, ViewEvent::Key(Key::Left))).unwrap();
+
+    assert_eq!(first_frame.value, "Purple, #8E24AA");
+    assert_eq!(second_frame.value, "Teal, #00897B");
+    assert_eq!(block_on(runtime.open_views()), 2);
+    runtime.close_view(first);
+    assert_eq!(block_on(runtime.open_views()), 1);
+    assert_eq!(
+        block_on(runtime.view_event(first, event)),
+        Err(CallError::ViewClosed)
+    );
+}
+
+fn an_unknown_view_is_a_guest_error(sample: &Sample) {
+    let runtime = Runtime::start().unwrap();
+
+    let opened = block_on(runtime.open_view(&sample.path(), "missing"));
+
+    assert_eq!(
+        opened.map(|(_, frame)| frame),
+        Err(CallError::Guest("unknown view: missing".into()))
+    );
+    assert_eq!(block_on(runtime.open_views()), 0);
+}
+
 /// Declares one test per check for each sample.
 macro_rules! contract {
     ($($check:ident),* $(,)?) => {
@@ -378,6 +546,12 @@ contract!(
     a_too_long_name_is_rejected_by_the_guest,
     an_unknown_choice_is_a_field_error_from_the_guest,
     a_platform_limited_action_runs_only_on_its_declared_systems,
+    opening_the_color_view_draws_the_picker,
+    keys_move_the_chosen_color,
+    pressing_and_dragging_the_pointer_chooses_swatches,
+    each_opened_color_view_starts_afresh,
+    views_open_at_once_keep_their_own_state,
+    an_unknown_view_is_a_guest_error,
 );
 
 /// The names of the component's imports.

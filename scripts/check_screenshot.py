@@ -15,9 +15,14 @@ screenshots show the same Pane window, pixel for pixel: a screen that should
 list the same rows as an earlier one (after a restart, a disabled package's
 command is gone again) cannot silently list another.
 
+With --locate, prints the center of the pixels drawn exactly in the given
+color (such as one swatch of a custom view), as "x y" screenshot pixels, so a
+smoke can click there.
+
 Usage: python3 scripts/check_screenshot.py <png> <hex color> [min pixels]
        python3 scripts/check_screenshot.py --distinct <png> <png>...
        python3 scripts/check_screenshot.py --same <png> <png>
+       python3 scripts/check_screenshot.py --locate <png> <hex color>
 """
 import sys
 
@@ -67,6 +72,19 @@ def same(first: str, second: str) -> None:
     print(f"{first} and {second} show the same Pane window")
 
 
+def locate(path: str, color: str) -> None:
+    image = Image.open(path).convert("RGB")
+    target = rgb(color)
+    width = image.width
+    pixels = getattr(image, "get_flattened_data", image.getdata)()
+    found = [i for i, pixel in enumerate(pixels) if near(pixel, target, 4)]
+    if not found:
+        raise SystemExit(f"{path}: no pixels of #{color.lstrip('#')}")
+    xs = sorted(i % width for i in found)
+    ys = sorted(i // width for i in found)
+    print(xs[len(xs) // 2], ys[len(ys) // 2])
+
+
 def main(path: str, color: str, minimum: int = 20) -> None:
     window = pane_window(path)
     target = rgb(color)
@@ -89,5 +107,7 @@ if __name__ == "__main__":
         distinct(sys.argv[2:])
     elif sys.argv[1] == "--same":
         same(sys.argv[2], sys.argv[3])
+    elif sys.argv[1] == "--locate":
+        locate(sys.argv[2], sys.argv[3])
     else:
         main(sys.argv[1], sys.argv[2], *(int(n) for n in sys.argv[3:4]))

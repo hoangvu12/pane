@@ -4,7 +4,7 @@
 // Pane keeps between runs, saved with `pane:extension/settings`. Items,
 // titles, results and errors match the Rust settings sample
 // (guests/sample-settings) and the JavaScript one.
-import type { Command, FormError, Item, View } from "@pane/extension";
+import type { Command, CustomView, FormError, Item, View } from "@pane/extension";
 import { get, set } from "pane:extension/settings@0.1.0";
 
 /** The settings key holding the chosen greeting style. */
@@ -49,4 +49,8 @@ async function submitForm(itemId: string): Promise<string> {
   throw { message: `unknown form: ${itemId}` } satisfies FormError;
 }
 
-export const command: Command = { getView, runAction, submitForm };
+async function openView(itemId: string): Promise<CustomView> {
+  throw new Error(`unknown view: ${itemId}`);
+}
+
+export const command: Command = { getView, runAction, submitForm, openView };

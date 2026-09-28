@@ -4,7 +4,9 @@
 use std::path::PathBuf;
 
 use futures::executor::block_on;
-use pane_core::{CallError, CommandRegistration, Launcher, Runtime, Screen, Status};
+use pane_core::{
+    CallError, CommandRegistration, Key, Launcher, Point, Runtime, Screen, Status, ViewEvent,
+};
 
 #[path = "support/platforms.rs"]
 mod platforms;
@@ -286,7 +288,7 @@ fn selecting_a_row_directly_ignores_indexes_past_the_list() {
 
     launcher.select(1);
     assert_eq!(launcher.view().selected, Some(1));
-    launcher.select(7);
+    launcher.select(8);
     assert_eq!(launcher.view().selected, Some(1));
 }
 
@@ -313,10 +315,181 @@ fn an_unavailable_form_explains_itself_instead_of_opening() {
     assert_eq!(launcher.view().status, Status::Result("fine".into()));
 }
 
+/// A launcher over `runtime` with the Rust sample's color picker opened.
+fn sample_color_view(runtime: &Runtime) -> Launcher {
+    let launcher = Launcher::new(
+        Ok(runtime.clone()),
+        vec![command("sample", guest("sample_rust"))],
+    );
+    block_on(launcher.activate_selected());
+    launcher.select(5);
+    block_on(launcher.activate_selected());
+    assert_eq!(launcher.view().screen, Screen::CustomView);
+    launcher
+}
+
+/// A launcher over `runtime` with the faulty fixture's counting view opened.
+fn faulty_view(runtime: &Runtime) -> Launcher {
+    let launcher = Launcher::new(
+        Ok(runtime.clone()),
+        vec![command("faulty", guest("faulty"))],
+    );
+    open_faulty_item(&launcher, "view");
+    block_on(launcher.activate_selected());
+    assert_eq!(launcher.view().screen, Screen::CustomView);
+    launcher
+}
+
+fn view_value(launcher: &Launcher) -> String {
+    launcher
+        .view()
+        .custom_view
+        .expect("a view is open")
+        .frame
+        .value
+}
+
+const RIGHT: ViewEvent = ViewEvent::Key(Key::Right);
+const ORIGIN: Point = Point { x: 0, y: 0 };
+
+#[test]
+fn back_from_a_custom_view_closes_it_and_returns_to_the_command() {
+    let runtime = Runtime::start().unwrap();
+    let launcher = sample_color_view(&runtime);
+    assert_eq!(block_on(runtime.open_views()), 1);
+
+    launcher.back();
+
+    let view = launcher.view();
+    assert_eq!(
+        (view.screen, view.selected, view.custom_view, view.status),
+        (Screen::Command, Some(5), None, Status::Idle)
+    );
+    assert_eq!(block_on(runtime.open_views()), 0);
+}
+
+#[test]
+fn a_view_that_opens_after_the_user_left_is_closed_again() {
+    let runtime = Runtime::start().unwrap();
+    let launcher = Launcher::new(
+        Ok(runtime.clone()),
+        vec![command("sample", guest("sample_rust"))],
+    );
+    block_on(launcher.activate_selected());
+    launcher.select(5);
+
+    let opening = launcher.activate_selected();
+    assert_eq!(launcher.view().status, Status::Running);
+    launcher.back();
+    block_on(opening);
+
+    assert_eq!(launcher.view().screen, Screen::Root);
+    assert_eq!(block_on(runtime.open_views()), 0);
+}
+
+#[test]
+fn an_event_answer_arriving_after_back_is_discarded() {
+    let runtime = Runtime::start().unwrap();
+    let launcher = sample_color_view(&runtime);
+
+    let pending = launcher.send_view_event(RIGHT);
+    launcher.back();
+    block_on(pending);
+
+    let view = launcher.view();
+    assert_eq!(
+        (view.screen, view.custom_view, view.status),
+        (Screen::Command, None, Status::Idle)
+    );
+    assert_eq!(block_on(runtime.open_views()), 0);
+    // Events sent with no view open go nowhere.
+    block_on(launcher.send_view_event(RIGHT));
+    assert_eq!(launcher.view().status, Status::Idle);
+}
+
+#[test]
+fn a_reopened_view_does_not_show_the_closed_views_answers() {
+    let runtime = Runtime::start().unwrap();
+    let launcher = sample_color_view(&runtime);
+
+    let pending = launcher.send_view_event(RIGHT);
+    launcher.back();
+    block_on(launcher.activate_selected());
+    block_on(pending);
+
+    assert_eq!(view_value(&launcher), "Blue, #1E88E5");
+    assert_eq!(block_on(runtime.open_views()), 1);
+}
+
+#[test]
+fn an_older_answer_arriving_late_does_not_replace_a_newer_one() {
+    let runtime = Runtime::start().unwrap();
+    let launcher = sample_color_view(&runtime);
+
+    let first = launcher.send_view_event(RIGHT);
+    let second = launcher.send_view_event(RIGHT);
+    block_on(second);
+    block_on(first);
+
+    assert_eq!(view_value(&launcher), "Pink, #D81B60");
+}
+
+#[test]
+fn pointer_moves_and_releases_are_sent_only_while_pressed() {
+    let runtime = Runtime::start().unwrap();
+    let launcher = faulty_view(&runtime);
+    let send = |event| block_on(launcher.send_view_event(event));
+
+    send(ViewEvent::PointerMove(ORIGIN));
+    send(ViewEvent::PointerUp(ORIGIN));
+    assert_eq!(view_value(&launcher), "0 events");
+    send(ViewEvent::PointerDown(ORIGIN));
+    send(ViewEvent::PointerMove(ORIGIN));
+    send(ViewEvent::PointerUp(ORIGIN));
+    assert_eq!(view_value(&launcher), "3 events");
+    send(ViewEvent::PointerMove(ORIGIN));
+    assert_eq!(view_value(&launcher), "3 events");
+}
+
+#[test]
+fn an_error_from_a_view_is_shown_and_the_view_stays_open() {
+    let runtime = Runtime::start().unwrap();
+    let launcher = faulty_view(&runtime);
+
+    block_on(launcher.send_view_event(ViewEvent::Key(Key::Left)));
+
+    assert_eq!(launcher.view().screen, Screen::CustomView);
+    assert_eq!(
+        error(&launcher),
+        "The extension reported an error: the view refused"
+    );
+    // The next handled event clears the error.
+    block_on(launcher.send_view_event(ViewEvent::Key(Key::Up)));
+    assert_eq!(launcher.view().status, Status::Idle);
+    assert_eq!(view_value(&launcher), "1 events");
+}
+
+#[test]
+fn a_crash_in_a_view_closes_it_and_the_command_keeps_working() {
+    let runtime = Runtime::start().unwrap();
+    let launcher = faulty_view(&runtime);
+
+    block_on(launcher.send_view_event(RIGHT));
+
+    let view = launcher.view();
+    assert_eq!((view.screen, view.custom_view), (Screen::Command, None));
+    assert!(error(&launcher).contains("crashed"), "{:?}", view.status);
+    assert_eq!(block_on(runtime.open_views()), 0);
+    launcher.select(0);
+    block_on(launcher.activate_selected());
+    assert_eq!(launcher.view().status, Status::Result("fine".into()));
+}
+
 /// The pre-release extension API 0.1 changes shape between slices without a
-/// version bump: `item` gained `platforms` in #19. A component built against
-/// the older shape declares the same API version, and the type check at
-/// instantiation refuses it when its command opens, naming the mismatch.
+/// version bump: `item` gained `platforms` in #19, and the command gained
+/// custom views in #21. A component built against an older shape declares
+/// the same API version, and the check at instantiation refuses it when its
+/// command opens, naming what is missing.
 #[test]
 fn a_component_of_an_older_api_shape_is_refused_when_it_loads() {
     let launcher = launcher(vec![command("old", guest("old_api"))]);
@@ -330,7 +503,47 @@ fn a_component_of_an_older_api_shape_is_refused_when_it_loads() {
         "{message}"
     );
     assert!(
-        message.contains("type mismatch for field items: expected record of 5 fields"),
+        message.contains("does not have export `[method]custom-view.render`"),
         "{message}"
     );
+}
+
+#[test]
+fn a_view_the_guest_refuses_to_open_is_an_error() {
+    let launcher = launcher(vec![command("faulty", guest("faulty"))]);
+    open_faulty_item(&launcher, "no-view");
+
+    block_on(launcher.activate_selected());
+
+    assert_eq!(launcher.view().screen, Screen::Command);
+    assert_eq!(
+        error(&launcher),
+        "The extension reported an error: the guest refused the view"
+    );
+}
+
+#[test]
+fn a_package_preview_closes_an_open_view() {
+    let runtime = Runtime::start().unwrap();
+    let launcher = sample_color_view(&runtime);
+
+    block_on(launcher.preview_package(std::path::Path::new("no-such-folder")));
+
+    let view = launcher.view();
+    assert_eq!((view.screen, view.custom_view), (Screen::Package, None));
+    assert_eq!(block_on(runtime.open_views()), 0);
+}
+
+#[test]
+fn replacing_a_components_code_closes_its_views() {
+    let runtime = Runtime::start().unwrap();
+    let launcher = sample_color_view(&runtime);
+
+    runtime.forget([guest("sample_rust")]);
+    block_on(launcher.send_view_event(RIGHT));
+
+    let view = launcher.view();
+    assert_eq!((view.screen, view.custom_view), (Screen::Command, None));
+    assert_eq!(error(&launcher), "The extension's view is no longer open");
+    assert_eq!(block_on(runtime.open_views()), 0);
 }

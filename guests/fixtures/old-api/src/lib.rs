@@ -1,5 +1,6 @@
 //! Test fixture: a guest built against an older shape of the same extension
-//! API version, `wit/extension.wit` here, whose `item` has no `platforms`.
+//! API version, `wit/extension.wit` here: from before #19 and #21, its `item`
+//! has no `platforms` and it exports no custom views.
 //! Pane's type check must refuse it before any of its code runs.
 //!
 //! It cannot use `pane-guest`, which binds the current contract, so it

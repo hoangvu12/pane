@@ -4,7 +4,7 @@
 #![no_std]
 
 use pane_guest::alloc::{format, string::String, vec, vec::Vec};
-use pane_guest::{FieldValue, FormError, Guest, Item, View, settings};
+use pane_guest::{CustomView, FieldValue, FormError, Guest, Item, NoCustomView, View, settings};
 
 /// The settings key holding the chosen greeting style.
 const STYLE: &str = "greeting-style";
@@ -13,6 +13,8 @@ struct Greeting;
 pane_guest::export!(Greeting);
 
 impl Guest for Greeting {
+    type CustomView = NoCustomView;
+
     async fn get_view() -> Result<View, String> {
         let title = match settings::get(STYLE)? {
             Some(style) => format!("Greeting: {style}"),
@@ -24,6 +26,7 @@ impl Guest for Greeting {
             subtitle: Some(subtitle.into()),
             form: None,
             platforms: None,
+            custom_view: None,
         };
         Ok(View {
             title,
@@ -63,5 +66,9 @@ impl Guest for Greeting {
             field: None,
             message: format!("unknown form: {item_id}"),
         })
+    }
+
+    async fn open_view(item_id: String) -> Result<CustomView, String> {
+        Err(format!("unknown view: {item_id}"))
     }
 }

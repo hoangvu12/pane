@@ -117,7 +117,7 @@ from the Rust sample with the two other systems in `platforms`.
   the window shrinks and when the rows reload, and does not undo a
   mouse-wheel scroll otherwise.
 - Native GUI smokes, identical steps on all three systems (screenshots 13 to
-  15): the sixth and seventh items of the Rust command after a restart, then
+  15): the seventh and eighth items of the Rust command after a restart, then
   `--install` of a package listing the other two systems. Expected colors
   differ by system: Windows expects the Windows-only action to answer and the
   other to be explained; macOS and Linux the reverse. Run locally on Linux

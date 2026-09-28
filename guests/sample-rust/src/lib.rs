@@ -1,12 +1,16 @@
-//! Pane's Rust sample command: a list with one action per item, a form, and
-//! two actions each declared for some operating systems only.
-//! Items, titles, results and errors match the JavaScript and TypeScript
-//! samples.
+//! Pane's Rust sample command: a list with one action per item, a form, a
+//! color picker the command draws itself, and two actions each declared for
+//! some operating systems only. Items, titles, results, errors and drawings
+//! match the JavaScript and TypeScript samples.
 #![no_std]
+
+use core::cell::Cell;
 
 use pane_guest::alloc::{format, string::String, vec, vec::Vec};
 use pane_guest::{
-    Choice, Field, FieldKind, FieldValue, Form, FormError, Guest, Item, Platform, TextField, View,
+    Choice, CustomView, CustomViewInfo, CustomViewRole, Field, FieldKind, FieldValue, Form,
+    FormError, Frame, Guest, GuestCustomView, Item, Key, Platform, Rect, Shape, Text, TextField,
+    View, ViewEvent,
 };
 
 struct Sample;
@@ -67,6 +71,131 @@ fn greeting_form() -> Form {
     }
 }
 
+/// The color picker's colors, (hue, [light, medium, dark]): a column of
+/// swatches per hue, one row per shade.
+const COLORS: [(&str, [u32; 3]); 8] = [
+    ("Red", [0xef9a9a, 0xe53935, 0xb71c1c]),
+    ("Orange", [0xffcc80, 0xfb8c00, 0xe65100]),
+    ("Yellow", [0xfff59d, 0xfdd835, 0xf57f17]),
+    ("Green", [0xa5d6a7, 0x43a047, 0x1b5e20]),
+    ("Teal", [0x80cbc4, 0x00897b, 0x004d40]),
+    ("Blue", [0x90caf9, 0x1e88e5, 0x0d47a1]),
+    ("Purple", [0xce93d8, 0x8e24aa, 0x4a148c]),
+    ("Pink", [0xf48fb1, 0xd81b60, 0x880e4f]),
+];
+const SHADES: [&str; 3] = ["Light", "", "Dark"];
+/// A swatch's size, and the distance from one swatch to the next.
+const SWATCH: u32 = 32;
+const STEP: i32 = 36;
+const COLUMNS: i32 = COLORS.len() as i32;
+const ROWS: i32 = SHADES.len() as i32;
+
+/// An open color picker: a grid of swatches and a preview of the chosen
+/// color. Arrow keys, Home and End move the choice; pressing or dragging the
+/// pointer over the grid chooses the swatch under it. Pane creates one per
+/// opened view (`open_view`) and drops it when the view closes.
+struct ColorPicker {
+    column: Cell<i32>,
+    row: Cell<i32>,
+    dragging: Cell<bool>,
+}
+
+impl ColorPicker {
+    fn new() -> ColorPicker {
+        // Blue.
+        ColorPicker {
+            column: Cell::new(5),
+            row: Cell::new(1),
+            dragging: Cell::new(false),
+        }
+    }
+
+    /// Chooses the swatch nearest to `x`, `y`.
+    fn choose(&self, x: i32, y: i32) {
+        self.column.set(x.div_euclid(STEP).clamp(0, COLUMNS - 1));
+        self.row.set(y.div_euclid(STEP).clamp(0, ROWS - 1));
+    }
+}
+
+fn rect(x: i32, y: i32, size: u32, fill: u32) -> Shape {
+    Shape::Rect(Rect {
+        x,
+        y,
+        width: size,
+        height: size,
+        fill,
+    })
+}
+
+/// "#RRGGBB" for 0xRRGGBB.
+fn hex(rgb: u32) -> String {
+    format!("#{rgb:06X}")
+}
+
+impl GuestCustomView for ColorPicker {
+    async fn render(&self) -> Frame {
+        let (column, row) = (self.column.get(), self.row.get());
+        let (hue, shades) = COLORS[column as usize];
+        let chosen = shades[row as usize];
+        // A light frame around the chosen swatch, then the swatches.
+        let mut shapes = vec![rect(column * STEP, row * STEP, STEP as u32, 0xf1f3f5)];
+        for (x, (_, column)) in (0..).zip(COLORS) {
+            for (y, fill) in (0..).zip(column) {
+                shapes.push(rect(x * STEP + 2, y * STEP + 2, SWATCH, fill));
+            }
+        }
+        shapes.push(rect(COLUMNS * STEP + 12, 2, 64, chosen));
+        shapes.push(Shape::Text(Text {
+            x: COLUMNS * STEP + 12,
+            y: 74,
+            content: hex(chosen),
+            color: 0xf1f3f5,
+        }));
+        let name = match SHADES[row as usize] {
+            "" => String::from(hue),
+            shade => format!("{shade} {}", hue.to_lowercase()),
+        };
+        Frame {
+            width: (COLUMNS * STEP + 88) as u32,
+            height: (ROWS * STEP) as u32,
+            shapes,
+            value: format!("{name}, {}", hex(chosen)),
+        }
+    }
+
+    async fn handle_event(&self, event: ViewEvent) -> Result<(), String> {
+        match event {
+            ViewEvent::Key(key) => {
+                let (column, row) = (self.column.get(), self.row.get());
+                let (column, row) = match key {
+                    Key::Left => (column - 1, row),
+                    Key::Right => (column + 1, row),
+                    Key::Up => (column, row - 1),
+                    Key::Down => (column, row + 1),
+                    Key::Home => (0, row),
+                    Key::End => (COLUMNS - 1, row),
+                };
+                self.column.set(column.clamp(0, COLUMNS - 1));
+                self.row.set(row.clamp(0, ROWS - 1));
+            }
+            // Only a press on the grid chooses a swatch and starts a drag.
+            ViewEvent::PointerDown(at) => {
+                if (0..COLUMNS * STEP).contains(&at.x) && (0..ROWS * STEP).contains(&at.y) {
+                    self.dragging.set(true);
+                    self.choose(at.x, at.y);
+                }
+            }
+            ViewEvent::PointerMove(at) => {
+                if self.dragging.get() {
+                    self.choose(at.x, at.y);
+                }
+            }
+            ViewEvent::PointerUp(_) => self.dragging.set(false),
+        }
+        Ok(())
+    }
+}
+
 /// An error about the field `field`.
 fn invalid(field: &str, message: &str) -> FormError {
     FormError {
@@ -76,6 +205,8 @@ fn invalid(field: &str, message: &str) -> FormError {
 }
 
 impl Guest for Sample {
+    type CustomView = ColorPicker;
+
     async fn get_view() -> Result<View, String> {
         let item = |id: &str, title: &str, subtitle: &str| Item {
             id: id.into(),
@@ -83,6 +214,7 @@ impl Guest for Sample {
             subtitle: Some(subtitle.into()),
             form: None,
             platforms: None,
+            custom_view: None,
         };
         Ok(View {
             title: "Rust sample".into(),
@@ -106,6 +238,18 @@ impl Guest for Sample {
                 Item {
                     form: Some(greeting_form()),
                     ..item("form", "Greet someone", "Fill in a form the guest checks")
+                },
+                Item {
+                    custom_view: Some(CustomViewInfo {
+                        title: "Choose a color".into(),
+                        label: "Color".into(),
+                        role: CustomViewRole::ColorWell,
+                    }),
+                    ..item(
+                        "color",
+                        "Choose a color",
+                        "Pick a color in a view the guest draws",
+                    )
                 },
                 // Elsewhere Pane lists these as unavailable, says why, and
                 // never calls `run_action` for them.
@@ -186,5 +330,12 @@ impl Guest for Sample {
             return Err(invalid("greeting", "Choose a greeting"));
         };
         Ok(format!("{greeting}, {name}, from the Rust guest"))
+    }
+
+    async fn open_view(item_id: String) -> Result<CustomView, String> {
+        if item_id != "color" {
+            return Err(format!("unknown view: {item_id}"));
+        }
+        Ok(CustomView::new(ColorPicker::new()))
     }
 }

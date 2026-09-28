@@ -131,6 +131,14 @@ Screenshots from run [36371205770](https://github.com/wasimysaid/pane/actions/ru
   pass on macOS but are platform-independent. **VoiceOver was not run**, so how
   the tree reaches NSAccessibility and what VoiceOver announces are unverified.
   Forms: see [accessibility of forms](../forms.md#accessibility).
+- **Custom view (#21):** after a final restart the smoke opens the Rust command's
+  color picker, presses Right (key code 124) and clicks the dark green swatch
+  with a Quartz mouse event posted through Python `ctypes`, converting the
+  screenshot's pixels to points (half on Retina). Each step must show the
+  chosen color over at least 3000 pixels. **This phase has not run on macOS
+  yet**; whether posting the Quartz event needs a permission beyond the one
+  System Events has is unverified. Accessibility: see
+  [custom views](../custom-views.md#accessibility).
 
 ## Local extension package (#9)
 

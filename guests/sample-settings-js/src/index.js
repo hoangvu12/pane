@@ -56,4 +56,8 @@ export const command = {
   async submitForm(itemId) {
     throw { message: `unknown form: ${itemId}` };
   },
+
+  async openView(itemId) {
+    throw new Error(`unknown view: ${itemId}`);
+  },
 };
