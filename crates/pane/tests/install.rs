@@ -172,7 +172,12 @@ fn an_installed_package_is_disabled_and_enabled_from_the_extension_list(cx: &mut
     assert_eq!(view.title, "Extensions");
     assert_eq!(
         titles(&view),
-        ["Hello", "Reload Hello", "Clear cache of Hello"]
+        [
+            "Hello",
+            "Reload Hello",
+            "Clear cache of Hello",
+            "Hotkey for Say hello"
+        ]
     );
     assert!(
         cx.debug_bounds("row-Hello").is_some(),
@@ -280,7 +285,8 @@ fn a_reload_that_fails_to_start_offers_retry(cx: &mut TestAppContext) {
             "Hello",
             "Reload Hello",
             "Retry starting Hello",
-            "Clear cache of Hello"
+            "Clear cache of Hello",
+            "Hotkey for Say hello"
         ]
     );
 
@@ -290,7 +296,12 @@ fn a_reload_that_fails_to_start_offers_retry(cx: &mut TestAppContext) {
     assert_eq!(view.status, Status::Result("Started Hello".into()));
     assert_eq!(
         titles(&view),
-        ["Hello", "Reload Hello", "Clear cache of Hello"]
+        [
+            "Hello",
+            "Reload Hello",
+            "Clear cache of Hello",
+            "Hotkey for Say hello"
+        ]
     );
 }
 
@@ -305,7 +316,12 @@ fn an_installed_package_cache_is_cleared_after_confirming(cx: &mut TestAppContex
     assert!(matches!(view.screen, Screen::Extensions { .. }));
     assert_eq!(
         titles(&view),
-        ["Hello", "Reload Hello", "Clear cache of Hello"]
+        [
+            "Hello",
+            "Reload Hello",
+            "Clear cache of Hello",
+            "Hotkey for Say hello"
+        ]
     );
 
     // The third row asks first, saying what is kept; Escape keeps the cache
