@@ -339,6 +339,9 @@ enum Request {
     ViewCount {
         reply: oneshot::Sender<usize>,
     },
+    Running {
+        reply: oneshot::Sender<Vec<PathBuf>>,
+    },
 }
 
 impl Runtime {
@@ -538,6 +541,18 @@ impl Runtime {
         response.await.unwrap_or(0)
     }
 
+    /// The components that have a live guest instance, counting the
+    /// requests sent before this call, in no particular order. A diagnostic
+    /// for tests and logs, like [`Runtime::view_count`]: listing or
+    /// searching commands starts none; invoking a command starts its own.
+    pub async fn running(&self) -> Vec<PathBuf> {
+        let (reply, response) = oneshot::channel();
+        if self.send(Request::Running { reply }).is_err() {
+            return Vec::new();
+        }
+        response.await.unwrap_or_default()
+    }
+
     /// Drops the compiled code and live instances of `components`, for
     /// example after their files were replaced or removed; a later call
     /// loads the file again. Calls made afterwards see the effect; a call
@@ -694,6 +709,9 @@ impl Host {
                 Request::CloseView { view } => self.close_view(view).await,
                 Request::ViewCount { reply } => {
                     let _ = reply.send(self.views.len());
+                }
+                Request::Running { reply } => {
+                    let _ = reply.send(self.instances.keys().cloned().collect());
                 }
             }
         }

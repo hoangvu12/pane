@@ -103,6 +103,15 @@ only the two other systems. In run [36372625940](https://github.com/wasimysaid/p
 | macOS-and-Linux action | [14-not-windows.png](evidence/macos/14-not-windows.png) |
 | Package for the other two systems | [15-no-compatible-package.png](evidence/macos/15-no-compatible-package.png) |
 
+## Root search (#23)
+
+Root search has a query field with focus ([root search](../root-search.md)).
+The smoke's last phase (screenshots 24 to 26) types "typescr" with System
+Events `keystroke`, opens the only match and runs "Wait briefly", which must
+look exactly like step 4, then types "zzz" and presses Return on no results.
+**It has not run on macOS yet**; typing into the query field through
+`NSTextInputClient` is therefore unverified here, as is any input method.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms now have a text field. The
@@ -135,10 +144,28 @@ Screenshots from run [36371205770](https://github.com/wasimysaid/pane/actions/ru
   color picker, presses Right (key code 124) and clicks the dark green swatch
   with a Quartz mouse event posted through Python `ctypes`, converting the
   screenshot's pixels to points (half on Retina). Each step must show the
-  chosen color over at least 3000 pixels. **This phase has not run on macOS
-  yet**; whether posting the Quartz event needs a permission beyond the one
-  System Events has is unverified. Accessibility: see
+  chosen color over at least 3000 pixels. In run [36378453278](https://github.com/wasimysaid/pane/actions/runs/36378453278) (commit `1487dc8`, macOS 15.7.9, arm64) every step passed: the picker opened on blue (#1E88E5), Right moved to purple (#8E24AA) and the click chose dark green (#1B5E20); posting the Quartz event needed no permission beyond the one System Events has. Accessibility: see
   [custom views](../custom-views.md#accessibility).
+
+## Disabling an extension and keeping its settings (#10)
+
+In run [36378453278](https://github.com/wasimysaid/pane/actions/runs/36378453278) (commit `1487dc8`) the disable phase passed: the Settings sample
+saved the formal greeting, was disabled in Manage extensions, stayed disabled
+and absent from root search after a restart (the root screenshot matches the
+one taken before the package was installed), was enabled again, and "Greet me"
+answered "Good day to you" from the kept setting.
+
+| Step | Evidence |
+| --- | --- |
+| Formal greeting saved | [16-setting-saved.png](evidence/macos/16-setting-saved.png) |
+| Disabled in Manage extensions | [17-disabled.png](evidence/macos/17-disabled.png) |
+| After a restart: Greeting absent from root | [18-restarted-disabled.png](evidence/macos/18-restarted-disabled.png) |
+| Enabled again | [19-enabled.png](evidence/macos/19-enabled.png) |
+| The kept setting answers | [20-greeted.png](evidence/macos/20-greeted.png) |
+
+Custom view screenshots from the same run: [21-color.png](evidence/macos/21-color.png),
+[22-color-key.png](evidence/macos/22-color-key.png),
+[23-color-click.png](evidence/macos/23-color-click.png).
 
 ## Local extension package (#9)
 

@@ -81,6 +81,15 @@ only the two other systems. In run [36372625940](https://github.com/wasimysaid/p
 | macOS-and-Linux action | [14-not-windows.png](evidence/windows/14-not-windows.png) |
 | Package for the other two systems | [15-no-compatible-package.png](evidence/windows/15-no-compatible-package.png) |
 
+## Root search (#23)
+
+Root search has a query field with focus ([root search](../root-search.md)).
+The smoke's last phase (screenshots 24 to 26) types "typescr" with
+`SendKeys`, opens the only match and runs "Wait briefly", which must look
+exactly like step 4, then types "zzz" and presses Enter on no results. **It
+has not run on Windows yet**; typing into the query field through the
+window's text input (TSF) is therefore unverified here, as is any IME.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** the smoke now also opens the Rust command's
@@ -107,11 +116,30 @@ Screenshots from run [36371205770](https://github.com/wasimysaid/pane/actions/ru
 - **Custom view (#21):** after a final restart the smoke opens the Rust command's
   color picker, presses Right and clicks the dark green swatch with `user32`
   `SetCursorPos` and `mouse_event`, at the screenshot's pixel position. Each
-  step must show the chosen color over at least 3000 pixels. **This phase has
-  not run on Windows yet**. The script calls `SetProcessDPIAware` first, so
+  step must show the chosen color over at least 3000 pixels. In run [36378453278](https://github.com/wasimysaid/pane/actions/runs/36378453278) (commit `1487dc8`, Windows NT 10.0.26100, AMD64) every step passed: the picker opened on blue (#1E88E5), Right moved to purple (#8E24AA) and the click chose dark green (#1B5E20). The runner displays at 100 % scaling, so other scaling is still unverified. The script calls `SetProcessDPIAware` first, so
   the screenshot, the screen bounds and `SetCursorPos` all use physical
   pixels and the click should land on the swatch at any display scaling;
   scaling other than 100 % is unverified.
+
+## Disabling an extension and keeping its settings (#10)
+
+In run [36378453278](https://github.com/wasimysaid/pane/actions/runs/36378453278) (commit `1487dc8`) the disable phase passed: the Settings sample
+saved the formal greeting, was disabled in Manage extensions, stayed disabled
+and absent from root search after a restart (the root screenshot matches the
+one taken before the package was installed), was enabled again, and "Greet me"
+answered "Good day to you" from the kept setting.
+
+| Step | Evidence |
+| --- | --- |
+| Formal greeting saved | [16-setting-saved.png](evidence/windows/16-setting-saved.png) |
+| Disabled in Manage extensions | [17-disabled.png](evidence/windows/17-disabled.png) |
+| After a restart: Greeting absent from root | [18-restarted-disabled.png](evidence/windows/18-restarted-disabled.png) |
+| Enabled again | [19-enabled.png](evidence/windows/19-enabled.png) |
+| The kept setting answers | [20-greeted.png](evidence/windows/20-greeted.png) |
+
+Custom view screenshots from the same run: [21-color.png](evidence/windows/21-color.png),
+[22-color-key.png](evidence/windows/22-color-key.png),
+[23-color-click.png](evidence/windows/23-color-click.png).
 
 ## Local extension package (#9)
 
