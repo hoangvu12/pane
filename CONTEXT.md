@@ -80,6 +80,10 @@ _Avoid_: App (ambiguous with Pane itself), program
 A named web address the user saves through the Quicklinks default extension's form and finds in root search, where invoking it opens the address with the system's handler for web links; it is kept in that extension's content.
 _Avoid_: Bookmark, shortcut, alias
 
+**Global hotkey**:
+A key combination the user assigns to an installed command in Pane, which opens that command in Pane's window while any application has focus; Pane keeps it as its own record and registers it with the system only while the command's extension is enabled.
+_Avoid_: Shortcut (any key combination, including Pane's own keys), keybinding, alias
+
 **Search provider**:
 A source of matching results for a query, such as applications, files or an online service.
 _Avoid_: The entire search interface

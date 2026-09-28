@@ -54,8 +54,9 @@ What is **not** a failure of the package:
   data or call operations. A command of it that is open closes.
 - Its commands stay in root search, listed and selectable, saying "<title>
   is paused after an error; retry it in Manage extensions"; activating one
-  shows that and runs nothing. It computes no root results and supplies no
-  indexed ones. Another package calling its operations is answered
+  shows that and runs nothing. A global hotkey assigned to one stays
+  registered (it is the user's choice); pressing it shows the same reason.
+  It computes no root results and supplies no indexed ones. Another package calling its operations is answered
   `unavailable`: "<title> is paused after an error; retry it in Manage
   extensions".
 - The status line (the launcher's toast) says "<title> crashed 3 times
@@ -112,6 +113,8 @@ it holds across a restart. The earlier code is still not restored.
 - [`crates/pane-core/tests/operations.rs`](../crates/pane-core/tests/operations.rs):
   a target that keeps crashing is paused and its caller is not; a target
   stopped with its caller again and again is not paused.
+- [`crates/pane-core/tests/hotkeys.rs`](../crates/pane-core/tests/hotkeys.rs):
+  a paused command's hotkey stays registered and explains the pause.
 - [`crates/pane/tests/install.rs`](../crates/pane/tests/install.rs): in the
   window, three crashes show the toast and the paused command's reason, and
   Retry in the extension list starts it again.

@@ -173,7 +173,8 @@ fn a_disabled_package_leaves_root_search_and_stays_disabled_after_a_restart(fixt
             "Settings sample",
             "Reload Settings sample",
             "Clear cache of Settings sample",
-            "Uninstall Settings sample"
+            "Uninstall Settings sample",
+            "Hotkey for Greeting"
         ]
     );
     assert_eq!(launcher.view().rows[0].id, identity.key());
@@ -263,7 +264,9 @@ fn copies_with_the_same_title_are_enabled_and_keep_settings_by_identity(fixture:
             "Clear cache of Greeter",
             "Clear cache of Greeter",
             "Uninstall Greeter",
-            "Uninstall Greeter"
+            "Uninstall Greeter",
+            "Hotkey for Greeting",
+            "Hotkey for Greeting"
         ]
     );
     let published_id = PackageIdentity::local(&published).unwrap();

@@ -24,10 +24,12 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+mod hotkeys;
 mod indexed;
 
 use crate::extension_data::{ExtensionData, PackageData};
 use crate::generation::End;
+use crate::hotkeys::{self as system_hotkeys, Hotkeys};
 use crate::links::{self, LinkOpener, NoOpener};
 use crate::operations::{self, Installed};
 use crate::packages::{
@@ -45,6 +47,7 @@ mod pausing;
 mod reload;
 mod uninstall;
 
+use hotkeys::Bindings;
 use pausing::Failures;
 
 /// The id of the root row that installs a package from a local folder.
@@ -87,6 +90,14 @@ pub enum Screen {
     /// lines of information under the title, answered by choosing a row.
     Confirm {
         question: Question,
+        details: Vec<String>,
+    },
+    /// Asks for the keys of a global hotkey that opens the installed command
+    /// with id `command` from any application, with lines of information
+    /// under the title. The window sends the keys pressed to
+    /// [`Launcher::record_hotkey`]; the rows offer to remove its hotkey.
+    Hotkey {
+        command: String,
         details: Vec<String>,
     },
 }
@@ -208,7 +219,8 @@ impl LauncherView {
         match &self.screen {
             Screen::Package { details }
             | Screen::Extensions { details }
-            | Screen::Confirm { details, .. } => details,
+            | Screen::Confirm { details, .. }
+            | Screen::Hotkey { details, .. } => details,
             _ => &[],
         }
     }
@@ -240,6 +252,8 @@ pub struct Launcher {
     installation: Option<Installation>,
     /// Opens the web links of computed results.
     links: Arc<dyn LinkOpener>,
+    /// Registers the global hotkeys the user assigns with the system.
+    hotkeys: Arc<dyn Hotkeys>,
     state: Arc<Mutex<State>>,
 }
 
@@ -250,6 +264,8 @@ pub struct Launcher {
 struct Installation {
     store: Arc<Mutex<Store>>,
     data: ExtensionData,
+    /// Where they are kept, with Pane's other records such as the hotkeys.
+    dir: PathBuf,
 }
 
 struct State {
@@ -290,6 +306,8 @@ struct State {
     /// The packages Pane paused after they failed, each with why, and the
     /// crashes counted towards pausing a package (see `pausing`).
     failed: Failures,
+    /// The global hotkeys the user assigned to commands.
+    bindings: Bindings,
 }
 
 /// What is happening to a package, which stops another change to it
@@ -470,6 +488,11 @@ enum Entry {
     AskClearCache(PackageIdentity),
     /// Clear this installed package's cache (confirmation).
     ClearCache(PackageIdentity),
+    /// Ask for the keys of the hotkey of the command with this id
+    /// (extension list).
+    AskHotkey(String),
+    /// Remove the hotkey of the command with this id (hotkey screen).
+    RemoveHotkey(String),
     /// Ask whether to uninstall this installed package, and whether to keep
     /// its saved data (extension list).
     AskUninstall(PackageIdentity),
@@ -504,6 +527,7 @@ impl Launcher {
     ) -> Self {
         let installation = Installation {
             data: ExtensionData::open(&packages_dir),
+            dir: packages_dir.clone(),
             store: Arc::new(Mutex::new(Store::open(packages_dir))),
         };
         Launcher::create(runtime, commands, Some(installation))
@@ -514,12 +538,13 @@ impl Launcher {
         commands: Vec<CommandRegistration>,
         installation: Option<Installation>,
     ) -> Self {
-        let (packages, store_problem, paused) = match &installation {
+        let (packages, store_problem, paused, bindings) = match &installation {
             Some(installation) => {
                 let store = installation.store.lock().unwrap_or_else(|p| p.into_inner());
-                (store.installed(), store.problem(), store.paused())
+                let bindings = Bindings::open(&installation.dir);
+                (store.installed(), store.problem(), store.paused(), bindings)
             }
-            None => (Vec::new(), None, Vec::new()),
+            None => (Vec::new(), None, Vec::new(), Bindings::default()),
         };
         let mut state = State {
             // Replaced by root search below.
@@ -537,6 +562,7 @@ impl Launcher {
             changing: HashMap::new(),
             store_problem,
             failed: Failures::default(),
+            bindings,
         };
         if let Some(installation) = &installation {
             for package in &state.packages {
@@ -557,6 +583,7 @@ impl Launcher {
             commands: commands.into(),
             installation,
             links: Arc::new(NoOpener),
+            hotkeys: system_hotkeys::none(),
             state: Arc::new(Mutex::new(state)),
         };
         if let (Ok(runtime), Some(installation)) = (&launcher.runtime, &launcher.installation) {
@@ -573,7 +600,9 @@ impl Launcher {
             // A package that keeps failing is paused. The report holds no
             // runtime, which would keep the runtime thread alive, and needs
             // none: a paused package's generation ends, which drops its
-            // instances and views.
+            // instances and views. Nor does it touch hotkeys: a paused
+            // command's hotkey stays registered, and pressing it explains
+            // the pause.
             let state = Arc::downgrade(&launcher.state);
             let commands = launcher.commands.clone();
             let installation = launcher.installation.clone();
@@ -589,6 +618,7 @@ impl Launcher {
                     commands: commands.clone(),
                     installation: installation.clone(),
                     links: links.clone(),
+                    hotkeys: system_hotkeys::none(),
                     state,
                 };
                 launcher.note_health(component, data, health);
@@ -603,6 +633,16 @@ impl Launcher {
     /// that this Pane has no link handler.
     pub fn with_link_opener(self, links: Arc<dyn LinkOpener>) -> Self {
         Launcher { links, ..self }
+    }
+
+    /// This launcher registering the global hotkeys the user assigns with
+    /// `hotkeys`, normally the system's ([`crate::hotkeys::native`]); the
+    /// recorded ones are registered now. Without it, assigning a hotkey
+    /// explains that this Pane has none.
+    pub fn with_hotkeys(self, hotkeys: Arc<dyn Hotkeys>) -> Self {
+        let launcher = Launcher { hotkeys, ..self };
+        launcher.sync_hotkeys(&mut launcher.lock());
+        launcher
     }
 
     pub fn view(&self) -> LauncherView {
@@ -903,6 +943,10 @@ impl Launcher {
             }
             Screen::CustomView(_) => self.return_from_custom_view(&mut state, Status::Idle),
             Screen::Confirm { .. } => self.leave_confirm(&mut state),
+            Screen::Hotkey { command, .. } => {
+                let command = command.clone();
+                self.show_extensions_at_hotkey(&mut state, &command);
+            }
             Screen::Command | Screen::Package { .. } | Screen::Extensions { .. } => {
                 self.show_root(&mut state, None)
             }
@@ -929,6 +973,7 @@ impl Launcher {
             .and_then(|index| state.entries.get(index).cloned());
         let mut change = None;
         let mut reload = None;
+        let mut hotkey_change = None;
         let mut uninstall = None;
         let entry = match entry {
             Some(Entry::Broken(problem) | Entry::Unavailable(problem)) => {
@@ -971,6 +1016,14 @@ impl Launcher {
             }
             Some(Entry::Cancel) => {
                 self.leave_confirm(&mut state);
+                None
+            }
+            Some(Entry::AskHotkey(command)) => {
+                self.show_hotkey(&mut state, &command);
+                None
+            }
+            Some(Entry::RemoveHotkey(command)) => {
+                hotkey_change = self.remove_hotkey(&mut state, &command);
                 None
             }
             Some(Entry::Toggle(identity)) => {
@@ -1018,6 +1071,9 @@ impl Launcher {
             if let Some(reload) = reload {
                 launcher.finish_reload(epoch, reload).await;
             }
+            if let Some(hotkey_change) = hotkey_change {
+                launcher.finish_hotkey_change(hotkey_change).await;
+            }
             if let Some(uninstall) = uninstall {
                 launcher.finish_uninstall(epoch, uninstall).await;
             }
@@ -1051,6 +1107,8 @@ impl Launcher {
                     | Entry::Reload(_)
                     | Entry::Retry(_)
                     | Entry::AskClearCache(_)
+                    | Entry::AskHotkey(_)
+                    | Entry::RemoveHotkey(_)
                     | Entry::AskUninstall(_)
                     | Entry::Uninstall(..)
                     | Entry::Cancel
@@ -1205,12 +1263,14 @@ impl Launcher {
         if let Some(installation) = &self.installation {
             installation.data.set_enabled(identity, enabled);
         }
+        let components: Vec<PathBuf> = package
+            .commands()
+            .into_iter()
+            .map(|command| command.component)
+            .collect();
+        // Its hotkeys are released while it is disabled.
+        self.sync_hotkeys(state);
         if !enabled {
-            let components: Vec<PathBuf> = package
-                .commands()
-                .into_iter()
-                .map(|command| command.component)
-                .collect();
             // Its results kept for root search go, and so does an answer
             // from it being awaited.
             Launcher::forget_indexes(state);
@@ -1313,6 +1373,7 @@ impl Launcher {
                     .set_enabled(&installed.identity, installed.enabled);
             }
             state.packages.push(installed);
+            self.sync_hotkeys(state);
             return false;
         };
         // The replaced copy's code is not run again: its generation ends,
@@ -1329,6 +1390,8 @@ impl Launcher {
             runtime.forget(replaced.iter().cloned());
         }
         *package = installed;
+        // A command the new copy no longer has releases its hotkey.
+        self.sync_hotkeys(state);
         // The replaced copy's results are asked for afresh.
         state
             .indexes
@@ -1408,7 +1471,8 @@ impl Launcher {
             | Screen::Package { .. }
             | Screen::Form(_)
             | Screen::CustomView(_)
-            | Screen::Confirm { .. } => {}
+            | Screen::Confirm { .. }
+            | Screen::Hotkey { .. } => {}
         }
     }
 
@@ -1481,9 +1545,10 @@ impl Launcher {
             let title = package.title();
             // A paused package's commands stay listed, saying why they do
             // not run.
-            let paused = state.failed.is_paused(&package.identity).then(|| {
-                format!("{title} is paused after an error; retry it in Manage extensions")
-            });
+            let paused = state
+                .failed
+                .is_paused(&package.identity)
+                .then(|| paused_reason(&title));
             for (registration, unavailable) in package.available_commands() {
                 let (row, entry) = command((registration, paused.clone().or(unavailable)));
                 add(row, entry, Some(&title));
@@ -1651,7 +1716,7 @@ impl Launcher {
 
     /// Shows the installed packages, each enabled or disabled.
     fn show_extensions(&self, state: &mut State) {
-        let (rows, entries) = extension_rows(&state.packages, &state.failed);
+        let (rows, entries) = self.extension_rows(state);
         self.leave_command(state);
         state.entries = entries;
         let details = vec![
@@ -1669,6 +1734,17 @@ impl Launcher {
         ];
         state.view =
             LauncherView::new(Screen::Extensions { details }, "Extensions").with_rows(rows);
+    }
+
+    /// The extension list's rows: each package's state, reload and cache
+    /// rows, then the hotkey of each command of the enabled packages.
+    fn extension_rows(&self, state: &State) -> (Vec<Row>, Vec<Entry>) {
+        let (mut rows, mut entries) = extension_rows(&state.packages, &state.failed);
+        for (row, entry) in self.hotkey_rows(state) {
+            rows.push(row);
+            entries.push(entry);
+        }
+        (rows, entries)
     }
 
     /// Asks whether to clear the cache of the installed package with
@@ -1780,7 +1856,7 @@ impl Launcher {
     /// Updates the installed packages on screen after one changed, keeping
     /// the selection on the same row.
     fn refresh_extensions(&self, state: &mut State) {
-        let (rows, entries) = extension_rows(&state.packages, &state.failed);
+        let (rows, entries) = self.extension_rows(state);
         // The same row stays selected; if it is gone (a Retry row once the
         // package started), the row before it.
         let selected = state.view.selected.and_then(|index| {
@@ -2068,9 +2144,18 @@ impl Launcher {
             }
             return;
         }
-        if matches!(end, Some(End::Uninstalled | End::Paused)) {
-            // Uninstalled while it was opening, or paused (this opening
-            // crashed or could not start): that reports its own outcome.
+        if end == Some(End::Uninstalled) {
+            // Uninstalled while it was opening: the uninstall reports its
+            // own outcome.
+            return;
+        }
+        if end == Some(End::Paused) {
+            // Paused before it was asked (by its hotkey), or while it was
+            // opening (this opening crashed or could not start, which said
+            // so).
+            if state.view.status == Status::Running {
+                state.view.status = Status::Error(paused(&state, &component));
+            }
             return;
         }
         let state = &mut *state;
@@ -2151,8 +2236,22 @@ fn stopped(state: &State, component: &Path, data: &Option<PackageData>) -> Optio
         End::Disabled => Some(disabled(state, component)),
         End::Replaced => Some(CallError::Replaced.to_string()),
         End::Uninstalled => Some(CallError::Uninstalled.to_string()),
-        End::Paused => Some(CallError::Paused.to_string()),
+        End::Paused => Some(paused(state, component)),
     }
+}
+
+/// "<title> is paused after an error; …", for the package `component`
+/// belongs to.
+fn paused(state: &State, component: &Path) -> String {
+    match owner(&state.packages, component) {
+        Some(package) => paused_reason(&package.title()),
+        None => CallError::Paused.to_string(),
+    }
+}
+
+/// Why a command of the paused package titled `title` does not run.
+fn paused_reason(title: &str) -> String {
+    format!("{title} is paused after an error; retry it in Manage extensions")
 }
 
 /// "<title> is disabled", for the package `component` belongs to.

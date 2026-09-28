@@ -18,6 +18,8 @@ public static class Win {
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint x, uint y, uint data, UIntPtr extra);
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int command);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
 }
 "@
 # Screenshots, screen bounds and SetCursorPos then all use physical pixels,
@@ -510,4 +512,71 @@ if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the credential is sti
 Send "{ESC}"; Start-Sleep -Seconds 1
 Stop-Pane $process
 if (Select-String -Quiet -SimpleMatch '"retained"' (Join-Path $data "extensions/installed.json")) { throw "retained record not dropped" }
+
+# Global hotkeys: in Manage extensions, the settings sample's command,
+# Greeting, is given Ctrl+Alt+G by pressing it on its hotkey screen (its row
+# follows the package's state, Reload, Clear cache and Uninstall rows).
+# With Pane minimized, pressing the hotkey brings Pane's window to the front with
+# Greeting open, also after a restart; once the extension is disabled,
+# pressing it does nothing. A data folder of its own keeps the rows in a
+# known order. (Screenshot 48 is the Linux smoke's opened quicklink.)
+function Minimize-Pane($process) {
+    [Win]::ShowWindow($process.MainWindowHandle, 6) | Out-Null   # SW_MINIMIZE
+    Start-Sleep -Seconds 1
+    if ([Win]::GetForegroundWindow() -eq $process.MainWindowHandle) { throw "Pane is still in front" }
+}
+function Press-Hotkey { Send "^%g"; Start-Sleep -Seconds 3 }
+function Check-Pane-In-Front($process) {
+    if ([Win]::GetForegroundWindow() -ne $process.MainWindowHandle) { throw "the hotkey did not bring Pane to the front" }
+}
+$data = Join-Path $OutDir "hotkeys-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+$process = Start-Pane "stderr-hotkeys.log" @("--install", "target/guests/packages/sample-settings")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Greeting is selected
+Send "{DOWN 10}"   # Manage extensions…
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Send "{DOWN 4}{ENTER}"; Start-Sleep -Seconds 1   # "Hotkey for Greeting"
+Capture "52-hotkey-screen.png"
+Check "52-hotkey-screen.png" "aab4c0"   # "Press the keys that should open Greeting ..."
+Send "^%g"; Start-Sleep -Seconds 2
+Capture "53-hotkey-assigned.png"
+Check "53-hotkey-assigned.png" "9fd8a8"   # "Ctrl+Alt+G now opens Greeting"
+Send "{ESC}"; Start-Sleep -Seconds 1   # root search
+Minimize-Pane $process
+Capture "54-unfocused.png"   # evidence only: Pane is not on screen
+Press-Hotkey
+Check-Pane-In-Front $process
+Capture "55-hotkey-opened.png"
+Check "55-hotkey-opened.png" "364355" 3000   # Greeting's first item, selected
+$shots = "53-hotkey-assigned", "55-hotkey-opened" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the hotkey opened nothing" }
+Stop-Pane $process
+if (-not (Select-String -Quiet -SimpleMatch '"ctrl+alt+g"' (Join-Path $data "extensions/hotkeys.json"))) { throw "hotkey not recorded" }
+$process = Start-Pane "stderr-hotkeys-restart.log"
+Minimize-Pane $process
+Press-Hotkey
+Check-Pane-In-Front $process
+Capture "56-hotkey-after-restart.png"
+Check "56-hotkey-after-restart.png" "364355" 3000   # Greeting's first item, selected
+$shots = "53-hotkey-assigned", "56-hotkey-after-restart" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the hotkey did not open Greeting after a restart" }
+Send "{ESC}"; Start-Sleep -Seconds 1
+Send "{DOWN 10}"   # Manage extensions…
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Send "{ENTER}"; Start-Sleep -Seconds 2   # disable Settings sample
+Send "{ESC}"; Start-Sleep -Seconds 1
+Capture "57-disabled.png"   # root search
+Minimize-Pane $process
+Press-Hotkey
+if ([Win]::GetForegroundWindow() -eq $process.MainWindowHandle) { throw "the released hotkey still brought Pane to the front" }
+[Win]::ShowWindow($process.MainWindowHandle, 9) | Out-Null   # SW_RESTORE
+Focus-Pane $process
+Capture "58-disabled-pressed.png"   # still root search: nothing opened
+$shots = "57-disabled", "58-disabled-pressed" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --same @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the released hotkey still did something" }
+Stop-Pane $process
 Write-Output "screenshots in $OutDir"

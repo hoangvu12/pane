@@ -141,6 +141,21 @@ form, restarts Pane and types "pane iss", which must list it selected. It
 stops before Enter, which would open the default browser; opening a link
 here is checked only through the tests' recording opener. Not run yet.
 
+## Global hotkeys (#33)
+
+The smoke's hotkey phase (screenshots 52 to 58, [global hotkeys](../hotkeys.md#checks))
+assigns Control+Option+G to Greeting on its hotkey screen, brings Finder to
+the front, presses it through System Events and checks that Pane is the
+frontmost process with Greeting open; then again after a restart; then,
+with the extension disabled, that pressing it leaves Finder in front and
+Pane's window unchanged. The hotkey is a Carbon hot key
+(`RegisterEventHotKey`), which needs no Accessibility or Input Monitoring
+permission of Pane's own (System Events, which sends the keys, needs the
+Accessibility permission the runners grant). The adapter code was only
+compile- and lint-checked for `x86_64-apple-darwin` from Linux; **not run
+on macOS yet**, so registration, delivery on the main run loop and the
+focus transition are unverified natively.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms now have a text field. The
