@@ -440,8 +440,8 @@ stop_pane
 # quicklink (Quicklinks is selected once installed, and "Create quicklink" is
 # its first item). After a restart, typing part of its name lists it,
 # selected, and Enter opens its address with the system's link handler:
-# xdg-open, with no desktop session, only BROWSER to choose a browser, and
-# BROWSER a script that records the address instead of starting one.
+# xdg-open, with no desktop session and a script that records the address,
+# instead of starting a browser, as the only handler for web links.
 start_pane --install target/guests/packages/quicklinks
 "$xdotool" windowfocus --sync "$window"
 "$xdotool" key Return; sleep 2   # Install
@@ -455,17 +455,38 @@ capture 46-quicklink-saved.png
 check 46-quicklink-saved.png 9fd8a8   # "Saved quicklink “Pane issues”"
 "$xdotool" key Escape key Escape; sleep 1
 stop_pane
-mkdir -p "$out/xdg"
 printf '#!/bin/sh\necho "$1" >"%s/opened-link.txt"\n' "$out" >"$out/browser.sh"
 chmod +x "$out/browser.sh"
 rm -f "$out/opened-link.txt"
-# No desktop session or setting of the user's may choose a browser, only
-# BROWSER: xdg-open otherwise asks gio or the MIME defaults, which start one.
-unset XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP DESKTOP_SESSION GDMSESSION \
-  DBUS_SESSION_BUS_ADDRESS GNOME_DESKTOP_SESSION_ID KDE_FULL_SESSION
+# Only the recording script may open the link. No desktop session may choose
+# a browser: xdg-open would ask it (gio, kde-open, ...) for the user's.
+# XDG_CONFIG_HOME and XDG_DATA_HOME of the smoke's own, replacing the user's,
+# make the script the default for web links, and every way xdg-open finds a
+# default checks those before the system's; BROWSER, its last resort, is the
+# script too. XDG_DATA_DIRS and XDG_CONFIG_DIRS keep the system's folders:
+# Pane's Vulkan driver is found there (/usr/share/vulkan/icd.d), and without
+# one Pane has no window on CI.
+unset XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP DESKTOP_SESSION GDMSESSION DBUS_SESSION_BUS_ADDRESS \
+  GNOME_DESKTOP_SESSION_ID KDE_FULL_SESSION KDE_SESSION_VERSION MATE_DESKTOP_SESSION_ID
 xdg=$(cd "$out" && pwd)/xdg
-export BROWSER="$(cd "$out" && pwd)/browser.sh" XDG_CONFIG_HOME="$xdg" XDG_CONFIG_DIRS="$xdg" \
-  XDG_DATA_HOME="$xdg" XDG_DATA_DIRS="$xdg"
+rm -rf "$xdg"
+mkdir -p "$xdg/applications"
+cat >"$xdg/applications/pane-smoke-browser.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Pane Smoke Browser
+Exec=$(cd "$out" && pwd)/browser.sh %u
+MimeType=x-scheme-handler/http;x-scheme-handler/https;
+NoDisplay=true
+EOF
+printf '[Default Applications]\nx-scheme-handler/http=pane-smoke-browser.desktop\nx-scheme-handler/https=pane-smoke-browser.desktop\n' \
+  >"$xdg/mimeapps.list"
+cp "$xdg/mimeapps.list" "$xdg/applications/mimeapps.list"
+export BROWSER="$(cd "$out" && pwd)/browser.sh" XDG_CONFIG_HOME="$xdg" XDG_DATA_HOME="$xdg"
+if command -v xdg-mime >/dev/null; then
+  handler=$(xdg-mime query default x-scheme-handler/https)
+  [ "$handler" = pane-smoke-browser.desktop ] || { echo "web links would open with $handler, not the smoke's script"; exit 1; }
+fi
 start_pane
 "$xdotool" windowfocus --sync "$window"
 "$xdotool" type --delay 50 'pane iss'; sleep 2
