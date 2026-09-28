@@ -590,6 +590,7 @@ fn launcher_with_build_command(dirs: &Dirs) -> Launcher {
         title: "JavaScript sample".into(),
         subtitle: None,
         component: guest("sample_js"),
+        takes_query: false,
     };
     Launcher::with_packages(
         Runtime::start(),

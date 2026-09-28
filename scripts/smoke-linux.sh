@@ -702,6 +702,72 @@ python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/51-reinstalled.pn
 "$xdotool" key Escape; sleep 1
 stop_pane
 
+# Aliases and fallbacks: in Manage extensions, the query sample's command,
+# Echo, is given the alias "ec" (its row follows the package's state, Reload,
+# Clear cache, Uninstall and hotkey rows) and made a fallback (the next row).
+# In root search, "ec hello" lists the row that sends "hello" to Echo,
+# selected, and Enter shows Echo's answer; text nothing matches lists "No
+# results" with Echo below it, not selected, until Down selects it and Enter
+# sends the text. After a restart with the extension disabled, "ec hello"
+# lists nothing: the same screen as a Pane with nothing installed. Data
+# folders of their own keep the rows in a known order.
+export PANE_DATA_DIR=$out/aliases-data
+rm -rf "$PANE_DATA_DIR"
+start_pane --install target/guests/packages/sample-query
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 2   # Install; Echo is selected
+for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+"$xdotool" key Return; sleep 1
+for ((i = 0; i < 5; i++)); do "$xdotool" key Down; done   # "Alias for Echo"
+"$xdotool" key Return; sleep 1
+"$xdotool" type --delay 50 'ec'
+"$xdotool" key Return; sleep 2
+capture 66-alias-saved.png
+check 66-alias-saved.png 9fd8a8   # "Typing “ec” now finds Echo"
+"$xdotool" key Down Return; sleep 2   # "Fallback: Echo"
+capture 67-fallback-on.png
+check 67-fallback-on.png 9fd8a8   # "Echo is now offered for any text typed in root search"
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{66-alias-saved,67-fallback-on}.png
+"$xdotool" key Escape; sleep 1   # root search
+"$xdotool" type --delay 50 'ec hello'; sleep 1
+capture 68-alias-row.png
+check 68-alias-row.png 364355 3000   # Echo, sending “hello”, selected
+"$xdotool" key Return; sleep 3
+capture 69-alias-answer.png
+check 69-alias-answer.png 9fd8a8   # "Echo heard “hello”"
+"$xdotool" key Escape; sleep 1   # clears the query
+"$xdotool" type --delay 50 'zqx'; sleep 1
+capture 70-fallback-listed.png   # "No results for “zqx”", then Echo, not selected
+"$xdotool" key Down; sleep 1
+capture 71-fallback-chosen.png
+check 71-fallback-chosen.png 364355 3000   # Echo, now selected
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{70-fallback-listed,71-fallback-chosen}.png
+"$xdotool" key Return; sleep 3
+capture 72-fallback-answer.png
+check 72-fallback-answer.png 9fd8a8   # "Echo heard “zqx”"
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{69-alias-answer,72-fallback-answer}.png
+stop_pane
+grep -q '"ec"' "$PANE_DATA_DIR/extensions/aliases.json" || { echo "alias not recorded"; exit 1; }
+grep -q '#echo"' "$PANE_DATA_DIR/extensions/aliases.json" || { echo "fallback not recorded"; exit 1; }
+start_pane
+"$xdotool" windowfocus --sync "$window"
+for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+"$xdotool" key Return; sleep 1
+"$xdotool" key Return; sleep 2   # disable Query sample
+"$xdotool" key Escape; sleep 1
+"$xdotool" type --delay 50 'ec hello'; sleep 1
+capture 73-alias-disabled.png   # "No results for “ec hello”"
+stop_pane
+grep -q '"disabled": true' "$PANE_DATA_DIR/extensions/installed.json" || { echo "not disabled"; exit 1; }
+export PANE_DATA_DIR=$out/aliases-empty-data
+rm -rf "$PANE_DATA_DIR"
+start_pane
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" type --delay 50 'ec hello'; sleep 1
+capture 74-nothing-installed.png   # "No results for “ec hello”"
+python3 "$(dirname "$0")/check_screenshot.py" --same "$out"/{73-alias-disabled,74-nothing-installed}.png
+stop_pane
+
 # Development mode (#12, #13): a copy of each development sample
 # (guests/hello-rust, hello-ts, hello-js) is built once, installed and
 # developed from Manage extensions ("Develop <title>", its last row). Saving
@@ -834,13 +900,13 @@ PY
   cmp -s "$built" "$before" || { echo "$title was built after development stopped"; exit 1; }
   stop_pane
 }
-develop_sample hello-rust "Hello Rust" target/wasm32-wasip2/release/hello_rust.wasm src/lib.rs 66 \
+develop_sample hello-rust "Hello Rust" target/wasm32-wasip2/release/hello_rust.wasm src/lib.rs 110 \
   'const GREETING: &str = "%s from Rust";' 'const GREETING: &str = 42;'
 js_toolchain=${PANE_JS_TOOLCHAIN_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/pane/componentize-js}
 if compgen -G "$js_toolchain/bin/*/toolchain.json" >/dev/null && command -v node >/dev/null; then
-  develop_sample hello-ts "Hello TypeScript" dist/hello_ts.wasm src/index.ts 75 \
+  develop_sample hello-ts "Hello TypeScript" dist/hello_ts.wasm src/index.ts 119 \
     'const GREETING: string = "%s from TypeScript";' 'const GREETING: string = 42;'
-  develop_sample hello-js "Hello JavaScript" dist/hello_js.wasm src/index.js 84 \
+  develop_sample hello-js "Hello JavaScript" dist/hello_js.wasm src/index.js 128 \
     'const GREETING = "%s from JavaScript";' 'const GREETING = 42;'
 else
   echo "skipped the JavaScript and TypeScript development smoke: no JS toolchain in $js_toolchain"

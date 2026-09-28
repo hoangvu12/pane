@@ -146,9 +146,18 @@ must show nothing kept. **Not run on Windows yet.** A data file locked by
 another program is covered only by the tests' unreadable files, and a
 record that cannot be written after the data is deleted only by a Unix test.
 
+## Aliases and fallbacks (#31)
+
+The smoke's alias phase (screenshots 66 to 74, [aliases and fallbacks](../aliases.md#checks))
+gives Echo, the query sample's command, the alias "ec" and makes it a
+fallback in Manage extensions, sends "ec hello" and, from the unselected
+fallback row chosen with Down, "zqx" to it, and checks that with the
+extension disabled "ec hello" lists nothing. Nothing in it is specific to
+Windows (no system API is involved); **not run on Windows yet**.
+
 ## Development mode (#12, #13)
 
-The smoke's last phase (screenshots 66 to 92, [development
+The smoke's last phase (screenshots 110 to 136, [development
 mode](../development-mode.md#checks)) builds a copy of each development
 sample, develops it from Manage extensions, saves an edit, a change that
 does not build, two saves in a row and, after stopping, one more, checking

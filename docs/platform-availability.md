@@ -130,8 +130,9 @@ from the Rust sample with the two other systems in `platforms`.
 - No architecture declaration: components are architecture-independent WASI.
   Native helper artifacts matching OS/architecture belong to #15.
 - The commands this build supplies (the samples) declare no platforms; only
-  packages, their commands and list items can. Aliases, fallbacks and other
-  surfaces do not exist yet.
+  packages, their commands and list items can. An alias or fallback row of a
+  command unavailable here ([#31](aliases.md)) keeps the command's reason and
+  runs nothing.
 - `platforms` on `item` was added to extension API 0.1 without a version
   bump ([current decisions](current-decisions.md#explicitly-unresolved-or-deferred),
   item 5); a component built against the older shape is refused when it is

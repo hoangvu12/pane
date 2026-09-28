@@ -407,6 +407,32 @@ The macOS and Windows smokes run the same phase (screenshots 63 to 65); it
 has not run there yet. A file locked by another program on Windows is
 covered only by the tests' unreadable and unwritable files, not natively.
 
+### Aliases and fallbacks (#31)
+
+The last phase, after the retained-data phase ([aliases and fallbacks](../aliases.md#checks)),
+with data folders of its own, installs the query sample, gives Echo the
+alias "ec" in its alias form (typed with real X11 key events) and makes it a
+fallback, then in root search types "ec hello" (the row sending "hello" to
+Echo is listed and selected) and presses Enter ("Echo heard “hello”");
+types "zqx" ("No results", then the fallback, not selected), presses Down
+(now selected) and Enter ("Echo heard “zqx”"). It checks `aliases.json`,
+restarts, disables the extension and types "ec hello": the screen is pixel
+for pixel the one a Pane with nothing installed shows for it. Run locally on
+2026-09-28 (Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64, same
+Xvfb/lavapipe setup): all checks of the whole smoke passed.
+
+| Step | Evidence |
+| --- | --- |
+| "ec hello": the alias row selected, the fallback below | [68-alias-row.png](evidence/linux-x11/68-alias-row.png) |
+| Enter: Echo's answer | [69-alias-answer.png](evidence/linux-x11/69-alias-answer.png) |
+| "zqx": no results, the fallback not selected | [70-fallback-listed.png](evidence/linux-x11/70-fallback-listed.png) |
+| Down and Enter: Echo's answer to "zqx" | [72-fallback-answer.png](evidence/linux-x11/72-fallback-answer.png) |
+| Extension disabled: "ec hello" lists nothing | [73-alias-disabled.png](evidence/linux-x11/73-alias-disabled.png) |
+
+(Screenshots 66 and 67, the extension list after saving the alias and the
+fallback, are checked but not kept here: they show the local package
+paths.)
+
 ### Development mode (#12, #13)
 
 The last phase ([development mode](../development-mode.md#checks)) takes a
@@ -427,21 +453,21 @@ setup, with the JS toolchain): all checks of the whole smoke passed.
 
 | Step | Evidence |
 | --- | --- |
-| Hello Rust as installed | [67-hello-rust-greeting-before.png](evidence/linux-x11/67-hello-rust-greeting-before.png) |
-| Its source saved: "Reloaded Hello Rust", with Pane open | [68-hello-rust-rebuilt.png](evidence/linux-x11/68-hello-rust-rebuilt.png) |
-| The new greeting (`--distinct` from 67) | [69-hello-rust-greeting-after.png](evidence/linux-x11/69-hello-rust-greeting-after.png) |
-| A save that does not compile: "Hello Rust did not build: error[E0308]: mismatched types. It keeps running its installed code; …" | [70-hello-rust-build-failed.png](evidence/linux-x11/70-hello-rust-build-failed.png) |
-| The working code still answers (`--same` as 69) | [71-hello-rust-kept.png](evidence/linux-x11/71-hello-rust-kept.png) |
-| Two saves, the second during the build: the newer greeting | [73-hello-rust-greeting-fixed.png](evidence/linux-x11/73-hello-rust-greeting-fixed.png) |
-| TypeScript: "Hello TypeScript did not build: src/index.ts(12,7): error TS2322: …" | [79-hello-ts-build-failed.png](evidence/linux-x11/79-hello-ts-build-failed.png) |
-| TypeScript after the two saves | [82-hello-ts-greeting-fixed.png](evidence/linux-x11/82-hello-ts-greeting-fixed.png) |
-| JavaScript (checked through JSDoc): "Hello JavaScript did not build: src/index.js(15,7): error TS2322: …" | [88-hello-js-build-failed.png](evidence/linux-x11/88-hello-js-build-failed.png) |
-| JavaScript after the two saves | [91-hello-js-greeting-fixed.png](evidence/linux-x11/91-hello-js-greeting-fixed.png) |
+| Hello Rust as installed | [111-hello-rust-greeting-before.png](evidence/linux-x11/111-hello-rust-greeting-before.png) |
+| Its source saved: "Reloaded Hello Rust", with Pane open | [112-hello-rust-rebuilt.png](evidence/linux-x11/112-hello-rust-rebuilt.png) |
+| The new greeting (`--distinct` from 111) | [113-hello-rust-greeting-after.png](evidence/linux-x11/113-hello-rust-greeting-after.png) |
+| A save that does not compile: "Hello Rust did not build: error[E0308]: mismatched types. It keeps running its installed code; …" | [114-hello-rust-build-failed.png](evidence/linux-x11/114-hello-rust-build-failed.png) |
+| The working code still answers (`--same` as 113) | [115-hello-rust-kept.png](evidence/linux-x11/115-hello-rust-kept.png) |
+| Two saves, the second during the build: the newer greeting | [117-hello-rust-greeting-fixed.png](evidence/linux-x11/117-hello-rust-greeting-fixed.png) |
+| TypeScript: "Hello TypeScript did not build: src/index.ts(12,7): error TS2322: …" | [123-hello-ts-build-failed.png](evidence/linux-x11/123-hello-ts-build-failed.png) |
+| TypeScript after the two saves | [126-hello-ts-greeting-fixed.png](evidence/linux-x11/126-hello-ts-greeting-fixed.png) |
+| JavaScript (checked through JSDoc): "Hello JavaScript did not build: src/index.js(15,7): error TS2322: …" | [132-hello-js-build-failed.png](evidence/linux-x11/132-hello-js-build-failed.png) |
+| JavaScript after the two saves | [135-hello-js-greeting-fixed.png](evidence/linux-x11/135-hello-js-greeting-fixed.png) |
 
-Screenshots 66, 74, 75, 83, 84 and 92 (developing started and stopped, on
+Screenshots 110, 118, 119, 127, 128 and 136 (developing started and stopped, on
 the extension list) are checked but not kept here: they show local package
-paths; the other steps of each language (72, 76 to 78, 80, 81, 85 to 87, 89,
-90) match those above.
+paths; the other steps of each language (116, 120 to 122, 124, 125, 129 to 131, 133,
+134) match those above.
 
 ## Text input and accessibility findings
 

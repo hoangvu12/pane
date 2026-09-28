@@ -168,7 +168,7 @@ These are implementation choices of #12/#13, not user decisions:
 - [`crates/pane/tests/develop.rs`](../crates/pane/tests/develop.rs): the
   window redraws by itself when a background build fails and when the fix
   is reloaded, and renders the diagnostics.
-- The native smokes' development phase (screenshots 66 to 92; see the
+- The native smokes' development phase (screenshots 110 to 136; see the
   [platform notes](platforms/linux.md#development-mode-12-13)).
 
 ## Limits
