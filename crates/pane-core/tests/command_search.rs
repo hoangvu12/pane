@@ -17,7 +17,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use futures::executor::block_on;
-use pane_core::{HttpLimits, Launcher, Runtime, Screen, Status};
+use pane_core::{
+    Fault, HttpLimits, Launcher, PackageIdentity, Runtime, RuntimeStatus, SavedData, Screen, Status,
+};
 use service::Service;
 use tempfile::TempDir;
 
@@ -75,6 +77,7 @@ fn package(name: &str, folder: &Path) -> PathBuf {
 /// it keeps its data and the package's source in.
 struct Pane {
     launcher: Launcher,
+    runtime: Runtime,
     _sources: TempDir,
     _data: TempDir,
 }
@@ -94,7 +97,8 @@ impl Pane {
     fn with_runtime(fixture: &Fixture, runtime: Runtime) -> Pane {
         let sources = tempfile::tempdir().unwrap();
         let data = tempfile::tempdir().unwrap();
-        let launcher = Launcher::with_packages(Ok(runtime), vec![], data.path().join("extensions"));
+        let launcher =
+            Launcher::with_packages(Ok(runtime.clone()), vec![], data.path().join("extensions"));
         let folder = package(fixture.package, &sources.path().join(fixture.package));
         block_on(launcher.install_package(&folder));
         assert!(
@@ -104,9 +108,20 @@ impl Pane {
         );
         Pane {
             launcher,
+            runtime,
             _sources: sources,
             _data: data,
         }
+    }
+
+    /// The identity of the search sample, installed.
+    fn identity(&self) -> PackageIdentity {
+        self.launcher
+            .packages()
+            .into_iter()
+            .next()
+            .expect("the search sample is installed")
+            .identity
     }
 
     /// Installs the assembled package `name` too.
@@ -713,6 +728,103 @@ fn the_extension_list_says_which_packages_use_the_network_and_what_they_reached(
         );
         pane.launcher.back();
         assert!(matches!(pane.view().screen, Screen::Extensions { .. }));
+    }
+}
+
+/// Starts a search the service holds, has `happen` while it waits, and
+/// checks that the search was stopped where it waited (the service saw
+/// Pane hang up) and that its end changes nothing on screen: the view
+/// after `happen` is the view once the search is done. The launcher, and
+/// the service, still serving.
+fn stopped_while_it_waits(fixture: &Fixture, happen: impl FnOnce(&Pane)) -> (Pane, Service) {
+    let service = Service::start();
+    let pane = Pane::with(fixture);
+    pane.use_service(&service.url());
+    let slow = pane.launcher.set_query("slow");
+    wait_for_request(&service, "/search?q=slow");
+
+    happen(&pane);
+    let after = pane.view();
+    assert!(
+        service.wait_for_abandoned(Duration::from_secs(5)),
+        "{}: the search was not stopped",
+        fixture.package
+    );
+    block_on(slow);
+    assert_eq!(pane.view(), after, "{}", fixture.package);
+    (pane, service)
+}
+
+#[test]
+fn disabling_the_package_stops_its_search() {
+    for fixture in &ALL {
+        let (pane, _service) = stopped_while_it_waits(fixture, |pane| {
+            block_on(pane.launcher.set_enabled(&pane.identity(), false));
+        });
+        assert!(!pane.launcher.packages()[0].enabled);
+    }
+}
+
+#[test]
+fn reloading_the_package_stops_its_search() {
+    for fixture in &ALL {
+        let (pane, _service) = stopped_while_it_waits(fixture, |pane| {
+            block_on(pane.launcher.reload(&pane.identity()));
+        });
+        // The reloaded code searches.
+        pane.open();
+        pane.search("ember");
+        assert_eq!(pane.titles(), ["ember-tz"], "{}", fixture.package);
+    }
+}
+
+#[test]
+fn uninstalling_the_package_stops_its_search() {
+    for fixture in &ALL {
+        let (pane, _service) = stopped_while_it_waits(fixture, |pane| {
+            block_on(pane.launcher.uninstall(&pane.identity(), SavedData::Keep));
+        });
+        assert!(pane.launcher.packages().is_empty());
+    }
+}
+
+#[test]
+fn a_crash_of_the_runtime_ends_a_search_with_an_error_not_its_results() {
+    for fixture in &ALL {
+        let service = Service::start();
+        let pane = Pane::with(fixture);
+        pane.use_service(&service.url());
+        let slow = pane.launcher.set_query("slow");
+        wait_for_request(&service, "/search?q=slow");
+
+        pane.runtime.inject(Fault::Crash);
+        // The search's answer is lost with the thread, which Pane restarts;
+        // the connection closed with it.
+        block_on(slow);
+        assert!(matches!(
+            pane.runtime.status(),
+            RuntimeStatus::Restarted { .. }
+        ));
+        assert!(service.wait_for_abandoned(Duration::from_secs(5)));
+        let view = pane.view();
+        assert_eq!(
+            view.screen,
+            Screen::CommandSearch {
+                query: "slow".into()
+            }
+        );
+        assert_eq!(view.rows, Vec::new(), "{}", fixture.package);
+        let Status::Error(message) = view.status else {
+            panic!("{}: {:?}", fixture.package, view.status);
+        };
+        assert!(
+            message.contains("it stopped before answering and was started again"),
+            "{message}"
+        );
+
+        // The restarted runtime searches.
+        pane.search("basalt");
+        assert_eq!(pane.titles(), ["basalt"], "{}", fixture.package);
     }
 }
 
