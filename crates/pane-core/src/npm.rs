@@ -171,6 +171,11 @@ impl Registry {
             // A redirect could lead elsewhere than the registry: its status
             // is reported instead of followed.
             .max_redirects(0)
+            // Each request opens its own connection: one kept from the
+            // metadata request may be closed by the server just as the
+            // tarball's is sent on it ("Peer disconnected", seen against an
+            // HTTP/1.0 server), and a download is only two requests.
+            .max_idle_connections(0)
             .http_status_as_error(false)
             .timeout_connect(Some(Duration::from_secs(30)))
             .timeout_global(Some(Duration::from_secs(300)))
