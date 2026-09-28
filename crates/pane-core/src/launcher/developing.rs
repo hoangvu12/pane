@@ -62,7 +62,7 @@ use super::{
 use crate::changes::ChangeSender;
 use crate::develop::{
     Build, BuildJob, BuildOutcome, BuildOutput, BuildStop, Builder, components, first_error,
-    is_save, stage_manifest,
+    is_save, stage_package,
 };
 use crate::packages::{InstalledPackage, Manifest, PackageIdentity};
 
@@ -316,6 +316,16 @@ impl Launcher {
             return None;
         }
         let title = state.title_of(identity);
+        // Being reloaded, updated, installed with another package or relied
+        // on by an install: it is developed once that ends.
+        match state.changing.get(identity) {
+            None => {}
+            Some(Changing::Recording) => return None,
+            Some(busy) => {
+                state.view.status = Status::Error(format!("{title} {}", busy.doing()));
+                return None;
+            }
+        }
         let Some(builder) = self.developing.builder.clone() else {
             state.view.status = Status::Error(format!(
                 "Cannot develop {title}: this Pane does not build extensions"
@@ -868,11 +878,11 @@ impl Worker {
                 .join("staging")
                 .join(format!("build-{}", self.builds));
             let output = BuildOutput::new(Some(&self.work.join(BUILD_LOG)));
-            let built = match stage_manifest(&self.folder, &staging) {
+            let built = match stage_package(&self.folder, &staging) {
                 Ok(()) => self.build_once(&staging, &output),
                 Err(error) => Some((
                     BuildOutcome::Failed(format!(
-                        "Pane could not stage pane.json in {}: {error}",
+                        "Pane could not stage the package in {}: {error}",
                         staging.display()
                     )),
                     false,

@@ -873,3 +873,24 @@ fn the_window_is_told_of_each_change() {
     });
     block_on(changes.next()).unwrap();
 }
+
+#[test]
+fn a_package_being_updated_or_installed_is_not_developed_meanwhile() {
+    let dev = Dev::new();
+    let (folder, identity) = dev.install("Dev", "sample_rust");
+    block_on(dev.launcher.preview_package(&folder));
+    select_title(&dev.launcher, "Update");
+    let update = dev.launcher.activate_selected();
+
+    block_on(dev.launcher.start_developing(&identity));
+    assert_eq!(
+        dev.launcher.view().status,
+        Status::Error("Dev is updating".into())
+    );
+    assert!(dev.launcher.development(&identity).is_none());
+    block_on(update);
+
+    // Once updated, it is developed as ever.
+    block_on(dev.launcher.start_developing(&identity));
+    assert!(dev.launcher.development(&identity).is_some());
+}

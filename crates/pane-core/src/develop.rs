@@ -959,11 +959,25 @@ pub(crate) fn is_save(path: &Path, build: &dyn Build) -> bool {
     !parts.is_empty() && !excluded && !temporary && !build.ignores(path)
 }
 
-/// Stages `pane.json` of `folder` into `staging`, for a build to add its
-/// components to.
-pub(crate) fn stage_manifest(folder: &Path, staging: &Path) -> std::io::Result<()> {
+/// Stages the package in `folder` into `staging` for a build to add its
+/// components to: its `pane.json`, and the files of the helpers it ships
+/// for this system, which no build makes. A helper file that is not a
+/// regular file (a link) is not copied, so the install checks refuse it as
+/// they would in the source folder.
+pub(crate) fn stage_package(folder: &Path, staging: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(staging)?;
-    std::fs::copy(folder.join(MANIFEST_FILE), staging.join(MANIFEST_FILE)).map(|_| ())
+    std::fs::copy(folder.join(MANIFEST_FILE), staging.join(MANIFEST_FILE))?;
+    let Ok((manifest, _)) = Manifest::read_parsed(staging) else {
+        // The install checks explain it.
+        return Ok(());
+    };
+    for file in manifest.helpers.iter().filter_map(|h| h.for_this_system()) {
+        let from = folder.join(file);
+        if std::fs::symlink_metadata(&from).is_ok_and(|meta| meta.is_file()) {
+            stage(&from, &staging.join(file))?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1140,6 +1154,39 @@ mod tests {
         let words =
             "   Compiling thiserror v1.0\nerrors: none\nerror[E]: x\nerror TSX\nno error: here";
         assert_eq!(first_error(words.lines()), None);
+    }
+
+    #[test]
+    fn staging_takes_pane_json_and_this_systems_helper_files() {
+        let target = pane_target::Target::current().expect("Pane names this system's target");
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("source");
+        let file = format!("helpers/tool{}", target.exe_suffix());
+        let other = if target.id() == "linux-x86_64" {
+            "linux-aarch64"
+        } else {
+            "linux-x86_64"
+        };
+        std::fs::create_dir_all(folder.join("helpers")).unwrap();
+        std::fs::write(folder.join(&file), b"a program").unwrap();
+        std::fs::write(folder.join("helpers/other"), b"another system's").unwrap();
+        std::fs::write(
+            folder.join("pane.json"),
+            format!(
+                r#"{{ "manifestVersion": 1, "title": "Tool", "apiVersion": "0.1",
+                     "commands": [{{ "id": "c", "title": "C", "component": "command.wasm" }}],
+                     "helpers": [{{ "id": "tool", "targets": {{ "{}": "{file}", "{other}": "helpers/other" }} }}] }}"#,
+                target.id()
+            ),
+        )
+        .unwrap();
+        let staging = dir.path().join("staging");
+        stage_package(&folder, &staging).unwrap();
+        assert!(staging.join("pane.json").is_file());
+        assert_eq!(std::fs::read(staging.join(&file)).unwrap(), b"a program");
+        assert!(!staging.join("helpers/other").exists());
+        // The build adds the components.
+        assert!(!staging.join("command.wasm").exists());
     }
 
     #[test]
