@@ -430,10 +430,11 @@ impl Render for LauncherWindow {
                 self.render_row(index, row, selected, cx)
             })
             .collect();
-        let body = match (view.form, view.custom_view) {
-            (Some(form), _) => self.render_form(view.title.clone(), form, cx),
-            (None, Some(custom_view)) => self.render_custom_view(custom_view, cx),
-            (None, None) => div()
+        // The launcher decides what an item opens; its screen says which.
+        let body = match (view.screen, view.form, view.custom_view) {
+            (Screen::Form, Some(form), _) => self.render_form(view.title.clone(), form, cx),
+            (Screen::CustomView, _, Some(custom_view)) => self.render_custom_view(custom_view, cx),
+            _ => div()
                 .id("rows")
                 .debug_selector(|| "rows".into())
                 // The list holds keyboard focus; the selected row is its

@@ -10,8 +10,10 @@
 //! user has left that screen, the reply is discarded, and a custom view that
 //! opened after the user left is closed again.
 
+use std::collections::VecDeque;
 use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::packages::{
@@ -19,7 +21,7 @@ use crate::packages::{
 };
 use crate::platform::{self, Platform};
 use crate::runtime::{
-    CallError, CustomViewInfo, CustomViewRole, FieldKind, FieldValue, Form, Frame, Runtime,
+    CallError, CustomViewInfo, CustomViewRole, FieldKind, FieldValue, Form, Frame, Point, Runtime,
     ViewEvent, ViewId,
 };
 use crate::settings::{PackageSettings, Settings};
@@ -104,6 +106,9 @@ pub struct FormField {
 /// An open custom view as the extension last drew it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CustomViewSnapshot {
+    /// Which opened view this is: a view opened again, even of the same
+    /// item, has another id.
+    pub id: ViewId,
     /// Names the view to assistive technology.
     pub label: String,
     pub role: CustomViewRole,
@@ -205,6 +210,35 @@ struct OpenCustomView {
     /// The number of the event whose answer is on screen, so an older answer
     /// arriving late does not replace a newer one.
     shown: u64,
+    /// Pointer moves sent to the view and not answered yet. While there are
+    /// any, a further move waits in `waiting_move` instead of being sent.
+    moves_in_flight: u32,
+    /// The latest move of a drag that has not been sent: sent when the
+    /// moves in flight are answered, or before the next other event.
+    waiting_move: Option<Point>,
+}
+
+/// An event sent to the open view, whose answer is still to be shown.
+struct SentEvent {
+    /// The event's number among those sent to the view.
+    number: u64,
+    is_move: bool,
+    reply: Pin<Box<dyn Future<Output = Result<Frame, CallError>> + Send>>,
+}
+
+impl OpenCustomView {
+    fn send(&mut self, runtime: &Runtime, event: ViewEvent) -> SentEvent {
+        self.sent += 1;
+        let is_move = matches!(event, ViewEvent::PointerMove(_));
+        if is_move {
+            self.moves_in_flight += 1;
+        }
+        SentEvent {
+            number: self.sent,
+            is_move,
+            reply: Box::pin(runtime.view_event(self.id, event)),
+        }
+    }
 }
 
 /// What activating a row does.
@@ -371,14 +405,7 @@ impl Launcher {
                     ..form.return_to
                 };
             }
-            Screen::CustomView => {
-                let return_to = self.close_custom_view(&mut state).expect("a view is open");
-                state.screen_generation += 1;
-                state.view = LauncherView {
-                    status: Status::Idle,
-                    ..return_to
-                };
-            }
+            Screen::CustomView => self.return_from_custom_view(&mut state, Status::Idle),
             Screen::Command | Screen::Package | Screen::Extensions => {
                 self.show_root(&mut state, None)
             }
@@ -490,10 +517,7 @@ impl Launcher {
                     .cloned()
             });
             let (view, entries) = preview_view(&folder, checked, installed);
-            state.screen_generation += 1;
-            launcher.close_custom_view(&mut state);
-            state.open = None;
-            state.form = None;
+            launcher.leave_command(&mut state);
             state.view = view;
             state.entries = entries;
         }
@@ -693,22 +717,33 @@ impl Launcher {
                     (Mode::Update, None) => format!("Updated {}", installed.title()),
                 };
                 let first = installed.commands().first().map(|c| c.component.clone());
+                let mut replaced = Vec::new();
                 match state
                     .packages
                     .iter_mut()
                     .find(|package| package.identity == installed.identity)
                 {
                     Some(package) => {
-                        // The replaced copy's code is not run again. A command
-                        // of it that is open is not coordinated with (#11, #14).
+                        // The replaced copy's code is not run again, and a
+                        // command of it that is open closes below: its state
+                        // is not carried over (#11, #14).
+                        replaced = package
+                            .commands()
+                            .into_iter()
+                            .map(|c| c.component)
+                            .collect();
                         if let Ok(runtime) = self.runtime() {
-                            runtime.forget(package.commands().into_iter().map(|c| c.component));
+                            runtime.forget(replaced.iter().cloned());
                         }
                         *package = installed;
                     }
                     None => state.packages.push(installed),
                 }
-                if current {
+                let replaced_is_open = state
+                    .open
+                    .as_ref()
+                    .is_some_and(|open| replaced.contains(open));
+                if current || replaced_is_open {
                     self.show_root(&mut state, first);
                     state.view.status = Status::Result(message);
                 } else if state.view.screen == Screen::Root {
@@ -749,10 +784,7 @@ impl Launcher {
                     .position(|entry| matches!(entry, Entry::Open(c) if *c == component))
             })
             .or_else(|| first_index(&rows));
-        self.close_custom_view(state);
-        state.open = None;
-        state.form = None;
-        state.screen_generation += 1;
+        self.leave_command(state);
         state.entries = entries;
         state.view = LauncherView {
             screen: Screen::Root,
@@ -970,9 +1002,7 @@ impl Launcher {
     /// Shows the installed packages, each enabled or disabled.
     fn show_extensions(&self, state: &mut State) {
         let (rows, entries) = extension_rows(&state.packages);
-        state.open = None;
-        state.form = None;
-        state.screen_generation += 1;
+        self.leave_command(state);
         state.entries = entries;
         state.view = LauncherView {
             screen: Screen::Extensions,
@@ -1036,6 +1066,7 @@ impl Launcher {
                     status: Status::Idle,
                     form: None,
                     custom_view: Some(CustomViewSnapshot {
+                        id,
                         label: info.label,
                         role: info.role,
                         frame,
@@ -1051,6 +1082,8 @@ impl Launcher {
                     pressed: false,
                     sent: 0,
                     shown: 0,
+                    moves_in_flight: 0,
+                    waiting_move: None,
                 });
                 state.screen_generation += 1;
             }
@@ -1066,34 +1099,81 @@ impl Launcher {
     /// Events are handled in order, and a drawing is shown only if no later
     /// event's drawing is on screen yet. An error the extension reports is
     /// shown while the view stays open; a crash closes the view.
+    ///
+    /// A drag is coalesced: while a pointer move is being handled, a further
+    /// move is not sent; only the latest one waiting is, once the moves in
+    /// flight are answered (by the future of the move answered last), or
+    /// before the next other event. Await every returned future.
     pub fn send_view_event(&self, event: ViewEvent) -> impl Future<Output = ()> + Send + 'static {
         let mut state = self.lock();
         let generation = state.screen_generation;
-        let runtime = self.runtime.as_ref().ok();
         // Sent now, so the view handles events in the order of these calls
         // whenever the returned futures are awaited.
-        let sent = state
-            .custom_view
-            .as_mut()
-            .zip(runtime)
-            .and_then(|(open, runtime)| {
-                match event {
-                    ViewEvent::PointerDown(_) => open.pressed = true,
-                    ViewEvent::PointerMove(_) if !open.pressed => return None,
-                    ViewEvent::PointerUp(_) if !open.pressed => return None,
-                    ViewEvent::PointerUp(_) => open.pressed = false,
-                    ViewEvent::PointerMove(_) | ViewEvent::Key(_) => {}
-                }
-                open.sent += 1;
-                Some((open.sent, runtime.view_event(open.id, event)))
-            });
+        let mut sent: VecDeque<SentEvent> = self.send_to_view(&mut state, event).into();
         drop(state);
         let launcher = self.clone();
         async move {
-            if let Some((number, reply)) = sent {
-                launcher.show_view_answer(generation, number, reply.await)
+            while let Some(event) = sent.pop_front() {
+                let result = event.reply.await;
+                launcher.show_view_answer(generation, event.number, result);
+                if event.is_move {
+                    sent.extend(launcher.finish_move(generation));
+                }
             }
         }
+    }
+
+    /// Whether the primary pointer button was pressed over the open view and
+    /// is still held, so the window should forward pointer moves and the
+    /// release.
+    pub fn pointer_held(&self) -> bool {
+        self.lock()
+            .custom_view
+            .as_ref()
+            .is_some_and(|open| open.pressed)
+    }
+
+    /// Sends `event` to the open view, after a waiting move, unless it is a
+    /// move or release with no press held, or a move to wait (see
+    /// [`Launcher::send_view_event`]).
+    fn send_to_view(&self, state: &mut State, event: ViewEvent) -> Vec<SentEvent> {
+        let (Some(open), Ok(runtime)) = (state.custom_view.as_mut(), self.runtime()) else {
+            return Vec::new();
+        };
+        match event {
+            ViewEvent::PointerDown(_) => open.pressed = true,
+            ViewEvent::PointerMove(_) | ViewEvent::PointerUp(_) if !open.pressed => {
+                return Vec::new();
+            }
+            ViewEvent::PointerUp(_) => open.pressed = false,
+            ViewEvent::PointerMove(_) | ViewEvent::Key(_) => {}
+        }
+        if let ViewEvent::PointerMove(at) = event
+            && open.moves_in_flight > 0
+        {
+            open.waiting_move = Some(at);
+            return Vec::new();
+        }
+        let mut sent = Vec::new();
+        if let Some(at) = open.waiting_move.take() {
+            sent.push(open.send(runtime, ViewEvent::PointerMove(at)));
+        }
+        sent.push(open.send(runtime, event));
+        sent
+    }
+
+    /// Notes that a move sent to the view of `generation` was answered, and
+    /// sends the waiting move once no other move is in flight.
+    fn finish_move(&self, generation: u64) -> Option<SentEvent> {
+        let mut state = self.lock_if_current(generation)?;
+        let runtime = self.runtime().ok()?;
+        let open = state.custom_view.as_mut()?;
+        open.moves_in_flight = open.moves_in_flight.saturating_sub(1);
+        if open.moves_in_flight > 0 {
+            return None;
+        }
+        let at = open.waiting_move.take()?;
+        Some(open.send(runtime, ViewEvent::PointerMove(at)))
     }
 
     /// Shows the open view's answer to its event number `number`.
@@ -1118,15 +1198,29 @@ impl Launcher {
                 state.view.status = Status::Error(error.to_string());
             }
             // The guest instance, and the view with it, is gone.
-            Err(error) => {
-                let return_to = self.close_custom_view(state).expect("a view is open");
-                state.screen_generation += 1;
-                state.view = LauncherView {
-                    status: Status::Error(error.to_string()),
-                    ..return_to
-                };
-            }
+            Err(error) => self.return_from_custom_view(state, Status::Error(error.to_string())),
         }
+    }
+
+    /// Closes the open custom view and shows the command view it was opened
+    /// from, with `status`, as a new screen.
+    fn return_from_custom_view(&self, state: &mut State, status: Status) {
+        let return_to = self.close_custom_view(state).expect("a view is open");
+        state.screen_generation += 1;
+        state.view = LauncherView {
+            status,
+            ..return_to
+        };
+    }
+
+    /// Leaves the open command, and any form or custom view of it, for
+    /// another screen, which the caller then shows: the view is closed in
+    /// the runtime, and replies for the old screen are discarded.
+    fn leave_command(&self, state: &mut State) {
+        self.close_custom_view(state);
+        state.open = None;
+        state.form = None;
+        state.screen_generation += 1;
     }
 
     /// Closes the open custom view, if there is one, and returns the command

@@ -431,7 +431,10 @@ async openView(itemId) {
 ```
 
 Both methods must be `async` in JS/TS (see the
-[contract notes](../docs/custom-views.md#contract)). Throwing from
+[contract notes](../docs/custom-views.md#contract)); `@pane/extension` types
+them as returning a `Promise`, so the build's type check rejects a
+synchronous one. A frame may have at most 4096 shapes, 256 characters per
+text and 4096 x 4096 pixels; Pane shows a larger one as your error. Throwing from
 `handleEvent` shows the error and keeps the view; a crash closes it. A
 command without custom views uses `type CustomView = NoCustomView;` in Rust
 and makes `open_view`/`openView` fail.

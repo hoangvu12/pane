@@ -15,8 +15,9 @@ screenshots show the same Pane window, pixel for pixel: a screen that should
 list the same rows as an earlier one (after a restart, a disabled package's
 command is gone again) cannot silently list another.
 
-With --locate, prints the center of the pixels drawn exactly in the given
-color (such as one swatch of a custom view), as "x y" screenshot pixels, so a
+With --locate, prints the center of the largest connected region of pixels drawn
+exactly in the given color inside the Pane window
+(such as one swatch of a custom view), as "x y" screenshot pixels, so a
 smoke can click there.
 
 Usage: python3 scripts/check_screenshot.py <png> <hex color> [min pixels]
@@ -43,18 +44,26 @@ def near(a, b, tolerance: float) -> bool:
     return sum((x - y) ** 2 for x, y in zip(a, b)) <= tolerance ** 2
 
 
-def pane_window(path: str) -> Image.Image:
-    """The screenshot cropped to the Pane window, found by its background color."""
+def pixels_of(image: Image.Image) -> list:
+    return list(getattr(image, "get_flattened_data", image.getdata)())  # Pillow 12 renamed it
+
+
+def window_box(path: str) -> tuple[Image.Image, tuple[int, int, int, int]]:
+    """The screenshot and the Pane window's box in it, found by its background color."""
     image = Image.open(path).convert("RGB")
     width = image.width
-    flattened = getattr(image, "get_flattened_data", image.getdata)  # Pillow 12 renamed it
-    pixels = list(flattened())
-    background = [i for i, pixel in enumerate(pixels) if near(pixel, BACKGROUND, 4)]
+    background = [i for i, pixel in enumerate(pixels_of(image)) if near(pixel, BACKGROUND, 4)]
     if not background:
         raise SystemExit(f"{path}: the Pane window is not visible")
     rows = [i // width for i in background]
     columns = [i % width for i in background]
-    return image.crop((min(columns), min(rows), max(columns) + 1, max(rows) + 1))
+    return image, (min(columns), min(rows), max(columns) + 1, max(rows) + 1)
+
+
+def pane_window(path: str) -> Image.Image:
+    """The screenshot cropped to the Pane window."""
+    image, box = window_box(path)
+    return image.crop(box)
 
 
 def distinct(paths: list[str]) -> None:
@@ -73,16 +82,32 @@ def same(first: str, second: str) -> None:
 
 
 def locate(path: str, color: str) -> None:
-    image = Image.open(path).convert("RGB")
+    image, (left, top, right, bottom) = window_box(path)
+    window = image.crop((left, top, right, bottom))
     target = rgb(color)
-    width = image.width
-    pixels = getattr(image, "get_flattened_data", image.getdata)()
-    found = [i for i, pixel in enumerate(pixels) if near(pixel, target, 4)]
-    if not found:
-        raise SystemExit(f"{path}: no pixels of #{color.lstrip('#')}")
-    xs = sorted(i % width for i in found)
-    ys = sorted(i // width for i in found)
-    print(xs[len(xs) // 2], ys[len(ys) // 2])
+    width = window.width
+    matching = {i for i, pixel in enumerate(pixels_of(window)) if near(pixel, target, 4)}
+    if not matching:
+        raise SystemExit(f"{path}: no pixels of #{color.lstrip('#')} in the Pane window")
+    # The largest 4-connected region of the color: a swatch rather than a
+    # stray antialiased pixel, and one place rather than the middle of two.
+    largest: list[int] = []
+    while matching:
+        start = matching.pop()
+        region, frontier = [start], [start]
+        while frontier:
+            i = frontier.pop()
+            x = i % width
+            for j in (i - width, i + width, i - 1 if x > 0 else -1, i + 1 if x + 1 < width else -1):
+                if j in matching:
+                    matching.remove(j)
+                    region.append(j)
+                    frontier.append(j)
+        if len(region) > len(largest):
+            largest = region
+    xs = [i % width for i in largest]
+    ys = [i // width for i in largest]
+    print(left + (min(xs) + max(xs)) // 2, top + (min(ys) + max(ys)) // 2)
 
 
 def main(path: str, color: str, minimum: int = 20) -> None:

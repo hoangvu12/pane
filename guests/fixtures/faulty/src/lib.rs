@@ -6,7 +6,7 @@ use core::cell::Cell;
 use pane_guest::alloc::{format, string::String, vec, vec::Vec};
 use pane_guest::{
     CustomView, CustomViewInfo, CustomViewRole, Field, FieldKind, FieldValue, Form, FormError,
-    Frame, Guest, GuestCustomView, Item, Key, TextField, View, ViewEvent,
+    Frame, Guest, GuestCustomView, Item, Key, Shape, Text, TextField, View, ViewEvent,
 };
 
 struct Faulty;
@@ -24,17 +24,34 @@ fn item(id: &str) -> Item {
 }
 
 /// A custom view that counts the events it handled, refuses Left and traps
-/// on Right.
+/// on Right. After Down, Home or End it draws a frame over one of Pane's
+/// limits (too many shapes, too long a text, too wide), until the next other
+/// event.
 struct Counter {
     events: Cell<u32>,
+    oversize: Cell<Option<Key>>,
 }
 
 impl GuestCustomView for Counter {
     async fn render(&self) -> Frame {
+        let text = |content: String| {
+            Shape::Text(Text {
+                x: 0,
+                y: 0,
+                content,
+                color: 0xffffff,
+            })
+        };
+        let (width, shapes) = match self.oversize.get() {
+            Some(Key::Down) => (100, vec![text("x".into()); 4097]),
+            Some(Key::Home) => (100, vec![text("x".repeat(257))]),
+            Some(Key::End) => (4097, Vec::new()),
+            _ => (100, Vec::new()),
+        };
         Frame {
-            width: 100,
+            width,
             height: 20,
-            shapes: Vec::new(),
+            shapes,
             value: format!("{} events", self.events.get()),
         }
     }
@@ -44,6 +61,10 @@ impl GuestCustomView for Counter {
             ViewEvent::Key(Key::Left) => Err("the view refused".into()),
             ViewEvent::Key(Key::Right) => panic!("view trap"),
             _ => {
+                self.oversize.set(match event {
+                    ViewEvent::Key(key @ (Key::Down | Key::Home | Key::End)) => Some(key),
+                    _ => None,
+                });
                 self.events.set(self.events.get() + 1);
                 Ok(())
             }
@@ -121,6 +142,7 @@ impl Guest for Faulty {
         match item_id.as_str() {
             "view" => Ok(CustomView::new(Counter {
                 events: Cell::new(0),
+                oversize: Cell::new(None),
             })),
             _ => Err("the guest refused the view".into()),
         }

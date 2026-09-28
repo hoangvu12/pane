@@ -17,8 +17,13 @@ public static class Win {
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint x, uint y, uint data, UIntPtr extra);
+    [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
 }
 "@
+# Screenshots, screen bounds and SetCursorPos then all use physical pixels,
+# so a position found in a screenshot is where the click lands at any
+# display scaling.
+[Win]::SetProcessDPIAware() | Out-Null
 function Capture($name) {
     $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
     $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height

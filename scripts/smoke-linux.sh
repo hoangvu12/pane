@@ -41,7 +41,8 @@ capture() {
 check() { python3 "$(dirname "$0")/check_screenshot.py" "$out/$1" "$2" ${3:+"$3"}; }
 # Prints "x y": where the screenshot shows the given color.
 locate() { python3 "$(dirname "$0")/check_screenshot.py" --locate "$out/$1" "$2"; }
-# Clicks the primary button at x y in the pixels of screenshot $3.
+# Clicks the primary button at screen position x y (screenshot pixels: the
+# screenshot is of the whole X screen).
 click_at() { "$xdotool" mousemove "$1" "$2" click 1; }
 
 # Starts Pane with the given arguments and focuses its window.
@@ -216,7 +217,7 @@ check 21-color.png 1e88e5 3000   # blue, chosen when the view opens
 capture 22-color-key.png
 check 22-color-key.png 8e24aa 3000   # purple
 read -r x y < <(locate 22-color-key.png 1b5e20)
-click_at "$x" "$y" 22-color-key.png; sleep 1
+click_at "$x" "$y"; sleep 1
 capture 23-color-click.png
 check 23-color-click.png 1b5e20 3000   # dark green
 "$xdotool" key Escape key Escape; sleep 1

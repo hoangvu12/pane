@@ -77,8 +77,44 @@ pub struct Frame {
     pub value: String,
 }
 
+/// The most shapes a frame may have.
+pub const MAX_FRAME_SHAPES: usize = 4096;
+/// The most characters a text shape may have.
+pub const MAX_TEXT_CHARS: usize = 256;
+/// The largest width and height of a frame, in logical pixels.
+pub const MAX_FRAME_SIZE: u32 = 4096;
+
+impl Frame {
+    /// Why the frame is over one of Pane's limits, if it is. The window
+    /// draws each shape as an element, so a frame from an extension is
+    /// bounded before it reaches the window.
+    fn over_limits(&self) -> Option<String> {
+        if self.shapes.len() > MAX_FRAME_SHAPES {
+            return Some(format!(
+                "the frame has {} shapes; at most {MAX_FRAME_SHAPES} are drawn",
+                self.shapes.len()
+            ));
+        }
+        if self.width > MAX_FRAME_SIZE || self.height > MAX_FRAME_SIZE {
+            return Some(format!(
+                "the frame is {} x {} pixels; at most {MAX_FRAME_SIZE} x {MAX_FRAME_SIZE} are drawn",
+                self.width, self.height
+            ));
+        }
+        self.shapes.iter().find_map(|shape| match shape {
+            Shape::Text { content, .. } if content.chars().count() > MAX_TEXT_CHARS => {
+                Some(format!(
+                    "a text of the frame has {} characters; at most {MAX_TEXT_CHARS} are drawn",
+                    content.chars().count()
+                ))
+            }
+            _ => None,
+        })
+    }
+}
+
 /// One thing a custom view draws. Coordinates are logical pixels from the
-/// view's top-left corner; colors are 0xRRGGBB.
+/// view's top-left corner.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Shape {
     Rect {
@@ -86,16 +122,20 @@ pub enum Shape {
         y: i32,
         width: u32,
         height: u32,
-        fill: u32,
+        fill: Rgb,
     },
     /// One line of text, its top-left corner at `x`, `y`.
     Text {
         x: i32,
         y: i32,
         content: String,
-        color: u32,
+        color: Rgb,
     },
 }
+
+/// An opaque color as 0xRRGGBB, the WIT `rgb`; the top byte is ignored.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Rgb(pub u32);
 
 /// A position in a custom view, in logical pixels from its top-left corner.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -282,7 +322,7 @@ enum Request {
     CloseView {
         view: ViewId,
     },
-    OpenViews {
+    ViewCount {
         reply: oneshot::Sender<usize>,
     },
 }
@@ -470,11 +510,13 @@ impl Runtime {
         let _ = self.send(Request::CloseView { view });
     }
 
-    /// How many custom views are open, counting the requests sent before
-    /// this call; for diagnostics and tests.
-    pub async fn open_views(&self) -> usize {
+    /// How many custom views are open in guest instances, counting the
+    /// requests sent before this call. A diagnostic for tests and logs, not
+    /// part of how the launcher decides anything: it tracks its own open
+    /// view.
+    pub async fn view_count(&self) -> usize {
         let (reply, response) = oneshot::channel();
-        if self.send(Request::OpenViews { reply }).is_err() {
+        if self.send(Request::ViewCount { reply }).is_err() {
             return 0;
         }
         response.await.unwrap_or(0)
@@ -542,7 +584,7 @@ struct Instance {
 }
 
 /// A custom view open in a guest instance.
-struct OpenView {
+struct LiveView {
     /// The component whose instance holds the view.
     component: PathBuf,
     /// The guest's `custom-view` resource.
@@ -556,7 +598,7 @@ struct Host {
     linker: Linker<GuestState>,
     components: HashMap<PathBuf, Component>,
     instances: HashMap<PathBuf, Instance>,
-    views: HashMap<ViewId, OpenView>,
+    views: HashMap<ViewId, LiveView>,
     next_view: u64,
 }
 
@@ -634,7 +676,7 @@ impl Host {
                     let _ = reply.send(result);
                 }
                 Request::CloseView { view } => self.close_view(view).await,
-                Request::OpenViews { reply } => {
+                Request::ViewCount { reply } => {
                     let _ = reply.send(self.views.len());
                 }
             }
@@ -701,7 +743,7 @@ impl Host {
         self.next_view += 1;
         self.views.insert(
             view,
-            OpenView {
+            LiveView {
                 component: path.to_path_buf(),
                 resource,
             },
@@ -740,7 +782,12 @@ impl Host {
             .run_concurrent(async |store| custom_view.call_render(store, resource).await)
             .await;
         let frame = self.settle(&path, result.map(|frame| frame.map(Ok)), |never| never)?;
-        Ok(Frame::from(frame))
+        let frame = Frame::from(frame);
+        match frame.over_limits() {
+            // The view stays open; its next drawing may be within them.
+            Some(problem) => Err(CallError::Guest(problem)),
+            None => Ok(frame),
+        }
     }
 
     /// The component and guest resource of the open view `view`.
@@ -924,13 +971,13 @@ impl From<command::Frame> for Frame {
                     y: rect.y,
                     width: rect.width,
                     height: rect.height,
-                    fill: rect.fill,
+                    fill: Rgb(rect.fill),
                 },
                 command::Shape::Text(text) => Shape::Text {
                     x: text.x,
                     y: text.y,
                     content: text.content,
-                    color: text.color,
+                    color: Rgb(text.color),
                 },
             })
             .collect();

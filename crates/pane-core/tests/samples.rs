@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use futures::executor::block_on;
 use pane_core::{
     CallError, Choice, CommandRegistration, CustomViewRole, FieldKind, FieldValue, FormError,
-    FormField, Key, Launcher, Point, Runtime, Screen, Shape, Status, ViewEvent,
+    FormField, Key, Launcher, Point, Rgb, Runtime, Screen, Shape, Status, ViewEvent,
 };
 use wasmtime::component::Component;
 use wasmtime::{Config, Engine};
@@ -402,7 +402,7 @@ fn opening_the_color_view_draws_the_picker(sample: &Sample) {
         y,
         width: size,
         height: size,
-        fill,
+        fill: Rgb(fill),
     };
     // The frame around the chosen swatch, 8 x 3 swatches, the preview and
     // its hex code.
@@ -417,7 +417,7 @@ fn opening_the_color_view_draws_the_picker(sample: &Sample) {
             x: 300,
             y: 74,
             content: "#1E88E5".into(),
-            color: 0xf1f3f5,
+            color: Rgb(0xf1f3f5),
         }
     );
 }
@@ -437,7 +437,10 @@ fn keys_move_the_chosen_color(sample: &Sample) {
     let frame = launcher.view().custom_view.unwrap().frame;
     assert!(matches!(
         frame.shapes[25],
-        Shape::Rect { fill: 0xf48fb1, .. }
+        Shape::Rect {
+            fill: Rgb(0xf48fb1),
+            ..
+        }
     ));
 }
 
@@ -495,9 +498,9 @@ fn views_open_at_once_keep_their_own_state(sample: &Sample) {
 
     assert_eq!(first_frame.value, "Purple, #8E24AA");
     assert_eq!(second_frame.value, "Teal, #00897B");
-    assert_eq!(block_on(runtime.open_views()), 2);
+    assert_eq!(block_on(runtime.view_count()), 2);
     runtime.close_view(first);
-    assert_eq!(block_on(runtime.open_views()), 1);
+    assert_eq!(block_on(runtime.view_count()), 1);
     assert_eq!(
         block_on(runtime.view_event(first, event)),
         Err(CallError::ViewClosed)
@@ -513,7 +516,7 @@ fn an_unknown_view_is_a_guest_error(sample: &Sample) {
         opened.map(|(_, frame)| frame),
         Err(CallError::Guest("unknown view: missing".into()))
     );
-    assert_eq!(block_on(runtime.open_views()), 0);
+    assert_eq!(block_on(runtime.view_count()), 0);
 }
 
 /// Declares one test per check for each sample.

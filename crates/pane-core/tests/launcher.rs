@@ -356,7 +356,7 @@ const ORIGIN: Point = Point { x: 0, y: 0 };
 fn back_from_a_custom_view_closes_it_and_returns_to_the_command() {
     let runtime = Runtime::start().unwrap();
     let launcher = sample_color_view(&runtime);
-    assert_eq!(block_on(runtime.open_views()), 1);
+    assert_eq!(block_on(runtime.view_count()), 1);
 
     launcher.back();
 
@@ -365,7 +365,7 @@ fn back_from_a_custom_view_closes_it_and_returns_to_the_command() {
         (view.screen, view.selected, view.custom_view, view.status),
         (Screen::Command, Some(5), None, Status::Idle)
     );
-    assert_eq!(block_on(runtime.open_views()), 0);
+    assert_eq!(block_on(runtime.view_count()), 0);
 }
 
 #[test]
@@ -384,7 +384,7 @@ fn a_view_that_opens_after_the_user_left_is_closed_again() {
     block_on(opening);
 
     assert_eq!(launcher.view().screen, Screen::Root);
-    assert_eq!(block_on(runtime.open_views()), 0);
+    assert_eq!(block_on(runtime.view_count()), 0);
 }
 
 #[test]
@@ -401,7 +401,7 @@ fn an_event_answer_arriving_after_back_is_discarded() {
         (view.screen, view.custom_view, view.status),
         (Screen::Command, None, Status::Idle)
     );
-    assert_eq!(block_on(runtime.open_views()), 0);
+    assert_eq!(block_on(runtime.view_count()), 0);
     // Events sent with no view open go nowhere.
     block_on(launcher.send_view_event(RIGHT));
     assert_eq!(launcher.view().status, Status::Idle);
@@ -418,7 +418,7 @@ fn a_reopened_view_does_not_show_the_closed_views_answers() {
     block_on(pending);
 
     assert_eq!(view_value(&launcher), "Blue, #1E88E5");
-    assert_eq!(block_on(runtime.open_views()), 1);
+    assert_eq!(block_on(runtime.view_count()), 1);
 }
 
 #[test]
@@ -452,6 +452,94 @@ fn pointer_moves_and_releases_are_sent_only_while_pressed() {
 }
 
 #[test]
+fn a_frame_over_the_limits_is_an_error_and_the_view_stays_usable() {
+    let runtime = Runtime::start().unwrap();
+    let launcher = faulty_view(&runtime);
+    // Down, Home and End make the fixture draw too many shapes, too long a
+    // text and too wide a frame.
+    let cases = [
+        (
+            Key::Down,
+            "the frame has 4097 shapes; at most 4096 are drawn",
+        ),
+        (
+            Key::Home,
+            "a text of the frame has 257 characters; at most 256 are drawn",
+        ),
+        (
+            Key::End,
+            "the frame is 4097 x 20 pixels; at most 4096 x 4096 are drawn",
+        ),
+    ];
+    for (key, problem) in cases {
+        block_on(launcher.send_view_event(ViewEvent::Key(key)));
+
+        let view = launcher.view();
+        assert_eq!(view.screen, Screen::CustomView, "{key:?}");
+        assert_eq!(
+            error(&launcher),
+            format!("The extension reported an error: {problem}")
+        );
+        // The last good drawing stays.
+        assert_eq!(view_value(&launcher), "0 events");
+    }
+
+    block_on(launcher.send_view_event(ViewEvent::Key(Key::Up)));
+    assert_eq!(launcher.view().status, Status::Idle);
+    assert_eq!(view_value(&launcher), "4 events");
+}
+
+#[test]
+fn the_launcher_says_whether_the_pointer_is_held_over_the_view() {
+    let runtime = Runtime::start().unwrap();
+    let launcher = faulty_view(&runtime);
+    assert!(!launcher.pointer_held());
+
+    block_on(launcher.send_view_event(ViewEvent::PointerDown(ORIGIN)));
+    assert!(launcher.pointer_held());
+    block_on(launcher.send_view_event(ViewEvent::PointerUp(ORIGIN)));
+    assert!(!launcher.pointer_held());
+}
+
+#[test]
+fn a_drag_sends_only_the_latest_move_while_one_is_being_handled() {
+    let runtime = Runtime::start().unwrap();
+    let launcher = faulty_view(&runtime);
+    block_on(launcher.send_view_event(ViewEvent::PointerDown(ORIGIN)));
+
+    // The first move is on its way; the next two wait, and only the later
+    // one is sent once the first is answered.
+    let moves: Vec<_> = (1..=3)
+        .map(|x| launcher.send_view_event(ViewEvent::PointerMove(Point { x, y: 0 })))
+        .collect();
+    for pending in moves.into_iter().rev() {
+        block_on(pending);
+    }
+
+    assert_eq!(view_value(&launcher), "3 events");
+}
+
+#[test]
+fn a_coalesced_move_is_sent_before_the_release_that_follows_it() {
+    let runtime = Runtime::start().unwrap();
+    let launcher = sample_color_view(&runtime);
+    let send = |event| launcher.send_view_event(event);
+    block_on(send(ViewEvent::PointerDown(Point { x: 10, y: 10 })));
+
+    let first = send(ViewEvent::PointerMove(Point { x: 80, y: 80 }));
+    let second = send(ViewEvent::PointerMove(Point { x: 45, y: 10 }));
+    let released = send(ViewEvent::PointerUp(Point { x: 45, y: 10 }));
+    block_on(released);
+    block_on(second);
+    block_on(first);
+
+    // The waiting move reached the guest before the release: its swatch,
+    // not the first move's, is chosen.
+    assert_eq!(view_value(&launcher), "Light orange, #FFCC80");
+    assert!(!launcher.pointer_held());
+}
+
+#[test]
 fn an_error_from_a_view_is_shown_and_the_view_stays_open() {
     let runtime = Runtime::start().unwrap();
     let launcher = faulty_view(&runtime);
@@ -479,7 +567,7 @@ fn a_crash_in_a_view_closes_it_and_the_command_keeps_working() {
     let view = launcher.view();
     assert_eq!((view.screen, view.custom_view), (Screen::Command, None));
     assert!(error(&launcher).contains("crashed"), "{:?}", view.status);
-    assert_eq!(block_on(runtime.open_views()), 0);
+    assert_eq!(block_on(runtime.view_count()), 0);
     launcher.select(0);
     block_on(launcher.activate_selected());
     assert_eq!(launcher.view().status, Status::Result("fine".into()));
@@ -531,7 +619,7 @@ fn a_package_preview_closes_an_open_view() {
 
     let view = launcher.view();
     assert_eq!((view.screen, view.custom_view), (Screen::Package, None));
-    assert_eq!(block_on(runtime.open_views()), 0);
+    assert_eq!(block_on(runtime.view_count()), 0);
 }
 
 #[test]
@@ -545,5 +633,5 @@ fn replacing_a_components_code_closes_its_views() {
     let view = launcher.view();
     assert_eq!((view.screen, view.custom_view), (Screen::Command, None));
     assert_eq!(error(&launcher), "The extension's view is no longer open");
-    assert_eq!(block_on(runtime.open_views()), 0);
+    assert_eq!(block_on(runtime.view_count()), 0);
 }

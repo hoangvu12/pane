@@ -885,3 +885,74 @@ fn the_pointer_chooses_and_drags_across_swatches(cx: &mut TestAppContext, sample
     wait_for_color(&window, cx, "Dark pink, #880E4F");
     assert_eq!(focused_label(cx).as_deref(), Some("Color"));
 }
+
+/// Opens the faulty fixture's counting view, whose value is the number of
+/// events it handled, and returns where its drawing area starts.
+fn open_counter(
+    window: &Entity<LauncherWindow>,
+    cx: &mut VisualTestContext,
+) -> gpui::Point<gpui::Pixels> {
+    cx.simulate_keystrokes("enter");
+    wait_for_answer(window, cx);
+    cx.simulate_keystrokes("down down down down down enter");
+    let view = wait_for_answer(window, cx);
+    assert_eq!(view.screen, Screen::CustomView);
+    wait_for_color(window, cx, "0 events");
+    cx.debug_bounds("custom-view")
+        .expect("the view is drawn")
+        .origin
+}
+
+fn pointer_held(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) -> bool {
+    cx.read_entity(window, |window, _| window.launcher().pointer_held())
+}
+
+#[gpui::test]
+fn a_press_on_the_views_border_is_not_sent_to_the_view(cx: &mut TestAppContext) {
+    let (window, cx) = open_with(cx, vec![command("Faulty", "faulty")]);
+    let origin = open_counter(&window, cx);
+    // Inside the focus ring's padding, left of the drawing area.
+    let border = origin + gpui::point(px(-3.0), px(5.0));
+
+    cx.simulate_mouse_down(border, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(border, MouseButton::Left, Modifiers::none());
+    // Had the press or release been sent, the view would count them first.
+    cx.simulate_keystrokes("up");
+
+    wait_for_color(&window, cx, "1 events");
+}
+
+#[gpui::test]
+fn a_release_outside_the_window_ends_the_drag(cx: &mut TestAppContext) {
+    let (window, cx) = open_with(cx, vec![command("Faulty", "faulty")]);
+    let origin = open_counter(&window, cx);
+    let at = |x: f32| origin + gpui::point(px(x), px(10.0));
+    cx.simulate_mouse_down(at(10.0), MouseButton::Left, Modifiers::none());
+    wait_for_color(&window, cx, "1 events");
+
+    // The button went up outside the window, which reported no release:
+    // the next move arrives without it.
+    cx.simulate_mouse_move(at(20.0), None, Modifiers::none());
+
+    wait_for_color(&window, cx, "2 events");
+    assert!(!pointer_held(&window, cx));
+    cx.simulate_mouse_move(at(30.0), None, Modifiers::none());
+    cx.simulate_keystrokes("up");
+    wait_for_color(&window, cx, "3 events");
+}
+
+#[gpui::test]
+fn leaving_the_window_during_a_drag_ends_it(cx: &mut TestAppContext) {
+    let (window, cx) = open_with(cx, vec![command("Faulty", "faulty")]);
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    let origin = open_counter(&window, cx);
+    let at = origin + gpui::point(px(10.0), px(10.0));
+    cx.simulate_mouse_down(at, MouseButton::Left, Modifiers::none());
+    wait_for_color(&window, cx, "1 events");
+
+    cx.deactivate_window();
+
+    wait_for_color(&window, cx, "2 events");
+    assert!(!pointer_held(&window, cx));
+}

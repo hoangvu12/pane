@@ -19,5 +19,6 @@ pub use packages::{
 pub use platform::Platform;
 pub use runtime::{
     CallError, Choice, CustomViewInfo, CustomViewRole, Field, FieldKind, FieldValue, Form,
-    FormError, Frame, Item, Key, Point, Runtime, Shape, View, ViewEvent, ViewId,
+    FormError, Frame, Item, Key, MAX_FRAME_SHAPES, MAX_FRAME_SIZE, MAX_TEXT_CHARS, Point, Rgb,
+    Runtime, Shape, View, ViewEvent, ViewId,
 };

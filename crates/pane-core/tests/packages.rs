@@ -922,3 +922,77 @@ fn a_command_platform_list_pane_does_not_know_is_an_invalid_manifest() {
         "{message}"
     );
 }
+
+/// Installs the Rust sample as package "Hello" on `runtime`, opens its
+/// command and its color picker, and returns the launcher and package folder.
+fn installed_color_view(dirs: &Dirs, runtime: &Runtime) -> (Launcher, PathBuf) {
+    let folder = package(&dirs.source("hello"), "Hello", "1.0.0", "sample_rust");
+    let launcher = Launcher::with_packages(
+        Ok(runtime.clone()),
+        vec![],
+        dirs.data.path().join("extensions"),
+    );
+    block_on(launcher.install_package(&folder));
+    open_installed_color_view(&launcher);
+    (launcher, folder)
+}
+
+/// From root search, opens the installed command and its color picker.
+fn open_installed_color_view(launcher: &Launcher) {
+    launcher.select(0);
+    block_on(launcher.activate_selected());
+    let color = launcher
+        .view()
+        .rows
+        .iter()
+        .position(|row| row.title == "Choose a color")
+        .expect("the color item is listed");
+    launcher.select(color);
+    block_on(launcher.activate_selected());
+    assert_eq!(launcher.view().screen, Screen::CustomView);
+}
+
+#[test]
+fn an_update_finishing_while_its_view_is_open_closes_the_view_at_once() {
+    let dirs = Dirs::new();
+    let runtime = Runtime::start().unwrap();
+    let (launcher, folder) = installed_color_view(&dirs, &runtime);
+    launcher.back();
+    launcher.back();
+    package(&folder, "Hello", "2.0.0", "sample_rust");
+    block_on(launcher.preview_package(&folder));
+    let updating = launcher.activate_selected();
+    // The user leaves the preview and opens the old copy's view meanwhile.
+    launcher.back();
+    open_installed_color_view(&launcher);
+
+    block_on(updating);
+
+    let view = launcher.view();
+    assert_eq!(
+        (view.screen, view.custom_view, view.status),
+        (
+            Screen::Root,
+            None,
+            Status::Result("Updated Hello to 2.0.0".into())
+        )
+    );
+    assert_eq!(block_on(runtime.view_count()), 0);
+}
+
+#[test]
+fn disabling_a_package_closes_its_open_view_at_once() {
+    let dirs = Dirs::new();
+    let runtime = Runtime::start().unwrap();
+    let (launcher, folder) = installed_color_view(&dirs, &runtime);
+    let identity = PackageIdentity::local(&folder).unwrap();
+
+    block_on(launcher.set_enabled(&identity, false));
+
+    let view = launcher.view();
+    assert_eq!(
+        (view.screen, view.custom_view, view.status),
+        (Screen::Root, None, Status::Result("Disabled Hello".into()))
+    );
+    assert_eq!(block_on(runtime.view_count()), 0);
+}
