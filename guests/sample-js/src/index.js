@@ -241,8 +241,19 @@ export const command = {
 /** @type {import("@pane/extension").RootResults} */
 export const rootResults = {
   // "reverse <text>" typed into root search lists the text reversed, which
-  // Enter copies; other queries have no results.
+  // Enter copies, and "pane website" lists Pane's website, which Enter
+  // opens; other queries have no results.
   async resultsFor(query) {
+    if (query === "pane website") {
+      return [
+        {
+          id: "website",
+          title: "Pane's website",
+          subtitle: "Opened by the JavaScript guest",
+          action: { tag: "open-url", val: "https://github.com/hoangvu12/pane" },
+        },
+      ];
+    }
     const text = query.startsWith("reverse ") ? query.slice("reverse ".length).trim() : "";
     if (!text) {
       return [];

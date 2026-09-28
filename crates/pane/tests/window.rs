@@ -1262,3 +1262,70 @@ fn typing_an_applications_name_shows_it_and_enter_opens_it(cx: &mut TestAppConte
     assert_eq!(*system.opened.lock().unwrap(), ["/apps/Firefox.desktop"]);
     assert!(query_has_focus(&window, cx), "typing goes on in the field");
 }
+
+/// Records the links the window's launcher is asked to open, so that no
+/// browser opens.
+#[derive(Default)]
+struct RecordedLinks(std::sync::Mutex<Vec<String>>);
+
+impl pane_core::LinkOpener for RecordedLinks {
+    fn open(&self, url: &str) -> Result<(), String> {
+        self.0.lock().unwrap().push(url.into());
+        Ok(())
+    }
+}
+
+#[gpui::test]
+fn a_quicklink_created_in_its_form_is_found_and_opened_from_root_search(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let folder =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/guests/packages/quicklinks");
+    let links = std::sync::Arc::new(RecordedLinks::default());
+    let launcher =
+        Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"))
+            .with_link_opener(links.clone());
+    cx.executor().allow_parking();
+    cx.foreground_executor()
+        .block_on(launcher.install_package(&folder));
+    launcher.back();
+    let (window, cx) = open_launcher(cx, launcher);
+
+    // Quicklinks is the first row; its first item creates a quicklink.
+    cx.simulate_keystrokes("enter");
+    wait_for_answer(&window, cx);
+    cx.simulate_keystrokes("enter");
+    let view = wait_for_answer(&window, cx);
+    assert_eq!(view.title, "Create quicklink");
+    // An address without a scheme is rejected on its field.
+    cx.simulate_input("Pane issues");
+    cx.simulate_keystrokes("tab");
+    cx.simulate_input("github.com/hoangvu12/pane/issues");
+    cx.simulate_keystrokes("enter");
+    let view = wait_for_answer(&window, cx);
+    assert_eq!(
+        view.status,
+        Status::Error("URL: Enter a web address starting with http:// or https://".into())
+    );
+    cx.simulate_keystrokes("home");
+    cx.simulate_input("https://");
+    cx.simulate_keystrokes("enter");
+    let view = wait_for_answer(&window, cx);
+    assert_eq!(
+        view.status,
+        Status::Result("Saved quicklink “Pane issues”".into())
+    );
+
+    cx.simulate_keystrokes("escape escape");
+    cx.simulate_input("pane iss");
+    wait_for_rows(&window, cx, &["Pane issues"]);
+    cx.simulate_keystrokes("enter");
+    let view = wait_for_answer(&window, cx);
+    assert_eq!(
+        view.status,
+        Status::Result("Opened https://github.com/hoangvu12/pane/issues".into())
+    );
+    assert_eq!(
+        *links.0.lock().unwrap(),
+        ["https://github.com/hoangvu12/pane/issues"]
+    );
+}

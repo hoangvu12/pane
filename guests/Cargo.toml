@@ -9,6 +9,7 @@ members = [
     "sample-settings",
     "calculator",
     "applications",
+    "quicklinks",
     "sample-operations",
     "fixtures/faulty",
     "fixtures/operations",

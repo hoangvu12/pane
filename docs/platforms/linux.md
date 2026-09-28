@@ -252,6 +252,7 @@ same Xvfb/lavapipe setup), all checks of the whole smoke passed:
 | Retry starting Dev: "Started Dev" | `39-retried.png` (not committed: it shows local paths) |
 
 The macOS and Windows smokes run the same phase (screenshots 33 to 39); it
+has not run there yet.
 
 ### Clearing an extension's cache (#39)
 
@@ -299,6 +300,30 @@ terminal application.
 Only X11 (Xvfb, no desktop session) ran; Wayland and real desktops'
 `XDG_CURRENT_DESKTOP`, Flatpak and Snap folders are untested. Disabling is
 covered by the launcher tests, not natively.
+
+### Quicklinks (#28)
+
+The last phase, after the applications phase, installs the Quicklinks package
+(`--install target/guests/packages/quicklinks`), opens its command, and in
+"Create quicklink" types "Pane issues", Tab and
+"https://example.com/pane-issues" with real X11 key events, then Return.
+After a restart it types "pane iss" (the selected row's color must appear)
+and presses Return: `xdg-open` runs with no desktop session variables, every
+XDG configuration and data location in the smoke's output folder and
+`BROWSER` set to a script that records its argument, so no real browser
+starts; the script must have received the URL. Run locally on 2026-09-28
+(Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64, same Xvfb/lavapipe
+setup): all checks of the whole smoke passed.
+
+| Step | Evidence |
+| --- | --- |
+| Form submitted: "Saved quicklink “Pane issues”" | [46-quicklink-saved.png](evidence/linux-x11/46-quicklink-saved.png) |
+| Restarted, "pane iss" typed: the quicklink, first and selected | [47-quicklink-found.png](evidence/linux-x11/47-quicklink-found.png) |
+| Return: "Opened https://example.com/pane-issues", the URL received by the handler | [48-quicklink-opened.png](evidence/linux-x11/48-quicklink-opened.png) |
+
+A real desktop's handler (GNOME's `gio open`, a browser chosen in the
+desktop settings) was not run. The macOS and Windows smokes run the phase up
+to screenshot 47; it has not run there yet.
 
 ## Text input and accessibility findings
 

@@ -435,4 +435,46 @@ for _ in $(seq 50); do [ -f "$apps/launched" ] && break; sleep 0.2; done
 [ -f "$apps/launched" ] || { echo "the application did not run"; exit 1; }
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{44-application,45-opened}.png
 stop_pane
+
+# Quicklinks, a default extension: installed, its command's form saves a
+# quicklink (Quicklinks is selected once installed, and "Create quicklink" is
+# its first item). After a restart, typing part of its name lists it,
+# selected, and Enter opens its address with the system's link handler:
+# xdg-open, with no desktop session, only BROWSER to choose a browser, and
+# BROWSER a script that records the address instead of starting one.
+start_pane --install target/guests/packages/quicklinks
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 2   # Install
+"$xdotool" key Return; sleep 3   # open Quicklinks
+"$xdotool" key Return; sleep 1   # Create quicklink
+"$xdotool" type --delay 50 'Pane issues'
+"$xdotool" key Tab
+"$xdotool" type --delay 50 'https://example.com/pane-issues'
+"$xdotool" key Return; sleep 2
+capture 46-quicklink-saved.png
+check 46-quicklink-saved.png 9fd8a8   # "Saved quicklink “Pane issues”"
+"$xdotool" key Escape key Escape; sleep 1
+stop_pane
+mkdir -p "$out/xdg"
+printf '#!/bin/sh\necho "$1" >"%s/opened-link.txt"\n' "$out" >"$out/browser.sh"
+chmod +x "$out/browser.sh"
+rm -f "$out/opened-link.txt"
+# No desktop session or setting of the user's may choose a browser, only
+# BROWSER: xdg-open otherwise asks gio or the MIME defaults, which start one.
+unset XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP DESKTOP_SESSION GDMSESSION \
+  DBUS_SESSION_BUS_ADDRESS GNOME_DESKTOP_SESSION_ID KDE_FULL_SESSION
+xdg=$(cd "$out" && pwd)/xdg
+export BROWSER="$(cd "$out" && pwd)/browser.sh" XDG_CONFIG_HOME="$xdg" XDG_CONFIG_DIRS="$xdg" \
+  XDG_DATA_HOME="$xdg" XDG_DATA_DIRS="$xdg"
+start_pane
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" type --delay 50 'pane iss'; sleep 2
+capture 47-quicklink-found.png
+check 47-quicklink-found.png 364355 3000   # the selected quicklink row
+"$xdotool" key Return; sleep 3
+capture 48-quicklink-opened.png
+check 48-quicklink-opened.png 9fd8a8   # "Opened https://example.com/pane-issues"
+[ "$(cat "$out/opened-link.txt")" = https://example.com/pane-issues ] || { echo "the link handler was not asked to open the quicklink"; exit 1; }
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{46-quicklink-saved,47-quicklink-found,48-quicklink-opened}.png
+stop_pane
 echo "screenshots in $out"

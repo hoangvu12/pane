@@ -112,6 +112,14 @@ Windows yet**: this branch was not pushed, so the phase, the native tests
 and the `ShellExecuteEx` path are unverified here (the Windows code was
 only type-checked and linted for `x86_64-pc-windows-gnu`).
 
+## Quicklinks (#28)
+
+The smoke's last phase (screenshots 46 and 47) installs the Quicklinks
+package, creates "Pane issues" (https://example.com/pane-issues) in its
+form, restarts Pane and types "pane iss", which must list it selected. It
+stops before Enter, which would open the default browser; opening a link
+here is checked only through the tests' recording opener. Not run yet.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** the smoke now also opens the Rust command's
