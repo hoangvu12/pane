@@ -112,15 +112,25 @@ struct State {
     entries: Vec<Entry>,
     /// The component of the command whose view is open.
     open: Option<PathBuf>,
-    /// While a form is open: the item it belongs to and the command view to
-    /// return to.
-    form: Option<(String, LauncherView)>,
+    /// The form on screen, if one is open.
+    form: Option<OpenForm>,
     /// Incremented on every navigation, so a reply that arrives after the
     /// user has left the screen it was requested from is discarded.
     screen_generation: u64,
     packages: Vec<InstalledPackage>,
     /// Why the installed packages could not be read, if they could not.
     store_problem: Option<String>,
+}
+
+/// What the launcher keeps about the open form besides its view.
+struct OpenForm {
+    /// The item of the open command that the form belongs to.
+    item_id: String,
+    /// The command view that Back returns to.
+    return_to: LauncherView,
+    /// Whether a submission is waiting for the extension's reply; further
+    /// submissions are ignored meanwhile.
+    submitting: bool,
 }
 
 /// What activating a row does.
@@ -249,11 +259,11 @@ impl Launcher {
         let mut state = self.lock();
         match state.view.screen {
             Screen::Form => {
-                let (_, command_view) = state.form.take().expect("a form is open");
+                let form = state.form.take().expect("a form is open");
                 state.screen_generation += 1;
                 state.view = LauncherView {
                     status: Status::Idle,
-                    ..command_view
+                    ..form.return_to
                 };
             }
             Screen::Command | Screen::Package => self.show_root(&mut state, None),
@@ -545,11 +555,14 @@ impl Launcher {
 
     /// Submits the open form to its extension. Await the returned future to
     /// apply the reply: the answer as the result, or the extension's
-    /// rejection next to its field.
+    /// rejection next to its field. While a submission is waiting for its
+    /// reply, submitting again does nothing.
     pub fn submit_form(&self) -> impl Future<Output = ()> + Send + 'static {
         let mut state = self.lock();
-        let submission = match (&state.view.form, &state.form, &state.open) {
-            (Some(form), Some((item_id, _)), Some(component)) => {
+        let state = &mut *state;
+        let submission = match (&state.view.form, &mut state.form, &state.open) {
+            (Some(form), Some(open), Some(component)) if !open.submitting => {
+                open.submitting = true;
                 let values: Vec<FieldValue> = form
                     .fields
                     .iter()
@@ -558,7 +571,7 @@ impl Launcher {
                         value: field.value.clone(),
                     })
                     .collect();
-                Some((component.clone(), item_id.clone(), values))
+                Some((component.clone(), open.item_id.clone(), values))
             }
             _ => None,
         };
@@ -566,7 +579,6 @@ impl Launcher {
             state.view.status = Status::Running;
         }
         let generation = state.screen_generation;
-        drop(state);
         let launcher = self.clone();
         async move {
             if let Some((component, item_id, values)) = submission {
@@ -577,6 +589,9 @@ impl Launcher {
         }
     }
 
+    /// Sends `values` and applies the reply as though it had arrived before
+    /// any edit made meanwhile: a rejected field that the user has changed
+    /// since is not marked, since editing a field clears its error.
     async fn submit(
         &self,
         generation: u64,
@@ -585,12 +600,18 @@ impl Launcher {
         values: Vec<FieldValue>,
     ) {
         let result = match self.runtime() {
-            Ok(runtime) => runtime.submit_form(&component, &item_id, values).await,
+            Ok(runtime) => {
+                runtime
+                    .submit_form(&component, &item_id, values.clone())
+                    .await
+            }
             Err(error) => Err(error),
         };
         let Some(mut state) = self.lock_if_current(generation) else {
             return;
         };
+        let state = &mut *state;
+        state.form.as_mut().expect("a form is open").submitting = false;
         let view = &mut state.view;
         let fields = &mut view.form.as_mut().expect("a form is open").fields;
         for field in fields.iter_mut() {
@@ -606,9 +627,16 @@ impl Launcher {
                 match field {
                     Some(field) => {
                         let status = format!("{}: {}", field.label, error.message);
-                        field.error = Some(error.message);
+                        let unchanged = values
+                            .iter()
+                            .any(|sent| sent.id == field.id && sent.value == field.value);
+                        if unchanged {
+                            field.error = Some(error.message);
+                        }
                         Status::Error(status)
                     }
+                    // A rejection of the form as a whole is the extension's
+                    // message to the user, shown as it is.
                     None => Status::Error(error.message),
                 }
             }
@@ -792,8 +820,12 @@ fn open_form(state: &mut State, item_id: String, form: Form) {
             submit_label: form.submit_label,
         }),
     };
-    let command_view = std::mem::replace(&mut state.view, form_view);
-    state.form = Some((item_id, command_view));
+    let return_to = std::mem::replace(&mut state.view, form_view);
+    state.form = Some(OpenForm {
+        item_id,
+        return_to,
+        submitting: false,
+    });
     state.screen_generation += 1;
 }
 

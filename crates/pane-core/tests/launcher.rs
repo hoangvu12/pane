@@ -245,6 +245,28 @@ fn going_back_while_a_form_is_submitted_discards_its_answer() {
 }
 
 #[test]
+fn submitting_again_while_a_submission_is_pending_is_ignored() {
+    let launcher = sample_form();
+    let first = launcher.submit_form();
+    launcher.set_field_value("name", "Ada");
+
+    let second = launcher.submit_form();
+    block_on(second);
+    assert_eq!(launcher.view().status, Status::Running);
+    block_on(first);
+
+    // Only the empty submission ran. Its rejection reports the name, but
+    // does not mark the field, which the user has edited since.
+    assert_eq!(error(&launcher), "Name: Enter a name");
+    assert_eq!(field_errors(&launcher), [None, None]);
+    block_on(launcher.submit_form());
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Hello, Ada, from the Rust guest".into())
+    );
+}
+
+#[test]
 fn submitting_outside_a_form_does_nothing() {
     let launcher = launcher(vec![command("sample", guest("sample_rust"))]);
     block_on(launcher.activate_selected());
