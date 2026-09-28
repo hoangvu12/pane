@@ -1033,4 +1033,65 @@ check 143-disable-dependents-enabled-alone.png 9fd8a8   # "Enabled JavaScript op
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{140-disable-dependents-asked,141-disable-dependents-cancelled,142-disable-dependents-disabled,143-disable-dependents-enabled-alone}.png
 stop_pane
 [ "$(grep -c '"disabled": true' "$PANE_DATA_DIR/extensions/installed.json")" = 1 ] || { echo "not exactly the dependent left disabled"; exit 1; }
+
+# File search (#29): Files, a default extension (its data folder is this
+# phase's own; Files is selected once installed, and "Choose folder" is its
+# first item). Its form takes a fixture folder whose path has spaces, and a
+# file in it has non-ASCII letters too; typing "plan" lists that file,
+# selected, and Enter opens it with the system's handler for files:
+# xdg-open, with no desktop session, whose only handler for plain text is a
+# script that records the path, so no program of the user's opens it. The
+# fixture is outside the home folder, so no screenshot shows a home path.
+export PANE_DATA_DIR=$out/files-data
+rm -rf "$PANE_DATA_DIR"
+files_fixture=$(mktemp -d /tmp/pane-smoke-files.XXXXXX)
+files_folder="$files_fixture/Pane smoke files"
+mkdir -p "$files_folder/notes"
+printf 'plan\n' >"$files_folder/Résumé plan ü.txt"
+printf 'todo\n' >"$files_folder/notes/todo.txt"
+printf '#!/bin/sh\nprintf "%%s" "$1" >"%s/opened-file.txt"\n' "$(cd "$out" && pwd)" >"$out/file-opener.sh"
+chmod +x "$out/file-opener.sh"
+rm -f "$out/opened-file.txt"
+unset XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP DESKTOP_SESSION GDMSESSION DBUS_SESSION_BUS_ADDRESS \
+  GNOME_DESKTOP_SESSION_ID KDE_FULL_SESSION KDE_SESSION_VERSION MATE_DESKTOP_SESSION_ID
+files_xdg=$(cd "$out" && pwd)/files-xdg
+rm -rf "$files_xdg"
+mkdir -p "$files_xdg/applications"
+cat >"$files_xdg/applications/pane-smoke-file-opener.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Pane Smoke File Opener
+Exec=$(cd "$out" && pwd)/file-opener.sh %f
+MimeType=text/plain;
+NoDisplay=true
+EOF
+printf '[Default Applications]\ntext/plain=pane-smoke-file-opener.desktop\n' >"$files_xdg/mimeapps.list"
+cp "$files_xdg/mimeapps.list" "$files_xdg/applications/mimeapps.list"
+export BROWSER="$(cd "$out" && pwd)/file-opener.sh" XDG_CONFIG_HOME="$files_xdg" XDG_DATA_HOME="$files_xdg"
+if command -v xdg-mime >/dev/null; then
+  handler=$(xdg-mime query default text/plain)
+  [ "$handler" = pane-smoke-file-opener.desktop ] || { echo "text files would open with $handler, not the smoke's script"; exit 1; }
+fi
+start_pane --install target/guests/packages/files
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 2   # Install; Files is selected
+"$xdotool" key Return; sleep 3   # open Files
+"$xdotool" key Return; sleep 1   # Choose folder
+"$xdotool" type --delay 30 "$files_folder"
+"$xdotool" key Return; sleep 2
+capture 220-files-folder-chosen.png
+check 220-files-folder-chosen.png 9fd8a8   # "Searching “Pane smoke files”: 2 files"
+"$xdotool" key Escape key Escape; sleep 1
+"$xdotool" type --delay 50 'plan'; sleep 3
+capture 221-files-found.png
+check 221-files-found.png 364355 3000   # the selected file row, "Résumé plan ü.txt"
+"$xdotool" key Return; sleep 4
+capture 222-files-opened.png
+check 222-files-opened.png 9fd8a8   # "Opened Résumé plan ü.txt"
+[ -f "$out/opened-file.txt" ] || { echo "the handler for files was not asked to open anything"; exit 1; }
+# Both sides resolved, as the same file.
+[ "$(realpath "$(cat "$out/opened-file.txt")")" = "$(realpath "$files_folder/Résumé plan ü.txt")" ] || { echo "the handler for files was not asked to open the found file"; exit 1; }
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{220-files-folder-chosen,221-files-found,222-files-opened}.png
+stop_pane
+rm -rf "$files_fixture"
 echo "screenshots in $out"

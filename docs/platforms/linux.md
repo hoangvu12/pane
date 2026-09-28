@@ -549,6 +549,32 @@ are painted over with the background; the smoke checks the whole frames.
 Frame 141, the list after Cancel with both enabled, is checked to differ
 from the others but not kept, as it shows those paths.)
 
+### Files (#29)
+
+The last phase, with its own data folder ([files](../files.md)), makes a
+fixture folder `/tmp/pane-smoke-files.XXXXXX/Pane smoke files` (spaces;
+outside the home folder, so no frame shows a home path) holding "Résumé
+plan ü.txt" and `notes/todo.txt`, installs Files, opens its command and
+"Choose folder", types the folder's path with real X11 key events and
+Return, returns to root search, types "plan" and presses Return. `xdg-open`
+runs with no desktop session variables, XDG_CONFIG_HOME and XDG_DATA_HOME in
+the smoke's output folder whose `mimeapps.list` makes a recording script
+the only handler for `text/plain` (checked with `xdg-mime query default`),
+and BROWSER the same script, so no program of the user's opens the file;
+the path the script received, resolved, must be the fixture file's,
+resolved. Run locally on 2026-09-28 (Ubuntu 26.04.1 LTS, kernel
+7.0.0-31-generic, x86_64, same Xvfb/lavapipe setup): all checks of the
+whole smoke passed, and frames 220 to 222 were looked at.
+
+| Step | Evidence |
+| --- | --- |
+| Folder submitted: "Searching “Pane smoke files”: 2 files" | [220-files-folder-chosen.png](evidence/linux-x11/220-files-folder-chosen.png) |
+| "plan" typed: "Résumé plan ü.txt", "File in Pane smoke files", selected | [221-files-found.png](evidence/linux-x11/221-files-found.png) |
+| Return: "Opened Résumé plan ü.txt", the path received by the handler | [222-files-opened.png](evidence/linux-x11/222-files-opened.png) |
+
+A real desktop's handler (GNOME's `gio open`, a text editor) was not run,
+and cancelling is checked by the launcher tests, not natively.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms have a text field (GPUI CE's

@@ -65,8 +65,16 @@ One entry root search lists for a query and can invoke, such as an extension com
 _Avoid_: Item (an item belongs to a command's own list), search hit
 
 **Computed result**:
-A root result an extension command computes from the query itself, such as the calculator's answer to "6*7", rather than one found by matching titles; it is listed above those, and invoking it performs its action, such as copying the answer.
+A root result an extension command computes from the query itself, such as the calculator's answer to "6*7", rather than one found by matching titles; it is listed above those (a file result below them), and invoking it performs its action, such as copying the answer. The search it answers owns the call asking for it: a newer query, or leaving root search, cancels a call still pending.
 _Avoid_: Suggestion, answer card, inline result
+
+**Searched folder**:
+The one folder the user chooses in the Files default extension's form, whose files root search finds by name; Pane's host lists it for the extension on each query under the scan policy, and invoking a file result opens the file with the system's handler for its type. It is kept in that extension's settings.
+_Avoid_: Index, library, search scope
+
+**Scan policy**:
+Pane's fixed bounds on listing a searched folder, the same on every system: regular files only, breadth first in name order, at most 8 folders deep, 5,000 files and 20,000 entries, skipping hidden entries, links and unreadable subfolders; a listing that reaches a bound says it stopped.
+_Avoid_: Indexer, crawl, whole-disk search
 
 **Indexed result**:
 A root result an extension command supplies ahead of the query, such as an installed application; Pane asks for them once root search is used, keeps them, and matches and ranks them by title like commands, for a query that is not blank.
@@ -150,7 +158,7 @@ _Avoid_: Crashed extension, quarantined, disabled (by Pane)
 
 **Generation**:
 One run of an installed package's code, from when it is installed, enabled or Pane starts until it is disabled, paused or its code is replaced by a reload or an update. Every call into the package belongs to the generation current when it was asked for, and is stopped when that generation ends; its late result is discarded.
-_Avoid_: Version (a package's version is its manifest's), session, instance (one generation can start several), screen or search epoch (the launcher's counters of screens and searches, which only decide whether an answer is shown)
+_Avoid_: Version (a package's version is its manifest's), session, instance (one generation can start several), screen or search epoch (the launcher's counters of screens and searches, which decide whether an answer is shown; a search also cancels its own pending calls for computed results)
 
 **Supported platforms**:
 The operating systems a package, a command or an action declares it works on: a plain list, not a rule language. A declaration is not evidence of native support.

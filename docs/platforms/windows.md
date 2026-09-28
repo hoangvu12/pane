@@ -222,6 +222,25 @@ Nothing in it is specific to Windows (no system API is involved; the
 closure reuses the dependency identities recorded at install); **not run on
 Windows yet**.
 
+## Files (#29)
+
+The files phase (screenshots 220 to 222, [files](../files.md)), with a data
+folder of its own, installs Files, chooses a fixture folder "Pane smoke
+files" (spaces) in the smoke's output folder through its form (the path is
+typed with SendKeys' special characters braced), types "plan", which must
+list "Résumé plan ü.panesmoke" selected, and presses Enter. `.panesmoke` is
+a type no application claims, so the real handler (PowerShell's
+`Start-Process`, ShellExecute, the path passed in an environment variable)
+runs and opens nothing: the status must be the error "Could not open …". A
+handler that does open a file (Notepad) is not run, since it would open the
+user's own application, so a positive native open on Windows is checked only
+through the launcher tests' recording opener. The scan policy skips entries
+with the hidden or system attribute and junctions (reparse points) on
+Windows only; a Windows-only test (`attrib +h`, `mklink /J`) is written
+but has not run. **Not run on Windows yet**;
+whether `Start-Process` reports an unassociated type without showing the
+"Open with" dialog is unverified.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** the smoke now also opens the Rust command's

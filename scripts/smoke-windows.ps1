@@ -1030,4 +1030,44 @@ if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: disabling with depend
 Stop-Pane $process
 $record = Join-Path $data "extensions/installed.json"
 if ((Select-String -SimpleMatch '"disabled": true' $record).Count -ne 1) { throw "not exactly the dependent left disabled" }
+
+# File search (#29): Files, a default extension (its data folder is this
+# phase's own; Files is selected once installed, and "Choose folder" is its
+# first item). Its form takes a fixture folder whose path has spaces, and a
+# file in it has non-ASCII letters too; typing "plan" lists that file,
+# selected, and Enter asks the system's handler for files (PowerShell's
+# Start-Process, ShellExecute) to open it. The file's type is one no
+# application claims (.panesmoke), so the real handler runs but opens
+# nothing: Pane must report that it could not open it. (The Linux smoke
+# opens a file through a recording handler.)
+$data = Join-Path $OutDir "files-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+$filesFixture = Join-Path $OutDir "files-fixture"
+if (Test-Path $filesFixture) { Remove-Item -Recurse -Force $filesFixture }
+$filesFolder = Join-Path $filesFixture "Pane smoke files"
+New-Item -ItemType Directory -Force (Join-Path $filesFolder "notes") | Out-Null
+Set-Content -Encoding UTF8 -LiteralPath (Join-Path $filesFolder "R$([char]0xE9)sum$([char]0xE9) plan $([char]0xFC).panesmoke") "plan"
+Set-Content -Encoding UTF8 -LiteralPath (Join-Path $filesFolder "notes/todo.txt") "todo"
+$process = Start-Pane "stderr-files.log" @("--install", "target/guests/packages/files")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Files is selected
+Send "{ENTER}"; Start-Sleep -Seconds 3   # open Files
+Send "{ENTER}"; Start-Sleep -Seconds 1   # Choose folder
+# SendKeys reads + ^ % ~ ( ) { } [ ] as keys: each is typed in braces.
+Send ([regex]::Replace((Resolve-Path -LiteralPath $filesFolder).Path, '[+^%~(){}\[\]]', '{$0}'))
+Send "{ENTER}"; Start-Sleep -Seconds 2
+Capture "220-files-folder-chosen.png"
+Check "220-files-folder-chosen.png" "9fd8a8"   # "Searching "Pane smoke files": 2 files"
+Send "{ESC}"; Send "{ESC}"; Start-Sleep -Seconds 1
+Send "plan"; Start-Sleep -Seconds 3
+Capture "221-files-found.png"
+Check "221-files-found.png" "364355" 3000   # the selected file row
+Send "{ENTER}"; Start-Sleep -Seconds 5
+Capture "222-files-open-refused.png"
+Check "222-files-open-refused.png" "f08c8c"   # "Could not open ...panesmoke: the system's handler for files did not open it ..."
+$shots = "220-files-folder-chosen", "221-files-found", "222-files-open-refused" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: file search changed nothing" }
+Stop-Pane $process
+Remove-Item -Recurse -Force $filesFixture
 Write-Output "screenshots in $OutDir"

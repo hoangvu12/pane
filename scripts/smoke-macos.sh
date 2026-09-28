@@ -983,4 +983,40 @@ check 143-disable-dependents-enabled-alone.png 9fd8a8   # "Enabled JavaScript op
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{140-disable-dependents-asked,141-disable-dependents-cancelled,142-disable-dependents-disabled,143-disable-dependents-enabled-alone}.png
 stop_pane
 [ "$(grep -c '"disabled": true' "$PANE_DATA_DIR/extensions/installed.json")" = 1 ] || { echo "not exactly the dependent left disabled"; exit 1; }
+
+# File search (#29): Files, a default extension (its data folder is this
+# phase's own; Files is selected once installed, and "Choose folder" is its
+# first item). Its form takes a fixture folder whose path has spaces, and a
+# file in it has non-ASCII letters too; typing "plan" lists that file,
+# selected, and Enter asks the system's handler for files (/usr/bin/open,
+# Launch Services) to open it. The file's type is one no application claims
+# (.panesmoke), so the real handler runs but opens nothing: Pane must report
+# that it could not open it. (The Linux smoke opens a file through a
+# recording handler.) The fixture is in the system's temporary folder, so no
+# screenshot shows a home path.
+export PANE_DATA_DIR=$out/files-data
+rm -rf "$PANE_DATA_DIR"
+files_fixture=$(mktemp -d "${TMPDIR:-/tmp}/pane-smoke-files.XXXXXX")
+files_folder="$files_fixture/Pane smoke files"
+mkdir -p "$files_folder/notes"
+printf 'plan\n' >"$files_folder/Résumé plan ü.panesmoke"
+printf 'todo\n' >"$files_folder/notes/todo.txt"
+start_pane --install target/guests/packages/files
+key 36; sleep 2   # Install; Files is selected
+key 36; sleep 3   # open Files
+key 36; sleep 1   # Choose folder
+type_text "$files_folder"
+key 36; sleep 2
+capture 220-files-folder-chosen.png
+check 220-files-folder-chosen.png 9fd8a8   # "Searching “Pane smoke files”: 2 files"
+key 53; key 53; sleep 1
+type_text 'plan'; sleep 3
+capture 221-files-found.png
+check 221-files-found.png 364355 3000   # the selected file row, "Résumé plan ü.panesmoke"
+key 36; sleep 5
+capture 222-files-open-refused.png
+check 222-files-open-refused.png f08c8c   # "Could not open Résumé plan ü.panesmoke: the system's handler for files did not open it ..."
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{220-files-folder-chosen,221-files-found,222-files-open-refused}.png
+stop_pane
+rm -rf "$files_fixture"
 echo "screenshots in $out"
