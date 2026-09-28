@@ -238,4 +238,22 @@ key 36; sleep 1
 capture 26-no-results.png
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{1-root,24-search,25-search-result,26-no-results}.png
 stop_pane
+
+# Operations: install the JavaScript operations sample, then the Rust one,
+# whose command (Call from Rust, selected once installed) asks the JavaScript
+# package's greet operation: "JavaScript answered: Hello, Rust, from
+# JavaScript" comes from the other package's guest, started for the call.
+start_pane --install target/guests/packages/sample-operations-js
+key 36; sleep 2   # Install
+capture 27-operations-target.png
+check 27-operations-target.png 9fd8a8   # "Installed JavaScript operations sample"
+stop_pane
+start_pane --install target/guests/packages/sample-operations
+key 36; sleep 2   # Install; Call from Rust is selected
+key 36; sleep 3   # open Call from Rust
+key 36; sleep 5   # "Ask JavaScript to greet"
+capture 28-operation-answer.png
+check 28-operation-answer.png 9fd8a8   # the JavaScript guest's answer
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{27-operations-target,28-operation-answer}.png
+stop_pane
 echo "screenshots in $out"

@@ -18,6 +18,11 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   style in Pane's settings ([Keeping settings](#keeping-settings)); the
   fixtures for disabling and re-enabling a package, held alike by
   `crates/pane-core/tests/disable.rs`.
+- `sample-operations`, `sample-operations-js`, `sample-operations-ts`: each
+  package publishes the operation `greet` and has a command that calls
+  another's, Rust calling JavaScript and TypeScript and they calling Rust
+  ([Operations](#operations)); held by
+  `crates/pane-core/tests/operations.rs`.
 - `js`: `@pane/extension`, TypeScript declarations for the contract
   (`pane.d.ts`) and the WIT world JS/TS commands are built against.
 - `prebuilt`: the JS and TS sample components (both samples in each
@@ -29,6 +34,8 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   `target/guests/packages/<name>/`, a ready-to-install package.
 - `fixtures/faulty`: test fixture whose actions, form and custom view return
   an error or trap.
+- `fixtures/operations`: test fixture installed as several packages to drive
+  each way an operation call can fail, cycles and the depth limit.
 - `fixtures/mixed-p2`: negative control that imports WASI 0.2 and must be rejected.
 - `fixtures/old-api`: negative control built against extension API 0.1 as it
   was before `item` gained `platforms` and custom views, with its own copy of
@@ -40,9 +47,10 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
 ## Writing a Rust command
 
 The [sample](sample-rust/src/lib.rs) is the complete example. A command is a
-`cdylib` crate depending on `pane-guest` that implements four async
-functions and names its custom view type (see [Forms](#forms) and
-[Custom views](#custom-views) for the last two):
+`cdylib` crate depending on `pane-guest` that implements five async
+functions and names its custom view type (see [Forms](#forms),
+[Custom views](#custom-views) and [Operations](#operations) for the last
+three):
 
 ```rust
 #![no_std]
@@ -78,6 +86,10 @@ impl Guest for Hello {
 
     async fn open_view(_item_id: String) -> Result<CustomView, String> {
         Err("this command has no custom views".into())
+    }
+
+    async fn run_operation(_operation: String, _input: String) -> Result<String, String> {
+        Err("this package publishes no operations".into())
     }
 }
 ```
@@ -159,9 +171,9 @@ const style: string | null = get("greeting-style");
 
 The [JavaScript](sample-js/src/index.js) and
 [TypeScript](sample-ts/src/index.ts) samples are complete examples. A command
-is an npm package whose `main` module exports `command` with four async
-functions (see [Forms](#forms) and [Custom views](#custom-views) for the last
-two). Pane's types come from
+is an npm package whose `main` module exports `command` with five async
+functions (see [Forms](#forms), [Custom views](#custom-views) and
+[Operations](#operations) for the last three). Pane's types come from
 `@pane/extension` (a `file:../js` development dependency); they describe plain
 values, not engine objects:
 
@@ -183,6 +195,9 @@ export const command: Command = {
   },
   async openView() {
     throw new Error("this command has no custom views");
+  },
+  async runOperation() {
+    throw new Error("this package publishes no operations");
   },
 };
 ```
@@ -241,7 +256,7 @@ Prerequisites, in addition to the Rust ones in the [README](../README.md):
   `npm` (Node.js 22+, for example through nvm).
 
 Toolchain used: upstream [componentize-qjs](https://github.com/andreiltd/componentize-qjs)
-0.4.5 at `e563c6d6` with the two patches in
+0.4.5 at `e563c6d6` with the three patches in
 [`tools/componentize-js/patches`](../tools/componentize-js/patches), its
 QuickJS runtime built with `nightly-2026-09-27` for `wasm32-wasip3` against
 wasi-sdk 34, the componentizer built with Rust 1.98.1, esbuild 0.28.2 and
@@ -441,6 +456,51 @@ text and 4096 x 4096 pixels; Pane shows a larger one as your error. Throwing fro
 command without custom views uses `type CustomView = NoCustomView;` in Rust
 and makes `open_view`/`openView` fail.
 
+## Operations
+
+A package can publish operations, named and versioned functions other
+extensions call through Pane with JSON input and results, and its commands
+can call other packages' operations; the full contract, errors and limits are
+in [docs/operations.md](../docs/operations.md). The operations samples show
+both sides in [Rust](sample-operations/src/lib.rs),
+[JavaScript](sample-operations-js/src/index.js) and
+[TypeScript](sample-operations-ts/src/index.ts).
+
+Publish in `pane.json`; only listed operations are callable:
+
+```json
+"operations": [{ "id": "greet", "version": 1, "component": "sample_operations.wasm" }]
+```
+
+Serve them in `run_operation` (Rust) or `runOperation` (JS/TS), which gets
+the operation's id and its JSON input and returns JSON text; an error is
+passed to the caller as the operation's own. Call another package's with its
+source, the operation, the version you were written for and JSON input:
+
+```rust
+use pane_guest::operations::call;
+
+let result = call("local:../sample-operations-js".into(), "greet".into(), 1, input)
+    .await
+    .map_err(|error| error.explain())?; // "not-found: …", "failed: …"
+```
+
+```ts
+import { call, type CallError } from "pane:extension/operations@0.1.0";
+
+try {
+  const result = await call("local:../sample-operations", "greet", 1, JSON.stringify({ name }));
+} catch (error) {
+  const { kind, message } = (error as { payload: CallError }).payload;
+}
+```
+
+A relative `local:` source is resolved from your package's own source
+folder, so packages kept side by side find each other wherever they are.
+Pane starts the target only when it is called, never enables a disabled one,
+keeps each package's settings apart, and refuses a call back into a package
+already waiting in the same chain instead of deadlocking.
+
 ## Packaging and installing a local extension
 
 A package is a folder with a `pane.json` manifest at its root and the built
@@ -544,7 +604,8 @@ What installing does:
   even with identical contents, and nothing is merged or switched between
   them.
 - **Listing.** Installed commands are listed from the manifests alone; no
-  guest runs until you open a command. A damaged installed copy stays listed
+  guest runs until you open a command or another extension calls one of the
+  package's [operations](#operations). A damaged installed copy stays listed
   with its problem.
 - **Disabling.** **Manage extensions…**, the last row of root search once a
   package is installed, lists every installed package with whether it is

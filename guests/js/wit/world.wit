@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 //
 // The world JS/TS commands are componentized against. It exports exactly
-// Pane's contract and imports its settings (wit/extension.wit and
-// wit/settings.wit, copied into deps/ by the build), and declares the WASI 0.3
+// Pane's contract and imports its settings and operations (wit/extension.wit,
+// wit/settings.wit and wit/operations.wit, copied into deps/ by the build), and declares the WASI 0.3
 // imports JS source may use: a JS module can import only what this world
 // declares. The host bindings are unchanged.
 package pane:js-guest@0.1.0;

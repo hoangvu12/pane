@@ -60,4 +60,8 @@ export const command = {
   async openView(itemId) {
     throw new Error(`unknown view: ${itemId}`);
   },
+
+  async runOperation(operation) {
+    throw new Error(`unknown operation: ${operation}`);
+  },
 };

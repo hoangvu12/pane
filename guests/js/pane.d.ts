@@ -5,6 +5,7 @@
 // describe plain values only; nothing here is specific to the JS engine.
 /// <reference path="./wasi.d.ts" />
 /// <reference path="./settings.d.ts" />
+/// <reference path="./operations.d.ts" />
 
 /** One entry in a command's list view. */
 export interface Item {
@@ -190,11 +191,13 @@ export interface CustomView {
  *   async runAction(id) { ... },
  *   async submitForm(id, values) { ... },
  *   async openView(id) { return new MyView(); },
+ *   async runOperation(operation, input) { ... },
  * };
  * ```
  *
  * Resolving gives Pane the value. Throwing (rejecting) reports an error to the
- * user: from `getView`, `runAction`, `openView` and a view's `handleEvent` an
+ * user: from `getView`, `runAction`, `openView`, a view's `handleEvent` and
+ * `runOperation` (to its caller) an
  * `Error`'s message, or a thrown string as is; from `submitForm` a
  * {@link FormError} object. Resolving with a value of the wrong type, such as
  * `undefined` instead of a string, or throwing an `Error` from `submitForm`,
@@ -217,4 +220,12 @@ export interface Command {
    * with its own state. Throwing reports an error and opens nothing.
    */
   openView(itemId: string): Promise<CustomView>;
+  /**
+   * Serve a call to `operation`, which the package publishes under
+   * `operations` in its pane.json, on behalf of another extension. `input`
+   * and the resolved text are JSON. Throwing reports the operation's own
+   * error to the caller, like `runAction`. A command that publishes nothing
+   * throws.
+   */
+  runOperation(operation: string, input: string): Promise<string>;
 }

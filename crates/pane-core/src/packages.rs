@@ -69,6 +69,14 @@ impl PackageIdentity {
         Ok(PackageIdentity(Source::Local(path.to_owned())))
     }
 
+    /// The identity of a local package folder at `path` as it is spelled,
+    /// for a folder that no longer exists to be resolved. `path` is
+    /// absolute and normalized.
+    pub(crate) fn from_path(path: &Path) -> PackageIdentity {
+        let path = without_verbatim_prefix(path.to_path_buf());
+        PackageIdentity(Source::Local(path.to_string_lossy().into_owned()))
+    }
+
     /// A stable key for this identity, for ids and records rather than for
     /// people to read: `local:` followed by the folder's resolved path. The
     /// [`Display`](fmt::Display) form is the wording shown to users.
@@ -134,6 +142,23 @@ pub struct Manifest {
     /// unavailable.
     pub platforms: Option<Vec<Platform>>,
     pub commands: Vec<ManifestCommand>,
+    /// The operations the package publishes for other extensions to call.
+    /// Only these are callable: a command is not an operation.
+    pub operations: Vec<ManifestOperation>,
+}
+
+/// An operation a package publishes: other extensions call it through
+/// Pane by the package's source, the operation's id and its version.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ManifestOperation {
+    pub id: String,
+    /// The version of the operation's input and result: a caller names the
+    /// version it was written for, and any other is refused. A change that
+    /// breaks callers publishes a new version.
+    pub version: u32,
+    /// The component serving it, relative to the package folder; often a
+    /// command's component too.
+    pub component: PathBuf,
 }
 
 /// A command a package contributes to root search.
@@ -158,7 +183,18 @@ struct ManifestJson {
     api_version: String,
     #[serde(default)]
     platforms: Option<Vec<String>>,
+    #[serde(default)]
     commands: Vec<CommandJson>,
+    #[serde(default)]
+    operations: Vec<OperationJson>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OperationJson {
+    id: String,
+    version: u32,
+    component: String,
 }
 
 #[derive(Deserialize)]
@@ -214,16 +250,32 @@ impl Manifest {
 
     /// Checks that every component the manifest names is in `folder`.
     fn check_components(&self, folder: &Path) -> Result<(), PackageError> {
-        for command in &self.commands {
-            let component = folder.join(&command.component);
-            if !component.is_file() {
+        for (name, component) in self.components() {
+            if !folder.join(component).is_file() {
                 return Err(PackageError::MissingComponent {
-                    command: command.title.clone(),
-                    component: command.component.clone(),
+                    command: name,
+                    component: component.to_path_buf(),
                 });
             }
         }
         Ok(())
+    }
+
+    /// Every component the manifest names, relative to the package folder,
+    /// with what it serves as people know it: a command's title, or
+    /// "operation `<id>`". A component serving several appears once per use.
+    pub(crate) fn components(&self) -> impl Iterator<Item = (String, &Path)> {
+        let commands = self
+            .commands
+            .iter()
+            .map(|command| (command.title.clone(), command.component.as_path()));
+        let operations = self.operations.iter().map(|operation| {
+            (
+                format!("operation `{}`", operation.id),
+                operation.component.as_path(),
+            )
+        });
+        commands.chain(operations)
     }
 
     fn parse(text: &str) -> Result<Manifest, PackageError> {
@@ -249,7 +301,7 @@ impl Manifest {
             return Err(invalid("`title` is empty".into()));
         }
         let platforms = parse_platforms(json.platforms, "`platforms`")?;
-        if json.commands.is_empty() {
+        if json.commands.is_empty() && json.operations.is_empty() {
             return Err(invalid("`commands` is empty".into()));
         }
         let mut commands = Vec::new();
@@ -263,16 +315,7 @@ impl Manifest {
             {
                 return Err(invalid(format!("command id `{}` is repeated", command.id)));
             }
-            let component = PathBuf::from(&command.component);
-            let inside = component
-                .components()
-                .all(|part| matches!(part, PathPart::Normal(_)));
-            if !inside || command.component.is_empty() {
-                return Err(invalid(format!(
-                    "component `{}` must be a relative path inside the package folder",
-                    command.component
-                )));
-            }
+            let component = inside_package(&command.component)?;
             let platforms = parse_platforms(
                 command.platforms,
                 &format!("`platforms` of command `{}`", command.id),
@@ -285,14 +328,52 @@ impl Manifest {
                 platforms,
             });
         }
+        let mut operations: Vec<ManifestOperation> = Vec::new();
+        for operation in json.operations {
+            if operation.id.is_empty() {
+                return Err(invalid("every operation needs an `id`".into()));
+            }
+            if operations.iter().any(|seen| seen.id == operation.id) {
+                return Err(invalid(format!(
+                    "operation id `{}` is repeated",
+                    operation.id
+                )));
+            }
+            if operation.version == 0 {
+                return Err(invalid(format!(
+                    "operation `{}` has version 0; versions start at 1",
+                    operation.id
+                )));
+            }
+            operations.push(ManifestOperation {
+                component: inside_package(&operation.component)?,
+                id: operation.id,
+                version: operation.version,
+            });
+        }
         Ok(Manifest {
             title: json.title,
             version: json.version,
             api_version: json.api_version,
             platforms,
             commands,
+            operations,
         })
     }
+}
+
+/// `component` as a path, if it is a relative path inside the package folder.
+fn inside_package(component: &str) -> Result<PathBuf, PackageError> {
+    let path = PathBuf::from(component);
+    let inside = path
+        .components()
+        .all(|part| matches!(part, PathPart::Normal(_)));
+    if !inside || component.is_empty() {
+        return Err(PackageError::InvalidManifest(format!(
+            "component `{component}` must be a relative path inside the package folder"
+        )));
+    }
+    Ok(path)
 }
 
 /// Reads a `platforms` list (named `field` in explanations): `None` when
@@ -444,12 +525,12 @@ impl SourcePackage {
         })
     }
 
-    /// The source path of each command's component.
-    pub fn components(&self) -> impl Iterator<Item = (&ManifestCommand, PathBuf)> {
+    /// The source path of each component the manifest names, with what it
+    /// serves (see [`Manifest::components`]).
+    pub fn components(&self) -> impl Iterator<Item = (String, PathBuf)> {
         self.manifest
-            .commands
-            .iter()
-            .map(|command| (command, self.folder.join(&command.component)))
+            .components()
+            .map(|(name, component)| (name, self.folder.join(component)))
     }
 }
 
@@ -741,8 +822,9 @@ impl Store {
 fn copy_package(package: &SourcePackage, location: &Path) -> io::Result<()> {
     fs::create_dir_all(location)?;
     fs::write(location.join(MANIFEST_FILE), &package.manifest_text)?;
-    for (command, source) in package.components() {
-        let target = location.join(&command.component);
+    for (_, component) in package.manifest.components() {
+        let source = package.folder.join(component);
+        let target = location.join(component);
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
         }

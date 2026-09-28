@@ -338,4 +338,8 @@ impl Guest for Sample {
         }
         Ok(CustomView::new(ColorPicker::new()))
     }
+
+    async fn run_operation(operation: String, _input: String) -> Result<String, String> {
+        Err(format!("unknown operation: {operation}"))
+    }
 }

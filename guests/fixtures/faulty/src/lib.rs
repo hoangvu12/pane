@@ -147,4 +147,8 @@ impl Guest for Faulty {
             _ => Err("the guest refused the view".into()),
         }
     }
+
+    async fn run_operation(operation: String, _input: String) -> Result<String, String> {
+        Err(format!("unknown operation: {operation}"))
+    }
 }
