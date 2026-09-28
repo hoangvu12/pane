@@ -28,6 +28,22 @@ _Avoid_: Uninstalled extension
 Values an installed package's commands save through Pane, owned by its package identity and kept while it is disabled, updated or Pane is stopped.
 _Avoid_: Preferences, cache
 
+**Extension data**:
+Values an installed package's commands keep through Pane, of four kinds (settings, content, cache and local credentials), owned by its package identity; the kind decides what a management action such as clearing its cache removes. Pane removes them itself, never by running the extension.
+_Avoid_: Storage, state
+
+**Extension content**:
+An extension's own durable records, such as notes or history: extension data kept when its cache is cleared.
+_Avoid_: Documents (the user's external files), cache
+
+**Extension cache**:
+Extension data the extension can compute or download again, which the user can clear at any time without affecting its settings, content or credentials. Distinct from Pane's own compile cache of components.
+_Avoid_: Temporary files, managed copy
+
+**Local credential**:
+A secret an extension keeps on this computer through Pane, such as a sign-in token. Deleting it does not revoke a remote session.
+_Avoid_: Account, session
+
 **Root search**:
 The launcher's main search and result view before a specific command is opened.
 _Avoid_: Every integration's internal search

@@ -227,4 +227,52 @@ Capture "23-color-click.png"
 Check "23-color-click.png" "1b5e20" 3000   # dark green
 Send "{ESC}{ESC}"; Start-Sleep -Seconds 1
 Stop-Pane $process
+
+# The settings sample keeps one value of each kind of data: its formal style
+# (settings) and "Good day to you" (cache) are saved above; its fourth and
+# fifth items save a note (content) and sign in (a local credential), and its
+# sixth shows all four.
+$process = Start-Pane "stderr-kept.log"
+Send "{DOWN 4}"   # Greeting
+Send "{ENTER}"; Start-Sleep -Seconds 3
+Send "{DOWN 3}"
+Send "{ENTER}"; Start-Sleep -Seconds 2   # "Save a note"
+Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2   # "Sign in"
+Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2   # "Show what Pane keeps"
+Capture "24-kept.png"
+Check "24-kept.png" "9fd8a8"   # every value, the cached greeting included
+Send "{ESC}"; Start-Sleep -Seconds 1
+Stop-Pane $process
+if (-not (Select-String -Quiet -SimpleMatch '"note": "Water the plants"' (Join-Path $data "extensions/content.json"))) { throw "note not saved" }
+if (-not (Select-String -Quiet -SimpleMatch '"token": "sample-token"' (Join-Path $data "extensions/credentials.json"))) { throw "credential not saved" }
+if (-not (Select-String -Quiet -SimpleMatch '"last-greeting": "Good day to you"' (Join-Path $data "extensions/cache.json"))) { throw "greeting not cached" }
+
+# Clear the settings sample's cache in Manage extensions: its row follows the
+# two package rows and "Clear cache of Rust sample". Pane asks first, then
+# deletes only the cached greeting, without running the extension.
+$process = Start-Pane "stderr-clear-cache.log"
+Send "{DOWN 10}"   # the last row
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Send "{DOWN 3}"
+Send "{ENTER}"; Start-Sleep -Seconds 1   # "Clear cache of Settings sample"
+Capture "25-confirm-clear-cache.png"
+Check "25-confirm-clear-cache.png" "aab4c0"   # what is deleted and what is kept
+Send "{ENTER}"; Start-Sleep -Seconds 2   # "Clear cache"
+Capture "26-cache-cleared.png"
+Check "26-cache-cleared.png" "9fd8a8"   # "Cleared the cache of Settings sample"
+Send "{ESC}"; Start-Sleep -Seconds 1
+Send "{DOWN 4}"   # Greeting
+Send "{ENTER}"; Start-Sleep -Seconds 3
+Send "{DOWN 5}"
+Send "{ENTER}"; Start-Sleep -Seconds 2   # "Show what Pane keeps"
+Capture "27-kept-after-clear.png"
+Check "27-kept-after-clear.png" "9fd8a8"   # "... Cached greeting: none"
+python "$PSScriptRoot/check_screenshot.py" --distinct (Join-Path $OutDir "24-kept.png") (Join-Path $OutDir "27-kept-after-clear.png")
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the cached greeting is still shown" }
+Send "{ESC}"; Start-Sleep -Seconds 1
+Stop-Pane $process
+if (Select-String -Quiet -SimpleMatch 'Good day to you' (Join-Path $data "extensions/cache.json")) { throw "cache not cleared" }
+if (-not (Select-String -Quiet -SimpleMatch '"greeting-style": "formal"' (Join-Path $data "extensions/settings.json"))) { throw "setting lost" }
+if (-not (Select-String -Quiet -SimpleMatch '"note": "Water the plants"' (Join-Path $data "extensions/content.json"))) { throw "note lost" }
+if (-not (Select-String -Quiet -SimpleMatch '"token": "sample-token"' (Join-Path $data "extensions/credentials.json"))) { throw "credential lost" }
 Write-Output "screenshots in $OutDir"

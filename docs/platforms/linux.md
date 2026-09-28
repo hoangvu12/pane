@@ -136,7 +136,7 @@ have not been run for this change.
 
 ### Custom view (#21)
 
-Finally the smoke restarts Pane again and opens the Rust command's "Choose a color", a
+The smoke then restarts Pane again and opens the Rust command's "Choose a color", a
 color picker the guest draws ([custom views](../custom-views.md)), presses
 Right with a real X11 key event, then moves the real pointer onto the dark
 green swatch (found in the screenshot by its color with
@@ -155,6 +155,30 @@ Xvfb/lavapipe setup), all checks of the whole smoke passed.
 A drag is not driven natively; it is covered by the window tests. The macOS
 and Windows smokes run the same phase (screenshots 21 to 23), with their own
 click helpers; it has not run there yet.
+
+### Clearing an extension's cache (#39)
+
+Last, the smoke restarts Pane, and in Greeting chooses "Save a note" and
+"Sign in", so the settings sample keeps one value of each kind of
+[extension data](../extension-data.md): its style (settings), a note
+(content), the greeting cached by "Greet me" earlier (cache) and a token
+(credentials). It checks each value in `content.json`, `credentials.json` and
+`cache.json`, restarts, chooses "Clear cache of Settings sample" in **Manage
+extensions…**, confirms, and shows what Pane keeps again. Finally it checks
+that `cache.json` no longer holds the greeting while the style, note and
+token are still in their files. Run locally on 2026-09-28 (Ubuntu 26.04.1
+LTS, kernel 7.0.0-31-generic, x86_64, same Xvfb/lavapipe setup), all checks
+of the whole smoke passed.
+
+| Step | Evidence |
+| --- | --- |
+| "Style: formal · Note: Water the plants · Signed in: yes · Cached greeting: Good day to you" | [24-kept.png](evidence/linux-x11/24-kept.png) |
+| "Clear the cache of Settings sample?", its source, what is deleted and what is kept; Clear cache and Cancel | `25-confirm-clear-cache.png` (not committed: it shows the local checkout path) |
+| "Cleared the cache of Settings sample" | `26-cache-cleared.png` (not committed: it shows the local checkout path) |
+| "... Cached greeting: none", the other three kept | [27-kept-after-clear.png](evidence/linux-x11/27-kept-after-clear.png) |
+
+The macOS and Windows smokes run the same phase (screenshots 24 to 27); it
+has not run there yet.
 
 ## Text input and accessibility findings
 
