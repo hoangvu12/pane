@@ -168,6 +168,9 @@ impl Registry {
             .build();
         let config = ureq::Agent::config_builder()
             .https_only(!self.loopback)
+            // A redirect could lead elsewhere than the registry: its status
+            // is reported instead of followed.
+            .max_redirects(0)
             .http_status_as_error(false)
             .timeout_connect(Some(Duration::from_secs(30)))
             .timeout_global(Some(Duration::from_secs(300)))

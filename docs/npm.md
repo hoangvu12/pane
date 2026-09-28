@@ -103,6 +103,7 @@ installed or left unpacked:
 | No such package or version | "npm package nobody was not found in the registry https://registry.npmjs.org/", "… has no version 9.9.9; its latest is 0.1.0" |
 | The registry cannot be reached | "Could not reach the npm registry … for <name>: <reason>" |
 | No sha512 integrity (only a `shasum`) | "… has no sha512 integrity in the registry, which Pane needs to check its download" |
+| A redirect | Pane follows none, so an answer sending it elsewhere is "The npm registry … answered 302 for …" |
 | The tarball is elsewhere | "Pane does not download <name>@<version>: its tarball address … is not on the registry …: Pane downloads a package only from the registry that describes it, over HTTPS" |
 | The download does not match | "The download of npm package <name>@<version> does not match the sha512 integrity the registry gives (it is sha512-…); nothing was installed" |
 | Too large | more than 16 MiB of metadata, a 64 MiB tarball, 256 MiB unpacked or 10,000 entries |

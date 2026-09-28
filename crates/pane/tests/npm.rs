@@ -107,7 +107,9 @@ fn a_package_named_in_the_npm_form_is_previewed_installed_and_run(cx: &mut TestA
         cx.run_until_parked();
     }
     let list = cx.debug_bounds("rows").expect("the list is rendered");
-    let row = cx.debug_bounds("row-Update").expect("the Update row is rendered");
+    let row = cx
+        .debug_bounds("row-Update")
+        .expect("the Update row is rendered");
     assert!(
         row.top() >= list.top() && row.bottom() <= list.bottom(),
         "{row:?} not in {list:?}"

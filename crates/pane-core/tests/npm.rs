@@ -676,6 +676,43 @@ fn a_tarball_elsewhere_than_the_registry_is_not_downloaded() {
     );
 }
 
+#[test]
+fn a_redirect_is_not_followed() {
+    let dirs = Dirs::new();
+    let tarball = pack(&greeter_files(&guests(), "0.1.0"));
+    let real = dirs.registry.tarball_url(GREETER, "0.1.0");
+    let redirecting = real.replacen(
+        dirs.registry.url(),
+        &format!("{}redirect/", dirs.registry.url()),
+        1,
+    );
+    dirs.registry.publish_with(
+        GREETER,
+        "0.1.0",
+        tarball.clone(),
+        Some(json!({ "tarball": redirecting, "integrity": integrity(&tarball) })),
+    );
+    dirs.registry.tag_latest(GREETER, "0.1.0");
+
+    assert_eq!(
+        refusal(&dirs, GREETER),
+        format!(
+            "The npm registry {} answered 302 for the tarball of @pane-samples/greeter@0.1.0",
+            dirs.registry.url()
+        )
+    );
+    // Where it pointed was never asked for.
+    assert!(
+        !dirs
+            .registry
+            .requests()
+            .iter()
+            .any(|path| real.ends_with(path.as_str())),
+        "{:?}",
+        dirs.registry.requests()
+    );
+}
+
 /// Publishes the raw tarball `entries` as `evil@1.0.0` and returns why
 /// previewing it is refused, checking that nothing was written outside
 /// Pane's downloads folder.

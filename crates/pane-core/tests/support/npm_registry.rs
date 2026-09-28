@@ -179,8 +179,19 @@ fn answer(stream: TcpStream, served: &Mutex<Served>, base: &str) {
         served.requests.push(path.clone());
         respond(&served, base, &path)
     };
+    // `/redirect/<path>` sends the client to `/<path>`, as a registry
+    // pointing elsewhere would.
+    let location = path
+        .strip_prefix("/redirect/")
+        .map(|rest| format!("Location: {base}{rest}\r\n"))
+        .unwrap_or_default();
+    let status = if location.is_empty() {
+        status
+    } else {
+        "302 Found"
+    };
     let head = format!(
-        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status}\r\n{location}Content-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n",
         body.len()
     );
     let _ = stream.write_all(head.as_bytes());
