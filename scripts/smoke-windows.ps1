@@ -775,4 +775,37 @@ Stop-Pane $process
 $record = Join-Path $data "extensions/installed.json"
 if (-not (Select-String -Quiet -SimpleMatch '"id": "greeter"' $record)) { throw "dependency not recorded" }
 if ((Select-String -SimpleMatch '"dir"' $record).Count -ne 2) { throw "not exactly two packages installed" }
+
+# Disabling a required dependency: installed with the dependencies sample
+# (whose install and data folder are this phase's own), the JavaScript
+# operations sample is the first row of Manage extensions. Enter asks first,
+# listing the Dependencies sample, which requires it, with Disable all and
+# Cancel; Cancel changes nothing, Disable all disables both, and Enter again
+# enables the JavaScript operations sample alone: the Dependencies sample
+# stays disabled, on record too.
+$data = Join-Path $OutDir "disable-dependents-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+$process = Start-Pane "stderr-disable-dependents.log" @("--install", "target/guests/packages/sample-dependencies")
+Send "{ENTER}"; Start-Sleep -Seconds 3   # Install
+for ($i = 0; $i -lt 10; $i++) { Send "{DOWN}" }   # Manage extensions...
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Send "{ENTER}"; Start-Sleep -Seconds 1   # disable JavaScript operations sample: asks first
+Capture "140-disable-dependents-asked.png"
+Check "140-disable-dependents-asked.png" "aab4c0"   # "Dependencies sample, which requires JavaScript operations sample ..."
+Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 1   # Cancel
+Capture "141-disable-dependents-cancelled.png"   # both still enabled
+Send "{ENTER}"; Start-Sleep -Seconds 1   # asks again
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Disable all 2
+Capture "142-disable-dependents-disabled.png"
+Check "142-disable-dependents-disabled.png" "9fd8a8"   # "Disabled JavaScript operations sample and Dependencies sample, which requires it"
+Send "{ENTER}"; Start-Sleep -Seconds 2   # enable JavaScript operations sample
+Capture "143-disable-dependents-enabled-alone.png"
+Check "143-disable-dependents-enabled-alone.png" "9fd8a8"   # "Enabled JavaScript operations sample"; Dependencies sample stays disabled
+$shots = "140-disable-dependents-asked", "141-disable-dependents-cancelled", "142-disable-dependents-disabled", "143-disable-dependents-enabled-alone" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: disabling with dependents changed nothing" }
+Stop-Pane $process
+$record = Join-Path $data "extensions/installed.json"
+if ((Select-String -SimpleMatch '"disabled": true' $record).Count -ne 1) { throw "not exactly the dependent left disabled" }
 Write-Output "screenshots in $OutDir"

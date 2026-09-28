@@ -795,4 +795,34 @@ python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{75-dependencies
 stop_pane
 grep -q '"id": "greeter"' "$PANE_DATA_DIR/extensions/installed.json" || { echo "dependency not recorded"; exit 1; }
 [ "$(grep -c '"dir"' "$PANE_DATA_DIR/extensions/installed.json")" = 2 ] || { echo "not exactly two packages installed"; exit 1; }
+
+# Disabling a required dependency: installed with the dependencies sample
+# (whose install and data folder are this phase's own), the JavaScript
+# operations sample is the first row of Manage extensions. Enter asks first,
+# listing the Dependencies sample, which requires it, with Disable all and
+# Cancel; Cancel changes nothing, Disable all disables both, and Enter again
+# enables the JavaScript operations sample alone: the Dependencies sample
+# stays disabled, on record too.
+export PANE_DATA_DIR=$out/disable-dependents-data
+rm -rf "$PANE_DATA_DIR"
+start_pane --install target/guests/packages/sample-dependencies
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 3   # Install
+for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+"$xdotool" key Return; sleep 1
+"$xdotool" key Return; sleep 1   # disable JavaScript operations sample: asks first
+capture 140-disable-dependents-asked.png
+check 140-disable-dependents-asked.png aab4c0   # "Dependencies sample, which requires JavaScript operations sample · …"
+"$xdotool" key Down Return; sleep 1   # Cancel
+capture 141-disable-dependents-cancelled.png   # both still enabled
+"$xdotool" key Return; sleep 1   # asks again
+"$xdotool" key Return; sleep 2   # Disable all 2
+capture 142-disable-dependents-disabled.png
+check 142-disable-dependents-disabled.png 9fd8a8   # "Disabled JavaScript operations sample and Dependencies sample, which requires it"
+"$xdotool" key Return; sleep 2   # enable JavaScript operations sample
+capture 143-disable-dependents-enabled-alone.png
+check 143-disable-dependents-enabled-alone.png 9fd8a8   # "Enabled JavaScript operations sample"; Dependencies sample stays disabled
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{140-disable-dependents-asked,141-disable-dependents-cancelled,142-disable-dependents-disabled,143-disable-dependents-enabled-alone}.png
+stop_pane
+[ "$(grep -c '"disabled": true' "$PANE_DATA_DIR/extensions/installed.json")" = 1 ] || { echo "not exactly the dependent left disabled"; exit 1; }
 echo "screenshots in $out"
