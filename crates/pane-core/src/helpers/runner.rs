@@ -542,6 +542,19 @@ impl Helpers {
         stop_and_wait(&all);
     }
 
+    /// Ends every helper process running now and waits (briefly) until each
+    /// is reaped, without keeping later ones from starting: after the
+    /// runtime thread crashed, when every run belonged to its guests.
+    pub fn stop_running(&self) {
+        let all = self.lock().runs.clone();
+        stop_and_wait(&all);
+    }
+
+    /// Whether Pane is quitting ([`Helpers::stop_all`]).
+    pub fn quitting(&self) -> bool {
+        self.lock().quitting
+    }
+
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(|p| p.into_inner())
     }

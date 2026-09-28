@@ -549,6 +549,42 @@ are painted over with the background; the smoke checks the whole frames.
 Frame 141, the list after Cancel with both enabled, is checked to differ
 from the others but not kept, as it shows those paths.)
 
+### Runtime crashes (#17)
+
+A phase of its own, after the disable-dependents phase, with its own data
+folder (`runtime-crash-data`, [runtime crashes](../pausing.md#when-the-extension-runtime-itself-crashes)).
+It installs the helper sample and the settings sample (two extensions
+active), and starts Pane with `PANE_TEST_RUNTIME_FAULTS` naming a fault
+file in the output folder: writing `crash` or `crash-before-answer` there
+has Pane's runtime thread panic, which is how the smoke kills it (the
+runtime is a thread, not a process). Count (the settings sample's last
+item) answers "Counted 1"; "Echo after waiting" starts the helper, which
+`pgrep -f` finds; a crash then ends it (`pgrep` finds none and its
+heartbeat stops growing), keeps its "started" note and never saves
+"finished", and the status line explains the crash without naming an
+extension. Count again, with the answer lost to a second crash: the count
+in `content.json` is 2 and stays 2, and the runtime is not restarted.
+Opening Greeting explains that nothing runs; Manage extensions lists
+**Restart the extension runtime** and **Why the extension runtime
+stopped** first; the details screen renders; disabling the helper sample
+works while the runtime is stopped; Restart runs extensions again, and
+Count answers "Counted 3" only when asked. `installed.json` must record the
+disable and no pause, and no helper may outlive Pane. Run locally on
+2026-09-28 (Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64, same
+Xvfb/lavapipe setup): all checks of the whole smoke passed, and frames 200
+to 209 were looked at.
+
+| Step | Evidence |
+| --- | --- |
+| The runtime crashed while the helper waited: the waiting call answers "Extension runtime unavailable: it stopped before answering and was started again; Pane does not run this again by itself" (the crash report's own line, "Pane's extension runtime stopped unexpectedly and was started again; …", shows instead when it arrives last) | [202-runtime-crashed.png](evidence/linux-x11/202-runtime-crashed.png) |
+| Count's answer lost in a second crash: "… it stopped before answering and was not restarted (it crashed twice within 5 minutes; …); Pane does not run this again by itself …" | [203-runtime-stopped.png](evidence/linux-x11/203-runtime-stopped.png) |
+| Manage extensions: Restart the extension runtime, Why the extension runtime stopped | [205-runtime-manage.png](evidence/linux-x11/205-runtime-manage.png) |
+| The details: no extension named, what Pane did, the diagnostics, Restart | [206-runtime-details.png](evidence/linux-x11/206-runtime-details.png) |
+| After Restart, Count asked again: "Counted 3" | [209-runtime-counted-again.png](evidence/linux-x11/209-runtime-counted-again.png) |
+
+Frames 200, 201, 204 and 208 match these; 207 ("Disabled Helper sample")
+is checked but not kept, as its row shows the local package path.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms have a text field (GPUI CE's

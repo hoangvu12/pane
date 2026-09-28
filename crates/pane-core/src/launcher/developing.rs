@@ -256,7 +256,8 @@ impl Launcher {
     pub fn with_development(self, builder: Arc<dyn Builder>, changes: ChangeSender) -> Self {
         self.developing.end(None);
         let launcher = Launcher {
-            developing: Arc::new(Developing::new(Some(builder), Some(changes))),
+            developing: Arc::new(Developing::new(Some(builder), Some(changes.clone()))),
+            changes: Some(changes),
             ..self
         };
         // The runtime reports failures to this launcher, not the one it
