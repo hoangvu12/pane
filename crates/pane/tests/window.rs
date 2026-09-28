@@ -1306,7 +1306,13 @@ fn a_quicklink_created_in_its_form_is_found_and_opened_from_root_search(cx: &mut
         view.status,
         Status::Error("URL: Enter a web address starting with http:// or https://".into())
     );
-    cx.simulate_keystrokes("home");
+    // To the start of the field: text fields on macOS have no binding for
+    // Home (Mac keyboards have none), only Command-Left.
+    cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+        "cmd-left"
+    } else {
+        "home"
+    });
     cx.simulate_input("https://");
     cx.simulate_keystrokes("enter");
     let view = wait_for_answer(&window, cx);

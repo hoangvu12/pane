@@ -161,6 +161,9 @@ pub struct LauncherWindow {
     scroll: ScrollHandle,
     /// What the list was last scrolled for.
     scrolled_for: Option<ScrolledFor>,
+    /// Whether the next frame scrolls to the selected row again, once the
+    /// list changed in this one has been laid out.
+    scroll_again: bool,
 }
 
 /// What the list was last scrolled for. When any of it changes, the list
@@ -192,6 +195,7 @@ impl LauncherWindow {
             form: None,
             scroll: ScrollHandle::new(),
             scrolled_for: None,
+            scroll_again: false,
             custom_view: None,
         }
     }
@@ -367,12 +371,22 @@ impl LauncherWindow {
             list: self.scroll.bounds().size,
         };
         let last = self.scrolled_for.as_ref();
-        if last == Some(&shown) {
+        if last == Some(&shown) && !self.scroll_again {
             return;
         }
-        if last.is_some_and(|last| last.window != shown.window) {
-            // The list's new size is known only once this frame is laid out,
-            // so the next frame scrolls again with it.
+        // Scrolling uses the list's size and rows as last laid out. When the
+        // window, the screen or the rows changed, those are known only once
+        // this frame is laid out, so the next frame scrolls again with them:
+        // otherwise a short screen after a long list, scrolled far down,
+        // would keep an offset that hides its selected row.
+        let relaid = last.is_some_and(|last| {
+            last.window != shown.window
+                || last.screen != shown.screen
+                || last.title != shown.title
+                || last.rows != shown.rows
+        });
+        self.scroll_again = relaid && !self.scroll_again;
+        if self.scroll_again {
             window.request_animation_frame();
         }
         if let Some(selected) = view.selected {

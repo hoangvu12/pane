@@ -359,6 +359,87 @@ fn an_installed_package_cache_is_cleared_after_confirming(cx: &mut TestAppContex
     assert!(cx.debug_bounds("status-result").is_some());
 }
 
+/// Whether the element with debug selector `element` lies wholly inside the
+/// list.
+fn row_is_visible(cx: &mut VisualTestContext, element: &'static str) -> bool {
+    let list = cx.debug_bounds("rows").expect("the list is rendered");
+    let element = cx.debug_bounds(element).expect("it is rendered");
+    element.top() >= list.top() && element.bottom() <= list.bottom()
+}
+
+#[gpui::test]
+fn a_short_confirmation_after_a_scrolled_extension_list_shows_its_first_choice(
+    cx: &mut TestAppContext,
+) {
+    let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    cx.executor().allow_parking();
+    cx.update(pane::bind_keys);
+    let launcher =
+        Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"));
+    // Long source paths, as in a real checkout, make the confirmation's
+    // details wrap, which moves and shrinks its list.
+    let nested = sources
+        .path()
+        .join("code/pane/.claude/worktrees/agent-0123456789abcdef0/target/guests/packages");
+    for name in ["one", "two", "three", "four", "five", "six"] {
+        let folder = package(&nested.join(name));
+        cx.foreground_executor()
+            .block_on(launcher.install_package(&folder));
+    }
+    let (window, cx) =
+        cx.add_window_view(|window, cx| LauncherWindow::new(launcher.clone(), window, cx));
+    // The size of Pane's window: the extension list of six packages
+    // overflows it.
+    cx.simulate_resize(gpui::size(gpui::px(640.), gpui::px(420.)));
+    launcher.back();
+    let manage = titles(&launcher.view())
+        .iter()
+        .position(|title| *title == MANAGE_ROW)
+        .unwrap();
+    launcher.select(manage);
+    cx.simulate_keystrokes("enter");
+    assert!(matches!(
+        settle(&window, cx).screen,
+        Screen::Extensions { .. }
+    ));
+    let last = launcher.view().rows.len() - 1;
+    launcher.select(last);
+    // Drawn twice: the list's size is known once laid out.
+    for _ in 0..2 {
+        window.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+    }
+    assert!(
+        !row_is_visible(cx, "row-Hello"),
+        "the list is scrolled to its last row"
+    );
+
+    // The last row asks to uninstall the sixth package: a screen of three
+    // short rows, the first selected.
+    cx.simulate_keystrokes("enter");
+    let view = settle(&window, cx);
+    assert_eq!(view.selected, Some(0));
+    // The first frame of the new screen scrolls with the list's size and
+    // rows as last laid out, those of the extension list; on a real
+    // platform nothing else may redraw the window, so it must ask for the
+    // next frame to scroll again with the new ones. The test platform
+    // delivers that frame when told to.
+    let asked = cx.update(|window, cx| window.simulate_next_frame(cx));
+    assert!(asked > 0, "the window asks for a frame to scroll again");
+    cx.run_until_parked();
+    // The list shows the first choice from its top (the long source paths
+    // leave the list less room than one row).
+    let list = cx.debug_bounds("rows").expect("the list is rendered");
+    let first = cx
+        .debug_bounds("row-Uninstall and keep saved data")
+        .expect("it is rendered");
+    assert_eq!(
+        first.top(),
+        list.top(),
+        "the selected first choice is shown from its top"
+    );
+}
+
 #[gpui::test]
 fn an_installed_package_is_uninstalled_after_choosing_what_to_keep(cx: &mut TestAppContext) {
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
