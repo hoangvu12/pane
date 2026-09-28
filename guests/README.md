@@ -35,6 +35,8 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
 - `fixtures/failing-start`: test fixture that builds and installs but traps
   the first time it is asked for its view (after saving a setting), so a
   reload to it fails to start and Retry then starts it.
+- `fixtures/refusing-view`: test fixture whose view is always refused with
+  an error it returns, which a reload must not report as a failure to start.
 - `fixtures/mixed-p2`: negative control that imports WASI 0.2 and must be rejected.
 - `fixtures/old-api`: negative control built against extension API 0.1 as it
   was before `item` gained `platforms` and custom views, with its own copy of
@@ -618,9 +620,11 @@ two stages, and a failure in each is reported differently:
    package closes; root search then selects its command), and the new code
    starts: Pane starts each of the package's commands available on this
    system and asks it for its view (`get-view`). Success shows "Reloaded
-   Dev". If a command fails, for example it traps or returns an error from
-   `get-view`, its instances are stopped again and the package is reported
-   as failed to start: the package's row says "Failed to start", a **Retry
+   Dev". If a command fails to initialize (it traps, or its component
+   cannot load or be instantiated), its instances are stopped again and the
+   package is reported as failed to start. An error the command returns
+   from `get-view` itself, such as asking the user to sign in first, is an
+   ordinary answer and not a failure to start. On a failure to start: the package's row says "Failed to start", a **Retry
    starting <title>** row appears under its Reload row with the diagnostics
    (for a trap, the guest backtrace), which Pane also writes to its standard
    error. The earlier code is not restored. Retry starts the same code

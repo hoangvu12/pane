@@ -9,18 +9,43 @@
 //! 2. Otherwise the checked package replaces the managed copy, the old
 //!    instances stop (closing a command of it that is open), and the
 //!    replacement starts: each of its commands available here is started
-//!    and asked for its view. If that fails, its instances are stopped
-//!    again and the package is reported as failed to start, with Retry; the
-//!    older code is not restored.
+//!    and asked for its view. If one fails to initialize (a trap, or a
+//!    component that cannot load or be instantiated; not an error the guest
+//!    answers with, #16), its instances are stopped again and the package
+//!    is reported as failed to start, with Retry; the older code is not
+//!    restored.
 //!
 //! Settings belong to the package identity, so they are kept throughout.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 
-use super::{Launcher, State, Status, off_thread};
-use crate::packages::{InstalledPackage, PackageError, PackageIdentity};
+use super::{Changing, Launcher, State, Status, off_thread};
+use crate::packages::{PackageError, PackageIdentity};
 use crate::runtime::CallError;
+
+/// Why each package whose reloaded code failed to start failed. Such a
+/// package stays installed with that code, offering Retry; nothing older is
+/// restored. The mark lasts until the package starts, is replaced or is
+/// disabled.
+#[derive(Default)]
+pub(super) struct StartFailures(HashMap<PackageIdentity, String>);
+
+impl StartFailures {
+    pub(super) fn record(&mut self, identity: PackageIdentity, why: String) {
+        self.0.insert(identity, why);
+    }
+
+    pub(super) fn forget(&mut self, identity: &PackageIdentity) {
+        self.0.remove(identity);
+    }
+
+    /// Why the package with `identity` failed to start, if it did.
+    pub(super) fn of(&self, identity: &PackageIdentity) -> Option<&str> {
+        self.0.get(identity).map(String::as_str)
+    }
+}
 
 /// What a reload does.
 #[derive(Clone, Copy)]
@@ -77,7 +102,8 @@ impl Launcher {
         }
     }
 
-    /// Checks that the package can be reloaded now, explaining why not.
+    /// Checks that the package can be reloaded now, explaining why not: it
+    /// is not, while it is being updated, enabled or disabled.
     pub(super) fn begin_reload(
         &self,
         state: &mut State,
@@ -89,7 +115,7 @@ impl Launcher {
             state.view.status = Status::Error(error.to_string());
             return None;
         }
-        let Some(package) = state.packages.iter().find(|p| p.identity == identity) else {
+        let Some(package) = state.package(&identity) else {
             state.view.status = Status::Error(PackageError::NotInstalled(identity).to_string());
             return None;
         };
@@ -100,10 +126,9 @@ impl Launcher {
             ));
             return None;
         }
-        if state.changing.contains(&identity) {
+        if !state.claim(&identity, Changing::Reloading) {
             return None;
         }
-        state.changing.push(identity.clone());
         state.view.status = Status::Running;
         Some(Reload { identity, attempt })
     }
@@ -116,7 +141,7 @@ impl Launcher {
         let title = self.title_of(&identity);
         let generation = match attempt {
             Attempt::Retry => {
-                self.lock().failed.retain(|(failed, _)| *failed != identity);
+                self.lock().failed.forget(&identity);
                 generation
             }
             Attempt::Reload => match self.replace(generation, &identity).await {
@@ -141,7 +166,7 @@ impl Launcher {
                 // The log: the diagnostics, such as a trap's backtrace, also
                 // go to Pane's standard error.
                 eprintln!("pane: {title} failed to start: {message}");
-                state.failed.push((identity.clone(), message));
+                state.failed.record(identity.clone(), message);
                 let failed = match attempt {
                     Attempt::Reload => format!("Reloaded {title}, but it failed to start"),
                     Attempt::Retry => format!("{title} failed to start again"),
@@ -162,10 +187,10 @@ impl Launcher {
     /// outcome belongs to: a new one if an open command of the package
     /// closed for root search.
     async fn replace(&self, generation: u64, identity: &PackageIdentity) -> Result<u64, String> {
-        let folder = identity
-            .local_folder()
-            .expect("a local identity has a folder")
-            .to_path_buf();
+        let Some(folder) = identity.local_folder() else {
+            return Err("it has no local source folder to reload from".into());
+        };
+        let folder = folder.to_path_buf();
         let package = self
             .read_and_check(folder)
             .await
@@ -183,31 +208,26 @@ impl Launcher {
         .await
         .map_err(|error| error.to_string())?;
         let mut state = self.lock();
-        let current = state.screen_generation == generation;
         let first = installed.commands().first().map(|c| c.component.clone());
         if self.put_installed(&mut state, installed) {
             self.show_root(&mut state, first);
             return Ok(state.screen_generation);
         }
         self.refresh(&mut state);
-        Ok(if current {
-            state.screen_generation
-        } else {
-            generation
-        })
+        Ok(generation)
     }
 
     /// Starts each command of the package that is available on this system
-    /// and asks it for its view. If one fails, the package's instances are
-    /// stopped again, so a retry starts afresh. A package disabled meanwhile
+    /// and asks it for its view. If one fails to initialize (it traps, or
+    /// cannot load or be instantiated), the package's instances are stopped
+    /// again, so a retry starts afresh; a view the guest refuses with an
+    /// error of its own is not a failure. A package disabled meanwhile
     /// is not started, and that is not a failure.
     async fn start(&self, identity: &PackageIdentity) -> Result<(), CallError> {
         let components: Vec<PathBuf> = {
             let state = self.lock();
             state
-                .packages
-                .iter()
-                .find(|package| package.identity == *identity)
+                .package(identity)
                 .map(|package| {
                     package
                         .available_commands()
@@ -222,7 +242,10 @@ impl Launcher {
         for component in &components {
             let settings = self.settings_of(component);
             match runtime.get_view_with(component, settings).await {
-                Ok(_) | Err(CallError::Disabled) => {}
+                // Only a fatal initialization is a failure to start: an
+                // error the guest answers with, such as "sign in first", is
+                // an ordinary outcome of code that started (#16).
+                Ok(_) | Err(CallError::Disabled | CallError::Guest(_)) => {}
                 Err(error) => {
                     runtime.forget(components.iter().cloned());
                     return Err(error);
@@ -236,7 +259,7 @@ impl Launcher {
     /// `generation`.
     fn end_reload(&self, generation: u64, identity: &PackageIdentity, status: Status) {
         let mut state = self.lock();
-        state.changing.retain(|changing| changing != identity);
+        state.release(identity);
         self.refresh(&mut state);
         if state.screen_generation == generation {
             state.view.status = status;
@@ -244,11 +267,6 @@ impl Launcher {
     }
 
     fn title_of(&self, identity: &PackageIdentity) -> String {
-        self.lock()
-            .packages
-            .iter()
-            .find(|package| package.identity == *identity)
-            .map(InstalledPackage::title)
-            .unwrap_or_default()
+        self.lock().title_of(identity)
     }
 }

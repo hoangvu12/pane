@@ -127,7 +127,10 @@ Screenshots from run [36371205770](https://github.com/wasimysaid/pane/actions/ru
   fixture (a startup failure, then Retry); screenshots 27 to 33, the same
   steps as on [Linux](linux.md#reloading-a-package-11). **This phase has not
   run on Windows yet.** Replacing the managed copy removes the old folder on
-  a best-effort basis; on Windows a folder still in use is left behind.
+  a best-effort basis; on Windows a folder still in use is left behind,
+  listed in `installed.json`, and removal is tried again at the next start
+  (tested on Linux with a folder whose files cannot be deleted; not run on
+  Windows).
 
 ## Disabling an extension and keeping its settings (#10)
 

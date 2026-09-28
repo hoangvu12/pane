@@ -10,7 +10,7 @@
 //! user has left that screen, the reply is discarded, and a custom view that
 //! opened after the user left is closed again.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -28,6 +28,8 @@ use crate::search::{self, Keys, Query};
 use crate::settings::{PackageSettings, Settings};
 
 mod reload;
+
+use reload::StartFailures;
 
 /// The id of the root row that installs a package from a local folder.
 const INSTALL_FROM_FOLDER: &str = "pane.install-from-folder";
@@ -247,15 +249,67 @@ struct State {
     /// latest choice, which applies at once, even while it is still being
     /// recorded.
     packages: Vec<InstalledPackage>,
-    /// Packages whose enabling or disabling is still being recorded; another
-    /// change to one of them is ignored meanwhile.
-    changing: Vec<PackageIdentity>,
+    /// Packages being enabled or disabled, reloaded or updated, with which;
+    /// another change to one of them is refused meanwhile (see
+    /// [`State::claim`]).
+    changing: HashMap<PackageIdentity, Changing>,
     /// Why the installed packages could not be read, if they could not.
     store_problem: Option<String>,
-    /// Packages whose reloaded code failed to start, each with why. They
-    /// stay installed with that code, offering Retry; nothing older is
-    /// restored.
-    failed: Vec<(PackageIdentity, String)>,
+    /// Packages whose reloaded code failed to start, each with why.
+    failed: StartFailures,
+}
+
+/// What is happening to a package, which stops another change to it
+/// meanwhile.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Changing {
+    /// Its enabling or disabling has taken effect and is being recorded.
+    Recording,
+    /// It is being reloaded, or started again after it failed to start.
+    Reloading,
+    /// Its managed copy is being replaced from a package folder.
+    Updating,
+}
+
+impl State {
+    /// The installed package with `identity`.
+    fn package(&self, identity: &PackageIdentity) -> Option<&InstalledPackage> {
+        self.packages
+            .iter()
+            .find(|package| package.identity == *identity)
+    }
+
+    /// The title of the installed package with `identity`, or its identity if
+    /// it is no longer installed.
+    fn title_of(&self, identity: &PackageIdentity) -> String {
+        self.package(identity)
+            .map(InstalledPackage::title)
+            .unwrap_or_else(|| identity.to_string())
+    }
+
+    /// Notes that `what` begins on the package with `identity`, unless
+    /// something else is happening to it: then it says what, and returns
+    /// false. A second enabling or disabling while one is recorded is ignored
+    /// without a word, as pressing Enter twice would do.
+    fn claim(&mut self, identity: &PackageIdentity, what: Changing) -> bool {
+        let busy = match self.changing.get(identity) {
+            None => {
+                self.changing.insert(identity.clone(), what);
+                return true;
+            }
+            Some(Changing::Recording) => return false,
+            Some(Changing::Reloading) => "is reloading",
+            Some(Changing::Updating) => "is updating",
+        };
+        self.view.status = Status::Error(format!("{} {busy}", self.title_of(identity)));
+        false
+    }
+
+    /// Notes that what began with [`State::claim`] on the package with
+    /// `identity` has ended.
+    fn release(&mut self, identity: &PackageIdentity) {
+        self.changing.remove(identity);
+    }
 }
 
 /// An enabling or disabling that has taken effect and is being recorded.
@@ -365,10 +419,11 @@ enum Entry {
     Cancel,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Mode {
     Install,
-    Update,
+    /// Replace the managed copy of the installed package with this identity.
+    Update(PackageIdentity),
 }
 
 impl Launcher {
@@ -415,9 +470,9 @@ impl Launcher {
             custom_view: None,
             screen_generation: 0,
             packages,
-            changing: Vec::new(),
+            changing: HashMap::new(),
             store_problem,
-            failed: Vec::new(),
+            failed: StartFailures::default(),
         };
         if let Some(installation) = &installation {
             for package in &state.packages {
@@ -571,11 +626,7 @@ impl Launcher {
             Some(Entry::Toggle(identity)) => {
                 // The package's state when the user pressed, not when the
                 // future runs.
-                let enable = state
-                    .packages
-                    .iter()
-                    .find(|package| package.identity == identity)
-                    .is_some_and(|package| !package.enabled);
+                let enable = state.package(&identity).is_some_and(|p| !p.enabled);
                 change = self.begin_change(&mut state, identity, enable);
                 None
             }
@@ -585,6 +636,11 @@ impl Launcher {
             }
             Some(Entry::Retry(identity)) => {
                 reload = self.begin_reload(&mut state, identity, reload::Attempt::Retry);
+                None
+            }
+            Some(Entry::Install(_, Mode::Update(identity)))
+                if !state.claim(&identity, Changing::Updating) =>
+            {
                 None
             }
             Some(Entry::InstallFromFolder) | None => None,
@@ -709,8 +765,9 @@ impl Launcher {
 
     /// Applies the user's choice to enable or disable a package, to be
     /// recorded by [`Launcher::finish_change`]. Explains why not and returns
-    /// `None` if there is no such package; returns `None` without a word
-    /// while another change to it is being recorded.
+    /// `None` if there is no such package or it is being reloaded or updated;
+    /// returns `None` without a word while another change to it is being
+    /// recorded.
     fn begin_change(
         &self,
         state: &mut State,
@@ -722,18 +779,13 @@ impl Launcher {
             state.view.status = Status::Error(error.to_string());
             return None;
         }
-        if !state
-            .packages
-            .iter()
-            .any(|package| package.identity == identity)
-        {
+        if state.package(&identity).is_none() {
             state.view.status = Status::Error(PackageError::NotInstalled(identity).to_string());
             return None;
         }
-        if state.changing.contains(&identity) {
+        if !state.claim(&identity, Changing::Recording) {
             return None;
         }
-        state.changing.push(identity.clone());
         self.apply_enabled(state, &identity, enabled);
         state.view.status = Status::Running;
         Some(Change { identity, enabled })
@@ -758,15 +810,10 @@ impl Launcher {
             .await
         };
         let mut state = self.lock();
-        state.changing.retain(|changing| *changing != identity);
+        state.release(&identity);
         let status = match recorded {
             Ok(()) => {
-                let title = state
-                    .packages
-                    .iter()
-                    .find(|package| package.identity == identity)
-                    .map(InstalledPackage::title)
-                    .unwrap_or_default();
+                let title = state.title_of(&identity);
                 if enabled {
                     Status::Result(format!("Enabled {title}"))
                 } else {
@@ -787,11 +834,7 @@ impl Launcher {
     /// without recording it: whether it offers commands and may save
     /// settings, its instances, and the screen showing them.
     fn apply_enabled(&self, state: &mut State, identity: &PackageIdentity, enabled: bool) {
-        let Some(package) = state
-            .packages
-            .iter_mut()
-            .find(|package| package.identity == *identity)
-        else {
+        let Some(package) = state.packages.iter_mut().find(|p| p.identity == *identity) else {
             return;
         };
         package.enabled = enabled;
@@ -804,10 +847,12 @@ impl Launcher {
                 .into_iter()
                 .map(|command| command.component)
                 .collect();
-            // Its instances stop; enabling it again starts fresh ones.
+            // Its instances stop; enabling it again starts fresh ones, so a
+            // failure to start no longer describes it.
             if let Ok(runtime) = self.runtime() {
                 runtime.forget(components.iter().cloned());
             }
+            state.failed.forget(identity);
             if state
                 .open
                 .as_ref()
@@ -834,11 +879,12 @@ impl Launcher {
             Some(store) => match self.read_and_check(folder).await {
                 Ok(package) => {
                     let store = store.clone();
+                    let mode = mode.clone();
                     off_thread(move || {
                         let mut store = store.lock().unwrap_or_else(|p| p.into_inner());
                         match mode {
                             Mode::Install => store.install(&package),
-                            Mode::Update => store.update(&package),
+                            Mode::Update(_) => store.update(&package),
                         }
                     })
                     .await
@@ -847,23 +893,26 @@ impl Launcher {
             },
         };
         let mut state = self.lock();
+        if let Mode::Update(identity) = &mode {
+            state.release(identity);
+        }
         let current = state.screen_generation == generation;
         match result {
             Ok(installed) => {
                 let message = match (mode, installed.version()) {
                     (Mode::Install, _) => format!("Installed {}", installed.title()),
-                    (Mode::Update, Some(version)) => {
+                    (Mode::Update(_), Some(version)) => {
                         format!("Updated {} to {version}", installed.title())
                     }
-                    (Mode::Update, None) => format!("Updated {}", installed.title()),
+                    (Mode::Update(_), None) => format!("Updated {}", installed.title()),
                 };
                 let first = installed.commands().first().map(|c| c.component.clone());
                 let replaced_is_open = self.put_installed(&mut state, installed);
                 if current || replaced_is_open {
                     self.show_root(&mut state, first);
                     state.view.status = Status::Result(message);
-                } else if matches!(state.view.screen, Screen::Root { .. }) {
-                    self.refresh_root(&mut state);
+                } else {
+                    self.refresh(&mut state);
                 }
             }
             Err(error) if current => state.view.status = Status::Error(error.to_string()),
@@ -876,9 +925,7 @@ impl Launcher {
     /// command of the replaced copy is open; the caller leaves it, since its
     /// state is not carried over to the new code.
     fn put_installed(&self, state: &mut State, installed: InstalledPackage) -> bool {
-        state
-            .failed
-            .retain(|(identity, _)| *identity != installed.identity);
+        state.failed.forget(&installed.identity);
         let Some(package) = state
             .packages
             .iter_mut()
@@ -1199,7 +1246,7 @@ impl Launcher {
     /// Asks whether to clear the cache of the installed package with
     /// `identity`, saying what is deleted and what is kept.
     fn show_clear_cache(&self, state: &mut State, identity: &PackageIdentity) {
-        let title = package_title(state, identity);
+        let title = state.title_of(identity);
         let choice = |title: &str, subtitle: &str| Row {
             id: title.into(),
             title: title.into(),
@@ -1239,7 +1286,7 @@ impl Launcher {
         let Some(mut state) = self.lock_if_current(generation) else {
             return;
         };
-        let title = package_title(&state, &identity);
+        let title = state.title_of(&identity);
         self.show_extensions_at_clear_cache(&mut state, &identity);
         state.view.status = match cleared {
             Ok(()) => Status::Result(format!("Cleared the cache of {title}")),
@@ -1516,15 +1563,25 @@ impl Launcher {
         if self.is_replaced(&state, &component) {
             // Reloaded or updated while it was opening: the answer came from
             // code that no longer runs, or from none. Its package's commands
-            // are in root search again.
+            // are in root search again. Unless the reload or update has
+            // reported its outcome meanwhile, this opening is still shown as
+            // running, so it ends here.
+            if state.view.status == Status::Running {
+                state.view.status = Status::Error(
+                    "The extension changed while its command was opening; open it again".into(),
+                );
+            }
             return;
+        }
+        let state = &mut *state;
+        if let (Ok(_) | Err(CallError::Guest(_)), Some(package)) =
+            (&result, owner(&state.packages, &component))
+        {
+            // It started, even if it refused to show its view.
+            state.failed.forget(&package.identity);
         }
         match result {
             Ok(view) => {
-                if let Some(package) = owner(&state.packages, &component) {
-                    let identity = package.identity.clone();
-                    state.failed.retain(|(failed, _)| *failed != identity);
-                }
                 let (rows, entries): (Vec<Row>, Vec<Entry>) = view
                     .items
                     .into_iter()
@@ -1606,32 +1663,13 @@ fn disabled_owner(state: &State, component: &Path) -> Option<String> {
         .map(|package| format!("{} is disabled", package.title()))
 }
 
-/// The title of the installed package with `identity`, or its identity if
-/// it is no longer installed.
-fn package_title(state: &State, identity: &PackageIdentity) -> String {
-    state
-        .packages
-        .iter()
-        .find(|package| package.identity == *identity)
-        .map(InstalledPackage::title)
-        .unwrap_or_else(|| identity.to_string())
-}
-
 /// One row per installed package, saying whether it is enabled and which
 /// source it is, so copies with the same title can be told apart; then the
 /// rows that reload each enabled package, each followed by a Retry row if
 /// its reloaded code failed to start; then one row per package to clear its
 /// cache, in the same order.
-fn extension_rows(
-    packages: &[InstalledPackage],
-    failed: &[(PackageIdentity, String)],
-) -> (Vec<Row>, Vec<Entry>) {
-    let failure = |package: &InstalledPackage| {
-        failed
-            .iter()
-            .find(|(identity, _)| *identity == package.identity)
-            .map(|(_, problem)| problem.clone())
-    };
+fn extension_rows(packages: &[InstalledPackage], failed: &StartFailures) -> (Vec<Row>, Vec<Entry>) {
+    let failure = |package: &InstalledPackage| failed.of(&package.identity).map(str::to_owned);
     let toggles = packages.iter().map(|package| {
         let state = match (package.enabled, failure(package)) {
             (false, _) => "Disabled",
@@ -1750,7 +1788,8 @@ fn preview_view(
                 subtitle: Some("Replace the installed copy with this folder's contents".into()),
                 unavailable: None,
             };
-            (row, Entry::Install(package.folder.clone(), Mode::Update))
+            let mode = Mode::Update(installed.identity.clone());
+            (row, Entry::Install(package.folder.clone(), mode))
         }
         None => {
             let row = Row {

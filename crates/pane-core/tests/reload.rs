@@ -6,6 +6,7 @@
 //! in Rust, JavaScript and TypeScript.
 
 use std::fs;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 
 use futures::executor::block_on;
@@ -315,6 +316,106 @@ fn a_replacement_that_fails_to_start_is_reported_and_retried() {
         Status::Result("Reloaded Dev".into())
     );
     assert_eq!(open(&launcher, "Open Dev"), "Rust sample");
+}
+
+#[test]
+fn disabling_a_package_that_failed_to_start_forgets_the_failure() {
+    let dirs = Dirs::new();
+    let (launcher, folder, identity) = dirs.installed("Dev", "sample_rust");
+    rebuild(&folder, "failing_start");
+    error(press(&launcher, "Reload Dev"));
+    assert!(titles(&launcher).contains(&"Retry starting Dev".to_string()));
+
+    // Disabling stops it; enabled again, it starts fresh when opened, so
+    // the earlier failure no longer describes it.
+    block_on(launcher.set_enabled(&identity, false));
+    block_on(launcher.set_enabled(&identity, true));
+    manage(&launcher);
+    assert!(!titles(&launcher).iter().any(|t| t.starts_with("Retry")));
+    assert_eq!(
+        launcher.view().rows[0].subtitle.as_deref(),
+        Some(format!("Enabled · {identity}").as_str())
+    );
+}
+
+/// Shows the package in `folder` and starts updating the installed copy
+/// from it, returning the update to await.
+fn begin_update(launcher: &Launcher, folder: &Path) -> impl Future<Output = ()> {
+    block_on(launcher.preview_package(folder));
+    select_title(launcher, "Update");
+    launcher.activate_selected()
+}
+
+#[test]
+fn a_package_being_updated_is_not_reloaded_meanwhile() {
+    let dirs = Dirs::new();
+    let (launcher, folder, identity) = dirs.installed("Dev", "sample_rust");
+    rebuild(&folder, "sample_js");
+
+    let update = begin_update(&launcher, &folder);
+    block_on(launcher.reload(&identity));
+    assert_eq!(
+        launcher.view().status,
+        Status::Error("Dev is updating".into())
+    );
+    block_on(update);
+    assert_eq!(launcher.view().status, Status::Result("Updated Dev".into()));
+
+    // Once updated, it reloads as ever.
+    rebuild(&folder, "sample_ts");
+    assert_eq!(
+        press(&launcher, "Reload Dev"),
+        Status::Result("Reloaded Dev".into())
+    );
+    assert_eq!(open(&launcher, "Open Dev"), "TypeScript sample");
+}
+
+#[test]
+fn a_package_being_reloaded_is_not_updated_or_toggled_meanwhile() {
+    let dirs = Dirs::new();
+    let (launcher, folder, identity) = dirs.installed("Dev", "sample_rust");
+    rebuild(&folder, "sample_js");
+    block_on(launcher.preview_package(&folder));
+    select_title(&launcher, "Update");
+
+    let reload = launcher.reload(&identity);
+    block_on(launcher.activate_selected());
+    assert_eq!(
+        launcher.view().status,
+        Status::Error("Dev is reloading".into())
+    );
+    block_on(launcher.set_enabled(&identity, false));
+    assert_eq!(
+        launcher.view().status,
+        Status::Error("Dev is reloading".into())
+    );
+    assert!(launcher.packages()[0].enabled);
+    block_on(reload);
+
+    assert_eq!(open(&launcher, "Open Dev"), "JavaScript sample");
+}
+
+#[test]
+fn a_view_the_guest_refuses_is_not_a_failure_to_start() {
+    let dirs = Dirs::new();
+    let (launcher, folder, _) = dirs.installed("Dev", "sample_rust");
+    // Its view answers with an ordinary error, as one that needs the user
+    // to sign in first would: the code started.
+    rebuild(&folder, "refusing_view");
+
+    assert_eq!(
+        press(&launcher, "Reload Dev"),
+        Status::Result("Reloaded Dev".into())
+    );
+    assert!(!titles(&launcher).iter().any(|t| t.starts_with("Retry")));
+    assert!(
+        launcher.view().rows[0]
+            .subtitle
+            .as_deref()
+            .is_some_and(|s| !s.contains("Failed to start")),
+        "{:?}",
+        launcher.view().rows[0]
+    );
 }
 
 #[test]

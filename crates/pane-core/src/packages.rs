@@ -535,6 +535,12 @@ struct RegistryJson {
     /// The next unused managed folder number.
     next: u64,
     packages: Vec<RecordJson>,
+    /// Managed folders of replaced copies that could not be removed, such as
+    /// a folder still in use on Windows; removal is tried again when Pane
+    /// starts. Only folders listed here are ever removed that way: one the
+    /// registry never recorded, as after it was lost, is left alone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    leftovers: Vec<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -582,11 +588,43 @@ impl Store {
                 version: REGISTRY_VERSION,
                 next: 1,
                 packages: Vec::new(),
+                leftovers: Vec::new(),
             }),
             Err(error) => Err(error.to_string()),
         }
         .map_err(|reason| format!("{}: {reason}", dir.join(REGISTRY_FILE).display()));
-        Store { dir, registry }
+        let mut store = Store { dir, registry };
+        store.remove_leftovers();
+        store
+    }
+
+    /// Tries again to remove the managed folders of replaced copies that
+    /// could not be removed before, never one an installed package uses.
+    /// Best effort: a folder that still cannot be removed stays listed.
+    fn remove_leftovers(&mut self) {
+        let Ok(registry) = &mut self.registry else {
+            return;
+        };
+        if registry.leftovers.is_empty() {
+            return;
+        }
+        let packages = self.dir.join(PACKAGES_DIR);
+        let mut updated = registry.clone();
+        updated.leftovers.retain(|dir| {
+            let in_use = registry.packages.iter().any(|record| record.dir == *dir);
+            if in_use {
+                return false;
+            }
+            match fs::remove_dir_all(packages.join(dir)) {
+                Ok(()) => false,
+                Err(error) => error.kind() != io::ErrorKind::NotFound,
+            }
+        });
+        if updated.leftovers.len() != registry.leftovers.len()
+            && write_registry(&self.dir, &updated).is_ok()
+        {
+            *registry = updated;
+        }
     }
 
     /// Why installed packages cannot be read, if they cannot.
@@ -724,9 +762,17 @@ impl Store {
             return Err(storage(error));
         }
         *registry = updated;
-        if let Some(old) = old {
-            // Best effort: a folder still in use (Windows) is left behind.
-            let _ = fs::remove_dir_all(self.dir.join(PACKAGES_DIR).join(old));
+        if let Some(old) = old
+            && fs::remove_dir_all(self.dir.join(PACKAGES_DIR).join(&old)).is_err()
+        {
+            // A folder still in use (Windows) is left behind, and listed so
+            // that the next start removes it. Best effort: if that cannot be
+            // recorded, the folder stays.
+            let mut listed = registry.clone();
+            listed.leftovers.push(old);
+            if write_registry(&self.dir, &listed).is_ok() {
+                *registry = listed;
+            }
         }
         Ok(InstalledPackage::load(
             package.identity.clone(),

@@ -85,7 +85,7 @@ Replacing an installed package's code from its source folder while Pane and othe
 _Avoid_: Restart, hot swap, update (an update does not start the new code)
 
 **Startup failure**:
-A reload whose checked replacement was installed but could not start; Pane stops its instances, reports it with Retry and diagnostics and does not restore the earlier code. Distinct from a replacement that fails its checks, which leaves the working code in place.
+A reload whose checked replacement was installed but could not start: a command trapped, or its component could not load or be instantiated (an error the command returns for its view is not one); Pane stops its instances, reports it with Retry and diagnostics and does not restore the earlier code. Distinct from a replacement that fails its checks, which leaves the working code in place.
 _Avoid_: Build failure, rollback
 
 **Supported platforms**:
