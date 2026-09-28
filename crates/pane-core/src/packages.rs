@@ -15,6 +15,7 @@ use std::path::{Component as PathPart, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::atomic::write_atomically;
 use crate::launcher::CommandRegistration;
 use crate::runtime::CallError;
 
@@ -664,12 +665,9 @@ fn copy_package(package: &SourcePackage, location: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Writes the registry through a temporary file, so a crash leaves either
-/// the old or the new registry.
+/// Replaces the registry whole (see [`write_atomically`] for what a crash or
+/// a second Pane process can do to it).
 fn write_registry(dir: &Path, registry: &RegistryJson) -> io::Result<()> {
-    fs::create_dir_all(dir)?;
     let text = serde_json::to_string_pretty(registry).map_err(io::Error::other)?;
-    let temporary = dir.join(format!("{REGISTRY_FILE}.tmp"));
-    fs::write(&temporary, text)?;
-    fs::rename(&temporary, dir.join(REGISTRY_FILE))
+    write_atomically(&dir.join(REGISTRY_FILE), text.as_bytes())
 }

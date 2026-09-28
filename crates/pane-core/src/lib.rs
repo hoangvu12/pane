@@ -1,6 +1,7 @@
 //! Pane's core: the launcher model, extension packages and the extension
 //! runtime the launcher drives.
 
+mod atomic;
 mod launcher;
 mod packages;
 mod runtime;

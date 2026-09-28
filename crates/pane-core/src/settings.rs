@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
+use crate::atomic::write_atomically;
 use crate::packages::PackageIdentity;
 
 pub(crate) const SETTINGS_FILE: &str = "settings.json";
@@ -135,13 +136,9 @@ impl PackageSettings {
     }
 }
 
-/// Writes through a temporary file, so a crash leaves the old or new file.
+/// Replaces the settings file whole (see [`write_atomically`] for what a
+/// crash or a second Pane process can do to it).
 fn write(path: &Path, file: &SettingsJson) -> io::Result<()> {
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
-    }
     let text = serde_json::to_string_pretty(file).map_err(io::Error::other)?;
-    let temporary = path.with_extension("json.tmp");
-    fs::write(&temporary, text)?;
-    fs::rename(&temporary, path)
+    write_atomically(path, text.as_bytes())
 }
