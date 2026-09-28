@@ -667,3 +667,47 @@ fn another_panes_install_on_the_same_folder_survives_an_uninstall() {
             .is_file()
     );
 }
+
+/// The folders granted in Pane's `folders.json`, by package key.
+fn granted_folders(dirs: &Dirs) -> Vec<String> {
+    let path = dirs.packages_dir().join("folders.json");
+    let Ok(text) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let record: serde_json::Value = serde_json::from_str(&text).unwrap();
+    record["folders"]
+        .as_object()
+        .map(|folders| folders.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
+#[test]
+fn uninstall_all_forgets_the_folder_granted_to_each_package() {
+    let dirs = Dirs::new();
+    dirs.fixture("x", &needs("y"));
+    let y = dirs.fixture("y", &needs("x"));
+    let launcher = dirs.launcher();
+    block_on(launcher.install_package(&y));
+    let shared = tempfile::tempdir().unwrap();
+    for name in ["x", "y"] {
+        let folder = shared.path().join(name);
+        fs::create_dir(&folder).unwrap();
+        block_on(launcher.grant_folder(&dirs.identity(name), &folder));
+    }
+    let mut both = vec![dirs.identity("x").key(), dirs.identity("y").key()];
+    both.sort();
+    let mut granted = granted_folders(&dirs);
+    granted.sort();
+    assert_eq!(granted, both);
+
+    ask_to_uninstall(&launcher, "Package x");
+    assert!(matches!(
+        press(&launcher, "Uninstall all 2 and keep saved data"),
+        Status::Result(_)
+    ));
+    assert!(launcher.packages().is_empty());
+    // Pane's record, not their data: forgotten although data is kept.
+    assert_eq!(granted_folders(&dirs), Vec::<String>::new());
+    dirs.launcher();
+    assert_eq!(granted_folders(&dirs), Vec::<String>::new());
+}

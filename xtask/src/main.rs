@@ -27,8 +27,12 @@ const PREBUILT: &[&str] = &[
     "sample_applications_ts",
     "sample_query_js",
     "sample_query_ts",
+    "sample_search_js",
+    "sample_search_ts",
     "sample_helper_js",
     "sample_helper_ts",
+    "sample_files_js",
+    "sample_files_ts",
 ];
 
 fn main() -> ExitCode {
@@ -85,10 +89,12 @@ fn guests() -> Result<(), String> {
                 "calculator",
                 "applications",
                 "quicklinks",
+                "files",
                 "clipboard_history",
                 "sample_operations",
                 "sample_dependencies",
                 "sample_query",
+                "sample_search",
                 "sample_helper",
                 "faulty",
                 "operations_fixture",
@@ -178,7 +184,7 @@ fn echo_helper(root: &Path, out: &Path) -> Result<(), String> {
 /// (package folder in `guests/packages`, component) of each sample package,
 /// and of the default extensions (the calculator, applications and
 /// quicklinks).
-const SAMPLE_PACKAGES: [(&str, &str); 22] = [
+const SAMPLE_PACKAGES: [(&str, &str); 28] = [
     ("sample-rust", "sample_rust"),
     ("sample-settings", "sample_settings"),
     ("sample-js", "sample_js"),
@@ -188,6 +194,7 @@ const SAMPLE_PACKAGES: [(&str, &str); 22] = [
     ("calculator", "calculator"),
     ("applications", "applications"),
     ("quicklinks", "quicklinks"),
+    ("files", "files"),
     ("clipboard-history", "clipboard_history"),
     ("sample-operations", "sample_operations"),
     ("sample-operations-js", "sample_operations_js"),
@@ -198,9 +205,14 @@ const SAMPLE_PACKAGES: [(&str, &str); 22] = [
     ("sample-query", "sample_query"),
     ("sample-query-js", "sample_query_js"),
     ("sample-query-ts", "sample_query_ts"),
+    ("sample-search", "sample_search"),
+    ("sample-search-js", "sample_search_js"),
+    ("sample-search-ts", "sample_search_ts"),
     ("sample-helper", "sample_helper"),
     ("sample-helper-js", "sample_helper_js"),
     ("sample-helper-ts", "sample_helper_ts"),
+    ("sample-files-js", "sample_files_js"),
+    ("sample-files-ts", "sample_files_ts"),
 ];
 
 /// Rebuilds `guests/prebuilt/` from the JS/TS sample sources, then refreshes

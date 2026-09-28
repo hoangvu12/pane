@@ -81,8 +81,9 @@ world clipboard-history-user {
 
 /// The world Pane hosts: a command that may also use extension data, call
 /// operations, find and open installed applications, run its native
-/// helpers and keep clipboard history.
+/// helpers, list the folder granted to its package and keep clipboard
+/// history.
 world extension-with-clipboard {
-  include extension-with-helpers;
+  include extension-with-files;
   import clipboard-history;
 }
