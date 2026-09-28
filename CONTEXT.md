@@ -35,3 +35,23 @@ _Avoid_: The entire search interface
 **Package identity**:
 The identity that distinguishes an installed source package from other packages, independently of its display title or selected release.
 _Avoid_: Display name, command name
+
+**Extension package**:
+A unit of installation: a package manifest plus the built components of the commands it lists. A local package is a folder.
+_Avoid_: Plugin bundle
+
+**Package manifest**:
+The `pane.json` file that declares a package's title, version, required extension API and commands, versioned by its manifest version.
+_Avoid_: package.json (npm's file)
+
+**Source-only package**:
+A package whose manifest names components that have not been built; Pane explains it rather than installing it.
+_Avoid_: Broken install
+
+**Managed copy**:
+Pane's own copy of an installed package's manifest and components, kept in Pane's data folder, separate from the user-owned source.
+_Avoid_: Cache (it is not disposable)
+
+**Update**:
+Replacing the managed copy of an installed package from its source while keeping its package identity. A second explicit install of the same identity is rejected instead.
+_Avoid_: Reinstall

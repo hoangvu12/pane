@@ -84,7 +84,7 @@ These remain open design/validation work in the specification and implementation
 1. Final JS engine, upstream patch/fork strategy, runtime packaging/topology and initialization fixes.
 2. Public WIT/SDK contracts, language parity, UI/event/custom drawing, input/IME/accessibility and host/helper IPC.
 3. Cancellation, hangs, concurrent work, stale generation replies, reload/disable resource cleanup and fatal shared-runtime recovery.
-4. Package manifest/artifact format, dependency/resource/operation addressing, dependency cycles/partial installation, Git tracking and staged update activation.
+4. Package manifest/artifact format beyond the minimal local `pane.json` v1 of #9 (title, version, extension API, one component per command; [format](../guests/README.md#packaging-and-installing-a-local-extension)), dependency/resource/operation addressing, dependency cycles/partial installation, Git tracking and staged update activation.
 5. API version signaling, deprecation/migration details, persisted-state schema/migration ownership and recovery limits.
 6. Supported OS versions/architectures/Linux desktops, release validation matrix and measured resource/startup/interaction targets.
 7. Installer acquisition/retry/cache mechanics; app/runtime update delivery; default clipboard retention and other concrete settings defaults.

@@ -2,7 +2,7 @@
 
 A small, extensible desktop launcher for Windows, macOS and Linux, inspired by Raycast and Pi.
 
-Pane is in early development. There is no installable application yet; the current slice is a native GPUI CE window running one sample command implemented three times, as Rust, JavaScript and TypeScript extensions, through a WASI 0.3 component interface. JavaScript and TypeScript run on a pinned, patched componentize-qjs (QuickJS), which remains provisional.
+Pane is in early development. There is no installable application yet; the current slice is a native GPUI CE window running one sample command implemented three times, as Rust, JavaScript and TypeScript extensions, through a WASI 0.3 component interface, and installing local extension packages from a folder. JavaScript and TypeScript run on a pinned, patched componentize-qjs (QuickJS), which remains provisional.
 
 ## Build, run and test
 
@@ -25,12 +25,12 @@ cargo xtask ci       # build guests, check the prebuilt JS/TS samples, then form
 
 No JavaScript toolchain is needed for these: the JS and TS sample components are committed prebuilt in `guests/prebuilt/`. Rebuilding them from source with `cargo xtask js-guests` also needs Python 3.12+, git and Node.js 22+ on any of the three OSes; see [guests/README.md](guests/README.md#writing-a-javascript-or-typescript-command).
 
-In the window, use the arrow keys to select, Enter to open a command or run an item, and Escape to go back; clicking a row runs it too.
+In the window, use the arrow keys to select, Enter to open a command or run an item, and Escape to go back; clicking a row runs it too. **Install extension from folder…**, the last row, installs a local extension package; see [Packaging and installing a local extension](guests/README.md#packaging-and-installing-a-local-extension).
 
 Layout:
 
 - `wit/extension.wit`: the host/guest contract for one extension command.
-- `crates/pane-core`: the launcher model (the public host interface the tests drive) and the extension runtime, a Wasmtime 49.0.1 engine registering only WASI 0.3.
+- `crates/pane-core`: the launcher model (the public host interface the tests drive), extension packages (manifest, identity, managed copies) and the extension runtime, a Wasmtime 49.0.1 engine registering only WASI 0.3.
 - `crates/pane`: the GPUI CE window.
 - `guests/`: extension guests, including [the Rust, JavaScript and TypeScript sample commands](guests/README.md), TypeScript declarations for the contract, the prebuilt JS/TS components and test fixtures.
 - `tools/componentize-js`: the JS/TS toolchain, pinned upstream componentize-qjs plus Pane's patch queue, and its build script.
