@@ -6,6 +6,9 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use futures::executor::block_on;
 use pane_core::{Launcher, PackageIdentity, Runtime, Status};
@@ -258,6 +261,14 @@ fn an_answer_arriving_after_the_query_changed_is_discarded() {
     assert_eq!(titles(&launcher), Vec::<String>::new());
     block_on(pending);
     assert_eq!(titles(&launcher), ["6"]);
+
+    // Nor is one for an earlier search of the same query.
+    let earlier = launcher.set_query("1 + 1");
+    search(&launcher, "2 + 2");
+    let later = launcher.set_query("1 + 1");
+    block_on(earlier);
+    block_on(later);
+    assert_eq!(titles(&launcher), ["2"]);
 }
 
 #[test]
@@ -368,6 +379,43 @@ fn a_command_that_fails_to_answer_is_explained_and_other_results_stay() {
     assert_eq!(titles(&launcher), ["2"]);
     search(&launcher, "faulty");
     assert_eq!(titles(&launcher), ["Faulty answers"]);
+}
+
+#[test]
+fn the_answer_is_listed_while_a_command_asked_after_it_is_still_answering() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher(dirs.runtime());
+    // Installed after the calculator, so asked after it.
+    let slow = dirs.package(
+        "slow",
+        &manifest_computing("Slow", "Slow answers"),
+        &built("faulty.wasm"),
+    );
+    install(&launcher, &slow);
+    launcher.back();
+
+    // The faulty fixture answers "0 + 0" after about a second of work.
+    let pending = launcher.set_query("0 + 0");
+    let (done, answered) = mpsc::channel();
+    thread::spawn(move || {
+        block_on(pending);
+        let _ = done.send(());
+    });
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while titles(&launcher).is_empty() {
+        assert!(Instant::now() < deadline, "the calculator never answered");
+        thread::sleep(Duration::from_millis(1));
+    }
+
+    assert_eq!(titles(&launcher), ["0"]);
+    assert_eq!(selected_title(&launcher).as_deref(), Some("0"));
+    assert!(
+        answered.try_recv().is_err(),
+        "the slow command is still answering"
+    );
+    answered.recv_timeout(Duration::from_secs(60)).unwrap();
+    assert_eq!(titles(&launcher), ["0", "Slow answer"]);
+    assert_eq!(selected_title(&launcher).as_deref(), Some("0"));
 }
 
 #[test]

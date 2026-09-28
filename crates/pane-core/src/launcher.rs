@@ -217,8 +217,11 @@ struct State {
     /// shown or refreshed, so that searching only ranks them.
     root: Vec<RootResult>,
     /// The root results commands computed from the current query, listed
-    /// first; empty until their answers arrive.
+    /// first; each command's results are added when it answers.
     computed: Vec<Computed>,
+    /// Incremented on every search, so that an answer arriving for an
+    /// earlier search, even of the same query, is discarded.
+    search_generation: u64,
     /// The component of the command whose view is open.
     open: Option<PathBuf>,
     /// The form on screen, if one is open.
@@ -392,6 +395,7 @@ impl Launcher {
             entries: Vec::new(),
             root: Vec::new(),
             computed: Vec::new(),
+            search_generation: 0,
             open: None,
             form: None,
             custom_view: None,
@@ -450,10 +454,11 @@ impl Launcher {
     ///
     /// Metadata is searched at once, without running any guest. For a query
     /// that is not blank, the enabled commands that compute root results
-    /// (such as the calculator) are asked too: await the returned future to
-    /// list their results, above the others, once every one has answered.
-    /// Their answers are discarded if the query has changed meanwhile, and a
-    /// command that fails is listed as a result explaining the failure.
+    /// (such as the calculator) are asked too, one after another: await the
+    /// returned future to list each one's results, above the others, as soon
+    /// as it answers. Their answers are discarded if the query has changed
+    /// meanwhile, and a command that fails is listed as a result explaining
+    /// the failure.
     pub fn set_query(&self, query: &str) -> impl Future<Output = ()> + Send + 'static {
         let mut state = self.lock();
         let asked = match &state.view.screen {
@@ -467,11 +472,14 @@ impl Launcher {
         };
         let query = query.to_owned();
         let generation = state.screen_generation;
+        let search = state.search_generation;
         drop(state);
         let launcher = self.clone();
         async move {
             if !asked.is_empty() {
-                launcher.show_root_results(generation, query, asked).await
+                launcher
+                    .show_root_results(generation, search, query, asked)
+                    .await
             }
         }
     }
@@ -479,6 +487,7 @@ impl Launcher {
     /// Shows the root results matching `query` from metadata alone; results
     /// computed for an earlier query are gone.
     fn search(&self, state: &mut State, query: &str) {
+        state.search_generation += 1;
         state.computed.clear();
         let (rows, entries) = root_rows(&state.root, &state.computed, query);
         state.view.screen = Screen::Root {
@@ -517,15 +526,21 @@ impl Launcher {
             .collect()
     }
 
-    /// Asks each of `commands` for its root results for `query` and lists
-    /// them, unless the query or the screen has changed meanwhile.
+    /// Asks each of `commands` in turn for its root results for `query` and
+    /// lists each one's as soon as it answers, unless the query, the search
+    /// or the screen has changed meanwhile.
+    ///
+    /// The runtime serves calls one at a time, so a command that is slow or
+    /// hangs still delays the commands asked after it (cancellation and
+    /// timeouts are #29 and #18); it no longer hides the answers of those
+    /// asked before it.
     async fn show_root_results(
         &self,
         generation: u64,
+        search: u64,
         query: String,
         commands: Vec<(CommandRegistration, Option<PackageSettings>)>,
     ) {
-        let mut answers = Vec::new();
         for (command, settings) in commands {
             let answer = match self.runtime() {
                 Ok(runtime) => {
@@ -535,35 +550,35 @@ impl Launcher {
                 }
                 Err(error) => Err(error),
             };
-            answers.push((command, answer));
-        }
-        let Some(mut state) = self.lock_if_current(generation) else {
-            return;
-        };
-        if state.view.query() != Some(query.as_str()) {
-            return;
-        }
-        let state = &mut *state;
-        state.computed = answers
-            .into_iter()
+            let Some(mut state) = self.lock_if_current(generation) else {
+                return;
+            };
+            if state.search_generation != search || state.view.query() != Some(query.as_str()) {
+                return;
+            }
+            let state = &mut *state;
             // A command disabled meanwhile contributes nothing.
-            .filter(|(command, _)| disabled_owner(state, &command.component).is_none())
-            .flat_map(|(command, answer)| computed_results(command, &query, answer))
-            .collect();
-        // The best match stays selected, now that better ones may be first;
-        // a row the user moved to stays selected.
-        let keep = state
-            .view
-            .selected
-            .filter(|&index| index > 0)
-            .and_then(|index| state.view.rows.get(index))
-            .map(|row| row.id.clone());
-        let (rows, entries) = root_rows(&state.root, &state.computed, &query);
-        state.view.selected = keep
-            .and_then(|id| rows.iter().position(|row| row.id == id))
-            .or_else(|| first_index(&rows));
-        state.view.rows = rows;
-        state.entries = entries;
+            if disabled_owner(state, &command.component).is_some() {
+                continue;
+            }
+            state
+                .computed
+                .extend(computed_results(command, &query, answer));
+            // The best match stays selected, now that better ones may be
+            // first; a row the user moved to stays selected.
+            let keep = state
+                .view
+                .selected
+                .filter(|&index| index > 0)
+                .and_then(|index| state.view.rows.get(index))
+                .map(|row| row.id.clone());
+            let (rows, entries) = root_rows(&state.root, &state.computed, &query);
+            state.view.selected = keep
+                .and_then(|id| rows.iter().position(|row| row.id == id))
+                .or_else(|| first_index(&rows));
+            state.view.rows = rows;
+            state.entries = entries;
+        }
     }
 
     /// Selects the row at `index`, if there is one.

@@ -109,17 +109,23 @@ comes from the extension, through the same guest boundary as its command:
   in Rust, JavaScript and TypeScript).
 - For every change of a query that is not blank, `Launcher::set_query`
   ranks the metadata at once and returns a future that asks each enabled
-  command with `rootResults` for `results-for(query)`, in install order, and
-  lists the answers once all have arrived. The window awaits it off its
-  thread and redraws, so typing never waits for an extension. Answers for an
-  older query (or after leaving root search) are discarded; until the
-  answers arrive the new query lists no computed result, never an older
-  query's. The guest's work for an older query is not cancelled: calls run
-  one at a time on the runtime thread
-  ([#29](https://github.com/hoangvu12/pane/issues/29) owns cancellation).
+  command with `rootResults` for `results-for(query)`, one after another in
+  install order, and lists each command's results as soon as it answers, so
+  a slow command does not hide the answers of those asked before it. The
+  window awaits it off its thread and redraws, so typing never waits for an
+  extension. Answers for an older query or an earlier search of the same
+  query (or after leaving root search) are discarded; until a command
+  answers, the new query lists none of its results, never an older
+  query's. The guest's work for an older query is not cancelled, and calls
+  run one at a time on the runtime thread, so a slow or hung command still
+  delays every command asked after it, for this query and the next ones
+  ([#29](https://github.com/hoangvu12/pane/issues/29) owns cancellation,
+  [#18](https://github.com/hoangvu12/pane/issues/18) timeouts).
 - Computed results are listed **above** every title match, in the order the
-  commands and their answers give them; they are not ranked against titles.
-  When they arrive the first row is selected again, unless the user had
+  commands and their answers give them; they are not ranked against titles
+  (provisional, pending user confirmation; see
+  [current decisions](current-decisions.md) item 10).
+  When each command's results arrive the first row is selected again, unless the user had
   moved the selection, which stays on its row.
 - A computed result has an id (`<command id>:<result id>`), title, optional
   subtitle and an **action** Pane performs without calling the extension
@@ -288,7 +294,10 @@ format; parentheses 65 deep, a query over 256 characters and 100,000
 leading signs or parentheses listing nothing, without an error row or a
 restart of the calculator; Enter reporting the copy and `selected_copy` giving the text; an
 answer for an older query discarded and none shown before the new one
-arrives; a selection the user moved kept; the calculator not running until
+arrives, nor one for an earlier search of the same query; the answer listed
+and selected while a command asked after it (the `faulty` fixture, slow on
+"0 + 0") is still answering, its result added below when it answers; a
+selection the user moved kept; the calculator not running until
 a non-blank query; disabling it removing its answer at once, asking it
 nothing more and keeping other results, and enabling it again; a failing
 and a crashing command (the `faulty` fixture) explained as a row while other
