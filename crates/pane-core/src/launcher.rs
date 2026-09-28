@@ -2903,6 +2903,10 @@ fn extension_rows(
             (true, None) => "Enabled",
             (true, Some(PauseCause::FailedToStart)) => "Enabled · Failed to start",
             (true, Some(PauseCause::Crashes)) => "Enabled · Paused after crashing",
+            (true, Some(PauseCause::Unresponsive)) => "Enabled · Paused after not responding",
+            (true, Some(PauseCause::CrashesAndHangs)) => {
+                "Enabled · Paused after crashing or not responding"
+            }
         };
         let developing = if developed(&package.identity) {
             " · Developing"

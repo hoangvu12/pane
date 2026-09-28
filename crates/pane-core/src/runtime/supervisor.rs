@@ -21,16 +21,27 @@
 //! This needs the panic to unwind (checked at compile time below). A panic
 //! in a destructor while the thread unwinds from a first panic aborts the
 //! whole process, as does any other abort: neither is recovered.
+//!
+//! A thread that **stops responding** (#18) is handled the same way: a
+//! watchdog thread sees it inside one poll of its work for longer than
+//! [`UNRESPONSIVE_LIMIT`] (stuck in Pane's host code or in Wasmtime: a
+//! guest yields every tick, see `deadlines`), and gives up on it. Every
+//! call it held answers that the runtime stopped, its helpers are ended, it
+//! is restarted or not as after a crash (the two share the restart window),
+//! and the launcher is told without any package named. The stuck thread
+//! cannot be ended: it is abandoned, runs nothing more if it ever returns,
+//! and frees what it holds only then.
 
 use std::any::Any;
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use tokio::sync::{mpsc, watch};
 
+use super::deadlines::{self, UNRESPONSIVE_LIMIT, Watch, Watched};
 #[cfg(any(test, debug_assertions))]
 use super::faults::Fault;
 use super::faults::Faults;
@@ -55,18 +66,47 @@ compile_error!(
 /// runtime instead of restarting it. An explicit choice (provisional).
 pub(crate) const CRASH_WINDOW: Duration = Duration::from_secs(5 * 60);
 
-/// What the runtime is doing, as far as crashes of its thread go.
+/// How the runtime thread failed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RuntimeFailure {
+    /// It panicked.
+    Crashed,
+    /// It stopped responding: it did not return to its work for
+    /// [`UNRESPONSIVE_LIMIT`], so Pane gave up on it.
+    Unresponsive,
+}
+
+/// What the runtime is doing, as far as failures of its thread go.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RuntimeStatus {
-    /// It runs, and has not crashed since it started or was last restarted
+    /// It runs, and has not failed since it started or was last restarted
     /// by the user.
     Running,
-    /// It crashed, and Pane started it again by itself. `why` is what its
-    /// thread reported as it stopped.
-    Restarted { why: String },
-    /// It crashed and was not started again: it runs nothing until the user
+    /// It failed, and Pane started it again by itself. `why` is what its
+    /// thread reported as it stopped, or why Pane gave up on it.
+    Restarted {
+        failure: RuntimeFailure,
+        why: String,
+    },
+    /// It failed and was not started again: it runs nothing until the user
     /// restarts it. `not_restarted` says why Pane did not.
-    Stopped { why: String, not_restarted: String },
+    Stopped {
+        failure: RuntimeFailure,
+        why: String,
+        not_restarted: String,
+    },
+}
+
+impl RuntimeStatus {
+    /// How it last failed, unless it runs as it started.
+    pub fn failure(&self) -> Option<RuntimeFailure> {
+        match self {
+            RuntimeStatus::Running => None,
+            RuntimeStatus::Restarted { failure, .. } | RuntimeStatus::Stopped { failure, .. } => {
+                Some(*failure)
+            }
+        }
+    }
 }
 
 /// Told on the crashed runtime thread, once its helpers were ended and it
@@ -87,19 +127,26 @@ pub(super) struct Shared {
     /// the window still shows from a crashed one must not name a new view.
     pub(super) next_view: Arc<AtomicU64>,
     crashes: Mutex<Option<CrashReport>>,
-    /// Counts the crashed threads Pane is done with (restarted or not, the
-    /// launcher told), for a call whose answer a crash lost.
+    /// The number of the last thread Pane is done with (it failed and was
+    /// restarted or not, the launcher told), for a call whose answer a
+    /// failure lost: threads serve one after another, so every thread up to
+    /// it is done.
     handled: watch::Sender<u64>,
+    /// How many threads Pane gave up on are still stuck.
+    abandoned: Arc<AtomicUsize>,
+    /// The threads made to hang, for releasing them.
+    #[cfg(any(test, debug_assertions))]
+    hung: Mutex<Vec<Arc<Faults>>>,
     cache_dir: Option<PathBuf>,
     current: Mutex<Current>,
 }
 
 /// Why a request was not sent to the runtime thread.
 pub(super) enum NotSent {
-    /// The runtime is stopped after crashing.
+    /// The runtime is stopped after failing.
     Stopped,
-    /// The thread has just crashed; Pane is handling it.
-    Lost,
+    /// Thread number `.0` has just crashed; Pane is handling it.
+    Lost(u64),
 }
 
 impl NotSent {
@@ -107,19 +154,19 @@ impl NotSent {
     pub(super) fn error(self) -> CallError {
         match self {
             NotSent::Stopped => stopped(),
-            NotSent::Lost => lost_in(&RuntimeStatus::Running),
+            NotSent::Lost(_) => lost_in(&RuntimeStatus::Running),
         }
     }
 }
 
-/// Counts a crashed thread as handled when it ends, however its handling
+/// Counts thread number `.1` as handled when it ends, however its handling
 /// ends.
-struct Handled(Weak<Shared>);
+struct Handled(Weak<Shared>, u64);
 
 impl Drop for Handled {
     fn drop(&mut self) {
         if let Some(shared) = self.0.upgrade() {
-            shared.handled.send_modify(|handled| *handled += 1);
+            shared.mark_handled(self.1);
         }
     }
 }
@@ -129,6 +176,9 @@ impl Drop for Shared {
     /// which would otherwise outlive it. The thread stops with its requests.
     fn drop(&mut self) {
         self.helpers.stop_all();
+        // A thread made to hang ends too.
+        #[cfg(any(test, debug_assertions))]
+        self.inject(Fault::Release);
     }
 }
 
@@ -137,8 +187,8 @@ struct Current {
     thread: Option<Thread>,
     /// Counts the threads started, to tell a report of an old one.
     started: u64,
-    /// When the runtime last crashed, since the user last restarted it.
-    last_crash: Option<Instant>,
+    /// When the runtime last failed, since the user last restarted it.
+    last_failure: Option<Instant>,
     status: RuntimeStatus,
 }
 
@@ -146,6 +196,8 @@ struct Current {
 #[derive(Clone)]
 struct Thread {
     requests: mpsc::UnboundedSender<Request>,
+    /// Its number among the threads started.
+    number: u64,
     /// Where faults are injected into it.
     #[cfg(any(test, debug_assertions))]
     faults: Arc<Faults>,
@@ -167,11 +219,14 @@ impl Shared {
             next_view: Arc::default(),
             crashes: Mutex::new(None),
             handled: watch::Sender::new(0),
+            abandoned: Arc::default(),
+            #[cfg(any(test, debug_assertions))]
+            hung: Mutex::default(),
             cache_dir,
             current: Mutex::new(Current {
                 thread: None,
                 started: 0,
-                last_crash: None,
+                last_failure: None,
                 status: RuntimeStatus::Running,
             }),
         });
@@ -184,21 +239,39 @@ impl Shared {
         Ok(shared)
     }
 
-    /// Sends `request` to the runtime thread.
-    pub(super) fn send(&self, request: Request) -> Result<(), NotSent> {
-        let requests = match &lock(&self.current).thread {
-            Some(thread) => thread.requests.clone(),
+    /// Sends `request` to the runtime thread, returning its number.
+    pub(super) fn send(&self, request: Request) -> Result<u64, NotSent> {
+        let (requests, number) = match &lock(&self.current).thread {
+            Some(thread) => (thread.requests.clone(), thread.number),
             None => return Err(NotSent::Stopped),
         };
         // A thread that just crashed has dropped its requests: this one is
         // not sent, nor sent again to the next thread.
-        requests.send(request).map_err(|_| NotSent::Lost)
+        requests
+            .send(request)
+            .map(|()| number)
+            .map_err(|_| NotSent::Lost(number))
     }
 
-    /// Resolves, through [`lost`], once a thread that crashes after this
-    /// call has been handled.
+    /// Tells, through [`lost`], when a thread that fails after this call
+    /// has been handled.
     pub(super) fn handled(&self) -> watch::Receiver<u64> {
         self.handled.subscribe()
+    }
+
+    /// Notes that Pane is done with thread number `number`.
+    fn mark_handled(&self, number: u64) {
+        self.handled.send_if_modified(|handled| {
+            let later = number > *handled;
+            *handled = (*handled).max(number);
+            later
+        });
+    }
+
+    /// How many runtime threads Pane gave up on, as they stopped
+    /// responding, are still stuck.
+    pub(super) fn abandoned(&self) -> usize {
+        self.abandoned.load(Ordering::SeqCst)
     }
 
     pub(super) fn status(&self) -> RuntimeStatus {
@@ -211,14 +284,24 @@ impl Shared {
 
     #[cfg(any(test, debug_assertions))]
     pub(super) fn inject(&self, fault: Fault) {
+        // Released wherever they hang, even once another thread serves.
+        if fault == Fault::Release {
+            for hung in lock(&self.hung).drain(..) {
+                hung.inject(Fault::Release);
+            }
+            return;
+        }
         let Some(thread) = lock(&self.current).thread.clone() else {
             return;
         };
+        if fault == Fault::Hang {
+            lock(&self.hung).push(thread.faults.clone());
+        }
         thread.faults.inject(fault);
     }
 
     /// Starts the runtime again after it stopped, at the user's request:
-    /// crashes before this no longer count against restarting it by
+    /// failures before this no longer count against restarting it by
     /// itself. Nothing that ran before is run again. A runtime that runs is
     /// left as it is.
     pub(super) fn restart(self: &Arc<Shared>) -> Result<(), CallError> {
@@ -233,7 +316,7 @@ impl Shared {
         let thread = self.spawn(Arc::new(Code::new(self.engine()?)), number)?;
         current.thread = Some(thread);
         current.started = number;
-        current.last_crash = None;
+        current.last_failure = None;
         current.status = RuntimeStatus::Running;
         Ok(())
     }
@@ -250,55 +333,121 @@ impl Shared {
             .map_err(unavailable)?;
         let (requests, receiver) = mpsc::unbounded_channel();
         let faults = Arc::new(Faults::default());
-        let host = Host::new(code, self, number, Arc::clone(&faults));
+        let watch = Arc::new(Watch::default());
+        let host = Host::new(code, self, number, Arc::clone(&faults), watch.clone());
         let shared = Arc::downgrade(self);
-        std::thread::Builder::new()
-            .name("pane-extension-runtime".into())
-            .spawn(move || {
-                // Dropped last, once the crash (if any) was handled.
-                let _handled = Handled(shared.clone());
-                let served = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                    executor.block_on(host.serve(receiver))
-                }));
-                drop(executor);
-                if let Err(panic) = served {
-                    crashed(&shared, number, panic_message(&*panic));
-                }
-            })
-            .map_err(unavailable)?;
+        let abandoned = self.abandoned.clone();
+        {
+            let (watch, shared) = (watch.clone(), shared.clone());
+            std::thread::Builder::new()
+                .name("pane-extension-runtime".into())
+                .spawn(move || {
+                    // Dropped last, once the failure (if any) was handled.
+                    let _handled = Handled(shared.clone(), number);
+                    let served = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                        executor.block_on(Watched {
+                            watch: &watch,
+                            work: Box::pin(host.serve(receiver)),
+                        })
+                    }));
+                    drop(executor);
+                    if !watch.end() {
+                        // Pane gave up on it while it was stuck, and handled
+                        // that then. What it held is freed now.
+                        abandoned.fetch_sub(1, Ordering::SeqCst);
+                        return;
+                    }
+                    if let Err(panic) = served {
+                        failed(
+                            &shared,
+                            number,
+                            RuntimeFailure::Crashed,
+                            panic_message(&*panic),
+                        );
+                    }
+                })
+                .map_err(unavailable)?;
+        }
+        watchdog(shared, watch, number);
         Ok(Thread {
             requests,
+            number,
             #[cfg(any(test, debug_assertions))]
             faults,
         })
     }
 }
 
-/// Runtime thread `number` crashed with `why`, and its unwinding dropped
-/// everything it held: ends the helpers its guests left running, restarts
-/// it unless it crashed within [`CRASH_WINDOW`] of its previous crash,
-/// and tells the launcher.
-fn crashed(shared: &Weak<Shared>, number: u64, why: String) {
+/// Watches runtime thread `number` on a thread of its own, giving up on it
+/// once it has been inside one poll of its work for [`UNRESPONSIVE_LIMIT`]
+/// (see [`Watch`]). It stops once the thread's end was handled, or every
+/// runtime handle is gone.
+fn watchdog(shared: Weak<Shared>, watch: Arc<Watch>, number: u64) {
+    let _ = std::thread::Builder::new()
+        .name("pane-runtime-watchdog".into())
+        .spawn(move || {
+            loop {
+                std::thread::sleep(deadlines::WATCH_EVERY);
+                if watch.ended() {
+                    return;
+                }
+                let Some(runtime) = shared.upgrade() else {
+                    return;
+                };
+                let stuck = watch
+                    .stuck_for()
+                    .is_some_and(|stuck| stuck >= UNRESPONSIVE_LIMIT);
+                if !stuck {
+                    continue;
+                }
+                if watch.give_up() {
+                    runtime.abandoned.fetch_add(1, Ordering::SeqCst);
+                    drop(runtime);
+                    failed(
+                        &shared,
+                        number,
+                        RuntimeFailure::Unresponsive,
+                        format!(
+                            "its thread did not respond for {} seconds {}: it was stuck in \
+                             Pane's own code or in Wasmtime, outside the extensions' code, which \
+                             Pane interrupts by itself",
+                            UNRESPONSIVE_LIMIT.as_secs(),
+                            watch.what().describe()
+                        ),
+                    );
+                }
+                return;
+            }
+        });
+}
+
+/// Runtime thread `number` failed (`failure`) with `why`: it crashed, and
+/// its unwinding dropped everything it held, or it stopped responding and
+/// Pane gave up on it. Ends the helpers its guests left running, restarts
+/// it unless it failed within [`CRASH_WINDOW`] of its previous failure,
+/// tells the launcher, and counts the thread as handled.
+fn failed(shared: &Weak<Shared>, number: u64, failure: RuntimeFailure, why: String) {
     let Some(shared) = shared.upgrade() else {
         // Pane is quitting.
         return;
     };
-    // Every helper still running was started by the crashed thread's
+    // Every helper still running was started by the failed thread's
     // guests: no other thread runs until this one has been handled.
     shared.helpers.stop_running();
     let status = {
         let mut current = lock(&shared.current);
-        // Only the thread serving calls runs guests and so can crash: a
-        // restart replaces a thread only once it has stopped.
+        // Only the thread serving calls runs guests and so can fail: a
+        // restart replaces a thread only once it has stopped or Pane gave
+        // up on it.
         current.thread = None;
         let now = Instant::now();
-        let again = restarts_automatically(current.last_crash, now);
-        current.last_crash = Some(now);
+        let again = restarts_automatically(current.last_failure, now);
+        current.last_failure = Some(now);
         let restarted = if shared.helpers.quitting() {
             Err("Pane is quitting".to_owned())
         } else if !again {
             Err(format!(
-                "it crashed twice within {} minutes; repeated automatic restarts are suppressed",
+                "it stopped twice within {} minutes; repeated automatic restarts are suppressed",
                 CRASH_WINDOW.as_secs() / 60
             ))
         } else {
@@ -313,8 +462,12 @@ fn crashed(shared: &Weak<Shared>, number: u64, why: String) {
                 .map_err(|error| format!("starting it again failed: {error}"))
         };
         current.status = match restarted {
-            Ok(()) => RuntimeStatus::Restarted { why },
-            Err(not_restarted) => RuntimeStatus::Stopped { why, not_restarted },
+            Ok(()) => RuntimeStatus::Restarted { failure, why },
+            Err(not_restarted) => RuntimeStatus::Stopped {
+                failure,
+                why,
+                not_restarted,
+            },
         };
         current.status.clone()
     };
@@ -323,10 +476,11 @@ fn crashed(shared: &Weak<Shared>, number: u64, why: String) {
     if let Some(report) = report {
         report(number, &status);
     }
+    shared.mark_handled(number);
 }
 
-/// Whether a crash at `now` restarts the runtime by itself: not when it
-/// already crashed within [`CRASH_WINDOW`] before (`previous`, since the
+/// Whether a failure at `now` restarts the runtime by itself: not when it
+/// already failed within [`CRASH_WINDOW`] before (`previous`, since the
 /// user last restarted it).
 pub(crate) fn restarts_automatically(previous: Option<Instant>, now: Instant) -> bool {
     previous.is_none_or(|previous| now.saturating_duration_since(previous) >= CRASH_WINDOW)
@@ -346,18 +500,30 @@ fn panic_message(panic: &(dyn Any + Send)) -> String {
 /// How a call answers when the runtime is stopped: it is not sent.
 pub(super) fn stopped() -> CallError {
     CallError::RuntimeUnavailable(
-        "it stopped after crashing and runs nothing until you restart it in Manage extensions"
+        "it stopped after failing and runs nothing until you restart it in Manage extensions"
             .into(),
     )
 }
 
-/// How a call answers when the runtime thread crashed before answering
-/// it, once Pane has handled the crash (`handled` changed): whether it
-/// restarted the runtime. It is not sent again.
-pub(super) async fn lost(shared: Weak<Shared>, mut handled: watch::Receiver<u64>) -> CallError {
-    // The thread counts itself as handled however its handling ends; the
-    // count's sender goes only with the last runtime handle.
-    let _ = handled.changed().await;
+/// Resolves once Pane is done with thread number `number`, which failed;
+/// never while it runs.
+pub(super) async fn handled_after(mut handled: watch::Receiver<u64>, number: u64) {
+    // The sender goes only with the last runtime handle.
+    if handled.wait_for(|done| *done >= number).await.is_err() {
+        std::future::pending::<()>().await;
+    }
+}
+
+/// How a call answers when runtime thread `number` failed before answering
+/// it, once Pane has handled the failure: whether it restarted the
+/// runtime. It is not sent again.
+pub(super) async fn lost(
+    shared: Weak<Shared>,
+    mut handled: watch::Receiver<u64>,
+    number: u64,
+) -> CallError {
+    // The thread counts itself as handled however its handling ends.
+    let _ = handled.wait_for(|done| *done >= number).await;
     let status = match shared.upgrade() {
         Some(shared) => shared.status(),
         None => RuntimeStatus::Running,
@@ -368,17 +534,19 @@ pub(super) async fn lost(shared: Weak<Shared>, mut handled: watch::Receiver<u64>
 /// How a call whose answer was lost answers, while the runtime does
 /// `status`.
 fn lost_in(status: &RuntimeStatus) -> CallError {
+    let stopped = match status.failure() {
+        Some(RuntimeFailure::Unresponsive) => "it stopped responding before answering",
+        _ => "it stopped before answering",
+    };
     CallError::RuntimeUnavailable(match status {
-        RuntimeStatus::Restarted { .. } => "it stopped before answering and was started again; \
-                                            Pane does not run this again by itself"
-            .into(),
-        RuntimeStatus::Stopped { not_restarted, .. } => format!(
-            "it stopped before answering and was not restarted ({not_restarted}); Pane does not \
-             run this again by itself. Restart it in Manage extensions"
-        ),
-        RuntimeStatus::Running => {
-            "it stopped before answering; Pane does not run this again by itself".into()
+        RuntimeStatus::Restarted { .. } => {
+            format!("{stopped} and was started again; Pane does not run this again by itself")
         }
+        RuntimeStatus::Stopped { not_restarted, .. } => format!(
+            "{stopped} and was not restarted ({not_restarted}); Pane does not run this again by \
+             itself. Restart it in Manage extensions"
+        ),
+        RuntimeStatus::Running => format!("{stopped}; Pane does not run this again by itself"),
     })
 }
 

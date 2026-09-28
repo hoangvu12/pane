@@ -1265,6 +1265,11 @@ pub(crate) enum PauseCause {
     FailedToStart,
     /// It crashed (trapped) too often.
     Crashes,
+    /// It stopped responding (computed for too long without finishing) too
+    /// often (#18).
+    Unresponsive,
+    /// It crashed or stopped responding too often, some of each.
+    CrashesAndHangs,
 }
 
 /// Pane's managed location for installed packages:

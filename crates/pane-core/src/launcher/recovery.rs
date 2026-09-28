@@ -1,8 +1,9 @@
 //! What the launcher shows when Pane's extension runtime thread crashes
-//! (#17), and restarting it.
+//! (#17) or stops responding (#18), and restarting it.
 //!
-//! A crash of the shared runtime thread is not attributed to any package:
-//! it is a fault in Pane or Wasmtime, not a guest trap, and whichever
+//! A failure of the shared runtime thread is not attributed to any
+//! package: it is a fault in Pane or Wasmtime, not a guest trap or a guest
+//! computing for too long (which are its package's own), and whichever
 //! extension ran last did not necessarily cause it. So the launcher pauses
 //! nothing and names no extension. It says what happened in the status line
 //! and in Manage extensions, where the details and, when Pane did not
@@ -13,7 +14,7 @@
 //! run no extension) keep working meanwhile.
 
 use super::{Entry, Launcher, LauncherView, Row, Screen, State, Status};
-use crate::runtime::{CRASH_WINDOW, RuntimeStatus};
+use crate::runtime::{CRASH_WINDOW, RuntimeFailure, RuntimeStatus, UNRESPONSIVE_LIMIT};
 
 /// The id of the extension list's row restarting the runtime.
 const RESTART_ROW: &str = "pane.runtime.restart";
@@ -103,12 +104,16 @@ impl Launcher {
             return Vec::new();
         };
         let mut rows = Vec::new();
+        let how = match status.failure() {
+            Some(RuntimeFailure::Unresponsive) => "not responding",
+            _ => "crashing",
+        };
         let state = match status {
             RuntimeStatus::Stopped { .. } => {
                 rows.push((restart_row(), Entry::RestartRuntime));
-                "Stopped after crashing"
+                format!("Stopped after {how}")
             }
-            _ => "Restarted after crashing",
+            _ => format!("Restarted after {how}"),
         };
         let details = Row {
             id: DETAILS_ROW.into(),
@@ -129,8 +134,12 @@ impl Launcher {
             return;
         };
         let (why, what) = match &status {
-            RuntimeStatus::Restarted { why } => (why, "Pane started it again by itself.".into()),
-            RuntimeStatus::Stopped { why, not_restarted } => (
+            RuntimeStatus::Restarted { why, .. } => {
+                (why, "Pane started it again by itself.".into())
+            }
+            RuntimeStatus::Stopped {
+                why, not_restarted, ..
+            } => (
                 why,
                 format!(
                     "Pane did not start it again: {not_restarted}. Extensions run nothing until \
@@ -139,8 +148,19 @@ impl Launcher {
             ),
             RuntimeStatus::Running => unreachable!("checked above"),
         };
-        let details = vec![
-            "Pane's extension runtime, which runs every extension, stopped unexpectedly.".into(),
+        let happened = match status.failure() {
+            Some(RuntimeFailure::Unresponsive) => format!(
+                "Pane's extension runtime, which runs every extension, stopped responding for {} \
+                 seconds, so Pane gave up on it. It was stuck outside the extensions' code: an \
+                 extension computing for too long is stopped by itself, and named.",
+                UNRESPONSIVE_LIMIT.as_secs()
+            ),
+            _ => {
+                "Pane's extension runtime, which runs every extension, stopped unexpectedly.".into()
+            }
+        };
+        let mut details = vec![
+            happened,
             what,
             "Pane cannot tell which extension, if any, caused it, so none is named or paused."
                 .into(),
@@ -150,8 +170,17 @@ impl Launcher {
                 .into(),
             "The native helpers it ran were ended. Extensions' settings and saved data are kept."
                 .into(),
-            format!("Diagnostics (also written to standard error): {why}"),
         ];
+        if status.failure() == Some(RuntimeFailure::Unresponsive) {
+            details.push(
+                "A stuck thread cannot be ended: it keeps the memory it holds until it returns, \
+                 and then runs nothing more."
+                    .into(),
+            );
+        }
+        details.push(format!(
+            "Diagnostics (also written to standard error): {why}"
+        ));
         let rows = match status {
             RuntimeStatus::Stopped { .. } => vec![restart_row()],
             _ => Vec::new(),
@@ -204,18 +233,23 @@ fn restart_row() -> Row {
     }
 }
 
-/// The status line when the runtime thread crashed, naming no extension.
+/// The status line when the runtime thread crashed or stopped responding,
+/// naming no extension.
 fn toast(status: &RuntimeStatus) -> String {
+    let stopped = match status.failure() {
+        Some(RuntimeFailure::Unresponsive) => "stopped responding",
+        _ => "stopped unexpectedly",
+    };
     match status {
         RuntimeStatus::Stopped { .. } => format!(
-            "Pane's extension runtime stopped unexpectedly again within {} minutes and was not \
-             restarted; saved data is kept. Restart it in Manage extensions.",
+            "Pane's extension runtime {stopped} again within {} minutes and was not restarted; \
+             saved data is kept. Restart it in Manage extensions.",
             CRASH_WINDOW.as_secs() / 60
         ),
-        _ => "Pane's extension runtime stopped unexpectedly and was started again; what was \
-              running was stopped and is not run again. Saved data is kept; details are in \
-              Manage extensions."
-            .into(),
+        _ => format!(
+            "Pane's extension runtime {stopped} and was started again; what was running was \
+             stopped and is not run again. Saved data is kept; details are in Manage extensions."
+        ),
     }
 }
 
@@ -259,6 +293,7 @@ mod tests {
 
     fn crashed() -> RuntimeStatus {
         RuntimeStatus::Restarted {
+            failure: RuntimeFailure::Crashed,
             why: "a test".into(),
         }
     }
