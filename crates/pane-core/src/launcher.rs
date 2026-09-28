@@ -44,8 +44,8 @@ use crate::packages::{
 };
 use crate::platform::{self, Platform};
 use crate::runtime::{
-    CallError, CustomViewInfo, CustomViewRole, FieldKind, FieldValue, Form, Frame, Point,
-    RootAction, RootResult as ComputedResult, Runtime, ViewEvent, ViewId, WeakRuntime,
+    CallError, CustomViewInfo, CustomViewRole, FieldKind, FieldValue, Form, Frame, Item, Listing,
+    Point, RootAction, RootResult as ComputedResult, Runtime, ViewEvent, ViewId, WeakRuntime,
 };
 use crate::search::{self, Keys, Query};
 
@@ -84,7 +84,7 @@ pub struct CommandRegistration {
     pub takes_query: bool,
     /// Whether the command searches as the user types into its own search
     /// field once it is open (`"search": true`); root search never asks it.
-    pub searches: bool,
+    pub search: bool,
 }
 
 impl CommandRegistration {
@@ -196,6 +196,57 @@ pub enum Unavailable {
     OnThisSystem(String),
     /// Its package is paused after an error until the user retries it.
     Paused(String),
+}
+
+impl Row {
+    /// The row of a result a command answered with (computed or indexed
+    /// root results, search results), available. Its id is the result's,
+    /// under `scope` if given (`<scope>:<id>`), so results of different
+    /// commands among root search's rows cannot share one.
+    fn listed(listing: Listing, scope: Option<&str>) -> Row {
+        Row {
+            id: match scope {
+                Some(scope) => format!("{scope}:{}", listing.id),
+                None => listing.id,
+            },
+            title: listing.title,
+            subtitle: listing.subtitle,
+            unavailable: None,
+        }
+    }
+}
+
+/// An opened command's own list: its rows and what activating each does.
+#[derive(Clone, Default)]
+struct CommandList {
+    rows: Vec<Row>,
+    entries: Vec<Entry>,
+}
+
+impl CommandList {
+    /// The list of a command whose list view has `items`.
+    fn of(items: Vec<Item>) -> CommandList {
+        let (rows, entries) = items
+            .into_iter()
+            .map(|item| {
+                let unavailable = platform::unavailable(item.platforms.as_deref(), "this action");
+                let entry = match (&unavailable, item.form, item.custom_view) {
+                    (Some(reason), _, _) => Entry::Unavailable(reason.clone()),
+                    (None, Some(form), _) => Entry::Form(item.id.clone(), form),
+                    (None, None, Some(info)) => Entry::CustomView(item.id.clone(), info),
+                    (None, None, None) => Entry::Run(item.id.clone()),
+                };
+                let row = Row {
+                    id: item.id,
+                    title: item.title,
+                    subtitle: item.subtitle,
+                    unavailable: unavailable.map(Unavailable::OnThisSystem),
+                };
+                (row, entry)
+            })
+            .unzip();
+        CommandList { rows, entries }
+    }
 }
 
 impl Unavailable {
@@ -755,16 +806,19 @@ enum Entry {
 #[derive(Clone)]
 struct Opening {
     component: PathBuf,
-    /// Its manifest id, when it searches as the user types into its own
-    /// search field; `None` when it does not.
-    search: Option<String>,
+    /// Its id in its package manifest, sent with each of its searches.
+    command: String,
+    /// Whether it searches as the user types into its own search field
+    /// ([`CommandRegistration::search`]).
+    search: bool,
 }
 
 impl Opening {
     fn of(command: &CommandRegistration) -> Opening {
         Opening {
             component: command.component.clone(),
-            search: command.searches.then(|| command.manifest_id().to_owned()),
+            command: command.manifest_id().to_owned(),
+            search: command.search,
         }
     }
 }
@@ -1298,7 +1352,7 @@ impl Launcher {
             // Escape clears the command's search before leaving it, as it
             // clears root search's query.
             Screen::CommandSearch { query } if !query.is_empty() => {
-                self.search_in_command(&mut state, "");
+                self.clear_search_in_command(&mut state);
             }
             Screen::Command
             | Screen::CommandSearch { .. }
@@ -2793,7 +2847,11 @@ impl Launcher {
     }
 
     async fn open_command(&self, epoch: u64, opening: Opening, data: Option<PackageData>) {
-        let Opening { component, search } = opening;
+        let Opening {
+            component,
+            command,
+            search,
+        } = opening;
         let result = match self.runtime() {
             Ok(runtime) => runtime.get_view_with(&component, data.clone()).await,
             Err(error) => Err(error),
@@ -2837,42 +2895,15 @@ impl Launcher {
         let state = &mut *state;
         match result {
             Ok(view) => {
-                let (rows, entries): (Vec<Row>, Vec<Entry>) = view
-                    .items
-                    .into_iter()
-                    .map(|item| {
-                        let unavailable =
-                            platform::unavailable(item.platforms.as_deref(), "this action");
-                        let entry = match (&unavailable, item.form, item.custom_view) {
-                            (Some(reason), _, _) => Entry::Unavailable(reason.clone()),
-                            (None, Some(form), _) => Entry::Form(item.id.clone(), form),
-                            (None, None, Some(info)) => Entry::CustomView(item.id.clone(), info),
-                            (None, None, None) => Entry::Run(item.id.clone()),
-                        };
-                        let row = Row {
-                            id: item.id,
-                            title: item.title,
-                            subtitle: item.subtitle,
-                            unavailable: unavailable.map(Unavailable::OnThisSystem),
-                        };
-                        (row, entry)
-                    })
-                    .unzip();
-                let screen = match search {
-                    Some(command) => {
-                        state.searching = Some(command_search::Searching::new(
-                            command,
-                            rows.clone(),
-                            entries.clone(),
-                        ));
-                        Screen::CommandSearch {
-                            query: String::new(),
-                        }
+                let CommandList { rows, entries } = CommandList::of(view.items);
+                let screen = if search {
+                    state.searching = Some(command_search::Searching::new(command));
+                    Screen::CommandSearch {
+                        query: String::new(),
                     }
-                    None => {
-                        state.searching = None;
-                        Screen::Command
-                    }
+                } else {
+                    state.searching = None;
+                    Screen::Command
                 };
                 state.entries = entries;
                 state.open = Some(component);
@@ -3328,12 +3359,7 @@ fn computed_results(
         Ok(results) => results
             .into_iter()
             .map(|result| {
-                let row = Row {
-                    id: format!("{}:{}", command.id, result.id),
-                    title: result.title,
-                    subtitle: result.subtitle,
-                    unavailable: None,
-                };
+                let row = Row::listed(result.listing, Some(&command.id));
                 let entry = match result.action {
                     RootAction::Copy(text) => Entry::Copy(text),
                     RootAction::OpenUrl(url) => Entry::OpenUrl(url),

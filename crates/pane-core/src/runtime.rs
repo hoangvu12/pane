@@ -136,14 +136,21 @@ const OPERATIONS_INTERFACE: &str = "pane:extension/published-operations@0.1.0";
 /// The interface a command that searches as the user types also exports.
 const COMMAND_SEARCH_INTERFACE: &str = "pane:extension/command-search@0.1.0";
 
-/// One thing a command's search found, listed as a row of the command.
+/// What a result a command answers with shows as a row: the fields its
+/// computed root results, indexed results and search results share (each
+/// interface's WIT declares its own record, as a WIT record cannot extend
+/// another).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SearchResult {
-    /// Passed to the command's `run-action` when the row is activated.
+pub(crate) struct Listing {
+    /// Identifies the result among the command's results; a search result's
+    /// is passed to the command's `run-action` when its row is activated.
     pub id: String,
     pub title: String,
     pub subtitle: Option<String>,
 }
+
+/// One thing a command's search found, listed as a row of the command.
+pub(crate) type SearchResult = Listing;
 
 /// Stops a search that is no longer needed: when it is stopped or dropped,
 /// the search is not started if it has not been, and stopped where its guest
@@ -169,9 +176,7 @@ fn stoppable() -> (StopSearch, SearchStopped) {
 /// A result a command computed from root search's query.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RootResult {
-    pub id: String,
-    pub title: String,
-    pub subtitle: Option<String>,
+    pub listing: Listing,
     pub action: RootAction,
 }
 
@@ -187,9 +192,7 @@ pub(crate) enum RootAction {
 /// A root result a command supplies ahead of the query.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct IndexedResult {
-    pub id: String,
-    pub title: String,
-    pub subtitle: Option<String>,
+    pub listing: Listing,
     pub action: IndexedAction,
 }
 
@@ -214,7 +217,7 @@ pub(crate) struct Exports {
     pub operations: bool,
     /// `command-search`: it searches as the user types into its own search
     /// field.
-    pub command_search: bool,
+    pub search: bool,
 }
 
 /// The system's applications as the runtime's guests and the launcher see
@@ -1570,7 +1573,7 @@ impl Code {
                 ))
             })?;
         }
-        if exports.command_search {
+        if exports.search {
             search_bindings::CommandSearchProviderPre::new(pre.clone()).map_err(|error| {
                 CallError::Interface(format!(
                     "its manifest says it searches as the user types, but it does not export \
@@ -1925,9 +1928,11 @@ impl Host {
         Ok(results
             .into_iter()
             .map(|result| RootResult {
-                id: result.id,
-                title: result.title,
-                subtitle: result.subtitle,
+                listing: Listing {
+                    id: result.id,
+                    title: result.title,
+                    subtitle: result.subtitle,
+                },
                 action: match result.action {
                     root_results::RootAction::Copy(text) => RootAction::Copy(text),
                     root_results::RootAction::OpenUrl(url) => RootAction::OpenUrl(url),
@@ -1993,7 +1998,7 @@ impl Host {
         let results = self.settle(path, result, CallError::Guest)?;
         Ok(results
             .into_iter()
-            .map(|result| SearchResult {
+            .map(|result| Listing {
                 id: result.id,
                 title: result.title,
                 subtitle: result.subtitle,
@@ -2029,9 +2034,11 @@ impl Host {
         Ok(results
             .into_iter()
             .map(|result| IndexedResult {
-                id: result.id,
-                title: result.title,
-                subtitle: result.subtitle,
+                listing: Listing {
+                    id: result.id,
+                    title: result.title,
+                    subtitle: result.subtitle,
+                },
                 action: match result.action {
                     indexed_results::IndexedAction::OpenApplication(id) => {
                         IndexedAction::OpenApplication(id)

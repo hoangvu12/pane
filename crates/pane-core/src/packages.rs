@@ -533,7 +533,7 @@ impl Manifest {
             root_results: commands().any(|command| command.root_results),
             indexed_results: commands().any(|command| command.indexed_results),
             query_command: commands().any(|command| command.takes_query),
-            command_search: commands().any(|command| command.search),
+            search: commands().any(|command| command.search),
             operations: self
                 .operations
                 .iter()
@@ -585,6 +585,15 @@ impl Manifest {
                 .any(|seen: &ManifestCommand| seen.id == command.id)
             {
                 return Err(invalid(format!("command id `{}` is repeated", command.id)));
+            }
+            // Root search never asks a command that searches inside itself:
+            // results it computed for root search would never be shown.
+            if command.search && command.root_results {
+                return Err(invalid(format!(
+                    "command `{}` sets both `search` and `rootResults`: a command that \
+                     searches inside itself is never asked by root search",
+                    command.id
+                )));
             }
             let component = inside_package(&command.component, "component")?;
             let platforms = parse_platforms(
@@ -1083,7 +1092,7 @@ impl InstalledPackage {
                         .or_else(|| Some(manifest.title.clone())),
                     component: self.location.join(&command.component),
                     takes_query: command.takes_query,
-                    searches: command.search,
+                    search: command.search,
                 };
                 let unavailable = package.clone().or_else(|| {
                     platform::unavailable(command.platforms.as_deref(), "this command")

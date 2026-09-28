@@ -7,7 +7,7 @@ its own** once the user opens it; Pane sends it the text typed there and
 lists what it finds. [Root search](root-search.md) never asks it: text typed
 in root search reaches no such command, and so no service. Web requests go
 through `wasi:http@0.3.0`, which Pane hosts for every command
-([ADR 0017](adr/0017-extensions-reach-the-network-through-wasi-http.md),
+([ADR 0018](adr/0018-extensions-reach-the-network-through-wasi-http.md),
 proposed). The same on every system.
 
 ## What the user sees

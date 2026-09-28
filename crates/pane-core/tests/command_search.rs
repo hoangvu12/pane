@@ -130,6 +130,11 @@ impl Pane {
     /// open.
     fn use_service(&self, address: &str) {
         self.open();
+        self.set_service(address);
+    }
+
+    /// Points the open Package search at `address` through its form.
+    fn set_service(&self, address: &str) {
         self.activate("Service address");
         self.launcher.set_field_value("address", address);
         block_on(self.launcher.submit_form());
@@ -283,6 +288,30 @@ fn the_service_results_are_listed_and_open_their_details() {
 }
 
 #[test]
+fn a_cleared_search_lists_the_command_as_it_is_now() {
+    for fixture in &ALL {
+        let service = Service::start();
+        let pane = Pane::with(fixture);
+        pane.open();
+        // Its settings change while it is open...
+        pane.set_service(&service.url());
+        pane.search("aurora");
+        assert_eq!(pane.titles(), ["aurora-charts", "aurora-cli"]);
+
+        // ...and clearing the search lists what the command lists now.
+        pane.search("");
+        let view = pane.view();
+        assert_eq!(view.status, Status::Idle, "{}", fixture.package);
+        let address = view
+            .rows
+            .iter()
+            .find(|row| row.title == "Service address")
+            .and_then(|row| row.subtitle.clone());
+        assert_eq!(address, Some(service.url()), "{}", fixture.package);
+    }
+}
+
+#[test]
 fn a_newer_search_stops_the_one_the_service_is_still_answering() {
     for fixture in &ALL {
         let service = Service::start();
@@ -415,6 +444,31 @@ fn an_offline_or_failing_service_is_an_error_that_does_not_pause_the_extension()
         assert_eq!(pane.titles(), ["granite-uuid"], "{}", fixture.package);
         assert_eq!(pane.view().status, Status::Idle);
     }
+}
+
+#[test]
+fn a_command_cannot_both_search_inside_itself_and_answer_root_search() {
+    let sources = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let folder = package(RUST.package, &sources.path().join("both"));
+    let manifest = fs::read_to_string(folder.join("pane.json")).unwrap();
+    let manifest = manifest.replace(
+        "\"search\": true",
+        "\"search\": true, \"rootResults\": true",
+    );
+    fs::write(folder.join("pane.json"), manifest).unwrap();
+    let launcher = Launcher::with_packages(Runtime::start(), vec![], data.path().join("x"));
+    block_on(launcher.install_package(&folder));
+    let Status::Error(message) = launcher.view().status else {
+        panic!("installed: {:?}", launcher.view().status);
+    };
+    assert!(
+        message.contains(
+            "command `packages` sets both `search` and `rootResults`: a command that \
+             searches inside itself is never asked by root search"
+        ),
+        "{message}"
+    );
 }
 
 #[test]
