@@ -83,11 +83,8 @@ impl Installed {
         let sources = tempfile::tempdir().unwrap();
         let data = tempfile::tempdir().unwrap();
         let runtime = Runtime::start().unwrap();
-        let launcher = Launcher::with_packages(
-            Ok(runtime.clone()),
-            vec![],
-            data.path().join("extensions"),
-        );
+        let launcher =
+            Launcher::with_packages(Ok(runtime.clone()), vec![], data.path().join("extensions"));
         let folder = settings_package(fixture, &sources.path().join("settings"));
         block_on(launcher.install_package(&folder));
         let identity = PackageIdentity::local(&folder).unwrap();
@@ -212,7 +209,10 @@ fn reloading_stops_a_pending_call_and_the_new_code_runs(fixture: &Fixture) {
         "{:?}",
         view.screen
     );
-    assert_eq!(view.status, Status::Result("Reloaded Settings sample".into()));
+    assert_eq!(
+        view.status,
+        Status::Result("Reloaded Settings sample".into())
+    );
     assert_eq!(installed.slow_save().as_deref(), Some("started"));
     open_greeting_at(&installed.launcher, "Use a casual greeting");
     block_on(installed.launcher.activate_selected());
@@ -221,6 +221,72 @@ fn reloading_stops_a_pending_call_and_the_new_code_runs(fixture: &Fixture) {
         Status::Result("Saved the casual greeting".into())
     );
     assert_eq!(installed.slow_save().as_deref(), Some("started"));
+}
+
+fn updating_stops_a_pending_call(fixture: &Fixture) {
+    let installed = Installed::new(fixture);
+    let pending = installed.start_slow_save();
+
+    block_on(installed.launcher.preview_package(&installed.folder));
+    select_title(&installed.launcher, "Update");
+    block_on(installed.launcher.activate_selected());
+    pending.assert_stopped();
+
+    assert_eq!(
+        installed.launcher.view().status,
+        Status::Result("Updated Settings sample to 0.1.0".into())
+    );
+    assert_eq!(installed.slow_save().as_deref(), Some("started"));
+}
+
+fn repeated_disables_and_reloads_leave_nothing_running(fixture: &Fixture) {
+    let installed = Installed::new(fixture);
+    for _ in 0..3 {
+        let pending = installed.start_slow_save();
+        block_on(installed.launcher.set_enabled(&installed.identity, false));
+        pending.assert_stopped();
+        assert_eq!(block_on(installed.runtime.running()), Vec::<PathBuf>::new());
+        assert_eq!(block_on(installed.runtime.view_count()), 0);
+        block_on(installed.launcher.set_enabled(&installed.identity, true));
+
+        let pending = installed.start_slow_save();
+        block_on(installed.launcher.reload(&installed.identity));
+        pending.assert_stopped();
+        // Only the new code, started by the reload, is running.
+        let running = block_on(installed.runtime.running());
+        assert_eq!(running.len(), 1, "{running:?}");
+        let current = installed.launcher.packages()[0].location.clone();
+        assert!(running[0].starts_with(&current), "{running:?}");
+    }
+    assert_eq!(installed.slow_save().as_deref(), Some("started"));
+}
+
+fn a_call_waiting_behind_a_stopped_one_is_served_at_once(fixture: &Fixture) {
+    let installed = Installed::new(fixture);
+    let pending = installed.start_slow_save();
+
+    // Opening the command again waits for the runtime, busy with the
+    // pending call, and is asked while its package is still enabled.
+    installed.launcher.back();
+    select_title(&installed.launcher, "Greeting");
+    let opening = installed.launcher.activate_selected();
+    let opened = thread::spawn(move || block_on(opening));
+    thread::sleep(Duration::from_millis(100));
+    block_on(installed.launcher.reload(&installed.identity));
+    pending.assert_stopped();
+    opened.join().unwrap();
+
+    // The opening belonged to the replaced code, so it is not shown; the
+    // new code opens at once.
+    let view = installed.launcher.view();
+    assert!(
+        matches!(view.screen, Screen::Root { .. }),
+        "{:?}",
+        view.screen
+    );
+    let started = Instant::now();
+    open_greeting_at(&installed.launcher, "Save after waiting");
+    assert!(started.elapsed() < STOPPED_WITHIN);
 }
 
 /// Declares one test per check for each language's settings sample.
@@ -241,4 +307,7 @@ macro_rules! contract {
 contract!(
     disabling_stops_a_pending_call_and_discards_its_result,
     reloading_stops_a_pending_call_and_the_new_code_runs,
+    updating_stops_a_pending_call,
+    repeated_disables_and_reloads_leave_nothing_running,
+    a_call_waiting_behind_a_stopped_one_is_served_at_once,
 );

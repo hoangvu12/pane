@@ -1537,7 +1537,6 @@ impl Host {
         }
         Ok(&self.components[path])
     }
-
 }
 
 impl From<command::Item> for Item {
