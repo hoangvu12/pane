@@ -30,7 +30,8 @@ use crate::generation::End;
 use crate::links::{self, LinkOpener, NoOpener};
 use crate::operations::{self, Installed};
 use crate::packages::{
-    InstalledPackage, PackageError, PackageIdentity, SavedData, SourcePackage, Store, folder_name,
+    InstalledPackage, PackageError, PackageIdentity, RetainedData, SavedData, SourcePackage, Store,
+    folder_name,
 };
 use crate::platform::{self, Platform};
 use crate::runtime::{
@@ -40,6 +41,7 @@ use crate::runtime::{
 use crate::search::{self, Keys, Query};
 
 mod reload;
+mod retained;
 mod uninstall;
 
 use reload::StartFailures;
@@ -97,6 +99,9 @@ pub enum Question {
     /// Whether to uninstall the installed package with this identity, and
     /// whether to keep its saved data.
     Uninstall(PackageIdentity),
+    /// Whether to delete the retained data of this identity, which is not
+    /// installed.
+    DeleteRetained(PackageIdentity),
 }
 
 /// A selectable row.
@@ -277,6 +282,9 @@ struct State {
     /// latest choice, which applies at once, even while it is still being
     /// recorded.
     packages: Vec<InstalledPackage>,
+    /// The identities that are not installed but whose data Pane keeps, as
+    /// last recorded in the store.
+    retained: Vec<RetainedData>,
     /// Packages being enabled or disabled, reloaded or updated, with which;
     /// another change to one of them is refused meanwhile (see
     /// [`State::claim`]).
@@ -299,6 +307,8 @@ enum Changing {
     Updating,
     /// It is being uninstalled.
     Uninstalling,
+    /// It is not installed, and its retained data is being deleted.
+    DeletingRetained,
 }
 
 impl State {
@@ -309,11 +319,18 @@ impl State {
             .find(|package| package.identity == *identity)
     }
 
-    /// The title of the installed package with `identity`, or its identity if
-    /// it is no longer installed.
+    /// The title of the installed package with `identity`, the title its
+    /// retained data was kept under if it is not installed, or else its
+    /// identity.
     fn title_of(&self, identity: &PackageIdentity) -> String {
         self.package(identity)
             .map(InstalledPackage::title)
+            .or_else(|| {
+                self.retained
+                    .iter()
+                    .find(|retained| retained.identity == *identity)
+                    .map(|retained| retained.title.clone())
+            })
             .unwrap_or_else(|| identity.to_string())
     }
 
@@ -331,6 +348,7 @@ impl State {
             Some(Changing::Reloading) => "is reloading",
             Some(Changing::Updating) => "is updating",
             Some(Changing::Uninstalling) => "is being uninstalled",
+            Some(Changing::DeletingRetained) => "is having its retained data deleted",
         };
         self.view.status = Status::Error(format!("{} {busy}", self.title_of(identity)));
         false
@@ -466,6 +484,11 @@ enum Entry {
     /// Uninstall this installed package, keeping or deleting its saved data
     /// (confirmation).
     Uninstall(PackageIdentity, SavedData),
+    /// Ask whether to delete the retained data of this identity, which is
+    /// not installed (extension list).
+    AskDeleteRetained(PackageIdentity),
+    /// Delete the retained data of this identity (confirmation).
+    DeleteRetained(PackageIdentity),
     /// Return to the extension list without acting (confirmation).
     Cancel,
 }
@@ -504,12 +527,12 @@ impl Launcher {
         commands: Vec<CommandRegistration>,
         installation: Option<Installation>,
     ) -> Self {
-        let (packages, store_problem) = match &installation {
+        let (packages, retained, store_problem) = match &installation {
             Some(installation) => {
                 let store = installation.store.lock().unwrap_or_else(|p| p.into_inner());
-                (store.installed(), store.problem())
+                (store.installed(), store.retained(), store.problem())
             }
-            None => (Vec::new(), None),
+            None => (Vec::new(), Vec::new(), None),
         };
         let state = State {
             // Replaced by root search below.
@@ -524,6 +547,7 @@ impl Launcher {
             custom_view: None,
             screen_epoch: 0,
             packages,
+            retained,
             changing: HashMap::new(),
             store_problem,
             failed: StartFailures::default(),
@@ -890,6 +914,7 @@ impl Launcher {
         let mut change = None;
         let mut reload = None;
         let mut uninstall = None;
+        let mut delete_retained = None;
         let entry = match entry {
             Some(Entry::Broken(problem) | Entry::Unavailable(problem)) => {
                 state.view.status = Status::Error(problem);
@@ -927,6 +952,14 @@ impl Launcher {
             }
             Some(Entry::Uninstall(identity, saved)) => {
                 uninstall = self.begin_uninstall(&mut state, identity, saved);
+                None
+            }
+            Some(Entry::AskDeleteRetained(identity)) => {
+                self.show_delete_retained(&mut state, &identity);
+                None
+            }
+            Some(Entry::DeleteRetained(identity)) => {
+                delete_retained = self.begin_delete_retained(&mut state, identity);
                 None
             }
             Some(Entry::Cancel) => {
@@ -981,6 +1014,9 @@ impl Launcher {
             if let Some(uninstall) = uninstall {
                 launcher.finish_uninstall(epoch, uninstall).await;
             }
+            if let Some(retained) = delete_retained {
+                launcher.finish_delete_retained(epoch, retained).await;
+            }
             match entry {
                 Some(Entry::Open(component)) => launcher.open_command(epoch, component, data).await,
                 Some(Entry::OpenApplication { id, name }) => {
@@ -1013,6 +1049,8 @@ impl Launcher {
                     | Entry::AskClearCache(_)
                     | Entry::AskUninstall(_)
                     | Entry::Uninstall(..)
+                    | Entry::AskDeleteRetained(_)
+                    | Entry::DeleteRetained(_)
                     | Entry::Cancel
                     | Entry::Form(..),
                 )
@@ -1211,6 +1249,13 @@ impl Launcher {
                         package.manifest.title
                     )))
                 }
+                // Nor while the data it would find is being deleted.
+                Ok(package) if self.is_deleting_retained(&package.identity) => {
+                    Err(PackageError::Storage(format!(
+                        "the retained data of {} is being deleted; install it once that is done",
+                        package.manifest.title
+                    )))
+                }
                 Ok(package) => {
                     let store = store.clone();
                     let mode = mode.clone();
@@ -1266,7 +1311,10 @@ impl Launcher {
             .find(|package| package.identity == installed.identity)
         else {
             // An identity installed again after it was uninstalled may save
-            // data again.
+            // data again, and data retained for it is its own again.
+            state
+                .retained
+                .retain(|retained| retained.identity != installed.identity);
             if let Some(installation) = &self.installation {
                 installation
                     .data
@@ -1468,7 +1516,9 @@ impl Launcher {
             };
             add(row, Entry::InstallFromFolder, None);
         }
-        if self.installation.is_some() && !state.packages.is_empty() {
+        // Retained data is managed there too, while nothing is installed.
+        if self.installation.is_some() && !(state.packages.is_empty() && state.retained.is_empty())
+        {
             let row = Row {
                 id: MANAGE_EXTENSIONS.into(),
                 title: "Manage extensions…".into(),
@@ -1605,10 +1655,10 @@ impl Launcher {
 
     /// Shows the installed packages, each enabled or disabled.
     fn show_extensions(&self, state: &mut State) {
-        let (rows, entries) = extension_rows(&state.packages, &state.failed);
+        let (rows, entries) = self.extension_rows(state);
         self.leave_command(state);
         state.entries = entries;
-        let details = vec![
+        let mut details = vec![
             "A disabled extension adds no commands and runs nothing; it keeps its settings.".into(),
             "Reloading replaces an extension's code with its source folder's current build; it \
              keeps its settings."
@@ -1616,6 +1666,13 @@ impl Launcher {
             "Clearing an extension's cache keeps its settings, content and credentials.".into(),
             "Uninstalling an extension asks whether to keep its settings and content.".into(),
         ];
+        if !state.retained.is_empty() {
+            details.push(
+                "Data kept for an uninstalled extension is listed until you delete it or install \
+                 it again from the same source."
+                    .into(),
+            );
+        }
         state.view =
             LauncherView::new(Screen::Extensions { details }, "Extensions").with_rows(rows);
     }
@@ -1704,6 +1761,10 @@ impl Launcher {
                 state,
                 |entry| matches!(entry, Entry::AskUninstall(asked) if *asked == identity),
             ),
+            Question::DeleteRetained(identity) => self.show_extensions_at(
+                state,
+                |entry| matches!(entry, Entry::AskDeleteRetained(asked) if *asked == identity),
+            ),
         }
     }
 
@@ -1726,10 +1787,23 @@ impl Launcher {
         }
     }
 
+    /// The extension list's rows: the installed packages' (see
+    /// [`extension_rows`]), then one per identity with retained data.
+    fn extension_rows(&self, state: &State) -> (Vec<Row>, Vec<Entry>) {
+        let (mut rows, mut entries) = extension_rows(&state.packages, &state.failed);
+        if let Some(installation) = &self.installation {
+            let (retained_rows, retained_entries) =
+                retained::rows(&state.retained, &installation.data);
+            rows.extend(retained_rows);
+            entries.extend(retained_entries);
+        }
+        (rows, entries)
+    }
+
     /// Updates the installed packages on screen after one changed, keeping
     /// the selection on the same row.
     fn refresh_extensions(&self, state: &mut State) {
-        let (rows, entries) = extension_rows(&state.packages, &state.failed);
+        let (rows, entries) = self.extension_rows(state);
         // The same row stays selected; if it is gone (a Retry row once the
         // package started), the row before it.
         let selected = state.view.selected.and_then(|index| {

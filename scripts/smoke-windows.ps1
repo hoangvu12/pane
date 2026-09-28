@@ -510,4 +510,37 @@ if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the credential is sti
 Send "{ESC}"; Start-Sleep -Seconds 1
 Stop-Pane $process
 if (Select-String -Quiet -SimpleMatch '"retained"' (Join-Path $data "extensions/installed.json")) { throw "retained record not dropped" }
+
+# Delete the settings sample's retained data. Installed last, its Uninstall
+# row is the extension list's last; uninstalled keeping its saved data, its
+# retained data is listed as the last row. Pane asks first, then deletes it
+# without the extension; installing the same folder again finds nothing.
+$process = Start-Pane "stderr-delete-retained.log"
+Send "{DOWN 20}"   # the last row
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Send "{DOWN 40}"
+Send "{ENTER}"; Start-Sleep -Seconds 1   # "Uninstall Settings sample"
+Send "{ENTER}"; Start-Sleep -Seconds 2   # "Uninstall and keep saved data"
+Send "{DOWN 40}"
+Send "{ENTER}"; Start-Sleep -Seconds 1   # "Delete retained data of Settings sample"
+Capture "52-confirm-delete-retained.png"
+Check "52-confirm-delete-retained.png" "aab4c0"   # what is kept and what is not touched
+Send "{ENTER}"; Start-Sleep -Seconds 2   # "Delete retained data"
+Capture "53-retained-deleted.png"
+Check "53-retained-deleted.png" "9fd8a8"   # "Deleted the retained data of Settings sample"
+Stop-Pane $process
+if (Select-String -Quiet -SimpleMatch '"retained"' (Join-Path $data "extensions/installed.json")) { throw "retained record not dropped" }
+if (Select-String -Quiet -SimpleMatch '"greeting-style": "formal"' (Join-Path $data "extensions/settings.json")) { throw "setting not deleted" }
+if (Select-String -Quiet -SimpleMatch 'Water the plants' (Join-Path $data "extensions/content.json")) { throw "note not deleted" }
+$process = Start-Pane "stderr-reinstall-empty.log" @("--install", "target/guests/packages/sample-settings")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Greeting is selected
+Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greeting
+Send "{DOWN 5}"
+Send "{ENTER}"; Start-Sleep -Seconds 2   # "Show what Pane keeps"
+Capture "54-reinstalled-empty.png"
+Check "54-reinstalled-empty.png" "9fd8a8"   # "Style: none · Note: none · Signed in: no ..."
+python "$PSScriptRoot/check_screenshot.py" --distinct (Join-Path $OutDir "51-reinstalled.png") (Join-Path $OutDir "54-reinstalled-empty.png")
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the deleted data is still shown" }
+Send "{ESC}"; Start-Sleep -Seconds 1
+Stop-Pane $process
 Write-Output "screenshots in $OutDir"

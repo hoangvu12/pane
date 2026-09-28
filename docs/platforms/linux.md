@@ -354,6 +354,27 @@ has not run there yet. A managed folder that Windows keeps in use is covered
 only by the leftover mechanism's Unix test (a read-only folder), not
 natively.
 
+### Deleting retained data (#41)
+
+The last phase restarts Pane, uninstalls the reinstalled settings sample
+again keeping its saved data, then chooses its "Delete retained data of
+Settings sample" row, the extension list's last, and confirms. It checks
+that `installed.json` no longer has a `retained` record and that the style
+and note are gone from `settings.json` and `content.json`; installs the same
+folder again and shows what Pane keeps, which must differ from screenshot 51.
+Run locally on 2026-09-28 (Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic,
+x86_64, same Xvfb/lavapipe setup): all checks of the whole smoke passed.
+
+| Step | Evidence |
+| --- | --- |
+| "Delete the retained data of Settings sample?", its source, "Retained data: 1 setting and 1 content record", what is not touched; Delete retained data and Cancel | `52-confirm-delete-retained.png` (not committed: it shows the local checkout path) |
+| "Deleted the retained data of Settings sample", the row gone | `53-retained-deleted.png` (not committed: the list's rows show the local checkout path) |
+| Reinstalled: "Style: none · Note: none · Signed in: no · Cached greeting: none" | [54-reinstalled-empty.png](evidence/linux-x11/54-reinstalled-empty.png) |
+
+The macOS and Windows smokes run the same phase (screenshots 52 to 54); it
+has not run there yet. A file locked by another program on Windows is
+covered only by the tests' unreadable and unwritable files, not natively.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms have a text field (GPUI CE's

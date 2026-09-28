@@ -14,8 +14,9 @@
 //! identity rather than the title or the managed copy. They are kept while
 //! the package is disabled, updated or Pane is not running. The kind decides
 //! what a management action removes, and removing is done here by Pane,
-//! never by running the package. An unreadable file is reported to the guest
-//! and never overwritten.
+//! never by running the package. Deleting retained data (an uninstalled
+//! package's kept data) removes every kind. An unreadable file is reported
+//! to the guest and never overwritten.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
@@ -46,7 +47,7 @@ pub(crate) enum DataKind {
 }
 
 impl DataKind {
-    const ALL: [DataKind; 4] = [
+    pub const ALL: [DataKind; 4] = [
         DataKind::Settings,
         DataKind::Content,
         DataKind::Cache,
@@ -87,6 +88,17 @@ impl DataKind {
             DataKind::Content => "the content",
             DataKind::Cache => "the cache value",
             DataKind::LocalCredentials => "the credential",
+        }
+    }
+
+    /// What one value, and several values, of this kind are called when
+    /// counted.
+    pub fn counted(self) -> (&'static str, &'static str) {
+        match self {
+            DataKind::Settings => ("setting", "settings"),
+            DataKind::Content => ("content record", "content records"),
+            DataKind::Cache => ("cache value", "cache values"),
+            DataKind::LocalCredentials => ("credential", "credentials"),
         }
     }
 
@@ -279,6 +291,21 @@ impl ExtensionData {
         if saved == SavedData::Delete {
             kinds.extend([DataKind::Settings, DataKind::Content]);
         }
+        self.remove_kinds(identity, kinds)
+    }
+
+    /// Removes every kind of data Pane keeps for `identity`, a package that
+    /// is not installed, without running it: its retained data. Each kind is
+    /// removed on its own, as [`ExtensionData::remove_uninstalled`] does, and
+    /// other identities' values stay. Returns why each kind that could not be
+    /// removed was not; its values remain where they were.
+    pub fn remove_retained(&self, identity: &PackageIdentity) -> Vec<String> {
+        self.remove_kinds(identity, DataKind::ALL.to_vec())
+    }
+
+    /// Removes `kinds` of the data of `identity`, returning why each that
+    /// could not be removed was not.
+    fn remove_kinds(&self, identity: &PackageIdentity, kinds: Vec<DataKind>) -> Vec<String> {
         kinds
             .into_iter()
             .filter_map(|kind| {

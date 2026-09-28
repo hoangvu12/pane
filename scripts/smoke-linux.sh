@@ -531,4 +531,38 @@ python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/43-kept-after-cle
 "$xdotool" key Escape; sleep 1
 stop_pane
 if grep -q '"retained"' "$out/data/extensions/installed.json"; then echo "retained record not dropped"; exit 1; fi
+
+# Delete the settings sample's retained data. Installed last, its Uninstall
+# row is the extension list's last; uninstalled keeping its saved data, its
+# retained data is listed as the last row. Pane asks first, then deletes it
+# without the extension; installing the same folder again finds nothing.
+start_pane
+"$xdotool" windowfocus --sync "$window"
+for ((i = 0; i < 20; i++)); do "$xdotool" key Down; done   # the last row
+"$xdotool" key Return; sleep 1
+for ((i = 0; i < 40; i++)); do "$xdotool" key Down; done
+"$xdotool" key Return; sleep 1   # "Uninstall Settings sample"
+"$xdotool" key Return; sleep 2   # "Uninstall and keep saved data"
+for ((i = 0; i < 40; i++)); do "$xdotool" key Down; done
+"$xdotool" key Return; sleep 1   # "Delete retained data of Settings sample"
+capture 52-confirm-delete-retained.png
+check 52-confirm-delete-retained.png aab4c0   # what is kept and what is not touched
+"$xdotool" key Return; sleep 2   # "Delete retained data"
+capture 53-retained-deleted.png
+check 53-retained-deleted.png 9fd8a8   # "Deleted the retained data of Settings sample"
+stop_pane
+if grep -q '"retained"' "$out/data/extensions/installed.json"; then echo "retained record not dropped"; exit 1; fi
+if grep -q '"greeting-style": "formal"' "$out/data/extensions/settings.json"; then echo "setting not deleted"; exit 1; fi
+if grep -q 'Water the plants' "$out/data/extensions/content.json"; then echo "note not deleted"; exit 1; fi
+start_pane --install target/guests/packages/sample-settings
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 2   # Install; Greeting is selected
+"$xdotool" key Return; sleep 3   # open Greeting
+for ((i = 0; i < 5; i++)); do "$xdotool" key Down; done
+"$xdotool" key Return; sleep 2   # "Show what Pane keeps"
+capture 54-reinstalled-empty.png
+check 54-reinstalled-empty.png 9fd8a8   # "Style: none · Note: none · Signed in: no ..."
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/51-reinstalled.png" "$out/54-reinstalled-empty.png"
+"$xdotool" key Escape; sleep 1
+stop_pane
 echo "screenshots in $out"

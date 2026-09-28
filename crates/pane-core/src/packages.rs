@@ -954,6 +954,30 @@ impl Store {
         })
     }
 
+    /// Drops the record that Pane keeps extension data for `identity`, once
+    /// that data is deleted. Nothing changes if there is no such record; a
+    /// failure to write leaves the record.
+    pub fn forget_retained(&mut self, identity: &PackageIdentity) -> Result<(), PackageError> {
+        let registry = self
+            .registry
+            .as_mut()
+            .map_err(|reason| PackageError::Storage(reason.clone()))?;
+        let PackageIdentity(Source::Local(local)) = identity;
+        if !registry
+            .retained
+            .iter()
+            .any(|record| &record.local == local)
+        {
+            return Ok(());
+        }
+        let mut updated = registry.clone();
+        updated.retained.retain(|record| &record.local != local);
+        write_registry(&self.dir, &updated)
+            .map_err(|error| PackageError::Storage(error.to_string()))?;
+        *registry = updated;
+        Ok(())
+    }
+
     /// Records that Pane keeps extension data for `identity`, which is not
     /// installed, under `title`.
     pub fn retain(

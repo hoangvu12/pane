@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, prelude::*};
 use pane::LauncherWindow;
-use pane_core::{Launcher, LauncherView, Runtime, Screen, Status};
+use pane_core::{Launcher, LauncherView, PackageIdentity, Runtime, Screen, Status};
 use tempfile::TempDir;
 
 const INSTALL_ROW: &str = "Install extension from folder…";
@@ -485,6 +485,66 @@ fn an_installed_package_is_uninstalled_after_choosing_what_to_keep(cx: &mut Test
     assert!(cx.debug_bounds("status-result").is_some());
 
     // Root search no longer offers its command, nor the extension list.
+    cx.simulate_keystrokes("escape");
+    assert_eq!(titles(&settle(&window, cx)), [INSTALL_ROW]);
+    assert!(folder.join("pane.json").exists(), "the source is kept");
+}
+
+#[gpui::test]
+fn retained_data_is_deleted_from_the_extension_list_after_confirming(cx: &mut TestAppContext) {
+    let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let folder = package(&sources.path().join("hello"));
+    // A setting the package saved earlier, as its commands would.
+    let key = PackageIdentity::local(&folder).unwrap().key();
+    let extensions = data.path().join("extensions");
+    let settings = extensions.join("settings.json");
+    fs::create_dir_all(&extensions).unwrap();
+    let saved = serde_json::json!({ "version": 1, "packages": { &key: { "style": "formal" } } });
+    fs::write(&settings, saved.to_string()).unwrap();
+    let (window, cx) = open(cx, &data);
+    install(&window, cx, &folder);
+    // Uninstall it, keeping its saved data.
+    cx.simulate_keystrokes("down down enter");
+    settle(&window, cx);
+    cx.simulate_keystrokes("down down down enter");
+    settle(&window, cx);
+    cx.simulate_keystrokes("enter");
+    let view = settle(&window, cx);
+    assert_eq!(titles(&view), ["Delete retained data of Hello"]);
+    assert!(
+        cx.debug_bounds("row-Delete retained data of Hello")
+            .is_some()
+    );
+
+    // It asks first, saying what is kept; Escape keeps it.
+    cx.simulate_keystrokes("enter");
+    let view = settle(&window, cx);
+    assert_eq!(view.title, "Delete the retained data of Hello?");
+    assert_eq!(titles(&view), ["Delete retained data", "Cancel"]);
+    assert!(
+        cx.debug_bounds("detail-Retained data: 1 setting").is_some(),
+        "what is kept is rendered"
+    );
+    cx.simulate_keystrokes("escape");
+    let view = settle(&window, cx);
+    assert!(matches!(view.screen, Screen::Extensions { .. }));
+    assert_eq!((view.status, view.selected), (Status::Idle, Some(0)));
+
+    cx.simulate_keystrokes("enter");
+    settle(&window, cx);
+    cx.simulate_keystrokes("enter");
+    let view = settle(&window, cx);
+    assert!(matches!(view.screen, Screen::Extensions { .. }));
+    assert_eq!(
+        view.status,
+        Status::Result("Deleted the retained data of Hello".into())
+    );
+    assert!(view.rows.is_empty());
+    assert!(cx.debug_bounds("status-result").is_some());
+    let text = fs::read_to_string(&settings).unwrap();
+    assert!(!text.contains(&key), "{text}");
+
+    // Nothing is left to manage.
     cx.simulate_keystrokes("escape");
     assert_eq!(titles(&settle(&window, cx)), [INSTALL_ROW]);
     assert!(folder.join("pane.json").exists(), "the source is kept");
