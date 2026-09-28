@@ -1022,11 +1022,17 @@ fn reloading_a_target_stops_the_call_it_serves_and_its_caller_is_told() {
         "{:?}",
         started.elapsed()
     );
-    assert_eq!(
-        launcher.view().status,
-        error(
-            "unavailable: Package b was reloaded or updated while serving the call; call it again"
-        )
+    // The caller's answer and the reload's own both go to the status line,
+    // in whichever order they finish; either is the last one shown.
+    let status = launcher.view().status;
+    assert!(
+        status
+            == error(
+                "unavailable: Package b was reloaded or updated while serving the call; call it \
+                 again"
+            )
+            || status == result("Reloaded Package b"),
+        "{status:?}"
     );
     assert_eq!(dirs.waiting().as_deref(), Some("started"));
 }

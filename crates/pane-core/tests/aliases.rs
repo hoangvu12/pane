@@ -620,12 +620,7 @@ fn a_conflict_in_the_record_is_shown_and_neither_alias_is_used() {
     let query = dirs.install(&launcher, "sample-query", "query");
     let settings = dirs.install(&launcher, "sample-settings", "settings");
     drop(launcher);
-    let id = |folder: &Path, command: &str| {
-        format!(
-            "local:{}#{command}",
-            fs::canonicalize(folder).unwrap().display()
-        )
-    };
+    let id = |folder: &Path, command: &str| format!("{}#{command}", identity_of(folder).key());
     let record = serde_json::json!({
         "version": 1,
         "aliases": { id(&query, "echo"): "same", id(&settings, "greeting"): "SAME" },
@@ -712,7 +707,7 @@ fn a_choice_whose_command_is_gone_is_shown_and_can_be_forgotten() {
     let (launcher, _runtime) = dirs.launcher();
     let query = dirs.install(&launcher, "sample-query", "query");
     drop(launcher);
-    let key = format!("local:{}", fs::canonicalize(&query).unwrap().display());
+    let key = identity_of(&query).key();
     let record = serde_json::json!({
         "version": 1,
         "aliases": { format!("{key}#gone"): "gn", "local:/nowhere#echo": "nw" },
