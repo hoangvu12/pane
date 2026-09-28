@@ -166,9 +166,18 @@ saved data, deletes its retained data from the extension list's last row
 and `content.json` no longer hold it, and reinstalls the same folder, which
 must show nothing kept. **Not run on macOS yet.**
 
+## Aliases and fallbacks (#31)
+
+The smoke's alias phase (screenshots 66 to 74, [aliases and fallbacks](../aliases.md#checks))
+gives Echo, the query sample's command, the alias "ec" and makes it a
+fallback in Manage extensions, sends "ec hello" and, from the unselected
+fallback row chosen with Down, "zqx" to it, and checks that with the
+extension disabled "ec hello" lists nothing. Nothing in it is specific to
+macOS (no system API is involved); **not run on macOS yet**.
+
 ## Dependencies (#42)
 
-The smoke's last phase (screenshots 66 to 68, [dependencies](../dependencies.md#checks)),
+The smoke's last phase (screenshots 75 to 77, [dependencies](../dependencies.md#checks)),
 with a data folder of its own, previews the dependencies sample (its
 required JavaScript operations sample and optional Rust one listed),
 installs it with the JavaScript sample and runs "Greet through the required

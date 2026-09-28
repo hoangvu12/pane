@@ -84,6 +84,18 @@ _Avoid_: Bookmark, shortcut, alias
 A key combination the user assigns to an installed command in Pane, which opens that command in Pane's window while any application has focus; Pane keeps it as its own record and registers it with the system only while the command's extension is enabled.
 _Avoid_: Shortcut (any key combination, including Pane's own keys), keybinding, alias
 
+**Alias**:
+A word the user gives an installed command in Pane; typing it in root search lists that command first, and, for a query-taking command, typing it before some text lists a row that sends the text to the command when invoked. Pane keeps it as its own record by command id; a disabled package's commands offer none.
+_Avoid_: Keyword (an author's search term), shortcut, nickname
+
+**Fallback**:
+A query-taking command the user chose to have offered below root search's results for any text typed; it is never chosen by itself, so the text reaches it only when the user invokes it.
+_Avoid_: Default action, catch-all
+
+**Query-taking command**:
+An extension command that declares it takes a query: text typed in root search, which Pane sends it only when the user invokes it through its alias or as a fallback, and whose answer Pane shows.
+_Avoid_: Argument (Raycast's per-field input), search provider (a provider is asked while the user types)
+
 **Search provider**:
 A source of matching results for a query, such as applications, files or an online service.
 _Avoid_: The entire search interface

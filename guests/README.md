@@ -50,6 +50,15 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   calling each by its dependency id; installing it installs the JavaScript
   sample too ([Dependencies](#dependencies-on-other-extensions)); held by
   `crates/pane-core/tests/dependencies.rs`.
+- `sample-query`, `sample-query-js`, `sample-query-ts`: Echo, the smallest
+  command that takes a query, in Rust, JavaScript and TypeScript:
+  it answers the text the user sends it from root search through its alias
+  or as a fallback ([A command that takes a query](#a-command-that-takes-a-query),
+  [aliases and fallbacks](../docs/aliases.md)); "fail" is refused and
+  "crash" crashes on purpose. Their packages are `packages/sample-query`,
+  `packages/sample-query-js` and `packages/sample-query-ts`; held alike by
+  `crates/pane-core/tests/aliases.rs`, and the Rust one by
+  `crates/pane/tests/aliases.rs`.
 - `js`: `@pane/extension`, TypeScript declarations for the contract
   (`pane.d.ts`) and the WIT world JS/TS commands are built against.
 - `prebuilt`: the JS and TS sample components (both samples in each
@@ -571,6 +580,54 @@ The [JavaScript](sample-applications-js) and
 their commands list the applications and open one with `open(id)`; their
 packages in [`packages/`](packages) set `indexedResults`.
 
+## A command that takes a query
+
+The user can give any installed command an alias in Manage extensions, and
+typing it in root search lists the command first; nothing is needed of the
+command for that. A command that **takes a query** can also be sent text
+from root search: the user types its alias, a space and the text ("ec
+hello"), or makes it a fallback, which is listed below the results for any
+text typed, and invokes that row. Pane calls the command only then, never
+while the user types, and shows its answer as the result (an error as the
+failure); root search stays as it was. Set `"takesQuery": true` on the
+command in `pane.json` and export `pane:extension/query-command`
+([`wit/query.wit`](../wit/query.wit)) beside the command; Pane checks it at
+install without running it. Pane passes the command's id in `pane.json`, so
+one component can serve several such commands, and the text, trimmed and
+never empty. A trap counts towards [pausing](../docs/pausing.md) as any
+call's does. See [aliases and fallbacks](../docs/aliases.md).
+
+Rust (`pane_guest::query`; the component then exports both interfaces), as
+[`sample-query`](sample-query) does:
+
+```rust
+use pane_guest::alloc::{format, string::String};
+
+pane_guest::export!(Echo);
+pane_guest::query::export!(Echo);
+
+impl pane_guest::query::Guest for Echo {
+    async fn run_query(command: String, query: String) -> Result<String, String> {
+        Ok(format!("Echo heard “{query}”"))
+    }
+}
+```
+
+JavaScript or TypeScript: add `"pane": { "takesQuery": true }` to
+`package.json`, so the build exports the interface, and export
+`queryCommand` from the module, as the [JavaScript](sample-query-js) and
+[TypeScript](sample-query-ts) query samples do:
+
+```ts
+import type { QueryCommand } from "@pane/extension";
+
+export const queryCommand: QueryCommand = {
+  async runQuery(command, query) {
+    return `Echo heard “${query}”`;
+  },
+};
+```
+
 ## Custom views
 
 An item can open a custom view that the command draws itself: filled
@@ -814,7 +871,8 @@ and TypeScript: Pane sees only components.
   available on Linux: this package supports only Windows") instead of
   installing it. See
   [platform availability](../docs/platform-availability.md).
-- `commands` (required, at least one): `id` unique in the package, `title`,
+- `commands` (required, at least one): `id` unique in the package (without
+  `#`, which Pane's records use to join it to the package identity), `title`,
   optional `subtitle`, optional `platforms` (the same list, for this command
   alone: elsewhere its root row is listed with the reason and does not
   open), and `component`, a relative path inside the package folder (no

@@ -702,6 +702,72 @@ python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/51-reinstalled.pn
 "$xdotool" key Escape; sleep 1
 stop_pane
 
+# Aliases and fallbacks: in Manage extensions, the query sample's command,
+# Echo, is given the alias "ec" (its row follows the package's state, Reload,
+# Clear cache, Uninstall and hotkey rows) and made a fallback (the next row).
+# In root search, "ec hello" lists the row that sends "hello" to Echo,
+# selected, and Enter shows Echo's answer; text nothing matches lists "No
+# results" with Echo below it, not selected, until Down selects it and Enter
+# sends the text. After a restart with the extension disabled, "ec hello"
+# lists nothing: the same screen as a Pane with nothing installed. Data
+# folders of their own keep the rows in a known order.
+export PANE_DATA_DIR=$out/aliases-data
+rm -rf "$PANE_DATA_DIR"
+start_pane --install target/guests/packages/sample-query
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" key Return; sleep 2   # Install; Echo is selected
+for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+"$xdotool" key Return; sleep 1
+for ((i = 0; i < 5; i++)); do "$xdotool" key Down; done   # "Alias for Echo"
+"$xdotool" key Return; sleep 1
+"$xdotool" type --delay 50 'ec'
+"$xdotool" key Return; sleep 2
+capture 66-alias-saved.png
+check 66-alias-saved.png 9fd8a8   # "Typing “ec” now finds Echo"
+"$xdotool" key Down Return; sleep 2   # "Fallback: Echo"
+capture 67-fallback-on.png
+check 67-fallback-on.png 9fd8a8   # "Echo is now offered for any text typed in root search"
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{66-alias-saved,67-fallback-on}.png
+"$xdotool" key Escape; sleep 1   # root search
+"$xdotool" type --delay 50 'ec hello'; sleep 1
+capture 68-alias-row.png
+check 68-alias-row.png 364355 3000   # Echo, sending “hello”, selected
+"$xdotool" key Return; sleep 3
+capture 69-alias-answer.png
+check 69-alias-answer.png 9fd8a8   # "Echo heard “hello”"
+"$xdotool" key Escape; sleep 1   # clears the query
+"$xdotool" type --delay 50 'zqx'; sleep 1
+capture 70-fallback-listed.png   # "No results for “zqx”", then Echo, not selected
+"$xdotool" key Down; sleep 1
+capture 71-fallback-chosen.png
+check 71-fallback-chosen.png 364355 3000   # Echo, now selected
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{70-fallback-listed,71-fallback-chosen}.png
+"$xdotool" key Return; sleep 3
+capture 72-fallback-answer.png
+check 72-fallback-answer.png 9fd8a8   # "Echo heard “zqx”"
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{69-alias-answer,72-fallback-answer}.png
+stop_pane
+grep -q '"ec"' "$PANE_DATA_DIR/extensions/aliases.json" || { echo "alias not recorded"; exit 1; }
+grep -q '#echo"' "$PANE_DATA_DIR/extensions/aliases.json" || { echo "fallback not recorded"; exit 1; }
+start_pane
+"$xdotool" windowfocus --sync "$window"
+for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+"$xdotool" key Return; sleep 1
+"$xdotool" key Return; sleep 2   # disable Query sample
+"$xdotool" key Escape; sleep 1
+"$xdotool" type --delay 50 'ec hello'; sleep 1
+capture 73-alias-disabled.png   # "No results for “ec hello”"
+stop_pane
+grep -q '"disabled": true' "$PANE_DATA_DIR/extensions/installed.json" || { echo "not disabled"; exit 1; }
+export PANE_DATA_DIR=$out/aliases-empty-data
+rm -rf "$PANE_DATA_DIR"
+start_pane
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" type --delay 50 'ec hello'; sleep 1
+capture 74-nothing-installed.png   # "No results for “ec hello”"
+python3 "$(dirname "$0")/check_screenshot.py" --same "$out"/{73-alias-disabled,74-nothing-installed}.png
+stop_pane
+
 # Dependencies: the dependencies sample requires the JavaScript operations
 # sample (from ../sample-operations-js) and can use the Rust one, which is
 # optional. Its preview lists both; Install installs it with the JavaScript
@@ -713,16 +779,16 @@ export PANE_DATA_DIR=$out/dependencies-data
 rm -rf "$PANE_DATA_DIR"
 start_pane --install target/guests/packages/sample-dependencies
 "$xdotool" windowfocus --sync "$window"
-capture 66-dependencies-preview.png
-check 66-dependencies-preview.png aab4c0   # "Requires: JavaScript operations sample, installed with it ..."
+capture 75-dependencies-preview.png
+check 75-dependencies-preview.png aab4c0   # "Requires: JavaScript operations sample, installed with it ..."
 "$xdotool" key Return; sleep 3   # Install; Greet through dependencies is selected
-capture 67-dependencies-installed.png
-check 67-dependencies-installed.png 9fd8a8   # "Installed Dependencies sample with JavaScript operations sample, which it requires"
+capture 76-dependencies-installed.png
+check 76-dependencies-installed.png 9fd8a8   # "Installed Dependencies sample with JavaScript operations sample, which it requires"
 "$xdotool" key Return; sleep 3   # open Greet through dependencies
 "$xdotool" key Return; sleep 5   # Greet through the required greeter
-capture 68-dependency-answer.png
-check 68-dependency-answer.png 9fd8a8   # the JavaScript guest's answer
-python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{66-dependencies-preview,67-dependencies-installed,68-dependency-answer}.png
+capture 77-dependency-answer.png
+check 77-dependency-answer.png 9fd8a8   # the JavaScript guest's answer
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{75-dependencies-preview,76-dependencies-installed,77-dependency-answer}.png
 stop_pane
 grep -q '"id": "greeter"' "$PANE_DATA_DIR/extensions/installed.json" || { echo "dependency not recorded"; exit 1; }
 [ "$(grep -c '"dir"' "$PANE_DATA_DIR/extensions/installed.json")" = 2 ] || { echo "not exactly two packages installed"; exit 1; }

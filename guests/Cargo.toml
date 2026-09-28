@@ -12,6 +12,7 @@ members = [
     "quicklinks",
     "sample-operations",
     "sample-dependencies",
+    "sample-query",
     "fixtures/faulty",
     "fixtures/operations",
     "fixtures/old-api",

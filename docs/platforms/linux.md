@@ -407,9 +407,35 @@ The macOS and Windows smokes run the same phase (screenshots 63 to 65); it
 has not run there yet. A file locked by another program on Windows is
 covered only by the tests' unreadable and unwritable files, not natively.
 
+### Aliases and fallbacks (#31)
+
+The phase after the retained-data phase ([aliases and fallbacks](../aliases.md#checks)),
+with data folders of its own, installs the query sample, gives Echo the
+alias "ec" in its alias form (typed with real X11 key events) and makes it a
+fallback, then in root search types "ec hello" (the row sending "hello" to
+Echo is listed and selected) and presses Enter ("Echo heard “hello”");
+types "zqx" ("No results", then the fallback, not selected), presses Down
+(now selected) and Enter ("Echo heard “zqx”"). It checks `aliases.json`,
+restarts, disables the extension and types "ec hello": the screen is pixel
+for pixel the one a Pane with nothing installed shows for it. Run locally on
+2026-09-28 (Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64, same
+Xvfb/lavapipe setup): all checks of the whole smoke passed.
+
+| Step | Evidence |
+| --- | --- |
+| "ec hello": the alias row selected, the fallback below | [68-alias-row.png](evidence/linux-x11/68-alias-row.png) |
+| Enter: Echo's answer | [69-alias-answer.png](evidence/linux-x11/69-alias-answer.png) |
+| "zqx": no results, the fallback not selected | [70-fallback-listed.png](evidence/linux-x11/70-fallback-listed.png) |
+| Down and Enter: Echo's answer to "zqx" | [72-fallback-answer.png](evidence/linux-x11/72-fallback-answer.png) |
+| Extension disabled: "ec hello" lists nothing | [73-alias-disabled.png](evidence/linux-x11/73-alias-disabled.png) |
+
+(Screenshots 66 and 67, the extension list after saving the alias and the
+fallback, are checked but not kept here: they show the local package
+paths.)
+
 ### Dependencies (#42)
 
-The last phase, after the retained-data phase ([dependencies](../dependencies.md#checks)), with a data
+The last phase, after the alias phase ([dependencies](../dependencies.md#checks)), with a data
 folder of its own, previews the dependencies sample, which requires the
 JavaScript operations sample (`local:../sample-operations-js`) and can use
 the Rust one (optional); the preview lists both. Enter on Install installs
@@ -421,9 +447,9 @@ lavapipe setup): all checks of the whole smoke passed.
 
 | Step | Evidence |
 | --- | --- |
-| The preview: "Requires: JavaScript operations sample, installed with it from local:../sample-operations-js", "Optional: `rust-greeter` from local:../sample-operations, not installed: …" and the Install row | [66-dependencies-preview-cropped.png](evidence/linux-x11/66-dependencies-preview-cropped.png) (cropped below the title and the Source line, which shows the local checkout path; the smoke checks the whole frame) |
-| "Installed Dependencies sample with JavaScript operations sample, which it requires", its command selected | [67-dependencies-installed.png](evidence/linux-x11/67-dependencies-installed.png) |
-| "Hello, Pane, from JavaScript", from the dependency's guest | [68-dependency-answer.png](evidence/linux-x11/68-dependency-answer.png) |
+| The preview: "Requires: JavaScript operations sample, installed with it from local:../sample-operations-js", "Optional: `rust-greeter` from local:../sample-operations, not installed: …" and the Install row | [75-dependencies-preview-cropped.png](evidence/linux-x11/75-dependencies-preview-cropped.png) (cropped below the title and the Source line, which shows the local checkout path; the smoke checks the whole frame) |
+| "Installed Dependencies sample with JavaScript operations sample, which it requires", its command selected | [76-dependencies-installed.png](evidence/linux-x11/76-dependencies-installed.png) |
+| "Hello, Pane, from JavaScript", from the dependency's guest | [77-dependency-answer.png](evidence/linux-x11/77-dependency-answer.png) |
 
 ## Text input and accessibility findings
 
