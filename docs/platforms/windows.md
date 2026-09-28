@@ -134,6 +134,20 @@ adapter was only compile- and lint-checked for `x86_64-pc-windows-gnu` from
 Linux; **not run on Windows yet**, so registration, delivery and the focus
 transition (foreground rules) are unverified natively.
 
+## Dependencies (#42)
+
+The smoke's last phase (screenshots 63 to 65, [dependencies](../dependencies.md#checks)),
+with a data folder of its own, previews the dependencies sample (its
+required JavaScript operations sample and optional Rust one listed),
+installs it with the JavaScript sample and runs "Greet through the required
+greeter", which must answer from the JavaScript guest; `installed.json`
+must then hold exactly two packages and the recorded dependency. A
+dependency's `local:../…` source is joined to the package folder and
+resolved with the same `canonicalize` (without the `\\?\` prefix) as
+package identity; a folder that does not exist is resolved from its
+spelling. **Not run on Windows yet**, so `..` across drive-letter and UNC
+paths is untested natively.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** the smoke now also opens the Rust command's

@@ -673,3 +673,52 @@ fn an_invalid_dependency_declaration_is_explained() {
         );
     }
 }
+
+/// From root search, opens the command titled `command` and runs its item
+/// titled `item`.
+fn run(launcher: &Launcher, command: &str, item: &str) -> Status {
+    launcher.back();
+    launcher.back();
+    select_title(launcher, command);
+    block_on(launcher.activate_selected());
+    select_title(launcher, item);
+    block_on(launcher.activate_selected());
+    launcher.view().status
+}
+
+#[test]
+fn the_dependencies_sample_installs_its_required_greeter_and_uses_the_optional_one_once_installed()
+{
+    let dirs = Dirs::new();
+    let sample = dirs.sample("sample-dependencies");
+    dirs.sample("sample-operations-js");
+    let rust = dirs.sample(RUST);
+    let launcher = dirs.launcher();
+
+    block_on(launcher.install_package(&sample));
+
+    assert_eq!(
+        launcher.view().status,
+        result(
+            "Installed Dependencies sample with JavaScript operations sample, which it requires"
+        )
+    );
+    let command = "Greet through dependencies";
+    assert_eq!(
+        run(&launcher, command, "Greet through the required greeter"),
+        result("Hello, Pane, from JavaScript")
+    );
+    assert_eq!(
+        run(&launcher, command, "Greet through the optional greeter"),
+        result(
+            "The optional Rust greeter is not installed; install the Rust operations sample to \
+             use it"
+        )
+    );
+
+    block_on(launcher.install_package(&rust));
+    assert_eq!(
+        run(&launcher, command, "Greet through the optional greeter"),
+        result("Hello, Pane, from Rust")
+    );
+}

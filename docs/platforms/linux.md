@@ -384,6 +384,27 @@ window manager, so raising and focusing Pane's window
 (`_NET_ACTIVE_WINDOW`) is not verified; Wayland is explained as unavailable
 (tested with a fake, not natively), and no real desktop session ran.
 
+### Dependencies (#42)
+
+The last phase ([dependencies](../dependencies.md#checks)), with a data
+folder of its own, previews the dependencies sample, which requires the
+JavaScript operations sample (`local:../sample-operations-js`) and can use
+the Rust one (optional); the preview lists both. Enter on Install installs
+it with the JavaScript sample only; its command, selected, opens, and "Greet
+through the required greeter" calls `greet` by the dependency id `greeter`.
+Afterwards `installed.json` must hold exactly two packages and the
+recorded dependency. Run locally on 2026-09-28 (same Ubuntu 26.04.1 / Xvfb /
+lavapipe setup): all checks of the whole smoke passed.
+
+| Step | Evidence |
+| --- | --- |
+| The preview: "Requires: JavaScript operations sample, installed with it from local folder …", "Optional: `rust-greeter` from local folder …, not installed: …" | `63-dependencies-preview.png` (not committed: it shows the local checkout path) |
+| "Installed Dependencies sample with JavaScript operations sample, which it requires", its command selected | [64-dependencies-installed.png](evidence/linux-x11/64-dependencies-installed.png) |
+| "Hello, Pane, from JavaScript", from the dependency's guest | [65-dependency-answer.png](evidence/linux-x11/65-dependency-answer.png) |
+
+In the preview the long source paths push the Install row mostly below the
+list's visible area; it is still selected and Enter installs.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms have a text field (GPUI CE's

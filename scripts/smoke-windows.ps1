@@ -616,4 +616,32 @@ python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: Retry changed nothing" }
 Stop-Pane $process
 if (Select-String -Quiet -SimpleMatch '"paused"' (Join-Path $data "extensions/installed.json")) { throw "pause not cleared" }
+
+# Dependencies: the dependencies sample requires the JavaScript operations
+# sample (from ../sample-operations-js) and can use the Rust one, which is
+# optional. Its preview lists both; Install installs it with the JavaScript
+# sample only, and its command (selected once installed) calls that
+# package's greet operation by its dependency id: "Hello, Pane, from
+# JavaScript" comes from the other package's guest. A data folder of its own
+# starts with nothing installed.
+$data = Join-Path $OutDir "dependencies-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+$process = Start-Pane "stderr-dependencies.log" @("--install", "target/guests/packages/sample-dependencies")
+Capture "63-dependencies-preview.png"
+Check "63-dependencies-preview.png" "aab4c0"   # "Requires: JavaScript operations sample, installed with it ..."
+Send "{ENTER}"; Start-Sleep -Seconds 3   # Install; Greet through dependencies is selected
+Capture "64-dependencies-installed.png"
+Check "64-dependencies-installed.png" "9fd8a8"   # "Installed Dependencies sample with JavaScript operations sample, which it requires"
+Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greet through dependencies
+Send "{ENTER}"; Start-Sleep -Seconds 5   # Greet through the required greeter
+Capture "65-dependency-answer.png"
+Check "65-dependency-answer.png" "9fd8a8"   # the JavaScript guest's answer
+$shots = "63-dependencies-preview", "64-dependencies-installed", "65-dependency-answer" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: installing with dependencies changed nothing" }
+Stop-Pane $process
+$record = Join-Path $data "extensions/installed.json"
+if (-not (Select-String -Quiet -SimpleMatch '"id": "greeter"' $record)) { throw "dependency not recorded" }
+if ((Select-String -SimpleMatch '"dir"' $record).Count -ne 2) { throw "not exactly two packages installed" }
 Write-Output "screenshots in $OutDir"
