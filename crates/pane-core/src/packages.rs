@@ -321,6 +321,11 @@ pub struct ManifestCommand {
     /// its alias or as a fallback. Its component then also exports
     /// `pane:extension/query-command`.
     pub takes_query: bool,
+    /// Whether the command searches as the user types into its own search
+    /// field once it is open (`"search": true`), such as a command searching
+    /// an online service; root search never asks it. Its component then
+    /// also exports `pane:extension/command-search`.
+    pub search: bool,
 }
 
 #[derive(Deserialize)]
@@ -385,6 +390,8 @@ struct CommandJson {
     indexed_results: bool,
     #[serde(default)]
     takes_query: bool,
+    #[serde(default)]
+    search: bool,
 }
 
 impl Manifest {
@@ -468,6 +475,7 @@ impl Manifest {
             root_results: commands().any(|command| command.root_results),
             indexed_results: commands().any(|command| command.indexed_results),
             query_command: commands().any(|command| command.takes_query),
+            command_search: commands().any(|command| command.search),
             operations: self
                 .operations
                 .iter()
@@ -534,6 +542,7 @@ impl Manifest {
                 root_results: command.root_results,
                 indexed_results: command.indexed_results,
                 takes_query: command.takes_query,
+                search: command.search,
             });
         }
         let mut operations: Vec<ManifestOperation> = Vec::new();
@@ -948,6 +957,7 @@ impl InstalledPackage {
                         .or_else(|| Some(manifest.title.clone())),
                     component: self.location.join(&command.component),
                     takes_query: command.takes_query,
+                    searches: command.search,
                 };
                 let unavailable = package.clone().or_else(|| {
                     platform::unavailable(command.platforms.as_deref(), "this command")

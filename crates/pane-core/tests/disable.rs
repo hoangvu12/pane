@@ -371,6 +371,7 @@ fn commands_built_into_pane_have_no_settings(fixture: &Fixture) {
         subtitle: None,
         component: folder.join(fixture.component),
         takes_query: false,
+        searches: false,
     };
     let launcher = Launcher::new(Runtime::start(), vec![command]);
 

@@ -94,9 +94,10 @@ impl OperationError {
             | CallError::Incompatible(_)
             | CallError::Interface(_)
             | CallError::OlderApiShape(_) => (Incompatible, format!("{title}: {error}")),
-            // A form's rejection answers only `submit-form`, and a live
-            // instance (started just before the call) is never missing.
-            CallError::Form(_) | CallError::ViewClosed => {
+            // A form's rejection answers only `submit-form`, a stopped search
+            // only a search, and a live instance (started just before the
+            // call) is never missing.
+            CallError::Form(_) | CallError::ViewClosed | CallError::SearchStopped => {
                 unreachable!("an operation call cannot end with {error:?}")
             }
         };

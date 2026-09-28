@@ -7,6 +7,7 @@ mod dependencies;
 mod extension_data;
 mod generation;
 pub mod hotkeys;
+mod http;
 mod launcher;
 mod links;
 mod operations;

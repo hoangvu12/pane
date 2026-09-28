@@ -22,7 +22,9 @@ use crate::packages::paused_reason;
 use wasmtime::component::{Component, Linker, ResourceAny, ResourceTable};
 use wasmtime::{Cache, CacheConfig, Config, Engine, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
+use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
 
+use crate::http;
 use crate::platform::Platform;
 
 pub(crate) mod bindings {
@@ -58,6 +60,16 @@ mod query_bindings {
     wasmtime::component::bindgen!({
         path: "../../wit",
         world: "query-command-provider",
+        exports: { default: async | store },
+    });
+}
+
+/// The `command-search` export of a command that searches as the user types
+/// into its own search field.
+mod search_bindings {
+    wasmtime::component::bindgen!({
+        path: "../../wit",
+        world: "command-search-provider",
         exports: { default: async | store },
     });
 }
@@ -100,6 +112,39 @@ const QUERY_COMMAND_INTERFACE: &str = "pane:extension/query-command@0.1.0";
 
 /// The interface a component serving published operations also exports.
 const OPERATIONS_INTERFACE: &str = "pane:extension/published-operations@0.1.0";
+
+/// The interface a command that searches as the user types also exports.
+const COMMAND_SEARCH_INTERFACE: &str = "pane:extension/command-search@0.1.0";
+
+/// One thing a command's search found, listed as a row of the command.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SearchResult {
+    /// Passed to the command's `run-action` when the row is activated.
+    pub id: String,
+    pub title: String,
+    pub subtitle: Option<String>,
+}
+
+/// Stops a search that is no longer needed: when it is stopped or dropped,
+/// the search is not started if it has not been, and stopped where its guest
+/// waits if it has (see [`Runtime::search_with`]).
+pub(crate) struct StopSearch(#[allow(dead_code)] oneshot::Sender<()>);
+
+/// Tells the runtime that a search was stopped.
+struct SearchStopped(oneshot::Receiver<()>);
+
+impl SearchStopped {
+    /// Whether the search has been stopped.
+    fn stopped(&mut self) -> bool {
+        !matches!(self.0.try_recv(), Err(oneshot::error::TryRecvError::Empty))
+    }
+}
+
+/// A way to stop a search, and what the runtime watches for it.
+fn stoppable() -> (StopSearch, SearchStopped) {
+    let (stop, stopped) = oneshot::channel();
+    (StopSearch(stop), SearchStopped(stopped))
+}
 
 /// A result a command computed from root search's query.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -147,6 +192,9 @@ pub(crate) struct Exports {
     pub query_command: bool,
     /// `published-operations`: it serves published operations.
     pub operations: bool,
+    /// `command-search`: it searches as the user types into its own search
+    /// field.
+    pub command_search: bool,
 }
 
 /// The system's applications as the runtime's guests and the launcher see
@@ -384,6 +432,11 @@ pub enum CallError {
     /// The custom view was closed, or its guest instance has stopped, so it
     /// cannot handle events any more.
     ViewClosed,
+    /// A search inside a command was stopped because it is no longer needed
+    /// (the user changed its text again, or left the command): it was not
+    /// started, or its guest's call and instance were dropped where it
+    /// waited. Not a failure of the extension.
+    SearchStopped,
 }
 
 impl fmt::Display for CallError {
@@ -419,6 +472,9 @@ impl fmt::Display for CallError {
             CallError::Form(error) => f.write_str(&error.message),
             CallError::Trap(reason) => write!(f, "The extension crashed: {reason}"),
             CallError::ViewClosed => f.write_str("The extension's view is no longer open"),
+            CallError::SearchStopped => {
+                f.write_str("The search was stopped: it is no longer needed")
+            }
         }
     }
 }
@@ -493,6 +549,14 @@ enum Request {
         query: String,
         data: Option<PackageData>,
         reply: oneshot::Sender<Result<String, CallError>>,
+    },
+    Search {
+        component: PathBuf,
+        command: String,
+        query: String,
+        data: Option<PackageData>,
+        stopped: SearchStopped,
+        reply: oneshot::Sender<Result<Vec<SearchResult>, CallError>>,
     },
     Forget {
         components: Vec<PathBuf>,
@@ -766,6 +830,45 @@ impl Runtime {
         response.await.unwrap_or_else(|_| Err(stopped()))
     }
 
+    /// Searches for `query` with the command with manifest id `command` in
+    /// `component`, which searches as the user types; the command reads and
+    /// saves `data`. Starts its instance if it has none.
+    ///
+    /// The search is sent at once; the returned future waits for its
+    /// answer. Stopping or dropping the returned [`StopSearch`] stops it:
+    /// a search queued behind other calls is then never started, and one
+    /// waiting inside the guest (on a web request, say) is dropped with its
+    /// instance, as when a generation ends; either answers
+    /// [`CallError::SearchStopped`], and so does a search that completes
+    /// once it was stopped, whose results are discarded. A stopped search is
+    /// not a failure of the extension.
+    pub(crate) fn search_with(
+        &self,
+        component: &Path,
+        command: &str,
+        query: &str,
+        data: Option<PackageData>,
+    ) -> (
+        StopSearch,
+        impl Future<Output = Result<Vec<SearchResult>, CallError>> + Send + 'static,
+    ) {
+        let (stop, watched) = stoppable();
+        let (reply, response) = oneshot::channel();
+        let sent = self.send(Request::Search {
+            component: component.to_path_buf(),
+            command: command.to_owned(),
+            query: query.to_owned(),
+            data,
+            stopped: watched,
+            reply,
+        });
+        let answer = async move {
+            sent?;
+            response.await.unwrap_or_else(|_| Err(stopped()))
+        };
+        (stop, answer)
+    }
+
     /// Submits the form of `item_id` in the command in `component`. A
     /// rejection by the guest is [`CallError::Form`]. The command has no
     /// extension data.
@@ -940,6 +1043,10 @@ pub(crate) struct GuestState {
     pub(crate) serving: bool,
     /// Finds and opens the system's applications for the guest.
     applications: SharedApplications,
+    /// `wasi:http`'s settings for the guest's web requests.
+    http: WasiHttpCtx,
+    /// Sends the guest's web requests.
+    sender: http::Sender,
 }
 
 impl GuestState {
@@ -1031,6 +1138,16 @@ impl WasiView for GuestState {
     }
 }
 
+impl WasiHttpView for GuestState {
+    fn http(&mut self) -> WasiHttpCtxView<'_> {
+        WasiHttpCtxView {
+            ctx: &mut self.http,
+            table: &mut self.table,
+            hooks: &mut self.sender,
+        }
+    }
+}
+
 /// A running guest instance of one component.
 struct Instance {
     store: Store<GuestState>,
@@ -1043,6 +1160,8 @@ struct Instance {
     query_command: Option<query_bindings::QueryCommandProvider>,
     /// Its published operations export, if it has one.
     operations: Option<operations_bindings::OperationsProvider>,
+    /// Its search export, if it searches as the user types.
+    command_search: Option<search_bindings::CommandSearchProvider>,
 }
 
 /// A custom view open in a guest instance.
@@ -1096,6 +1215,9 @@ impl Code {
         // imports, so a mixed P2/P3 component cannot instantiate.
         wasmtime_wasi::p3::add_to_linker(&mut linker)
             .expect("registering WASI 0.3 in a fresh linker cannot conflict");
+        // Web requests (`wasi:http@0.3.0`'s client), sent by `http`.
+        wasmtime_wasi_http::p3::add_to_linker(&mut linker)
+            .expect("registering wasi:http in a fresh linker cannot conflict");
         settings::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| state)
             .expect("registering settings in a fresh linker cannot conflict");
         content::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| state)
@@ -1223,6 +1345,14 @@ impl Code {
                 ))
             })?;
         }
+        if exports.command_search {
+            search_bindings::CommandSearchProviderPre::new(pre.clone()).map_err(|error| {
+                CallError::Interface(format!(
+                    "its manifest says it searches as the user types, but it does not export \
+                     {COMMAND_SEARCH_INTERFACE} with the functions Pane calls: {error:#}"
+                ))
+            })?;
+        }
         bindings::ExtensionWithApplicationsPre::new(pre).map_err(interface)?;
         Ok(())
     }
@@ -1294,6 +1424,17 @@ impl Host {
                     reply,
                 } => {
                     let result = self.run_query(&component, command, query, data).await;
+                    let _ = reply.send(result);
+                }
+                Request::Search {
+                    component,
+                    command,
+                    query,
+                    data,
+                    stopped,
+                    reply,
+                } => {
+                    let result = self.search(&component, command, query, data, stopped).await;
                     let _ = reply.send(result);
                 }
                 Request::Forget { components } => {
@@ -1575,6 +1716,45 @@ impl Host {
         self.settle(path, result, CallError::Guest)
     }
 
+    async fn search(
+        &mut self,
+        path: &Path,
+        id: String,
+        query: String,
+        data: Option<PackageData>,
+        mut stopped: SearchStopped,
+    ) -> Result<Vec<SearchResult>, CallError> {
+        // Replaced while it waited in the queue: it is not started.
+        if stopped.stopped() {
+            return Err(CallError::SearchStopped);
+        }
+        let instance = self.instance(path, data).await?;
+        let search = instance
+            .command_search
+            .as_ref()
+            .map(|provider| provider.pane_extension_command_search().clone())
+            .ok_or_else(|| {
+                CallError::Interface(format!("it does not export {COMMAND_SEARCH_INTERFACE}"))
+            })?;
+        let result = self
+            .run_guest_until(path, Some(stopped), async |instance| {
+                instance
+                    .store
+                    .run_concurrent(async |store| search.call_search(store, id, query).await)
+                    .await
+            })
+            .await?;
+        let results = self.settle(path, result, CallError::Guest)?;
+        Ok(results
+            .into_iter()
+            .map(|result| SearchResult {
+                id: result.id,
+                title: result.title,
+                subtitle: result.subtitle,
+            })
+            .collect())
+    }
+
     async fn indexed_results(
         &mut self,
         path: &Path,
@@ -1659,12 +1839,33 @@ impl Host {
         path: &Path,
         call: impl AsyncFnOnce(&mut Instance) -> R,
     ) -> Result<R, CallError> {
+        self.run_guest_until(path, None, call).await
+    }
+
+    /// Like [`Host::run_guest`]; the call also stops, the same way, as soon
+    /// as `search` is stopped, answering [`CallError::SearchStopped`]. Only
+    /// the outermost call watches it: an operation its guest waits for runs
+    /// to its end, and the search stops when it returns.
+    async fn run_guest_until<R>(
+        &mut self,
+        path: &Path,
+        search: Option<SearchStopped>,
+        call: impl AsyncFnOnce(&mut Instance) -> R,
+    ) -> Result<R, CallError> {
         use std::task::Poll;
+
+        /// Why a call stopped before it answered.
+        enum Halt {
+            /// A generation in its chain ended.
+            Ended(End),
+            /// The search it serves is no longer needed.
+            SearchStopped,
+        }
 
         /// What happened next while the guest's call ran.
         enum Next<R> {
             Returned(R),
-            Stopped(End),
+            Stopped(Halt),
             Called(OperationCall),
         }
 
@@ -1673,11 +1874,23 @@ impl Host {
         if let Some(generation) = &own {
             self.owners.push(generation.clone());
         }
-        let mut ends: Vec<std::pin::Pin<Box<dyn Future<Output = End>>>> = self
+        let mut ends: Vec<std::pin::Pin<Box<dyn Future<Output = Halt>>>> = self
             .owners
             .iter()
-            .map(|owner| Box::pin(owner.wait_end()) as _)
+            .map(|owner| {
+                let end = owner.wait_end();
+                Box::pin(async move { Halt::Ended(end.await) }) as _
+            })
             .collect();
+        if let Some(SearchStopped(stopped)) = search {
+            // Resolves when the search is stopped: its sender sent or was
+            // dropped. Polled before the call each time, so a result that
+            // completes once the search was stopped is discarded.
+            ends.push(Box::pin(async move {
+                let _ = stopped.await;
+                Halt::SearchStopped
+            }));
+        }
         self.chain.push(path.to_path_buf());
         instance.store.data_mut().serving = true;
         let result = {
@@ -1709,7 +1922,7 @@ impl Host {
                 .await;
                 match next {
                     Next::Returned(result) => match own.as_ref().and_then(Generation::ended) {
-                        Some(end) => break Err(end),
+                        Some(end) => break Err(Halt::Ended(end)),
                         None => break Ok(result),
                     },
                     Next::Stopped(end) => break Err(end),
@@ -1738,12 +1951,16 @@ impl Host {
                 self.instances.insert(path.to_path_buf(), instance);
                 Ok(result)
             }
-            Err(end) => {
+            Err(halt) => {
                 // The instance is dropped with its store: the abandoned
-                // task, its host tasks, streams, futures and views.
+                // task, its host tasks (web requests too), streams, futures
+                // and views.
                 drop(instance);
                 self.views.retain(|_, view| view.component != path);
-                Err(ended(end))
+                Err(match halt {
+                    Halt::Ended(end) => ended(end),
+                    Halt::SearchStopped => CallError::SearchStopped,
+                })
             }
         }
     }
@@ -1923,6 +2140,8 @@ impl Host {
             GuestState {
                 wasi: WasiCtx::builder().build(),
                 table: ResourceTable::new(),
+                http: WasiHttpCtx::new(),
+                sender: http::Sender::new(data.clone()),
                 data,
                 component: path.to_path_buf(),
                 calls: self.calls.clone(),
@@ -1949,6 +2168,9 @@ impl Host {
         let query_command = query_bindings::QueryCommandProvider::new(&mut store, &instance).ok();
         // Only a component serving published operations exports them.
         let operations = operations_bindings::OperationsProvider::new(&mut store, &instance).ok();
+        // Only a command that searches as the user types exports it.
+        let command_search =
+            search_bindings::CommandSearchProvider::new(&mut store, &instance).ok();
         self.instances.insert(
             path.to_path_buf(),
             Instance {
@@ -1958,6 +2180,7 @@ impl Host {
                 indexed_results,
                 query_command,
                 operations,
+                command_search,
             },
         );
         Ok(())

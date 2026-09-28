@@ -13,6 +13,7 @@ members = [
     "sample-operations",
     "sample-dependencies",
     "sample-query",
+    "sample-search",
     "fixtures/faulty",
     "fixtures/operations",
     "fixtures/old-api",

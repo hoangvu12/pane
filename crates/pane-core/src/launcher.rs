@@ -26,6 +26,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 mod aliases;
 mod choices;
+mod command_search;
 mod hotkeys;
 mod indexed;
 
@@ -74,6 +75,9 @@ pub struct CommandRegistration {
     /// Whether the command takes a query (`"takesQuery": true`): text typed
     /// into root search, sent to it through its alias or as a fallback.
     pub takes_query: bool,
+    /// Whether the command searches as the user types into its own search
+    /// field once it is open (`"search": true`); root search never asks it.
+    pub searches: bool,
 }
 
 impl CommandRegistration {
@@ -92,6 +96,12 @@ pub enum Screen {
     Root { query: String },
     /// An opened command's list view.
     Command,
+    /// An opened command that searches as the user types into its own
+    /// search field, holding `query`, the text typed there: while it is
+    /// blank, the command's list view; otherwise what the command found
+    /// for it. Only the opened command is asked, never root search's
+    /// providers.
+    CommandSearch { query: String },
     /// A package folder's identity and compatibility, before installing it,
     /// as lines of information under the title.
     Package { details: Vec<String> },
@@ -259,6 +269,16 @@ impl LauncherView {
         }
     }
 
+    /// The text of the search field on screen: root search's query, or the
+    /// search of an open command that searches as the user types; `None` on
+    /// screens without one.
+    pub fn search_field(&self) -> Option<&str> {
+        match &self.screen {
+            Screen::Root { query } | Screen::CommandSearch { query } => Some(query),
+            _ => None,
+        }
+    }
+
     /// Lines of information under the title, such as a package's source and
     /// compatibility; empty on screens without any.
     pub fn details(&self) -> &[String] {
@@ -364,6 +384,8 @@ struct State {
     search_epoch: u64,
     /// The component of the command whose view is open.
     open: Option<PathBuf>,
+    /// The open command's search, when it searches as the user types.
+    searching: Option<command_search::Searching>,
     /// The form on screen, if one is open.
     form: Option<OpenForm>,
     /// The custom view on screen, if one is open.
@@ -579,8 +601,8 @@ enum Entry {
     OpenUrl(String),
     /// Open the installed application `id`, named `name` (root).
     OpenApplication { id: String, name: String },
-    /// Open the command with this component (root).
-    Open(PathBuf),
+    /// Open this command (root).
+    Open(Opening),
     /// Send a query to a command that takes one, and show its answer
     /// (root: an alias or fallback).
     Send(aliases::Sending),
@@ -641,6 +663,24 @@ enum Entry {
     DeleteRetained(PackageIdentity),
     /// Return to the extension list without acting (confirmation).
     Cancel,
+}
+
+/// A command root search can open.
+#[derive(Clone)]
+struct Opening {
+    component: PathBuf,
+    /// Its manifest id, when it searches as the user types into its own
+    /// search field; `None` when it does not.
+    search: Option<String>,
+}
+
+impl Opening {
+    fn of(command: &CommandRegistration) -> Opening {
+        Opening {
+            component: command.component.clone(),
+            search: command.searches.then(|| command.manifest_id().to_owned()),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -712,6 +752,7 @@ impl Launcher {
             indexes: indexed::Indexes::default(),
             search_epoch: 0,
             open: None,
+            searching: None,
             form: None,
             custom_view: None,
             screen_epoch: 0,
@@ -870,8 +911,19 @@ impl Launcher {
     /// their results, matched like titles, when they answer, and they are
     /// kept for later queries. Until then the results kept from before are
     /// listed.
+    ///
+    /// On an open command that searches as the user types, `query` is the
+    /// text of its own search field instead: see
+    /// [`Launcher::search_in_command`]. Root search's providers are not
+    /// asked then, and the opened command never is from root search.
     pub fn set_query(&self, query: &str) -> impl Future<Output = ()> + Send + 'static {
         let mut state = self.lock();
+        let in_command = match &state.view.screen {
+            Screen::CommandSearch { query: current } if current != query => {
+                self.search_in_command(&mut state, query)
+            }
+            _ => None,
+        };
         let (asked, indexing) = match &state.view.screen {
             Screen::Root { query: current } if current != query => {
                 self.search(&mut state, query);
@@ -888,6 +940,9 @@ impl Launcher {
         drop(state);
         let launcher = self.clone();
         async move {
+            if let Some(searching) = in_command {
+                searching.await;
+            }
             if !asked.is_empty() {
                 launcher
                     .show_root_results(epoch, search, query, asked)
@@ -1138,9 +1193,15 @@ impl Launcher {
                     |entry| matches!(entry, Entry::PauseDetails(shown) if *shown == identity),
                 );
             }
-            Screen::Command | Screen::Package { .. } | Screen::Extensions { .. } => {
-                self.show_root(&mut state, None)
+            // Escape clears the command's search before leaving it, as it
+            // clears root search's query.
+            Screen::CommandSearch { query } if !query.is_empty() => {
+                self.search_in_command(&mut state, "");
             }
+            Screen::Command
+            | Screen::CommandSearch { .. }
+            | Screen::Package { .. }
+            | Screen::Extensions { .. } => self.show_root(&mut state, None),
             Screen::Root { query } => {
                 if !query.is_empty() {
                     self.search(&mut state, "");
@@ -1287,9 +1348,10 @@ impl Launcher {
         // A call into the package belongs to its generation as of now, not
         // as of when the returned future first runs.
         let called = match &entry {
-            Some(Entry::Open(component) | Entry::Send(aliases::Sending { component, .. })) => {
-                Some(component)
-            }
+            Some(
+                Entry::Open(Opening { component, .. })
+                | Entry::Send(aliases::Sending { component, .. }),
+            ) => Some(component),
             Some(Entry::Run(_) | Entry::CustomView(..)) => open.as_ref(),
             _ => None,
         };
@@ -1319,7 +1381,7 @@ impl Launcher {
                 launcher.finish_install(epoch, install).await;
             }
             match entry {
-                Some(Entry::Open(component)) => launcher.open_command(epoch, component, data).await,
+                Some(Entry::Open(opening)) => launcher.open_command(epoch, opening, data).await,
                 Some(Entry::Send(sending)) => launcher.run_query(epoch, sending, data).await,
                 Some(Entry::OpenApplication { id, name }) => {
                     launcher.open_application(epoch, id, name).await
@@ -1655,9 +1717,9 @@ impl Launcher {
         let (rows, entries) = root_rows(state, "");
         let selected = select
             .and_then(|component| {
-                entries
-                    .iter()
-                    .position(|entry| matches!(entry, Entry::Open(c) if *c == component))
+                entries.iter().position(
+                    |entry| matches!(entry, Entry::Open(opening) if opening.component == component),
+                )
             })
             .or_else(|| aliases::first_choice(&entries));
         self.leave_command(state);
@@ -1685,6 +1747,7 @@ impl Launcher {
             Screen::Root { .. } => self.refresh_root(state),
             Screen::Extensions { .. } => self.refresh_extensions(state),
             Screen::Command
+            | Screen::CommandSearch { .. }
             | Screen::Package { .. }
             | Screen::Form(_)
             | Screen::CustomView(_)
@@ -1759,7 +1822,7 @@ impl Launcher {
         let command = |(command, unavailable): (CommandRegistration, Option<Unavailable>)| {
             let entry = match &unavailable {
                 Some(reason) => Entry::Unavailable(reason.reason().to_owned()),
-                None => Entry::Open(command.component),
+                None => Entry::Open(Opening::of(&command)),
             };
             let row = Row {
                 id: command.id,
@@ -2406,6 +2469,8 @@ impl Launcher {
     /// the runtime, and replies for the old screen are discarded.
     fn leave_command(&self, state: &mut State) {
         self.close_custom_view(state);
+        // Its search in progress, if any, is stopped.
+        state.searching = None;
         state.open = None;
         state.form = None;
         state.screen_epoch += 1;
@@ -2501,7 +2566,8 @@ impl Launcher {
         };
     }
 
-    async fn open_command(&self, epoch: u64, component: PathBuf, data: Option<PackageData>) {
+    async fn open_command(&self, epoch: u64, opening: Opening, data: Option<PackageData>) {
+        let Opening { component, search } = opening;
         let result = match self.runtime() {
             Ok(runtime) => runtime.get_view_with(&component, data.clone()).await,
             Err(error) => Err(error),
@@ -2566,10 +2632,26 @@ impl Launcher {
                         (row, entry)
                     })
                     .unzip();
+                let screen = match search {
+                    Some(command) => {
+                        state.searching = Some(command_search::Searching::new(
+                            command,
+                            rows.clone(),
+                            entries.clone(),
+                        ));
+                        Screen::CommandSearch {
+                            query: String::new(),
+                        }
+                    }
+                    None => {
+                        state.searching = None;
+                        Screen::Command
+                    }
+                };
                 state.entries = entries;
                 state.open = Some(component);
                 state.screen_epoch += 1;
-                state.view = LauncherView::new(Screen::Command, view.title).with_rows(rows);
+                state.view = LauncherView::new(screen, view.title).with_rows(rows);
             }
             Err(error) => state.view.status = Status::Error(error.to_string()),
         }

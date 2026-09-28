@@ -47,6 +47,7 @@ EXPORT_OPTIONS = {
     "indexedResults": "pane:extension/indexed-results@0.1.0",
     "operations": "pane:extension/published-operations@0.1.0",
     "takesQuery": "pane:extension/query-command@0.1.0",
+    "search": "pane:extension/command-search@0.1.0",
 }
 PREBUILT = REPO / "guests" / "prebuilt"
 MANIFEST = PREBUILT / "manifest.json"
@@ -62,9 +63,15 @@ SAMPLES = [
     ("sample_applications_ts.wasm", "guests/sample-applications-ts"),
     ("sample_query_js.wasm", "guests/sample-query-js"),
     ("sample_query_ts.wasm", "guests/sample-query-ts"),
+    ("sample_search_js.wasm", "guests/sample-search-js"),
+    ("sample_search_ts.wasm", "guests/sample-search-ts"),
 ]
 # Pane's WIT, copied beside the world in guests/js/wit.
-PANE_WIT = ["extension.wit", "data.wit", "root-results.wit", "operations.wit", "applications.wit", "query.wit"]
+PANE_WIT = ["extension.wit", "data.wit", "root-results.wit", "operations.wit", "applications.wit", "query.wit",
+            "search.wit"]
+# WASI's WIT (clocks, and `wasi:http` with the packages it names), copied from
+# wit/deps into the world's deps/.
+WASI_WIT = sorted((REPO / "wit" / "deps").glob("*.wit"))
 # Toolchain inputs that decide what a component contains.
 TOOL_INPUTS = ["pins.json", "package.json", "package-lock.json", "bundle.mjs", "p3_build.rs", "patches"]
 SKIP_DIRS = {"node_modules", ".git"}
@@ -366,6 +373,8 @@ def build(package: Path, out: Path, toolchain: Toolchain) -> dict:
     (wit / "deps" / "pane-extension").mkdir(parents=True, exist_ok=True)
     for name in PANE_WIT:
         shutil.copyfile(REPO / "wit" / name, wit / "deps" / "pane-extension" / name)
+    for path in WASI_WIT:
+        shutil.copyfile(path, wit / "deps" / path.name)
     out.parent.mkdir(parents=True, exist_ok=True)
     (wit / "command.wit").write_text(command_world(manifest.get("pane", {})), encoding="utf-8")
     report = run([toolchain.componentizer, wit, COMMAND_WORLD, bundle, toolchain.runtime, out],
@@ -382,6 +391,7 @@ ADAPTED_PROVIDERS = {
     "indexedResults": ("indexedResults", "results"),
     "operations": ("publishedOperations", "runOperation"),
     "takesQuery": ("queryCommand", "runQuery"),
+    "search": ("commandSearch", "search"),
 }
 
 
@@ -413,7 +423,7 @@ def command_world(options: dict) -> str:
 
 
 def component_inputs(source: str) -> str:
-    pane_wit = [REPO / "wit" / name for name in PANE_WIT]
+    pane_wit = [REPO / "wit" / name for name in PANE_WIT] + WASI_WIT
     return inputs_digest(tool_inputs() + pane_wit + [REPO / "guests" / "js", REPO / source])
 
 
