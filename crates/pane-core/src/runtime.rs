@@ -28,8 +28,8 @@ use crate::platform::Platform;
 pub(crate) mod bindings {
     wasmtime::component::bindgen!({
         path: "../../wit",
-        world: "extension-with-applications",
-        imports: { "pane:extension/operations": store },
+        world: "extension-with-helpers",
+        imports: { "pane:extension/operations": store, "pane:extension/helpers": store },
         exports: { default: async | store },
     });
 }
@@ -70,6 +70,7 @@ use root_bindings::exports::pane::extension::root_results;
 use crate::applications::Applications;
 use crate::extension_data::{DataKind, PackageData};
 use crate::generation::{End, Generation};
+use crate::helpers::{self, HelperError, HelperErrorKind, Helpers, Running};
 use crate::operations::{self, Directory, OperationCall, OperationError, Target};
 use crate::packages::EXTENSION_API;
 
@@ -138,6 +139,10 @@ pub(crate) struct Exports {
 /// The system's applications as the runtime's guests and the launcher see
 /// them; replaceable, for tests.
 type SharedApplications = Arc<Mutex<Arc<dyn Applications>>>;
+
+/// The installed packages as the launcher has them, once it has said, for
+/// resolving operation calls and finding a guest's helpers.
+type SharedDirectory = Arc<Mutex<Option<Directory>>>;
 
 /// One entry in a command's list view, as produced by the guest.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -416,6 +421,8 @@ impl std::error::Error for CallError {}
 pub struct Runtime {
     requests: mpsc::UnboundedSender<Request>,
     applications: SharedApplications,
+    /// The native helper processes guests started, for diagnostics.
+    helpers: Helpers,
     /// Component checks, served one at a time by the checker thread, apart
     /// from the runtime thread: a reload's check must not wait behind the
     /// guest call the reload is about to stop.
@@ -429,6 +436,7 @@ pub struct Runtime {
 pub(crate) struct WeakRuntime {
     requests: mpsc::WeakUnboundedSender<Request>,
     applications: SharedApplications,
+    helpers: Helpers,
     checks: std::sync::mpsc::Sender<Check>,
 }
 
@@ -438,6 +446,7 @@ impl WeakRuntime {
         Some(Runtime {
             requests: self.requests.upgrade()?,
             applications: self.applications.clone(),
+            helpers: self.helpers.clone(),
             checks: self.checks.clone(),
         })
     }
@@ -536,6 +545,7 @@ impl Runtime {
         WeakRuntime {
             requests: self.requests.downgrade(),
             applications: self.applications.clone(),
+            helpers: self.helpers.clone(),
             checks: self.checks.clone(),
         }
     }
@@ -573,7 +583,8 @@ impl Runtime {
         let (requests, receiver) = mpsc::unbounded_channel();
         let applications: SharedApplications = Arc::new(Mutex::new(crate::applications::native()));
         let code = Arc::new(Code::new(engine));
-        let host = Host::new(code.clone(), applications.clone());
+        let helpers = Helpers::default();
+        let host = Host::new(code.clone(), applications.clone(), helpers.clone());
         let (checks, pending_checks) = std::sync::mpsc::channel::<Check>();
         std::thread::Builder::new()
             .name("pane-extension-check".into())
@@ -592,6 +603,7 @@ impl Runtime {
         Ok(Runtime {
             requests,
             applications,
+            helpers,
             checks,
         })
     }
@@ -835,6 +847,21 @@ impl Runtime {
         response.await.unwrap_or_default()
     }
 
+    /// The process ids of the native helpers guests started that are still
+    /// running (not yet ended and reaped), in no particular order. A
+    /// diagnostic for tests and logs, like [`Runtime::running`].
+    pub fn helper_processes(&self) -> Vec<u32> {
+        self.helpers.running()
+    }
+
+    /// Ends every native helper process guests started, waiting until each
+    /// is reaped, for Pane quitting: its threads stop with it, and nothing
+    /// would end them otherwise. The calls that ran them answer that they
+    /// were stopped.
+    pub fn stop_helpers(&self) {
+        self.helpers.stop_all();
+    }
+
     /// Drops the compiled code and live instances of `components`, for
     /// example after their files were replaced or removed; a later call
     /// loads the file again. Calls made afterwards see the effect; a call
@@ -898,9 +925,115 @@ pub(crate) struct GuestState {
     pub(crate) serving: bool,
     /// Finds and opens the system's applications for the guest.
     applications: SharedApplications,
+    /// The installed packages, for finding the guest's helpers.
+    directory: SharedDirectory,
+    /// The runtime's helper processes; those of this instance are ended
+    /// with it.
+    helpers: Helpers,
+    /// Identifies this instance as the owner of the helpers it starts.
+    owner: u64,
+}
+
+impl Drop for GuestState {
+    /// The instance is going (its generation ended, it crashed, it was
+    /// forgotten or the runtime stopped): so do the helpers it started.
+    fn drop(&mut self) {
+        self.helpers.stop_owned_by(self.owner);
+    }
 }
 
 impl GuestState {
+    /// Starts the helper `name` of the guest's own package with `args` and
+    /// `input`. Its process belongs to this instance and to the generation
+    /// of its code.
+    pub(crate) fn start_helper(
+        &mut self,
+        name: String,
+        args: Vec<String>,
+        input: String,
+    ) -> Result<Running, HelperError> {
+        use HelperErrorKind::*;
+        // Code whose generation ended starts no more work.
+        if let Some(end) = self.stopped() {
+            return Err(helpers::stopped_code(end));
+        }
+        if self.data.is_none() {
+            return Err(HelperError::new(
+                Refused,
+                "only installed packages ship helpers; this command is built into Pane",
+            ));
+        }
+        helpers::check_limits(&args, &input)?;
+        let directory = self
+            .directory
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let installed = directory.map(|directory| directory()).unwrap_or_default();
+        let package = installed
+            .packages
+            .iter()
+            .find(|package| self.component.starts_with(&package.location))
+            .ok_or_else(|| {
+                HelperError::new(
+                    Refused,
+                    "Pane does not know the package of this command; only installed \
+                     packages ship helpers",
+                )
+            })?;
+        let manifest = package.manifest.as_ref().map_err(|error| {
+            HelperError::new(Unavailable, format!("the package cannot load: {error}"))
+        })?;
+        let Some(helper) = manifest.helpers.iter().find(|helper| helper.id == name) else {
+            let declared: Vec<String> = manifest
+                .helpers
+                .iter()
+                .map(|helper| format!("`{}`", helper.id))
+                .collect();
+            let declared = match declared.as_slice() {
+                [] => "it declares none".to_owned(),
+                names => format!("it declares {}", crate::platform::join(names)),
+            };
+            return Err(HelperError::new(
+                NotFound,
+                format!(
+                    "{} declares no helper `{name}` in its pane.json; {declared}",
+                    package.title()
+                ),
+            ));
+        };
+        let target = helpers::current_target();
+        let Some(file) = helper.for_this_system() else {
+            let targets: Vec<String> = helper
+                .targets
+                .keys()
+                .map(|target| helpers::target_name(target))
+                .collect();
+            return Err(HelperError::new(
+                Unavailable,
+                format!(
+                    "Not available on {}: helper `{name}` is built only for {}",
+                    helpers::target_name(&target),
+                    crate::platform::join(&targets)
+                ),
+            ));
+        };
+        let program = package.location.join(file);
+        if let Some(reason) = helpers::unfit(&program, file, &target) {
+            return Err(HelperError::new(
+                Unavailable,
+                format!("helper `{name}` cannot run: {reason}"),
+            ));
+        }
+        self.helpers.start(helpers::Spec {
+            name,
+            program,
+            args,
+            input,
+            generation: self.generation().cloned(),
+            owner: self.owner,
+        })
+    }
     /// The generation the instance belongs to; `None` for a command built
     /// into Pane, which runs as long as Pane.
     pub(crate) fn generation(&self) -> Option<&Generation> {
@@ -992,7 +1125,7 @@ impl WasiView for GuestState {
 /// A running guest instance of one component.
 struct Instance {
     store: Store<GuestState>,
-    bindings: bindings::ExtensionWithApplications,
+    bindings: bindings::ExtensionWithHelpers,
     /// Its root results export, if it has one.
     root_results: Option<root_bindings::RootResultsProvider>,
     /// Its indexed results export, if it has one.
@@ -1024,8 +1157,11 @@ struct Host {
     instances: HashMap<PathBuf, Instance>,
     views: HashMap<ViewId, LiveView>,
     next_view: u64,
-    /// The installed packages operation calls are resolved against.
-    directory: Option<Directory>,
+    /// The installed packages operation calls are resolved against, and
+    /// guests' helpers found in.
+    directory: SharedDirectory,
+    /// The helper processes guests started.
+    helpers: Helpers,
     /// Told of each failure of a call into an installed package's code.
     health: Option<HealthReport>,
     /// Handed to every guest, for its operation calls.
@@ -1071,6 +1207,11 @@ impl Code {
             state
         })
         .expect("registering applications in a fresh linker cannot conflict");
+        bindings::pane::extension::helpers::add_to_linker::<_, helpers::Runs>(
+            &mut linker,
+            |state| state,
+        )
+        .expect("registering helpers in a fresh linker cannot conflict");
         Code { engine, linker }
     }
 
@@ -1171,13 +1312,13 @@ impl Code {
                 ))
             })?;
         }
-        bindings::ExtensionWithApplicationsPre::new(pre).map_err(interface)?;
+        bindings::ExtensionWithHelpersPre::new(pre).map_err(interface)?;
         Ok(())
     }
 }
 
 impl Host {
-    fn new(code: Arc<Code>, applications: SharedApplications) -> Host {
+    fn new(code: Arc<Code>, applications: SharedApplications, helpers: Helpers) -> Host {
         let (calls, calls_sent) = operations::channel();
         Host {
             code,
@@ -1185,7 +1326,8 @@ impl Host {
             instances: HashMap::new(),
             views: HashMap::new(),
             next_view: 0,
-            directory: None,
+            directory: SharedDirectory::default(),
+            helpers,
             health: None,
             calls,
             calls_sent,
@@ -1270,7 +1412,12 @@ impl Host {
                 Request::Running { reply } => {
                     let _ = reply.send(self.instances.keys().cloned().collect());
                 }
-                Request::SetDirectory { directory } => self.directory = Some(directory),
+                Request::SetDirectory { directory } => {
+                    *self
+                        .directory
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(directory);
+                }
                 Request::SetHealth { health } => self.health = Some(health),
             }
         }
@@ -1632,6 +1779,10 @@ impl Host {
             }
         };
         instance.store.data_mut().serving = false;
+        // A helper runs no longer than the call that started it: one the
+        // guest left running when its call ended is ended too.
+        let state = instance.store.data();
+        state.helpers.stop_owned_by(state.owner);
         self.chain.pop();
         if own.is_some() {
             self.owners.pop();
@@ -1700,7 +1851,12 @@ impl Host {
     /// package already serves a call in the chain, through whichever of its
     /// components.
     fn resolve_target(&self, call: &OperationCall) -> Result<Target, OperationError> {
-        let installed = match &self.directory {
+        let directory = self
+            .directory
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let installed = match directory {
             Some(directory) => directory(),
             None => operations::Installed::default(),
         };
@@ -1839,6 +1995,9 @@ impl Host {
                 calls: self.calls.clone(),
                 serving: false,
                 applications: self.applications.clone(),
+                directory: self.directory.clone(),
+                owner: self.helpers.new_owner(),
+                helpers: self.helpers.clone(),
             },
         );
         let load = |error: wasmtime::Error| CallError::Load(format!("{error:#}"));
@@ -1848,8 +2007,7 @@ impl Host {
             .instantiate_async(&mut store, &component)
             .await
             .map_err(load)?;
-        let bindings =
-            bindings::ExtensionWithApplications::new(&mut store, &instance).map_err(load)?;
+        let bindings = bindings::ExtensionWithHelpers::new(&mut store, &instance).map_err(load)?;
         // Only a command that computes root results exports them.
         let root_results = root_bindings::RootResultsProvider::new(&mut store, &instance).ok();
         // Only a command that supplies results ahead of the query exports

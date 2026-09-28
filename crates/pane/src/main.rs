@@ -28,6 +28,16 @@ fn main() {
             Some(dir) => Runtime::start_with_cache(dir),
             None => Runtime::start(),
         };
+        // Quitting ends the native helpers still running, which would
+        // otherwise outlive Pane.
+        if let Ok(runtime) = &runtime {
+            let runtime = runtime.clone();
+            cx.on_app_quit(move |_| {
+                runtime.stop_helpers();
+                async {}
+            })
+            .detach();
+        }
         let launcher = match pane::data_dir() {
             Some(dir) => {
                 Launcher::with_packages(runtime, pane::sample_commands(), dir.join("extensions"))

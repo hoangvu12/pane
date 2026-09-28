@@ -2,7 +2,8 @@
 //!
 //! - `guests`: build the Rust guests and copy them, with the prebuilt JS/TS
 //!   sample components from `guests/prebuilt/`, into `target/guests/`, and
-//!   assemble the sample packages into `target/guests/packages/`.
+//!   assemble the sample packages into `target/guests/packages/`, with the
+//!   helper sample's native helper built for this system.
 //! - `js-guests`: rebuild the prebuilt JS/TS sample components with the pinned
 //!   toolchain in `tools/componentize-js` (prerequisites: guests/README.md),
 //!   then run `guests`.
@@ -81,6 +82,7 @@ fn guests() -> Result<(), String> {
                 "applications",
                 "quicklinks",
                 "sample_operations",
+                "sample_helper",
                 "faulty",
                 "operations_fixture",
                 "old_api",
@@ -132,14 +134,34 @@ fn guests() -> Result<(), String> {
                 .map_err(|error| format!("copy {} failed: {error}", from.display()))?;
         }
     }
+    echo_helper(&root, &out)?;
     println!("guests built into {}", out.display());
+    Ok(())
+}
+
+/// Builds the helper sample's native helper, `pane-echo`, for the system
+/// this runs on, and puts it in the helper sample package as that target's
+/// file, as its `pane.json` names it. An author ships one build per target;
+/// Pane runs the one for its own system and compiles nothing.
+fn echo_helper(root: &Path, out: &Path) -> Result<(), String> {
+    let dir = root.join("guests/helpers/echo");
+    run(cargo()
+        .current_dir(&dir)
+        .args(["build", "--locked", "--release"]))?;
+    let file = format!("pane-echo{}", std::env::consts::EXE_SUFFIX);
+    let target = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
+    let built = dir.join("target/release").join(&file);
+    let dest = out.join("packages/sample-helper/helpers").join(target);
+    std::fs::create_dir_all(&dest).map_err(|error| error.to_string())?;
+    std::fs::copy(&built, dest.join(&file))
+        .map_err(|error| format!("copy {} failed: {error}", built.display()))?;
     Ok(())
 }
 
 /// (package folder in `guests/packages`, component) of each sample package,
 /// and of the default extensions (the calculator, applications and
 /// quicklinks).
-const SAMPLE_PACKAGES: [(&str, &str); 14] = [
+const SAMPLE_PACKAGES: [(&str, &str); 15] = [
     ("sample-rust", "sample_rust"),
     ("sample-settings", "sample_settings"),
     ("sample-js", "sample_js"),
@@ -154,6 +176,7 @@ const SAMPLE_PACKAGES: [(&str, &str); 14] = [
     ("sample-operations-ts", "sample_operations_ts"),
     ("sample-applications-js", "sample_applications_js"),
     ("sample-applications-ts", "sample_applications_ts"),
+    ("sample-helper", "sample_helper"),
 ];
 
 /// Rebuilds `guests/prebuilt/` from the JS/TS sample sources, then refreshes
@@ -181,7 +204,7 @@ fn ci() -> Result<(), String> {
     run(&mut pane_js("check"))?;
     let root = root();
     run(cargo().current_dir(&root).args(["fmt", "--all", "--check"]))?;
-    for dir in ["guests", "guests/fixtures/mixed-p2"] {
+    for dir in ["guests", "guests/fixtures/mixed-p2", "guests/helpers/echo"] {
         run(cargo()
             .current_dir(root.join(dir))
             .args(["fmt", "--all", "--check"]))?;

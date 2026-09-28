@@ -290,6 +290,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sample-helper"
+version = "0.1.0"
+dependencies = [
+ "pane-guest",
+ "wasip3",
+]
+
+[[package]]
 name = "sample-operations"
 version = "0.1.0"
 dependencies = [

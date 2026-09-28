@@ -29,6 +29,7 @@ mod indexed;
 
 use crate::extension_data::{ExtensionData, PackageData};
 use crate::generation::End;
+use crate::helpers;
 use crate::hotkeys::{self as system_hotkeys, Hotkeys};
 use crate::links::{self, LinkOpener, NoOpener};
 use crate::operations::{self, Installed};
@@ -2534,6 +2535,9 @@ fn preview_view(
     }
     if let Some(operations) = operations::describe(&manifest.operations) {
         details.push(operations);
+    }
+    if let Some(helpers) = helpers::describe(&manifest.helpers) {
+        details.push(helpers);
     }
     details.push(format!(
         "Compatible: needs extension API {}, and its components import only WASI 0.3",

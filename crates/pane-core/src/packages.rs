@@ -4,10 +4,12 @@
 //! A local package is a folder holding `pane.json` and the components it
 //! names. Installing copies exactly those files into Pane's managed location,
 //! so the user's folder is never written and the installed copy keeps working
-//! if the folder changes or disappears. Installed packages are recorded in
+//! if the folder changes or disappears; of a native helper (see `helpers`),
+//! only its file for this system is copied. Installed packages are recorded in
 //! `installed.json`, with whether the user disabled each; reading them back
 //! needs only the manifests, never the guests.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::io;
@@ -16,6 +18,7 @@ use std::path::{Component as PathPart, Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::atomic::{Readers, write_atomically};
+use crate::helpers;
 use crate::launcher::CommandRegistration;
 use crate::platform::{self, Platform};
 use crate::runtime::{CallError, Exports};
@@ -137,6 +140,28 @@ pub struct Manifest {
     /// The operations the package publishes for other extensions to call.
     /// Only these are callable: a command is not an operation.
     pub operations: Vec<ManifestOperation>,
+    /// The native helpers the package ships, which its commands run through
+    /// Pane (`pane:extension/helpers`).
+    pub helpers: Vec<ManifestHelper>,
+}
+
+/// A native helper a package ships: a prebuilt program per target (operating
+/// system and processor), which its commands run by name through Pane.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ManifestHelper {
+    pub id: String,
+    /// The helper's file for each target it is built for, such as
+    /// `linux-x86_64`, relative to the package folder.
+    pub targets: BTreeMap<String, PathBuf>,
+}
+
+impl ManifestHelper {
+    /// The helper's file for this system, if the package ships one.
+    pub fn for_this_system(&self) -> Option<&Path> {
+        self.targets
+            .get(&helpers::current_target())
+            .map(PathBuf::as_path)
+    }
 }
 
 /// An operation a package publishes: other extensions call it through
@@ -190,6 +215,15 @@ struct ManifestJson {
     commands: Vec<CommandJson>,
     #[serde(default)]
     operations: Vec<OperationJson>,
+    #[serde(default)]
+    helpers: Vec<HelperJson>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HelperJson {
+    id: String,
+    targets: BTreeMap<String, String>,
 }
 
 #[derive(Deserialize)]
@@ -258,13 +292,28 @@ impl Manifest {
         Ok((manifest, text))
     }
 
-    /// Checks that every component the manifest names is in `folder`.
+    /// Checks that every component the manifest names is in `folder`, and
+    /// that each helper's file for this system, where the package ships
+    /// one, is there and is a program for this system.
     fn check_components(&self, folder: &Path) -> Result<(), PackageError> {
         for (name, component) in self.components() {
             if !folder.join(component).is_file() {
                 return Err(PackageError::MissingComponent {
                     command: name,
                     component: component.to_path_buf(),
+                });
+            }
+        }
+        let target = helpers::current_target();
+        for helper in &self.helpers {
+            let Some(file) = helper.for_this_system() else {
+                continue;
+            };
+            if let Some(reason) = helpers::unfit(&folder.join(file), file, &target) {
+                return Err(PackageError::Helper {
+                    helper: helper.id.clone(),
+                    target: target.clone(),
+                    reason,
                 });
             }
         }
@@ -342,7 +391,7 @@ impl Manifest {
             {
                 return Err(invalid(format!("command id `{}` is repeated", command.id)));
             }
-            let component = inside_package(&command.component)?;
+            let component = inside_package(&command.component, "component")?;
             let platforms = parse_platforms(
                 command.platforms,
                 &format!("`platforms` of command `{}`", command.id),
@@ -380,9 +429,41 @@ impl Manifest {
             )?;
             operations.push(ManifestOperation {
                 platforms,
-                component: inside_package(&operation.component)?,
+                component: inside_package(&operation.component, "component")?,
                 id: operation.id,
                 version: operation.version,
+            });
+        }
+        let mut helpers: Vec<ManifestHelper> = Vec::new();
+        for helper in json.helpers {
+            if helper.id.is_empty() {
+                return Err(invalid("every helper needs an `id`".into()));
+            }
+            if helpers.iter().any(|seen| seen.id == helper.id) {
+                return Err(invalid(format!("helper id `{}` is repeated", helper.id)));
+            }
+            if helper.targets.is_empty() {
+                return Err(invalid(format!(
+                    "helper `{}` has no `targets`; name its file for each system it is \
+                     built for, such as \"linux-x86_64\"",
+                    helper.id
+                )));
+            }
+            let mut targets = BTreeMap::new();
+            for (target, file) in helper.targets {
+                if !helpers::is_known_target(&target) {
+                    return Err(invalid(format!(
+                        "unknown target `{target}` of helper `{}`; use windows, macos or \
+                         linux, a dash, and x86_64 or aarch64, such as \"linux-x86_64\"",
+                        helper.id
+                    )));
+                }
+                let file = inside_package(&file, "helper file")?;
+                targets.insert(target, file);
+            }
+            helpers.push(ManifestHelper {
+                id: helper.id,
+                targets,
             });
         }
         Ok(Manifest {
@@ -392,19 +473,21 @@ impl Manifest {
             platforms,
             commands,
             operations,
+            helpers,
         })
     }
 }
 
-/// `component` as a path, if it is a relative path inside the package folder.
-fn inside_package(component: &str) -> Result<PathBuf, PackageError> {
-    let path = PathBuf::from(component);
+/// `file` (a `what`, such as a component) as a path, if it is a relative
+/// path inside the package folder.
+fn inside_package(file: &str, what: &str) -> Result<PathBuf, PackageError> {
+    let path = PathBuf::from(file);
     let inside = path
         .components()
         .all(|part| matches!(part, PathPart::Normal(_)));
-    if !inside || component.is_empty() {
+    if !inside || file.is_empty() {
         return Err(PackageError::InvalidManifest(format!(
-            "component `{component}` must be a relative path inside the package folder"
+            "{what} `{file}` must be a relative path inside the package folder"
         )));
     }
     Ok(path)
@@ -471,6 +554,13 @@ pub enum PackageError {
     UnsupportedPlatform(String),
     /// A component the manifest names is not in the folder.
     MissingComponent { command: String, component: PathBuf },
+    /// The package ships a helper for this system whose file is missing or
+    /// is not a program for this system.
+    Helper {
+        helper: String,
+        target: String,
+        reason: String,
+    },
     /// A component is present but Pane cannot run it.
     Component { command: String, error: CallError },
     /// A package with this identity is already installed.
@@ -514,6 +604,15 @@ impl fmt::Display for PackageError {
                 f,
                 "Not ready to run: the component {} of \"{command}\" is missing. This looks like a source-only package; build its component before installing",
                 component.display()
+            ),
+            PackageError::Helper {
+                helper,
+                target,
+                reason,
+            } => write!(
+                f,
+                "Not ready to run: the package ships helper `{helper}` for {}, but {reason}",
+                helpers::target_name(target)
             ),
             PackageError::Component { command, error } => write!(f, "\"{command}\": {error}"),
             PackageError::AlreadyInstalled(identity) => write!(
@@ -1159,19 +1258,49 @@ fn put_retained(registry: &mut RegistryJson, local: &str, title: String) {
     });
 }
 
-/// Writes the validated `pane.json` and copies the components it names,
-/// keeping their relative paths. Nothing else in the source folder is copied.
+/// Writes the validated `pane.json` and copies the components it names and
+/// the file of each helper for this system, keeping their relative paths.
+/// Nothing else in the source folder is copied, not even helpers' files for
+/// other systems.
 fn copy_package(package: &SourcePackage, location: &Path) -> io::Result<()> {
     fs::create_dir_all(location)?;
     fs::write(location.join(MANIFEST_FILE), &package.manifest_text)?;
-    for (_, component) in package.manifest.components() {
-        let source = package.folder.join(component);
-        let target = location.join(component);
+    let helper_files = package
+        .manifest
+        .helpers
+        .iter()
+        .filter_map(ManifestHelper::for_this_system);
+    for file in package
+        .manifest
+        .components()
+        .map(|(_, component)| component)
+        .chain(helper_files.clone())
+    {
+        let source = package.folder.join(file);
+        let target = location.join(file);
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
         }
         fs::copy(source, target)?;
     }
+    for file in helper_files {
+        make_executable(&location.join(file))?;
+    }
+    Ok(())
+}
+
+/// Lets the system run the helper file at `path`: a package fetched as an
+/// archive or through a tool may have lost the execute permission.
+#[cfg(unix)]
+fn make_executable(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut permissions = fs::metadata(path)?.permissions();
+    permissions.set_mode(permissions.mode() | 0o755);
+    fs::set_permissions(path, permissions)
+}
+
+#[cfg(not(unix))]
+fn make_executable(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 

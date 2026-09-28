@@ -11,6 +11,7 @@ members = [
     "applications",
     "quicklinks",
     "sample-operations",
+    "sample-helper",
     "fixtures/faulty",
     "fixtures/operations",
     "fixtures/old-api",
@@ -18,8 +19,9 @@ members = [
     "fixtures/failing-start",
     "fixtures/refusing-view",
 ]
-# `mixed-p2` deliberately uses std (WASI 0.2) and has its own workspace.
-exclude = ["fixtures/mixed-p2"]
+# `mixed-p2` deliberately uses std (WASI 0.2), and `helpers/echo` is a native
+# program, not a component; each has its own workspace.
+exclude = ["fixtures/mixed-p2", "helpers/echo"]
 
 [workspace.package]
 edition = "2024"
