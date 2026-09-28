@@ -21,7 +21,9 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   ([content, cache and credentials](#keeping-content-cache-and-credentials));
   the fixtures for disabling and re-enabling a package and for clearing its
   cache, held alike by `crates/pane-core/tests/disable.rs` and
-  `crates/pane-core/tests/clear_cache.rs`.
+  `crates/pane-core/tests/clear_cache.rs`. Their **Crash** item crashes on
+  purpose: three crashes within five minutes pause the package until Retry
+  ([pausing](../docs/pausing.md), `crates/pane-core/tests/pausing.rs`).
 - `calculator`: Pane's calculator, a default extension in Rust: an
   arithmetic expression typed into root search lists its answer, which Enter
   copies ([Root results](#root-results-computed-from-the-query),
@@ -389,9 +391,26 @@ async submitForm(itemId, values) {
 ```
 
 In JS/TS, reject a submission by throwing a plain `FormError` object as above.
-Throwing an `Error` from `submitForm` is treated as a crash, not as a
-validation message. The samples validate with Zod and turn its first issue
-into a `FormError`.
+Throwing an `Error` (or a string) from `submitForm` rejects the form as a
+whole with its message. The samples validate with Zod and turn its first
+issue into a `FormError`.
+
+## Errors and crashes
+
+An error a command returns (Rust `Err`; in JS/TS, anything a handler
+throws) is its message to the user: Pane shows it and the command keeps
+running, however often it happens. The JS/TS build wraps the exported
+handlers ([`guests/js/adapt.js`](js/adapt.js)) so that a thrown `Error`,
+string or `{ message }` object is always such an error. A crash is
+different: a Rust panic, or in JS/TS resolving with a value of the wrong
+type (or a custom view's `render` throwing), traps the guest. Pane reports it and starts a fresh instance for the next
+call; after three crashes within five minutes, or a component that cannot
+start, Pane pauses the whole package until the user chooses Retry in
+**Manage extensions…** (where "Why <title> is paused" shows the details),
+keeping its data ([pausing](../docs/pausing.md)).
+So report expected failures, such as a missing sign-in, as errors, never by
+crashing. The settings samples' **Crash** item shows a crash in each
+language.
 
 ## Actions for some operating systems only
 

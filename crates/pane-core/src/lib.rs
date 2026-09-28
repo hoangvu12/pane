@@ -16,7 +16,7 @@ mod search;
 
 pub use launcher::{
     CommandRegistration, CustomViewSnapshot, FormField, FormView, Launcher, LauncherView, Question,
-    Row, Screen, Status,
+    Row, Screen, Status, Unavailable,
 };
 pub use links::LinkOpener;
 pub use operations::{MAX_CALL_DEPTH, MAX_OPERATION_JSON};

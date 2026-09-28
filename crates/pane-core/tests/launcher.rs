@@ -5,7 +5,8 @@ use std::path::PathBuf;
 
 use futures::executor::block_on;
 use pane_core::{
-    CallError, CommandRegistration, Key, Launcher, Point, Runtime, Screen, Status, ViewEvent,
+    CallError, CommandRegistration, Key, Launcher, Point, Runtime, Screen, Status, Unavailable,
+    ViewEvent,
 };
 
 #[path = "support/platforms.rs"]
@@ -329,7 +330,11 @@ fn an_unavailable_form_explains_itself_instead_of_opening() {
     let view = launcher.view();
     let reason = view.rows[view.selected.unwrap()].unavailable.clone();
     let reason = reason.expect("the row says why it is unavailable");
-    assert_eq!(reason, platforms::nowhere("this action"));
+    assert_eq!(
+        reason,
+        Unavailable::OnThisSystem(platforms::nowhere("this action"))
+    );
+    let reason = reason.reason().to_owned();
 
     block_on(launcher.activate_selected());
 

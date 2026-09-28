@@ -736,6 +736,48 @@ struct RecordJson {
     /// Set when the user disabled the package; absent means enabled.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     disabled: bool,
+    /// Set when Pane paused the package after it failed; absent means it
+    /// runs. Separate from `disabled`, which is the user's choice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    paused: Option<PausedJson>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct PausedJson {
+    #[serde(flatten)]
+    pause: Pause,
+    /// The managed folder of the code that failed. A pause recorded for
+    /// other code (the folder changed) no longer applies.
+    code: String,
+}
+
+/// Why Pane paused an installed package: it runs none of its code until the
+/// user retries it, reloads or updates it, or disables it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Pause {
+    pub after: PauseCause,
+    /// The details: what failed, and how.
+    pub why: String,
+    /// The version of the package that failed, if its manifest has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
+/// Why a command of the paused package titled `title` does not run, or why
+/// a call to it is refused; "The extension" when the title is not known.
+pub(crate) fn paused_reason(title: &str) -> String {
+    format!("{title} is paused after an error; retry it in Manage extensions")
+}
+
+/// What made Pane pause a package.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum PauseCause {
+    /// Its code could not start: a component could not be loaded or
+    /// instantiated, or its reloaded code trapped as it started.
+    FailedToStart,
+    /// It crashed (trapped) too often.
+    Crashes,
 }
 
 /// Pane's managed location for installed packages:
@@ -887,6 +929,59 @@ impl Store {
             return Err(PackageError::NotInstalled(identity.clone()));
         };
         record.disabled = !enabled;
+        // Disabling or enabling ends a pause: the package starts afresh.
+        record.paused = None;
+        write_registry(&self.dir, &updated)
+            .map_err(|error| PackageError::Storage(error.to_string()))?;
+        *registry = updated;
+        Ok(())
+    }
+
+    /// The installed packages Pane paused, each with why, as recorded for
+    /// their current code.
+    pub fn paused(&self) -> Vec<(PackageIdentity, Pause)> {
+        let Ok(registry) = &self.registry else {
+            return Vec::new();
+        };
+        registry
+            .packages
+            .iter()
+            .filter_map(|record| {
+                let paused = record.paused.as_ref()?;
+                (paused.code == record.dir).then(|| {
+                    (
+                        PackageIdentity(Source::Local(record.local.clone())),
+                        paused.pause.clone(),
+                    )
+                })
+            })
+            .collect()
+    }
+
+    /// Records that Pane paused the installed package with `identity` for
+    /// `pause`, or, with `None`, that it runs again.
+    pub fn set_paused(
+        &mut self,
+        identity: &PackageIdentity,
+        pause: Option<Pause>,
+    ) -> Result<(), PackageError> {
+        let registry = self
+            .registry
+            .as_mut()
+            .map_err(|reason| PackageError::Storage(reason.clone()))?;
+        let PackageIdentity(Source::Local(local)) = identity;
+        let mut updated = registry.clone();
+        let Some(record) = updated.packages.iter_mut().find(|r| &r.local == local) else {
+            return Err(PackageError::NotInstalled(identity.clone()));
+        };
+        let paused = pause.map(|pause| PausedJson {
+            pause,
+            code: record.dir.clone(),
+        });
+        if paused.is_none() && record.paused.is_none() {
+            return Ok(());
+        }
+        record.paused = paused;
         write_registry(&self.dir, &updated)
             .map_err(|error| PackageError::Storage(error.to_string()))?;
         *registry = updated;
@@ -1012,6 +1107,8 @@ impl Store {
         let enabled = match updated.packages.iter_mut().find(|r| &r.local == local) {
             Some(record) => {
                 record.dir = dir;
+                // New code has not failed.
+                record.paused = None;
                 !record.disabled
             }
             None => {
@@ -1022,6 +1119,7 @@ impl Store {
                     local: local.clone(),
                     dir,
                     disabled: false,
+                    paused: None,
                 });
                 true
             }
