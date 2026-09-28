@@ -153,6 +153,10 @@ pub enum Question {
     /// Whether to disable the installed package with this identity together
     /// with the enabled packages that require it.
     DisableDependents(PackageIdentity),
+    /// Whether to uninstall the installed package with this identity
+    /// together with the installed packages that require it, and whether to
+    /// keep their saved data.
+    UninstallDependents(PackageIdentity),
 }
 
 /// A selectable row.
@@ -694,6 +698,10 @@ enum Entry {
     /// Uninstall this installed package, keeping or deleting its saved data
     /// (confirmation).
     Uninstall(PackageIdentity, SavedData),
+    /// Uninstall this installed package and the packages that require it,
+    /// which the confirmation showed, keeping or deleting their saved data
+    /// (confirmation).
+    UninstallAll(PackageIdentity, Vec<PackageIdentity>, SavedData),
     /// Ask whether to delete the retained data of this identity, which is
     /// not installed (extension list).
     AskDeleteRetained(PackageIdentity),
@@ -1308,11 +1316,20 @@ impl Launcher {
                 None
             }
             Some(Entry::AskUninstall(identity)) => {
-                self.show_uninstall(&mut state, &identity);
+                let closure = dependencies::required_dependents(&state.packages, &identity);
+                if closure.is_empty() {
+                    self.show_uninstall(&mut state, &identity);
+                } else {
+                    self.show_uninstall_dependents(&mut state, &identity, closure);
+                }
                 None
             }
             Some(Entry::Uninstall(identity, saved)) => {
-                uninstall = self.begin_uninstall(&mut state, identity, saved);
+                uninstall = self.begin_uninstall(&mut state, vec![identity], saved);
+                None
+            }
+            Some(Entry::UninstallAll(identity, shown, saved)) => {
+                uninstall = self.begin_uninstall_all(&mut state, identity, &shown, saved);
                 None
             }
             Some(Entry::AskDeleteRetained(identity)) => {
@@ -1467,6 +1484,7 @@ impl Launcher {
                     | Entry::ForgetChoices(_)
                     | Entry::AskUninstall(_)
                     | Entry::Uninstall(..)
+                    | Entry::UninstallAll(..)
                     | Entry::AskDeleteRetained(_)
                     | Entry::DeleteRetained(_)
                     | Entry::Cancel
@@ -2333,10 +2351,11 @@ impl Launcher {
         };
         match question.clone() {
             Question::ClearCache(identity) => self.show_extensions_at_clear_cache(state, &identity),
-            Question::Uninstall(identity) => self.show_extensions_at(
-                state,
-                |entry| matches!(entry, Entry::AskUninstall(asked) if *asked == identity),
-            ),
+            Question::Uninstall(identity) | Question::UninstallDependents(identity) => self
+                .show_extensions_at(
+                    state,
+                    |entry| matches!(entry, Entry::AskUninstall(asked) if *asked == identity),
+                ),
             Question::DeleteRetained(identity) => self.show_extensions_at(
                 state,
                 |entry| matches!(entry, Entry::AskDeleteRetained(asked) if *asked == identity),
