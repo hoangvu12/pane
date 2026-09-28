@@ -8,9 +8,11 @@ use std::mem::{Discriminant, discriminant};
 use std::path::{Path, PathBuf};
 
 use gpui::{
-    App, ClipboardItem, Context, Div, FocusHandle, KeyBinding, PathPromptOptions, Pixels, Role,
-    ScrollHandle, SharedString, Size, Stateful, Window, actions, div, prelude::*, rgb,
+    App, ClipboardItem, Context, Div, FocusHandle, KeyBinding, KeyDownEvent, PathPromptOptions,
+    Pixels, Role, ScrollHandle, SharedString, Size, Stateful, Window, actions, div, prelude::*,
+    rgb,
 };
+use pane_core::hotkeys::Shortcut;
 use pane_core::{CommandRegistration, Launcher, LauncherView, Row, Screen, Status};
 
 mod custom_view;
@@ -262,6 +264,50 @@ impl LauncherWindow {
         .detach();
     }
 
+    /// Opens the command whose global hotkey `shortcut` is, as the system
+    /// reported it pressed while any application had focus: the window
+    /// comes to the front and shows the command.
+    pub fn hotkey_pressed(
+        &mut self,
+        shortcut: &Shortcut,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.activate_window();
+        cx.activate(true);
+        let pending = self.launcher.press_hotkey(shortcut);
+        self.show_until_done(pending, window, cx);
+    }
+
+    /// On the hotkey screen, a key pressed with its modifiers is the new
+    /// hotkey. Keys the launcher binds (Enter, Escape, arrows, Tab) do not
+    /// reach here; pressing a modifier alone is not a key press.
+    fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if !matches!(self.launcher.view().screen, Screen::Hotkey { .. }) {
+            return;
+        }
+        let keystroke = &event.keystroke;
+        let modifiers = keystroke.modifiers;
+        let shortcut = Shortcut::new(
+            modifiers.control,
+            modifiers.alt,
+            modifiers.shift,
+            modifiers.platform,
+            &keystroke.key,
+        );
+        cx.stop_propagation();
+        match shortcut {
+            Ok(shortcut) => {
+                let pending = self.launcher.record_hotkey(shortcut);
+                self.show_until_done(pending, window, cx);
+            }
+            Err(problem) => {
+                self.launcher.show_error(problem);
+                cx.notify();
+            }
+        }
+    }
+
     fn focus_next(&mut self, _: &FocusNext, window: &mut Window, cx: &mut Context<Self>) {
         window.focus_next(cx);
     }
@@ -426,6 +472,7 @@ impl Render for LauncherWindow {
             ),
             Screen::CustomView(_) => ("", "Keys and pointer go to the view · Esc back"),
             Screen::Confirm { .. } => ("", "↑↓ select · Enter choose · Esc cancel"),
+            Screen::Hotkey { .. } => ("", "Press the new hotkey · Enter choose · Esc back"),
         };
         let details: Vec<_> = view
             .details()
@@ -499,6 +546,7 @@ impl Render for LauncherWindow {
             .on_action(cx.listener(Self::back))
             .on_action(cx.listener(Self::focus_next))
             .on_action(cx.listener(Self::focus_previous))
+            .on_key_down(cx.listener(Self::key_down))
             .size_full()
             .flex()
             .flex_col()

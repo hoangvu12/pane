@@ -16,9 +16,11 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+mod hotkeys;
 mod indexed;
 
 use crate::extension_data::{ExtensionData, PackageData};
+use crate::hotkeys::{self as system_hotkeys, Hotkeys};
 use crate::links::{self, LinkOpener, NoOpener};
 use crate::operations::{self, Installed};
 use crate::packages::{
@@ -33,6 +35,7 @@ use crate::search::{self, Keys, Query};
 
 mod reload;
 
+use hotkeys::Bindings;
 use reload::StartFailures;
 
 /// The id of the root row that installs a package from a local folder.
@@ -75,6 +78,14 @@ pub enum Screen {
     /// lines of information under the title, answered by choosing a row.
     Confirm {
         question: Question,
+        details: Vec<String>,
+    },
+    /// Asks for the keys of a global hotkey that opens the installed command
+    /// with id `command` from any application, with lines of information
+    /// under the title. The window sends the keys pressed to
+    /// [`Launcher::record_hotkey`]; the rows offer to remove its hotkey.
+    Hotkey {
+        command: String,
         details: Vec<String>,
     },
 }
@@ -192,7 +203,8 @@ impl LauncherView {
         match &self.screen {
             Screen::Package { details }
             | Screen::Extensions { details }
-            | Screen::Confirm { details, .. } => details,
+            | Screen::Confirm { details, .. }
+            | Screen::Hotkey { details, .. } => details,
             _ => &[],
         }
     }
@@ -224,6 +236,8 @@ pub struct Launcher {
     installation: Option<Installation>,
     /// Opens the web links of computed results.
     links: Arc<dyn LinkOpener>,
+    /// Registers the global hotkeys the user assigns with the system.
+    hotkeys: Arc<dyn Hotkeys>,
     state: Arc<Mutex<State>>,
 }
 
@@ -234,6 +248,8 @@ pub struct Launcher {
 struct Installation {
     store: Arc<Mutex<Store>>,
     data: ExtensionData,
+    /// Where they are kept, with Pane's other records such as the hotkeys.
+    dir: PathBuf,
 }
 
 struct State {
@@ -273,6 +289,8 @@ struct State {
     store_problem: Option<String>,
     /// Packages whose reloaded code failed to start, each with why.
     failed: StartFailures,
+    /// The global hotkeys the user assigned to commands.
+    bindings: Bindings,
 }
 
 /// What is happening to a package, which stops another change to it
@@ -445,6 +463,11 @@ enum Entry {
     AskClearCache(PackageIdentity),
     /// Clear this installed package's cache (confirmation).
     ClearCache(PackageIdentity),
+    /// Ask for the keys of the hotkey of the command with this id
+    /// (extension list).
+    AskHotkey(String),
+    /// Remove the hotkey of the command with this id (hotkey screen).
+    RemoveHotkey(String),
     /// Return to the extension list without acting (confirmation).
     Cancel,
 }
@@ -473,6 +496,7 @@ impl Launcher {
     ) -> Self {
         let installation = Installation {
             data: ExtensionData::open(&packages_dir),
+            dir: packages_dir.clone(),
             store: Arc::new(Mutex::new(Store::open(packages_dir))),
         };
         Launcher::create(runtime, commands, Some(installation))
@@ -483,12 +507,13 @@ impl Launcher {
         commands: Vec<CommandRegistration>,
         installation: Option<Installation>,
     ) -> Self {
-        let (packages, store_problem) = match &installation {
+        let (packages, store_problem, bindings) = match &installation {
             Some(installation) => {
                 let store = installation.store.lock().unwrap_or_else(|p| p.into_inner());
-                (store.installed(), store.problem())
+                let bindings = Bindings::open(&installation.dir);
+                (store.installed(), store.problem(), bindings)
             }
-            None => (Vec::new(), None),
+            None => (Vec::new(), None, Bindings::default()),
         };
         let state = State {
             // Replaced by root search below.
@@ -506,6 +531,7 @@ impl Launcher {
             changing: HashMap::new(),
             store_problem,
             failed: StartFailures::default(),
+            bindings,
         };
         if let Some(installation) = &installation {
             for package in &state.packages {
@@ -519,6 +545,7 @@ impl Launcher {
             commands: commands.into(),
             installation,
             links: Arc::new(NoOpener),
+            hotkeys: system_hotkeys::none(),
             state: Arc::new(Mutex::new(state)),
         };
         if let (Ok(runtime), Some(installation)) = (&launcher.runtime, &launcher.installation) {
@@ -542,6 +569,16 @@ impl Launcher {
     /// that this Pane has no link handler.
     pub fn with_link_opener(self, links: Arc<dyn LinkOpener>) -> Self {
         Launcher { links, ..self }
+    }
+
+    /// This launcher registering the global hotkeys the user assigns with
+    /// `hotkeys`, normally the system's ([`crate::hotkeys::native`]); the
+    /// recorded ones are registered now. Without it, assigning a hotkey
+    /// explains that this Pane has none.
+    pub fn with_hotkeys(self, hotkeys: Arc<dyn Hotkeys>) -> Self {
+        let launcher = Launcher { hotkeys, ..self };
+        launcher.sync_hotkeys(&mut launcher.lock());
+        launcher
     }
 
     pub fn view(&self) -> LauncherView {
@@ -838,6 +875,10 @@ impl Launcher {
             }
             Screen::CustomView(_) => self.return_from_custom_view(&mut state, Status::Idle),
             Screen::Confirm { .. } => self.leave_confirm(&mut state),
+            Screen::Hotkey { command, .. } => {
+                let command = command.clone();
+                self.show_extensions_at_hotkey(&mut state, &command);
+            }
             Screen::Command | Screen::Package { .. } | Screen::Extensions { .. } => {
                 self.show_root(&mut state, None)
             }
@@ -864,6 +905,7 @@ impl Launcher {
             .and_then(|index| state.entries.get(index).cloned());
         let mut change = None;
         let mut reload = None;
+        let mut hotkey_change = None;
         let entry = match entry {
             Some(Entry::Broken(problem) | Entry::Unavailable(problem)) => {
                 state.view.status = Status::Error(problem);
@@ -897,6 +939,14 @@ impl Launcher {
             }
             Some(Entry::Cancel) => {
                 self.leave_confirm(&mut state);
+                None
+            }
+            Some(Entry::AskHotkey(command)) => {
+                self.show_hotkey(&mut state, &command);
+                None
+            }
+            Some(Entry::RemoveHotkey(command)) => {
+                hotkey_change = self.remove_hotkey(&mut state, &command);
                 None
             }
             Some(Entry::Toggle(identity)) => {
@@ -936,6 +986,9 @@ impl Launcher {
             if let Some(reload) = reload {
                 launcher.finish_reload(generation, reload).await;
             }
+            if let Some(hotkey_change) = hotkey_change {
+                launcher.finish_hotkey_change(hotkey_change).await;
+            }
             match entry {
                 Some(Entry::Open(component)) => launcher.open_command(generation, component).await,
                 Some(Entry::OpenApplication { id, name }) => {
@@ -970,6 +1023,8 @@ impl Launcher {
                     | Entry::Reload(_)
                     | Entry::Retry(_)
                     | Entry::AskClearCache(_)
+                    | Entry::AskHotkey(_)
+                    | Entry::RemoveHotkey(_)
                     | Entry::Cancel
                     | Entry::Form(..),
                 )
@@ -1122,12 +1177,14 @@ impl Launcher {
         if let Some(installation) = &self.installation {
             installation.data.set_enabled(identity, enabled);
         }
+        let components: Vec<PathBuf> = package
+            .commands()
+            .into_iter()
+            .map(|command| command.component)
+            .collect();
+        // Its hotkeys are released while it is disabled.
+        self.sync_hotkeys(state);
         if !enabled {
-            let components: Vec<PathBuf> = package
-                .commands()
-                .into_iter()
-                .map(|command| command.component)
-                .collect();
             // Its results kept for root search go, and so does an answer
             // from it being awaited.
             Launcher::forget_indexes(state);
@@ -1216,6 +1273,7 @@ impl Launcher {
             .find(|package| package.identity == installed.identity)
         else {
             state.packages.push(installed);
+            self.sync_hotkeys(state);
             return false;
         };
         // The replaced copy's code is not run again.
@@ -1228,6 +1286,8 @@ impl Launcher {
             runtime.forget(replaced.iter().cloned());
         }
         *package = installed;
+        // A command the new copy no longer has releases its hotkey.
+        self.sync_hotkeys(state);
         // The replaced copy's results are asked for afresh.
         state
             .indexes
@@ -1307,7 +1367,8 @@ impl Launcher {
             | Screen::Package { .. }
             | Screen::Form(_)
             | Screen::CustomView(_)
-            | Screen::Confirm { .. } => {}
+            | Screen::Confirm { .. }
+            | Screen::Hotkey { .. } => {}
         }
     }
 
@@ -1541,7 +1602,7 @@ impl Launcher {
 
     /// Shows the installed packages, each enabled or disabled.
     fn show_extensions(&self, state: &mut State) {
-        let (rows, entries) = extension_rows(&state.packages, &state.failed);
+        let (rows, entries) = self.extension_rows(state);
         self.leave_command(state);
         state.entries = entries;
         let details = vec![
@@ -1553,6 +1614,17 @@ impl Launcher {
         ];
         state.view =
             LauncherView::new(Screen::Extensions { details }, "Extensions").with_rows(rows);
+    }
+
+    /// The extension list's rows: each package's state, reload and cache
+    /// rows, then the hotkey of each command of the enabled packages.
+    fn extension_rows(&self, state: &State) -> (Vec<Row>, Vec<Entry>) {
+        let (mut rows, mut entries) = extension_rows(&state.packages, &state.failed);
+        for (row, entry) in self.hotkey_rows(state) {
+            rows.push(row);
+            entries.push(entry);
+        }
+        (rows, entries)
     }
 
     /// Asks whether to clear the cache of the installed package with
@@ -1654,7 +1726,7 @@ impl Launcher {
     /// Updates the installed packages on screen after one changed, keeping
     /// the selection on the same row.
     fn refresh_extensions(&self, state: &mut State) {
-        let (rows, entries) = extension_rows(&state.packages, &state.failed);
+        let (rows, entries) = self.extension_rows(state);
         // The same row stays selected; if it is gone (a Retry row once the
         // package started), the row before it.
         let selected = state.view.selected.and_then(|index| {
