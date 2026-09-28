@@ -459,7 +459,7 @@ impl Run {
 
 /// How many times starting a helper retries after the system refuses to run
 /// its file because another process still has it open for writing
-/// (`ETXTBSY`), and the backoff before each retry, doubling from `10ms`:
+/// (`ETXTBSY`), and the backoff before each retry, growing by `10ms` each time:
 /// the standard mitigation for this Linux race, also used by cargo and
 /// rustup. [`copy_executable`] closes the window for Pane's own writes, but
 /// not one held open a moment longer by an antivirus scanner or another
