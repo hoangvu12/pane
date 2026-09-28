@@ -63,7 +63,7 @@ fn guests() -> Result<(), String> {
     std::fs::create_dir_all(&out).map_err(|error| error.to_string())?;
     // (workspace directory, component file names)
     let workspaces: [(&str, &[&str]); 2] = [
-        ("guests", &["sample_rust", "faulty"]),
+        ("guests", &["sample_rust", "faulty", "old_api"]),
         ("guests/fixtures/mixed-p2", &["mixed_p2"]),
     ];
     for (dir, components) in workspaces {

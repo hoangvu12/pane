@@ -312,3 +312,25 @@ fn an_unavailable_form_explains_itself_instead_of_opening() {
     block_on(launcher.activate_selected());
     assert_eq!(launcher.view().status, Status::Result("fine".into()));
 }
+
+/// The pre-release extension API 0.1 changes shape between slices without a
+/// version bump: `item` gained `platforms` in #19. A component built against
+/// the older shape declares the same API version, and the type check at
+/// instantiation refuses it when its command opens, naming the mismatch.
+#[test]
+fn a_component_of_an_older_api_shape_is_refused_when_it_loads() {
+    let launcher = launcher(vec![command("old", guest("old_api"))]);
+
+    block_on(launcher.activate_selected());
+
+    assert_eq!(launcher.view().screen, Screen::Root);
+    let message = error(&launcher);
+    assert!(
+        message.starts_with("Could not load the extension: "),
+        "{message}"
+    );
+    assert!(
+        message.contains("type mismatch for field items: expected record of 5 fields"),
+        "{message}"
+    );
+}
