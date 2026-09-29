@@ -198,14 +198,14 @@ fn npm_sample(root: &Path, out: &Path) -> Result<(), String> {
     let mut files = vec!["package.json".to_owned(), "pane.json".to_owned()];
     let manifest = std::fs::read_to_string(source.join("package.json"))
         .map_err(|error| format!("read the npm sample's package.json failed: {error}"))?;
-    for component in ["sample_npm_js.wasm"] {
-        if !manifest.contains(component) {
-            return Err(format!(
-                "the npm sample's package.json does not list {component}"
-            ));
-        }
-        files.push(component.to_owned());
+    // Its one component, the prebuilt `sample_npm_js`.
+    let component = "sample_npm_js.wasm";
+    if !manifest.contains(component) {
+        return Err(format!(
+            "the npm sample's package.json does not list {component}"
+        ));
     }
+    files.push(component.to_owned());
     for file in &files {
         let from = match file.ends_with(".wasm") {
             true => out.join(file),
