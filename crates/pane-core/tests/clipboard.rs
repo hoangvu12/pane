@@ -26,6 +26,7 @@ mod platforms;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use futures::executor::block_on;
@@ -81,6 +82,17 @@ const TYPESCRIPT: Fixture = Fixture {
     title: "TypeScript clipboard sample",
     command: "Clipboard history (TypeScript)",
 };
+
+/// Waits until `what` holds, for up to 10 seconds: the expiry sweep writes
+/// the history file from its own thread, so a test that just moved the
+/// clock may read the disk before that write lands.
+fn wait_until(what: &str, is_so: impl Fn() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !is_so() {
+        assert!(Instant::now() < deadline, "{what}");
+        thread::sleep(Duration::from_millis(5));
+    }
+}
 
 fn built(path: &str) -> PathBuf {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -928,8 +940,12 @@ fn items_expire_after_the_retention_also_while_disabled_or_stopped(fixture: &'st
     pane.clock.advance(4 * DAY);
     let launcher = pane.start();
     // Gone from the file once Pane starts, before the package runs or
-    // anything shows it.
-    assert_eq!(pane.kept_on_disk(), ["new"]);
+    // anything shows it. The sweep that expires writes the file off the
+    // caller's thread, so the disk is polled until it agrees, with a
+    // deadline that still fails if the expired item were kept.
+    wait_until("the expired item is gone from the file", || {
+        pane.kept_on_disk() == ["new".to_owned()]
+    });
     block_on(launcher.set_enabled(&identity, true));
     assert_eq!(pane.listed(&launcher), ["new"]);
     // Enabling it again did not start its time again: "new" goes 7 days
@@ -938,7 +954,9 @@ fn items_expire_after_the_retention_also_while_disabled_or_stopped(fixture: &'st
     assert_eq!(pane.listed(&launcher), ["new"]);
     pane.clock.advance(MINUTE);
     assert!(pane.listed(&launcher).is_empty());
-    assert!(pane.kept_on_disk().is_empty());
+    wait_until("the expired items are gone from the file", || {
+        pane.kept_on_disk().is_empty()
+    });
     // History is still on.
     assert!(pane.clipboard.copy("after", None));
     assert_eq!(pane.listed(&launcher), ["after"]);
