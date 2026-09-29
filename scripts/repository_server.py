@@ -7,6 +7,9 @@ Usage:
       `cargo xtask guests` assembles (target/guests/git/greeter): its source
       (everything but dist/) committed on `main`, then the branch `release`
       adding the built component under dist/, tagged `v0.1.0`.
+  repository_server.py commit <repository-folder> <reference>
+      Prints the id of the commit <reference> (such as v0.1.0) points to, to
+      check the one Pane records.
   repository_server.py serve <repositories-folder> <port-file>
       Serves each repository in the folder as /<name>.git on a free port,
       writes the port to <port-file> once listening, and serves until it is
@@ -69,6 +72,15 @@ def make_sample(sample, repository):
     git("commit", "--quiet", "-m", "Release 0.1.0")
     git("tag", "--annotate", "-m", "v0.1.0", "v0.1.0")
     git("switch", "--quiet", "main")
+
+
+def commit(repository, reference):
+    home = os.path.join(os.path.dirname(os.path.abspath(repository)), ".home")
+    result = subprocess.run(
+        ["git", "rev-parse", "--verify", reference + "^{commit}"],
+        cwd=repository, env=git_env(home), check=True, capture_output=True, text=True,
+    )
+    print(result.stdout.strip())
 
 
 def serve(folder, port_file):
@@ -139,6 +151,8 @@ def serve(folder, port_file):
 if __name__ == "__main__":
     if sys.argv[1:2] == ["make-sample"] and len(sys.argv) == 4:
         make_sample(sys.argv[2], sys.argv[3])
+    elif sys.argv[1:2] == ["commit"] and len(sys.argv) == 4:
+        commit(sys.argv[2], sys.argv[3])
     elif sys.argv[1:2] == ["serve"] and len(sys.argv) == 4:
         serve(sys.argv[2], sys.argv[3])
     else:

@@ -20,6 +20,18 @@ trap '[ -n "$pid" ] && kill "$pid" 2>/dev/null; [ -n "$npm_registry_pid" ] && ki
 
 capture() { screencapture -x "$out/$1"; }
 check() { python3 "$(dirname "$0")/check_screenshot.py" "$out/$1" "$2" ${3:+"$3"}; }
+# Captures screenshot $1 until it shows text in color $2, for at most $3
+# seconds, then checks it: for a view that appears once work in the
+# background ends, whenever that is.
+capture_until() {
+  local deadline=$((SECONDS + $3))
+  while :; do
+    capture "$1"
+    check "$1" "$2" >/dev/null 2>&1 && return 0
+    [ "$SECONDS" -lt "$deadline" ] || { check "$1" "$2"; return 1; }
+    sleep 0.5
+  done
+}
 # Prints "x y": where the screenshot shows the given color.
 locate() { python3 "$(dirname "$0")/check_screenshot.py" --locate "$out/$1" "$2"; }
 # Clicks the primary button at x y in the pixels of screenshot $3: Quartz
@@ -1197,8 +1209,8 @@ for _ in $(seq 50); do [ -s "$out/repository-server.port" ] && break; sleep 0.1;
 [ -s "$out/repository-server.port" ] || { echo "the local repository server did not start"; exit 1; }
 repository=http://127.0.0.1:$(cat "$out/repository-server.port")/greeter.git
 start_pane --install "git:$repository"
-capture 300-git-source-only.png
-check 300-git-source-only.png f08c8c   # "The default branch, main (commit …) of the Git repository … holds only the source of …"
+# The fetch runs after the window shows: capture until its explanation does.
+capture_until 300-git-source-only.png f08c8c 60   # "The default branch, main (commit …) of the Git repository … holds only the source of …"
 key 53; sleep 1
 for ((i = 0; i < 14; i++)); do key 125; done   # the last row
 key 36; sleep 1   # Install extension from Git…
@@ -1218,8 +1230,8 @@ check 304-git-command-ran.png 9fd8a8   # "Hello from the Git repository"
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{300-git-source-only,301-git-form,302-git-preview,303-git-installed,304-git-command-ran}.png
 stop_pane
 kill "$repository_server_pid"; wait "$repository_server_pid" 2>/dev/null || true; repository_server_pid=
-grep -q '"gitRef": "refs/tags/v0.1.0"' "$PANE_DATA_DIR/extensions/installed.json" || { echo "Git reference not recorded"; exit 1; }
-grep -q '"gitCommit": "' "$PANE_DATA_DIR/extensions/installed.json" || { echo "Git commit not recorded"; exit 1; }
+release=$(python3 "$(dirname "$0")/repository_server.py" commit "$out/git-repositories/greeter" v0.1.0)
+python3 "$(dirname "$0")/check_git_record.py" "$PANE_DATA_DIR/extensions/installed.json" "$release" || { echo "Git package not recorded as installed from v0.1.0"; exit 1; }
 [ -z "$(ls -A "$PANE_DATA_DIR/extensions/downloads" 2>/dev/null)" ] || { echo "a Git download was left"; exit 1; }
 
 # File search (#29): Files, a default extension (its data folder is this

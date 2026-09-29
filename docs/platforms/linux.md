@@ -672,18 +672,24 @@ configuration, never in Pane) and serves it on 127.0.0.1 with
 `scripts/repository_server.py serve`, which answers each request with `git
 upload-pack --stateless-rpc`; nothing reaches the network. `--install
 git:http://127.0.0.1:<port>/greeter.git` (the default branch) is explained
-as source-only, with nothing offered (frame 300: "The default branch, main
+as source-only, with nothing offered (frame 300, captured again every half
+second until the explanation's color shows, for up to 60 s: "The default branch, main
 (commit …) of the Git repository 127.0.0.1:<port>/greeter holds only the
 source of "Greeter from Git" …"). Escape, then root's last row (with nothing
 installed in this data folder there is no "Manage extensions…") is "Install
 extension from Git…", whose form (301) takes `<address>@v0.1.0`; its
 preview (302) shows "Source: Git repository 127.0.0.1:<port>/greeter",
 "Revision: tag v0.1.0, which you named: installing pins it to that
-revision" and the commit fetched, with Install in view; Enter installs it
+revision", the commit fetched ("Fetched: commit … “Release 0.1.0”, served at
+http://127.0.0.1:<port>/greeter.git; …") and "Runs only the components its
+pane.json names: …", with Install in view below them (a preview's details
+may take 55% of the window since the review, so none is cut); Enter installs it
 (303, "Installed Greeter from Git") and its command's "Say hello" answers
-"Hello from the Git repository" (304). `installed.json` must then record
-`"gitRef": "refs/tags/v0.1.0"` and a `gitCommit`, and
-`extensions/downloads/` must be empty. Run locally on 2026-09-29 (same
+"Hello from the Git repository" (304). `installed.json`, read as JSON
+(`scripts/check_git_record.py`), must then record one package from Git with
+`"gitRef": "refs/tags/v0.1.0"`, `pinned` and the `gitCommit` the tag points
+to (`scripts/repository_server.py commit`), and `extensions/downloads/` must
+be empty. Run locally on 2026-09-29 (same
 Ubuntu 26.04.1 / Xvfb / lavapipe setup): the phase passed on its own first,
 after a first run found the form row one row lower than written (no Manage
 extensions… row in a fresh data folder); then the whole smoke passed and

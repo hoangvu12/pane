@@ -1263,16 +1263,30 @@ python "$PSScriptRoot/repository_server.py" make-sample target/guests/git/greete
 if ($LASTEXITCODE -ne 0) { throw "the Git sample's repository was not made" }
 $portFile = Join-Path $OutDir "repository-server.port"
 if (Test-Path $portFile) { Remove-Item -Force $portFile }
+# Captures $name until it shows text in $color, for at most $seconds, then
+# checks it: for a view that appears once work in the background ends,
+# whenever that is.
+function Capture-Until($name, $color, $seconds) {
+    $deadline = (Get-Date).AddSeconds($seconds)
+    while ($true) {
+        Capture $name
+        python "$PSScriptRoot/check_screenshot.py" (Join-Path $OutDir $name) $color 20 *> $null
+        if ($LASTEXITCODE -eq 0) { return }
+        if ((Get-Date) -gt $deadline) { Check $name $color; return }
+        Start-Sleep -Milliseconds 500
+    }
+}
 $server = Start-Process python -PassThru -NoNewWindow `
     -ArgumentList @("`"$PSScriptRoot/repository_server.py`"", "serve", "`"$repositories`"", "`"$portFile`"") `
     -RedirectStandardError (Join-Path $OutDir "repository-server.log")
+$process = $null
 try {
     for ($i = 0; $i -lt 50 -and -not (Test-Path $portFile); $i++) { Start-Sleep -Milliseconds 100 }
     if (-not (Test-Path $portFile)) { throw "the local repository server did not start" }
     $repository = "http://127.0.0.1:$((Get-Content $portFile).Trim())/greeter.git"
     $process = Start-Pane "stderr-git.log" @("--install", "git:$repository")
-    Capture "300-git-source-only.png"
-    Check "300-git-source-only.png" "f08c8c"   # "The default branch, main (commit ...) of the Git repository ... holds only the source of ..."
+    # The fetch runs after the window shows: capture until its explanation does.
+    Capture-Until "300-git-source-only.png" "f08c8c" 60   # "The default branch, main (commit ...) of the Git repository ... holds only the source of ..."
     Send "{ESC}"; Start-Sleep -Seconds 1
     for ($i = 0; $i -lt 14; $i++) { Send "{DOWN}" }   # the last row
     Send "{ENTER}"; Start-Sleep -Seconds 1   # Install extension from Git...
@@ -1294,11 +1308,21 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: installing from Git changed nothing" }
     Stop-Pane $process
 } finally {
+    # A failure above leaves Pane running: stop it too, before the server.
+    if ($process -and -not $process.HasExited) {
+        Stop-Process -Id $process.Id -ErrorAction SilentlyContinue
+        $process.WaitForExit()
+    }
     Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
 }
+$release = (python "$PSScriptRoot/repository_server.py" commit (Join-Path $repositories "greeter") v0.1.0)
+if ($LASTEXITCODE -ne 0) { throw "the tag's commit was not found" }
 $record = Join-Path $data "extensions/installed.json"
-if (-not (Select-String -Quiet -SimpleMatch '"gitRef": "refs/tags/v0.1.0"' $record)) { throw "Git reference not recorded" }
-if (-not (Select-String -Quiet -SimpleMatch '"gitCommit": "' $record)) { throw "Git commit not recorded" }
+$fromGit = @((Get-Content -Raw $record | ConvertFrom-Json).packages | Where-Object { $_.git })
+if ($fromGit.Count -ne 1) { throw "not one package from Git recorded: $($fromGit.Count)" }
+if ($fromGit[0].gitRef -ne "refs/tags/v0.1.0") { throw "Git reference not recorded: $($fromGit[0].gitRef)" }
+if ($fromGit[0].gitCommit -ne $release.Trim()) { throw "Git commit not recorded: $($fromGit[0].gitCommit)" }
+if ($fromGit[0].pinned -ne $true) { throw "Git tag not recorded as pinned" }
 $downloads = Join-Path $data "extensions/downloads"
 if ((Test-Path $downloads) -and (Get-ChildItem $downloads)) { throw "a Git download was left" }
 
