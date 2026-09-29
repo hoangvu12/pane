@@ -68,8 +68,10 @@ The preview is the one a folder has, with lines of its own:
   commit 1a2b3c4d5e6f. A host that shares storage between forks, as GitHub
   does, can serve a fork's or a pull request's commit at this address, so
   its id alone does not show that this repository made it".
-- "Nothing in the repository is built or run: no hooks, scripts or
-  submodules" (the components that do run are the preview's "Commands:").
+- "Pane builds nothing and runs no repository hooks, scripts or
+  submodules" (what the package does run, its components and any native
+  helpers it ships, is listed as the preview's "Commands:", "Operations:"
+  and "Helpers:").
 
 Install copies `pane.json`, the components it names and this system's
 helper files into Pane, as for a folder, and records the package in

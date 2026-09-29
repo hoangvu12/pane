@@ -123,8 +123,7 @@ fn a_repository_named_in_the_form_is_previewed_installed_and_run(cx: &mut TestAp
     assert!(list.bottom() <= gpui::px(420.), "{list:?}");
     // And the Git lines above it are whole, not cut behind the list: the
     // last of them ends above the list's top.
-    let last_git_line =
-        "Nothing in the repository is built or run: no hooks, scripts or submodules";
+    let last_git_line = "Pane builds nothing and runs no repository hooks, scripts or submodules";
     let line = cx
         .debug_bounds(format!("detail-{last_git_line}").leak())
         .expect("the preview's last Git line is rendered");

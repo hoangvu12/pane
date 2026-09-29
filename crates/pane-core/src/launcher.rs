@@ -3920,9 +3920,11 @@ fn git_lines(
     if let Some(caution) = git.caution() {
         lines.push(format!("Caution: {caution}"));
     }
-    // One short line, so that the preview's Git lines fit above Install
-    // (what does run, the components, is listed as Commands).
-    lines.push("Nothing in the repository is built or run: no hooks, scripts or submodules".into());
+    // One short line, so that the preview's Git lines fit above Install.
+    // What the package runs, its components and any helpers, is listed as
+    // its Commands, Operations and Helpers: only what Pane itself never
+    // does is said here.
+    lines.push("Pane builds nothing and runs no repository hooks, scripts or submodules".into());
     lines
 }
 

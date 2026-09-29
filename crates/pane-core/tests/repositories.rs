@@ -243,7 +243,7 @@ fn a_release_tag_is_previewed_installed_and_its_command_runs() {
             "Fetched: commit {} “Release 0.1.0”, served at {}; each object checked against its id",
             greeter.release, greeter.url
         ),
-        "Nothing in the repository is built or run: no hooks, scripts or submodules".into(),
+        "Pane builds nothing and runs no repository hooks, scripts or submodules".into(),
         "Commands: Greeter from Git".into(),
         "Operations: greet (version 1)".into(),
     ];
