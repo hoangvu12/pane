@@ -1895,6 +1895,7 @@ impl Launcher {
                     return;
                 }
             };
+            let request = launcher.keeping_pin(request);
             let checked = match launcher.read_and_check(request.clone()).await {
                 Ok(package) => Ok(launcher.plan_dependencies(package).await),
                 Err(error) => Err(error),
@@ -1904,6 +1905,27 @@ impl Launcher {
                 return;
             }
             launcher.show_preview(&mut state, &request, checked);
+        }
+    }
+
+    /// `request`, or for an npm package without a version that is installed
+    /// pinned to one, that version: updating it keeps its pin, which only
+    /// naming another version changes.
+    fn keeping_pin(&self, request: install::Request) -> install::Request {
+        match request {
+            install::Request::Npm(spec) if spec.version.is_none() => {
+                let state = self.lock();
+                let pinned = state
+                    .package(&PackageIdentity::npm(&spec.name))
+                    .and_then(|package| package.npm.as_ref())
+                    .filter(|npm| npm.pinned)
+                    .map(|npm| npm.version.clone());
+                install::Request::Npm(crate::npm::NpmSpec {
+                    version: pinned,
+                    ..spec
+                })
+            }
+            other => other,
         }
     }
 
@@ -3510,7 +3532,12 @@ fn preview_view(
         details.push(format!("Version: {version}"));
     }
     if let Some(npm) = &package.npm {
-        details.extend(npm_lines(npm));
+        let pinned_to = installed
+            .as_ref()
+            .and_then(|installed| installed.npm.as_ref())
+            .filter(|installed| installed.pinned)
+            .map(|installed| installed.version.as_str());
+        details.extend(npm_lines(npm, pinned_to));
     }
     let titles: Vec<&str> = manifest.commands.iter().map(|c| c.title.as_str()).collect();
     if !titles.is_empty() {
@@ -3609,10 +3636,17 @@ fn preview_view(
 }
 
 /// The preview's lines about where a package from npm was downloaded from,
-/// and what Pane does not do with it.
-fn npm_lines(npm: &crate::npm::NpmOrigin) -> Vec<String> {
+/// and what Pane does not do with it; `pinned_to` is the version the
+/// installed copy is pinned to, if it is.
+fn npm_lines(npm: &crate::npm::NpmOrigin, pinned_to: Option<&str>) -> Vec<String> {
+    let version = &npm.package.version;
     let mut lines = vec![
-        if npm.package.pinned {
+        if npm.package.pinned && pinned_to == Some(version) {
+            format!(
+                "npm version: {version}, the version it is pinned to: name another version to \
+                 change it"
+            )
+        } else if npm.package.pinned {
             format!(
                 "npm version: {}, the version you named: installing pins it to that version",
                 npm.package.version

@@ -15,6 +15,12 @@
 //!   version it names. There is one copy per source, so two packages naming
 //!   different versions of one operation of the same source conflict: Pane
 //!   explains it rather than solving for several versions.
+//! - A dependency on an npm package may **pin** an exact npm version
+//!   (`npm:greeter@1.2.3`). The one copy must have it: an installed copy of
+//!   another version, another dependent pinning another version, or the
+//!   latest version taken for a dependent that pins none is a conflict Pane
+//!   explains, rather than installing a version the dependent did not ask
+//!   for.
 //! - **Cycles** are allowed: each source is visited once, so packages that
 //!   require each other are installed together. At most
 //!   [`MAX_INSTALLED_WITH`] packages are installed with the requested one.
@@ -164,6 +170,16 @@ pub(crate) enum ProblemKind {
         operation: String,
         reason: String,
     },
+    /// It is an npm package the dependent pins to npm version `wanted`, and
+    /// the plan's copy has version `have`: the installed one (`by` is
+    /// `None`), or the one read for the dependent named by `by`, which
+    /// pinned it too or took its latest.
+    NpmVersion {
+        target: Named,
+        wanted: String,
+        have: String,
+        by: Option<(String, bool)>,
+    },
     /// The dependent and `other` call different versions of one operation.
     Conflict {
         other: String,
@@ -208,6 +224,37 @@ impl fmt::Display for Problem {
                  dependency `{id}`; a package published to npm can depend only on packages from \
                  npm"
             ),
+            ProblemKind::NpmVersion {
+                target,
+                wanted,
+                have,
+                by,
+            } => {
+                let title = &target.title;
+                write!(
+                    f,
+                    "{dependent} requires {title} at npm version {wanted}, and "
+                )?;
+                match by {
+                    None => write!(
+                        f,
+                        "version {have} is installed; Pane does not replace the installed copy \
+                         while installing another extension: update it to {wanted} (npm \
+                         package {}@{wanted}) if {dependent} needs that version",
+                        target.identity.npm_name().unwrap_or(title)
+                    ),
+                    Some((other, pinned)) => write!(
+                        f,
+                        "{other} {} {have}; Pane installs one copy of each package, so they \
+                         cannot both have theirs",
+                        if *pinned {
+                            "requires version"
+                        } else {
+                            "takes its latest, version"
+                        }
+                    ),
+                }
+            }
             ProblemKind::TooMany => write!(
                 f,
                 "Installing {dependent} would install more than {MAX_INSTALLED_WITH} other \
@@ -735,6 +782,43 @@ impl<R: FnMut(&PackageIdentity, &str) -> Result<SourcePackage, PackageError>> Pl
             }
             for (demand, kind) in unmet(&named, manifest, &demands, is_installed) {
                 problems.push(problem(demand, kind));
+            }
+            // The npm version each dependent pins must be the one of the
+            // copy: the one installed, or the one read for the first
+            // dependent found to need it.
+            let have = if *target == requested.identity {
+                requested.npm.as_ref().map(|npm| {
+                    let by = (requested.manifest.title.clone(), npm.package.pinned);
+                    (npm.package.version.clone(), Some(by))
+                })
+            } else if let Some(source) = self.plan.install.iter().find(|p| p.identity == *target) {
+                source.npm.as_ref().map(|npm| {
+                    let by = (demands[0].dependent.title.clone(), npm.package.pinned);
+                    (npm.package.version.clone(), Some(by))
+                })
+            } else {
+                installed
+                    .and_then(|installed| installed.npm.as_ref())
+                    .map(|npm| (npm.version.clone(), None))
+            };
+            if let Some((have, by)) = have {
+                for demand in &demands {
+                    let wanted = match SourceSpec::parse(&demand.dependency.source) {
+                        Ok(SourceSpec::Npm(spec)) => spec.version,
+                        _ => None,
+                    };
+                    if let Some(wanted) = wanted.filter(|wanted| *wanted != have) {
+                        problems.push(problem(
+                            demand,
+                            ProblemKind::NpmVersion {
+                                target: named.clone(),
+                                wanted,
+                                have: have.clone(),
+                                by: by.clone(),
+                            },
+                        ));
+                    }
+                }
             }
         }
         self.plan.problems.extend(problems);

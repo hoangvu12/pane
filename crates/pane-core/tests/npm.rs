@@ -426,8 +426,8 @@ fn the_npm_name_is_the_identity_a_second_install_is_refused_and_choosing_it_agai
         (&json!("0.2.0"), &json!(true))
     );
 
-    // Without a version it is the latest (still 0.1.0 here, an older one),
-    // and the update no longer pins it.
+    // Without a version, a pinned package keeps its pin: the update is of
+    // the version it is pinned to, not the latest (0.1.0 here).
     block_on(launcher.preview_npm(GREETER));
     let details = self::details(&launcher);
     assert!(
@@ -438,13 +438,31 @@ fn the_npm_name_is_the_identity_a_second_install_is_refused_and_choosing_it_agai
         "{details:#?}"
     );
     assert!(
-        has(&details, "npm version: 0.1.0, the latest"),
+        has(
+            &details,
+            "npm version: 0.2.0, the version it is pinned to: name another version to change it"
+        ),
         "{details:#?}"
+    );
+    assert_eq!(
+        launcher.view().rows[0].subtitle.as_deref(),
+        Some("Replace the installed copy with npm version 0.2.0, pinned")
     );
     block_on(launcher.activate_selected());
     let record = dirs.record(GREETER);
-    assert_eq!(record["npmVersion"], "0.1.0");
-    assert_eq!(record.get("pinned"), None);
+    assert_eq!(
+        (&record["npmVersion"], &record["pinned"]),
+        (&json!("0.2.0"), &json!(true))
+    );
+
+    // Naming another version changes the pin.
+    block_on(launcher.preview_npm(&format!("{GREETER}@0.1.0")));
+    block_on(launcher.activate_selected());
+    let record = dirs.record(GREETER);
+    assert_eq!(
+        (&record["npmVersion"], &record["pinned"]),
+        (&json!("0.1.0"), &json!(true))
+    );
     assert_eq!(installed(&launcher), ["Greeter from npm"]);
 }
 
@@ -635,6 +653,104 @@ fn a_dependency_naming_a_version_installs_that_version_pinned() {
         (&record["npmVersion"], &record["pinned"]),
         (&json!("0.1.0"), &json!(true))
     );
+}
+
+#[test]
+fn a_dependency_pinning_another_version_than_the_installed_one_is_a_conflict() {
+    let dirs = Dirs::new();
+    dirs.publish_greeter("0.1.0");
+    let launcher = dirs.launcher();
+    block_on(launcher.install_npm(GREETER));
+    dirs.registry.publish_with(
+        GREETER,
+        "0.2.0",
+        pack(&greeter_files(&guests(), "0.2.0")),
+        None,
+    );
+    let caller = dirs.caller(&format!(
+        r#"{{ "id": "greeter", "source": "npm:{GREETER}@0.2.0", "operations": [{{ "id": "greet", "version": 1 }}] }}"#
+    ));
+
+    block_on(launcher.preview_package(&caller));
+
+    let conflict = "Nothing was installed: Caller requires Greeter from npm at npm version 0.2.0, \
+                    and version 0.1.0 is installed; Pane does not replace the installed copy \
+                    while installing another extension: update it to 0.2.0 (npm package \
+                    @pane-samples/greeter@0.2.0) if Caller needs that version";
+    assert_eq!(launcher.view().title, "Cannot install Caller");
+    assert_eq!(error_of(&launcher), conflict);
+    assert!(titles(&launcher).is_empty());
+    block_on(launcher.install_package(&caller));
+    assert_eq!(error_of(&launcher), conflict);
+    assert_eq!(installed(&launcher), ["Greeter from npm"]);
+    assert_eq!(dirs.record(GREETER)["npmVersion"], "0.1.0");
+
+    // The version installed, named exactly, is no conflict.
+    let caller = dirs.caller(&format!(
+        r#"{{ "id": "greeter", "source": "npm:{GREETER}@0.1.0", "operations": [{{ "id": "greet", "version": 1 }}] }}"#
+    ));
+    block_on(launcher.preview_package(&caller));
+    assert!(has(
+        &details(&launcher),
+        "Requires: Greeter from npm, already installed"
+    ));
+}
+
+#[test]
+fn two_dependents_pinning_different_versions_of_one_npm_package_conflict() {
+    let dirs = Dirs::new();
+    dirs.publish_greeter("0.1.0");
+    dirs.publish_greeter("0.2.0");
+    // "Middle", on npm, pins the greeter at 0.2.0; the caller pins it at
+    // 0.1.0 and requires Middle too.
+    let mut files = greeter_files(&guests(), "1.0.0");
+    for (path, contents) in &mut files {
+        let mut json: Value = match *path {
+            "package.json" | "pane.json" => serde_json::from_slice(contents).unwrap(),
+            _ => continue,
+        };
+        if *path == "package.json" {
+            json["name"] = json!("middle");
+        } else {
+            json["title"] = json!("Middle");
+            json["dependencies"] = json!([{
+                "id": "greeter", "source": format!("npm:{GREETER}@0.2.0"),
+                "operations": [{ "id": "greet", "version": 1 }]
+            }]);
+        }
+        *contents = serde_json::to_vec(&json).unwrap();
+    }
+    dirs.registry.publish("middle", "1.0.0", pack(&files));
+    let caller = dirs.caller(&format!(
+        r#"{{ "id": "greeter", "source": "npm:{GREETER}@0.1.0", "operations": [{{ "id": "greet", "version": 1 }}] }},
+           {{ "id": "middle", "source": "npm:middle", "operations": [{{ "id": "greet", "version": 1 }}] }}"#
+    ));
+    let launcher = dirs.launcher();
+
+    block_on(launcher.preview_package(&caller));
+
+    assert_eq!(
+        error_of(&launcher),
+        "Nothing was installed: Middle requires Greeter from npm at npm version 0.2.0, and \
+         Caller requires version 0.1.0; Pane installs one copy of each package, so they cannot \
+         both have theirs"
+    );
+
+    // Unpinned, the first to name it takes the latest; a pin of another
+    // version conflicts with that.
+    let caller = dirs.caller(&format!(
+        r#"{{ "id": "greeter", "source": "npm:{GREETER}", "operations": [{{ "id": "greet", "version": 1 }}] }},
+           {{ "id": "middle", "source": "npm:middle", "operations": [{{ "id": "greet", "version": 1 }}] }}"#
+    ));
+    dirs.registry.tag_latest(GREETER, "0.1.0");
+    block_on(launcher.preview_package(&caller));
+    assert_eq!(
+        error_of(&launcher),
+        "Nothing was installed: Middle requires Greeter from npm at npm version 0.2.0, and \
+         Caller takes its latest, version 0.1.0; Pane installs one copy of each package, so they \
+         cannot both have theirs"
+    );
+    assert!(launcher.packages().is_empty());
 }
 
 #[test]
