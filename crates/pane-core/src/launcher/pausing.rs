@@ -15,12 +15,13 @@
 //!   (opening a command before each crashing action answers); crashes
 //!   further apart than the window, and those before Pane started or the
 //!   package's generation began, are not counted together.
-//! - **It stopped responding** (#18): a guest call computed for the
-//!   runtime's compute limit without finishing and was stopped. Wasmtime
-//!   was running that package's code, so the failure is its own, and it
-//!   counts as a crash does, in the same window (provisional). A package
-//!   started from a guest that stops responding as it starts could not
-//!   start.
+//! - **Its call stopped responding** (#18, an unresponsive call): a guest
+//!   call computed for the runtime's compute limit without finishing and
+//!   was stopped. Only the guest's own computing counts, never Pane's host
+//!   calls or waiting, and Wasmtime was running that package's code, so
+//!   the failure is its own; it counts as a crash does, in the same window
+//!   (provisional). Starting a package is never counted: a slow start is
+//!   not a failure to start.
 //!
 //! What is not a failure of the package: an error the extension answers
 //! with ("sign in first"), which is an ordinary outcome; a call stopped
@@ -48,7 +49,7 @@ use super::{Launcher, State, Status, owner};
 use crate::extension_data::PackageData;
 use crate::generation::End;
 use crate::packages::{PackageError, PackageIdentity, Pause, PauseCause, Store};
-use crate::runtime::Health;
+use crate::runtime::{CallError, Health};
 
 /// How many crashes within [`CRASH_WINDOW`] pause a package. Small, so
 /// that a broken command stops failing soon, and more than one, so that one
@@ -67,7 +68,7 @@ use crate::runtime::CRASH_WINDOW;
 #[derive(Default)]
 pub(super) struct Pauses {
     pauses: HashMap<PackageIdentity, Pause>,
-    crashes: HashMap<PackageIdentity, Vec<(Instant, Failing)>>,
+    failures: HashMap<PackageIdentity, Vec<(Instant, Failing)>>,
 }
 
 /// How a package's call failed, towards pausing it.
@@ -75,8 +76,77 @@ pub(super) struct Pauses {
 pub(super) enum Failing {
     /// It trapped.
     Crash,
-    /// It computed for too long without finishing.
-    Hang,
+    /// It computed for too long without finishing (an unresponsive call).
+    UnresponsiveCall,
+}
+
+impl Failing {
+    /// How a call into an installed package failed, towards pausing it,
+    /// and its error; `Err` for a failure to start, which pauses at once.
+    fn of(health: Health) -> (Failing, Result<CallError, CallError>) {
+        match health {
+            Health::Crashed(error) => (Failing::Crash, Ok(error)),
+            Health::Unresponsive(error) => (Failing::UnresponsiveCall, Ok(error)),
+            Health::FailedToStart(error) => (Failing::Crash, Err(error)),
+        }
+    }
+}
+
+impl PauseCause {
+    /// Why a package that failed as `failures` did is paused.
+    fn of(failures: &[(Instant, Failing)]) -> PauseCause {
+        let unresponsive = failures
+            .iter()
+            .filter(|(_, how)| *how == Failing::UnresponsiveCall)
+            .count();
+        match unresponsive {
+            0 => PauseCause::Crashes,
+            all if all == failures.len() => PauseCause::UnresponsiveCalls,
+            _ => PauseCause::CrashesAndUnresponsiveCalls,
+        }
+    }
+
+    /// How the paused package titled `title` failed, in a sentence:
+    /// "<title> crashed 3 times within 5 minutes", or "<title> could not
+    /// start".
+    pub(super) fn failure(self, title: &str) -> String {
+        match self {
+            PauseCause::FailedToStart => format!("{title} could not start"),
+            _ => format!("{title} {} {}", self.failed_how().to_lowercase(), within()),
+        }
+    }
+
+    /// "Crashed", "Stopped responding" or "Crashed or stopped responding":
+    /// how a package paused after failing too often failed.
+    fn failed_how(self) -> &'static str {
+        match self {
+            PauseCause::UnresponsiveCalls => "Stopped responding",
+            PauseCause::CrashesAndUnresponsiveCalls => "Crashed or stopped responding",
+            PauseCause::Crashes | PauseCause::FailedToStart => "Crashed",
+        }
+    }
+
+    /// The state of an enabled package paused for this, in the extension
+    /// list: "Enabled · Paused after crashing".
+    pub(super) fn state(self) -> &'static str {
+        match self {
+            PauseCause::FailedToStart => "Enabled · Failed to start",
+            PauseCause::Crashes => "Enabled · Paused after crashing",
+            PauseCause::UnresponsiveCalls => "Enabled · Paused after not responding",
+            PauseCause::CrashesAndUnresponsiveCalls => {
+                "Enabled · Paused after crashing or not responding"
+            }
+        }
+    }
+
+    /// The title of the row that retries the paused package titled
+    /// `title`.
+    pub(super) fn retry_title(self, title: &str) -> String {
+        match self {
+            PauseCause::FailedToStart => format!("Retry starting {title}"),
+            _ => format!("Retry {title}"),
+        }
+    }
 }
 
 impl Pauses {
@@ -89,10 +159,10 @@ impl Pauses {
         self.pauses.contains_key(identity)
     }
 
-    /// Forgets the pause and crashes of the package with `identity`,
+    /// Forgets the pause and failures of the package with `identity`,
     /// returning its pause: it runs in a new generation, or not at all.
     pub(super) fn forget(&mut self, identity: &PackageIdentity) -> Option<Pause> {
-        self.crashes.remove(identity);
+        self.failures.remove(identity);
         self.pauses.remove(identity)
     }
 
@@ -101,14 +171,6 @@ impl Pauses {
     /// not be recorded.
     pub(super) fn restore(&mut self, identity: PackageIdentity, pause: Pause) {
         self.pauses.insert(identity, pause);
-    }
-
-    /// Notes that the package with `identity` crashed at `now`, and returns
-    /// whether that is its [`CRASHES_BEFORE_PAUSE`]th failure within
-    /// [`CRASH_WINDOW`], which pauses it.
-    #[cfg(test)]
-    fn crashed(&mut self, identity: &PackageIdentity, now: Instant) -> bool {
-        self.failed(identity, now, Failing::Crash).is_some()
     }
 
     /// Notes that the package with `identity` failed (`how`) at `now`, and
@@ -121,25 +183,14 @@ impl Pauses {
         now: Instant,
         how: Failing,
     ) -> Option<PauseCause> {
-        let failures = self.crashes.entry(identity.clone()).or_default();
+        let failures = self.failures.entry(identity.clone()).or_default();
         failures.retain(|(at, _)| now.saturating_duration_since(*at) < CRASH_WINDOW);
         failures.push((now, how));
-        if failures.len() < CRASHES_BEFORE_PAUSE {
-            return None;
-        }
-        let hangs = failures
-            .iter()
-            .filter(|(_, how)| *how == Failing::Hang)
-            .count();
-        Some(match hangs {
-            0 => PauseCause::Crashes,
-            all if all == failures.len() => PauseCause::Unresponsive,
-            _ => PauseCause::CrashesAndHangs,
-        })
+        (failures.len() >= CRASHES_BEFORE_PAUSE).then(|| PauseCause::of(failures))
     }
 
     fn pause(&mut self, identity: PackageIdentity, pause: Pause) {
-        self.crashes.remove(&identity);
+        self.failures.remove(&identity);
         self.pauses.insert(identity, pause);
     }
 }
@@ -203,37 +254,6 @@ impl Recorder {
     }
 }
 
-/// How the paused package titled `title` failed, in a sentence: "<title>
-/// crashed 3 times within 5 minutes", or "<title> could not start".
-pub(super) fn failure(title: &str, cause: PauseCause) -> String {
-    match cause {
-        PauseCause::Crashes => format!("{title} crashed {}", within()),
-        PauseCause::Unresponsive => format!("{title} stopped responding {}", within()),
-        PauseCause::CrashesAndHangs => {
-            format!("{title} crashed or stopped responding {}", within())
-        }
-        PauseCause::FailedToStart => format!("{title} could not start"),
-    }
-}
-
-/// "Crashed", "Stopped responding" or "Crashed or stopped responding":
-/// how a package paused after failing too often failed.
-fn failed_how(cause: PauseCause) -> &'static str {
-    match cause {
-        PauseCause::Unresponsive => "Stopped responding",
-        PauseCause::CrashesAndHangs => "Crashed or stopped responding",
-        PauseCause::Crashes | PauseCause::FailedToStart => "Crashed",
-    }
-}
-
-/// The title of the row that retries the paused package titled `title`.
-pub(super) fn retry_title(title: &str, cause: PauseCause) -> String {
-    match cause {
-        PauseCause::FailedToStart => format!("Retry starting {title}"),
-        _ => format!("Retry {title}"),
-    }
-}
-
 /// The title of the row, and of the screen, that shows why the package
 /// titled `title` is paused.
 pub(super) fn details_title(title: &str) -> String {
@@ -269,11 +289,7 @@ impl Launcher {
         let identity = package.identity.clone();
         let version = package.version();
         let title = package.title();
-        let (how, error) = match health {
-            Health::Crashed(error) => (Failing::Crash, Ok(error)),
-            Health::Unresponsive(error) => (Failing::Hang, Ok(error)),
-            Health::FailedToStart(error) => (Failing::Crash, Err(error)),
-        };
+        let (how, error) = Failing::of(health);
         let pause = match error {
             Ok(error) => {
                 let Some(after) = state.paused.failed(&identity, Instant::now(), how) else {
@@ -281,7 +297,11 @@ impl Launcher {
                 };
                 Pause {
                     after,
-                    why: format!("{} {}; the last time: {error}", failed_how(after), within()),
+                    why: format!(
+                        "{} {}; the last time: {error}",
+                        after.failed_how(),
+                        within()
+                    ),
                     version,
                 }
             }
@@ -291,7 +311,7 @@ impl Launcher {
                 version,
             },
         };
-        let what = failure(&title, pause.after);
+        let what = pause.after.failure(&title);
         self.pause(&mut state, &identity, pause);
         state.view.status = Status::Error(format!(
             "{what} and is paused: Pane runs none of its code until you retry it, and keeps its \
@@ -402,6 +422,11 @@ mod tests {
         PackageIdentity::local(dir.path()).unwrap()
     }
 
+    /// Whether a crash of the package with `identity` at `now` pauses it.
+    fn crashes(pauses: &mut Pauses, identity: &PackageIdentity, now: Instant) -> bool {
+        pauses.failed(identity, now, Failing::Crash).is_some()
+    }
+
     #[test]
     fn three_crashes_within_the_window_pause() {
         let dir = tempfile::tempdir().unwrap();
@@ -409,9 +434,9 @@ mod tests {
         let mut pauses = Pauses::default();
         let start = Instant::now();
         let minute = Duration::from_secs(60);
-        assert!(!pauses.crashed(&identity, start));
-        assert!(!pauses.crashed(&identity, start + minute));
-        assert!(pauses.crashed(&identity, start + 4 * minute));
+        assert!(!crashes(&mut pauses, &identity, start));
+        assert!(!crashes(&mut pauses, &identity, start + minute));
+        assert!(crashes(&mut pauses, &identity, start + 4 * minute));
     }
 
     #[test]
@@ -420,23 +445,40 @@ mod tests {
         let identity = identity(&dir);
         let now = Instant::now();
         let mut pauses = Pauses::default();
-        assert_eq!(pauses.failed(&identity, now, Failing::Hang), None);
-        assert_eq!(pauses.failed(&identity, now, Failing::Hang), None);
         assert_eq!(
-            pauses.failed(&identity, now, Failing::Hang),
-            Some(PauseCause::Unresponsive)
+            pauses.failed(&identity, now, Failing::UnresponsiveCall),
+            None
+        );
+        assert_eq!(
+            pauses.failed(&identity, now, Failing::UnresponsiveCall),
+            None
+        );
+        assert_eq!(
+            pauses.failed(&identity, now, Failing::UnresponsiveCall),
+            Some(PauseCause::UnresponsiveCalls)
         );
 
         let mut pauses = Pauses::default();
         assert_eq!(pauses.failed(&identity, now, Failing::Crash), None);
-        assert_eq!(pauses.failed(&identity, now, Failing::Hang), None);
         assert_eq!(
-            pauses.failed(&identity, now, Failing::Crash),
-            Some(PauseCause::CrashesAndHangs)
+            pauses.failed(&identity, now, Failing::UnresponsiveCall),
+            None
         );
         assert_eq!(
-            failure("Sample", PauseCause::CrashesAndHangs),
+            pauses.failed(&identity, now, Failing::Crash),
+            Some(PauseCause::CrashesAndUnresponsiveCalls)
+        );
+        assert_eq!(
+            PauseCause::CrashesAndUnresponsiveCalls.failure("Sample"),
             "Sample crashed or stopped responding 3 times within 5 minutes"
+        );
+        assert_eq!(
+            PauseCause::Crashes.failure("Sample"),
+            "Sample crashed 3 times within 5 minutes"
+        );
+        assert_eq!(
+            PauseCause::FailedToStart.failure("Sample"),
+            "Sample could not start"
         );
     }
 
@@ -450,15 +492,19 @@ mod tests {
         // Never three within five minutes of one another.
         for crash in 0..10 {
             assert!(
-                !pauses.crashed(&identity, start + crash * 3 * minute),
+                !crashes(&mut pauses, &identity, start + crash * 3 * minute),
                 "crash {crash}"
             );
         }
         // Exactly the window apart does not count together either.
         let later = start + 60 * minute;
-        assert!(!pauses.crashed(&identity, later));
-        assert!(!pauses.crashed(&identity, later + CRASH_WINDOW - minute));
-        assert!(!pauses.crashed(&identity, later + CRASH_WINDOW));
+        assert!(!crashes(&mut pauses, &identity, later));
+        assert!(!crashes(
+            &mut pauses,
+            &identity,
+            later + CRASH_WINDOW - minute
+        ));
+        assert!(!crashes(&mut pauses, &identity, later + CRASH_WINDOW));
     }
 
     /// A launcher without a runtime with one package installed, its
@@ -515,9 +561,9 @@ mod tests {
         let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         let mut pauses = Pauses::default();
         let now = Instant::now();
-        assert!(!pauses.crashed(&identity(&a), now));
-        assert!(!pauses.crashed(&identity(&a), now));
-        assert!(!pauses.crashed(&identity(&b), now));
-        assert!(pauses.crashed(&identity(&a), now));
+        assert!(!crashes(&mut pauses, &identity(&a), now));
+        assert!(!crashes(&mut pauses, &identity(&a), now));
+        assert!(!crashes(&mut pauses, &identity(&b), now));
+        assert!(crashes(&mut pauses, &identity(&a), now));
     }
 }

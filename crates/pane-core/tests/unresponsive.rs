@@ -8,9 +8,14 @@
 //!   the details. Meanwhile the launcher keeps answering the user, and the
 //!   calculator, another extension, answers as soon as the call is stopped.
 //! - A runtime thread stuck outside any guest (a fault injected in debug
-//!   builds) is given up on: nothing is named or paused, Manage extensions
-//!   says the runtime stopped responding, a fresh thread runs the next
-//!   call, and the stuck one, once it returns, saves nothing more.
+//!   builds) is first said to be not responding yet, then given up on:
+//!   nothing is named or paused, Manage extensions says the runtime stopped
+//!   responding, a fresh thread runs the next call, and the stuck one, once
+//!   it returns, saves nothing more. One that carries on before Pane gives
+//!   up on it is left running.
+//!
+//! The runtime's limits are shortened ([`Limits`]), so nothing waits for
+//! the real ones; waits are on what Pane shows, with generous deadlines.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -18,10 +23,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use futures::executor::block_on;
-use pane_core::{
-    COMPUTE_LIMIT, Launcher, PackageIdentity, Row, Runtime, RuntimeFailure, Screen, Status,
-    UNRESPONSIVE_LIMIT,
-};
+use pane_core::{Launcher, Limits, PackageIdentity, Row, Runtime, RuntimeFailure, Screen, Status};
 use tempfile::TempDir;
 
 const MANAGE_ROW: &str = "Manage extensions…";
@@ -29,7 +31,18 @@ const COMMAND: &str = "Greeting";
 const BUSY: &str = "Stop responding";
 
 /// Generous, for a loaded machine.
-const LONG: Duration = Duration::from_secs(60);
+const LONG: Duration = Duration::from_secs(120);
+
+/// The limits these tests run with: a guest call may compute for two
+/// seconds; a runtime thread making no progress is said to be not
+/// responding yet after one, and given up on after three.
+fn limits() -> Limits {
+    Limits {
+        compute: Duration::from_secs(2),
+        warn: Duration::from_secs(1),
+        unresponsive: Duration::from_secs(3),
+    }
+}
 
 /// A settings sample package: the same command in each language.
 struct Fixture {
@@ -85,6 +98,7 @@ impl Pane {
         let sources = tempfile::tempdir().unwrap();
         let data = tempfile::tempdir().unwrap();
         let runtime = Runtime::start().unwrap();
+        runtime.set_limits(limits());
         let launcher =
             Launcher::with_packages(Ok(runtime.clone()), vec![], data.path().join("extensions"));
         let folder = package(fixture.package, &sources.path().join(fixture.package));
@@ -217,30 +231,35 @@ fn a_guest_that_stops_responding_is_stopped_and_paused_the_third_time(fixture: &
     assert!(calculator_answers(launcher));
 
     // The first time, the user leaves the command and keeps working while
-    // the guest computes.
+    // the guest computes: with no compute limit to speak of, the guest's
+    // call ends only when Pane lowers it.
+    pane.runtime.set_limits(Limits {
+        compute: Duration::from_secs(3600),
+        ..limits()
+    });
     open_at(launcher, BUSY);
     let busy = {
         let launcher = launcher.clone();
         thread::spawn(move || block_on(launcher.activate_selected()))
     };
     pane.until_saved("busy", "started");
-    let started = Instant::now();
     manage(launcher);
     assert!(
-        started.elapsed() < Duration::from_secs(1),
+        !busy.is_finished(),
         "Manage extensions waited for the guest"
     );
     to_root(launcher);
-    // The calculator's answer waits only until the busy call is stopped.
+    // The call is stopped once the limit applies, and the calculator's
+    // answer, which waited behind it, comes.
+    pane.runtime.set_limits(limits());
     assert!(calculator_answers(launcher));
-    assert!(started.elapsed() < COMPUTE_LIMIT + Duration::from_secs(10));
     busy.join().unwrap();
     assert_eq!(pane.saved("busy").as_deref(), Some("started"));
 
     // The second time, its error says what happened.
     let second = error(run(launcher, BUSY));
     assert!(
-        second.starts_with("The extension stopped responding: it computed for 5 seconds"),
+        second.starts_with("The extension stopped responding: it computed for 2 seconds"),
         "{second}"
     );
     assert!(row_is_runnable(launcher));
@@ -282,7 +301,7 @@ fn a_guest_that_stops_responding_is_stopped_and_paused_the_third_time(fixture: &
     assert!(
         details.iter().any(|line| line.starts_with(
             "Stopped responding 3 times within 5 minutes; the last time: The extension stopped \
-             responding: it computed for 5 seconds"
+             responding: it computed for 2 seconds"
         )),
         "{details:?}"
     );
@@ -332,12 +351,10 @@ fn a_runtime_that_stops_responding_is_replaced_naming_no_extension() {
         thread::spawn(move || block_on(launcher.activate_selected()))
     };
     pane.until_saved("slow-save", "started");
-    let waiting = Instant::now();
 
     pane.runtime.inject(Fault::Hang);
 
     slow.join().unwrap();
-    assert!(waiting.elapsed() >= UNRESPONSIVE_LIMIT);
     assert!(matches!(
         pane.runtime.status(),
         RuntimeStatus::Restarted {
@@ -370,7 +387,7 @@ fn a_runtime_that_stops_responding_is_replaced_naming_no_extension() {
     let view = launcher.view();
     let details = view.details();
     assert!(
-        details[0].contains("stopped responding for 10 seconds"),
+        details[0].contains("made no progress for 3 seconds, so Pane gave up on it"),
         "{details:?}"
     );
     assert!(
@@ -389,11 +406,8 @@ fn a_runtime_that_stops_responding_is_replaced_naming_no_extension() {
     to_root(launcher);
     assert!(calculator_answers(launcher));
 
-    // Once the guest's wait has passed, the stuck thread returns, and
-    // saves nothing.
-    while waiting.elapsed() < Duration::from_secs(11) {
-        thread::sleep(Duration::from_millis(50));
-    }
+    // The stuck thread returns, and saves nothing: the guest's wait went
+    // with it.
     pane.runtime.inject(Fault::Release);
     let released = Instant::now();
     while pane.runtime.abandoned_threads() > 0 {
@@ -402,4 +416,57 @@ fn a_runtime_that_stops_responding_is_replaced_naming_no_extension() {
     }
     assert_eq!(pane.saved("slow-save").as_deref(), Some("started"));
     assert_eq!(pane.saved("greeting-style").as_deref(), Some("casual"));
+}
+
+/// A runtime thread that makes no progress for a while is said to be not
+/// responding yet; once it carries on, before Pane gave up on it, the
+/// status line says what it said before, nothing was stopped, and the call
+/// it held answers.
+#[cfg(debug_assertions)]
+#[test]
+fn a_runtime_not_responding_yet_says_so_and_is_left_running_when_it_carries_on() {
+    use pane_core::{Fault, RuntimeStatus};
+
+    let pane = Pane::new(&RUST);
+    // Never given up on here.
+    pane.runtime.set_limits(Limits {
+        unresponsive: Duration::from_secs(3600),
+        ..limits()
+    });
+    let launcher = &pane.launcher;
+    open_at(launcher, "Save after waiting");
+    let slow = {
+        let launcher = launcher.clone();
+        thread::spawn(move || block_on(launcher.activate_selected()))
+    };
+    pane.until_saved("slow-save", "started");
+    let before = launcher.view().status;
+
+    pane.runtime.inject(Fault::Hang);
+    let started = Instant::now();
+    let not_yet = loop {
+        if let Status::Progress(text) = launcher.view().status {
+            break text;
+        }
+        assert!(started.elapsed() < LONG, "{:?}", launcher.view().status);
+        thread::sleep(Duration::from_millis(5));
+    };
+    assert!(
+        not_yet.starts_with("Pane's extension runtime is not responding yet"),
+        "{not_yet}"
+    );
+
+    pane.runtime.inject(Fault::Release);
+    while launcher.view().status != before && !slow.is_finished() {
+        assert!(started.elapsed() < LONG, "{:?}", launcher.view().status);
+        thread::sleep(Duration::from_millis(5));
+    }
+    slow.join().unwrap();
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Saved after waiting 10 seconds".into())
+    );
+    assert_eq!(pane.saved("slow-save").as_deref(), Some("finished"));
+    assert_eq!(pane.runtime.status(), RuntimeStatus::Running);
+    assert_eq!(pane.runtime.abandoned_threads(), 0);
 }

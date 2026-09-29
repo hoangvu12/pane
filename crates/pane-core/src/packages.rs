@@ -1315,11 +1315,11 @@ pub(crate) enum PauseCause {
     FailedToStart,
     /// It crashed (trapped) too often.
     Crashes,
-    /// It stopped responding (computed for too long without finishing) too
-    /// often (#18).
-    Unresponsive,
-    /// It crashed or stopped responding too often, some of each.
-    CrashesAndHangs,
+    /// Its calls stopped responding (computed for too long without
+    /// finishing: unresponsive calls) too often (#18).
+    UnresponsiveCalls,
+    /// It crashed or its calls stopped responding too often, some of each.
+    CrashesAndUnresponsiveCalls,
 }
 
 /// Pane's managed location for installed packages:

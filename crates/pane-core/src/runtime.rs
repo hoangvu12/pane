@@ -38,12 +38,15 @@ use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
 use crate::http;
 use crate::platform::Platform;
 
-mod deadlines;
+pub(crate) mod deadlines;
 mod faults;
 mod supervisor;
 
-pub use deadlines::{COMPUTE_LIMIT, UNRESPONSIVE_LIMIT};
-use deadlines::{Doing, Meter, Watch};
+use deadlines::Doing;
+#[doc(hidden)]
+pub use deadlines::Limits;
+pub use deadlines::{COMPUTE_LIMIT, UNRESPONSIVE_LIMIT, WARN_AFTER};
+pub(crate) use deadlines::{HostCall, Hosted, Watch};
 #[cfg(any(test, debug_assertions))]
 #[doc(hidden)]
 pub use faults::Fault;
@@ -61,6 +64,12 @@ pub(crate) mod bindings {
         imports: {
             "pane:extension/operations": store,
             "pane:extension/helpers": store,
+            // Saving waits for the file to be written, off the runtime
+            // thread, which awaits it.
+            "pane:extension/settings.set": async,
+            "pane:extension/content.set": async,
+            "pane:extension/cache.set": async,
+            "pane:extension/credentials.set": async,
         },
         exports: { default: async | store },
     });
@@ -662,10 +671,10 @@ enum Request {
         view: ViewId,
     },
     ViewCount {
-        reply: oneshot::Sender<usize>,
+        reply: oneshot::Sender<Result<usize, CallError>>,
     },
     Running {
-        reply: oneshot::Sender<Vec<PathBuf>>,
+        reply: oneshot::Sender<Result<Vec<PathBuf>, CallError>>,
     },
 }
 
@@ -762,6 +771,20 @@ impl Runtime {
         self.shared.inject(fault);
     }
 
+    /// Sets the limits the runtime applies to guest calls and to its own
+    /// thread from now on ([`Limits`]), so tests and smokes reach them
+    /// quickly. For tests and the native smokes only; debug builds only.
+    #[cfg(any(test, debug_assertions))]
+    #[doc(hidden)]
+    pub fn set_limits(&self, limits: Limits) {
+        self.shared.set_limits(limits);
+    }
+
+    /// The limits the runtime applies ([`Limits`]).
+    pub(crate) fn limits(&self) -> Limits {
+        self.shared.limits()
+    }
+
     /// Sets the ceilings of guests' web requests started from now on, so
     /// tests can reach them quickly. For tests only; debug builds only.
     #[cfg(any(test, debug_assertions))]
@@ -779,7 +802,9 @@ impl Runtime {
     /// Injects a fault each time a file appears at `file`, then removes it:
     /// `crash` injects [`Fault::Crash`], `crash-before-answer:<item>`
     /// [`Fault::CrashBeforeAnswer`] for the action `<item>`, `hang`
-    /// [`Fault::Hang`] and `release` [`Fault::Release`]. For the native
+    /// [`Fault::Hang`] and `release` [`Fault::Release`];
+    /// `limits:<compute>,<warn>,<unresponsive>` (whole seconds) sets the
+    /// runtime's [`Limits`]. For the native
     /// smokes, which set `PANE_TEST_RUNTIME_FAULTS`; the file is looked for
     /// every 100 ms, by a thread that stops once every handle to the
     /// runtime is dropped. Debug builds only.
@@ -807,7 +832,12 @@ impl Runtime {
                         None if text == "crash" => runtime.inject(InjectedFault::Crash),
                         None if text == "hang" => runtime.inject(InjectedFault::Hang),
                         None if text == "release" => runtime.inject(InjectedFault::Release),
-                        None => eprintln!("PANE_TEST_RUNTIME_FAULTS: unknown fault {text:?}"),
+                        None => match parse_limits(text) {
+                            Some(limits) => runtime.set_limits(limits),
+                            None => {
+                                eprintln!("PANE_TEST_RUNTIME_FAULTS: unknown fault {text:?}")
+                            }
+                        },
                     }
                 }
             });
@@ -817,6 +847,12 @@ impl Runtime {
     /// restarted it or chose not to.
     pub(crate) fn set_crash_report(&self, report: supervisor::CrashReport) {
         self.shared.set_crash_report(report);
+    }
+
+    /// Tells `report` when the runtime thread is not responding yet, and
+    /// when it carries on (see [`supervisor::SlowReport`]).
+    pub(crate) fn set_slow_report(&self, report: supervisor::SlowReport) {
+        self.shared.set_slow_report(report);
     }
 
     /// Asks the command in `component` for its list view. The command has
@@ -1123,10 +1159,10 @@ impl Runtime {
     /// view.
     pub async fn view_count(&self) -> usize {
         let (reply, response) = oneshot::channel();
-        if self.send(Request::ViewCount { reply }).is_err() {
-            return 0;
-        }
-        response.await.unwrap_or(0)
+        // A stopped runtime, or a thread Pane gave up on, holds no views.
+        self.call(Request::ViewCount { reply }, response)
+            .await
+            .unwrap_or(0)
     }
 
     /// The components that have a live guest instance, counting the
@@ -1134,11 +1170,16 @@ impl Runtime {
     /// for tests and logs, like [`Runtime::view_count`]: listing or
     /// searching commands starts none; invoking a command starts its own.
     pub async fn running(&self) -> Vec<PathBuf> {
+        self.try_running().await.unwrap_or_default()
+    }
+
+    /// Like [`Runtime::running`], saying why there is no answer: the
+    /// runtime is stopped, or its thread failed (a crash, or Pane gave up
+    /// on it) before answering. Answered once every request sent before it
+    /// was handled, so it tells when those are done.
+    pub(crate) async fn try_running(&self) -> Result<Vec<PathBuf>, CallError> {
         let (reply, response) = oneshot::channel();
-        if self.send(Request::Running { reply }).is_err() {
-            return Vec::new();
-        }
-        response.await.unwrap_or_default()
+        self.call(Request::Running { reply }, response).await
     }
 
     /// The process ids of the native helpers guests started that are still
@@ -1250,6 +1291,26 @@ impl Runtime {
     }
 }
 
+/// The limits `limits:<compute>,<warn>,<unresponsive>` sets, in whole
+/// seconds (see [`Runtime::watch_fault_file`]).
+#[cfg(any(test, debug_assertions))]
+fn parse_limits(text: &str) -> Option<Limits> {
+    let seconds: Vec<u64> = text
+        .strip_prefix("limits:")?
+        .split(',')
+        .map(|n| n.trim().parse().ok())
+        .collect::<Option<_>>()?;
+    let [compute, warn, unresponsive] = seconds[..] else {
+        return None;
+    };
+    let secs = std::time::Duration::from_secs;
+    Some(Limits {
+        compute: secs(compute),
+        warn: secs(warn),
+        unresponsive: secs(unresponsive),
+    })
+}
+
 /// Locks `mutex`, taking it over if a thread panicked while holding it:
 /// the runtime thread may crash while a lock is held (see `supervisor`),
 /// and Pane carries on with what the lock guarded.
@@ -1280,9 +1341,7 @@ fn engine(cache_dir: Option<PathBuf>) -> Result<Engine, CallError> {
         let cache = Cache::new(cache).map_err(unavailable)?;
         config.cache(Some(cache));
     }
-    let engine = Engine::new(&config).map_err(unavailable)?;
-    deadlines::tick(&engine);
-    Ok(engine)
+    Engine::new(&config).map_err(unavailable)
 }
 
 /// The most one linear memory of a guest instance may grow to. Web
@@ -1303,7 +1362,23 @@ fn ended(end: End) -> CallError {
         End::Replaced => CallError::Replaced,
         End::Uninstalled => CallError::Uninstalled,
         End::Paused => CallError::Paused,
+        End::Abandoned => given_up(),
     }
+}
+
+/// Why stopped code (see [`GuestState::stopped`]) may not start host work.
+pub(crate) fn stopped_code(end: End) -> String {
+    match end {
+        End::Abandoned => "Pane's extension runtime stopped responding and was replaced while \
+                           this code ran; it no longer changes anything"
+            .into(),
+        _ => "this code of the extension was stopped (disabled, reloaded or updated)".into(),
+    }
+}
+
+/// How a call answers that ran on a runtime thread Pane gave up on.
+fn given_up() -> CallError {
+    CallError::RuntimeUnavailable("it stopped responding and was replaced".into())
 }
 
 pub(crate) struct GuestState {
@@ -1337,8 +1412,9 @@ pub(crate) struct GuestState {
     helpers: Helpers,
     /// Identifies this instance as the owner of the helpers it starts.
     owner: u64,
-    /// The runtime thread running the instance: once Pane gave up on it
-    /// (it stopped responding), the instance starts no host work.
+    /// The runtime thread running the instance: its host calls are marked
+    /// there, and once Pane gave up on it (a runtime hang), its fence is
+    /// closed and the instance is stopped ([`GuestState::stopped`]).
     watch: Arc<Watch>,
 }
 
@@ -1359,32 +1435,45 @@ impl GuestState {
         name: String,
         args: Vec<String>,
         input: String,
-    ) -> Result<Running, HelperError> {
-        // Code whose generation ended starts no more work.
-        if let Some(end) = self.stopped() {
-            return Err(runner::stopped_code(end));
+    ) -> impl Future<Output = Result<Running, HelperError>> + Send + 'static + use<> {
+        let checked = (|| {
+            // Stopped code starts no more work.
+            if let Some(end) = self.stopped() {
+                return Err(runner::stopped_code(end));
+            }
+            if self.data.is_none() {
+                return Err(HelperError::new(
+                    HelperErrorKind::Refused,
+                    "only installed packages ship helpers; this command is built into Pane",
+                ));
+            }
+            runner::check_limits(&args, &input)?;
+            Ok(lock(&self.directory).clone())
+        })();
+        let (component, helpers) = (self.component.clone(), self.helpers.clone());
+        let (generation, owner) = (self.generation().cloned(), self.owner);
+        let fence = self.watch.fence().clone();
+        async move {
+            let directory = checked?;
+            // Finding and checking its file and starting its process may
+            // block, so they run off the runtime thread, which only awaits.
+            helpers
+                .start_off_thread(move || {
+                    let installed = directory.map(|directory| directory()).unwrap_or_default();
+                    let program = helpers::find(&installed, &component, &name)?;
+                    Ok(Spec {
+                        name,
+                        program,
+                        args,
+                        input,
+                        generation,
+                        fence: Some(fence),
+                        owner,
+                        limit: runner::HELPER_TIME_LIMIT,
+                    })
+                })
+                .await
         }
-        self.check_runtime()
-            .map_err(|problem| HelperError::new(HelperErrorKind::Refused, problem))?;
-        if self.data.is_none() {
-            return Err(HelperError::new(
-                HelperErrorKind::Refused,
-                "only installed packages ship helpers; this command is built into Pane",
-            ));
-        }
-        runner::check_limits(&args, &input)?;
-        let directory = lock(&self.directory).clone();
-        let installed = directory.map(|directory| directory()).unwrap_or_default();
-        let program = helpers::find(&installed, &self.component, &name)?;
-        self.helpers.start(Spec {
-            name,
-            program,
-            args,
-            input,
-            generation: self.generation().cloned(),
-            owner: self.owner,
-            limit: runner::HELPER_TIME_LIMIT,
-        })
     }
 
     /// The generation the instance belongs to; `None` for a command built
@@ -1393,44 +1482,59 @@ impl GuestState {
         self.data.as_ref().map(PackageData::generation)
     }
 
-    /// Why the instance's generation ended, if it has: its code may no
-    /// longer run, save data or call operations.
+    /// Why the instance's code is stopped, if it is: its generation ended,
+    /// or Pane gave up on the runtime thread running it
+    /// ([`End::Abandoned`]). Stopped code may no longer run, save data,
+    /// call operations or start any other host work: every host interface
+    /// checks this one fence.
     pub(crate) fn stopped(&self) -> Option<End> {
-        self.data.as_ref().and_then(PackageData::stopped)
-    }
-
-    /// Refuses host work for code of a runtime thread Pane gave up on: it
-    /// stopped responding, a fresh thread replaced it, and whatever it
-    /// still runs must change nothing.
-    pub(crate) fn check_runtime(&self) -> Result<(), String> {
-        match self.watch.given_up() {
-            true => Err(
-                "Pane's extension runtime stopped responding and was replaced while \
-                         this code ran; it no longer changes anything"
-                    .into(),
-            ),
-            false => Ok(()),
+        match &self.data {
+            // Fenced with this thread's fence ([`PackageData::fenced`]).
+            Some(data) => data.stopped(),
+            None => self.watch.fence().closed().then_some(End::Abandoned),
         }
     }
 
+    /// Marks a host call on the runtime thread until the guard is dropped
+    /// (see `deadlines`): its time is not the guest's, and the thread is
+    /// not given up on meanwhile, so what it does must not block for long.
+    pub(crate) fn host(&self) -> HostCall<'_> {
+        self.watch.host()
+    }
+
+    /// The runtime thread running the instance, for marking host work.
+    pub(crate) fn watch(&self) -> Arc<Watch> {
+        self.watch.clone()
+    }
+
+    /// Marks each poll of `future`, a host call's work, as
+    /// [`GuestState::host`] does.
+    pub(crate) fn hosted<F: Future>(&self, future: F) -> Hosted<F> {
+        deadlines::hosted(self.watch.clone(), future)
+    }
+
     fn data(&self) -> Result<&PackageData, String> {
-        self.check_runtime()?;
         self.data.as_ref().ok_or_else(|| {
             "only installed packages keep settings or data; this command is built into Pane".into()
         })
     }
 }
 
-/// Implements one kind of data's interface over the package's extension data.
+/// Implements one kind of data's interface over the package's extension
+/// data. Reading is a short host call; saving waits for the file to be
+/// written, off the runtime thread.
 macro_rules! data_host {
     ($interface:ident, $kind:expr) => {
         impl $interface::Host for GuestState {
             fn get(&mut self, key: String) -> Result<Option<String>, String> {
+                let _host = self.host();
                 self.data()?.get($kind, &key)
             }
 
-            fn set(&mut self, key: String, value: String) -> Result<(), String> {
-                self.data()?.set($kind, &key, &value)
+            async fn set(&mut self, key: String, value: String) -> Result<(), String> {
+                let data = self.data()?.clone();
+                self.hosted(async move { data.set($kind, &key, &value).await })
+                    .await
             }
         }
     };
@@ -1460,13 +1564,11 @@ impl GuestState {
 
 impl applications::Host for GuestState {
     fn installed(&mut self) -> Result<Vec<applications::Application>, String> {
-        // Code whose generation ended starts no more work.
-        if self.stopped().is_some() {
-            return Err(
-                "this code of the extension was stopped (disabled, reloaded or updated)".into(),
-            );
+        // Stopped code starts no more work.
+        if let Some(end) = self.stopped() {
+            return Err(stopped_code(end));
         }
-        self.check_runtime()?;
+        let _host = self.host();
         Ok(self
             .applications()
             .installed()?
@@ -1480,13 +1582,11 @@ impl applications::Host for GuestState {
     }
 
     fn open(&mut self, id: String) -> Result<(), String> {
-        // Code whose generation ended starts no more work.
-        if self.stopped().is_some() {
-            return Err(
-                "this code of the extension was stopped (disabled, reloaded or updated)".into(),
-            );
+        // Stopped code starts no more work.
+        if let Some(end) = self.stopped() {
+            return Err(stopped_code(end));
         }
-        self.check_runtime()?;
+        let _host = self.host();
         self.applications().open(&id)
     }
 }
@@ -1561,6 +1661,8 @@ struct Host {
     faults: Arc<Faults>,
     /// What the watchdog knows of this thread; whether Pane gave up on it.
     watch: Arc<Watch>,
+    /// The limits guest calls run within, shared with the watchdog.
+    limits: Arc<Mutex<Limits>>,
     /// This thread's number among those the runtime started.
     number: u64,
     /// Handed to every guest, for its operation calls.
@@ -1768,6 +1870,7 @@ impl Host {
             health: shared.health.clone(),
             faults,
             watch,
+            limits: shared.limits.clone(),
             number,
             calls,
             calls_sent,
@@ -1894,10 +1997,10 @@ impl Host {
                 }
                 Request::CloseView { view } => self.close_view(view).await,
                 Request::ViewCount { reply } => {
-                    let _ = reply.send(self.views.len());
+                    let _ = reply.send(Ok(self.views.len()));
                 }
                 Request::Running { reply } => {
-                    let _ = reply.send(self.instances.keys().cloned().collect());
+                    let _ = reply.send(Ok(self.instances.keys().cloned().collect()));
                 }
             }
         }
@@ -2047,8 +2150,12 @@ impl Host {
             return;
         };
         let data = instance.store.data().data.clone();
-        let dropped =
-            deadlines::metered(open.resource.resource_drop_async(&mut instance.store)).await;
+        let dropped = deadlines::metered(
+            self.watch.clone(),
+            self.limits.clone(),
+            open.resource.resource_drop_async(&mut instance.store),
+        )
+        .await;
         let health = match dropped {
             Ok(Ok(())) => return,
             // The destructor trapped: the instance cannot be re-entered. It
@@ -2325,8 +2432,8 @@ impl Host {
             Stopped(End),
             Cancelled,
             Called(OperationCall),
-            /// It computed for too long.
-            Unresponsive,
+            /// It computed for too long, as this says.
+            Unresponsive(String),
             /// Pane gave up on this thread while it was stuck.
             GivenUp,
         }
@@ -2335,7 +2442,7 @@ impl Host {
         enum Halt {
             Stopped(End),
             Cancelled,
-            Unresponsive,
+            Unresponsive(String),
             GivenUp,
         }
 
@@ -2355,9 +2462,14 @@ impl Host {
         let faults = self.faults.clone();
         let watch = self.watch.clone();
         let _running = watch.doing(Doing::Running);
-        let mut meter = Meter::default();
+        let limits = self.limits.clone();
         let result = {
-            let mut running = std::pin::pin!(call(&mut instance));
+            // Only the guest's own computing counts (see `deadlines`).
+            let mut running = std::pin::pin!(deadlines::metered(
+                watch.clone(),
+                limits,
+                call(&mut instance)
+            ));
             let mut waiting = std::pin::pin!(faults.waiting());
             loop {
                 let next = std::future::poll_fn(|cx| {
@@ -2374,11 +2486,10 @@ impl Host {
                     if cancelled.as_mut().poll(cx).is_ready() {
                         return Poll::Ready(Next::Cancelled);
                     }
-                    if let Poll::Ready(result) = meter.measure(|| running.as_mut().poll(cx)) {
-                        return Poll::Ready(Next::Returned(result));
-                    }
-                    if meter.exhausted() {
-                        return Poll::Ready(Next::Unresponsive);
+                    match running.as_mut().poll(cx) {
+                        Poll::Ready(Ok(result)) => return Poll::Ready(Next::Returned(result)),
+                        Poll::Ready(Err(why)) => return Poll::Ready(Next::Unresponsive(why)),
+                        Poll::Pending => {}
                     }
                     while let Poll::Ready(Some(call)) = self.calls_sent.poll_recv(cx) {
                         self.waiting_calls.push_back(call);
@@ -2402,7 +2513,7 @@ impl Host {
                     },
                     Next::Stopped(end) => break Err(Halt::Stopped(end)),
                     Next::Cancelled => break Err(Halt::Cancelled),
-                    Next::Unresponsive => break Err(Halt::Unresponsive),
+                    Next::Unresponsive(why) => break Err(Halt::Unresponsive(why)),
                     Next::GivenUp => break Err(Halt::GivenUp),
                     Next::Called(operation_call) => {
                         Box::pin(self.serve_operation(operation_call)).await;
@@ -2443,15 +2554,13 @@ impl Host {
                 match halt {
                     Halt::Stopped(end) => Err(ended(end)),
                     Halt::Cancelled => Err(CallError::Cancelled),
-                    Halt::Unresponsive => {
-                        let error = CallError::Unresponsive(deadlines::computed_too_long());
+                    Halt::Unresponsive(why) => {
+                        let error = CallError::Unresponsive(why);
                         eprintln!("pane: {} stopped responding: {error}", path.display());
                         self.report(path, data.as_ref(), Health::Unresponsive(error.clone()));
                         Err(error)
                     }
-                    Halt::GivenUp => Err(CallError::RuntimeUnavailable(
-                        "it stopped responding and was replaced".into(),
-                    )),
+                    Halt::GivenUp => Err(given_up()),
                 }
             }
         }
@@ -2585,6 +2694,11 @@ impl Host {
     /// package whose extension data is `data`, failed; nothing for a command
     /// built into Pane.
     fn report(&self, path: &Path, data: Option<&PackageData>, health: Health) {
+        // Code of a thread Pane gave up on is stopped where it runs (a
+        // guest traps at its next tick): no failure of its package.
+        if self.watch.given_up() {
+            return;
+        }
         let report = lock(&self.health).clone();
         if let (Some(report), Some(data)) = (report, data) {
             report(path, data, health);
@@ -2614,7 +2728,12 @@ impl Host {
         }
         if !self.instances.contains_key(path) {
             let started = self.start_instance(path, data.clone()).await;
-            if let Err(error) = &started {
+            // One stopped while it started (disabled, say) did not fail.
+            let stopped = data.as_ref().and_then(PackageData::stopped).is_some();
+            if let Err(error) = &started
+                && !stopped
+                && !self.watch.given_up()
+            {
                 self.report(path, data.as_ref(), Health::FailedToStart(error.clone()));
             }
             started?;
@@ -2631,13 +2750,19 @@ impl Host {
         let component = self.component(path)?.clone();
         let watch = self.watch.clone();
         let _starting = watch.doing(Doing::Starting);
+        // Its code is stopped once Pane gives up on this thread.
+        let data = data.map(|data| data.fenced(watch.fence().clone()));
+        let end: std::pin::Pin<Box<dyn Future<Output = End>>> = match &data {
+            Some(data) => Box::pin(data.generation().wait_end()),
+            None => Box::pin(std::future::pending()),
+        };
         let mut store = Store::new(
             &self.code.engine,
             GuestState {
                 wasi: WasiCtx::builder().build(),
                 table: ResourceTable::new(),
                 http: WasiHttpCtx::new(),
-                sender: http::Sender::new(data.clone(), self.network.clone()),
+                sender: http::Sender::new(data.clone(), self.network.clone(), watch.clone()),
                 limits: StoreLimitsBuilder::new().memory_size(GUEST_MEMORY).build(),
                 data,
                 component: path.to_path_buf(),
@@ -2653,17 +2778,39 @@ impl Host {
         );
         store.limiter(|state| &mut state.limits);
         // The guest yields to this thread at every epoch tick, however long
-        // it computes (see `deadlines`). Starting is not metered: a slow
-        // start is not a failure of the package.
+        // it computes, which is progress for the watchdog (see `deadlines`);
+        // once Pane gave up on this thread, it traps there instead.
         store.set_epoch_deadline(1);
-        store.epoch_deadline_async_yield_and_update(1);
+        store.epoch_deadline_callback(|store| {
+            let watch = &store.data().watch;
+            if watch.given_up() {
+                return Ok(wasmtime::UpdateDeadline::Interrupt);
+            }
+            watch.beat();
+            Ok(wasmtime::UpdateDeadline::Yield(1))
+        });
         let load = |error: wasmtime::Error| CallError::Load(format!("{error:#}"));
-        let instance = self
-            .code
-            .linker
-            .instantiate_async(&mut store, &component)
-            .await
-            .map_err(load)?;
+        // Starting is not metered: a slow start is not a failure of the
+        // package. It stops once its generation ends (it was disabled, say):
+        // one that never finishes holds the runtime thread until then.
+        let instance = {
+            let mut end = end;
+            let mut instantiating =
+                std::pin::pin!(self.code.linker.instantiate_async(&mut store, &component));
+            std::future::poll_fn(|cx| {
+                if watch.given_up() {
+                    return std::task::Poll::Ready(Err(given_up()));
+                }
+                if let std::task::Poll::Ready(end) = end.as_mut().poll(cx) {
+                    return std::task::Poll::Ready(Err(ended(end)));
+                }
+                instantiating
+                    .as_mut()
+                    .poll(cx)
+                    .map(|started| started.map_err(load))
+            })
+            .await?
+        };
         let bindings = bindings::ExtensionWithFiles::new(&mut store, &instance).map_err(load)?;
         // Only a command that computes root results exports them.
         let root_results = root_bindings::RootResultsProvider::new(&mut store, &instance).ok();
@@ -2823,6 +2970,7 @@ mod tests {
     use crate::extension_data::ExtensionData;
     use crate::packages::PackageIdentity;
     use futures::executor::block_on;
+    use std::time::Duration;
 
     fn settings_sample() -> PathBuf {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -2853,6 +3001,7 @@ mod tests {
         let helpers = runtime.shared.helpers.clone();
         let running = helpers
             .start(runner::Spec {
+                fence: None,
                 name: "echo".into(),
                 program,
                 args: vec!["--wait".into(), "5".into()],
@@ -2877,6 +3026,7 @@ mod tests {
         assert!(
             helpers
                 .start(runner::Spec {
+                    fence: None,
                     name: "echo".into(),
                     program: PathBuf::from("unused"),
                     args: vec![],
@@ -3014,6 +3164,46 @@ mod tests {
         }
     }
 
+    /// Short limits, so tests reach them quickly (see [`Limits`]).
+    fn short_limits() -> Limits {
+        Limits {
+            compute: Duration::from_secs(1),
+            warn: Duration::from_millis(500),
+            unresponsive: Duration::from_secs(2),
+        }
+    }
+
+    /// A runtime with [`short_limits`], and every failure it reports.
+    fn watched_runtime() -> (Runtime, Arc<Mutex<Vec<Health>>>) {
+        let runtime = Runtime::start().unwrap();
+        runtime.set_limits(short_limits());
+        let reported = Arc::new(Mutex::new(Vec::new()));
+        {
+            let reported = reported.clone();
+            runtime.set_health(Arc::new(move |_, _, health| {
+                lock(&reported).push(health);
+            }));
+        }
+        (runtime, reported)
+    }
+
+    /// Runs `item` of the settings sample on another thread.
+    fn run_in_background(
+        runtime: &Runtime,
+        packages: &ExtensionData,
+        identity: &PackageIdentity,
+        item: &str,
+    ) -> std::thread::JoinHandle<Result<String, CallError>> {
+        let (runtime, owned, item) = (
+            runtime.clone(),
+            packages.owned_by(identity),
+            item.to_owned(),
+        );
+        std::thread::spawn(move || {
+            block_on(runtime.run_action_with(&settings_sample(), &item, Some(owned)))
+        })
+    }
+
     /// A guest computing without waiting yields at every tick: after the
     /// compute limit its call is stopped as unresponsive, reported as its
     /// package's failure, and its instance is gone, while the runtime
@@ -3023,32 +3213,21 @@ mod tests {
         let data = tempfile::tempdir().unwrap();
         let (packages, identity) = settings_package(&data);
         let component = settings_sample();
-        let runtime = Runtime::start().unwrap();
-        let reported = Arc::new(Mutex::new(Vec::new()));
-        {
-            let reported = reported.clone();
-            runtime.set_health(Arc::new(move |_, _, health| {
-                lock(&reported).push(health);
-            }));
-        }
+        let (runtime, reported) = watched_runtime();
         // Another command is active meanwhile, and stays so.
         let other = guest("sample_rust.wasm");
         let (view, _) = block_on(runtime.open_view(&other, "color")).unwrap();
 
-        let started = std::time::Instant::now();
         let busy = block_on(runtime.run_action_with(
             &component,
             "busy",
             Some(packages.owned_by(&identity)),
         ));
 
-        let took = started.elapsed();
         let Err(CallError::Unresponsive(reason)) = &busy else {
             panic!("expected it stopped as unresponsive, got {busy:?}");
         };
-        assert!(reason.contains("computed for 5 seconds"), "{reason}");
-        assert!(took >= COMPUTE_LIMIT, "{took:?}");
-        assert!(took < COMPUTE_LIMIT * 3, "{took:?}");
+        assert!(reason.contains("computed for 1 seconds"), "{reason}");
         assert_eq!(
             saved(&packages, &identity, "busy").as_deref(),
             Some("started")
@@ -3064,31 +3243,30 @@ mod tests {
         assert!(
             block_on(runtime.get_view_with(&component, Some(packages.owned_by(&identity)))).is_ok()
         );
+        assert_eq!(runtime.status(), RuntimeStatus::Running);
     }
 
     /// Ending a generation stops a guest that computes without waiting at
-    /// its next tick, rather than when it yields by itself.
+    /// its next tick, rather than when it yields by itself or reaches the
+    /// compute limit (which it would report as its failure).
     #[test]
     fn disabling_a_package_stops_its_computing_guest_at_once() {
         let data = tempfile::tempdir().unwrap();
         let (packages, identity) = settings_package(&data);
-        let component = settings_sample();
-        let runtime = Runtime::start().unwrap();
-        let busy = {
-            let (runtime, owned) = (runtime.clone(), packages.owned_by(&identity));
-            std::thread::spawn(move || {
-                block_on(runtime.run_action_with(&component, "busy", Some(owned)))
-            })
-        };
+        let (runtime, reported) = watched_runtime();
+        runtime.set_limits(Limits {
+            compute: Duration::from_secs(600),
+            ..Limits::default()
+        });
+        let busy = run_in_background(&runtime, &packages, &identity, "busy");
         until("it started computing", || {
             saved(&packages, &identity, "busy").as_deref() == Some("started")
         });
 
-        let disabled = std::time::Instant::now();
         packages.set_enabled(&identity, false);
 
         assert_eq!(busy.join().unwrap(), Err(CallError::Disabled));
-        assert!(disabled.elapsed() < std::time::Duration::from_secs(2));
+        assert!(lock(&reported).is_empty());
         packages.set_enabled(&identity, true);
         assert_eq!(
             saved(&packages, &identity, "busy").as_deref(),
@@ -3096,38 +3274,55 @@ mod tests {
         );
     }
 
+    /// A guest whose host calls are slow (Pane's own work, here computing
+    /// for three times the compute limit and past the time the watchdog
+    /// gives up after) is never stopped nor blamed, and the runtime thread
+    /// inside the host call is never given up on.
+    #[test]
+    fn a_guest_whose_host_calls_are_slow_is_never_stopped_or_blamed() {
+        let data = tempfile::tempdir().unwrap();
+        let (packages, identity) = settings_package(&data);
+        let component = settings_sample();
+        let (runtime, reported) = watched_runtime();
+        let slow = short_limits().compute * 3;
+        assert!(slow > short_limits().unresponsive);
+
+        runtime.inject(Fault::SlowHostCall(slow));
+        let saved_note = block_on(runtime.run_action_with(
+            &component,
+            "note",
+            Some(packages.owned_by(&identity)),
+        ));
+
+        assert_eq!(saved_note, Ok("Saved a note".into()));
+        assert!(lock(&reported).is_empty(), "{:?}", lock(&reported));
+        assert_eq!(runtime.status(), RuntimeStatus::Running);
+        assert_eq!(runtime.abandoned_threads(), 0);
+        assert_eq!(block_on(runtime.running()), vec![component]);
+    }
+
+    /// Waits until Pane gave up on the runtime thread, as it does once the
+    /// thread made no progress for its limit.
+    fn until_given_up(runtime: &Runtime) {
+        until("Pane gave up on the thread", || {
+            runtime.status() != RuntimeStatus::Running
+        });
+    }
+
     /// A runtime thread stuck outside any guest (made to hang) is given up
     /// on: the call it held answers that the runtime stopped responding, a
     /// fresh thread serves, no package is reported, and once the stuck
-    /// thread returns it runs nothing more: the guest waiting in it never
-    /// saves "finished", though its wait has passed.
+    /// thread returns it runs nothing more.
     #[test]
     fn a_runtime_thread_that_stops_responding_is_replaced_and_runs_nothing_more() {
         let data = tempfile::tempdir().unwrap();
         let (packages, identity) = settings_package(&data);
         let component = settings_sample();
-        let runtime = Runtime::start().unwrap();
-        let reported = Arc::new(Mutex::new(Vec::new()));
-        {
-            let reported = reported.clone();
-            runtime.set_health(Arc::new(move |_, _, health| {
-                lock(&reported).push(health);
-            }));
-        }
-        let slow = {
-            let (runtime, owned, component) = (
-                runtime.clone(),
-                packages.owned_by(&identity),
-                component.clone(),
-            );
-            std::thread::spawn(move || {
-                block_on(runtime.run_action_with(&component, "slow", Some(owned)))
-            })
-        };
+        let (runtime, reported) = watched_runtime();
+        let slow = run_in_background(&runtime, &packages, &identity, "slow");
         until("it started waiting", || {
             saved(&packages, &identity, "slow-save").as_deref() == Some("started")
         });
-        let waiting = std::time::Instant::now();
 
         runtime.inject(Fault::Hang);
 
@@ -3138,12 +3333,12 @@ mod tests {
             reason.contains("stopped responding before answering and was started again"),
             "{reason}"
         );
-        assert!(waiting.elapsed() >= UNRESPONSIVE_LIMIT);
         let RuntimeStatus::Restarted { failure, why } = runtime.status() else {
             panic!("expected a restart, got {:?}", runtime.status());
         };
         assert_eq!(failure, RuntimeFailure::Unresponsive);
-        assert!(why.contains("did not respond for 10 seconds"), "{why}");
+        assert!(why.contains("made no progress for 2 seconds"), "{why}");
+        assert!(why.contains("which code held it is not known"), "{why}");
         assert_eq!(runtime.abandoned_threads(), 1);
         assert!(lock(&reported).is_empty(), "no package is named");
         // A fresh thread serves.
@@ -3151,15 +3346,93 @@ mod tests {
             block_on(runtime.get_view_with(&component, Some(packages.owned_by(&identity)))).is_ok()
         );
 
-        // The guest's wait has passed by now; the stuck thread returns.
-        until("the guest's wait passed", || {
-            waiting.elapsed() > std::time::Duration::from_secs(11)
-        });
         runtime.inject(Fault::Release);
         until("the stuck thread ended", || {
             runtime.abandoned_threads() == 0
         });
 
+        // It ran nothing more: its instance, and the guest's wait, went
+        // with it.
+        assert_eq!(
+            saved(&packages, &identity, "slow-save").as_deref(),
+            Some("started")
+        );
+        assert_eq!(block_on(runtime.running()), vec![component]);
+        assert!(lock(&reported).is_empty());
+    }
+
+    /// Asking which instances run, or how many views are open, answers
+    /// once Pane gave up on a thread that held the request, rather than
+    /// waiting for it for ever.
+    #[test]
+    fn running_and_view_count_answer_when_the_thread_is_given_up_on() {
+        let (runtime, _) = watched_runtime();
+        let other = guest("sample_rust.wasm");
+        block_on(runtime.open_view(&other, "color")).unwrap();
+
+        runtime.inject(Fault::Hang);
+        let (running, views) = {
+            let (a, b) = (runtime.clone(), runtime.clone());
+            (
+                std::thread::spawn(move || block_on(a.try_running())),
+                std::thread::spawn(move || block_on(b.view_count())),
+            )
+        };
+
+        assert!(matches!(
+            running.join().unwrap(),
+            Err(CallError::RuntimeUnavailable(_))
+        ));
+        assert_eq!(views.join().unwrap(), 0);
+        until_given_up(&runtime);
+        assert_eq!(block_on(runtime.try_running()), Ok(Vec::new()));
+        runtime.inject(Fault::Release);
+        until("the stuck thread ended", || {
+            runtime.abandoned_threads() == 0
+        });
+    }
+
+    /// A package reloaded while the runtime thread is stuck runs its new
+    /// code on the fresh thread; the obsolete generation's instance, held by
+    /// the stuck thread, is never restored, even once that thread returns.
+    #[test]
+    fn a_reload_during_a_hang_never_restores_the_obsolete_generation() {
+        let data = tempfile::tempdir().unwrap();
+        let (packages, identity) = settings_package(&data);
+        let component = settings_sample();
+        let (runtime, reported) = watched_runtime();
+        let obsolete = packages.owned_by(&identity);
+        let slow = run_in_background(&runtime, &packages, &identity, "slow");
+        until("it started waiting", || {
+            saved(&packages, &identity, "slow-save").as_deref() == Some("started")
+        });
+
+        runtime.inject(Fault::Hang);
+        packages.replace_code(&identity);
+        runtime.forget([component.clone()]);
+
+        assert!(matches!(
+            slow.join().unwrap(),
+            Err(CallError::RuntimeUnavailable(_))
+        ));
+        until_given_up(&runtime);
+        let current = packages.owned_by(&identity);
+        assert!(block_on(runtime.get_view_with(&component, Some(current.clone()))).is_ok());
+        runtime.inject(Fault::Release);
+        until("the stuck thread ended", || {
+            runtime.abandoned_threads() == 0
+        });
+
+        // A call of the obsolete generation starts nothing.
+        assert_eq!(
+            block_on(runtime.run_action_with(&component, "slow", Some(obsolete))),
+            Err(CallError::Replaced)
+        );
+        assert_eq!(block_on(runtime.running()), vec![component.clone()]);
+        assert_eq!(
+            block_on(runtime.run_action_with(&component, "note", Some(current))),
+            Ok("Saved a note".into())
+        );
         assert_eq!(
             saved(&packages, &identity, "slow-save").as_deref(),
             Some("started")

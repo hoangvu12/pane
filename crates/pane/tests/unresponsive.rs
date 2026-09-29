@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use gpui::{Entity, TestAppContext, VisualTestContext, prelude::*};
 use pane::LauncherWindow;
-use pane_core::{COMPUTE_LIMIT, Launcher, LauncherView, PackageIdentity, Runtime, Screen, Status};
+use pane_core::{Launcher, LauncherView, Limits, PackageIdentity, Runtime, Screen, Status};
 use tempfile::TempDir;
 
 const MANAGE_ROW: &str = "Manage extensions…";
@@ -31,17 +31,29 @@ fn package(folder: &Path) -> PathBuf {
     folder.to_path_buf()
 }
 
+/// The limits the test runs with: a guest call may compute for two
+/// seconds.
+fn limits() -> Limits {
+    Limits {
+        compute: Duration::from_secs(2),
+        ..Limits::default()
+    }
+}
+
 fn open<'a>(
     cx: &'a mut TestAppContext,
     data: &TempDir,
     folder: &Path,
-) -> (Entity<LauncherWindow>, &'a mut VisualTestContext) {
+) -> (Runtime, Entity<LauncherWindow>, &'a mut VisualTestContext) {
     cx.executor().allow_parking();
     cx.update(pane::bind_keys);
     let runtime = Runtime::start().unwrap();
-    let launcher = Launcher::with_packages(Ok(runtime), vec![], data.path().join("extensions"));
+    runtime.set_limits(limits());
+    let launcher =
+        Launcher::with_packages(Ok(runtime.clone()), vec![], data.path().join("extensions"));
     futures::executor::block_on(launcher.install_package(folder));
-    cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx))
+    let (window, cx) = cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
+    (runtime, window, cx)
 }
 
 fn view(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) -> LauncherView {
@@ -95,10 +107,15 @@ fn a_command_that_stops_responding_leaves_the_window_usable_and_pauses_the_third
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let folder = package(&sources.path().join("settings"));
     let identity = PackageIdentity::local(&folder).unwrap();
-    let (window, cx) = open(cx, &data, &folder);
+    let (runtime, window, cx) = open(cx, &data, &folder);
     settle(&window, cx);
 
-    // The command starts computing without waiting.
+    // The command starts computing without waiting; with no compute limit
+    // to speak of, its call ends only once Pane lowers it.
+    runtime.set_limits(Limits {
+        compute: Duration::from_secs(3600),
+        ..limits()
+    });
     press_enter_on(&window, cx, "Greeting");
     let launcher = cx.read_entity(&window, |window, _| window.launcher().clone());
     let busy = launcher
@@ -115,18 +132,20 @@ fn a_command_that_stops_responding_leaves_the_window_usable_and_pauses_the_third
         cx.run_until_parked();
         std::thread::sleep(Duration::from_millis(5));
     }
-    let started = Instant::now();
 
     // Meanwhile the window answers: Escape returns to root search, and
-    // Manage extensions opens, before the guest was stopped.
+    // Manage extensions opens, while the guest still computes.
     cx.simulate_keystrokes("escape");
     assert!(matches!(view(&window, cx).screen, Screen::Root { .. }));
     let manage = press_enter_on(&window, cx, MANAGE_ROW);
     assert!(matches!(manage.screen, Screen::Extensions { .. }));
-    assert!(
-        started.elapsed() < COMPUTE_LIMIT,
-        "the window waited for the guest"
+    assert_eq!(
+        saved(&data, &identity, "busy").as_deref(),
+        Some("started"),
+        "the guest still computes"
     );
+    // The limit applies to the call already running, which is stopped.
+    runtime.set_limits(limits());
     cx.simulate_keystrokes("escape");
 
     // Run again, it is stopped after the limit and says why.
@@ -134,7 +153,7 @@ fn a_command_that_stops_responding_leaves_the_window_usable_and_pauses_the_third
     let stopped = press_enter_on(&window, cx, "Stop responding");
     assert!(
         matches!(&stopped.status, Status::Error(text)
-            if text.starts_with("The extension stopped responding: it computed for 5 seconds")),
+            if text.starts_with("The extension stopped responding: it computed for 2 seconds")),
         "{:?}",
         stopped.status
     );

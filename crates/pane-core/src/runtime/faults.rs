@@ -34,6 +34,10 @@ pub enum Fault {
     Hang,
     /// A thread blocked by [`Fault::Hang`] carries on.
     Release,
+    /// The runtime thread's next host call (a guest reading or saving a
+    /// value, say) computes for this long inside the call, as a slow host
+    /// call would: Pane's time, never the guest's, and no hang.
+    SlowHostCall(std::time::Duration),
 }
 
 /// The faults injected into one runtime thread.
@@ -73,6 +77,8 @@ impl Faults {
                 *super::lock(&self.hang) = false;
                 self.released.notify_all();
             }
+            // Injected where host calls are marked (`deadlines::Watch`).
+            Fault::SlowHostCall(_) => {}
         }
     }
 

@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 use pane_target::{Platform, Target};
 use tokio::sync::oneshot;
 
-use crate::generation::{End, Generation};
+use crate::generation::{End, Fence, Generation};
 use crate::platform;
 
 /// The largest input a helper run takes, in bytes.
@@ -359,11 +359,28 @@ pub(crate) fn stopped_code(end: End) -> HelperError {
         End::Replaced => "this code of the extension was replaced by a reload or an update",
         End::Uninstalled => "the extension was uninstalled",
         End::Paused => "the extension is paused after an error",
+        End::Abandoned => {
+            "Pane's extension runtime stopped responding and was replaced while this code ran"
+        }
     };
     HelperError::new(
         HelperErrorKind::Refused,
         format!("{why}; its helpers do not run"),
     )
+}
+
+/// Why the code running `spec` is stopped, if it is: its generation ended,
+/// or Pane gave up on its runtime thread.
+fn stopped(spec: &Spec) -> Option<End> {
+    spec.generation
+        .as_ref()
+        .and_then(Generation::ended)
+        .or_else(|| {
+            spec.fence
+                .as_ref()
+                .is_some_and(Fence::closed)
+                .then_some(End::Abandoned)
+        })
 }
 
 /// Refuses input or arguments over Pane's limits.
@@ -404,6 +421,9 @@ pub(crate) struct Spec {
     /// The generation of the code running it: when it ends, so does the
     /// process.
     pub generation: Option<Generation>,
+    /// The fence of the runtime thread running that code: once Pane gives
+    /// up on the thread, the process ends too.
+    pub fence: Option<Fence>,
     /// The guest instance that started it (see [`Helpers::stop_owned_by`]).
     pub owner: u64,
     /// How long it may run before Pane ends it ([`HELPER_TIME_LIMIT`]).
@@ -568,8 +588,43 @@ impl Helpers {
         self.state.lock().unwrap_or_else(|p| p.into_inner())
     }
 
+    /// Starts the helper that `spec` finds, on a thread of its own: finding
+    /// its file and starting a process may block, and the runtime thread
+    /// only awaits. A run whose caller is gone by then ends at once.
+    pub fn start_off_thread<S>(
+        &self,
+        spec: S,
+    ) -> impl std::future::Future<Output = Result<Running, HelperError>> + Send + 'static + use<S>
+    where
+        S: FnOnce() -> Result<Spec, HelperError> + Send + 'static,
+    {
+        let helpers = self.clone();
+        let (reply, started) = oneshot::channel();
+        let spawned = thread::Builder::new()
+            .name("pane-helper-start".into())
+            .spawn(move || {
+                // Dropped with the run, ending it, if nobody waits for it.
+                let _ = reply.send(spec().and_then(|spec| helpers.start(spec)));
+            });
+        async move {
+            spawned.map_err(|error| {
+                HelperError::new(
+                    HelperErrorKind::Unavailable,
+                    format!("Pane could not start a helper: {error}"),
+                )
+            })?;
+            started.await.unwrap_or_else(|_| {
+                Err(HelperError::new(
+                    HelperErrorKind::Unavailable,
+                    "Pane's thread starting the helper stopped",
+                ))
+            })
+        }
+    }
+
     /// Starts the helper of `spec`. The returned run ends the process when
-    /// it is dropped before it finishes.
+    /// it is dropped before it finishes. It may block (the system starts a
+    /// process); the helpers' lock is not held meanwhile.
     pub fn start(&self, spec: Spec) -> Result<Running, HelperError> {
         let name = spec.name.clone();
         let unavailable = |what: &str, error: io::Error| {
@@ -604,19 +659,31 @@ impl Helpers {
             use windows::Win32::System::Threading::CREATE_NO_WINDOW;
             command.creation_flags(CREATE_NO_WINDOW.0);
         }
-        // Registered under the lock, so that quitting either sees this run
-        // or keeps it from starting.
-        let mut state = self.lock();
-        if state.quitting {
-            return Err(HelperError::new(
+        let quitting = || {
+            HelperError::new(
                 HelperErrorKind::Refused,
                 format!("Pane is quitting; helper `{name}` does not start"),
-            ));
+            )
+        };
+        if self.quitting() {
+            return Err(quitting());
         }
+        // Started without the lock held, which stopping helpers takes: a
+        // start the system is slow with (or never finishes) holds up no one.
         let child = Owned(
             spawn_retrying_busy(&mut command)
                 .map_err(|error| unavailable("the system did not start", error))?,
         );
+        // Registered under the lock, so that quitting, or ending the helpers
+        // of a runtime thread Pane gave up on, either sees this run or keeps
+        // it from running on: the process is ended (by `Owned`) here then.
+        let mut state = self.lock();
+        if state.quitting {
+            return Err(quitting());
+        }
+        if let Some(end) = stopped(&spec) {
+            return Err(stopped_code(end));
+        }
         let run = Arc::new(Run {
             owner: spec.owner,
             pid: child.0.id(),
@@ -802,7 +869,7 @@ fn supervise(
     let status: Result<ExitStatus, Ended> = loop {
         let ended = if run.stop.load(Ordering::SeqCst) {
             Some(Ended::Stopped)
-        } else if let Some(end) = spec.generation.as_ref().and_then(Generation::ended) {
+        } else if let Some(end) = stopped(spec) {
             Some(Ended::Generation(end))
         } else if written(&output) > MAX_HELPER_OUTPUT as u64 {
             Some(Ended::TooMuchOutput)
@@ -1214,6 +1281,7 @@ mod tests {
 
     fn spec(args: &[&str], generation: Option<Generation>, owner: u64) -> Spec {
         Spec {
+            fence: None,
             name: "echo".into(),
             program: echo(),
             args: args.iter().map(|arg| (*arg).to_owned()).collect(),

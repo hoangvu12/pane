@@ -38,9 +38,11 @@ pub use platform::Platform;
 #[cfg(debug_assertions)]
 #[doc(hidden)]
 pub use runtime::Fault;
+#[doc(hidden)]
+pub use runtime::Limits;
 pub use runtime::{
     COMPUTE_LIMIT, CallError, Choice, CustomViewInfo, CustomViewRole, Field, FieldKind, FieldValue,
     Form, FormError, Frame, Item, Key, MAX_FRAME_SHAPES, MAX_FRAME_SIZE, MAX_TEXT_CHARS, Point,
     Rgb, Runtime, RuntimeFailure, RuntimeStatus, Shape, UNRESPONSIVE_LIMIT, View, ViewEvent,
-    ViewId,
+    ViewId, WARN_AFTER,
 };

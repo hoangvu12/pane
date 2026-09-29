@@ -43,8 +43,8 @@ use crate::hotkeys::{self as system_hotkeys, Hotkeys};
 use crate::links::{self, LinkOpener, NoOpener};
 use crate::operations::{self, Installed};
 use crate::packages::{
-    InstalledPackage, PackageError, PackageIdentity, PauseCause, RetainedData, SavedData,
-    SourcePackage, Store, folder_name, paused_reason,
+    InstalledPackage, PackageError, PackageIdentity, RetainedData, SavedData, SourcePackage, Store,
+    folder_name, paused_reason,
 };
 use crate::platform::{self, Platform};
 use crate::runtime::{
@@ -532,6 +532,9 @@ struct State {
     /// The newest status of a developed package's builds, kept while
     /// another screen is shown (see `developing`).
     development_status: Option<(PackageIdentity, Status)>,
+    /// While the runtime thread is not responding yet, the status line it
+    /// replaced, put back if the thread carries on (see `recovery`).
+    runtime_slow: Option<Status>,
 }
 
 /// What is happening to a package, which stops another change to it
@@ -956,6 +959,7 @@ impl Launcher {
             bindings,
             aliases,
             sent_from: None,
+            runtime_slow: None,
         };
         if let (Some(installation), Some(files)) = (&installation, &state.files) {
             files.open_record(&installation.dir);
@@ -2559,7 +2563,7 @@ impl Launcher {
         };
         let title = package.title();
         let mut details = vec![
-            format!("{}.", pausing::failure(&title, pause.after)),
+            format!("{}.", pause.after.failure(&title)),
             format!("From {identity}"),
         ];
         if let Some(version) = &pause.version {
@@ -2580,7 +2584,7 @@ impl Launcher {
         );
         let retry = Row {
             id: format!("retry:{}", identity.key()),
-            title: pausing::retry_title(&title, pause.after),
+            title: pause.after.retry_title(&title),
             subtitle: Some("Start it again".into()),
             unavailable: None,
         };
@@ -2647,11 +2651,13 @@ impl Launcher {
                     .collect()
             })
         };
-        let running = match self.runtime() {
-            Ok(runtime) => runtime.running().await,
-            Err(_) => Vec::new(),
+        // Unknown (the runtime did not answer in time) counts as running.
+        let still_running = match self.runtime() {
+            Ok(runtime) => runtime_barrier(runtime)
+                .await
+                .is_none_or(|running| running.iter().any(|path| components.contains(path))),
+            Err(_) => false,
         };
-        let still_running = running.iter().any(|path| components.contains(path));
         let Some(mut state) = self.lock_if_current(epoch) else {
             return;
         };
@@ -3173,6 +3179,8 @@ fn stopped(state: &State, component: &Path, data: &Option<PackageData>) -> Optio
         End::Replaced => Some(CallError::Replaced.to_string()),
         End::Uninstalled => Some(CallError::Uninstalled.to_string()),
         End::Paused => Some(paused(state, component)),
+        // The launcher's data is never fenced: only the runtime's copy is.
+        End::Abandoned => None,
     }
 }
 
@@ -3209,12 +3217,7 @@ fn extension_rows(
         let state = match (package.enabled, failure(package).map(|pause| pause.after)) {
             (false, _) => "Disabled",
             (true, None) => "Enabled",
-            (true, Some(PauseCause::FailedToStart)) => "Enabled · Failed to start",
-            (true, Some(PauseCause::Crashes)) => "Enabled · Paused after crashing",
-            (true, Some(PauseCause::Unresponsive)) => "Enabled · Paused after not responding",
-            (true, Some(PauseCause::CrashesAndHangs)) => {
-                "Enabled · Paused after crashing or not responding"
-            }
+            (true, Some(cause)) => cause.state(),
         };
         let developing = if developed(&package.identity) {
             " · Developing"
@@ -3257,10 +3260,10 @@ fn extension_rows(
             let paused = failure(package).into_iter().flat_map(move |pause| {
                 let retry = Row {
                     id: format!("retry:{}", package.identity.key()),
-                    title: pausing::retry_title(&title, pause.after),
+                    title: pause.after.retry_title(&title),
                     subtitle: Some(format!(
                         "Paused: {}; start it again",
-                        pausing::failure("it", pause.after)
+                        pause.after.failure("it")
                     )),
                     unavailable: None,
                 };
@@ -3618,6 +3621,24 @@ async fn until_cancelled<T>(
             return std::task::Poll::Ready(None);
         }
         call.as_mut().poll(cx).map(Some)
+    })
+    .await
+}
+
+/// The components with a live instance, once the runtime handled every
+/// request sent before this; `None` when it cannot say (it stopped, or its
+/// thread failed) or does not within [`crate::runtime::UNRESPONSIVE_LIMIT`]
+/// (a guest call ahead of it waits for long), so that a management action
+/// waiting on it never waits forever.
+async fn runtime_barrier(runtime: &Runtime) -> Option<Vec<PathBuf>> {
+    let running = runtime.try_running();
+    let timer = off_thread(|| std::thread::sleep(crate::runtime::UNRESPONSIVE_LIMIT));
+    let (mut running, mut timer) = (std::pin::pin!(running), std::pin::pin!(timer));
+    std::future::poll_fn(|cx| {
+        if let std::task::Poll::Ready(running) = running.as_mut().poll(cx) {
+            return std::task::Poll::Ready(running.ok());
+        }
+        timer.as_mut().poll(cx).map(|()| None)
     })
     .await
 }

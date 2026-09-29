@@ -810,12 +810,12 @@ fn parse_token(id: &str, visit: u64, version: u64) -> Option<usize> {
 /// granted folder's listing, never waiting for one.
 impl wit::Host for GuestState {
     fn list_folder(&mut self) -> Result<wit::FolderState, String> {
-        // Code whose generation ended starts no more work.
-        if self.stopped().is_some() {
-            return Err(
-                "this code of the extension was stopped (disabled, reloaded or updated)".into(),
-            );
+        // Stopped code starts no more work.
+        if let Some(end) = self.stopped() {
+            return Err(crate::runtime::stopped_code(end));
         }
+        // Answers from what the listing worker found; never waits for it.
+        let _host = self.host();
         let Some(owner) = self.owner() else {
             return Ok(wit::FolderState::NotGranted);
         };
