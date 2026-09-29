@@ -693,7 +693,10 @@ be empty. Run locally on 2026-09-29 (same
 Ubuntu 26.04.1 / Xvfb / lavapipe setup): the phase passed on its own first,
 after a first run found the form row one row lower than written (no Manage
 extensions… row in a fresh data folder); then the whole smoke passed and
-frames 300 to 304 were looked at.
+frames 300 to 304 were looked at. After the review, with #36 merged, the
+whole smoke passed again, frames 300 to 304 were looked at, and 300 and 302
+were recorded again: 302 now shows every Git line whole above Install (304
+was unchanged).
 
 | Step | Evidence |
 | --- | --- |
