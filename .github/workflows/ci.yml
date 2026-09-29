@@ -54,6 +54,15 @@ jobs:
           # clipboard, so it runs only where this is set: on CI's runner,
           # never by default on a developer's computer.
           PANE_TEST_REAL_CLIPBOARD: ${{ runner.os == 'Windows' && '1' || '' }}
+      # The Linux (X11) clipboard adapter's test also replaces what is on
+      # the clipboard, and needs a display to watch: the same opt-in, run
+      # under Xvfb (the step above runs without a display, so the test
+      # skips itself there).
+      - name: Run the Linux clipboard adapter test (Xvfb)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a cargo test --locked -p pane-core --test clipboard_adapter_linux
+        env:
+          PANE_TEST_REAL_CLIPBOARD: "1"
       - name: Build the launcher
         run: cargo build --locked -p pane
       - uses: actions/setup-python@v5

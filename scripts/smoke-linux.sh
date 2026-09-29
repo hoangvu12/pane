@@ -1556,68 +1556,196 @@ python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{161-root-typed,
 stop_pane
 stop_service
 
-# Clipboard history (#35): Pane watches the clipboard only on Windows so
-# far, so here the Clipboard History default extension installs and its
-# command is listed with why it does not run (in amber); Enter explains it
-# (the error line) and runs nothing, and no history file appears. A data
-# folder of its own. No clipboard is read: Pane has no clipboard adapter on
-# Linux, and Xvfb is the smoke's own display.
+# Clipboard history (#35): the Clipboard History default extension keeps
+# nothing until it is turned on in its command (its first item); then the
+# text this smoke copies is kept; nothing is kept while it is paused or the
+# extension is disabled, also after a restart, and once enabled again it is
+# kept again, also after a restart. Enter on a kept item, then on its first
+# choice, copies it again, and the copy really is on the clipboard: pasting
+# it into root search shows what was typed. The smoke copies only text of
+# its own ("pane-smoke-..."), by typing it into root search, selecting it
+# with Ctrl+A and copying it with Ctrl+C through the window's X11
+# clipboard, and so replaces what is on the clipboard without reading or
+# putting it back: run it on CI's runner or a desktop given to it, as the
+# rest of the smoke already takes over the keyboard and the display. X11
+# has no marker formats a password manager could set, so no marked copy is
+# checked here (an excluded program is the only way to keep one out; the
+# adapter test checks that). A data folder of its own.
 export PANE_DATA_DIR=$out/clipboard-data
 rm -rf "$PANE_DATA_DIR"
+extensions=$PANE_DATA_DIR/extensions
+history=$extensions/clipboard-history.json
+# The kept texts, newest first, joined by commas.
+kept_texts() { python3 "$(dirname "$0")/clipboard_history.py" texts "$extensions"; }
+# The newest kept text.
+first_kept() { kept_texts | cut -d, -f1; }
+# Whether `text` is among the kept texts.
+kept_one() { case ",$(kept_texts)," in (*",$1,"*) true;; (*) false;; esac; }
+not_kept() { sleep 2; if kept_one "$1"; then echo "$1 was kept"; exit 1; fi; }
+# Copies `text`: from wherever the smoke is, back at root search, types it,
+# selects it and copies it.
+copy() {
+  "$xdotool" key Escape; sleep 1
+  "$xdotool" type --delay 50 "$1"; sleep 0.5
+  "$xdotool" key ctrl+a ctrl+c; sleep 1
+  "$xdotool" key Escape; sleep 1
+}
+# Opens the Clipboard History command from wherever the smoke is.
+open_history() {
+  "$xdotool" key Escape; sleep 1
+  "$xdotool" type --delay 50 clipboard; sleep 1
+  "$xdotool" key Return; sleep 2
+}
 start_pane --install target/guests/packages/clipboard-history
 "$xdotool" windowfocus --sync "$window"
-"$xdotool" key Return   # Install
-wait_for "$PANE_DATA_DIR/extensions/installed.json" clipboard-history present; sleep 1
-"$xdotool" type --delay 50 clipboard; sleep 1
-capture 280-clipboard-unavailable.png
-check 280-clipboard-unavailable.png d6a36a   # "Not available on Linux: this command supports only Windows"
-"$xdotool" key Return; sleep 2
-capture 281-clipboard-explained.png
-check 281-clipboard-explained.png f08c8c   # the reason as the error; the command did not open
-python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{280-clipboard-unavailable,281-clipboard-explained}.png
+"$xdotool" key Return   # Install; Clipboard History is selected
+wait_for "$extensions/installed.json" clipboard-history present; sleep 1
+copy pane-smoke-before   # while history is off
+open_history
+capture 280-clipboard-off.png
+check 280-clipboard-off.png aab4c0   # "Off · Pane keeps nothing you copy until you turn it on ..."
+[ ! -e "$history" ] || { echo "clipboard history was kept before it was turned on"; exit 1; }
+"$xdotool" key Return   # Turn on clipboard history
+wait_for "$history" '"capture": "on"' present; sleep 1
+capture 281-clipboard-on.png
+check 281-clipboard-on.png 9fd8a8   # "Clipboard history is on"
+copy pane-smoke-kept
+copy pane-smoke-second
+wait_for "$history" pane-smoke-second present
+[ "$(kept_texts)" = pane-smoke-second,pane-smoke-kept ] || { echo "kept: $(kept_texts)"; exit 1; }
+open_history
+capture 282-clipboard-kept.png
+check 282-clipboard-kept.png aab4c0   # the two kept items, newest first
+"$xdotool" key Return   # Pause clipboard history
+wait_for "$history" '"capture": "paused"' present
+copy pane-smoke-paused
+not_kept pane-smoke-paused
+open_history
+"$xdotool" key Return   # Resume clipboard history
+wait_for "$history" '"capture": "on"' present
+copy pane-smoke-resumed
+wait_for "$history" pane-smoke-resumed present
+open_history
+"$xdotool" key Down Down Down Down Down Down Down Down Return; sleep 1   # the second kept item, pane-smoke-second, after Pause, Turn off, Keep items for, Exclude, Clear, Turn off and delete, Delete recent and the first
+"$xdotool" key Return; sleep 2   # Copy it again, the first of its choices (#36)
+capture 283-clipboard-copied.png
+check 283-clipboard-copied.png 9fd8a8   # "Copied to the clipboard"
+[ "$(first_kept)" = pane-smoke-second ] || { echo "the copied item did not move to the front: $(kept_texts)"; exit 1; }
+# The clipboard really holds the item again: pasting it over root search
+# shows exactly what typing it shows.
+"$xdotool" key Escape Escape; sleep 1
+"$xdotool" key ctrl+a ctrl+v; sleep 1
+capture 284-clipboard-pasted.png
+"$xdotool" key Escape; sleep 1
+"$xdotool" type --delay 50 pane-smoke-second; sleep 1
+capture 285-clipboard-typed.png
+python3 "$(dirname "$0")/check_screenshot.py" --same "$out"/{284-clipboard-pasted,285-clipboard-typed}.png
+"$xdotool" key Escape; sleep 1
+"$xdotool" type --delay 50 manage; sleep 1
+"$xdotool" key Return; sleep 1
+"$xdotool" key Return; sleep 2   # disable Clipboard History, the first row
+wait_for "$extensions/installed.json" '"disabled": true' present; sleep 1
+capture 286-clipboard-disabled.png
+check 286-clipboard-disabled.png 9fd8a8   # "Disabled Clipboard History"
+copy pane-smoke-disabled
+not_kept pane-smoke-disabled
 stop_pane
-if [ -e "$PANE_DATA_DIR/extensions/clipboard-history.json" ]; then echo "clipboard history was kept on Linux"; exit 1; fi
+start_pane
+"$xdotool" windowfocus --sync "$window"
+copy pane-smoke-restarted-disabled
+not_kept pane-smoke-restarted-disabled
+"$xdotool" type --delay 50 manage; sleep 1
+"$xdotool" key Return; sleep 1
+"$xdotool" key Return; sleep 2   # enable Clipboard History
+wait_for "$extensions/installed.json" '"disabled": true' absent; sleep 1
+copy pane-smoke-enabled
+wait_for "$history" pane-smoke-enabled present
+stop_pane
+start_pane
+"$xdotool" windowfocus --sync "$window"
+copy pane-smoke-after-restart
+wait_for "$history" pane-smoke-after-restart present
+open_history
+capture 287-clipboard-after-restart.png
+check 287-clipboard-after-restart.png aab4c0   # kept again after the restart
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{280-clipboard-off,281-clipboard-on,282-clipboard-kept,283-clipboard-copied,284-clipboard-pasted,286-clipboard-disabled,287-clipboard-after-restart}.png
+stop_pane
+[ "$(kept_texts)" = pane-smoke-after-restart,pane-smoke-enabled,pane-smoke-second,pane-smoke-resumed,pane-smoke-kept ] || { echo "kept: $(kept_texts)"; exit 1; }
+for never in before paused disabled restarted-disabled; do
+  kept_one "pane-smoke-$never" && { echo "pane-smoke-$never was kept"; exit 1; }
+done
 
-# Clipboard history expiry (#36): items expire after their package's
-# retention (7 days unless the user chose otherwise), whether or not the
-# extension runs; here its command never runs at all. With Pane stopped, the
-# smoke writes the history file as Pane would have left it before a
-# downtime, for the package just installed: history on, one item copied 8
-# days ago and one a day ago. Once Pane starts, before anything shows it, the
-# old one is gone from the file, and uninstalling counts only the other
-# ("Saved data: 1 clipboard history item"; its Uninstall row follows its
-# state, Reload and Clear cache rows). Kept as retained data and made 8 days
-# old while Pane is stopped again, it is gone once Pane starts: the retained
-# data keeps only the clipboard history settings (the extension list's last
-# row). No clipboard is read or written.
-extensions=$PANE_DATA_DIR/extensions
-kept_texts() { python3 "$(dirname "$0")/clipboard_history.py" texts "$extensions"; }
-python3 "$(dirname "$0")/clipboard_history.py" seed "$extensions" pane-smoke-expired=8 pane-smoke-kept=1
-[ "$(kept_texts)" = pane-smoke-kept,pane-smoke-expired ] || { echo "seeded: $(kept_texts)"; exit 1; }
+# Clipboard history expiry and deletion (#36), on the history just kept.
+# With Pane stopped, the smoke makes pane-smoke-kept 8 days old (past the
+# default 7-day retention) and pane-smoke-enabled 2 hours old, as a
+# downtime would: once Pane starts again, before the command shows
+# anything, pane-smoke-kept is gone from the file and the list. Then, in
+# the command: Enter on pane-smoke-second and "Delete it" deletes that
+# item alone; Delete recent items (the last hour) deletes the two copied
+# in this smoke's last minutes and keeps pane-smoke-enabled; keeping items
+# for 1 hour deletes pane-smoke-enabled at once; and after one more copy,
+# "Turn off and delete clipboard history" deletes it and turns history
+# off, so a later copy is not kept, while the clipboard still holds what
+# was copied last (pasting it into root search shows it; on Windows the
+# smoke reads the clipboard directly, on Linux pasting is the only way to
+# see it). The rows: Pause, Turn off, Keep items for…, Exclude a program,
+# Clear, Turn off and delete, Delete recent items, then the items, newest
+# first.
+backdate() { python3 "$(dirname "$0")/clipboard_history.py" backdate "$extensions" "$@"; }
+field() { python3 "$(dirname "$0")/clipboard_history.py" field "$extensions" "$1"; }
+backdate 8 pane-smoke-kept || { echo "could not backdate the history"; exit 1; }
+backdate 0.084 pane-smoke-enabled || { echo "could not backdate the history"; exit 1; }
 start_pane
-[ "$(kept_texts)" = pane-smoke-kept ] || { echo "kept after starting: $(kept_texts)"; exit 1; }
 "$xdotool" windowfocus --sync "$window"
-"$xdotool" type --delay 50 manage; sleep 1
-"$xdotool" key Return; sleep 1   # Manage extensions…
-"$xdotool" key Down Down Down Return; sleep 1   # "Uninstall Clipboard History"
-capture 400-clipboard-expired-uninstall.png
-check 400-clipboard-expired-uninstall.png aab4c0   # "Saved data: 1 clipboard history item"
-"$xdotool" key Return   # "Uninstall and keep saved data"
-wait_for "$extensions/installed.json" '"retained"' present; sleep 1
-capture 401-clipboard-uninstalled-kept.png
-check 401-clipboard-uninstalled-kept.png 9fd8a8   # "Uninstalled Clipboard History; its settings and content are kept"
-stop_pane
-python3 "$(dirname "$0")/clipboard_history.py" backdate "$extensions" 8
-start_pane
-[ -z "$(kept_texts)" ] || { echo "retained after starting: $(kept_texts)"; exit 1; }
-[ "$(python3 "$(dirname "$0")/clipboard_history.py" field "$extensions" capture)" = on ] || { echo "the choice was not kept"; exit 1; }
-"$xdotool" windowfocus --sync "$window"
-"$xdotool" type --delay 50 manage; sleep 1
-"$xdotool" key Return; sleep 1   # Manage extensions…
-for ((i = 0; i < 40; i++)); do "$xdotool" key Down; done
 sleep 1
-capture 402-clipboard-retained-expired.png   # "Delete retained data of Clipboard History", "keeps clipboard history settings"
-check 402-clipboard-retained-expired.png 364355 3000   # the selected row
-python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{400-clipboard-expired-uninstall,401-clipboard-uninstalled-kept,402-clipboard-retained-expired}.png
+[ "$(kept_texts)" = pane-smoke-after-restart,pane-smoke-enabled,pane-smoke-second,pane-smoke-resumed ] || { echo "kept after starting: $(kept_texts)"; exit 1; }
+open_history
+capture 400-clipboard-expired.png
+check 400-clipboard-expired.png aab4c0   # pane-smoke-kept is no longer listed
+"$xdotool" key Down Down Down Down Down Down Down Down Down Return; sleep 1   # pane-smoke-second: Copy it again or Delete it
+"$xdotool" key Down Return; sleep 1   # Delete it
+wait_for "$history" pane-smoke-second absent; sleep 1
+capture 401-clipboard-item-deleted.png
+check 401-clipboard-item-deleted.png 9fd8a8   # "Deleted the kept item"
+[ "$(kept_texts)" = pane-smoke-after-restart,pane-smoke-enabled,pane-smoke-resumed ] || { echo "kept: $(kept_texts)"; exit 1; }
+"$xdotool" key Escape; sleep 1   # from the item's form to the command's list
+open_history
+"$xdotool" key Down Down Down Down Down Down Return; sleep 1   # Delete recent items: 15 minutes, hour or day
+"$xdotool" key Down Return; sleep 1   # the last hour
+wait_for "$history" pane-smoke-resumed absent; sleep 1
+capture 402-clipboard-recent-deleted.png
+check 402-clipboard-recent-deleted.png 9fd8a8   # "Deleted 2 kept items"
+[ "$(kept_texts)" = pane-smoke-enabled ] || { echo "kept: $(kept_texts)"; exit 1; }
+"$xdotool" key Escape; sleep 1
+open_history
+"$xdotool" key Down Down Return; sleep 1   # Keep items for 7 days: 7 days (the retention now, chosen), 1 hour, 1 day, 30 or 90 days
+"$xdotool" key Down Return; sleep 1   # 1 hour, the second choice
+wait_for "$history" '"retentionSeconds": 3600' present; sleep 1
+capture 403-clipboard-retention-changed.png
+check 403-clipboard-retention-changed.png 9fd8a8   # "Items are kept for 1 hour; deleted 1 older item"
+[ -z "$(kept_texts)" ] || { echo "kept: $(kept_texts)"; exit 1; }
+copy pane-smoke-final
+wait_for "$history" pane-smoke-final present
+open_history
+"$xdotool" key Down Down Down Down Down Return; sleep 1   # Turn off and delete clipboard history
+wait_for "$history" pane-smoke-final absent; sleep 1
+capture 404-clipboard-turned-off-and-deleted.png
+check 404-clipboard-turned-off-and-deleted.png 9fd8a8   # "Clipboard history is off; deleted 1 kept item"
+[ -z "$(field capture)" ] || { echo "history is still $(field capture)"; exit 1; }
+# Deleting history never changes the system's clipboard: pasting what was
+# copied last into root search still shows pane-smoke-final.
+"$xdotool" key Escape Escape; sleep 1
+"$xdotool" key ctrl+a ctrl+v; sleep 1
+capture 405-clipboard-still-held.png
+"$xdotool" key Escape; sleep 1
+"$xdotool" type --delay 50 pane-smoke-final; sleep 1
+capture 406-clipboard-held-typed.png
+python3 "$(dirname "$0")/check_screenshot.py" --same "$out"/{405-clipboard-still-held,406-clipboard-held-typed}.png
+"$xdotool" key Escape; sleep 1
+copy pane-smoke-after-off
+not_kept pane-smoke-after-off
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{400-clipboard-expired,401-clipboard-item-deleted,402-clipboard-recent-deleted,403-clipboard-retention-changed,404-clipboard-turned-off-and-deleted,405-clipboard-still-held}.png
 stop_pane
+[ -z "$(kept_texts)" ] || { echo "kept: $(kept_texts)"; exit 1; }
+[ "$(field retentionSeconds)" = 3600 ] || { echo "retention: $(field retentionSeconds)"; exit 1; }
 echo "screenshots in $out"

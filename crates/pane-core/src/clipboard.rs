@@ -19,8 +19,11 @@
 //!
 //! - Windows: a clipboard format listener (`AddClipboardFormatListener`,
 //!   `WM_CLIPBOARDUPDATE`) on a thread of Pane's own ([`windows`]);
-//! - macOS and Linux: none yet (#37, #38), so clipboard history is
-//!   unavailable there and says why.
+//! - Linux: the X11 `CLIPBOARD` selection, watched through XFIXES on a
+//!   thread of Pane's own ([`linux`]); a Wayland session or a display that
+//!   does not answer says so instead;
+//! - macOS: none yet (#37), so clipboard history is unavailable there and
+//!   says why.
 //!
 //! An adapter watches the clipboard only while Pane holds the [`Watch`] it
 //! returned, which Pane does exactly while some package keeps clipboard
@@ -44,10 +47,17 @@ use serde::{Deserialize, Serialize};
 use crate::extension_data::{ExtensionData, PackageData};
 
 pub(crate) mod history;
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(target_os = "windows")]
 mod windows;
 
 pub use history::Item;
+#[cfg(target_os = "linux")]
+pub use linux::LinuxClipboard;
+#[cfg(target_os = "linux")]
+#[doc(hidden)]
+pub use linux::testing;
 #[cfg(target_os = "windows")]
 pub use windows::WindowsClipboard;
 #[cfg(target_os = "windows")]
@@ -285,19 +295,27 @@ pub trait ClipboardSystem: Send + Sync + 'static {
     fn write_text(&self, text: &str) -> Result<(), String>;
 }
 
-/// This system's adapter: Windows' clipboard format listener, or one that
-/// explains why clipboard history is unavailable here.
+/// This system's adapter: Windows' clipboard format listener, Linux's
+/// watcher of the X11 CLIPBOARD selection, or one that explains why
+/// clipboard history is unavailable here.
 pub fn native() -> Arc<dyn ClipboardSystem> {
     #[cfg(target_os = "windows")]
     {
         Arc::new(WindowsClipboard)
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    {
+        match linux::native() {
+            Ok(clipboard) => Arc::new(clipboard),
+            Err(reason) => Arc::new(Unavailable(reason)),
+        }
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
         let here = crate::platform::Platform::current()
             .map_or_else(|| std::env::consts::OS.to_string(), |p| p.to_string());
         Arc::new(Unavailable(format!(
-            "Not available on {here}: Pane watches the clipboard only on Windows so far"
+            "Not available on {here}: Pane watches the clipboard only on Windows and Linux so far"
         )))
     }
 }
