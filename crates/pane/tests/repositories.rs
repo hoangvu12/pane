@@ -6,7 +6,6 @@
 //! nothing reaches the network.
 
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
 
 use gpui::{Entity, TestAppContext, VisualTestContext, prelude::*};
 use pane::LauncherWindow;
@@ -17,19 +16,10 @@ mod repo_server;
 
 use repo_server::{Repo, Server, greeter_files};
 
-/// Lets the window apply replies that arrive from other threads.
-fn settle(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) -> LauncherView {
-    let deadline = Instant::now() + Duration::from_secs(60);
-    loop {
-        cx.run_until_parked();
-        let view = cx.read_entity(window, |window, _| window.launcher().view());
-        if view.status != Status::Running {
-            return view;
-        }
-        assert!(Instant::now() < deadline, "the launcher did not finish");
-        std::thread::sleep(Duration::from_millis(5));
-    }
-}
+#[path = "support/settle.rs"]
+mod settle;
+
+use settle::settle;
 
 fn titles(view: &LauncherView) -> Vec<&str> {
     view.rows.iter().map(|row| row.title.as_str()).collect()

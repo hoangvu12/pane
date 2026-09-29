@@ -4,12 +4,16 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
 
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, prelude::*};
 use pane::LauncherWindow;
 use pane_core::{Launcher, LauncherView, PackageIdentity, Runtime, Screen, Status};
 use tempfile::TempDir;
+
+#[path = "support/settle.rs"]
+mod settle;
+
+use settle::settle;
 
 const INSTALL_ROW: &str = "Install extension from folder…";
 const NPM_ROW: &str = "Install extension from npm…";
@@ -50,20 +54,6 @@ fn open<'a>(
     let launcher =
         Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"));
     cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx))
-}
-
-/// Lets the window apply replies that arrive from other threads.
-fn settle(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) -> LauncherView {
-    let deadline = Instant::now() + Duration::from_secs(60);
-    loop {
-        cx.run_until_parked();
-        let view = cx.read_entity(window, |window, _| window.launcher().view());
-        if view.status != Status::Running {
-            return view;
-        }
-        assert!(Instant::now() < deadline, "the launcher did not finish");
-        std::thread::sleep(Duration::from_millis(5));
-    }
 }
 
 fn titles(view: &LauncherView) -> Vec<&str> {

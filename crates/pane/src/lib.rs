@@ -167,6 +167,10 @@ pub struct LauncherWindow {
     /// Whether the next frame scrolls to the selected row again, once the
     /// list changed in this one has been laid out.
     scroll_again: bool,
+    /// The launcher's view as the last frame drew it, for tests (see
+    /// [`LauncherWindow::drawn_view`]). Test and debug builds only.
+    #[cfg(any(test, debug_assertions))]
+    drawn: Option<LauncherView>,
 }
 
 /// What the list was last scrolled for. When any of it changes, the list
@@ -207,11 +211,24 @@ impl LauncherWindow {
             scrolled_for: None,
             scroll_again: false,
             custom_view: None,
+            #[cfg(any(test, debug_assertions))]
+            drawn: None,
         }
     }
 
     pub fn launcher(&self) -> &Launcher {
         &self.launcher
+    }
+
+    /// Test support: the launcher's view as the window last drew it; `None`
+    /// before the first frame. The launcher changes on other threads (a
+    /// crash pausing a package, a build) before the window is told to
+    /// redraw, so a test compares this with [`Launcher::view`] to know that
+    /// a frame shows what the launcher holds. Test and debug builds only.
+    #[cfg(any(test, debug_assertions))]
+    #[doc(hidden)]
+    pub fn drawn_view(&self) -> Option<&LauncherView> {
+        self.drawn.as_ref()
     }
 
     /// Redraws whenever the launcher changes in the background, as
@@ -575,6 +592,10 @@ impl LauncherWindow {
 impl Render for LauncherWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let view = self.launcher.view();
+        #[cfg(any(test, debug_assertions))]
+        {
+            self.drawn = Some(view.clone());
+        }
         self.keep_selected_visible(&view, window);
         let (empty, hint) = match &view.screen {
             Screen::Root { .. } => (
