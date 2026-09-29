@@ -269,6 +269,13 @@ impl LauncherWindow {
         self.show_until_done(pending, window, cx);
     }
 
+    /// Downloads and shows the npm package `spec` names, as
+    /// [`LauncherWindow::preview_package`] shows a folder.
+    pub fn preview_npm(&mut self, spec: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let pending = self.launcher.preview_npm(spec);
+        self.show_until_done(pending, window, cx);
+    }
+
     /// Asks for the folder to grant the package with `identity` with the
     /// platform's folder picker, then has Pane check and record it.
     /// Cancelling changes nothing. A debug build run by the native smokes
@@ -589,7 +596,11 @@ impl Render for LauncherWindow {
             Screen::RuntimeDetails { .. } => ("", "Enter restart · Esc back"),
             Screen::BuildDetails { .. } => ("", "Enter build again · Esc back"),
         };
-        let confirm = matches!(view.screen, Screen::Confirm { .. });
+        // A confirmation, and a package preview offering Install or Update
+        // (an npm package's has several more lines), keep their choices in
+        // view.
+        let confirm = matches!(view.screen, Screen::Confirm { .. })
+            || (matches!(view.screen, Screen::Package { .. }) && !view.rows.is_empty());
         let details: Vec<_> = view
             .details()
             .iter()
@@ -692,8 +703,9 @@ impl Render for LauncherWindow {
             .bg(rgb(0x20252d))
             .text_color(rgb(0xf1f3f5))
             .child(div().text_xl().child(view.title.clone()))
-            // A confirmation's long details scroll within 40% of the
-            // window, leaving the rest to its choices, which stay visible.
+            // A confirmation's or preview's long details scroll within 40%
+            // of the window, leaving the rest to its choices, which stay
+            // visible.
             .when(!details.is_empty(), |root| {
                 root.child(
                     div()

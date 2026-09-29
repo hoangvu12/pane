@@ -252,6 +252,29 @@ uninstall; a folder still in use (a file open on Windows) is listed and removed 
 reported against its own package. Nothing else in it is specific to
 Windows; **not run on Windows yet**.
 
+## npm packages (#45)
+
+A phase of the smoke (screenshots 260 to 266, [npm packages](../npm.md)),
+with a data folder of its own, starts `scripts/npm_registry.py` (with
+`python`) on 127.0.0.1 serving the npm sample `cargo xtask guests` packed,
+and points the development build at it with `PANE_NPM_REGISTRY`: it installs
+the local Dependencies from npm sample, which downloads and installs the npm
+package it requires, calls its `greet` operation, then names the npm package
+in "Install extension from npm…" (Up from the last row; SendKeys types
+`@pane-samples/greeter`), updates it and runs its command, which answers
+"Hello from the npm package"; `installed.json` must then record `"npm":
+"@pane-samples/greeter"` at `"npmVersion": "0.1.0"` with both packages.
+Unpacking refuses, on every system alike, the names Windows reads
+differently or cannot write: `\ : < > " | ? *`, control characters,
+trailing dots and spaces, and device names such as `con`, `conin$`,
+`conout$`, `com1` or `lpt³` (compared by character, with any extension), so
+a tarball Linux accepts never fails or writes elsewhere on Windows; the
+real registry would be reached through the HTTP client guests' requests
+use, trusting the certificates rustls-native-certs reads from the Windows
+certificate store, which no check exercises (the smoke never reaches the
+network; [by hand](../npm.md#trying-the-real-registry-by-hand), not run). The packing, in `cargo xtask guests`, runs in CI on
+Windows. **Not run on Windows yet.**
+
 ## Files (#29)
 
 The files phase (screenshots 220 to 223, [files](../files.md)), with a data
@@ -284,6 +307,36 @@ sends "aurora" (results listed, Enter shows a package's details); "slow" then "e
 must log the held search as abandoned; the service's 503, then the service
 stopped, are errors; restarted, a search lists results again. Windows retries a refused connection for about two seconds, so the offline step waits longer.
 **Not run on Windows yet.**
+
+## Clipboard history (#35)
+
+The smoke's clipboard phase (screenshots 280 to 285, [clipboard history](../clipboard-history.md#checks)),
+with a data folder of its own, installs Clipboard History and checks
+`clipboard-history.json` at each step: text copied before it is turned on is
+not kept; once turned on (its first row) plain text is kept, while text
+carrying `ExcludeClipboardContentFromMonitorProcessing`,
+`CanIncludeInClipboardHistory` = 0 or `CanUploadToCloudClipboard` = 0 is
+not; nothing is kept while paused, or while disabled, also after a restart;
+Enter on a kept item puts it on the clipboard again and moves it to the
+front; enabled again, text is kept, also after a restart, before the command
+is opened. The smoke copies only its own `pane-smoke-...` text, through the
+clipboard API from PowerShell, and so replaces what was on the clipboard,
+without reading or restoring it. `clipboard_adapter.rs` checks the adapter
+alone: plain text reported with its owner (the test's process), each marker
+read and withholding the text, a written text reported, and nothing once
+the watch is dropped; it too replaces the clipboard, so it runs only with
+`PANE_TEST_REAL_CLIPBOARD=1`, which CI's Windows job sets. `atomic.rs`'s
+Windows unit test checks the owner-only DACL of `clipboard-history.json`
+and `credentials.json`.
+
+The adapter, the shared message thread (also the hotkey adapter's), the
+DACL and these tests were only compile- and lint-checked for
+`x86_64-pc-windows-gnu` from Linux; **not run on Windows yet**. They run in
+CI (`cargo xtask ci` with `PANE_TEST_REAL_CLIPBOARD=1`, then
+`smoke-windows.ps1`) on `windows-2025`, and the next green Windows run of
+the branch is their evidence: until then the listener's delivery, the
+retry and stop paths, the markers as real password managers set them, the
+owner lookup and the DACL are unverified natively.
 
 ## Text input and accessibility findings
 

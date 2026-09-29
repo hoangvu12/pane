@@ -4,6 +4,7 @@
 pub mod applications;
 mod atomic;
 pub mod changes;
+pub mod clipboard;
 mod dependencies;
 pub mod develop;
 mod extension_data;
@@ -14,11 +15,13 @@ pub mod hotkeys;
 mod http;
 mod launcher;
 mod links;
+pub mod npm;
 mod operations;
 mod packages;
 mod platform;
 mod runtime;
 mod search;
+mod threads;
 
 pub use helpers::runner::{MAX_HELPER_INPUT, MAX_HELPER_OUTPUT};
 #[doc(hidden)]
