@@ -67,8 +67,8 @@ The preview is the one a folder has, with lines of its own:
   commit 1a2b3c4d5e6f. A host that shares storage between forks, as GitHub
   does, can serve a fork's or a pull request's commit at this address, so
   its id alone does not show that this repository made it".
-- "Runs only the components its pane.json names: nothing in the repository
-  is built or run (no hooks, scripts or submodules)".
+- "Nothing in the repository is built or run: no hooks, scripts or
+  submodules" (the components that do run are the preview's "Commands:").
 
 Install copies `pane.json`, the components it names and this system's
 helper files into Pane, as for a folder, and records the package in
@@ -256,7 +256,7 @@ yet.
   commits, ambiguous names, redirects, sign-in, protocol version 0, a
   `# service` line, an unreachable server; the form.
 - [`crates/pane/tests/repositories.rs`](../crates/pane/tests/repositories.rs):
-  the form, the source-only explanation, preview, Install in view and the
+  the form, the source-only explanation, preview, Install in view below whole Git lines and the
   command running in the native window at Pane's size.
 - The native smokes' own phase (frames 300 to 304;
   [Linux](platforms/linux.md#git-packages-46)).

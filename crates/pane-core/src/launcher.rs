@@ -3894,11 +3894,9 @@ fn git_lines(
             revision.short_commit()
         ));
     }
-    lines.push(
-        "Runs only the components its pane.json names: nothing in the repository is built or \
-         run (no hooks, scripts or submodules)"
-            .into(),
-    );
+    // One short line, so that the preview's Git lines fit above Install
+    // (what does run, the components, is listed as Commands).
+    lines.push("Nothing in the repository is built or run: no hooks, scripts or submodules".into());
     lines
 }
 

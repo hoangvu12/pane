@@ -610,7 +610,7 @@ impl Render for LauncherWindow {
         let confirm = matches!(view.screen, Screen::Confirm { .. }) || preview;
         // A preview has one or two rows (Install or Update) and more lines
         // to read, which may take more of the window than a confirmation's.
-        let details_share = if preview { 0.55 } else { 0.4 };
+        let details_share = if preview { 0.62 } else { 0.4 };
         let details: Vec<_> = view
             .details()
             .iter()
@@ -714,7 +714,7 @@ impl Render for LauncherWindow {
             .text_color(rgb(0xf1f3f5))
             .child(div().text_xl().child(view.title.clone()))
             // A confirmation's or preview's long details scroll within 40%
-            // (a preview's 55%) of the window, leaving the rest to its
+            // (a preview's 62%) of the window, leaving the rest to its
             // choices, which stay visible.
             .when(!details.is_empty(), |root| {
                 root.child(

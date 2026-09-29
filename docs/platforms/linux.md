@@ -681,9 +681,9 @@ extension from Git…", whose form (301) takes `<address>@v0.1.0`; its
 preview (302) shows "Source: Git repository 127.0.0.1:<port>/greeter",
 "Revision: tag v0.1.0, which you named: installing pins it to that
 revision", the commit fetched ("Fetched: commit … “Release 0.1.0”, served at
-http://127.0.0.1:<port>/greeter.git; …") and "Runs only the components its
-pane.json names: …", with Install in view below them (a preview's details
-may take 55% of the window since the review, so none is cut); Enter installs it
+http://127.0.0.1:<port>/greeter.git; …") and "Nothing in the repository is
+built or run: …", with Install in view below them (a preview's details
+may take 62% of the window since the review, so none is cut); Enter installs it
 (303, "Installed Greeter from Git") and its command's "Say hello" answers
 "Hello from the Git repository" (304). `installed.json`, read as JSON
 (`scripts/check_git_record.py`), must then record one package from Git with
