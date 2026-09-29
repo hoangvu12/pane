@@ -169,13 +169,10 @@ impl Sender {
     }
 
     /// Whether the code sending is stopped: its generation ended, or Pane
-    /// gave up on its runtime thread.
+    /// gave up on its runtime thread (the check every host interface makes,
+    /// `runtime::code_stopped`).
     fn stopped(&self) -> bool {
-        match &self.data {
-            // Fenced with the thread's fence.
-            Some(data) => data.stopped().is_some(),
-            None => self.watch.fence().closed(),
-        }
+        crate::runtime::code_stopped(self.data.as_ref(), self.watch.fence()).is_some()
     }
 }
 
@@ -196,15 +193,17 @@ impl WasiHttpHooks for Sender {
             .data
             .as_ref()
             .map_or_else(String::new, |data| data.owner().to_owned());
-        let network = self.network.clone();
-        // Sending is host work: its polls are not the guest's computing.
+        let (network, watch) = (self.network.clone(), self.watch.clone());
+        // Sending is host work: its polls are not the guest's computing, nor
+        // are those receiving the response (see `send`).
         Box::new(crate::runtime::deadlines::hosted(
             self.watch.clone(),
             async move {
                 let limits = network.limits();
                 let target = Target::of(&request)?;
                 let permit = network.connect(&owner, target.address())?;
-                send(request, target, Ceilings::new(limits, options), permit).await
+                let ceilings = Ceilings::new(limits, options);
+                send(request, target, ceilings, permit, watch).await
             },
         ))
     }
@@ -324,12 +323,15 @@ where
 
 /// Connects to `target` and sends `request`, resolving once the response's
 /// head has arrived; its body follows as it is received, within
-/// `ceilings`. The connection holds `permit` until it closes.
+/// `ceilings`. The connection holds `permit` until it closes. Driving the
+/// connection and reading the body are host work on `watch`'s runtime
+/// thread, never the guest's computing.
 async fn send(
     mut request: http::Request<WasiBody>,
     target: Target,
     ceilings: Ceilings,
     permit: OwnedSemaphorePermit,
+    watch: Arc<Watch>,
 ) -> Result<(http::Response<WasiBody>, Receiving), Error> {
     let (mut sender, connection) = connect(&target, ceilings.within(ceilings.connect)).await?;
 
@@ -381,28 +383,33 @@ async fn send(
         return Err(Error::HttpResponseBodySize(Some(ceilings.body)));
     }
     let deadline = ceilings.deadline;
-    let receiving: Receiving = Box::new(async move {
-        // Given back once the connection closes.
-        let _permit = permit;
-        let Some(connection) = connection else {
-            return Ok(());
-        };
-        match timeout_at(deadline, connection).await {
-            Ok(finished) => finished.map_err(Error::from),
-            Err(_) => Err(Error::HttpResponseTimeout),
-        }
-    });
+    let receiving: Receiving = Box::new(crate::runtime::deadlines::hosted(
+        watch.clone(),
+        async move {
+            // Given back once the connection closes.
+            let _permit = permit;
+            let Some(connection) = connection else {
+                return Ok(());
+            };
+            match timeout_at(deadline, connection).await {
+                Ok(finished) => finished.map_err(Error::from),
+                Err(_) => Err(Error::HttpResponseTimeout),
+            }
+        },
+    ));
     Ok((
-        response.map(|body| Limited::new(body, ceilings).boxed_unsync()),
+        response.map(|body| Limited::new(body, ceilings, watch).boxed_unsync()),
         receiving,
     ))
 }
 
 /// A response body read within a request's ceilings: it ends with an error
 /// once it grows past the size limit, once the next piece takes too long,
-/// or at the request's deadline.
+/// or at the request's deadline. Reading it is host work on the runtime
+/// thread `watch` follows (see [`Watch::host`]).
 struct Limited {
     body: Incoming,
+    watch: Arc<Watch>,
     received: u64,
     most: u64,
     between_bytes: Duration,
@@ -414,9 +421,10 @@ struct Limited {
 }
 
 impl Limited {
-    fn new(body: Incoming, ceilings: Ceilings) -> Limited {
+    fn new(body: Incoming, ceilings: Ceilings, watch: Arc<Watch>) -> Limited {
         Limited {
             body,
+            watch,
             received: 0,
             most: ceilings.body,
             between_bytes: ceilings.between_bytes,
@@ -444,6 +452,9 @@ impl Body for Limited {
         if this.failed {
             return Poll::Ready(None);
         }
+        // Pane's work, not the guest's computing.
+        let watch = this.watch.clone();
+        let _host = watch.host();
         match Pin::new(&mut this.body).poll_frame(cx) {
             Poll::Ready(Some(Ok(frame))) => {
                 if let Some(data) = frame.data_ref() {

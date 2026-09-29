@@ -133,7 +133,7 @@ use crate::applications::Applications;
 use crate::clipboard::{self, Capture, CaptureState};
 use crate::extension_data::{DataKind, PackageData};
 use crate::files::{FileAccess, Folders};
-use crate::generation::{End, Generation};
+use crate::generation::{End, Fence, Generation};
 use crate::helpers;
 use crate::helpers::runner::{self, HelperError, HelperErrorKind, Helpers, Running, Spec};
 use crate::operations::{self, Directory, OperationCall, OperationError, Target};
@@ -1423,6 +1423,19 @@ pub(crate) fn stopped_code(end: End) -> String {
     }
 }
 
+/// Why code is stopped, if it is: the one check every host interface goes
+/// through ([`GuestState::stopped`], and the web requests' sender, which
+/// holds no `GuestState`). Code of an installed package is stopped once its
+/// generation ended or `fence`, its runtime thread's, closed (its data is
+/// fenced with it, see [`PackageData::stopped`]); a command built into
+/// Pane, which has no generation, once `fence` closed.
+pub(crate) fn code_stopped(data: Option<&PackageData>, fence: &Fence) -> Option<End> {
+    match data {
+        Some(data) => data.stopped(),
+        None => fence.closed().then_some(End::Abandoned),
+    }
+}
+
 /// How a call answers that ran on a runtime thread Pane gave up on.
 fn given_up() -> CallError {
     CallError::RuntimeUnavailable("it stopped responding and was replaced".into())
@@ -1537,11 +1550,9 @@ impl GuestState {
     /// call operations or start any other host work: every host interface
     /// checks this one fence.
     pub(crate) fn stopped(&self) -> Option<End> {
-        match &self.data {
-            // Fenced with this thread's fence ([`PackageData::fenced`]).
-            Some(data) => data.stopped(),
-            None => self.watch.fence().closed().then_some(End::Abandoned),
-        }
+        // The data is fenced with this thread's fence
+        // ([`PackageData::fenced`]).
+        code_stopped(self.data.as_ref(), self.watch.fence())
     }
 
     /// Marks a host call on the runtime thread until the guard is dropped

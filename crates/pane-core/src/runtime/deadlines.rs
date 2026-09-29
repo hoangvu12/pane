@@ -257,14 +257,18 @@ impl Drop for Exempt<'_> {
 /// One host call in progress on the runtime thread (see [`Watch::host`]).
 pub(crate) struct HostCall<'a> {
     watch: &'a Watch,
-    started: Duration,
+    /// When it started, if it is the outermost host call: only that one
+    /// counts its time, so a host call inside another is not counted twice.
+    started: Option<Duration>,
 }
 
 impl Drop for HostCall<'_> {
     fn drop(&mut self) {
-        let spent = thread_time().saturating_sub(self.started);
-        let nanos = u64::try_from(spent.as_nanos()).unwrap_or(u64::MAX);
-        self.watch.host_time.fetch_add(nanos, Ordering::SeqCst);
+        if let Some(started) = self.started {
+            let spent = thread_time().saturating_sub(started);
+            let nanos = u64::try_from(spent.as_nanos()).unwrap_or(u64::MAX);
+            self.watch.host_time.fetch_add(nanos, Ordering::SeqCst);
+        }
         self.watch.host_depth.fetch_sub(1, Ordering::SeqCst);
         self.watch.beat();
     }
@@ -295,11 +299,11 @@ impl Watch {
     /// its time is not charged to the guest, and the watchdog does not give
     /// up on the thread meanwhile (what it does must not block for long).
     pub(crate) fn host(&self) -> HostCall<'_> {
-        self.host_depth.fetch_add(1, Ordering::SeqCst);
+        let outermost = self.host_depth.fetch_add(1, Ordering::SeqCst) == 0;
         self.beat();
         let call = HostCall {
             watch: self,
-            started: thread_time(),
+            started: outermost.then(thread_time),
         };
         #[cfg(any(test, debug_assertions))]
         {
@@ -802,6 +806,35 @@ mod tests {
             Poll::<()>::Pending
         });
         assert!(!meter.exhausted(), "{:?}", meter.spent);
+        let _ = meter.measure(|| {
+            spin(Duration::from_millis(250));
+            Poll::<()>::Pending
+        });
+        assert!(meter.exhausted(), "{:?}", meter.spent);
+    }
+
+    /// A host call inside another (a web response's body read while its
+    /// connection is driven, say) is counted once: the guest is charged
+    /// neither less nor more than its own computing.
+    #[test]
+    fn a_meter_counts_a_host_call_inside_another_once() {
+        let watch = Arc::new(Watch::default());
+        let mut meter = Meter::new(watch.clone(), Duration::from_millis(200));
+        let spin = |for_: Duration| {
+            let started = thread_time();
+            while thread_time().saturating_sub(started) < for_ {}
+        };
+        let _ = meter.measure(|| {
+            let _outer = watch.host();
+            let _inner = watch.host();
+            spin(Duration::from_millis(100));
+            Poll::<()>::Pending
+        });
+        let hosted = watch.host_time();
+        assert!(
+            hosted >= Duration::from_millis(100) && hosted < Duration::from_millis(200),
+            "{hosted:?}"
+        );
         let _ = meter.measure(|| {
             spin(Duration::from_millis(250));
             Poll::<()>::Pending
