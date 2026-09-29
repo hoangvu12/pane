@@ -233,6 +233,11 @@ pub struct Manifest {
     /// The other packages whose operations this one calls, required or
     /// optional.
     pub dependencies: Vec<ManifestDependency>,
+    /// The package asks for access to one folder the user chooses
+    /// (`"folderAccess": true`): Pane offers its own "Choose folder" row
+    /// in the package's commands, and lists only that folder for it
+    /// (`pane:extension/files`).
+    pub folder_access: bool,
 }
 
 /// A native helper a package ships: a prebuilt program per target (operating
@@ -351,6 +356,11 @@ pub struct ManifestCommand {
     /// its alias or as a fallback. Its component then also exports
     /// `pane:extension/query-command`.
     pub takes_query: bool,
+    /// Whether the command searches as the user types into its own search
+    /// field once it is open (`"search": true`), such as a command searching
+    /// an online service; root search never asks it. Its component then
+    /// also exports `pane:extension/command-search`.
+    pub search: bool,
 }
 
 #[derive(Deserialize)]
@@ -370,6 +380,8 @@ struct ManifestJson {
     helpers: Vec<HelperJson>,
     #[serde(default)]
     dependencies: Vec<DependencyJson>,
+    #[serde(default)]
+    folder_access: bool,
 }
 
 #[derive(Deserialize)]
@@ -424,6 +436,8 @@ struct CommandJson {
     indexed_results: bool,
     #[serde(default)]
     takes_query: bool,
+    #[serde(default)]
+    search: bool,
 }
 
 impl Manifest {
@@ -526,6 +540,7 @@ impl Manifest {
             root_results: commands().any(|command| command.root_results),
             indexed_results: commands().any(|command| command.indexed_results),
             query_command: commands().any(|command| command.takes_query),
+            search: commands().any(|command| command.search),
             operations: self
                 .operations
                 .iter()
@@ -578,6 +593,15 @@ impl Manifest {
             {
                 return Err(invalid(format!("command id `{}` is repeated", command.id)));
             }
+            // Root search never asks a command that searches inside itself:
+            // results it computed for root search would never be shown.
+            if command.search && command.root_results {
+                return Err(invalid(format!(
+                    "command `{}` sets both `search` and `rootResults`: a command that \
+                     searches inside itself is never asked by root search",
+                    command.id
+                )));
+            }
             let component = inside_package(&command.component, "component")?;
             let platforms = parse_platforms(
                 command.platforms,
@@ -592,6 +616,7 @@ impl Manifest {
                 root_results: command.root_results,
                 indexed_results: command.indexed_results,
                 takes_query: command.takes_query,
+                search: command.search,
             });
         }
         let mut operations: Vec<ManifestOperation> = Vec::new();
@@ -668,6 +693,7 @@ impl Manifest {
             operations,
             helpers,
             dependencies,
+            folder_access: json.folder_access,
         })
     }
 
@@ -931,6 +957,10 @@ pub(crate) struct SourcePackage {
     /// The `pane.json` text `manifest` was validated from; the managed copy
     /// gets exactly this, even if the source changes meanwhile.
     manifest_text: String,
+    /// Whether a component of it imports `wasi:http` (it can make web
+    /// requests), as checking its components found; `false` until they are
+    /// checked.
+    pub network: bool,
 }
 
 impl SourcePackage {
@@ -946,6 +976,7 @@ impl SourcePackage {
             folder: folder.to_path_buf(),
             manifest,
             manifest_text,
+            network: false,
         })
     }
 
@@ -961,6 +992,7 @@ impl SourcePackage {
             folder,
             manifest,
             manifest_text,
+            network: false,
         })
     }
 
@@ -981,6 +1013,9 @@ pub struct InstalledPackage {
     /// Whether the user has left the package enabled. A disabled package
     /// contributes no commands and runs nothing, but keeps its settings.
     pub enabled: bool,
+    /// Whether a component of it imports `wasi:http`, so its code can make
+    /// web requests, as found when it was installed, updated or reloaded.
+    pub uses_network: bool,
     /// The identity each `local:` dependency the manifest declares was
     /// resolved to when the package was installed, by dependency id.
     dependencies: Vec<(String, PackageIdentity)>,
@@ -994,6 +1029,7 @@ impl InstalledPackage {
         identity: PackageIdentity,
         location: PathBuf,
         enabled: bool,
+        uses_network: bool,
         recorded: &[ResolvedJson],
     ) -> InstalledPackage {
         let manifest = Manifest::read_installed(&location);
@@ -1016,6 +1052,7 @@ impl InstalledPackage {
             identity,
             location,
             enabled,
+            uses_network,
             dependencies,
         }
     }
@@ -1074,6 +1111,7 @@ impl InstalledPackage {
                         .or_else(|| Some(manifest.title.clone())),
                     component: self.location.join(&command.component),
                     takes_query: command.takes_query,
+                    search: command.search,
                 };
                 let unavailable = package.clone().or_else(|| {
                     platform::unavailable(command.platforms.as_deref(), "this command")
@@ -1209,6 +1247,11 @@ struct RecordJson {
     /// to when it was installed or updated.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     dependencies: Vec<ResolvedJson>,
+    /// Set when a component of its current code imports `wasi:http`;
+    /// absent means none does (or it was installed before Pane recorded
+    /// it, until it is reloaded or updated).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    network: bool,
 }
 
 /// A dependency id and the local source folder it resolved to.
@@ -1367,6 +1410,7 @@ impl Store {
                     PackageIdentity(Source::Local(record.local.clone())),
                     self.dir.join(PACKAGES_DIR).join(&record.dir),
                     !record.disabled,
+                    record.network,
                     &record.dependencies,
                 )
             })
@@ -1707,6 +1751,7 @@ impl Store {
                 // New code has not failed.
                 record.paused = None;
                 record.dependencies = dependencies.clone();
+                record.network = package.network;
                 !record.disabled
             }
             None => {
@@ -1719,6 +1764,7 @@ impl Store {
                     disabled: false,
                     paused: None,
                     dependencies: dependencies.clone(),
+                    network: package.network,
                 });
                 true
             }
@@ -1747,6 +1793,7 @@ impl Store {
             package.identity.clone(),
             location,
             enabled,
+            package.network,
             &dependencies,
         ))
     }

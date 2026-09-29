@@ -548,7 +548,7 @@ impl Launcher {
             subtitle: Some(format!("Run `{}` now", development.command)),
             unavailable: None,
         };
-        state.screen_epoch += 1;
+        state.next_screen();
         state.entries = vec![Entry::BuildAgain(identity.clone())];
         let screen = Screen::BuildDetails {
             identity: identity.clone(),

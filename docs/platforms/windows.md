@@ -269,6 +269,39 @@ uninstall; a folder still in use (a file open on Windows) is listed and removed 
 reported against its own package. Nothing else in it is specific to
 Windows; **not run on Windows yet**.
 
+## Files (#29)
+
+The files phase (screenshots 220 to 223, [files](../files.md)), with a data
+folder of its own, installs Files and presses Enter on Pane's own "Choose
+folder…" row; a debug build's `PANE_TEST_CHOOSE_FOLDER` names a fixture
+folder "Pane smoke files" (spaces) in the smoke's output folder instead of
+showing the system's picker. It types "plan", which must list "Résumé plan
+ü.txt" selected, and presses Enter. The real opener (PowerShell's
+`Invoke-Item -LiteralPath` for an existing path, through the `open` crate,
+the path passed in an environment variable) can show the "Open with" dialog
+for a type with no handler, so a debug build's `PANE_TEST_OPEN_FILE_LOG`
+makes it record the path in a file instead; the recorded path, resolved,
+must be the fixture file's, resolved. Last it types "runner" and presses
+Enter on a batch file, which Pane must refuse without recording or running
+it. A positive native open on Windows is therefore not run by the smoke. The
+scan policy skips entries with the hidden or system attribute and junctions
+(reparse points) on Windows only, and a grant refuses UNC paths from their
+text before any file system call; a Windows-only test (`attrib +h`,
+`mklink /J`) is written but has not run. **Not run on Windows yet.**
+
+## Searching inside a command (#30)
+
+The smoke's search phase (screenshots 160 to 169, [command search](../command-search.md#checks)),
+with a data folder of its own, builds and starts the fixture service on a
+free port of 127.0.0.1 (`fixture_service --port 0`, the port read from its
+log) and installs Package search, the Rust search sample. "aurora" typed in
+root search must leave the service's log without a request; opened, the
+command's "Service address" form is set to the service; its search field
+sends "aurora" (results listed, Enter shows a package's details); "slow" then "ember"
+must log the held search as abandoned; the service's 503, then the service
+stopped, are errors; restarted, a search lists results again. Windows retries a refused connection for about two seconds, so the offline step waits longer.
+**Not run on Windows yet.**
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** the smoke now also opens the Rust command's

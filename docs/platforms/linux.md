@@ -644,6 +644,68 @@ whole frames. Frames 181, the list after Cancel, and 183, the list after
 installing the JavaScript operations sample again with only it listed, are
 checked to differ from the others but not kept, as they show those paths.)
 
+### Files (#29)
+
+The last phase, with its own data folder ([files](../files.md)), makes a
+fixture folder `/tmp/pane-smoke-files.XXXXXX/Pane smoke files` (spaces;
+outside the home folder, so no frame shows a home path) holding "Résumé
+plan ü.txt", `notes/todo.txt` and an executable `notes/runner.sh`, installs
+Files, opens its command and presses Return on Pane's own "Choose folder…"
+row; a debug build's `PANE_TEST_CHOOSE_FOLDER` names the folder instead of
+showing the system's picker. It then returns to root search, types "plan"
+and presses Return. `xdg-open` runs with no desktop session variables,
+XDG_CONFIG_HOME and XDG_DATA_HOME in the smoke's output folder whose
+`mimeapps.list` makes a recording script the only handler for `text/plain`
+(checked with `xdg-mime query default`), and BROWSER the same script, so no
+program of the user's opens the file; the path the script received,
+resolved, must be the fixture file's, resolved. Last it types "runner" and
+presses Return: Pane must refuse the script, hand nothing to the handler,
+and the script must not run. Run locally on 2026-09-28 (Ubuntu 26.04.1 LTS,
+kernel 7.0.0-31-generic, x86_64, same Xvfb/lavapipe setup): all checks of
+the whole smoke passed, and frames 220 to 223 were looked at.
+
+| Step | Evidence |
+| --- | --- |
+| "Choose folder…": "Files may now list “Pane smoke files”" | [220-files-folder-granted.png](evidence/linux-x11/220-files-folder-granted.png) |
+| "plan" typed: "Résumé plan ü.txt", "File in Pane smoke files", selected | [221-files-found.png](evidence/linux-x11/221-files-found.png) |
+| Return: "Opened Résumé plan ü.txt", the path received by the handler | [222-files-opened.png](evidence/linux-x11/222-files-opened.png) |
+| "runner", Return: "Could not open runner.sh: it is a program or script…" | [223-files-program-refused.png](evidence/linux-x11/223-files-program-refused.png) |
+
+The system's folder picker (the XDG portal) and a real desktop's handler
+(GNOME's `gio open`, a text editor) were not run; cancelling, the slow
+listing and the re-checks at Enter are checked by the launcher tests, not
+natively.
+
+### Searching inside a command (#30)
+
+The last phase ([command search](../command-search.md#checks)), with a data
+folder of its own, builds and starts the fixture service on a free port of
+127.0.0.1 (`fixture_service --port 0`, its log in the smoke's output, the
+port read from it) and installs Package search, the Rust search sample.
+"aurora" typed in root search lists nothing and the service's log must hold
+no request; opened, the command's "Service address" form is set to the
+service; its own search field (the same query field) sends "aurora" (the
+log must hold `GET /search?q=aurora`), Down and Enter show aurora-cli's
+details; "slow" (held by the service) then "ember" must show ember-tz and
+log `ABANDONED /search?q=slow`; "down" shows the service's 503 as an error;
+with the service stopped, "basalt" shows "connection refused"; restarted on
+the same port, "cobalt" lists cobalt-http: the extension was not paused.
+Run locally on 2026-09-29 after the #30 review (Ubuntu 26.04.1 LTS, kernel
+7.0.0-31-generic, x86_64, same Xvfb/lavapipe setup): all checks of the
+whole smoke passed, and frames 160 to 169 were looked at.
+
+| Step | Evidence |
+| --- | --- |
+| Root search, "aurora": no results, nothing sent | [161-root-typed.png](evidence/linux-x11/161-root-typed.png) |
+| Package search opened: its own list, its search field empty | [162-command-opened.png](evidence/linux-x11/162-command-opened.png) |
+| Its "Service address" form set to the fixture service's free port | [163-service-set.png](evidence/linux-x11/163-service-set.png) |
+| "aurora": the service's results | [164-search-results.png](evidence/linux-x11/164-search-results.png) |
+| Enter: aurora-cli's details, fetched from the service | [165-details.png](evidence/linux-x11/165-details.png) |
+| "slow" replaced by "ember": the newer results | [166-newer-search.png](evidence/linux-x11/166-newer-search.png) |
+| "down": the service's 503 as an error | [167-service-error.png](evidence/linux-x11/167-service-error.png) |
+| Service stopped: "connection refused" | [168-offline.png](evidence/linux-x11/168-offline.png) |
+| Service back: results again | [169-back-online.png](evidence/linux-x11/169-back-online.png) |
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms have a text field (GPUI CE's

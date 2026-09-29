@@ -1204,4 +1204,136 @@ check 183-uninstall-dependents-reinstalled-alone.png aab4c0
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{180-uninstall-dependents-asked,181-uninstall-dependents-cancelled,182-uninstall-dependents-uninstalled,183-uninstall-dependents-reinstalled-alone}.png
 stop_pane
 [ "$(grep -c '"dir"' "$PANE_DATA_DIR/extensions/installed.json")" = 1 ] || { echo "not the dependency alone reinstalled"; exit 1; }
+
+# File search (#29): Files, a default extension (its data folder is this
+# phase's own; Files is selected once installed, and Pane's own "Choose
+# folder…" row is the first of its command). Enter on it would show the
+# system's folder picker; the smoke names the folder in
+# PANE_TEST_CHOOSE_FOLDER instead (a debug build's hook). The fixture folder's
+# path has spaces, and a file in it has non-ASCII letters too; typing "plan"
+# lists that file, selected, and Enter hands it to Pane's handler for files,
+# which PANE_TEST_OPEN_FILE_LOG (a debug build's hook) makes record the path
+# instead of asking /usr/bin/open, since any application that opened it would
+# be the user's own. An executable script in the folder is found but refused.
+# The fixture is in the system's temporary folder, so no screenshot shows a
+# home path.
+export PANE_DATA_DIR=$out/files-data
+rm -rf "$PANE_DATA_DIR"
+files_fixture=$(mktemp -d "${TMPDIR:-/tmp}/pane-smoke-files.XXXXXX")
+files_folder="$files_fixture/Pane smoke files"
+mkdir -p "$files_folder/notes"
+printf 'plan\n' >"$files_folder/Résumé plan ü.txt"
+printf 'todo\n' >"$files_folder/notes/todo.txt"
+printf '#!/bin/sh\ntouch "%s/runner-ran"\n' "$files_fixture" >"$files_folder/notes/runner.sh"
+chmod +x "$files_folder/notes/runner.sh"
+rm -f "$out/opened-file.txt"
+export PANE_TEST_CHOOSE_FOLDER=$files_folder PANE_TEST_OPEN_FILE_LOG=$out/opened-file.txt
+start_pane --install target/guests/packages/files
+key 36; sleep 2   # Install; Files is selected
+key 36; sleep 3   # open Files; "Choose folder…" is selected
+key 36; sleep 2   # the folder PANE_TEST_CHOOSE_FOLDER names
+capture 220-files-folder-granted.png
+check 220-files-folder-granted.png 9fd8a8   # "Files may now list “Pane smoke files”"
+key 53; sleep 1
+type_text 'plan'; sleep 3
+capture 221-files-found.png
+check 221-files-found.png 364355 3000   # the selected file row, "Résumé plan ü.txt"
+key 36; sleep 3
+capture 222-files-opened.png
+check 222-files-opened.png 9fd8a8   # "Opened Résumé plan ü.txt"
+[ -f "$out/opened-file.txt" ] || { echo "the handler for files was not asked to open anything"; exit 1; }
+[ "$(cd "$(dirname "$(head -1 "$out/opened-file.txt")")" && pwd -P)/$(basename "$(head -1 "$out/opened-file.txt")")" = "$(cd "$files_folder" && pwd -P)/Résumé plan ü.txt" ] || { echo "the handler for files was not asked to open the found file"; exit 1; }
+rm -f "$out/opened-file.txt"
+key 53; sleep 1
+type_text 'runner'; sleep 3
+key 36; sleep 2
+capture 223-files-program-refused.png
+check 223-files-program-refused.png f08c8c   # "Could not open runner.sh: it is a program or script, ..."
+[ ! -e "$out/opened-file.txt" ] || { echo "the script was handed to the handler"; exit 1; }
+[ ! -e "$files_fixture/runner-ran" ] || { echo "the script ran"; exit 1; }
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{220-files-folder-granted,221-files-found,222-files-opened,223-files-program-refused}.png
+stop_pane
+unset PANE_TEST_CHOOSE_FOLDER PANE_TEST_OPEN_FILE_LOG
+rm -rf "$files_fixture"
+
+# Searching an online service inside its command: Package search, the Rust
+# search sample, queries the fixture service (a made-up package registry on
+# a free port of 127.0.0.1, set as the sample's address through its form;
+# nothing leaves this computer), whose log lists each request. Typed into
+# root search, "aurora" finds nothing and sends the service nothing. Opened,
+# the command's own search field sends it: its results are listed, Enter
+# shows a package's details. A search the service holds ("slow...") is stopped when the text
+# changes: the service sees its client hang up and the newer results show.
+# The service's own error, then the service stopped (offline), are errors in
+# place of results; once it is back, searching works again: the extension
+# was not paused. A data folder of its own keeps the rows in a known order.
+export PANE_DATA_DIR=$out/search-data
+rm -rf "$PANE_DATA_DIR"
+cargo build --locked --quiet -p pane-core --example fixture_service
+service_log=$out/fixture-service.log
+service_pid=
+service_port=0
+# Starts the fixture service, the `$1`th time: first on a free port, which
+# it prints, then on that same port again.
+start_service() {
+  target/debug/examples/fixture_service --port "$service_port" >>"$service_log" 2>&1 &
+  service_pid=$!
+  for _ in $(seq 50); do
+    if [ "$(grep -c 'listening on' "$service_log" 2>/dev/null)" -ge "$1" ]; then
+      service_port=$(sed -n 's#.*listening on http://127\.0\.0\.1:\([0-9]*\).*#\1#p' "$service_log" | tail -n 1)
+      return
+    fi
+    kill -0 "$service_pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  echo "the fixture service did not start (see $service_log)"; exit 1
+}
+stop_service() { kill "$service_pid"; wait "$service_pid" 2>/dev/null || true; service_pid=; }
+trap '[ -z "$service_pid" ] || kill "$service_pid" 2>/dev/null || true; [ -n "$pid" ] && kill "$pid" 2>/dev/null || true' EXIT
+rm -f "$service_log"
+start_service 1
+start_pane --install target/guests/packages/sample-search
+key 36; sleep 2   # Install; Package search is selected
+capture 160-search-installed.png
+check 160-search-installed.png 9fd8a8   # "Installed Search sample"
+type_text aurora; sleep 2
+capture 161-root-typed.png   # root search: "No results for “aurora”"
+if grep -q '^GET' "$service_log"; then echo "root search reached the service"; exit 1; fi
+key 53; sleep 1   # clears the query
+type_text 'package search'; sleep 1
+key 36; sleep 3   # open Package search
+capture 162-command-opened.png   # its own list, its search field empty
+check 162-command-opened.png 364355 3000   # its first row, selected
+key 125; key 36; sleep 2   # Service address: its form
+type_text "http://127.0.0.1:$service_port"
+key 36; sleep 2   # Save
+capture 163-service-set.png   # "Searching http://127.0.0.1:<port> from now on"
+check 163-service-set.png 9fd8a8
+key 53; sleep 1   # back to the command, its search field empty
+type_text aurora; sleep 3
+capture 164-search-results.png   # aurora-charts, selected, and aurora-cli
+check 164-search-results.png 364355 3000
+grep -q '^GET /search?q=aurora$' "$service_log" || { echo "the command's search did not reach the service"; exit 1; }
+key 125; key 36; sleep 3   # aurora-cli's details
+capture 165-details.png
+check 165-details.png 9fd8a8   # "aurora-cli 0.9.3 (Apache-2.0): Command-line parsing with subcommands"
+command_key a; type_text slow; sleep 2   # held by the service
+command_key a; type_text ember; sleep 3
+capture 166-newer-search.png   # ember-tz, not what "slow" would list
+check 166-newer-search.png 364355 3000
+grep -q '^ABANDONED /search?q=slow$' "$service_log" || { echo "the replaced search was not stopped"; exit 1; }
+command_key a; type_text down; sleep 3
+capture 167-service-error.png
+check 167-service-error.png f08c8c   # "... The service answered 503: the registry is down for maintenance"
+stop_service
+command_key a; type_text basalt; sleep 3
+capture 168-offline.png
+check 168-offline.png f08c8c   # "... Could not reach the service at http://127.0.0.1:<port>: connection refused"
+start_service 2
+command_key a; type_text cobalt; sleep 3
+capture 169-back-online.png   # cobalt-http, selected: not paused
+check 169-back-online.png 364355 3000
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{161-root-typed,162-command-opened,163-service-set,164-search-results,165-details,166-newer-search,167-service-error,168-offline,169-back-online}.png
+stop_pane
+stop_service
 echo "screenshots in $out"
