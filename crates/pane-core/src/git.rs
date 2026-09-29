@@ -922,8 +922,12 @@ impl<'a> Remote<'a> {
             let commit = commit.to_ascii_lowercase();
             // A host sharing storage between forks serves a fork's commit
             // too: see whether this repository's own references name it.
-            let found = self.list_refs(&["HEAD", "refs/heads/", "refs/tags/"])?;
-            let advertised = found.iter().any(|(_, id, _)| *id == commit);
+            // A listing too long to read (as for a repository with very
+            // many tags) is taken as naming none: cautioned about, not
+            // refused, since the commit itself is still checked.
+            let advertised = self
+                .list_refs(&["HEAD", "refs/heads/", "refs/tags/"])?
+                .is_some_and(|found| found.iter().any(|(_, id, _)| *id == commit));
             return Ok((
                 GitRevision {
                     reference: GitRef::Commit,
@@ -951,7 +955,9 @@ impl<'a> Remote<'a> {
             None => vec!["HEAD"],
             Some(_) => heads.iter().chain(&tags).map(String::as_str).collect(),
         };
-        let found = self.list_refs(&prefixes)?;
+        let found = self
+            .list_refs(&prefixes)?
+            .ok_or_else(|| format!("Could not list the references of {name}: {TOO_LARGE}"))?;
         let find = |wanted: &Option<String>| {
             wanted.as_ref().and_then(|wanted| {
                 found
@@ -1006,24 +1012,24 @@ impl<'a> Remote<'a> {
 
     /// The references whose names start with one of `prefixes` (`ls-refs`,
     /// peeled): each one's name, the commit it points to and, for a
-    /// symbolic one such as `HEAD`, the reference it points to.
-    fn list_refs(
-        &self,
-        prefixes: &[&str],
-    ) -> Result<Vec<(String, String, Option<String>)>, String> {
+    /// symbolic one such as `HEAD`, the reference it points to; `None` when
+    /// the listing is longer than the [`MAX_REFS`] Pane reads.
+    fn list_refs(&self, prefixes: &[&str]) -> Result<Option<Vec<Listed>>, String> {
         let name = self.repository.name();
         let mut arguments = vec!["symrefs".to_owned(), "peel".to_owned()];
         for prefix in prefixes {
             arguments.push(format!("ref-prefix {prefix}"));
         }
-        let answer = self
-            .command("ls-refs", &arguments, MAX_REFS)
-            .map_err(|why| format!("Could not list the references of {name}: {why}"))?;
+        let answer = match self.command("ls-refs", &arguments, MAX_REFS) {
+            Ok(answer) => answer,
+            Err(why) if why == TOO_LARGE => return Ok(None),
+            Err(why) => return Err(format!("Could not list the references of {name}: {why}")),
+        };
         let damaged =
             |why: &str| format!("The Git repository {name} listed its references wrongly: {why}");
         let mut reader = PktReader::new(&answer);
         // (name, commit, what HEAD points to)
-        let mut found: Vec<(String, String, Option<String>)> = Vec::new();
+        let mut found: Vec<Listed> = Vec::new();
         loop {
             let line = match reader.line().map_err(|why| damaged(&why))? {
                 Ok(line) => line,
@@ -1052,7 +1058,7 @@ impl<'a> Remote<'a> {
             }
             found.push((ref_name.to_owned(), commit, target));
         }
-        Ok(found)
+        Ok(Some(found))
     }
 
     /// Fetches the one commit `commit`, without its history, as a pack.
@@ -1138,6 +1144,11 @@ fn pack_in(answer: &[u8]) -> Result<Vec<u8>, NoPack> {
     }
     Ok(pack)
 }
+
+/// A reference as `ls-refs` lists it: its name, the commit it points to
+/// (peeled) and, for a symbolic one such as `HEAD`, the reference it points
+/// to.
+type Listed = (String, String, Option<String>);
 
 /// The error text of an answer larger than asked for.
 const TOO_LARGE: &str = "its answer is too large";

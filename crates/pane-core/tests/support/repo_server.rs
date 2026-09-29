@@ -217,6 +217,10 @@ pub enum Mode {
     Redirect,
     /// `401`, as for a private repository.
     SignIn,
+    /// A reference listing (`ls-refs`) longer than the 16 MiB Pane reads,
+    /// as a repository with very many tags might answer; the rest as
+    /// `Normal`.
+    LongListing,
 }
 
 struct Served {
@@ -386,6 +390,26 @@ fn answer(stream: TcpStream, served: &Mutex<Served>, home: &Path) {
     let Some(dir) = repositories.get(name) else {
         return respond("404 Not Found", &[], b"");
     };
+    if mode == Mode::LongListing
+        && service == "upload-pack"
+        && body.windows(15).any(|part| part == b"command=ls-refs")
+    {
+        let line = format!("{} refs/tags/padding\n", "0".repeat(40));
+        let line = format!("{:04x}{line}", line.len() + 4).into_bytes();
+        let mut out = Vec::with_capacity((16 << 20) + 2 * line.len());
+        while out.len() <= 16 << 20 {
+            out.extend(&line);
+        }
+        out.extend(b"0000");
+        return respond(
+            "200 OK",
+            &[(
+                "Content-Type",
+                "application/x-git-upload-pack-result".into(),
+            )],
+            &out,
+        );
+    }
     let version_2 = version_2 && mode != Mode::VersionZero;
     let mut command = git_in(dir, home);
     command.arg("upload-pack").arg("--stateless-rpc");

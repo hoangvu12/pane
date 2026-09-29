@@ -517,6 +517,34 @@ fn a_commit_no_branch_or_tag_points_to_is_previewed_with_a_caution() {
 }
 
 #[test]
+fn a_commit_is_cautioned_about_when_the_reference_listing_is_too_long_to_read() {
+    let dirs = Dirs::new();
+    let greeter = dirs.greeter();
+    let repository = &dirs.identity("greeter")[4..];
+    dirs.server.set_mode(Mode::LongListing);
+    let launcher = dirs.launcher();
+
+    // The listing only tells whether a branch or tag points to the commit:
+    // one too long to read is taken as saying none does.
+    block_on(launcher.preview_git(&format!("{}@{}", greeter.url, greeter.release)));
+    let details = details(&launcher);
+    assert!(
+        has(&details, &unadvertised(repository, &greeter.release)),
+        "{details:#?} {:?}",
+        launcher.view().status
+    );
+    assert_eq!(titles(&launcher), ["Install"]);
+
+    // A tag cannot be resolved without it.
+    let error = refusal(&launcher, &format!("{}@v0.1.0", greeter.url));
+    assert!(
+        error.starts_with(&format!("Could not list the references of {repository}: ")),
+        "{error}"
+    );
+    dirs.wait_for_no_downloads();
+}
+
+#[test]
 fn equivalent_addresses_are_one_package_and_a_local_copy_is_another() {
     let dirs = Dirs::new();
     let greeter = dirs.greeter();
