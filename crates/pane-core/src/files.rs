@@ -450,8 +450,11 @@ struct PackageFiles {
     kept: Option<Kept>,
     /// The visit and grant version of the listing being made, if any.
     running: Option<(u64, u64)>,
-    /// Increments when a listing ends, kept or not.
-    done: watch::Sender<u64>,
+    /// The visit and grant version of the latest listing that ended, kept
+    /// or not. Both only grow, so a wait for one listing ends when it, or a
+    /// newer one that replaced it, has ended, and never when an older one
+    /// stopped late.
+    done: watch::Sender<(u64, u64)>,
     /// The package's worker, started with its first listing.
     worker: Option<mpsc::Sender<Job>>,
 }
@@ -461,7 +464,7 @@ impl Default for PackageFiles {
         PackageFiles {
             kept: None,
             running: None,
-            done: watch::Sender::new(0),
+            done: watch::Sender::new((0, 0)),
             worker: None,
         }
     }
@@ -639,7 +642,9 @@ impl FileAccess {
     }
 
     /// Resolves once the listing being made for the package with identity
-    /// key `owner` in this visit ends; `None` when none is being made.
+    /// key `owner` in this visit ends, or a newer one that replaced it;
+    /// `None` when none is being made. An older listing that ends meanwhile
+    /// (one stopped when root search was left) does not resolve it.
     pub(crate) fn listed(&self, owner: &str) -> Option<impl Future<Output = ()> + Send + 'static> {
         let state = self.state();
         let current = (state.visit, state.version);
@@ -649,7 +654,7 @@ impl FileAccess {
         }
         let mut done = package.done.subscribe();
         Some(async move {
-            let _ = done.changed().await;
+            let _ = done.wait_for(|ended| *ended >= current).await;
         })
     }
 
@@ -786,7 +791,14 @@ impl FileAccess {
                 result,
             });
         }
-        package.done.send_modify(|done| *done += 1);
+        let ended = (job.visit, job.version);
+        package.done.send_if_modified(|done| {
+            let newer = ended > *done;
+            if newer {
+                *done = ended;
+            }
+            newer
+        });
     }
 }
 
@@ -847,5 +859,107 @@ impl wit::Host for GuestState {
             files: count(MAX_FILES),
             entries: count(MAX_ENTRIES),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Condvar;
+    use std::time::Duration;
+
+    use futures::FutureExt;
+    use futures::executor::block_on;
+
+    use super::*;
+
+    /// A folder lister whose listings each return only when the test lets
+    /// one return, whether cancelled or not: a listing that stops late.
+    #[derive(Default)]
+    struct Gated {
+        state: Mutex<Gate>,
+        changed: Condvar,
+    }
+
+    #[derive(Default)]
+    struct Gate {
+        started: usize,
+        may_return: usize,
+    }
+
+    impl Gated {
+        fn let_one_return(&self) {
+            lock(&self.state).may_return += 1;
+            self.changed.notify_all();
+        }
+
+        fn wait_until_started(&self, count: usize) {
+            let mut state = lock(&self.state);
+            while state.started < count {
+                let (next, timeout) = self
+                    .changed
+                    .wait_timeout(state, Duration::from_secs(10))
+                    .unwrap();
+                assert!(!timeout.timed_out(), "listing {count} never started");
+                state = next;
+            }
+        }
+    }
+
+    impl Folders for Gated {
+        fn list(
+            &self,
+            folder: &Path,
+            _limits: &Limits,
+            _cancelled: &dyn Fn() -> bool,
+        ) -> Result<FolderListing, String> {
+            let mut state = lock(&self.state);
+            state.started += 1;
+            let number = state.started;
+            self.changed.notify_all();
+            while state.may_return < number {
+                state = self.changed.wait(state).unwrap();
+            }
+            Ok(FolderListing {
+                files: vec![Listed {
+                    path: folder.join("report.txt"),
+                    relative: "report.txt".into(),
+                }],
+                truncated: false,
+            })
+        }
+    }
+
+    #[test]
+    fn a_listing_of_a_left_visit_ending_late_does_not_end_the_next_visit_s_wait() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("Granted");
+        fs::create_dir_all(&folder).unwrap();
+        let gated = Arc::new(Gated::default());
+        let access = FileAccess::default();
+        access.set_folders(gated.clone());
+        access.grant("owner", &folder).unwrap();
+
+        // The first visit's listing starts, then root search is left and
+        // visited again before it returns.
+        assert_eq!(access.folder_state("owner", None), Ok(FolderState::Listing));
+        gated.wait_until_started(1);
+        access.new_visit();
+        assert_eq!(access.folder_state("owner", None), Ok(FolderState::Listing));
+        let mut listed = Box::pin(access.listed("owner").expect("a listing is being made"));
+
+        // The old listing returns; the worker has moved on to the new one.
+        gated.let_one_return();
+        gated.wait_until_started(2);
+        assert!(
+            (&mut listed).now_or_never().is_none(),
+            "the wait ended with the old listing"
+        );
+
+        gated.let_one_return();
+        block_on(listed);
+        assert!(matches!(
+            access.folder_state("owner", None),
+            Ok(FolderState::Ready { files, .. }) if files.len() == 1
+        ));
     }
 }
