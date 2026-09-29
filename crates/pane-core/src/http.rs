@@ -45,7 +45,7 @@ use wasmtime_wasi_http::io::TokioIo;
 use wasmtime_wasi_http::{Error, RequestOptions, WasiBody, WasiHttpHooks};
 
 use crate::extension_data::PackageData;
-use crate::runtime::lock;
+use crate::runtime::{Watch, lock};
 
 /// The ceilings Pane puts on each web request of a guest, whatever timeouts
 /// the guest asks for: a guest may ask for shorter ones, never longer.
@@ -145,16 +145,36 @@ type Receiving = Box<dyn Future<Output = Result<(), Error>> + Send>;
 type Sent = Box<dyn Future<Output = Result<(http::Response<WasiBody>, Receiving), Error>> + Send>;
 
 /// Sends one guest instance's requests. It knows the instance's extension
-/// data to refuse code whose generation has ended, and to tell whose
-/// requests they are.
+/// data to refuse stopped code and to tell whose requests they are, and the
+/// runtime thread running it, whose fence stops a built-in command's code
+/// and where sending is marked as host work.
 pub(crate) struct Sender {
     data: Option<PackageData>,
     network: Arc<Network>,
+    watch: Arc<Watch>,
 }
 
 impl Sender {
-    pub(crate) fn new(data: Option<PackageData>, network: Arc<Network>) -> Sender {
-        Sender { data, network }
+    pub(crate) fn new(
+        data: Option<PackageData>,
+        network: Arc<Network>,
+        watch: Arc<Watch>,
+    ) -> Sender {
+        Sender {
+            data,
+            network,
+            watch,
+        }
+    }
+
+    /// Whether the code sending is stopped: its generation ended, or Pane
+    /// gave up on its runtime thread.
+    fn stopped(&self) -> bool {
+        match &self.data {
+            // Fenced with the thread's fence.
+            Some(data) => data.stopped().is_some(),
+            None => self.watch.fence().closed(),
+        }
     }
 }
 
@@ -167,8 +187,8 @@ impl WasiHttpHooks for Sender {
         // nothing here needs it.
         _received: Box<dyn Future<Output = Result<(), Error>> + Send>,
     ) -> Sent {
-        if self.data.as_ref().and_then(PackageData::stopped).is_some() {
-            // Code whose generation ended starts no more work.
+        if self.stopped() {
+            // Stopped code starts no more work.
             return Box::new(async { Err(Error::HttpRequestDenied) });
         }
         let owner = self
@@ -176,12 +196,16 @@ impl WasiHttpHooks for Sender {
             .as_ref()
             .map_or_else(String::new, |data| data.owner().to_owned());
         let network = self.network.clone();
-        Box::new(async move {
-            let limits = network.limits();
-            let target = Target::of(&request)?;
-            let permit = network.connect(&owner, target.address())?;
-            send(request, target, Ceilings::new(limits, options), permit).await
-        })
+        // Sending is host work: its polls are not the guest's computing.
+        Box::new(crate::runtime::deadlines::hosted(
+            self.watch.clone(),
+            async move {
+                let limits = network.limits();
+                let target = Target::of(&request)?;
+                let permit = network.connect(&owner, target.address())?;
+                send(request, target, Ceilings::new(limits, options), permit).await
+            },
+        ))
     }
 }
 
@@ -519,11 +543,36 @@ mod tests {
         let url = format!("http://{}/", listener.local_addr().unwrap());
         data.set_enabled(&identity, false);
         let network = Arc::new(Network::default());
-        let mut sender = Sender::new(Some(owned), network.clone());
+        let mut sender = Sender::new(Some(owned), network.clone(), Arc::default());
         let sent = sender.send_request(request(&url), None, Box::new(async { Ok(()) }));
         let refused = block_on(Box::into_pin(sent));
         assert!(matches!(refused, Err(Error::HttpRequestDenied)));
         // Nothing was tried.
+        assert_eq!(network.contacted(&identity.key()), Vec::<String>::new());
+        listener.set_nonblocking(true).unwrap();
+        assert!(listener.accept().is_err());
+    }
+
+    /// Code of a runtime thread Pane gave up on (a runtime hang) is fenced:
+    /// installed or built in, it sends nothing.
+    #[test]
+    fn code_of_a_runtime_thread_given_up_on_sends_nothing() {
+        let folder = tempfile::tempdir().unwrap();
+        let data = ExtensionData::open(folder.path());
+        let identity = PackageIdentity::local(folder.path()).unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let network = Arc::new(Network::default());
+        let watch = Arc::new(Watch::default());
+        let owned = data.owned_by(&identity).fenced(watch.fence().clone());
+        let mut installed = Sender::new(Some(owned), network.clone(), watch.clone());
+        let mut built_in = Sender::new(None, network.clone(), watch.clone());
+        watch.fence().close();
+        for sender in [&mut installed, &mut built_in] {
+            let sent = sender.send_request(request(&url), None, Box::new(async { Ok(()) }));
+            let refused = block_on(Box::into_pin(sent));
+            assert!(matches!(refused, Err(Error::HttpRequestDenied)));
+        }
         assert_eq!(network.contacted(&identity.key()), Vec::<String>::new());
         listener.set_nonblocking(true).unwrap();
         assert!(listener.accept().is_err());

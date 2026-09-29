@@ -14,7 +14,7 @@
 //! run no extension) keep working meanwhile.
 
 use super::{Entry, Launcher, LauncherView, Row, Screen, State, Status};
-use crate::runtime::{CRASH_WINDOW, RuntimeFailure, RuntimeStatus, UNRESPONSIVE_LIMIT};
+use crate::runtime::{CRASH_WINDOW, RuntimeStatus};
 
 /// The id of the extension list's row restarting the runtime.
 const RESTART_ROW: &str = "pane.runtime.restart";
@@ -28,11 +28,38 @@ impl Launcher {
             return;
         };
         let launcher = self.downgrade();
-        runtime.set_crash_report(std::sync::Arc::new(move |thread, status| {
-            if let Some(launcher) = launcher.upgrade() {
-                launcher.note_runtime_crash(thread, status);
+        runtime.set_crash_report(std::sync::Arc::new({
+            let launcher = self.downgrade();
+            move |thread, status| {
+                if let Some(launcher) = launcher.upgrade() {
+                    launcher.note_runtime_crash(thread, status);
+                }
             }
         }));
+        runtime.set_slow_report(std::sync::Arc::new(move |_thread, slow| {
+            if let Some(launcher) = launcher.upgrade() {
+                launcher.note_runtime_slow(slow);
+            }
+        }));
+    }
+
+    /// The runtime thread is not responding yet (`slow`), or carries on
+    /// after that: says so in the status line, and puts back what it said
+    /// before once the thread carries on. Pane gives up on a thread that
+    /// stays stuck, which [`Launcher::note_runtime_crash`] says.
+    pub(super) fn note_runtime_slow(&self, slow: bool) {
+        let mut state = self.lock();
+        let note = Status::Progress(slow_note());
+        if slow {
+            let before = std::mem::replace(&mut state.view.status, note);
+            state.runtime_slow.get_or_insert(before);
+        } else if let Some(before) = state.runtime_slow.take()
+            && state.view.status == note
+        {
+            state.view.status = before;
+        }
+        drop(state);
+        self.changed();
     }
 
     /// Runtime thread number `thread` crashed and the runtime was
@@ -42,6 +69,7 @@ impl Launcher {
     /// Called on the crashed thread, once the helpers it ran were ended.
     pub(super) fn note_runtime_crash(&self, thread: u64, status: &RuntimeStatus) {
         let mut state = self.lock();
+        state.runtime_slow = None;
         let toast = Status::Error(toast(status));
         let held = state
             .custom_view
@@ -104,10 +132,7 @@ impl Launcher {
             return Vec::new();
         };
         let mut rows = Vec::new();
-        let how = match status.failure() {
-            Some(RuntimeFailure::Unresponsive) => "not responding",
-            _ => "crashing",
-        };
+        let how = status.failure().map_or("crashing", |failure| failure.how());
         let state = match status {
             RuntimeStatus::Stopped { .. } => {
                 rows.push((restart_row(), Entry::RestartRuntime));
@@ -148,17 +173,13 @@ impl Launcher {
             ),
             RuntimeStatus::Running => unreachable!("checked above"),
         };
-        let happened = match status.failure() {
-            Some(RuntimeFailure::Unresponsive) => format!(
-                "Pane's extension runtime, which runs every extension, stopped responding for {} \
-                 seconds, so Pane gave up on it. It was stuck outside the extensions' code: an \
-                 extension computing for too long is stopped by itself, and named.",
-                UNRESPONSIVE_LIMIT.as_secs()
-            ),
-            _ => {
-                "Pane's extension runtime, which runs every extension, stopped unexpectedly.".into()
-            }
-        };
+        let limits = self
+            .runtime
+            .as_ref()
+            .map(crate::runtime::Runtime::limits)
+            .unwrap_or_default();
+        let failure = status.failure().expect("checked above");
+        let happened = failure.happened(&limits);
         let mut details = vec![
             happened,
             what,
@@ -171,12 +192,8 @@ impl Launcher {
             "The native helpers it ran were ended. Extensions' settings and saved data are kept."
                 .into(),
         ];
-        if status.failure() == Some(RuntimeFailure::Unresponsive) {
-            details.push(
-                "A stuck thread cannot be ended: it keeps the memory it holds until it returns, \
-                 and then runs nothing more."
-                    .into(),
-            );
+        if let Some(left) = failure.left_behind() {
+            details.push(left.into());
         }
         details.push(format!(
             "Diagnostics (also written to standard error): {why}"
@@ -233,13 +250,19 @@ fn restart_row() -> Row {
     }
 }
 
+/// The status line while the runtime thread is not responding yet.
+fn slow_note() -> String {
+    "Pane's extension runtime is not responding yet. Pane starts it again if it stays stuck; \
+     saved data is kept."
+        .into()
+}
+
 /// The status line when the runtime thread crashed or stopped responding,
 /// naming no extension.
 fn toast(status: &RuntimeStatus) -> String {
-    let stopped = match status.failure() {
-        Some(RuntimeFailure::Unresponsive) => "stopped responding",
-        _ => "stopped unexpectedly",
-    };
+    let stopped = status
+        .failure()
+        .map_or("stopped unexpectedly", |failure| failure.stopped());
     match status {
         RuntimeStatus::Stopped { .. } => format!(
             "Pane's extension runtime {stopped} again within {} minutes and was not restarted; \
@@ -262,7 +285,7 @@ mod tests {
     use super::*;
     use crate::launcher::{Changing, CommandRegistration};
     use crate::packages::{PackageIdentity, Store};
-    use crate::runtime::Runtime;
+    use crate::runtime::{Runtime, RuntimeFailure};
 
     /// A launcher whose one command is the Rust sample, which draws a
     /// custom view, with it open on its color view.

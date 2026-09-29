@@ -240,16 +240,20 @@ disable); **not run on Windows yet**.
 
 ## Extensions that stop responding (#18)
 
-The unresponsive phase (screenshots 240 to 247, data folder
+The unresponsive phase (screenshots 240 to 248, data folder
 `unresponsive-data`, [extensions that stop responding](../pausing.md#when-an-extension-stops-responding))
-installs the settings sample and runs its **Stop responding**, which
-computes without waiting: while it computes, Escape and Manage extensions
-must answer (the details color); run again, the call must be stopped after
-5 seconds with the error color, and the third time pause the package (the
-error and reason colors), with the saved `busy` note still "started";
-the pause details and Retry must work. Then the runtime thread is made to
-hang through the fault file (`hang`): opening Greeting must show the error
-color after Pane gave up on the thread, Manage extensions' first row must
+shortens the runtime's limits through the fault file
+(`limits:2,4,15`), installs the settings sample and runs its **Stop
+responding**, which computes without waiting: while it computes, Escape
+and Manage extensions must answer (the details color); run again, the call
+must be stopped after 2 seconds of its own computing (thread CPU time from
+`GetThreadTimes` on Windows, `CLOCK_THREAD_CPUTIME_ID` on macOS) with the
+error color, and the third time pause the package (the error and reason
+colors), with the saved `busy` note still "started"; the pause details and
+Retry must work. Then the runtime thread is made to hang through the fault
+file (`hang`): opening Greeting must first show "not responding yet" (the
+progress color, frame 245), then the error color after Pane gave up on the
+thread, Manage extensions' first row must
 open the runtime's details, and after `release` a fresh thread must save
 the formal greeting; no package may be recorded as paused. Epoch
 interruption and the watchdog are Wasmtime's and Pane's own, with nothing

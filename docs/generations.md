@@ -113,15 +113,17 @@ resume in the store. So:
 - ~~A guest computing without yielding cannot be preempted.~~ Since
   [#18](https://github.com/hoangvu12/pane/issues/18) every guest yields to
   the runtime thread at each epoch tick (10 ms, `Config::epoch_interruption`
-  and `Store::epoch_deadline_async_yield_and_update`), so a generation that
-  ends stops a computing guest within a tick, and a call that computes for
-  5 seconds without finishing is stopped as unresponsive
+  and an epoch-deadline callback), so a generation that ends stops a
+  computing guest within a tick (one starting too), and a call whose guest
+  computes for 5 seconds in all (its own computing only) without finishing
+  is stopped as unresponsive
   ([pausing](pausing.md#when-an-extension-stops-responding)). What such
   code did before the stop is kept; nothing after it runs.
 - **No time limit on waiting, and no user cancellation** of an action: a
   call waiting on a clock or another extension's operation ends when the
   guest answers, or when a generation in its chain ends; only computing
-  (5 seconds) and a native helper's run (30 seconds) are limited.
+  (5 seconds of the guest's own) and a native helper's run (30 seconds)
+  are limited.
 - **External side effects are not undone**: what the guest did before the
   stop (a file written through WASI, a request sent) stays done; only what
   it would have done afterwards is prevented. Data it saved before the stop

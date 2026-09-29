@@ -853,3 +853,55 @@ fn a_development_build_reloaded_while_the_helper_runs_ends_its_process() {
     );
     assert_eq!(installed.run("Echo through the helper"), echoed());
 }
+
+/// A helper runs no longer than the runtime thread its guest ran on: when
+/// Pane gives up on a stuck thread (a runtime hang, a fault injected in
+/// debug builds), the helpers it started end, the call answers that the
+/// runtime stopped responding, and the command runs its helper again on
+/// the fresh thread.
+#[cfg(debug_assertions)]
+#[test]
+fn a_helper_is_ended_when_its_runtime_thread_is_given_up_on() {
+    use pane_core::{Fault, Limits, RuntimeFailure};
+
+    let long = Duration::from_secs(120);
+    let installed = Installed::new(&RUST);
+    installed.runtime.set_limits(Limits {
+        warn: Duration::from_secs(1),
+        unresponsive: Duration::from_secs(2),
+        ..Limits::default()
+    });
+    let pending = installed.start("Echo after waiting");
+
+    installed.runtime.inject(Fault::Hang);
+
+    pending.thread.join().unwrap();
+    let started = Instant::now();
+    while !installed.runtime.helper_processes().is_empty() {
+        assert!(started.elapsed() < long, "the helper still runs");
+        thread::sleep(Duration::from_millis(5));
+    }
+    let last = beats(&pending.alive);
+    thread::sleep(Duration::from_millis(200));
+    assert_eq!(beats(&pending.alive), last, "the helper still beats");
+    assert_eq!(
+        installed.runtime.status().failure(),
+        Some(RuntimeFailure::Unresponsive)
+    );
+    let Status::Error(said) = installed.launcher.view().status else {
+        panic!(
+            "expected an error, got {:?}",
+            installed.launcher.view().status
+        );
+    };
+    assert!(said.contains("stopped responding"), "{said}");
+    assert_eq!(installed.waiting().as_deref(), Some("started"));
+
+    installed.runtime.inject(Fault::Release);
+    while installed.runtime.abandoned_threads() > 0 {
+        assert!(started.elapsed() < long, "the stuck thread did not end");
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(installed.run("Echo through the helper"), echoed());
+    assert_eq!(installed.waiting().as_deref(), Some("started"));
+}

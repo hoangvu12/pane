@@ -253,8 +253,9 @@ impl Launcher {
             .expect("begin_uninstall checked there is an installation");
         // The runtime has dropped their instances before their files go;
         // their pending calls were stopped when their generations ended.
+        // Bounded: a runtime that does not answer holds up no uninstall.
         if let Ok(runtime) = self.runtime() {
-            runtime.running().await;
+            super::runtime_barrier(runtime).await;
         }
         let keeps = |kind, identity| installation.data.count(kind, identity) != Ok(0);
         let removals: Vec<(PackageIdentity, Option<String>)> = removed

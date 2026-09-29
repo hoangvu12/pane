@@ -464,15 +464,23 @@ Write an action whose repetition matters so the user can tell whether it
 ran, as the Rust settings sample's **Count** does by answering the count it
 saved.
 
-A command that computes for 5 seconds without waiting for anything holds
-every other extension's calls behind it, so Pane stops it as **not
-responding**: its instance goes, the user sees "The extension stopped
-responding", and it counts towards pausing the package as a crash does
+Every call Pane makes into a command (opening it, an action, a form, a
+search, a view event) may **compute for 5 seconds in all** (the compute
+limit). Only your own code's computing counts: time spent waiting (a
+clock, a save, a helper, a web request, another extension's operation) and
+time inside Pane's own host calls do not, nor does starting your
+component. The count is per call and cumulative: awaiting between parts of
+a computation does not reset it; only the call finishing does. A call past
+the limit holds every other extension's calls behind it, so Pane stops it
+as **not responding**: its instance goes, the user sees "The extension
+stopped responding", and it counts towards pausing the package as a crash
+does
 ([extensions that stop responding](../docs/pausing.md#when-an-extension-stops-responding)).
-Waiting (a clock, a helper, another extension's operation) is not
-computing and is never stopped for it; a native helper runs for at most 30
-seconds. Split long work into several calls, or await between its parts.
-The settings samples' **Stop responding** item shows it in each language.
+So keep each call's own computing well under 5 seconds: split long work
+into several calls (an action that does one part and saves where it got
+to), or run it in a [native helper](#native-helpers), which runs for at
+most 30 seconds. The settings samples' **Stop responding** item shows the
+limit in each language.
 
 ## Actions for some operating systems only
 
@@ -1357,11 +1365,11 @@ Known limits of local packages so far:
   meanwhile prevents. So save what must survive before awaiting, and do
   not count on code after an `await` running. A command computing without
   awaiting is interrupted too, at Pane's next epoch tick (10 ms), and one
-  that computes for 5 seconds without finishing is stopped as
+  that computes for 5 seconds in all without finishing is stopped as
   unresponsive, which counts towards pausing its package like a crash
   (#18, [pausing](../docs/pausing.md#when-an-extension-stops-responding)):
-  split long work into calls, or await between parts of it. A native
-  helper runs for at most 30 seconds.
+  waiting does not count, but awaiting does not reset the count either, so
+  split long work into calls. A native helper runs for at most 30 seconds.
 - Background services, timers and hotkeys are not part of the extension
   API yet and come with their own tickets. Disabling does not yet consider
   packages that depend on the disabled one (#43).

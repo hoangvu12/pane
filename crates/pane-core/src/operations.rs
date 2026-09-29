@@ -400,13 +400,12 @@ impl<T> operations::HostWithStore<T> for Calls {
             if !state.serving {
                 return Err(outside_a_call());
             }
-            // Code whose generation ended starts no more work.
-            if state.stopped().is_some() {
-                return Err(OperationError::refused(
-                    "this code of the extension was stopped (disabled, reloaded or updated)",
-                ));
+            // Stopped code starts no more work.
+            if let Some(end) = state.stopped() {
+                return Err(OperationError::refused(crate::runtime::stopped_code(end)));
             }
-            state.check_runtime().map_err(OperationError::refused)?;
+            // The operation is served by the runtime's loop while this
+            // waits, not inside this host call.
             state
                 .calls
                 .send(OperationCall {

@@ -22,26 +22,43 @@
 //! in a destructor while the thread unwinds from a first panic aborts the
 //! whole process, as does any other abort: neither is recovered.
 //!
-//! A thread that **stops responding** (#18) is handled the same way: a
-//! watchdog thread sees it inside one poll of its work for longer than
-//! [`UNRESPONSIVE_LIMIT`] (stuck in Pane's host code or in Wasmtime: a
-//! guest yields every tick, see `deadlines`), and gives up on it. Every
-//! call it held answers that the runtime stopped, its helpers are ended, it
-//! is restarted or not as after a crash (the two share the restart window),
-//! and the launcher is told without any package named. The stuck thread
-//! cannot be ended: it is abandoned, runs nothing more if it ever returns,
-//! and frees what it holds only then.
+//! A thread that **stops responding** (#18, a runtime hang) is handled the
+//! same way. A watchdog thread follows its heartbeat (see `deadlines`): a
+//! thread inside one poll of its work, outside any host call, whose
+//! heartbeat stays still for [`deadlines::WARN_AFTER`] is said to be not
+//! responding yet ([`SlowReport`]), and after
+//! [`deadlines::UNRESPONSIVE_LIMIT`] Pane gives up on it. A guest computing
+//! beats at every tick (and is stopped by its own limit), a host call is
+//! never given up on, and a thread waiting for work or for a guest's host
+//! work is not stuck, so neither a busy extension nor a slow host call is
+//! mistaken for a hang. Every call it held answers that the runtime
+//! stopped, its helpers are ended, it is restarted or not as after a crash
+//! (the two share the restart window), and the launcher is told without
+//! any package named. The stuck thread cannot be ended: it is abandoned,
+//! its fence closes so nothing it still runs changes anything, and it
+//! frees what it holds only once it returns.
+//!
+//! A fresh thread must not wait on something an abandoned one holds, or it
+//! would fail in turn, using up the restart window for the first failure.
+//! So what runtime threads share is held only briefly and never across
+//! blocking work: the extension data lock while a value is read or staged
+//! (files are written by their own thread), the helpers' lock while a run
+//! is registered (processes start off the runtime thread), and the
+//! runtime's own state here. A thread stuck elsewhere holds none of them.
+//! What remains: the launcher's health report, which the runtime thread
+//! calls with a failure it reports, takes the launcher's lock briefly; a
+//! thread stuck inside it would have stopped the launcher too.
 
 use std::any::Any;
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use tokio::sync::{mpsc, watch};
 
-use super::deadlines::{self, UNRESPONSIVE_LIMIT, Watch, Watched};
+use super::deadlines::{self, Limits, Quiet, Verdict, Watch, Watched};
 #[cfg(any(test, debug_assertions))]
 use super::faults::Fault;
 use super::faults::Faults;
@@ -71,9 +88,64 @@ pub(crate) const CRASH_WINDOW: Duration = Duration::from_secs(5 * 60);
 pub enum RuntimeFailure {
     /// It panicked.
     Crashed,
-    /// It stopped responding: it did not return to its work for
-    /// [`UNRESPONSIVE_LIMIT`], so Pane gave up on it.
+    /// It stopped responding (a runtime hang): it made no progress for
+    /// [`deadlines::UNRESPONSIVE_LIMIT`], so Pane gave up on it.
     Unresponsive,
+}
+
+impl RuntimeFailure {
+    /// "after crashing", "after not responding": how it stopped, for a
+    /// state such as "Restarted after …".
+    pub fn how(self) -> &'static str {
+        match self {
+            RuntimeFailure::Crashed => "crashing",
+            RuntimeFailure::Unresponsive => "not responding",
+        }
+    }
+
+    /// "stopped unexpectedly", "stopped responding": what the runtime did.
+    pub(crate) fn stopped(self) -> &'static str {
+        match self {
+            RuntimeFailure::Crashed => "stopped unexpectedly",
+            RuntimeFailure::Unresponsive => "stopped responding",
+        }
+    }
+
+    /// What happened, for the details of the failure, under `limits`. It
+    /// says only what is known: never which code held a stuck thread.
+    pub(crate) fn happened(self, limits: &Limits) -> String {
+        match self {
+            RuntimeFailure::Crashed => {
+                "Pane's extension runtime, which runs every extension, stopped unexpectedly.".into()
+            }
+            RuntimeFailure::Unresponsive => format!(
+                "Pane's extension runtime, which runs every extension, made no progress for {} \
+                 seconds, so Pane gave up on it. It was not running an extension's code (an \
+                 extension computing for too long is stopped by itself, and named) nor inside \
+                 one of Pane's host calls; which code held it is not known.",
+                limits.unresponsive.as_secs()
+            ),
+        }
+    }
+
+    /// What the failure leaves behind, if anything.
+    pub(crate) fn left_behind(self) -> Option<&'static str> {
+        match self {
+            RuntimeFailure::Crashed => None,
+            RuntimeFailure::Unresponsive => Some(
+                "A stuck thread cannot be ended: it keeps the memory it holds until it returns, \
+                 and then runs nothing more; nothing it still does changes anything.",
+            ),
+        }
+    }
+
+    /// How a call whose answer it lost starts to say so.
+    fn stopped_before_answering(self) -> &'static str {
+        match self {
+            RuntimeFailure::Crashed => "it stopped before answering",
+            RuntimeFailure::Unresponsive => "it stopped responding before answering",
+        }
+    }
 }
 
 /// What the runtime is doing, as far as failures of its thread go.
@@ -114,6 +186,12 @@ impl RuntimeStatus {
 /// [`super::ViewId::thread`]) and what the runtime does now.
 pub(crate) type CrashReport = Arc<dyn Fn(u64, &RuntimeStatus) + Send + Sync>;
 
+/// Told on the watchdog's thread when the runtime thread `.0` has made no
+/// progress for [`deadlines::WARN_AFTER`] (`true`: it is not responding
+/// yet, and Pane gives up on it unless it carries on), and when it carries
+/// on after that (`false`).
+pub(crate) type SlowReport = Arc<dyn Fn(u64, bool) + Send + Sync>;
+
 /// What every [`super::Runtime`] handle shares: the runtime thread now
 /// serving calls, if one is, and what a new one needs.
 pub(super) struct Shared {
@@ -131,13 +209,16 @@ pub(super) struct Shared {
     /// session, which a restarted thread carries on.
     pub(super) network: Arc<crate::http::Network>,
     crashes: Mutex<Option<CrashReport>>,
+    slow: Mutex<Option<SlowReport>>,
+    /// The limits guest calls and the watchdog apply.
+    pub(super) limits: Arc<Mutex<Limits>>,
     /// The number of the last thread Pane is done with (it failed and was
     /// restarted or not, the launcher told), for a call whose answer a
     /// failure lost: threads serve one after another, so every thread up to
     /// it is done.
     handled: watch::Sender<u64>,
-    /// How many threads Pane gave up on are still stuck.
-    abandoned: Arc<AtomicUsize>,
+    /// The threads Pane gave up on, until each returns.
+    abandoned: Mutex<Vec<Arc<Watch>>>,
     /// The threads made to hang, for releasing them.
     #[cfg(any(test, debug_assertions))]
     hung: Mutex<Vec<Arc<Faults>>>,
@@ -205,6 +286,9 @@ struct Thread {
     /// Where faults are injected into it.
     #[cfg(any(test, debug_assertions))]
     faults: Arc<Faults>,
+    /// Where a slow host call is injected into it.
+    #[cfg(any(test, debug_assertions))]
+    watch: Arc<Watch>,
 }
 
 impl Shared {
@@ -224,8 +308,10 @@ impl Shared {
             next_view: Arc::default(),
             network: Arc::default(),
             crashes: Mutex::new(None),
+            slow: Mutex::new(None),
+            limits: Arc::default(),
             handled: watch::Sender::new(0),
-            abandoned: Arc::default(),
+            abandoned: Mutex::default(),
             #[cfg(any(test, debug_assertions))]
             hung: Mutex::default(),
             cache_dir,
@@ -277,7 +363,22 @@ impl Shared {
     /// How many runtime threads Pane gave up on, as they stopped
     /// responding, are still stuck.
     pub(super) fn abandoned(&self) -> usize {
-        self.abandoned.load(Ordering::SeqCst)
+        let mut abandoned = lock(&self.abandoned);
+        abandoned.retain(|watch| watch.abandoned());
+        abandoned.len()
+    }
+
+    pub(super) fn limits(&self) -> Limits {
+        *lock(&self.limits)
+    }
+
+    #[cfg(any(test, debug_assertions))]
+    pub(super) fn set_limits(&self, limits: Limits) {
+        *lock(&self.limits) = limits;
+    }
+
+    pub(super) fn set_slow_report(&self, report: SlowReport) {
+        *lock(&self.slow) = Some(report);
     }
 
     pub(super) fn status(&self) -> RuntimeStatus {
@@ -300,6 +401,10 @@ impl Shared {
         let Some(thread) = lock(&self.current).thread.clone() else {
             return;
         };
+        if let Fault::SlowHostCall(slow) = fault {
+            thread.watch.slow_next_host_call(slow);
+            return;
+        }
         if fault == Fault::Hang {
             lock(&self.hung).push(thread.faults.clone());
         }
@@ -340,9 +445,10 @@ impl Shared {
         let (requests, receiver) = mpsc::unbounded_channel();
         let faults = Arc::new(Faults::default());
         let watch = Arc::new(Watch::default());
+        // Its epoch ticks, which end with it (see `deadlines::tick`).
+        deadlines::tick(&code.engine, watch.clone());
         let host = Host::new(code, self, number, Arc::clone(&faults), watch.clone());
         let shared = Arc::downgrade(self);
-        let abandoned = self.abandoned.clone();
         {
             let (watch, shared) = (watch.clone(), shared.clone());
             std::thread::Builder::new()
@@ -357,10 +463,11 @@ impl Shared {
                         })
                     }));
                     drop(executor);
+                    // What it held is freed now, even if Pane gave up on it.
+                    watch.finish();
                     if !watch.end() {
                         // Pane gave up on it while it was stuck, and handled
-                        // that then. What it held is freed now.
-                        abandoned.fetch_sub(1, Ordering::SeqCst);
+                        // that then.
                         return;
                     }
                     if let Err(panic) = served {
@@ -374,24 +481,28 @@ impl Shared {
                 })
                 .map_err(unavailable)?;
         }
-        watchdog(shared, watch, number);
+        watchdog(shared, watch.clone(), number);
         Ok(Thread {
             requests,
             number,
             #[cfg(any(test, debug_assertions))]
             faults,
+            #[cfg(any(test, debug_assertions))]
+            watch,
         })
     }
 }
 
-/// Watches runtime thread `number` on a thread of its own, giving up on it
-/// once it has been inside one poll of its work for [`UNRESPONSIVE_LIMIT`]
-/// (see [`Watch`]). It stops once the thread's end was handled, or every
+/// Watches runtime thread `number` on a thread of its own, following its
+/// heartbeat (see [`Watch`] and [`Quiet`]): says when it is not responding
+/// yet, and when it carries on, and gives up on it once it made no progress
+/// for its limit. It stops once the thread's end was handled, or every
 /// runtime handle is gone.
 fn watchdog(shared: Weak<Shared>, watch: Arc<Watch>, number: u64) {
     let _ = std::thread::Builder::new()
         .name("pane-runtime-watchdog".into())
         .spawn(move || {
+            let mut quiet = Quiet::new(Instant::now());
             loop {
                 std::thread::sleep(deadlines::WATCH_EVERY);
                 if watch.ended() {
@@ -400,29 +511,43 @@ fn watchdog(shared: Weak<Shared>, watch: Arc<Watch>, number: u64) {
                 let Some(runtime) = shared.upgrade() else {
                     return;
                 };
-                let stuck = watch
-                    .stuck_for()
-                    .is_some_and(|stuck| stuck >= UNRESPONSIVE_LIMIT);
-                if !stuck {
-                    continue;
+                let limits = runtime.limits();
+                let verdict = quiet.observe(Instant::now(), watch.progress(), &limits);
+                let slow = |slow: bool| {
+                    let report = lock(&runtime.slow).clone();
+                    if let Some(report) = report {
+                        report(number, slow);
+                    }
+                };
+                match verdict {
+                    Verdict::Fine => {}
+                    Verdict::Slow => slow(true),
+                    Verdict::Recovered => slow(false),
+                    Verdict::GiveUp => {
+                        // Only exactly as last seen: a thread that moved on
+                        // meanwhile is watched on.
+                        let seen = quiet.last().expect("seen before giving up");
+                        if !watch.give_up(seen) {
+                            continue;
+                        }
+                        lock(&runtime.abandoned).push(watch.clone());
+                        drop(runtime);
+                        failed(
+                            &shared,
+                            number,
+                            RuntimeFailure::Unresponsive,
+                            format!(
+                                "its thread made no progress for {} seconds; its last known \
+                                 work was {}. It was not running an extension's code, which \
+                                 yields to Pane at every tick, nor inside a host call Pane \
+                                 marks; which code held it is not known",
+                                limits.unresponsive.as_secs(),
+                                watch.what().describe()
+                            ),
+                        );
+                        return;
+                    }
                 }
-                if watch.give_up() {
-                    runtime.abandoned.fetch_add(1, Ordering::SeqCst);
-                    drop(runtime);
-                    failed(
-                        &shared,
-                        number,
-                        RuntimeFailure::Unresponsive,
-                        format!(
-                            "its thread did not respond for {} seconds {}: it was stuck in \
-                             Pane's own code or in Wasmtime, outside the extensions' code, which \
-                             Pane interrupts by itself",
-                            UNRESPONSIVE_LIMIT.as_secs(),
-                            watch.what().describe()
-                        ),
-                    );
-                }
-                return;
             }
         });
 }
@@ -540,10 +665,10 @@ pub(super) async fn lost(
 /// How a call whose answer was lost answers, while the runtime does
 /// `status`.
 fn lost_in(status: &RuntimeStatus) -> CallError {
-    let stopped = match status.failure() {
-        Some(RuntimeFailure::Unresponsive) => "it stopped responding before answering",
-        _ => "it stopped before answering",
-    };
+    let stopped = status.failure().map_or(
+        "it stopped before answering",
+        RuntimeFailure::stopped_before_answering,
+    );
     CallError::RuntimeUnavailable(match status {
         RuntimeStatus::Restarted { .. } => {
             format!("{stopped} and was started again; Pane does not run this again by itself")
