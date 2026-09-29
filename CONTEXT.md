@@ -129,8 +129,16 @@ The `pane.json` file that declares a package's title, version, required extensio
 _Avoid_: package.json (npm's file)
 
 **Source-only package**:
-A package whose manifest names components that have not been built; Pane explains it rather than installing it.
+A package whose manifest names components that have not been built, in a folder or published to npm without them; Pane explains it rather than installing it, and never builds it.
 _Avoid_: Broken install
+
+**npm-distributed package**:
+An extension package published to the npm registry: a tarball holding its package manifest and built components, identified by its npm name without version. Pane downloads it itself, checks its integrity and unpacks only its files and folders; the unpacked package is then installed like a local package, into a managed copy, while it keeps its npm source identity. Pane runs none of its npm install scripts and installs none of its npm dependencies.
+_Avoid_: Node package, npm module (Pane runs no Node code), plugin from npm
+
+**Pinned version**:
+The exact npm version the user, or a dependency's source, named when a package from npm was installed or updated, recorded so that it is not taken for the latest; updating without a version keeps it, and naming another version changes it. A dependency's source that names a version must get that version: an installed copy of another version is a conflict, since installing another package never replaces an installed required dependency.
+_Avoid_: Locked version, version range
 
 **Managed copy**:
 Pane's own copy of an installed package's manifest and components, kept in Pane's data folder, separate from the user-owned source.

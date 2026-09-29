@@ -30,7 +30,7 @@ use wasmtime::component::{Accessor, HasData};
 
 use crate::extension_data::{ExtensionData, PackageData};
 use crate::packages::{
-    InstalledPackage, ManifestOperation, PackageIdentity, installed_as, paused_reason,
+    InstalledPackage, ManifestOperation, PackageIdentity, SourceSpec, installed_as, paused_reason,
 };
 use crate::platform;
 use crate::runtime::{CallError, GuestState, bindings};
@@ -178,15 +178,19 @@ impl Installed {
             dependency = self.dependency(caller, source, operation, version)?;
             dependency.as_str()
         };
-        let is_identity = source
-            .strip_prefix("local:")
-            .is_some_and(|path| Path::new(path).is_absolute());
+        // An identity names a package, not a version of it.
+        let is_identity = match SourceSpec::parse(source) {
+            Ok(SourceSpec::Local(path)) => Path::new(&path).is_absolute(),
+            Ok(SourceSpec::Npm(spec)) => spec.version.is_none(),
+            Err(_) => false,
+        };
         if !is_identity {
             return Err(OperationError::new(
                 NotFound,
                 format!(
                     "`{source}` is not a package identity; use `local:` followed by the \
-                     absolute folder path Pane shows for the package"
+                     absolute folder path Pane shows for the package, or `npm:` followed by \
+                     its npm package name"
                 ),
             ));
         }
@@ -272,8 +276,8 @@ impl Installed {
                 NotFound,
                 format!(
                     "`{id}` is not a package identity; use `local:` followed by the absolute \
-                     folder path Pane shows for the package, or the id of a dependency the \
-                     caller's pane.json declares"
+                     folder path Pane shows for the package, `npm:` followed by its npm package \
+                     name, or the id of a dependency the caller's pane.json declares"
                 ),
             )
         };

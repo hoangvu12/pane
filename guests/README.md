@@ -69,6 +69,20 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   calling each by its dependency id; installing it installs the JavaScript
   sample too ([Dependencies](#dependencies-on-other-extensions)); held by
   `crates/pane-core/tests/dependencies.rs`.
+- `npm/greeter`: `@pane-samples/greeter`, the npm-distributed sample: an
+  npm package holding a `pane.json` and one JavaScript component,
+  `sample_npm_js.wasm` (from `sample-npm-js`, prebuilt like the other
+  JavaScript samples), whose command answers "Hello from the npm package"
+  and whose `greet` operation answers "Hello, <name>, from the npm package",
+  so it is plain which copy runs. `"private": true` keeps `npm publish` from
+  publishing it;
+  `cargo xtask guests` assembles it in `target/guests/npm/greeter/` and packs
+  it as `npm pack` does into `target/guests/npm/pane-samples-greeter-0.1.0.tgz`
+  ([Publishing a package to npm](#publishing-a-package-to-npm)).
+  `packages/sample-dependencies-npm` is the dependencies sample's component
+  requiring it as `npm:@pane-samples/greeter`; held by
+  `crates/pane-core/tests/npm.rs` and `crates/pane/tests/npm.rs`, from a
+  local registry.
 - `sample-query`, `sample-query-js`, `sample-query-ts`: Echo, the smallest
   command that takes a query, in Rust, JavaScript and TypeScript:
   it answers the text the user sends it from root search through its alias
@@ -1002,8 +1016,13 @@ installing it installs what it needs
   folder a link to it points to) or absolute, with `/` between folders on
   every system: `\`, drive letters and `//server` shares are refused. Pane
   resolves it as it resolves an installed folder and keeps what it resolved
-  to, so moving your source folder later does not change it. Other sources
-  (npm, Git) are not supported yet.
+  to, so moving your source folder later does not change it. Or `npm:` and
+  an npm package name, optionally with an exact version
+  (`npm:@pane-samples/greeter@0.1.0`), which Pane downloads when it is
+  missing ([npm](../docs/npm.md#dependencies-from-npm)); a version pins it,
+  so an installed copy of another version is a conflict Pane explains
+  rather than a version your package did not ask for. A package you publish
+  to npm can only use `npm:` sources. Git is not supported yet.
 - `optional` (default `false`): a required dependency is installed with your
   package when it is missing; an optional one never is, and a call to it
   when it is not installed is `not-found` (the
@@ -1347,6 +1366,58 @@ affected: a copy of the package installed from another folder keeps its own
 code. The `hello-rust`, `hello-js` and `hello-ts` samples are ready to try;
 [development mode](../docs/development-mode.md) has the steps, what is
 watched and the limits.
+
+## Publishing a package to npm
+
+A Pane package can be published to npm, so that users install it by name
+with **Install extension from npm…** (or `pane --install npm:<name>`),
+without Node.js or npm ([details](../docs/npm.md)). Pane installs the
+package's tarball exactly as it installs a folder, and runs nothing else in
+it: publish what is **built**.
+
+1. **Build first.** Build every component `pane.json` names, and each native
+   helper for every target you support, before packing: Pane never runs npm
+   install scripts (`preinstall`, `install`, `postinstall`, `prepare`…) and
+   never installs your npm `dependencies`, so a component bundling a library
+   must have it built in. A package published without its components is
+   explained to users as source-only.
+2. **Add a `package.json`** beside `pane.json`, whose `files` lists
+   `pane.json` and what it names, and nothing Pane would not use:
+
+   ```json
+   {
+     "name": "@your-scope/your-extension",
+     "version": "1.0.0",
+     "description": "…",
+     "license": "…",
+     "keywords": ["pane-extension"],
+     "files": ["pane.json", "dist/command.wasm", "helpers/"]
+   }
+   ```
+
+   Its `name` is the package's identity in Pane (every version is the same
+   package), and each version you publish is what users install by
+   `name@version` or as the latest. Keep `pane.json` at the package's root.
+   Its dependencies on other Pane packages are `npm:` sources.
+3. **Check the tarball** with `npm pack --dry-run`: it lists what users
+   will download. Helpers keep their files; Pane sets their mode itself.
+   Symbolic links, and names some system reads differently or cannot write
+   (`\ : < > " | ? *`, a name ending in `.` or a space, `con`, `nul`,
+   `com1`…, on every system alike), make Pane refuse the whole tarball.
+4. **Try it before publishing**: `npm pack` makes the `.tgz`; serve it from
+   a registry on this computer and point a development build of Pane at it
+   with `PANE_NPM_REGISTRY=http://127.0.0.1:<port>/`
+   ([`scripts/npm_registry.py`](../scripts/npm_registry.py) serves the
+   tarballs of a folder), then install it by name.
+5. **Publish** with `npm publish` (`--access public` for a scoped name).
+   Pane needs the registry's sha512 integrity, which npm gives every
+   version it publishes.
+
+The sample [`npm/greeter`](npm/greeter) is such a package, kept
+`"private": true` so that it is never published. `cargo xtask guests`
+assembles and packs it on each contributor system, without npm; `npm pack`
+in the assembled `target/guests/npm/greeter` makes the same list of files,
+and its tarball installs alike.
 
 Uninstalling is not implemented yet.
 
