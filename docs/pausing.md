@@ -226,83 +226,132 @@ Added for [#18](https://github.com/hoangvu12/pane/issues/18) (US77, US78,
 US80, T18, T19, G3; contributions, not a claim that the whole scenario or
 gate passes). The runtime serves one guest call at a time, so a call that
 never finishes holds every other extension's calls behind it. Pane bounds
-each way a call can fail to finish, and tells them apart
+each way a call can fail to finish, tells them apart, and **never blames a
+healthy extension**: only a guest's own computing counts against it
 ([`runtime/deadlines.rs`](../crates/pane-core/src/runtime/deadlines.rs);
 every value is an explicit, **provisional** choice):
 
 | What does not finish | Limit | What Pane does | Whose failure |
 | --- | --- | --- | --- |
-| A guest **computing without waiting** (a busy loop in Rust, JavaScript or TypeScript) | 5 seconds of computing in one call (`COMPUTE_LIMIT`) | Stops the call where the guest yields and drops its instance, as for a stopped call; the answer is "The extension stopped responding: it computed for 5 seconds without waiting for anything, so Pane stopped it; other extensions' calls waited meanwhile" | The package's own: Wasmtime was running its code. Counted with its crashes (3 within 5 minutes pause it) |
-| A guest **waiting on a native helper** that does not exit | 30 seconds of the helper running (`HELPER_TIME_LIMIT`) | Ends the helper; the guest's `run` fails with "helper `echo` did not finish within 30 seconds; Pane ended it", an error it handles | No one's: an expected slow-operation error, never counted |
-| The **runtime thread itself** not returning to its work (stuck in Pane's host code or in Wasmtime) | 10 seconds inside one poll of its work (`UNRESPONSIVE_LIMIT`); compiling a component is not counted | Gives up on the thread, as on a [runtime crash](#when-the-extension-runtime-itself-crashes) | Unknown: no extension is named or paused |
-| A guest **waiting** on anything else (a clock, an operation of another extension) | None | Nothing: waiting is not computing, and the call ends when its generation does | — |
+| A guest **computing without waiting** (a busy loop in Rust, JavaScript or TypeScript): an **unresponsive call** | 5 seconds of the guest's own computing in one call, in all (`COMPUTE_LIMIT`) | Stops the call where the guest yields and drops its instance, as for a stopped call; the answer is "The extension stopped responding: it computed for 5 seconds without finishing, so Pane stopped it; other extensions' calls waited meanwhile" | The package's own: Wasmtime was running its code. Counted with its crashes (3 within 5 minutes pause it) |
+| A guest **waiting on a native helper** that does not exit | 30 seconds of the helper running (`HELPER_TIME_LIMIT`, provisional, see [helpers](helpers.md#limits)) | Ends the helper; the guest's `run` fails with "helper `echo` did not finish within 30 seconds; Pane ended it", an error it handles | No one's: an expected slow-operation error, never counted |
+| The **runtime thread itself** making no progress (a **runtime hang**): inside one poll of its work, outside any host call, with its heartbeat still | Says "not responding yet" after 10 seconds (`WARN_AFTER`), gives up after 30 seconds (`UNRESPONSIVE_LIMIT`) | Gives up on the thread, as on a [runtime crash](#when-the-extension-runtime-itself-crashes) | Unknown: no extension is named or paused |
+| A guest **waiting** on anything else (a clock, a save, an operation of another extension, a web request) | None | Nothing: waiting is not computing, and the call ends when its generation does | — |
+| A **slow host call** (Pane reading or saving a value, listing applications, answering a folder's listing) | None | Nothing: its time is Pane's, not the guest's, and the thread inside it is not stuck | — |
 
 How it works:
 
-- The engine counts **epochs**, 10 ms apart, on a ticker thread
-  (`Config::epoch_interruption`), and every store yields to the runtime
-  thread at each one (`Store::epoch_deadline_async_yield_and_update`). So
-  the runtime thread keeps looking at the call's generation and injected
-  faults however busy a guest is: disabling, reloading, updating or
-  pausing a package now stops its computing guest within a tick
+- **Epochs.** Each runtime thread has a ticker thread advancing the
+  engine's epoch every 10 ms (`Config::epoch_interruption`), and every
+  store yields to the runtime thread at each one (an epoch-deadline
+  callback). So the runtime thread keeps looking at the call's generation
+  and injected faults however busy a guest is: disabling, reloading,
+  updating or pausing a package stops its computing guest within a tick
   ([generations](generations.md)). Epoch interruption was chosen over fuel
   because it measures time, not instructions, and costs a check per loop
-  and function rather than a count per instruction.
-- A call's **compute time** is the time the guest's polls take: a guest
-  that yields each tick returns within one, and one that waits is not
-  polled. Serving the operations a guest calls counts for their targets,
-  not for it. Instantiating a component and running a custom view's
-  destructor are guest code too, and bounded the same way; a component
-  whose start computes for too long could not start, and is paused at once.
-- A **watchdog thread** per runtime thread looks every 100 ms at how long
-  the thread has been inside one poll of its work. Past the limit it gives
-  up on it: every call the thread held (running or queued) answers
-  "Extension runtime unavailable: it stopped responding before answering
-  and was started again; Pane does not run this again by itself", its
-  native helpers are ended, a fresh thread serves the next call (unless
-  the runtime already failed within 5 minutes before: hangs and crashes
-  share the restart window), and the status line and Manage extensions
-  ("Why the extension runtime stopped", "Restarted after not responding")
-  say that the runtime stopped responding, what it was doing (waiting,
-  handling a request, starting a guest instance or running a guest call;
-  never which extension) and that none is named or paused.
-- A thread **cannot be ended from outside**: the stuck one is abandoned.
-  If it ever returns, it runs nothing more: its guests' host calls (saving
-  or reading data, operation calls, helpers, applications) are refused, it
-  stops at its next check without resuming the guest, and only then frees
-  its instances and memory (`Runtime::abandoned_threads` counts those still
-  stuck). The launcher closes a custom view it held, as after a crash.
+  and function rather than a count per instruction. The ticker ends with
+  its thread.
+- **The meter** counts a call's compute time as the runtime thread's CPU
+  time while it polls the call (`CLOCK_THREAD_CPUTIME_ID` on Linux and
+  macOS, `GetThreadTimes` on Windows; wall time inside those polls where
+  neither is available), **less the time inside Pane's host calls**. Every
+  host import marks its entry and exit in one place (`Watch::host`, and
+  `hosted` for a host call's future: saving data, running a helper,
+  sending a web request). So a slow save, a slow system call or a machine
+  too loaded to run the thread never counts against the guest. A guest
+  that waits is not polled at all. The meter is **per call and
+  cumulative**: awaiting between parts of a computation does not reset
+  it; only the call finishing does. Serving the operations a guest calls
+  counts for their targets, not for it. **Starting an instance is never
+  counted**: a slow start is not a failure to start; a start that never
+  finishes holds the runtime thread until its package is disabled,
+  reloaded, updated or uninstalled, which stops it. A custom view's
+  destructor is metered like a call.
+- **Saving** is written by a writer thread: the runtime thread changes the
+  value in memory and awaits the write, so it never waits on the file
+  system. **Helpers** are found and started on a thread of their own.
+- **The watchdog.** Each runtime thread has a heartbeat, bumped at each
+  poll of its work, each epoch yield of a guest and as each host call
+  starts and ends. A watchdog thread looks every 100 ms. A thread waiting
+  for work, or awaiting a guest's host work, is not polled, so never quiet;
+  one inside a host call is never given up on; one computing a guest
+  beats at every tick (and is stopped by the meter). A thread inside one
+  poll, outside any host call, whose heartbeat stays still for 10 seconds
+  is said to be **not responding yet** in the status line ("Pane's
+  extension runtime is not responding yet. Pane starts it again if it
+  stays stuck; saved data is kept."), and what the status line said before
+  comes back if it carries on. After 30 seconds, Pane gives up on it,
+  exactly as last seen: a thread that left its poll or beat meanwhile
+  (checked under the lock it leaves its poll under) is left alone.
+  Compiling a component is exempt. Giving up: every call the thread held
+  (running or queued, and `Runtime::running` or `view_count` asked of it)
+  answers "Extension runtime unavailable: it stopped responding before
+  answering and was started again; Pane does not run this again by
+  itself", its native helpers are ended, a fresh thread serves the next
+  call (unless the runtime already failed within 5 minutes before: hangs
+  and crashes share the restart window), and the status line and Manage
+  extensions ("Why the extension runtime stopped", "Restarted after not
+  responding") say that the runtime made no progress, that it was not
+  running an extension's code nor inside one of Pane's host calls, and
+  that which code held it is not known; its last known work (waiting,
+  handling a request, starting a guest instance or running a guest call)
+  is in the diagnostics. No extension is named or paused.
+- **The fence.** A thread cannot be ended from outside: the stuck one is
+  abandoned, and its fence closes. Stopped code is one check that every
+  host interface goes through (`GuestState::stopped`,
+  `PackageData::stopped`): data, applications, operations, helpers, the
+  folder listing and web requests all refuse code whose generation ended
+  or whose thread's fence closed. A save checks and stages its change
+  while holding the fence open, and closing waits for it, so no save
+  lands after the give-up. A guest the thread still runs traps at its
+  next tick (the ticker's last tick makes sure it reaches one), the thread
+  runs nothing more once it returns, and only then frees its instances
+  and memory (`Runtime::abandoned_threads` counts those still stuck). The
+  launcher closes a custom view it held, as after a crash. A management
+  action that waits for the runtime (uninstalling, clearing a cache)
+  waits for it at most 30 seconds.
+- **Locks.** A fresh thread must never wait on something an abandoned one
+  holds, or its failure would use up the restart window for the first
+  one's. What runtime threads share is held only briefly and never across
+  blocking work: the extension data lock while a value is read or staged
+  (a cache or uninstall removal reads its file without it), the helpers'
+  lock while a run is registered (a process starts without it), the
+  runtime's own state. What remains: the runtime thread reports a
+  package's failure to the launcher, which takes the launcher's lock
+  briefly; a thread stuck inside that would have stopped the launcher too.
 - Other active extensions: their calls wait behind a computing guest for
   up to the compute limit, then run; their instances and open views are
   kept. After a runtime hang, every extension's instances and views go with
   the abandoned thread, as after a crash.
 
-**Provisional, pending user confirmation:** the three limits (5 seconds of
-computing, 30 seconds of a helper, 10 seconds of a stuck thread) and the
-10 ms tick; an unresponsive call counts as a crash towards pausing (not a
-pause at once, and not free); a start that computes too long is a failure
-to start (paused at once); the operation error kind for a target that
-stops responding is `crashed` (the WIT has no kind of its own); a helper
-past its limit fails with `failed`, not `refused`; compiling is exempt from
-the watchdog; the stuck thread is abandoned, since the runtime stays a
-thread in Pane's process ([Q39](current-decisions.md)).
+**Provisional, pending user confirmation:** the limits (5 seconds of a
+guest's computing, 30 seconds of a helper, 10 then 30 seconds of a thread
+making no progress) and the 10 ms tick; an unresponsive call counts as a
+crash towards pausing (not a pause at once, and not free); a start is
+never metered; the operation error kind for a target that stops
+responding is `crashed` (the WIT has no kind of its own); a helper past
+its limit fails with `failed`, not `refused`; compiling is exempt from the
+watchdog; the stuck thread is abandoned, since the runtime stays a thread
+in Pane's process ([Q39](current-decisions.md)).
 
-Faults for tests and smokes (debug builds only, like #17's):
+Faults and limits for tests and smokes (debug builds only, like #17's):
 `Runtime::inject(Fault::Hang)` blocks the runtime thread wherever it next
 checks for faults (waiting for a request, or between a guest's yields),
-as a thread stuck in host code would, until `Fault::Release`; the fault
-file takes `hang` and `release`.
+as a thread stuck outside any host call would, until `Fault::Release`;
+`Fault::SlowHostCall(d)` makes the next host call compute for `d` itself.
+`Runtime::set_limits` shortens the limits; the fault file takes `hang`,
+`release` and `limits:<compute>,<warn>,<unresponsive>` (seconds).
 
 Limits:
 
-- A guest's compute time is measured from wall-clock time inside its
-  polls, so a machine too loaded to run the thread counts against the
-  guest; the watchdog's limit is wall-clock time too. The limits are
-  generous for that reason.
-- A runtime hang abandons a thread that keeps its memory, and any lock it
-  holds, until it returns; a thread stuck for good keeps them until Pane
-  quits. Compiling a component (which may take long legitimately) is not
-  watched, so a compile that never ends is not recovered.
+- Where a system has no per-thread CPU clock, the meter counts wall time
+  inside the guest's polls, so there a loaded machine counts against the
+  guest.
+- A runtime hang abandons a thread that keeps its memory until it returns;
+  a thread stuck for good keeps it until Pane quits. A host call that
+  never returns is never given up on (it is Pane's own work, marked as
+  such), and neither is a compile that never ends; the runtime then stays
+  stuck until Pane restarts.
 - A call waiting on another extension's operation, or on a clock, has no
   time limit; a user cannot cancel a running action yet.
 - Stopping a computing guest drops its instance and what it keeps in
@@ -354,20 +403,30 @@ Limits:
   waiting for up to a minute (bounded, so it ends even without Pane)
   before saving "finished".
 - [`crates/pane-core/tests/unresponsive.rs`](../crates/pane-core/tests/unresponsive.rs)
-  (#18): in each language, while Stop responding computes, Manage
-  extensions opens at once and the calculator (another extension) answers
-  as soon as the call is stopped; the call is stopped after the compute
-  limit and says why, never saves "finished" and is not run again; the
-  third time pauses the package ("stopped responding 3 times within 5
-  minutes"), with its data kept, details and Retry. A runtime thread made
-  to hang is given up on after 10 seconds: nothing is paused or named,
-  Manage extensions says "Restarted after not responding", a fresh thread
-  runs the next call and the calculator, and the stuck thread, released
-  after its guest's wait has passed, saves nothing and ends. Unit tests in
-  `runtime.rs` stop a computing guest (another command's open view kept),
-  stop it at once on disable, and replace a hung thread; `deadlines.rs`
-  tests the watch and meter, `launcher/pausing.rs` counting hangs with
-  crashes, and `helpers/runner.rs` a helper past its time limit.
+  (#18, with limits shortened through `Runtime::set_limits`): in each
+  language, while Stop responding computes, Manage extensions opens and
+  the calculator (another extension) answers as soon as the call is
+  stopped; the call is stopped after the compute limit and says why, never
+  saves "finished" and is not run again; the third time pauses the package
+  ("stopped responding 3 times within 5 minutes"), with its data kept,
+  details and Retry. A runtime thread made to hang is said to be not
+  responding yet, then given up on: nothing is paused or named, Manage
+  extensions says "Restarted after not responding", a fresh thread runs
+  the next call and the calculator, and the stuck thread, released, saves
+  nothing and ends; one released before the give-up carries on, its call
+  answers and the status line is put back.
+  [`helpers.rs`](../crates/pane-core/tests/helpers.rs) ends a waiting
+  helper when its thread is given up on. Unit tests in `runtime.rs` stop a
+  computing guest (another command's open view kept), stop it on disable,
+  never stop nor blame a guest whose host call computes for three times
+  the compute limit (`Fault::SlowHostCall`), replace a hung thread, answer
+  `running` and `view_count` on a give-up, and never restore the obsolete
+  generation of a package reloaded during a hang; `deadlines.rs` tests the
+  watchdog's verdicts, the give-up race and a meter that charges neither a
+  host call nor time the thread did not run; `extension_data.rs` that no
+  save lands after the fence closes; `http.rs` that fenced code sends
+  nothing; `launcher/pausing.rs` counting unresponsive calls with crashes;
+  and `helpers/runner.rs` a helper past its time limit.
   [`crates/pane/tests/unresponsive.rs`](../crates/pane/tests/unresponsive.rs):
   in the window, keys are answered while the guest computes, and the error,
   the pause toast, the paused command's reason and Retry render. The

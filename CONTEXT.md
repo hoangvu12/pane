@@ -173,11 +173,11 @@ A failure of the extension runtime itself, not attributable to any one extension
 _Avoid_: Extension crash, paused runtime
 
 **Unresponsive call**:
-A guest call whose extension computed for five seconds without finishing, holding every other extension's calls behind it; Pane stops it where the guest yields (every guest yields to the runtime at each epoch tick), drops its instance and says so, and, since the extension's own code was running, counts it towards pausing that extension as a crash. Time the guest spends waiting (on a clock, a helper, another extension) is not computing, so a slow call is never stopped for it.
+A guest call whose extension computed for five seconds in all without finishing, holding every other extension's calls behind it; Pane stops it where the guest yields (every guest yields to the runtime at each epoch tick), drops its instance and says so, and, since the extension's own code was running, counts it towards pausing that extension as a crash. Only the guest's own computing counts: time it spends waiting (on a clock, a save, a helper, another extension), time inside Pane's host calls, time the system gave other threads and starting its instance are not, so a healthy extension is never stopped for them.
 _Avoid_: Timeout (waiting is not limited), hung extension, frozen
 
 **Runtime hang**:
-The extension runtime's thread not returning to its work for ten seconds: stuck in Pane's own code or in Wasmtime, outside every guest (which yields each tick), so no extension is known to have caused it. Pane gives up on the thread as on a runtime crash (every call it held is answered and none run again, its native helpers end, it is started again unless it failed within five minutes before, nothing is named or paused); the stuck thread cannot be ended, so it is abandoned and runs nothing more if it ever returns.
+The extension runtime's shared thread making no progress: inside one piece of its work, outside every guest (which yields each tick) and every host call Pane marks, with its heartbeat still. Pane says it is not responding yet after ten seconds and gives up on it after thirty; which code held it is not known, so no extension is named. Pane gives up on the thread as on a runtime crash (every call it held is answered and none run again, its native helpers end, it is started again unless it failed within five minutes before, nothing is named or paused); the stuck thread cannot be ended, so it is abandoned, fenced so that nothing it still runs changes anything, and runs nothing more if it ever returns. Only the shared thread hangs; one package's slow call is an unresponsive call.
 _Avoid_: Unresponsive call (an extension's own), freeze of Pane (the window keeps working)
 
 **Generation**:

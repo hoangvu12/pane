@@ -137,7 +137,9 @@ untouched: what the command saved before the helper was stopped is kept
   folder is removed, so Windows can remove the program's folder. If a
   removal still fails, the folder is left over and removed at the next
   start, as for any folder in use.
-- **A 30-second limit** (provisional, #18): a helper runs until it exits,
+- **A 30-second limit** (a **provisional decision** of #18 that changes
+  #15's contract, which had no limit: pending the user's confirmation, see
+  [current decisions](current-decisions.md) item 11): a helper runs until it exits,
   the command cancels it, the package stops or it has run for 30 seconds,
   when Pane ends it. Pane serves extension calls one at a time, so a helper
   that runs that long holds every other command's calls behind it

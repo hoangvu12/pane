@@ -1145,14 +1145,17 @@ if (-not (Select-String -Quiet -SimpleMatch '"disabled": true' $record)) { throw
 if (Select-String -Quiet -SimpleMatch '"paused"' $record) { throw "a package was paused for the runtime's crash" }
 # Recovering from an extension that stops responding (#18). The settings
 # sample's last item, Stop responding, computes without waiting for up to a
-# minute. While it computes, the window answers keys: Escape returns to root
-# search and Manage extensions opens. Pane stops the call after 5 seconds of
+# minute. The phase shortens the runtime's limits through the fault file
+# (PANE_TEST_RUNTIME_FAULTS): 2 seconds of a guest's own computing, "not
+# responding yet" after 4 seconds without progress, given up on after 15.
+# While it computes, the window answers keys: Escape returns to root search
+# and Manage extensions opens. Pane stops the call after 2 seconds of its
 # computing, says why, and the third time pauses the package (a failure of
 # its own); Retry starts it again. Then the runtime thread itself is made to
-# hang through the fault file (PANE_TEST_RUNTIME_FAULTS): Pane gives up on it
-# after 10 seconds, names and pauses no extension, and Manage extensions says
-# the runtime stopped responding; a fresh thread runs the next call. A data
-# folder of its own keeps the rows in a known order.
+# hang through the fault file: the status line says it is not responding
+# yet, then Pane gives up on it, names and pauses no extension, and Manage
+# extensions says the runtime stopped responding; a fresh thread runs the
+# next call. A data folder of its own keeps the rows in a known order.
 $data = Join-Path $OutDir "unresponsive-data"
 if (Test-Path $data) { Remove-Item -Recurse -Force $data }
 $env:PANE_DATA_DIR = $data
@@ -1168,6 +1171,7 @@ function Saved-Setting($key) {
 }
 $env:PANE_TEST_RUNTIME_FAULTS = $fault
 $process = Start-Pane "stderr-unresponsive.log" @("--install", "target/guests/packages/sample-settings")
+Inject-Fault "limits:2,4,15"
 Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Greeting is selected
 Send "{ENTER}"; Start-Sleep -Seconds 2   # open Greeting
 Send "{DOWN 9}"   # Stop responding
@@ -1184,7 +1188,7 @@ Send "{ENTER}"; Start-Sleep -Seconds 2   # open Greeting
 Send "{DOWN 9}"   # Stop responding
 Send "{ENTER}"; Start-Sleep -Seconds 8
 Capture "241-unresponsive-stopped.png"
-Check "241-unresponsive-stopped.png" "f08c8c"   # "The extension stopped responding: it computed for 5 seconds ..."
+Check "241-unresponsive-stopped.png" "f08c8c"   # "The extension stopped responding: it computed for 2 seconds ..."
 Send "{ENTER}"; Start-Sleep -Seconds 8   # the third time
 Send "greet"; Start-Sleep -Seconds 1   # Greeting and its reason at the top
 Capture "242-unresponsive-paused.png"
@@ -1203,23 +1207,26 @@ Check "244-unresponsive-retried.png" "9fd8a8"   # "Started Settings sample"
 Send "{ESC}"; Start-Sleep -Seconds 1
 Inject-Fault "hang"
 Send "greet"; Start-Sleep -Seconds 1
-Send "{ENTER}"; Start-Sleep -Seconds 13   # open Greeting: the stuck runtime is given up on
-Capture "245-unresponsive-runtime.png"
-Check "245-unresponsive-runtime.png" "f08c8c"   # the runtime stopped responding and was started again
+Send "{ENTER}"; Start-Sleep -Seconds 4   # open Greeting: the stuck runtime is not responding yet
+Capture "245-unresponsive-not-yet.png"
+Check "245-unresponsive-not-yet.png" "d6c27a"   # "Pane's extension runtime is not responding yet. ..."
+Start-Sleep -Seconds 14   # Pane gives up on it
+Capture "246-unresponsive-runtime.png"
+Check "246-unresponsive-runtime.png" "f08c8c"   # the runtime stopped responding and was started again
 Send "{ESC}"; Start-Sleep -Seconds 1   # clears the query
 Send "{DOWN 10}"   # Manage extensions…
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{ENTER}"; Start-Sleep -Seconds 1   # Why the extension runtime stopped, its first row
-Capture "246-unresponsive-runtime-details.png"
-Check "246-unresponsive-runtime-details.png" "aab4c0"   # the details
+Capture "247-unresponsive-runtime-details.png"
+Check "247-unresponsive-runtime-details.png" "aab4c0"   # the details
 Inject-Fault "release"
 Send "{ESC}{ESC}"; Start-Sleep -Seconds 1
 Send "greet"; Start-Sleep -Seconds 1
 Send "{ENTER}"; Start-Sleep -Seconds 2   # open Greeting on a fresh runtime thread
 Send "{ENTER}"; Start-Sleep -Seconds 2   # Use a formal greeting
-Capture "247-unresponsive-runs-again.png"
-Check "247-unresponsive-runs-again.png" "9fd8a8"   # "Saved the formal greeting"
-$shots = "240-unresponsive-window-answers", "241-unresponsive-stopped", "242-unresponsive-paused", "243-unresponsive-pause-details", "244-unresponsive-retried", "245-unresponsive-runtime", "246-unresponsive-runtime-details", "247-unresponsive-runs-again" | ForEach-Object { Join-Path $OutDir "$_.png" }
+Capture "248-unresponsive-runs-again.png"
+Check "248-unresponsive-runs-again.png" "9fd8a8"   # "Saved the formal greeting"
+$shots = "240-unresponsive-window-answers", "241-unresponsive-stopped", "242-unresponsive-paused", "243-unresponsive-pause-details", "244-unresponsive-retried", "245-unresponsive-not-yet", "246-unresponsive-runtime", "247-unresponsive-runtime-details", "248-unresponsive-runs-again" | ForEach-Object { Join-Path $OutDir "$_.png" }
 python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: recovering from an extension that stops responding changed nothing" }
 Stop-Pane $process
