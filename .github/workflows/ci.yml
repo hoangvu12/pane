@@ -64,6 +64,16 @@ jobs:
       - name: Native GUI smoke (Linux, Xvfb)
         if: runner.os == 'Linux'
         run: bash scripts/smoke-linux.sh smoke
+      - name: Build the Linux package (release, x86_64)
+        if: runner.os == 'Linux'
+        run: cargo xtask package-linux
+      - name: Upload the Linux package and its artifacts
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-package
+          path: target/dist/
+          if-no-files-found: error
       - name: Native GUI smoke (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

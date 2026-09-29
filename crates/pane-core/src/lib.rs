@@ -5,6 +5,7 @@ pub mod applications;
 mod atomic;
 pub mod changes;
 pub mod clipboard;
+pub mod defaults;
 mod dependencies;
 pub mod develop;
 pub mod downloads;
@@ -27,6 +28,7 @@ mod runtime;
 mod search;
 mod threads;
 
+pub use defaults::{ArtifactSource, DefaultExtension};
 pub use helpers::runner::{HELPER_TIME_LIMIT, MAX_HELPER_INPUT, MAX_HELPER_OUTPUT};
 #[doc(hidden)]
 pub use http::HttpLimits;

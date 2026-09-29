@@ -1,0 +1,223 @@
+# Pane's Linux package and first setup
+
+Added for [#53](https://github.com/hoangvu12/pane/issues/53) (US15, US16,
+US18, US42; T23; contributions to G6, not a claim that it passes): a clean
+Linux machine installs Pane from one package, and Pane acquires its
+default extensions itself over the network — the calculator, the feature
+this proves — with progress, retries and a cache, while the core (the
+window, root search, the install rows, Manage extensions) stays usable.
+This is the internet-first setup the specification chose
+([decision 20](../launcher-design-interview.md)); the installer carries no
+payloads and installs no runtime, and the user installs no Node, Rust,
+npm, Git or compiler: Pane's extension runtime is part of Pane's own
+process (Wasmtime), so nothing is acquired for it.
+
+## The package
+
+`cargo xtask package-linux` builds, under `target/dist/`:
+
+- **`pane-<version>-linux-<arch>.tar.gz`** — the package: the `pane`
+  program (release profile), the install script, a `README.txt` and a
+  `pane.desktop` entry, under `pane/`. With `--dev`, the program is the
+  development profile and the name ends `-dev`; the native smokes install
+  that one, because only a development build takes its artifact source
+  from `PANE_ARTIFACTS` (a release build uses Pane's published downloads,
+  which no controlled source may replace).
+- **`artifacts/`** — what an artifact source serves (below): the index
+  `pane-defaults.json` and one tarball per default extension's payload.
+  A real deployment serves this folder at Pane's published downloads; the
+  tests and smokes serve it from this computer instead.
+- **`pane-<version>-linux-<arch>.tar.gz.sha256`** — the package's digest.
+
+The package is the same bytes wherever it is built (fixed time, owner and
+mode in the tar), and its program is built for the system the task ran
+on: this machine builds `linux-aarch64`, CI's `ubuntu-24.04` runner builds
+`linux-x86_64`. A release for several systems builds one package per
+system. **Nothing is signed** — no signing credentials exist — and the
+`.sha256` file says only what was packed; signing the package, and
+deploying the artifact source, are execution prerequisites recorded
+[below](#limits-and-prerequisites).
+
+### Installing
+
+```sh
+tar -xzf pane-<version>-linux-<arch>.tar.gz
+bash pane/install.sh                # installs to ~/.local
+bash pane/install.sh --prefix DIR   # or somewhere else
+pane --version                      # what the install script runs to check
+```
+
+The script installs for one user: `pane` to `<prefix>/bin` and the
+desktop entry to `<prefix>/share/applications`. No root is needed. It
+checks the program's libraries with `ldd` and, if one is missing, names
+it and the Ubuntu package that provides it, rather than installing
+anything. The declared baseline is Ubuntu 24.04 (x86_64, X11), the
+combination [CI runs](platforms/linux.md#ci-result); the libraries
+`libxkbcommon0 libxkbcommon-x11-0 libwayland-client0 libxcb1
+libfontconfig1 libfreetype6 libvulkan1` and a Vulkan driver
+(`mesa-vulkan-drivers` works without a GPU) are the prerequisites. Uninstalling
+is removing the two files; Pane's own data stays in `~/.local/share/pane`.
+
+The package holds no default extension: first setup downloads them, so
+the installer stays small and every default extension (also the ones
+later slices add) is a normal, individually disableable extension rather
+than something baked into the program.
+
+## Acquiring the default extensions
+
+A default extension ([glossary](../CONTEXT.md)) is identified by its id —
+`calculator` — which is also its package identity
+(`default:calculator`, recorded as `"default": "calculator"` in
+`installed.json`, with `"defaultVersion"`), whatever version is
+installed. A development build of Pane acquires the calculator and, with
+it, the helper sample (`helper-sample`), so a payload carrying a native
+helper is acquired and its prebuilt helper runs with no developer tool; a
+release build acquires the calculator alone — which default extensions a
+release ships is a product choice as each lands its slice.
+
+At first setup, and whenever a default extension is missing, Pane
+acquires each in turn in the background:
+
+1. **The index.** `GET https://downloads.pane.sh/pane-defaults.json`:
+   `formatVersion` (this Pane reads 1) and one entry per default
+   extension: its `id`, `version`, `file` (a plain name, so the address
+   stays on the source), `integrity` (`sha512-<base64>`, which the
+   payload's bytes must match) and `size` (for progress). An index with
+   another format version, an entry without a sha512, or a duplicate id
+   is explained, and so is an entry Pane's build does not ask for.
+2. **The payload.** `GET <source>/<file>`, through Pane's own HTTP client
+   (hyper, rustls, the system's certificates, one connection per request,
+   no proxy, no redirect — the one npm and Git packages use), at most
+   64 MiB, with the bytes so far reported as they arrive. An interrupted
+   download — the connection closing partway, or a server error (403,
+   500, 502, 503, 504) — is tried again, up to three times, after 0.5 s
+   and 1 s; a payload that is simply not there, or whose bytes do not
+   match the integrity the index gives, is explained, not retried.
+3. **The cache.** The downloaded payload is kept under
+   `extensions/acquired/<id>/<version>-<integrity's first 16 hex
+   digits>.tgz` (written through a `.part` file, so a Pane stopped
+   mid-download leaves no half-written payload under the name a later one
+   looks for; one a day old is removed as abandoned, as a young one may
+   belong to another Pane on the same data folder). Acquiring again finds
+   it there and reuses it — only if its bytes still match the integrity
+   its index gives: a damaged entry is downloaded again and replaces it,
+   and another version of the same default extension removes the older
+   one's entry. Nothing else of the payload is kept: what is installed is
+   the managed copy.
+4. **The install.** The payload is a gzipped tar of a `package/` folder
+   holding the extension package, unpacked with the same checks an npm
+   package's tarball gets (files and folders only, every path inside,
+   the same limits), then read, checked, planned and installed exactly as
+   a package from a folder is — into a managed copy, with the default
+   extension's identity. Its compatibility is what any package's is: the
+   manifest version and extension API this Pane reads, the platforms it
+   declares, the components it names present, and, where it ships
+   helpers, the file for this system a real program for it. A default
+   extension the user uninstalled, whose data Pane keeps, is not acquired
+   again — the user's choice, with disabling the documented opt-out; one
+   never installed is.
+
+### What the user sees
+
+The status line says what is happening — "Acquiring the Calculator…" then
+"Acquiring the Calculator: 34% of 116 KiB" — while the window, root
+search, the install rows and Manage extensions stay usable: acquisition
+never blocks anything. When every default extension is set up, the status
+line says "Set up the Calculator" (or "Set up Pane's default extensions").
+A default extension that could not be acquired is explained there ("Could
+not set up the Calculator: Pane's downloads at … could not be reached:
+… (Pane tried 3 times)") and offered as a row in root search after the
+install rows, **Set up Calculator**, which tries again; the row goes once
+what it asked for is there. Starting Pane tries again by itself, so a
+Pane stopped mid-setup recovers, and disabling a default extension (in
+Manage extensions) is the opt-out: a disabled default extension is
+installed, so it is never re-acquired or re-enabled.
+
+## The artifact source
+
+Release builds acquire from `https://downloads.pane.sh/` only. Tests and
+development builds can name a source on this computer instead
+(`PANE_ARTIFACTS`, read as [`Registry::local` in
+npm](npm.md#the-registry) is: an `http://` or `https://` address on a
+literal loopback address — `127.0.0.1`, any `127.x.y.z`, `[::1]` — with an
+optional port and path; `localhost` and anything else is refused), so no
+check ever reaches the network. **A release build has no way to replace
+the published source.** The smokes serve `target/dist/artifacts` with
+[scripts/artifact_server.py](../scripts/artifact_server.py) on 127.0.0.1;
+the tests serve their own payloads in process
+(`crates/pane-core/tests/support/artifacts.rs`).
+
+A development build with no `PANE_ARTIFACTS` acquires nothing, so a
+checkout runs nothing over the network by itself.
+
+## Trying a first setup by hand
+
+```sh
+cargo xtask package-linux --dev
+python3 scripts/artifact_server.py target/dist/artifacts /tmp/port &
+PANE_ARTIFACTS=http://127.0.0.1:$(cat /tmp/port)/ cargo run -p pane
+```
+
+A fresh data folder (`PANE_DATA_DIR=/tmp/fresh`) shows the acquisition
+and the calculator's answer to "6*7".
+
+## Checks
+
+- `crates/pane-core/tests/installer.rs`: the acquisition through the
+  launcher's public interface — a first setup installing the calculator
+  and the helper sample as managed copies with the default identity and
+  the record in `installed.json`; progress on the status line while the
+  core stays usable; an interrupted download recovered by retry; the
+  cache reused, a damaged entry replaced; an unreachable source leaving
+  the core usable with the row that tries again, and the row setting the
+  extension up once the source works; the helper running from the managed
+  copy with mode 0755; a payload that does not match its integrity, and
+  one for another platform, explained and not installed; a restart
+  fetching nothing; a disabled default extension not re-acquired.
+- The [Linux smoke](platforms/linux.md#installing-pane-and-acquiring-its-calculator-53):
+  the package is built, installed on a clean home with a PATH that holds
+  nothing, and the installed Pane acquires both payloads from the
+  controlled source and answers "6*7" with 42, its helper echoing for
+  this system.
+- `xtask`'s packaging is checked by building it: `cargo xtask
+  package-linux [--dev]` must produce the tarball, its sha256 and the
+  artifact tree; the release-profile package is built the same way the
+  development-profile one the smoke installs is.
+
+## Limits and prerequisites
+
+- **The artifact source is not deployed.** `downloads.pane.sh` does not
+  exist, so a Pane installed from today's package cannot complete its
+  first setup on the real internet: it explains that Pane's downloads
+  cannot be reached, keeps everything else working and offers the retry.
+  Deploying the source (serving `artifacts/` above) is an execution
+  prerequisite, like the signing credentials below.
+- **Nothing is signed.** No signing credentials exist, so the package and
+  its payloads are not signed: the package's `.sha256` says only what was
+  packed, and a payload is checked only against the sha512 its index
+  gives, over HTTPS. (The connection trusts the system's certificates.)
+  Signing the package, and serving the index over an authenticated
+  channel a release trusts, are prerequisites for a release.
+- **The artifact this build serves is built for the system it ran on.**
+  The helper sample's payload declares the one helper target its file was
+  built for (`linux-x86_64` on CI, `linux-aarch64` on an arm64 checkout);
+  a real deployment must build every supported target and serve one
+  payload whose manifest names them all, or serve one payload per system
+  at a per-system index.
+- **One package per system**, built where it runs; cross-building and
+  packaging for a system this task cannot build on is out of scope (the
+  evidence for each is per-system, as the specification requires).
+- **No default-extension updates.** A default extension is installed once
+  and left alone: a Pane whose default is installed acquires nothing, so
+  a newer payload version is not fetched (uninstalling and restarting
+  acquires the new one). Automatic extension updates are the
+  [extension update](current-decisions.md) direction, tracked for npm and
+  Git sources separately; how a default extension's updates arrive
+  (through the same controls) is an open choice recorded for the user.
+- **Concurrent Panes** on one data folder both acquire; each writes its
+  own payload through a `.part` file, and a torn entry fails its
+  integrity check and is downloaded again. One that installs the same
+  default extension while the other is installing it is told the install's
+  own wording, "Already installed …; use Update to replace the installed
+  copy" — wording a default extension has no row for (a restarted Pane
+  lists it): a small wart of the shared install path, left as it is.

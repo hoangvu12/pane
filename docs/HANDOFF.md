@@ -2,7 +2,7 @@
 
 Updated 2026-09-28. This handoff covers Pane, the cross-platform launcher and its extension system.
 
-The project is published at [hoangvu12/pane](https://github.com/hoangvu12/pane). The repository contains planning documents and research prototypes; there is no installable Pane application yet.
+The project is published at [hoangvu12/pane](https://github.com/hoangvu12/pane). The repository contains a launcher under development with native smoke evidence for its slices; there is a Linux package a clean machine installs ([#53](https://github.com/hoangvu12/pane/issues/53), [installer](installer.md)), but the artifact source its first setup downloads from is not deployed, and no published installer exists yet.
 
 ## Start here
 

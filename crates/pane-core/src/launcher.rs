@@ -26,6 +26,7 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+mod acquire;
 mod aliases;
 mod choices;
 mod command_search;
@@ -65,6 +66,7 @@ mod reload;
 mod retained;
 mod uninstall;
 
+use acquire::{Acquisitions, Defaults};
 use aliases::AliasChoices;
 use choices::Record;
 use developing::Developing;
@@ -78,6 +80,12 @@ const INSTALL_FROM_FOLDER: &str = "pane.install-from-folder";
 /// The folder beside the managed copies where packages downloaded from npm
 /// or Git are written until they are installed.
 const DOWNLOADS_DIR: &str = "downloads";
+
+/// The folder beside the managed copies where the payloads of default
+/// extensions are cached, named by version and integrity, so an
+/// interrupted first setup can acquire again without downloading what it
+/// already holds (see `acquire`).
+const ACQUIRED_DIR: &str = "acquired";
 
 /// The id of the root row that installs a package from npm.
 const INSTALL_FROM_NPM: &str = "pane.install-from-npm";
@@ -431,6 +439,10 @@ pub struct Launcher {
     commands: Arc<[CommandRegistration]>,
     /// Where installed packages are kept, when installing packages is on.
     installation: Option<Installation>,
+    /// The default extensions this build acquires at first setup, and
+    /// where their payloads come from; `None` when this launcher
+    /// installs none.
+    defaults: Option<Defaults>,
     /// Opens the web links of computed results.
     links: Arc<dyn LinkOpener>,
     /// Registers the global hotkeys the user assigns with the system.
@@ -455,6 +467,7 @@ struct WeakLauncher {
     runtime: Result<WeakRuntime, CallError>,
     commands: Arc<[CommandRegistration]>,
     installation: Option<Installation>,
+    defaults: Option<Defaults>,
     links: Arc<dyn LinkOpener>,
     hotkeys: Arc<dyn Hotkeys>,
     /// Held weakly, so that Pane stops watching the clipboard as soon as
@@ -481,6 +494,7 @@ impl WeakLauncher {
             runtime,
             commands: self.commands.clone(),
             installation: self.installation.clone(),
+            defaults: self.defaults.clone(),
             links: self.links.clone(),
             hotkeys: self.hotkeys.clone(),
             clipboard,
@@ -559,6 +573,10 @@ struct State {
     bindings: Bindings,
     /// The aliases and fallbacks the user gave commands.
     aliases: Record<AliasChoices>,
+    /// Acquiring Pane's default extensions: what the status line says of
+    /// the one being acquired, and which failed and can be tried again
+    /// (see `acquire`).
+    acquisitions: Acquisitions,
     /// The query root search showed when the status line began showing a
     /// command's answer to a query sent from it (or its sending), so that
     /// changing the query clears it.
@@ -818,6 +836,8 @@ enum Entry {
     AskNpm,
     /// Ask which Git repository to install from (root).
     AskGit,
+    /// Acquire this default extension again, after Pane could not (root).
+    Acquire(String),
     /// Run the open command's item with this id.
     Run(String),
     /// Open this form of the open command's item with this id.
@@ -1010,6 +1030,7 @@ impl Launcher {
             paused: Pauses::default(),
             bindings,
             aliases,
+            acquisitions: Acquisitions::default(),
             sent_from: None,
             runtime_slow: None,
         };
@@ -1042,6 +1063,7 @@ impl Launcher {
             runtime,
             commands: commands.into(),
             installation,
+            defaults: None,
             links: Arc::new(NoOpener),
             hotkeys: system_hotkeys::none(),
             clipboard: None,
@@ -1178,6 +1200,7 @@ impl Launcher {
                 .map_err(Clone::clone),
             commands: self.commands.clone(),
             installation: self.installation.clone(),
+            defaults: self.defaults.clone(),
             links: self.links.clone(),
             hotkeys: self.hotkeys.clone(),
             clipboard: self.clipboard.as_ref().map(Arc::downgrade),
@@ -1650,6 +1673,7 @@ impl Launcher {
         let mut develop = None;
         let mut delete_retained = None;
         let mut install = None;
+        let mut acquire = None;
         let mut stop_sharing = None;
         // The status line is about this action from now on.
         state.sent_from = None;
@@ -1814,6 +1838,11 @@ impl Launcher {
                 install = self.begin_install(&mut state, request, mode, assumptions);
                 None
             }
+            Some(Entry::Acquire(id)) => {
+                acquire = Some(id);
+                state.view.status = Status::Running;
+                None
+            }
             Some(Entry::AskNpm) => {
                 self.show_npm_form(&mut state);
                 None
@@ -1868,6 +1897,9 @@ impl Launcher {
             if let Some(install) = install {
                 launcher.finish_install(epoch, install).await;
             }
+            if let Some(id) = acquire {
+                launcher.retry_acquiring(&id).await;
+            }
             if let Some(identity) = stop_sharing {
                 launcher.stop_sharing_folder(identity).await;
             }
@@ -1901,6 +1933,7 @@ impl Launcher {
                     | Entry::InstallFromFolder
                     | Entry::AskNpm
                     | Entry::AskGit
+                    | Entry::Acquire(_)
                     | Entry::ChooseFolder(_)
                     | Entry::StopSharingFolder(_)
                     | Entry::Install(..)
@@ -2647,6 +2680,20 @@ impl Launcher {
                 unavailable: None,
             };
             add(row, Entry::AskGit, None, None);
+        }
+        // A default extension Pane could not acquire can be tried again;
+        // the row is gone while one is being acquired, or once it is
+        // installed.
+        if self.defaults.is_some() {
+            for (id, title, why) in state.acquisitions.retryable() {
+                let row = Row {
+                    id: format!("acquire:{id}"),
+                    title: format!("Set up {title}"),
+                    subtitle: Some(why),
+                    unavailable: None,
+                };
+                add(row, Entry::Acquire(id), None, None);
+            }
         }
         // Retained data is managed there too, while nothing is installed.
         if self.installation.is_some() && !(state.packages.is_empty() && state.retained.is_empty())

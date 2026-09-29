@@ -47,13 +47,15 @@ const PACKAGES_DIR: &str = "packages";
 pub struct PackageIdentity(Source);
 
 /// A package's source, as `installed.json` records it: `"local": "<folder>"`,
-/// `"npm": "<package name>"` or `"git": "<host>/<repository path>"`.
+/// `"npm": "<package name>"`, `"git": "<host>/<repository path>"` or
+/// `"default": "<default extension's id>"`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(untagged)]
 enum Source {
     Local { local: String },
     Npm { npm: String },
     Git { git: String },
+    Default { default: String },
 }
 
 impl PackageIdentity {
@@ -90,6 +92,7 @@ impl PackageIdentity {
             Source::Local { local } => format!("local:{local}"),
             Source::Npm { npm } => format!("npm:{npm}"),
             Source::Git { git } => format!("git:{git}"),
+            Source::Default { default } => format!("default:{default}"),
         }
     }
 
@@ -109,8 +112,8 @@ impl PackageIdentity {
         }
     }
 
-    /// Whether the package was downloaded (from npm or Git) rather than
-    /// installed from a folder on this computer.
+    /// Whether the package was downloaded (from npm, Git or Pane's own
+    /// downloads) rather than installed from a folder on this computer.
     pub(crate) fn is_published(&self) -> bool {
         !matches!(self.0, Source::Local { .. })
     }
@@ -127,7 +130,24 @@ impl PackageIdentity {
     pub fn npm_name(&self) -> Option<&str> {
         match &self.0 {
             Source::Npm { npm } => Some(npm),
-            Source::Local { .. } | Source::Git { .. } => None,
+            Source::Local { .. } | Source::Git { .. } | Source::Default { .. } => None,
+        }
+    }
+
+    /// The identity of the default extension `id` (checked by
+    /// [`crate::defaults::fetch`]), whatever its version: the extension Pane
+    /// acquired for this feature, from Pane's own downloads.
+    pub fn default_extension(id: &str) -> PackageIdentity {
+        PackageIdentity(Source::Default {
+            default: id.to_owned(),
+        })
+    }
+
+    /// The id of a default extension acquired from Pane's own downloads.
+    pub fn default_id(&self) -> Option<&str> {
+        match &self.0 {
+            Source::Default { default } => Some(default),
+            _ => None,
         }
     }
 
@@ -135,7 +155,7 @@ impl PackageIdentity {
     pub fn local_folder(&self) -> Option<&Path> {
         match &self.0 {
             Source::Local { local } => Some(Path::new(local)),
-            Source::Npm { .. } | Source::Git { .. } => None,
+            Source::Npm { .. } | Source::Git { .. } | Source::Default { .. } => None,
         }
     }
 
@@ -166,7 +186,9 @@ impl PackageIdentity {
         };
         let folder = match &self.0 {
             Source::Local { local } => Path::new(local).join(&path),
-            Source::Npm { .. } | Source::Git { .. } => return Err(PathBuf::from(path)),
+            Source::Npm { .. } | Source::Git { .. } | Source::Default { .. } => {
+                return Err(PathBuf::from(path));
+            }
         };
         if let Ok(identity) = PackageIdentity::local(&folder) {
             return Ok(identity);
@@ -236,6 +258,7 @@ impl fmt::Display for PackageIdentity {
             Source::Local { local } => write!(f, "local folder {local}"),
             Source::Npm { npm } => write!(f, "npm package {npm}"),
             Source::Git { git } => write!(f, "Git repository {git}"),
+            Source::Default { default } => write!(f, "Pane's default extension {default}"),
         }
     }
 }
@@ -1014,6 +1037,9 @@ pub enum PackageError {
     /// A package from Git cannot be fetched, written out or installed; the
     /// message says why.
     Git(String),
+    /// A default extension's payload cannot be acquired or installed; the
+    /// message says why.
+    Defaults(String),
 }
 
 impl fmt::Display for PackageError {
@@ -1072,7 +1098,9 @@ impl fmt::Display for PackageError {
             PackageError::Dependencies(problems) => {
                 write!(f, "Nothing was installed: {}", problems.join("; "))
             }
-            PackageError::Npm(message) | PackageError::Git(message) => f.write_str(message),
+            PackageError::Npm(message)
+            | PackageError::Git(message)
+            | PackageError::Defaults(message) => f.write_str(message),
         }
     }
 }
@@ -1093,6 +1121,9 @@ pub(crate) struct SourcePackage {
     pub npm: Option<NpmOrigin>,
     /// Where a package from Git was fetched from; `None` otherwise.
     pub git: Option<GitOrigin>,
+    /// Where a default extension's payload was acquired from; `None`
+    /// otherwise.
+    pub default: Option<crate::defaults::DefaultOrigin>,
     /// For a package from npm or Git, its download, removed from the
     /// downloads folder once the last copy of this package is dropped.
     _download: Option<std::sync::Arc<crate::downloads::Download>>,
@@ -1149,6 +1180,7 @@ impl SourcePackage {
             manifest_text,
             npm: Some(origin),
             git: None,
+            default: None,
             _download: Some(std::sync::Arc::new(download)),
             network: false,
         })
@@ -1207,19 +1239,56 @@ impl SourcePackage {
             manifest_text,
             npm: None,
             git: Some(origin),
+            default: None,
+            _download: Some(std::sync::Arc::new(download)),
+            network: false,
+        })
+    }
+
+    /// Reads the payload of the default extension Pane acquired from its
+    /// own downloads, as the package with the default extension's
+    /// identity. A payload is unpacked and checked as an npm package's
+    /// tarball is, so a payload without `pane.json` or without its built
+    /// components is explained like one.
+    pub(crate) fn read_default(
+        fetched: crate::defaults::Fetched,
+    ) -> Result<SourcePackage, PackageError> {
+        let crate::defaults::Fetched { download, origin } = fetched;
+        let folder = download.folder().to_path_buf();
+        let id = origin.id.clone();
+        let (manifest, manifest_text) = match Manifest::read_text(&folder) {
+            Ok(read) => read,
+            Err(PackageError::NoManifest(_)) => {
+                return Err(PackageError::Defaults(format!(
+                    "the payload of Pane's default extension {id} is not a Pane extension: it \
+                     has no {MANIFEST_FILE}, and Pane does not install what does not hold one"
+                )));
+            }
+            Err(error) => return Err(error),
+        };
+        Ok(SourcePackage {
+            identity: PackageIdentity::default_extension(&id),
+            folder,
+            manifest,
+            manifest_text,
+            npm: None,
+            git: None,
+            default: Some(origin),
             _download: Some(std::sync::Arc::new(download)),
             network: false,
         })
     }
 
     /// What identifies the download this package was read from, when it
-    /// was downloaded: its npm tarball's integrity or its Git commit. A new
-    /// download with the same `pane.json` is another plan.
+    /// was downloaded: its npm tarball's integrity, its Git commit, or its
+    /// default payload's integrity. A new download with the same
+    /// `pane.json` is another plan.
     pub(crate) fn fingerprint(&self) -> Option<String> {
-        match (&self.npm, &self.git) {
-            (Some(npm), _) => Some(npm.integrity.clone()),
-            (None, Some(git)) => Some(git.revision.commit.clone()),
-            (None, None) => None,
+        match (&self.npm, &self.git, &self.default) {
+            (Some(npm), _, _) => Some(npm.integrity.clone()),
+            (None, Some(git), _) => Some(git.revision.commit.clone()),
+            (None, None, Some(default)) => Some(default.integrity.clone()),
+            (None, None, None) => None,
         }
     }
 
@@ -1237,6 +1306,7 @@ impl SourcePackage {
             manifest_text,
             npm: None,
             git: None,
+            default: None,
             _download: None,
             network: false,
         })
@@ -1256,6 +1326,7 @@ impl SourcePackage {
             manifest_text,
             npm: None,
             git: None,
+            default: None,
             _download: None,
             network: false,
         })
@@ -1527,6 +1598,9 @@ struct RecordJson {
     /// installed.
     #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
     git: Option<GitRecordJson>,
+    /// For a default extension Pane acquired, the version installed.
+    #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
+    default: Option<DefaultRecordJson>,
     /// The managed folder under `packages/`.
     dir: String,
     /// Set when the user disabled the package; absent means enabled.
@@ -1618,6 +1692,17 @@ impl GitRecordJson {
             ),
         })
     }
+}
+
+/// The version of an acquired default extension as its record writes it,
+/// beside the default extension its source records: `"default":
+/// "calculator", "defaultVersion": "0.1.0"`. The payload's integrity
+/// identified the download and is not kept: what is kept is what was
+/// installed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct DefaultRecordJson {
+    #[serde(rename = "defaultVersion")]
+    version: String,
 }
 
 /// A dependency id and the source it resolved to.
@@ -2116,6 +2201,9 @@ impl Store {
             .as_ref()
             .map(|origin| NpmRecordJson::of(&origin.package));
         let git = package.git.as_ref().map(GitRecordJson::of);
+        let default = package.default.as_ref().map(|origin| DefaultRecordJson {
+            version: origin.version().to_owned(),
+        });
         // An update keeps the record, so a disabled package stays disabled.
         let enabled = match updated.packages.iter_mut().find(|r| &r.source == local) {
             Some(record) => {
@@ -2125,6 +2213,7 @@ impl Store {
                 record.dependencies = dependencies.clone();
                 record.npm = npm.clone();
                 record.git = git.clone();
+                record.default = default.clone();
                 record.network = package.network;
                 !record.disabled
             }
@@ -2136,6 +2225,7 @@ impl Store {
                     source: local.clone(),
                     npm: npm.clone(),
                     git: git.clone(),
+                    default: default.clone(),
                     dir,
                     disabled: false,
                     paused: None,

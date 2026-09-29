@@ -11,11 +11,23 @@
 //!   toolchain in `tools/componentize-js` (prerequisites: guests/README.md),
 //!   then run `guests`.
 //! - `ci`: build guests, then check formatting, lints and tests.
+//! - `package-linux`: build Pane's Linux package and the artifacts its
+//!   default extensions are acquired from, under `target/dist/` (with
+//!   `--dev`, the package's program is the development profile; see
+//!   `package.rs`).
+
+mod package;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 const GUEST_TARGET: &str = "wasm32-wasip2";
+
+/// npm's own fixed time for packed files, 1985-10-26T08:15:00Z: the
+/// tarballs this repository packs (the npm sample, the default
+/// extensions' payloads, the Linux package) are the same on every system,
+/// so a source serves one integrity everywhere.
+pub(crate) const PACKED_MTIME: u64 = 499_162_500;
 
 /// Components built by `js-guests` and committed, so that normal builds and
 /// tests need no JavaScript toolchain.
@@ -43,11 +55,13 @@ const PREBUILT: &[&str] = &[
 
 fn main() -> ExitCode {
     let task = std::env::args().nth(1);
+    let dev = std::env::args().any(|arg| arg == "--dev");
     let result = match task.as_deref() {
         Some("guests") => guests(),
         Some("js-guests") => js_guests(),
         Some("ci") => ci(),
-        _ => Err("usage: cargo xtask <guests|js-guests|ci>".into()),
+        Some("package-linux") => package::linux(dev),
+        _ => Err("usage: cargo xtask <guests|js-guests|ci|package-linux>".into()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -222,15 +236,13 @@ fn npm_sample(root: &Path, out: &Path) -> Result<(), String> {
             .map_err(|error| format!("copy {} failed: {error}", from.display()))?;
     }
     files.sort();
-    // npm's own fixed time for packed files, 1985-10-26T08:15:00Z.
-    const NPM_MTIME: u64 = 499_162_500;
     let mut tar = tar::Builder::new(Vec::new());
     for file in &files {
         let contents = std::fs::read(dest.join(file)).map_err(|error| error.to_string())?;
         let mut header = tar::Header::new_ustar();
         header.set_size(contents.len() as u64);
         header.set_mode(0o644);
-        header.set_mtime(NPM_MTIME);
+        header.set_mtime(PACKED_MTIME);
         header.set_uid(0);
         header.set_gid(0);
         header.set_entry_type(tar::EntryType::Regular);
