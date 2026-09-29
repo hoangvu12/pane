@@ -884,6 +884,53 @@ checked once, at the end, as after the copy in phase 280 to 287). As the
 | Pasting into root search still shows the copied text | 405-clipboard-still-held.png |
 | Typing the same text (the same frame) | 406-clipboard-held-typed.png |
 
+### Installing Pane and acquiring its calculator (#53)
+
+A final phase, after the clipboard-expiry one, proves the whole outcome of
+[#53](https://github.com/hoangvu12/pane/issues/53)
+([installer](../installer.md)). `cargo xtask package-linux --dev` builds the
+Linux package (the development profile, so its program accepts the
+controlled artifact source) and the default extensions' payloads; the
+smoke serves `target/dist/artifacts` from 127.0.0.1 with
+`scripts/artifact_server.py` (nothing reaches the network or Pane's
+published downloads). The package is unpacked into a folder of its own and
+its install script runs with a **clean machine's** environment: a fresh
+home folder and `PATH=/usr/bin:/bin`, so the home holds no data and no
+development tool is configured. The installed Pane
+(`~/.local/bin/pane` of that home) then starts with a PATH that holds
+nothing at all (an empty folder, checked by `command -v` of cargo, rustc,
+node, npm, git, cc, clang and make, and by reading the running process's
+`PATH`), pointed at the controlled source with `PANE_ARTIFACTS`. It
+acquires the calculator and the helper sample by itself
+(`installed.json` must record both under `"default"`), root search lists
+their commands, "6*7" answers 42 and Enter copies it, and the Helper
+sample's "Echo through the helper" runs the payload's prebuilt `pane-echo`
+("Echoed \"hello from Pane\" on Linux x86-64"), from the managed copy,
+with no developer tool reachable. The acquired payloads must be cached,
+the downloads folder empty, and no helper process left running. The
+program files are removed again at the phase's end, so the uploaded
+evidence is the screenshots and records (frames 500 to 503), not the
+program.
+
+**Recorded 2026-09-29, this machine (Ubuntu aarch64, no display — the GUI
+cannot run here):** what ran locally is everything short of the GUI: the
+packaging task in both profiles, the install script into a temporary home
+with a scrubbed PATH (`pane --version` answered), and the acquisition and
+its recovery through the launcher's public interface
+(`crates/pane-core/tests/installer.rs`, ten checks, all passing, including
+the helper running from the managed copy — this machine's payload names
+`linux-aarch64`, which CI's x86_64 runner builds as `linux-x86_64`). The
+smoke phase itself, and the release-profile package on x86_64, are
+**pending CI**: they need the Xvfb smoke and the x86_64 build only CI's
+runner provides.
+
+| Step | Evidence |
+| --- | --- |
+| The clean machine's Pane acquired both default extensions and lists their commands | pending CI (frame 500) |
+| "6*7" answers 42 | pending CI (frame 501) |
+| Enter copies the answer | pending CI (frame 502) |
+| The helper sample's prebuilt helper answers | pending CI (frame 503) |
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms have a text field (GPUI CE's
@@ -921,6 +968,10 @@ checked once, at the end, as after the copy in phase 280 to 287). As the
   XWayland) it says why it cannot watch, and only the X11 combination
   (Xvfb in CI) is claimed; a real desktop's programs, password managers and
   selection transfers have not been run.
+- aarch64 has now built and checked headlessly (the #53 package and its
+  acquisition, above), but no aarch64 GUI has run: Xvfb, the smoke and the
+  window tests on aarch64 remain untested, and the prebuilt-helper fixture
+  the smoke installs is built for the system that builds it.
 - The GUI smoke now also asserts that text is drawn in the expected colors and
   that the three result screens differ (`scripts/check_screenshot.py`). Which
   command and guest each screenshot shows is still checked by inspection.

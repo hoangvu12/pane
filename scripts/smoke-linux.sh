@@ -25,10 +25,12 @@ xvfb_pid=
 pane_pid=
 npm_registry_pid=
 repository_server_pid=
+artifact_server_pid=
 cleanup() {
   [ -n "$pane_pid" ] && kill "$pane_pid" 2>/dev/null || true
   [ -n "$npm_registry_pid" ] && kill "$npm_registry_pid" 2>/dev/null || true
   [ -n "$repository_server_pid" ] && kill "$repository_server_pid" 2>/dev/null || true
+  [ -n "$artifact_server_pid" ] && kill "$artifact_server_pid" 2>/dev/null || true
   [ -n "$xvfb_pid" ] && kill "$xvfb_pid" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -676,8 +678,11 @@ if grep -q '"paused"' "$PANE_DATA_DIR/extensions/installed.json"; then echo "pau
 export PANE_DATA_DIR=$out/retained-data
 rm -rf "$PANE_DATA_DIR"
 # Waits until file $1 contains text $2 ("present") or no longer does ("absent").
+# Waits up to a tenth of a second times `tries` (100 by default) for
+# `grep -e $2 $1` to be found (present) or gone (absent).
 wait_for() {
-  for _ in $(seq 100); do
+  local tries=${4:-100}
+  for _ in $(seq "$tries"); do
     if grep -q "$2" "$1" 2>/dev/null; then [ "$3" = present ] && return; else [ "$3" = absent ] && return; fi
     sleep 0.1
   done
@@ -1748,4 +1753,91 @@ python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{400-clipboard-e
 stop_pane
 [ -z "$(kept_texts)" ] || { echo "kept: $(kept_texts)"; exit 1; }
 [ "$(field retentionSeconds)" = 3600 ] || { echo "retention: $(field retentionSeconds)"; exit 1; }
+
+# Installing Pane and acquiring its calculator (#53): the package
+# `cargo xtask package-linux --dev` builds is installed on a clean machine
+# — a fresh home folder, a PATH that holds nothing at all, so no Rust,
+# Node, npm, Git or compiler can be reached — and Pane, started from what
+# the install script installed, acquires its default extensions (the
+# calculator, and the prebuilt-helper sample with it) from the artifact
+# source this smoke serves on 127.0.0.1 (scripts/artifact_server.py, the
+# payloads `cargo xtask package-linux` assembled; nothing reaches the
+# network or Pane's published downloads). The calculator answers "6*7"
+# with 42, and the helper sample's pane-echo runs: a prebuilt program
+# from the acquired payload, no developer tool anywhere. The package is
+# the development profile, because only a development build takes its
+# artifact source from PANE_ARTIFACTS; a release build uses Pane's
+# published downloads, which no controlled source may replace.
+# (The binaries are removed again at the end of the phase: the uploaded
+# evidence is the screenshots and records, not the program.)
+cargo xtask package-linux --dev >/dev/null
+package=$(ls target/dist/pane-*-linux-*-dev.tar.gz | head -1)
+[ -n "$package" ] || { echo "the package was not built"; exit 1; }
+home=$out/clean-home
+unpack=$out/package-unpacked
+rm -rf "$home" "$unpack"
+mkdir -p "$home" "$unpack"
+rm -f "$out/artifact-server.port"
+python3 "$(dirname "$0")/artifact_server.py" target/dist/artifacts "$out/artifact-server.port" 2>>"$out/artifact-server.log" &
+artifact_server_pid=$!
+for _ in $(seq 600); do [ -s "$out/artifact-server.port" ] && break; kill -0 "$artifact_server_pid" 2>/dev/null || break; sleep 0.1; done
+[ -s "$out/artifact-server.port" ] || { echo "the local artifact source did not start (see $out/artifact-server.log)"; exit 1; }
+tar -xzf "$package" -C "$unpack"
+clean_bin=$out/clean-bin
+rm -rf "$clean_bin"; mkdir -p "$clean_bin"
+# Nothing can be reached at all from the PATH Pane runs with.
+[ -z "$(env -i PATH="$clean_bin" sh -c 'command -v cargo rustc node npm git cc clang make' 2>/dev/null)" ] \
+  || { echo "the clean machine still reaches a development tool"; exit 1; }
+env -i HOME="$home" PATH="/usr/bin:/bin" bash "$unpack/pane/install.sh" >>"$out/install.log" 2>&1 \
+  || { echo "the install script failed (see $out/install.log)"; exit 1; }
+[ -x "$home/.local/bin/pane" ] || { echo "the install script installed no pane"; exit 1; }
+start_installed() {
+  env -i HOME="$home" PATH="$clean_bin" DISPLAY="$display" \
+    PANE_ARTIFACTS="http://127.0.0.1:$(cat "$out/artifact-server.port")/" \
+    "$home/.local/bin/pane" "$@" 2>>"$out/installed-stderr.log" &
+  pane_pid=$!
+  window=
+  for _ in $(seq 100); do
+    window=$("$xdotool" search --onlyvisible --pid "$pane_pid" 2>/dev/null | head -1) && [ -n "$window" ] && break
+    sleep 0.2
+  done
+  [ -n "$window" ] || { echo "the installed Pane window did not appear"; exit 1; }
+  sleep 2
+}
+start_installed
+# Pane ran with the PATH that holds nothing.
+[ "$(tr '\0' '\n' <"/proc/$pane_pid/environ" | grep '^PATH=')" = "PATH=$clean_bin" ] \
+  || { echo "the installed Pane did not run with the clean PATH"; exit 1; }
+"$xdotool" windowfocus --sync "$window"
+installed=$home/.local/share/pane/extensions
+# Generous: a slow runner may take a while to check both payloads'
+# components (120 s each).
+kill -0 "$pane_pid" 2>/dev/null || { echo "the installed Pane exited during setup"; exit 1; }
+wait_for "$installed/installed.json" '"default": "calculator"' present 1200
+wait_for "$installed/installed.json" '"default": "helper-sample"' present 1200
+sleep 1
+capture 500-installed-root.png
+check 500-installed-root.png aab4c0   # root search: the calculator and Helper sample commands are listed
+"$xdotool" type --delay 50 '6*7'; sleep 2
+capture 501-calculator-answer.png
+check 501-calculator-answer.png 364355 3000   # "42", the calculator's selected answer row
+"$xdotool" key Return; sleep 1
+capture 502-calculator-copied.png
+check 502-calculator-copied.png 9fd8a8   # "Copied 42 to the clipboard"
+"$xdotool" key ctrl+a; "$xdotool" type --delay 50 helper; sleep 1
+"$xdotool" key Return; sleep 2   # Helper sample
+"$xdotool" key Return; sleep 3   # "Echo through the helper"
+capture 503-helper-echoed.png
+check 503-helper-echoed.png 9fd8a8   # "Echoed \"hello from Pane\" on Linux x86-64"
+[ -n "$(ls "$installed"/packages/*/helpers/*/pane-echo)" ] \
+  || { echo "the acquired payload's helper was not installed"; exit 1; }
+[ -z "$(pgrep -f pane-echo)" ] || { echo "a helper is still running"; exit 1; }
+[ "$(ls "$installed/acquired/calculator" | wc -l)" = 1 ] || { echo "the calculator's payload is not cached"; exit 1; }
+[ -z "$(ls -A "$installed/downloads" 2>/dev/null)" ] || { echo "downloads were left behind"; exit 1; }
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{500-installed-root,501-calculator-answer,503-helper-echoed}.png
+stop_pane
+kill "$artifact_server_pid"; wait "$artifact_server_pid" 2>/dev/null || true; artifact_server_pid=
+# The program files go again: the evidence is the screenshots, the
+# installed.json record and the logs.
+rm -f "$home/.local/bin/pane" "$unpack/pane/pane"
 echo "screenshots in $out"
