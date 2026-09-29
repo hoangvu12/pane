@@ -1320,12 +1320,15 @@ fn read_pack(pack: &[u8], limits: Limits) -> Result<Objects, String> {
 
 /// Inflates the zlib stream at the start of `input`, which must hold
 /// exactly `size` bytes; returns them and how much of `input` it took.
+/// Its buffer doubles as it fills, never past `size`, which is what the
+/// budget counts, but for one byte that finds a stream longer than `size`.
 fn inflate(input: &[u8], size: u64) -> Result<(Vec<u8>, usize), String> {
     let mut inflater = flate2::Decompress::new(true);
     let mut out = Vec::with_capacity(size.min(1 << 20) as usize);
     loop {
         if out.len() == out.capacity() {
-            out.reserve((size as usize - out.len()).clamp(1, 1 << 20));
+            let rest = size as usize - out.len();
+            out.reserve_exact(rest.min(out.len().max(1 << 20)).max(1));
         }
         let consumed = inflater.total_in() as usize;
         let status = inflater
@@ -2399,6 +2402,19 @@ mod tests {
         }
         let (pack, _) = pack_of(&entries);
         assert!(read_pack(&pack, within(5500)).is_ok());
+    }
+
+    #[test]
+    fn an_entry_takes_no_more_memory_than_the_budget_counted_for_it() {
+        // Larger than inflating's first allocation (1 MiB), so that it grows
+        // while it is inflated; it may not grow past the size its header
+        // gives, which is what the budget counts.
+        let contents: Vec<u8> = (0..3 << 19).map(|i| (i % 251) as u8).collect();
+        let (pack, _) = pack_of(&[(3, Vec::new(), contents.clone())]);
+        let objects = read_pack(&pack, Limits::default()).unwrap();
+        let (_, data) = &objects[&object_id(Kind::Blob, &contents).unwrap()];
+        assert_eq!(data[..], contents[..]);
+        assert_eq!(data.capacity(), contents.len());
     }
 
     #[test]
