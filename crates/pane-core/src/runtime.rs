@@ -190,6 +190,7 @@ impl SearchStopped {
 /// What a search waits on before it starts, given [`SEARCH_DEBOUNCE`]: the
 /// clock's sleep, unless a test sets another
 /// (`Runtime::set_search_timer`, in debug builds).
+#[cfg(any(test, debug_assertions))]
 type SearchTimer = Arc<
     dyn Fn(std::time::Duration) -> std::pin::Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync,
 >;
@@ -1635,7 +1636,8 @@ struct Host {
     /// The granted folders and their listings.
     files: FileAccess,
     /// What a search waits on before it starts, if a test replaced the
-    /// clock.
+    /// clock. A release build has none.
+    #[cfg(any(test, debug_assertions))]
     search_timer: Arc<Mutex<Option<SearchTimer>>>,
     /// Keeps clipboard history for guests' packages.
     clipboard: SharedClipboard,
@@ -1832,6 +1834,7 @@ impl Host {
             applications: shared.applications.clone(),
             network: shared.network.clone(),
             files: shared.files.clone(),
+            #[cfg(any(test, debug_assertions))]
             search_timer: shared.search_timer.clone(),
             clipboard: shared.clipboard.clone(),
         }
@@ -2219,11 +2222,13 @@ impl Host {
     ) -> Result<Vec<SearchResult>, CallError> {
         // Replaced while it waited in the queue, or soon after: it is not
         // started.
-        let timer = lock(&self.search_timer).clone();
-        let wait = match timer {
+        #[cfg(any(test, debug_assertions))]
+        let wait = match lock(&self.search_timer).clone() {
             Some(timer) => timer(SEARCH_DEBOUNCE),
             None => Box::pin(tokio::time::sleep(SEARCH_DEBOUNCE)),
         };
+        #[cfg(not(any(test, debug_assertions)))]
+        let wait = tokio::time::sleep(SEARCH_DEBOUNCE);
         if stopped.stopped() || stopped.stopped_before(wait).await {
             return Err(CallError::Cancelled);
         }
