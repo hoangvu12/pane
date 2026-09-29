@@ -1,14 +1,16 @@
-//! Building Pane's Linux package and the artifacts its default extensions
-//! are acquired from (#53).
+//! Building Pane's packages and the artifacts its default extensions
+//! are acquired from (#53 for Linux, #51 for Windows).
 //!
-//! `package-linux` produces, under `target/dist/`:
+//! `package-linux` and `package-windows` each produce, under
+//! `target/dist/`:
 //!
-//! - `pane-<version>-linux-<arch>[-dev].tar.gz` — the package a clean
-//!   machine installs from: the `pane` program, the install script and a
-//!   desktop entry, and none of the default extensions' payloads
-//!   (internet-first: Pane downloads them at first setup). A `.sha256`
-//!   file beside it names its digest; nothing is signed, since no signing
-//!   credentials exist yet.
+//! - `pane-<version>-<os>-<arch>[-dev].tar.gz` (Linux) or `.zip`
+//!   (Windows) — the package a clean machine of that system installs
+//!   from: the `pane` program, the install script and a README (and, on
+//!   Linux, a desktop entry), and none of the default extensions'
+//!   payloads (internet-first: Pane downloads them at first setup). A
+//!   `.sha256` file beside it names its digest; nothing is signed, since
+//!   no signing credentials exist yet.
 //! - `artifacts/` — what an artifact source serves: the index document
 //!   `pane-defaults.json` and one tarball per default extension's payload,
 //!   built for the system this ran on. A real deployment serves this
@@ -21,6 +23,14 @@
 //! its artifact source from `PANE_ARTIFACTS` (a release build uses Pane's
 //! published downloads, which no controlled source may replace). Without
 //! it, the release profile is built.
+//!
+//! Each task builds the package for the system it runs on, so a release
+//! for several systems builds one package per system (this machine builds
+//! the Linux one, CI's `windows-2025` and `ubuntu-24.04` runners theirs).
+//! `package-windows` runs everywhere far enough to assemble the
+//! artifacts, then refuses anywhere but Windows: `pane.exe` needs a
+//! Windows build, and packing another system's program under a Windows
+//! package's name would be worse than explaining so.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -30,6 +40,8 @@ use super::PACKED_MTIME;
 
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256, Sha512};
+
+use crate::zip;
 
 /// The default extensions whose payloads the artifacts describe, and the
 /// assembled package each is packed from: the calculator (the default
@@ -45,6 +57,52 @@ const DEFAULTS: [(&str, &str); 2] = [
 /// version, which every crate of it shares.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Which system one of the package tasks builds for.
+#[derive(Clone, Copy)]
+enum System {
+    Linux,
+    Windows,
+}
+
+impl System {
+    /// The system's id, as the package's name and the docs say it.
+    fn id(self) -> &'static str {
+        match self {
+            System::Linux => "linux",
+            System::Windows => "windows",
+        }
+    }
+
+    /// The install script the package holds: where the repository keeps it,
+    /// and the name it is packed under.
+    fn install_script(self) -> (&'static str, &'static str) {
+        match self {
+            System::Linux => ("scripts/install-linux.sh", "install.sh"),
+            System::Windows => ("scripts/install-windows.ps1", "install.ps1"),
+        }
+    }
+
+    /// How the package is packed: the tarball Linux unpacks with `tar`, or
+    /// the zip a Windows user unzips with whatever is at hand (Windows has
+    /// no tar a user can rely on).
+    fn archive(self) -> &'static str {
+        match self {
+            System::Linux => "tar.gz",
+            System::Windows => "zip",
+        }
+    }
+
+    /// The one file this system's package holds besides the program, the
+    /// install script and the README: Linux's desktop entry, which Windows'
+    /// install script replaces with a Start-menu shortcut.
+    fn extra_file(self) -> Option<(&'static str, String)> {
+        match self {
+            System::Linux => Some(("pane.desktop", desktop_entry())),
+            System::Windows => None,
+        }
+    }
+}
+
 /// Builds the Linux package and the default extensions' artifacts.
 pub fn linux(dev: bool) -> Result<(), String> {
     let root = root();
@@ -52,7 +110,35 @@ pub fn linux(dev: bool) -> Result<(), String> {
     fs::create_dir_all(&out).map_err(|error| error.to_string())?;
     build_program(&root, dev)?;
     let artifacts = assemble_artifacts(&root, &out)?;
-    let package = assemble_package(&root, &out, dev)?;
+    let package = assemble_package(&root, &out, dev, System::Linux)?;
+    println!("package built into {}", package.display());
+    println!("artifacts built into {}", artifacts.display());
+    Ok(())
+}
+
+/// Builds the Windows package and the default extensions' artifacts.
+pub fn windows(dev: bool) -> Result<(), String> {
+    let root = root();
+    let out = root.join("target/dist");
+    fs::create_dir_all(&out).map_err(|error| error.to_string())?;
+    let artifacts = assemble_artifacts(&root, &out)?;
+    // The program comes last, so everything else the task builds is built
+    // wherever it runs; but pane.exe can only be built by a Windows
+    // checkout (no cross toolchain is set up: a Windows program needs a
+    // Windows build), and packing another system's program under a
+    // Windows package's name would be worse than explaining so. CI's
+    // `windows-2025` runner builds the package itself.
+    if !cfg!(target_os = "windows") {
+        return Err(format!(
+            "package-windows builds the pane program for Windows, which only a Windows checkout \
+             can build; this one runs on {}. The artifacts under {} are assembled for this \
+             system, and a Windows run re-assembles them for windows-x86_64",
+            std::env::consts::OS,
+            artifacts.display()
+        ));
+    }
+    build_program(&root, dev)?;
+    let package = assemble_package(&root, &out, dev, System::Windows)?;
     println!("package built into {}", package.display());
     println!("artifacts built into {}", artifacts.display());
     Ok(())
@@ -267,57 +353,25 @@ fn manifest_version(files: &[(String, Vec<u8>)]) -> Result<String, String> {
 /// file a regular file without execute permission, with the fixed time,
 /// owner and mode that make the tarball the same on every system.
 fn pack(files: &[(String, Vec<u8>)]) -> Vec<u8> {
-    let mut tar = tar::Builder::new(Vec::new());
-    for (path, contents) in files {
-        let mut header = tar::Header::new_ustar();
-        header.set_size(contents.len() as u64);
-        header.set_mode(0o644);
-        header.set_mtime(PACKED_MTIME);
-        header.set_uid(0);
-        header.set_gid(0);
-        header.set_entry_type(tar::EntryType::Regular);
-        tar.append_data(&mut header, format!("package/{path}"), contents.as_slice())
-            .expect("the payload's names are plain names");
-    }
-    let tar = tar.into_inner().expect("packing into memory");
-    let mut gz = flate2::GzBuilder::new()
-        .mtime(0)
-        .write(Vec::new(), flate2::Compression::best());
-    std::io::Write::write_all(&mut gz, &tar).expect("packing into memory");
-    gz.finish().expect("packing into memory")
+    pack_tgz(files, "package", None).expect("packing into memory")
 }
 
-/// Assembles the package: the `pane` program, the install script, a
-/// README and a desktop entry in `pane/`, packed as
-/// `pane-<version>-linux-<arch>[-dev].tar.gz` with a `.sha256` file
-/// beside it.
-fn assemble_package(root: &Path, out: &Path, dev: bool) -> Result<PathBuf, String> {
-    let stage = out.join("stage/pane");
-    let _ = fs::remove_dir_all(stage.parent().expect("the stage folder"));
-    fs::create_dir_all(&stage).map_err(|error| error.to_string())?;
-    let suffix = if dev { "-dev" } else { "" };
-    let name = format!(
-        "pane-{VERSION}-linux-{}{suffix}.tar.gz",
-        arch().ok_or("the package names no architecture for this system")?
-    );
-    let copies = [
-        (program(root, dev), stage.join(program_name())),
-        (
-            root.join("scripts/install-linux.sh"),
-            stage.join("install.sh"),
-        ),
-    ];
-    for (from, to) in copies {
-        fs::copy(&from, &to).map_err(|error| format!("copy {} failed: {error}", from.display()))?;
-    }
-    fs::write(stage.join("README.txt"), readme(dev)).map_err(|error| error.to_string())?;
-    fs::write(stage.join("pane.desktop"), desktop_entry()).map_err(|error| error.to_string())?;
-    // The package is packed like the payloads are: fixed time, owner and
-    // mode, so its sha256 is the same wherever it is built.
-    let files = read_files(&stage, "")?;
+/// Packs `files` (path in the archive, contents) as the tarballs this
+/// repository packs: a gzip of a tar holding them under `prefix/`, every
+/// file a regular file, `program` (when given) executable, with the fixed
+/// time, owner and mode that make the bytes the same on every system.
+fn pack_tgz(
+    files: &[(String, Vec<u8>)],
+    prefix: &str,
+    program: Option<&str>,
+) -> Result<Vec<u8>, String> {
     let mut tar = tar::Builder::new(Vec::new());
     for (path, contents) in files {
-        let mode = if path == program_name() { 0o755 } else { 0o644 };
+        let mode = if Some(path.as_str()) == program {
+            0o755
+        } else {
+            0o644
+        };
         let mut header = tar::Header::new_ustar();
         header.set_size(contents.len() as u64);
         header.set_mode(mode);
@@ -325,20 +379,58 @@ fn assemble_package(root: &Path, out: &Path, dev: bool) -> Result<PathBuf, Strin
         header.set_uid(0);
         header.set_gid(0);
         header.set_entry_type(tar::EntryType::Regular);
-        tar.append_data(&mut header, format!("pane/{path}"), contents.as_slice())
-            .map_err(|error| error.to_string())?;
+        tar.append_data(&mut header, format!("{prefix}/{path}"), contents.as_slice())
+            .map_err(|error| format!("packing {path} failed: {error}"))?;
     }
     let tar = tar.into_inner().map_err(|error| error.to_string())?;
     let mut gz = flate2::GzBuilder::new()
         .mtime(0)
         .write(Vec::new(), flate2::Compression::best());
     std::io::Write::write_all(&mut gz, &tar).map_err(|error| error.to_string())?;
-    let packed = gz.finish().map_err(|error| error.to_string())?;
+    gz.finish().map_err(|error| error.to_string())
+}
+
+/// Assembles the package: the `pane` program, the install script, a
+/// README (and, on Linux, a desktop entry) in `pane/`, packed as
+/// `pane-<version>-<os>-<arch>[-dev].tar.gz` on Linux and
+/// `pane-<version>-<os>-<arch>[-dev].zip` on Windows, with a `.sha256`
+/// file beside it. The package is the same bytes wherever it is built: the
+/// tarball with fixed time, owner and mode, the zip the same way
+/// ([`zip::pack`]).
+fn assemble_package(root: &Path, out: &Path, dev: bool, system: System) -> Result<PathBuf, String> {
+    let stage = out.join("stage/pane");
+    let _ = fs::remove_dir_all(stage.parent().expect("the stage folder"));
+    fs::create_dir_all(&stage).map_err(|error| error.to_string())?;
+    let suffix = if dev { "-dev" } else { "" };
+    let name = format!(
+        "pane-{VERSION}-{}-{}{suffix}.{}",
+        system.id(),
+        arch().ok_or("the package names no architecture for this system")?,
+        system.archive(),
+    );
+    let (script, script_name) = system.install_script();
+    let copies = [
+        (program(root, dev), stage.join(program_name())),
+        (root.join(script), stage.join(script_name)),
+    ];
+    for (from, to) in copies {
+        fs::copy(&from, &to).map_err(|error| format!("copy {} failed: {error}", from.display()))?;
+    }
+    fs::write(stage.join("README.txt"), readme(system, dev)).map_err(|error| error.to_string())?;
+    if let Some((file, contents)) = system.extra_file() {
+        fs::write(stage.join(file), contents).map_err(|error| error.to_string())?;
+    }
+    let files = read_files(&stage, "")?;
+    let packed = match system {
+        System::Linux => pack_tgz(&files, "pane", Some(&program_name()))?,
+        System::Windows => zip::pack(&files, "pane")?,
+    };
     let package = out.join(&name);
     fs::write(&package, &packed)
         .map_err(|error| format!("write {} failed: {error}", package.display()))?;
     // As `sha256sum` writes it, so the file can be checked with
-    // `sha256sum -c`.
+    // `sha256sum -c` on Linux; on Windows, `Get-FileHash` prints the digest
+    // to compare with.
     let digest: String = Sha256::digest(&packed)
         .iter()
         .map(|b| format!("{b:02x}"))
@@ -360,7 +452,14 @@ fn arch() -> Option<&'static str> {
 }
 
 /// The README in the package.
-fn readme(dev: bool) -> String {
+fn readme(system: System, dev: bool) -> String {
+    match system {
+        System::Linux => readme_linux(dev),
+        System::Windows => readme_windows(dev),
+    }
+}
+
+fn readme_linux(dev: bool) -> String {
     let profile = if dev { "development" } else { "release" };
     format!(
         "Pane {VERSION} for Linux (this package is the {profile} profile)
@@ -411,6 +510,69 @@ FIRST RUN
   in the pane-<version>-linux-<arch>.tar.gz.sha256 file beside it, which
   says only what was packed.
 "
+    )
+}
+
+fn readme_windows(dev: bool) -> String {
+    let profile = if dev { "development" } else { "release" };
+    format!(
+        r#"Pane {VERSION} for Windows (this package is the {profile} profile)
+
+WHAT THIS IS
+
+  Pane, a desktop launcher. This package holds the pane.exe program and
+  installs it for one user; it holds none of Pane's default extensions:
+  Pane downloads them itself the first time it runs, from Pane's own
+  downloads (https://downloads.pane.sh/).
+
+PREREQUISITES
+
+  A 64-bit x86_64 Windows. The system this package was built and checked
+  on is Windows Server 2025 (CI's windows-2025 runner); no other Windows
+  has been tried. Nothing else is needed: no Node, Rust, npm, Git or
+  compiler, and no administrator rights.
+
+INSTALL
+
+  Unzip this package (Explorer unzips it, or Expand-Archive in
+  PowerShell), then, in the pane folder it unpacked:
+
+    powershell -ExecutionPolicy Bypass -File install.ps1
+
+  It copies the pane.exe program to %LOCALAPPDATA%\Pane, puts a Pane
+  shortcut in your Start menu, and runs `pane --version` to check what it
+  installed. No administrator rights are needed. To install somewhere
+  else, add -InstallDir <folder>; to install from another folder, add
+  -PackageFolder <folder>.
+
+  PowerShell may refuse install.ps1 as a script that came from the
+  internet (nothing here is signed): the -ExecutionPolicy Bypass above
+  answers that, or run Unblock-File install.ps1 once. Check the package's
+  digest against the pane-<version>-windows-<arch>.zip.sha256 file beside
+  it if it reached you over the internet.
+
+UNINSTALL
+
+  Remove %LOCALAPPDATA%\Pane\pane.exe and the Pane shortcut in your Start
+  menu (close Pane first). Pane keeps its own data in
+  %LOCALAPPDATA%\Pane\data (its installed extensions and their settings);
+  remove that folder to remove them too.
+
+FIRST RUN
+
+  The first run downloads Pane's default extensions (the calculator) from
+  https://downloads.pane.sh/ and shows their progress; Pane stays usable
+  if the download fails, and offers to try again. That location is not
+  deployed yet, so today a first run on the real internet explains that
+  it cannot reach it and keeps everything else working.
+
+  NOTHING IS SIGNED
+
+  The package is not signed: no signing credentials exist (no
+  Authenticode certificate), so Windows may warn about an unknown
+  publisher when the program or the install script runs. Its sha256 is in
+  the pane-<version>-windows-<arch>.zip.sha256 file beside it, which says
+  only what was packed."#
     )
 }
 
