@@ -1426,14 +1426,12 @@ pub(crate) fn stopped_code(end: End) -> String {
 /// Why code is stopped, if it is: the one check every host interface goes
 /// through ([`GuestState::stopped`], and the web requests' sender, which
 /// holds no `GuestState`). Code of an installed package is stopped once its
-/// generation ended or `fence`, its runtime thread's, closed (its data is
-/// fenced with it, see [`PackageData::stopped`]); a command built into
-/// Pane, which has no generation, once `fence` closed.
+/// generation ended (which says why first); any code, once `fence`, its
+/// runtime thread's, closed, whether or not its data was fenced with it
+/// ([`PackageData::stopped`] checks that fence too).
 pub(crate) fn code_stopped(data: Option<&PackageData>, fence: &Fence) -> Option<End> {
-    match data {
-        Some(data) => data.stopped(),
-        None => fence.closed().then_some(End::Abandoned),
-    }
+    data.and_then(PackageData::stopped)
+        .or_else(|| fence.closed().then_some(End::Abandoned))
 }
 
 /// How a call answers that ran on a runtime thread Pane gave up on.
@@ -3335,6 +3333,26 @@ mod tests {
         let packages = ExtensionData::open(data.path());
         let identity = PackageIdentity::local(data.path()).unwrap();
         (packages, identity)
+    }
+
+    /// The one check every host interface goes through stops code whose
+    /// runtime thread's fence closed, also through package data that was
+    /// not fenced with it; a generation that ended says why first.
+    #[test]
+    fn code_is_stopped_by_its_thread_s_fence_with_or_without_data() {
+        let data = tempfile::tempdir().unwrap();
+        let (packages, identity) = settings_package(&data);
+        let unfenced = packages.owned_by(&identity);
+        let fence = Fence::default();
+        assert_eq!(code_stopped(Some(&unfenced), &fence), None);
+        assert_eq!(code_stopped(None, &fence), None);
+
+        fence.close();
+
+        assert_eq!(code_stopped(Some(&unfenced), &fence), Some(End::Abandoned));
+        assert_eq!(code_stopped(None, &fence), Some(End::Abandoned));
+        packages.set_enabled(&identity, false);
+        assert_eq!(code_stopped(Some(&unfenced), &fence), Some(End::Disabled));
     }
 
     /// What the settings sample saved under `key` in `identity`'s settings.
