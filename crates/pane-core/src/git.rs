@@ -1074,50 +1074,69 @@ impl<'a> Remote<'a> {
                 ),
                 _ => format!("Could not fetch commit {commit} of {name}: {why}"),
             })?;
-        let damaged =
-            |why: &str| format!("The Git repository {name} answered the fetch wrongly: {why}");
-        let mut reader = PktReader::new(&answer);
-        // Sections before the pack (shallow-info, …), each ended by a
-        // delimiter.
-        loop {
-            let section = match reader.line() {
-                Ok(Ok(section)) => section,
-                Ok(Err(_)) => return Err(damaged("it sent no pack")),
-                Err(why) => {
-                    return Err(format!("Could not fetch commit {commit} of {name}: {why}"));
-                }
-            };
-            if section == "packfile" {
-                break;
+        pack_in(&answer).map_err(|no_pack| match no_pack {
+            NoPack::Failed(why) => format!("Could not fetch commit {commit} of {name}: {why}"),
+            NoPack::Damaged(why) => {
+                format!("The Git repository {name} answered the fetch wrongly: {why}")
             }
-            loop {
-                match reader.line().map_err(|why| damaged(&why))? {
-                    Ok(_) => {}
-                    Err(Some(Pkt::Delim)) => break,
-                    Err(_) => return Err(damaged("it sent no pack")),
-                }
-            }
-        }
-        let mut pack = Vec::new();
-        loop {
-            match reader.next().map_err(|why| damaged(&why))? {
-                Some(Pkt::Data(data)) => match data.split_first() {
-                    Some((1, data)) => pack.extend_from_slice(data),
-                    Some((2, _)) => {}
-                    Some((3, message)) => {
-                        return Err(format!(
-                            "Could not fetch commit {commit} of {name}: the server failed: {}",
-                            shown_bytes(message.trim_ascii_end())
-                        ));
-                    }
-                    _ => return Err(damaged("a pack line on no known band")),
-                },
-                Some(Pkt::Flush) | None => break,
-                Some(_) => return Err(damaged("an unexpected delimiter in the pack")),
-            }
-        }
-        Ok(pack)
+        })
     }
+}
+
+/// Why the answer to a fetch holds no pack.
+#[derive(Debug, PartialEq, Eq)]
+enum NoPack {
+    /// The server refused (`ERR`) or failed (on band 3), saying why.
+    Failed(String),
+    /// The answer is not as the protocol has it.
+    Damaged(String),
+}
+
+/// The pack in `answer`, the answer to a fetch: past the sections before
+/// it (`shallow-info`, …), its lines on band 1 put together, in a buffer
+/// the size of the answer, which holds all of it.
+fn pack_in(answer: &[u8]) -> Result<Vec<u8>, NoPack> {
+    let damaged = |why: &str| NoPack::Damaged(why.into());
+    let mut reader = PktReader::new(answer);
+    // Sections before the pack, each ended by a delimiter.
+    loop {
+        let section = match reader.line() {
+            Ok(Ok(section)) => section,
+            Ok(Err(_)) => return Err(damaged("it sent no pack")),
+            Err(why) => return Err(NoPack::Failed(why)),
+        };
+        if section == "packfile" {
+            break;
+        }
+        loop {
+            match reader.line().map_err(|why| damaged(&why))? {
+                Ok(_) => {}
+                Err(Some(Pkt::Delim)) => break,
+                Err(_) => return Err(damaged("it sent no pack")),
+            }
+        }
+    }
+    // Reserved at once rather than doubled as it grows, which could hold
+    // twice the answer.
+    let mut pack = Vec::with_capacity(answer.len());
+    loop {
+        match reader.next().map_err(|why| damaged(&why))? {
+            Some(Pkt::Data(data)) => match data.split_first() {
+                Some((1, data)) => pack.extend_from_slice(data),
+                Some((2, _)) => {}
+                Some((3, message)) => {
+                    return Err(NoPack::Failed(format!(
+                        "the server failed: {}",
+                        shown_bytes(message.trim_ascii_end())
+                    )));
+                }
+                _ => return Err(damaged("a pack line on no known band")),
+            },
+            Some(Pkt::Flush) | None => break,
+            Some(_) => return Err(damaged("an unexpected delimiter in the pack")),
+        }
+    }
+    Ok(pack)
 }
 
 /// The error text of an answer larger than asked for.
@@ -1975,6 +1994,57 @@ mod tests {
         assert!(PktReader::new(b"00").next().is_err());
         assert!(PktReader::new(b"0010abc").next().is_err());
         assert!(PktReader::new(b"zzzz").next().is_err());
+    }
+
+    #[test]
+    fn a_fetch_s_pack_is_read_into_no_more_than_the_answer_takes() {
+        let mut answer = pkt("shallow-info\n");
+        answer.extend(pkt("shallow 1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b\n"));
+        answer.extend_from_slice(DELIM);
+        answer.extend(pkt("packfile\n"));
+        // 3 MiB on band 1, in the longest pkt-lines, with progress on band 2
+        // between them.
+        let chunk = vec![7u8; 65515];
+        for _ in 0..48 {
+            answer.extend(format!("{:04x}", chunk.len() + 5).into_bytes());
+            answer.push(1);
+            answer.extend(&chunk);
+            answer.extend(format!("{:04x}", 10).into_bytes());
+            answer.extend(b"\x02Hello");
+        }
+        answer.extend_from_slice(FLUSH);
+        let pack = pack_in(&answer).unwrap();
+        assert_eq!(pack.len(), 48 * chunk.len());
+        assert!(pack.iter().all(|&byte| byte == 7));
+        assert!(
+            pack.capacity() <= answer.len(),
+            "{} bytes held for an answer of {}",
+            pack.capacity(),
+            answer.len()
+        );
+
+        let mut refused = pkt("ERR upload-pack: not our ref\n");
+        refused.extend_from_slice(FLUSH);
+        assert_eq!(
+            pack_in(&refused),
+            Err(NoPack::Failed(
+                "the server refused: upload-pack: not our ref".into()
+            ))
+        );
+        let mut failed = pkt("packfile\n");
+        failed.extend(pkt("\x03fatal: \u{1b}[2Jout of memory\n"));
+        assert_eq!(
+            pack_in(&failed),
+            Err(NoPack::Failed(
+                "the server failed: fatal: [2Jout of memory".into()
+            ))
+        );
+        let mut none = pkt("acknowledgments\n");
+        none.extend_from_slice(FLUSH);
+        assert_eq!(
+            pack_in(&none),
+            Err(NoPack::Damaged("it sent no pack".into()))
+        );
     }
 
     /// A pack of `entries`, each `(type, header extra, contents)`, as Git
