@@ -24,8 +24,11 @@
 //! 5. writes that tree into a download folder of its own
 //!    ([`crate::downloads`]), taking only regular files and folders whose
 //!    names every system can write: a symbolic link, a submodule, a `.git`
-//!    entry, two names differing only in case, or any name a system reads
-//!    differently refuses the whole revision. Nothing is written executable.
+//!    entry (in any case, as `git~1`, or with characters HFS+ ignores), two
+//!    names differing only in case, or a name some system cannot write or
+//!    reads as another (such as a Windows device name, or one ending in a
+//!    dot) refuses the whole revision. Names that differ only in Unicode
+//!    normalization are not compared. Nothing is written executable.
 //!
 //! The pack, the objects, the files and the folders are limited in size and
 //! number ([`MAX_PACK`], [`MAX_OBJECTS`], [`MAX_UNPACKED`], [`MAX_ENTRIES`],
@@ -1659,6 +1662,22 @@ fn check_out(
     Ok((subject, tally.lfs_pointers))
 }
 
+/// Whether a system may read `name` as `.git`: in any case; as `git~1`,
+/// its short name on Windows file systems; or on HFS+, which ignores some
+/// format characters in a name, with them (as Git's own `is_hfs_dotgit`
+/// checks). A trailing dot or space, which Windows drops, and `:`, which
+/// names an NTFS stream, are refused of every name already.
+fn is_dot_git(name: &str) -> bool {
+    let ignored_by_hfs = |c: char| {
+        matches!(
+            c,
+            '\u{200c}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{206a}'..='\u{206f}' | '\u{feff}'
+        )
+    };
+    let hfs: String = name.chars().filter(|&c| !ignored_by_hfs(c)).collect();
+    hfs.eq_ignore_ascii_case(".git") || name.eq_ignore_ascii_case("git~1")
+}
+
 /// The start of a Git LFS pointer file.
 const LFS_POINTER: &[u8] = b"version https://git-lfs.github.com/spec/";
 
@@ -1712,8 +1731,7 @@ fn write_tree(
         if let Err(why) = check_part(name) {
             return refuse(why);
         }
-        // `git~1` is `.git`'s short name on Windows file systems.
-        if name.eq_ignore_ascii_case(".git") || name.eq_ignore_ascii_case("git~1") {
+        if is_dot_git(name) {
             return refuse("a `.git` entry, which Git itself refuses to check out");
         }
         let folded: String = name.chars().flat_map(char::to_lowercase).collect();
@@ -2251,12 +2269,17 @@ mod tests {
 
     #[test]
     fn links_submodules_git_folders_and_unsafe_names_are_refused() {
-        let cases: [(&str, &str, &str); 10] = [
+        let cases: [(&str, &str, &str); 13] = [
             ("120000", "link", "`link`, a symbolic link"),
             ("160000", "vendored", "`vendored`, a submodule"),
             ("100644", ".git", "`.git`, a `.git` entry"),
             ("100644", ".GIT", "`.GIT`, a `.git` entry"),
             ("40000", "GIT~1", "`GIT~1`, a `.git` entry"),
+            // `.git` to HFS+, which ignores some format characters (and
+            // shown without them).
+            ("100644", ".g\u{200c}it", "`.git`, a `.git` entry"),
+            ("40000", "\u{feff}.GIT", "`.GIT`, a `.git` entry"),
+            ("100644", ".gIt\u{206f}", "`.gIt`, a `.git` entry"),
             ("100644", "..", "`..`, which climbs out"),
             ("100644", "a:b", "`a:b`, whose name has a character"),
             (
