@@ -36,7 +36,7 @@ use std::sync::{Arc, Mutex, Weak, mpsc};
 use serde::{Deserialize, Serialize};
 
 use crate::atomic::{Readers, write_atomically};
-use crate::clipboard::history::HistoryStore;
+use crate::clipboard::history::{HistoryStore, PackageHistory};
 use crate::generation::{End, Fence, Generation};
 use crate::packages::{PackageIdentity, SavedData};
 
@@ -815,14 +815,37 @@ impl PackageData {
         }
     }
 
-    /// Every package's clipboard history, unless code using this data is
-    /// stopped (see [`PackageData::stopped`]): stopped code reads and
-    /// changes nothing more.
+    /// Every package's clipboard history, to read, unless code using this
+    /// data is stopped (see [`PackageData::stopped`]): stopped code reads
+    /// nothing more. It changes this package's history through
+    /// [`PackageData::update_clipboard_history`].
     pub fn clipboard_history(&self) -> Result<&HistoryStore, String> {
         match self.refusal(self.fence.as_ref().is_some_and(Fence::closed)) {
             Some(refusal) => Err(refusal.into()),
             None => Ok(self.data.clipboard_history()),
         }
+    }
+
+    /// Changes this package's clipboard history with `change`, written
+    /// before this returns, unless code using this data is stopped; returns
+    /// its answer and whether the capture state changed. As for
+    /// [`PackageData::set`], the change is checked and made in memory while
+    /// the fence is held, so none lands after the runtime thread was given
+    /// up on; the file is written after, with the fence released.
+    pub fn update_clipboard_history<R>(
+        &self,
+        change: impl FnOnce(&mut PackageHistory) -> Result<R, String>,
+    ) -> Result<(R, bool), String> {
+        let staged = {
+            let fence = self.fence.as_ref().map(Fence::hold);
+            let fenced = fence.as_deref() == Some(&true);
+            if let Some(refusal) = self.refusal(fenced) {
+                let kept = DataKind::ClipboardHistory.kept_unchanged();
+                return Err(format!("{refusal}; {kept}"));
+            }
+            self.data.clipboard.stage(&self.owner, change)?
+        };
+        self.data.clipboard.write_staged(staged)
     }
 
     /// Says that this package's clipboard capture state changed, which
@@ -1022,5 +1045,68 @@ mod tests {
             block_on(current.set(DataKind::Settings, "n", "fresh")),
             Ok(())
         );
+    }
+
+    /// Clipboard history (#35) is behind the same fence as the other kinds:
+    /// once it closes, code of the thread Pane gave up on neither reads nor
+    /// changes it, and a change under way when it closes lands before the
+    /// close returns, never after, while the package's generation goes on.
+    #[test]
+    fn a_clipboard_change_never_lands_after_the_fence_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = ExtensionData::open(dir.path());
+        let identity = PackageIdentity::local(dir.path()).unwrap();
+        let fence = Fence::default();
+        let fenced = data.owned_by(&identity).fenced(fence.clone());
+        let adding = std::thread::spawn(move || {
+            let mut outcomes = Vec::new();
+            for n in 0_u64.. {
+                let added = fenced.update_clipboard_history(|history| {
+                    history.add(&n.to_string(), None, n);
+                    Ok(())
+                });
+                let refused = added.is_err();
+                outcomes.push(added.map(|_| ()));
+                if refused {
+                    let read = fenced.clipboard_history().err();
+                    return (outcomes, read);
+                }
+            }
+            unreachable!()
+        });
+        let items = || data.clipboard_history().get(&identity.key()).unwrap().items;
+        while items().is_empty() {
+            std::thread::yield_now();
+        }
+
+        fence.close();
+        let at_close = items();
+
+        let (outcomes, read) = adding.join().unwrap();
+        let (last, landed) = outcomes.split_last().unwrap();
+        assert!(landed.iter().all(Result::is_ok));
+        let abandoned =
+            "Pane's extension runtime stopped responding and was replaced while this code ran";
+        assert_eq!(
+            last,
+            &Err(format!(
+                "{abandoned}; its clipboard history is kept unchanged"
+            ))
+        );
+        assert_eq!(read.as_deref(), Some(abandoned), "reads are fenced too");
+        assert_eq!(items(), at_close);
+        let on_disk = HistoryStore::open(dir.path())
+            .get(&identity.key())
+            .unwrap()
+            .items;
+        assert_eq!(
+            on_disk, at_close,
+            "the file holds the last change before the close"
+        );
+        // The package's generation goes on: a fresh thread's code changes it.
+        let current = data.owned_by(&identity);
+        assert_eq!(current.stopped(), None);
+        let cleared = current.update_clipboard_history(|history| Ok(history.clear()));
+        assert_eq!(cleared, Ok((at_close.len(), false)));
     }
 }

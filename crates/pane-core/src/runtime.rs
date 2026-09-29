@@ -1609,15 +1609,27 @@ impl applications::Host for GuestState {
 }
 
 impl GuestState {
-    /// What the guest's package does with its clipboard history.
-    fn clipboard(&self) -> Result<clipboard::Commands<'_>, String> {
+    /// Runs `call` with what the guest's package does with its clipboard
+    /// history, as one host call. Stopped code ([`GuestState::stopped`],
+    /// the one check every host interface goes through) reads and changes
+    /// nothing more, and the call is marked ([`GuestState::host`]), so its
+    /// time (the history's lock and file, the system's clipboard) is
+    /// Pane's, never the guest's.
+    fn clipboard<R>(
+        &self,
+        call: impl FnOnce(clipboard::Commands<'_>) -> Result<R, String>,
+    ) -> Result<R, String> {
+        if let Some(end) = self.stopped() {
+            return Err(stopped_code(end));
+        }
+        let _host = self.host();
         let data = self.data.as_ref().ok_or(
             "only installed packages keep clipboard history; this command is built into Pane",
         )?;
         let capture = lock(&self.clipboard)
             .as_ref()
             .and_then(std::sync::Weak::upgrade);
-        Ok(clipboard::Commands { data, capture })
+        call(clipboard::Commands { data, capture })
     }
 }
 
@@ -1648,7 +1660,7 @@ fn count(count: usize) -> u32 {
 
 impl clipboard_history::Host for GuestState {
     fn status(&mut self) -> Result<clipboard_history::HistoryStatus, String> {
-        let status = self.clipboard()?.status()?;
+        let status = self.clipboard(|history| history.status())?;
         Ok(clipboard_history::HistoryStatus {
             capture: status.capture.into(),
             problem: status.problem,
@@ -1658,18 +1670,17 @@ impl clipboard_history::Host for GuestState {
     }
 
     fn set_capture(&mut self, wanted: clipboard_history::Capture) -> Result<(), String> {
-        self.clipboard()?.set_capture(wanted.into())
+        self.clipboard(|history| history.set_capture(wanted.into()))
     }
 
     fn set_excluded(&mut self, programs: Vec<String>) -> Result<(), String> {
-        self.clipboard()?.set_excluded(&programs)
+        self.clipboard(|history| history.set_excluded(&programs))
     }
 
     fn entries(&mut self) -> Result<Vec<clipboard_history::Entry>, String> {
+        let items = self.clipboard(|history| history.items())?;
         let now = clipboard::now();
-        Ok(self
-            .clipboard()?
-            .items()?
+        Ok(items
             .into_iter()
             .map(|item| clipboard_history::Entry {
                 id: item.id.to_string(),
@@ -1682,11 +1693,11 @@ impl clipboard_history::Host for GuestState {
     }
 
     fn copy(&mut self, id: String) -> Result<(), String> {
-        self.clipboard()?.copy(&id)
+        self.clipboard(|history| history.copy(&id))
     }
 
     fn clear(&mut self) -> Result<u32, String> {
-        Ok(count(self.clipboard()?.clear()?))
+        Ok(count(self.clipboard(|history| history.clear())?))
     }
 }
 
@@ -3404,6 +3415,35 @@ mod tests {
         ));
 
         assert_eq!(saved_note, Ok("Saved a note".into()));
+        assert!(lock(&reported).is_empty(), "{:?}", lock(&reported));
+        assert_eq!(runtime.status(), RuntimeStatus::Running);
+        assert_eq!(runtime.abandoned_threads(), 0);
+        assert_eq!(block_on(runtime.running()), vec![component]);
+    }
+
+    /// Clipboard history's host calls (#35) are marked like every other
+    /// host call: the slow host call computes inside the view's first one,
+    /// so the view takes at least that long, yet the guest is never stopped
+    /// or blamed and the thread is never given up on.
+    #[test]
+    fn a_guest_whose_clipboard_host_calls_are_slow_is_never_stopped_or_blamed() {
+        let data = tempfile::tempdir().unwrap();
+        let (packages, identity) = settings_package(&data);
+        let component = guest("clipboard_history.wasm");
+        let (runtime, reported) = watched_runtime();
+        let slow = short_limits().compute * 3;
+        assert!(slow > short_limits().unresponsive);
+
+        runtime.inject(Fault::SlowHostCall(slow));
+        let started = std::time::Instant::now();
+        let view = block_on(runtime.get_view_with(&component, Some(packages.owned_by(&identity))));
+
+        assert_eq!(view.expect("the view is shown").title, "Clipboard History");
+        assert!(
+            started.elapsed() >= slow,
+            "the slow host call was not one of clipboard history's: {:?}",
+            started.elapsed()
+        );
         assert!(lock(&reported).is_empty(), "{:?}", lock(&reported));
         assert_eq!(runtime.status(), RuntimeStatus::Running);
         assert_eq!(runtime.abandoned_threads(), 0);

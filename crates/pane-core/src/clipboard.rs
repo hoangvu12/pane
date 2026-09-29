@@ -485,7 +485,9 @@ pub(crate) struct Status {
 
 /// What a command of the package with `data` does with its clipboard
 /// history through `capture` (none: this Pane does not watch the
-/// clipboard). Code whose generation ended reads and changes nothing more.
+/// clipboard). Stopped code (its generation ended, or Pane gave up on the
+/// runtime thread running it, see `PackageData::stopped`) reads and changes
+/// nothing more.
 pub(crate) struct Commands<'a> {
     pub data: &'a PackageData,
     pub capture: Option<Arc<Capture>>,
@@ -560,10 +562,7 @@ impl Commands<'_> {
         &self,
         change: impl FnOnce(&mut history::PackageHistory) -> Result<R, String>,
     ) -> Result<R, String> {
-        let (answer, capture_changed) = self
-            .data
-            .clipboard_history()?
-            .update(self.data.owner(), change)?;
+        let (answer, capture_changed) = self.data.update_clipboard_history(change)?;
         if capture_changed {
             self.data.changed();
         }

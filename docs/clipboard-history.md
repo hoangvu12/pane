@@ -154,6 +154,14 @@ no owner, so its program is unknown and never excluded).
   commands share, so a copy never waits on another's write. A change is on
   disk when the call that made it returns; a crash before that loses only
   that change (the file is replaced atomically, never torn).
+- A command reaches it through Pane's extension runtime, like every other
+  host interface ([#18](pausing.md#when-an-extension-stops-responding)):
+  stopped code (its package disabled, paused, reloaded or uninstalled, or
+  its runtime thread given up on) reads and changes nothing, a change is
+  made while the runtime thread's fence is held, so none lands after a
+  give-up, and each call is a marked host call, so its time (the history's
+  lock and file, the system's clipboard) never counts against the guest's
+  compute limit.
 - It is **saved data**, like settings and content: Clear cache keeps it;
   uninstalling asks, "Saved data: 12 clipboard history items", and
   "Uninstall and delete saved data" removes it, while "keep" keeps it as
@@ -188,7 +196,10 @@ no owner, so its program is unknown and never excluded).
   owner-only DACL ([`atomic.rs`](../crates/pane-core/src/atomic.rs)). The package's generation
   ([`extension_data.rs`](../crates/pane-core/src/extension_data.rs)):
   nothing kept while off, paused by Pane or uninstalled, and each change
-  starting or stopping the watch.
+  starting or stopping the watch; with #18, no change landing after a
+  runtime thread's fence closed, and fenced code reading nothing. The
+  runtime ([`runtime.rs`](../crates/pane-core/src/runtime.rs)): a slow
+  clipboard history call is Pane's time, never the guest's.
 - Launcher public interface ([`crates/pane-core/tests/clipboard.rs`](../crates/pane-core/tests/clipboard.rs)),
   with the real Clipboard History guest and the JavaScript and TypeScript
   samples alike, and a fake system clipboard (a copy of each package

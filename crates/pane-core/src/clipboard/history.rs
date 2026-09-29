@@ -153,6 +153,15 @@ pub(crate) struct Pending {
     file: HistoryJson,
 }
 
+/// A package's change made in memory by [`HistoryStore::stage`], with its
+/// answer, to be written by [`HistoryStore::write_staged`].
+pub(crate) struct Staged<R> {
+    answer: R,
+    capture_changed: bool,
+    /// None when nothing changed.
+    pending: Option<Pending>,
+}
+
 impl HistoryStore {
     /// Opens the history kept in `dir`. Nothing is written until something
     /// changes.
@@ -201,39 +210,55 @@ impl HistoryStore {
         self.lock().deletions
     }
 
-    /// Hands `change` the history of `owner` and keeps what it changed,
-    /// written before this returns. Returns its answer and whether the
-    /// capture state changed.
-    pub fn update<R>(
+    /// Hands `change` the history of `owner` and makes what it changed in
+    /// memory, under the store's lock; [`HistoryStore::write_staged`] then
+    /// writes it, before the change's call returns. Two steps, so that a
+    /// guest's change is made while its runtime thread's fence is held and
+    /// written once it is released (see
+    /// `PackageData::update_clipboard_history`).
+    pub fn stage<R>(
         &self,
         owner: &str,
         change: impl FnOnce(&mut PackageHistory) -> Result<R, String>,
-    ) -> Result<(R, bool), String> {
-        let (answer, capture_changed, pending) = {
-            let mut state = self.lock();
-            let file = state.file.as_ref().map_err(Clone::clone)?;
-            let before = file.packages.get(owner).cloned().unwrap_or_default();
-            let mut history = before.clone();
-            let answer = change(&mut history)?;
-            if history == before {
-                return Ok((answer, false));
-            }
-            if history.items.len() < before.items.len() {
-                state.deletions += 1;
-            }
-            let capture_changed = history.capture != before.capture;
-            let pending = state.change(|file| {
-                if history.is_empty() {
-                    file.packages.remove(owner);
-                } else {
-                    file.packages.insert(owner.to_owned(), history);
-                }
+    ) -> Result<Staged<R>, String> {
+        let mut state = self.lock();
+        let file = state.file.as_ref().map_err(Clone::clone)?;
+        let before = file.packages.get(owner).cloned().unwrap_or_default();
+        let mut history = before.clone();
+        let answer = change(&mut history)?;
+        if history == before {
+            return Ok(Staged {
+                answer,
+                capture_changed: false,
+                pending: None,
             });
-            (answer, capture_changed, pending)
-        };
-        self.write(pending)
-            .map_err(|error| format!("Could not save the clipboard history: {error}"))?;
-        Ok((answer, capture_changed))
+        }
+        if history.items.len() < before.items.len() {
+            state.deletions += 1;
+        }
+        let capture_changed = history.capture != before.capture;
+        let pending = state.change(|file| {
+            if history.is_empty() {
+                file.packages.remove(owner);
+            } else {
+                file.packages.insert(owner.to_owned(), history);
+            }
+        });
+        Ok(Staged {
+            answer,
+            capture_changed,
+            pending: Some(pending),
+        })
+    }
+
+    /// Writes what [`HistoryStore::stage`] changed, if anything, before
+    /// returning its answer and whether the capture state changed.
+    pub fn write_staged<R>(&self, staged: Staged<R>) -> Result<(R, bool), String> {
+        if let Some(pending) = staged.pending {
+            self.write(pending)
+                .map_err(|error| format!("Could not save the clipboard history: {error}"))?;
+        }
+        Ok((staged.answer, staged.capture_changed))
     }
 
     /// Changes every history `change` asks to, if items were not deleted
@@ -361,6 +386,15 @@ fn read(path: &Path) -> Result<HistoryJson, String> {
 mod tests {
     use super::*;
 
+    /// Changes the history of `owner` and writes it, as a command does.
+    fn update<R>(
+        store: &HistoryStore,
+        owner: &str,
+        change: impl FnOnce(&mut PackageHistory) -> Result<R, String>,
+    ) -> Result<(R, bool), String> {
+        store.write_staged(store.stage(owner, change)?)
+    }
+
     fn texts(history: &PackageHistory) -> Vec<&str> {
         history
             .items
@@ -441,7 +475,7 @@ mod tests {
         let store = HistoryStore::open(dir.path());
         assert!(store.get("local:/x").unwrap_err().contains("version 2"));
         // Nothing overwrites a file of another version.
-        assert!(store.update("local:/x", |_| Ok(())).is_err());
+        assert!(update(&store, "local:/x", |_| Ok(())).is_err());
         assert!(
             fs::read_to_string(dir.path().join(FILE))
                 .unwrap()
@@ -453,14 +487,13 @@ mod tests {
     fn a_capture_begun_before_items_were_deleted_keeps_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let store = HistoryStore::open(dir.path());
-        store
-            .update("a", |history| {
-                history.add("old", None, 1);
-                Ok(())
-            })
-            .unwrap();
+        update(&store, "a", |history| {
+            history.add("old", None, 1);
+            Ok(())
+        })
+        .unwrap();
         let before = store.deletions();
-        store.update("a", |history| Ok(history.clear())).unwrap();
+        update(&store, "a", |history| Ok(history.clear())).unwrap();
         let add = |packages: &mut BTreeMap<String, PackageHistory>| {
             packages.entry("a".into()).or_default().add("late", None, 2);
             true
