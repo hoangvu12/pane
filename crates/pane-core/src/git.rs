@@ -487,24 +487,14 @@ fn check_reference(reference: &str) -> Result<String, String> {
 const MAX_SHOWN: usize = 200;
 
 /// `text`, which a server chose, as Pane shows it in a preview or an error:
-/// without control characters (a terminal escape, a line break), without
-/// the characters that reorder text (bidirectional overrides, embeddings
-/// and isolates, which can show `exe.txt` as `txt.exe`) or separate lines,
-/// and at most [`MAX_SHOWN`] characters, `…` marking where it was cut.
+/// without control characters (a terminal escape, a line break), line or
+/// paragraph separators, or format characters, which show nothing
+/// themselves but reorder text (bidirectional overrides, embeddings and
+/// isolates, which can show `exe.txt` as `txt.exe`) or hide it (zero-width
+/// spaces and joiners, soft hyphens, tags); and at most [`MAX_SHOWN`]
+/// characters, `…` marking where it was cut.
 pub(crate) fn shown(text: &str) -> String {
-    let hidden = |c: char| {
-        c.is_control()
-            || matches!(
-                c,
-                '\u{061c}'
-                    | '\u{200e}'
-                    | '\u{200f}'
-                    | '\u{202a}'..='\u{202e}'
-                    | '\u{2066}'..='\u{2069}'
-                    | '\u{2028}'
-                    | '\u{2029}'
-            )
-    };
+    let hidden = |c: char| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') || is_format(c);
     let mut out = String::new();
     for (count, c) in text.chars().filter(|&c| !hidden(c)).enumerate() {
         if count == MAX_SHOWN {
@@ -514,6 +504,35 @@ pub(crate) fn shown(text: &str) -> String {
         out.push(c);
     }
     out
+}
+
+/// Whether `c` is a format character (Unicode's general category Cf, as
+/// of Unicode 16).
+fn is_format(c: char) -> bool {
+    matches!(
+        c,
+        '\u{ad}'
+            | '\u{600}'..='\u{605}'
+            | '\u{61c}'
+            | '\u{6dd}'
+            | '\u{70f}'
+            | '\u{890}'..='\u{891}'
+            | '\u{8e2}'
+            | '\u{180e}'
+            | '\u{200b}'..='\u{200f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{206f}'
+            | '\u{feff}'
+            | '\u{fff9}'..='\u{fffb}'
+            | '\u{110bd}'
+            | '\u{110cd}'
+            | '\u{13430}'..='\u{1343f}'
+            | '\u{1bca0}'..='\u{1bca3}'
+            | '\u{1d173}'..='\u{1d17a}'
+            | '\u{e0001}'
+            | '\u{e0020}'..='\u{e007f}'
+    )
 }
 
 /// The most bytes of a server's text Pane decodes to show it: enough for
@@ -1136,9 +1155,11 @@ fn answered(repository: &Repository, url: &str, answer: Answer) -> Result<Answer
 fn unreachable(repository: &Repository, error: GetError) -> String {
     match error {
         GetError::TooLarge => TOO_LARGE.into(),
+        // Its text may quote the server.
         GetError::Failed(why) => format!(
-            "Could not reach the Git repository {}: {why}",
-            repository.name()
+            "Could not reach the Git repository {}: {}",
+            repository.name(),
+            shown(&why)
         ),
     }
 }
@@ -2264,6 +2285,32 @@ mod tests {
         assert_eq!(short.chars().count(), 201, "{short}");
         assert!(short.ends_with('…'));
         assert_eq!(shown(&"a".repeat(200)), "a".repeat(200));
+        // Characters that show nothing but can hide or disguise what does:
+        // zero-width spaces and joiners, a soft hyphen, a word joiner, a
+        // byte order mark and tags (which can spell hidden text).
+        assert_eq!(
+            shown(
+                "ma\u{200b}in\u{200c}\u{200d}\u{ad}\u{2060}\u{feff}\u{e0001}\u{e0041}\u{e007f} \
+                 \u{2063}\u{600}\u{1d173}ok"
+            ),
+            "main ok"
+        );
+        // A line or paragraph separator, which would start another line.
+        assert_eq!(shown("a\u{2028}b\u{2029}c"), "abc");
+    }
+
+    #[test]
+    fn a_connection_failure_is_shown_safely() {
+        let repository = spec("https://github.com/owner/repo").repository;
+        let why = format!("reset\u{1b}[2J\u{202e}{}", "x".repeat(400));
+        let text = unreachable(&repository, GetError::Failed(why));
+        assert!(
+            text.starts_with(
+                "Could not reach the Git repository github.com/owner/repo: reset[2Jxxx"
+            ),
+            "{text}"
+        );
+        assert!(text.ends_with("x…"), "{text}");
     }
 
     #[test]

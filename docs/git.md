@@ -61,7 +61,8 @@ The preview is the one a folder has, with lines of its own:
   fetched over HTTPS from https://…; …". It says where the commit was
   served, not who made it ([provenance](#a-commit-id-pins-contents-not-provenance)).
   The subject, like any text the server chooses, is shown without control
-  or bidirectional characters and cut to 200 characters.
+  characters or format characters (bidirectional, zero-width, tags) and cut
+  to 200 characters.
 - For a commit named by its id that no branch or tag of the repository
   points to: "Caution: no branch or tag of github.com/owner/repo points to
   commit 1a2b3c4d5e6f. A host that shares storage between forks, as GitHub
@@ -238,8 +239,8 @@ yet.
   shared memory budget with deltas' instructions let go), trees (links,
   submodules, `.git`, unsafe names, names differing in case, limits of
   entries, size and depth), files without execute permission, Git LFS
-  pointers, and a server's text (subject, `ERR`) shown without control or
-  bidirectional characters and cut. `downloads.rs` checks that a name is
+  pointers, and a server's text (subject, `ERR`, a connection failure)
+  shown without control or format characters and cut. `downloads.rs` checks that a name is
   one plain name (`a/b`, `../x`, `/abs`, `sub/.git`, `..`, `.`, `\`).
 - [`crates/pane-core/tests/repositories.rs`](../crates/pane-core/tests/repositories.rs),
   against Git's own server (`git upload-pack`) on 127.0.0.1: preview,
