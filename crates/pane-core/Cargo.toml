@@ -53,15 +53,16 @@ futures = { version = "0.3", default-features = false, features = ["executor"] }
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_DataExchange", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }
 
-# Global hotkeys on X11 (key grabs on the root window); already in the
-# dependency tree through GPUI's X11 platform.
+# Global hotkeys on X11 (key grabs on the root window) and the X11
+# clipboard of clipboard history (XFIXES selection events, selection
+# transfers); already in the dependency tree through GPUI's X11 platform.
 # Stopping a development build with the processes it started (a process
 # group); already in the dependency tree.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-x11rb = { version = "0.13", features = ["xkb"] }
+x11rb = { version = "0.13", features = ["xkb", "xfixes"] }
 
 # Global hotkeys on macOS through Carbon's RegisterEventHotKey, which needs no
 # Accessibility permission.
