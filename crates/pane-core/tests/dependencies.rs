@@ -680,8 +680,8 @@ fn an_invalid_dependency_declaration_is_explained() {
 }
 
 #[test]
-fn a_source_that_is_not_a_local_folder_is_not_supported_yet() {
-    for source in ["../b", "npm:left-pad", "git:github.com/a/b", "local:"] {
+fn a_source_that_is_neither_a_local_folder_nor_npm_is_not_supported_yet() {
+    for source in ["../b", "git:github.com/a/b", "local:"] {
         let dirs = Dirs::new();
         let a = dirs.fixture(
             "a",

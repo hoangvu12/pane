@@ -603,17 +603,18 @@ yet, then answers that it stopped responding once Pane gave up on it,
 Manage extensions' first row opens the runtime's details, and after
 `release` a fresh thread saves the formal greeting; `installed.json`
 records no pause. Run locally
-on 2026-09-29 (Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64, same
-Xvfb/lavapipe setup): all checks of the whole smoke passed, and frames 240
-to 247 were looked at.
+on 2026-09-29 after the #18 review (Ubuntu 26.04.1 LTS, kernel
+7.0.0-31-generic, x86_64, same Xvfb/lavapipe setup): all checks of the
+whole smoke passed, and frames 240 to 248 were looked at.
 
 | Step | Evidence |
 | --- | --- |
-| The second run: "The extension stopped responding: it computed for 5 seconds without waiting for anything, so Pane stopped it; other extensions' calls waited meanwhile" | [241-unresponsive-stopped.png](evidence/linux-x11/241-unresponsive-stopped.png) |
+| The second run: "The extension stopped responding: it computed for 2 seconds without finishing, so Pane stopped it; other extensions' calls waited meanwhile" | [241-unresponsive-stopped.png](evidence/linux-x11/241-unresponsive-stopped.png) |
 | The third: "Settings sample stopped responding 3 times within 5 minutes and is paused …", Greeting listed with why | [242-unresponsive-paused.png](evidence/linux-x11/242-unresponsive-paused.png) |
-| The runtime thread made to hang: "Extension runtime unavailable: it stopped responding before answering and was started again; Pane does not run this again by itself" | [245-unresponsive-runtime.png](evidence/linux-x11/245-unresponsive-runtime.png) |
-| The runtime's details: stopped responding for 10 seconds, none named or paused, the stuck thread abandoned, what it was doing | [246-unresponsive-runtime-details.png](evidence/linux-x11/246-unresponsive-runtime-details.png) |
-| A fresh thread: "Saved the formal greeting" | [247-unresponsive-runs-again.png](evidence/linux-x11/247-unresponsive-runs-again.png) |
+| The runtime thread made to hang, first: "Pane's extension runtime is not responding yet. Pane starts it again if it stays stuck; saved data is kept." | [245-unresponsive-not-yet.png](evidence/linux-x11/245-unresponsive-not-yet.png) |
+| Then given up on: "Extension runtime unavailable: it stopped responding before answering and was started again; Pane does not run this again by itself" | [246-unresponsive-runtime.png](evidence/linux-x11/246-unresponsive-runtime.png) |
+| The runtime's details: no progress for 15 seconds, not in an extension's code nor a host call, which code held it not known, none named or paused, the stuck thread abandoned, its last known work | [247-unresponsive-runtime-details.png](evidence/linux-x11/247-unresponsive-runtime-details.png) |
+| A fresh thread: "Saved the formal greeting" | [248-unresponsive-runs-again.png](evidence/linux-x11/248-unresponsive-runs-again.png) |
 
 Frames 240 (the extension list while the guest computes), 243 (the pause
 details) and 244 ("Started Settings sample" on the extension list) are
@@ -647,6 +648,52 @@ package paths are painted over with the background; the smoke checks the
 whole frames. Frames 181, the list after Cancel, and 183, the list after
 installing the JavaScript operations sample again with only it listed, are
 checked to differ from the others but not kept, as they show those paths.)
+
+### npm packages (#45)
+
+A phase after the one uninstalling required dependents, with a data folder
+of its own ([npm packages](../npm.md)),
+starts `scripts/npm_registry.py` on 127.0.0.1 serving
+`target/guests/npm/pane-samples-greeter-0.1.0.tgz` (the npm sample `cargo
+xtask guests` packed) and points the development build at it with
+`PANE_NPM_REGISTRY`; nothing reaches the network. `--install` of the local
+Dependencies from npm sample previews it (frame 260: "Requires: Greeter from
+npm, installed with it from npm:@pane-samples/greeter"); Enter installs both
+(261) and "Greet through the required greeter" answers "Hello, Pane, from
+the npm package" from the npm package's own component (262; the item's
+subtitle is the Rust dependencies sample's, shared with the local
+Dependencies sample). Up from root's last row is
+"Install extension from npm…", whose form (263) takes
+`@pane-samples/greeter`; its preview (264) shows the npm lines and, the
+package being installed, **Update**, which Enter chooses ("Updated Greeter
+from npm to 0.1.0", 265); its command's "Say hello" answers "Hello from the
+npm package" (266). `installed.json` must then hold both packages and
+record the npm name and version. Run locally on 2026-09-29 (same Ubuntu
+26.04.1 / Xvfb / lavapipe setup): all checks of the whole smoke passed and
+frames 260 to 266 were looked at. A first run showed the Update row pushed
+out of Pane's window by the preview's longer details; a package preview's
+details now scroll within 40% of the window, as a confirmation's do. The
+same phase, serving instead the tarball `npm pack` (npm 11.19.0) made of the
+assembled sample folder, also passed: it holds the same four files as
+Pane's own packing. After merging #30 a run failed at frame 261 with "Peer
+disconnected": the smoke's registry (Python's HTTP/1.0 server) closed the
+connection kept from the metadata request as the tarball's was sent on it,
+about one download in forty. Pane now opens a connection per npm request;
+the whole smoke then passed again and frames 260 to 266 were looked at.
+After #45's review (npm through #30's HTTP client, raw tar reading, a
+download folder each, the npm sample's own component answering as the npm
+package), the whole smoke passed again on 2026-09-29 and frames 260 to 266
+were looked at; the kept frames below are from that run.
+
+| Step | Evidence |
+| --- | --- |
+| Installing the dependency from npm: "Installed Dependencies from npm sample with Greeter from npm, which it requires" | [261-npm-dependency-installed.png](evidence/linux-x11/261-npm-dependency-installed.png) |
+| The npm package's `greet`, called by the dependency id: "Hello, Pane, from the npm package" | [262-npm-dependency-called.png](evidence/linux-x11/262-npm-dependency-called.png) |
+| The preview: "Source: npm package @pane-samples/greeter", "npm version: 0.1.0, the latest", the tarball and its sha512 integrity, what Pane runs, and Update in view | [264-npm-preview.png](evidence/linux-x11/264-npm-preview.png) |
+| Its command: "Hello from the npm package" | [266-npm-command-ran.png](evidence/linux-x11/266-npm-command-ran.png) |
+
+(The kept frames are cropped to Pane's window; the smoke checks the whole
+frames. Frame 260 shows the local checkout path and is not kept.)
 
 ### Files (#29)
 
