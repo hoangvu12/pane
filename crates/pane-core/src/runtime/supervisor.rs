@@ -209,6 +209,11 @@ pub(super) struct Shared {
     /// Guests' web requests: their limits, and what each package did this
     /// session, which a restarted thread carries on.
     pub(super) network: Arc<crate::http::Network>,
+    /// What a search waits on before it starts, if a test replaced the
+    /// clock's [`super::SEARCH_DEBOUNCE`]; a restarted thread keeps it.
+    /// A release build has none.
+    #[cfg(any(test, debug_assertions))]
+    pub(super) search_timer: Arc<Mutex<Option<super::SearchTimer>>>,
     crashes: Mutex<Option<CrashReport>>,
     slow: Mutex<Option<SlowReport>>,
     /// The limits guest calls and the watchdog apply.
@@ -309,6 +314,8 @@ impl Shared {
             health: Arc::default(),
             next_view: Arc::default(),
             network: Arc::default(),
+            #[cfg(any(test, debug_assertions))]
+            search_timer: Arc::default(),
             crashes: Mutex::new(None),
             slow: Mutex::new(None),
             limits: Arc::default(),
