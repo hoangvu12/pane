@@ -997,6 +997,19 @@ mod tests {
         );
     }
 
+    /// Waits until `done`, failing the test if it takes more than a
+    /// generous minute.
+    fn until(what: &str, mut done: impl FnMut() -> bool) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while !done() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{what} did not happen"
+            );
+            std::thread::yield_now();
+        }
+    }
+
     /// Code of a runtime thread Pane gave up on saves nothing once the
     /// thread's fence is closed, while its generation goes on: a save
     /// already under way when the fence closes lands before the close
@@ -1021,9 +1034,9 @@ mod tests {
             unreachable!()
         });
         let current = data.owned_by(&identity);
-        while current.get(DataKind::Settings, "n") == Ok(None) {
-            std::thread::yield_now();
-        }
+        until("a save landed", || {
+            current.get(DataKind::Settings, "n") != Ok(None)
+        });
 
         fence.close();
         let at_close = current.get(DataKind::Settings, "n").unwrap();
@@ -1066,11 +1079,13 @@ mod tests {
         let identity = PackageIdentity::local(dir.path()).unwrap();
         let fence = Fence::default();
         let fenced = data.owned_by(&identity).fenced(fence.clone());
+        // Copied now, so that none has expired (#36).
+        let now = data.clipboard_history().now();
         let adding = std::thread::spawn(move || {
             let mut outcomes = Vec::new();
             for n in 0_u64.. {
                 let added = fenced.update_clipboard_history(|history| {
-                    history.add(&n.to_string(), None, n);
+                    history.add(&n.to_string(), None, now);
                     Ok(())
                 });
                 let refused = added.is_err();
@@ -1083,9 +1098,7 @@ mod tests {
             unreachable!()
         });
         let items = || data.clipboard_history().get(&identity.key()).unwrap().items;
-        while items().is_empty() {
-            std::thread::yield_now();
-        }
+        until("a change landed", || !items().is_empty());
 
         fence.close();
         let at_close = items();
