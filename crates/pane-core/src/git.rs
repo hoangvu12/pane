@@ -1071,7 +1071,7 @@ impl<'a> Remote<'a> {
                     Some((3, message)) => {
                         return Err(format!(
                             "Could not fetch commit {commit} of {name}: the server failed: {}",
-                            shown(String::from_utf8_lossy(message).trim_end())
+                            shown_bytes(message.trim_ascii_end())
                         ));
                     }
                     _ => return Err(damaged("a pack line on no known band")),
@@ -1558,16 +1558,26 @@ fn check_out(
     if *kind != Kind::Commit {
         return Err(format!("it is a {}, not a commit", kind.name()));
     }
-    let text = String::from_utf8_lossy(&data[..]);
-    let tree = text
-        .lines()
+    // Read as bytes, not decoded whole: a message may be 256 MiB that is
+    // not UTF-8, which decoded would take three times as much.
+    let tree = data
+        .split(|&byte| byte == b'\n')
         .next()
-        .and_then(|line| line.strip_prefix("tree "))
+        .and_then(|line| line.strip_prefix(b"tree "))
+        .and_then(|id| std::str::from_utf8(id).ok())
         .and_then(parse_hex)
         .ok_or("its commit names no tree")?;
-    let subject = text
-        .split_once("\n\n")
-        .map(|(_, message)| shown(message.lines().next().unwrap_or("").trim()))
+    let subject = data
+        .windows(2)
+        .position(|pair| pair == b"\n\n")
+        .map(|end| {
+            let message = &data[end + 2..];
+            let first = message
+                .split(|&byte| byte == b'\n')
+                .next()
+                .unwrap_or_default();
+            shown_bytes(first.trim_ascii())
+        })
         .unwrap_or_default();
     fs::create_dir(dest).map_err(|error| error.to_string())?;
     let mut tally = Tally {
@@ -2479,6 +2489,33 @@ mod tests {
             assert!(error.len() < 2000, "{why}: {} bytes", error.len());
             assert!(peak < 1 << 20, "{why}: {peak} bytes held");
         }
+    }
+
+    #[test]
+    fn a_commit_s_message_is_read_without_decoding_all_of_it() {
+        // A message of 2 MiB that is not UTF-8, which decoded would take
+        // three bytes for each: its subject is its start.
+        let tree = tree_of(&[("100644", "pane.json", object_id(Kind::Blob, b"x").unwrap())]);
+        let mut commit = format!(
+            "tree {}\nauthor A <a@a> 0 +0000\ncommitter A <a@a> 0 +0000\n\n",
+            hex(&object_id(Kind::Tree, &tree).unwrap())
+        )
+        .into_bytes();
+        commit.extend(vec![0xff; 2 << 20]);
+        let id = hex(&object_id(Kind::Commit, &commit).unwrap());
+        let (pack, _) = pack_of(&[
+            (3, Vec::new(), b"x".to_vec()),
+            (2, Vec::new(), tree),
+            (1, Vec::new(), commit),
+        ]);
+        let objects = read_pack(&pack, Limits::default()).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("out");
+        let (result, peak) =
+            crate::peak_memory::peak_while(|| check_out(&objects, &id, &out, Limits::default()));
+        let (subject, _) = result.unwrap();
+        assert_eq!(subject, format!("{}…", "\u{fffd}".repeat(200)));
+        assert!(peak < 1 << 20, "{peak} bytes held");
     }
 
     #[test]
