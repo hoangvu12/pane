@@ -561,6 +561,60 @@ fn an_installed_npm_dependency_is_used_as_it_is_and_a_disabled_one_stays_disable
 }
 
 #[test]
+fn an_npm_dependency_that_can_reach_the_network_is_recorded_as_using_it() {
+    // A package on npm with #30's search command, whose component imports
+    // `wasi:http`, and the Rust `greet` operation, which a local package
+    // requires.
+    let dirs = Dirs::new();
+    let package_json = json!({ "name": "net-search", "version": "1.0.0" }).to_string();
+    let manifest = json!({
+        "manifestVersion": 1, "title": "Search with greet", "version": "1.0.0",
+        "apiVersion": "0.1",
+        "commands": [{ "id": "packages", "title": "Package search",
+                       "component": "sample_search.wasm", "search": true }],
+        "operations": [{ "id": "greet", "version": 1, "component": "sample_operations.wasm" }]
+    })
+    .to_string();
+    let files = vec![
+        ("package.json", package_json.into_bytes()),
+        ("pane.json", manifest.into_bytes()),
+        (
+            "sample_search.wasm",
+            fs::read(guest("sample_search.wasm")).unwrap(),
+        ),
+        (
+            "sample_operations.wasm",
+            fs::read(guest("sample_operations.wasm")).unwrap(),
+        ),
+    ];
+    dirs.registry.publish("net-search", "1.0.0", pack(&files));
+    let caller = dirs.caller(
+        r#"{ "id": "greeter", "source": "npm:net-search", "operations": [{ "id": "greet", "version": 1 }] }"#,
+    );
+    let launcher = dirs.launcher();
+
+    block_on(launcher.install_package(&caller));
+
+    let packages = launcher.packages();
+    let search = packages
+        .iter()
+        .find(|package| package.identity == PackageIdentity::npm("net-search"))
+        .unwrap_or_else(|| panic!("not installed: {:?}", launcher.view().status));
+    assert!(search.uses_network, "{search:?}");
+    let caller = packages
+        .iter()
+        .find(|package| package.title() == "Caller")
+        .unwrap();
+    assert!(!caller.uses_network);
+    // As recorded, so after a restart too.
+    drop(launcher);
+    let launcher = dirs.launcher();
+    assert!(launcher.packages().iter().any(|package| package.identity
+        == PackageIdentity::npm("net-search")
+        && package.uses_network));
+}
+
+#[test]
 fn a_dependency_naming_a_version_installs_that_version_pinned() {
     let dirs = Dirs::new();
     dirs.publish_greeter("0.1.0");

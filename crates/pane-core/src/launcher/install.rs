@@ -406,7 +406,8 @@ impl Launcher {
     /// Works out what installing `package` means for its dependencies (see
     /// `dependencies`) against the installed packages, reading the folders
     /// of those it would install off the calling thread and having the
-    /// runtime check their components without running them.
+    /// runtime check their components without running them (noting whether
+    /// they use the network, as for the package itself).
     pub(in crate::launcher) async fn plan_dependencies(
         &self,
         package: SourcePackage,
@@ -430,23 +431,30 @@ impl Launcher {
             (package, plan)
         })
         .await;
-        for dependency in &plan.install {
-            if let Err(error) = self.check_components(dependency).await {
-                let required = plan
-                    .required
-                    .iter()
-                    .find(|required| required.target.identity == dependency.identity)
-                    .expect("a package to install is a required dependency");
-                plan.problems.push(dependencies::Problem {
-                    dependent: required.dependent.clone(),
-                    id: required.id.clone(),
-                    kind: dependencies::ProblemKind::CannotInstall {
-                        from: dependencies::source_name(&dependency.identity),
-                        error,
-                    },
-                });
+        let mut problems = Vec::new();
+        for dependency in &mut plan.install {
+            match self.check_components(dependency).await {
+                // Recorded as the package's own is: whether it can make web
+                // requests.
+                Ok(network) => dependency.network = network,
+                Err(error) => {
+                    let required = plan
+                        .required
+                        .iter()
+                        .find(|required| required.target.identity == dependency.identity)
+                        .expect("a package to install is a required dependency");
+                    problems.push(dependencies::Problem {
+                        dependent: required.dependent.clone(),
+                        id: required.id.clone(),
+                        kind: dependencies::ProblemKind::CannotInstall {
+                            from: dependencies::source_name(&dependency.identity),
+                            error,
+                        },
+                    });
+                }
             }
         }
+        plan.problems.extend(problems);
         (package, plan)
     }
 }
