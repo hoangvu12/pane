@@ -141,7 +141,9 @@ details Enter shows. Texts and names starting with `huge`, `stall` or
   address (a port held bound, never listening) four times, then the
   service's 503, are errors and the extension keeps working; an endless
   body, a stalled head and a dripping body, for searches and for an action,
-  end with the matching errors within short test limits; an untrusted
+  end with the matching errors within short test limits (only the limit a
+  case checks is shortened, so a slow machine cannot make another fire
+  first); an untrusted
   certificate is "not trusted"; Manage extensions says which package uses
   the network and lists the address it reached; a manifest saying
   `"search": true` for a component without the export, or with

@@ -634,11 +634,20 @@ fn an_endless_answer_is_an_error_that_does_not_pause_the_extension() {
     }
 }
 
-/// Short ceilings, so a service that stalls is given up on quickly.
-fn short_limits() -> HttpLimits {
+/// A short wait between two pieces of an answer, and Pane's own deadline,
+/// so a stalled answer can end only by that wait, and quickly.
+fn stall_limits() -> HttpLimits {
     HttpLimits {
-        first_byte: Duration::from_millis(500),
         between_bytes: Duration::from_millis(300),
+        ..HttpLimits::default()
+    }
+}
+
+/// A short deadline, and Pane's own wait between two pieces of an answer,
+/// so a dripping answer (a byte every 50 ms, however late a slow machine
+/// reads one) can end only by the deadline, and quickly.
+fn drip_limits() -> HttpLimits {
+    HttpLimits {
         deadline: Duration::from_millis(1500),
         ..HttpLimits::default()
     }
@@ -648,7 +657,7 @@ fn short_limits() -> HttpLimits {
 fn a_service_that_stalls_is_given_up_on_within_the_limits() {
     for fixture in &ALL {
         let service = Service::start();
-        let pane = Pane::with_limits(fixture, short_limits());
+        let pane = Pane::with_limits(fixture, stall_limits());
         pane.use_service(&service.url());
         let failed = |why: &str| {
             format!(
@@ -677,6 +686,7 @@ fn a_service_that_stalls_is_given_up_on_within_the_limits() {
         );
 
         // A byte now and then: the whole request's deadline.
+        pane.runtime.set_http_limits(drip_limits());
         let started = Instant::now();
         pane.search("drip");
         assert_eq!(pane.error(), failed("the service took too long to answer"));
@@ -692,6 +702,7 @@ fn a_service_that_stalls_is_given_up_on_within_the_limits() {
             pane.titles(),
             ["huge-details", "stall-details", "drip-details"]
         );
+        pane.runtime.set_http_limits(stall_limits());
         let started = Instant::now();
         pane.activate("stall-details");
         assert_eq!(
@@ -705,6 +716,7 @@ fn a_service_that_stalls_is_given_up_on_within_the_limits() {
             "{:?}",
             started.elapsed()
         );
+        pane.runtime.set_http_limits(drip_limits());
         pane.activate("drip-details");
         assert_eq!(pane.error(), failed("the service took too long to answer"));
         pane.activate("huge-details");
