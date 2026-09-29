@@ -100,15 +100,29 @@ pub(crate) fn remove_abandoned(downloads: &Path, now: std::time::SystemTime) {
 }
 
 /// Checks one part of a path in a downloaded package, the same on every
-/// system, so that a package Pane unpacks on one unpacks on all: no `\`,
-/// `:`, `<`, `>`, `"`, `|`, `?`, `*` or control character, no trailing `.`
-/// or space, and no Windows device name (`con`, `conin$`, `nul`, `com1`,
-/// `lpt³`…, with or without an extension), compared by character.
+/// system, so that a package Pane unpacks on one unpacks on all: exactly one
+/// plain name (no `/`, `\`, `.` or `..`, so that joining it to a folder
+/// names something inside that folder), no `:`, `<`, `>`, `"`, `|`, `?`, `*`
+/// or control character, no trailing `.` or space, and no Windows device
+/// name (`con`, `conin$`, `nul`, `com1`, `lpt³`…, with or without an
+/// extension), compared by character.
 pub(crate) fn check_part(part: &str) -> Result<(), &'static str> {
     match part {
         "" | "." => return Err("which has an empty or `.` part"),
         ".." => return Err("which climbs out with `..`"),
         _ => {}
+    }
+    if part.contains(['/', '\\']) {
+        return Err("whose name holds `/` or `\\`, which would put it in another folder");
+    }
+    // Whatever this system reads as more than one plain name (a prefix, a
+    // root, `.` or `..`) is refused too, not only what the checks above know.
+    let mut components = Path::new(part).components();
+    if !matches!(
+        (components.next(), components.next()),
+        (Some(std::path::Component::Normal(_)), None)
+    ) {
+        return Err("whose name is not one plain name");
     }
     if part
         .chars()
@@ -144,4 +158,37 @@ pub(crate) fn check_part(part: &str) -> Result<(), &'static str> {
         return Err("which is a Windows device name");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_part_is_one_plain_name() {
+        for name in ["pane.json", "dist", "x.wasm", ".gitattributes", "a b", "é"] {
+            assert_eq!(check_part(name), Ok(()), "{name}");
+        }
+        // Each of these would put a file elsewhere than under one name inside
+        // the folder it is joined to: in a subfolder, above it, or anywhere
+        // (an absolute path replaces the folder it is joined to).
+        for name in [
+            "a/b",
+            "../x",
+            "/abs",
+            "/abs/path",
+            "sub/.git",
+            "..",
+            ".",
+            "",
+            "a\\b",
+            "..\\x",
+            "\\abs",
+            "a/",
+            "/",
+            "./a",
+        ] {
+            assert!(check_part(name).is_err(), "{name:?} was taken");
+        }
+    }
 }

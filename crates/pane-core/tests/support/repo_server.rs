@@ -137,6 +137,50 @@ impl Repo {
             &format!("{mode},{id},{path}"),
         ]);
     }
+
+    /// Writes `data` as an object of `kind` without Git checking it
+    /// (`hash-object --literally`), so that a test can make objects `git`
+    /// itself refuses to make, such as a tree entry named `../x`; its id.
+    pub fn write_object(&self, kind: &str, data: &[u8]) -> String {
+        let mut command = git_in(&self.dir, &self.home);
+        command
+            .args(["hash-object", "-w", "--literally", "-t", kind, "--stdin"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = command.spawn().unwrap();
+        child.stdin.take().unwrap().write_all(data).unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "hash-object: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    /// Commits a tree made of `entries` (mode, raw name, file contents; a
+    /// folder, mode `40000`, is empty), each name written as given, whatever
+    /// it holds, and tags the commit `tag`; the commit's id.
+    pub fn commit_raw_tree(&self, entries: &[(&str, &[u8], &[u8])], tag: &str) -> String {
+        let mut tree = Vec::new();
+        for (mode, name, contents) in entries {
+            let blob = match *mode {
+                "40000" => self.write_object("tree", b""),
+                _ => self.write_object("blob", contents),
+            };
+            tree.extend_from_slice(format!("{mode} ").as_bytes());
+            tree.extend_from_slice(name);
+            tree.push(0);
+            for i in 0..20 {
+                tree.push(u8::from_str_radix(&blob[2 * i..2 * i + 2], 16).unwrap());
+            }
+        }
+        let tree = self.write_object("tree", &tree);
+        let commit = self.git(&["commit-tree", &tree, "-m", tag]);
+        self.git(&["tag", tag, &commit]);
+        commit
+    }
 }
 
 /// The files of the Git sample `cargo xtask guests` assembles

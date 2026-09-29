@@ -655,6 +655,83 @@ fn a_tree_holding_a_link_or_a_submodule_is_refused() {
     dirs.wait_for_no_downloads();
 }
 
+/// Every file and folder under `dir` whose name starts with `escaped`.
+fn escaped_under(dir: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let Ok(entries) = fs::read_dir(dir) else {
+        return found;
+    };
+    for entry in entries {
+        let entry = entry.unwrap();
+        if entry.file_name().to_string_lossy().starts_with("escaped") {
+            found.push(entry.path());
+        }
+        if entry.file_type().unwrap().is_dir() {
+            found.extend(escaped_under(&entry.path()));
+        }
+    }
+    found
+}
+
+#[test]
+fn a_tree_entry_naming_another_folder_writes_nothing_outside_its_download() {
+    let dirs = Dirs::new();
+    let (repo, url) = dirs.repo("hostile");
+    let manifest: &[u8] = br#"{ "manifestVersion": 1, "title": "Hostile", "apiVersion": "0.1",
+        "commands": [] }"#;
+    // Names `git` refuses to put in a tree, made directly: each would be
+    // written above the download (`..`), anywhere (an absolute path replaces
+    // the folder it is joined to) or in a folder of the tree's choosing.
+    let absolute = dirs.sources.path().join("escaped-absolute");
+    let absolute = absolute.to_string_lossy().into_owned();
+    let hostile: Vec<(&str, String)> = vec![
+        ("100644", "../escaped-up".into()),
+        ("100644", "../../escaped-two-up".into()),
+        ("100644", "../../../escaped-three-up".into()),
+        ("100644", absolute.clone()),
+        ("40000", "../escaped-folder".into()),
+        ("100644", "dist/escaped-nested".into()),
+        ("100644", "..\\escaped-backslash".into()),
+        ("100644", "sub/.git".into()),
+    ];
+    let launcher = dirs.launcher();
+    for (i, (mode, name)) in hostile.iter().enumerate() {
+        let tag = format!("hostile-{i}");
+        repo.commit_raw_tree(
+            &[
+                ("100644", b"pane.json", manifest),
+                (mode, name.as_bytes(), b"written by a hostile tree"),
+            ],
+            &tag,
+        );
+        let error = refusal(&launcher, &format!("{url}@{tag}"));
+        assert!(
+            error.contains(&format!(
+                "cannot be installed safely: its tree contains `{name}`"
+            )),
+            "{name}: {error}"
+        );
+    }
+    // Nothing was written anywhere the test can see: not in the data
+    // folder, not beside it, not where the absolute name pointed.
+    for dir in [
+        dirs.data.path(),
+        dirs.sources.path(),
+        dirs.repos.path(),
+        dirs.data.path().parent().unwrap(),
+    ] {
+        assert_eq!(
+            escaped_under(dir),
+            Vec::<PathBuf>::new(),
+            "{}",
+            dir.display()
+        );
+    }
+    assert!(!Path::new(&absolute).exists());
+    assert!(launcher.packages().is_empty());
+    dirs.wait_for_no_downloads();
+}
+
 #[test]
 fn nothing_in_the_repository_runs_and_its_files_are_taken_as_committed() {
     let dirs = Dirs::new();
