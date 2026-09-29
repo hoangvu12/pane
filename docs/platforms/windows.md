@@ -297,15 +297,23 @@ not; nothing is kept while paused, or while disabled, also after a restart;
 Enter on a kept item puts it on the clipboard again and moves it to the
 front; enabled again, text is kept, also after a restart, before the command
 is opened. The smoke copies only its own `pane-smoke-...` text, through the
-clipboard API from PowerShell, and saves what was on the clipboard (every
-format held in global memory) in memory only, putting it back at the end.
-`clipboard_adapter.rs` does the same for the adapter alone: plain text
-reported with its owner (the test's process), each marker withholding the
-text, a written text reported, and nothing once the watch is dropped. The
-adapter and the test were only compile- and lint-checked for
-`x86_64-pc-windows-gnu` from Linux; **not run on Windows yet**, so the
-listener's delivery, the markers as real password managers set them and the
-owner lookup are unverified natively.
+clipboard API from PowerShell, and so replaces what was on the clipboard,
+without reading or restoring it. `clipboard_adapter.rs` checks the adapter
+alone: plain text reported with its owner (the test's process), each marker
+read and withholding the text, a written text reported, and nothing once
+the watch is dropped; it too replaces the clipboard, so it runs only with
+`PANE_TEST_REAL_CLIPBOARD=1`, which CI's Windows job sets. `atomic.rs`'s
+Windows unit test checks the owner-only DACL of `clipboard-history.json`
+and `credentials.json`.
+
+The adapter, the shared message thread (also the hotkey adapter's), the
+DACL and these tests were only compile- and lint-checked for
+`x86_64-pc-windows-gnu` from Linux; **not run on Windows yet**. They run in
+CI (`cargo xtask ci` with `PANE_TEST_REAL_CLIPBOARD=1`, then
+`smoke-windows.ps1`) on `windows-2025`, and the next green Windows run of
+the branch is their evidence: until then the listener's delivery, the
+retry and stop paths, the markers as real password managers set them, the
+owner lookup and the DACL are unverified natively.
 
 ## Text input and accessibility findings
 

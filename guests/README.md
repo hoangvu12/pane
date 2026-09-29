@@ -43,6 +43,10 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
 - `sample-files-js`, `sample-files-ts`: the same host import and `open-file`
   results in JavaScript and TypeScript; held by
   `crates/pane-core/tests/files.rs`.
+- `sample-clipboard-js`, `sample-clipboard-ts`: the Clipboard History
+  command in JavaScript and TypeScript, over the same host import
+  ([Clipboard history](#clipboard-history)); held by
+  `crates/pane-core/tests/clipboard.rs`.
 - `sample-helper`, `sample-helper-js`, `sample-helper-ts`: a command in
   Rust, JavaScript and TypeScript running a [native helper](#native-helpers)
   its package ships, `helpers/echo` (`pane-echo`, an ordinary program
@@ -712,8 +716,26 @@ only, never text marked by its application as not to be kept, and nothing
 while the package is disabled. The [Clipboard History](clipboard-history)
 default extension is the example; see [clipboard history](../docs/clipboard-history.md).
 Only Windows has a clipboard adapter so far, so its package declares
-`"platforms": ["windows"]`. JavaScript and TypeScript commands cannot use it
-yet.
+`"platforms": ["windows"]`.
+
+A JavaScript or TypeScript command imports it when its package.json sets
+`"pane": { "clipboardHistory": true }` (declared in
+[`js/clipboard.d.ts`](js/clipboard.d.ts)); a command that does not set it
+does not import it. Each function throws, on failure, an object whose
+`payload` is the reason:
+
+```ts
+import * as history from "pane:extension/clipboard-history@0.1.0";
+
+history.setCapture("on");
+for (const entry of history.entries()) {
+  // entry.text, entry.ageSeconds, entry.source ("notepad.exe")
+}
+```
+
+[`sample-clipboard-js`](sample-clipboard-js) and
+[`sample-clipboard-ts`](sample-clipboard-ts) implement the Clipboard History
+command in JavaScript and TypeScript.
 
 ## A command that takes a query
 

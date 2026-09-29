@@ -1,24 +1,32 @@
 //! The clipboard on Windows: a clipboard format listener
 //! (`AddClipboardFormatListener`) on a message-only window of a thread of
-//! Pane's own, which receives `WM_CLIPBOARDUPDATE` after every change of the
-//! clipboard, whichever application made it. No permission is needed.
+//! Pane's own (`threads::windows::MessageThread`), which receives
+//! `WM_CLIPBOARDUPDATE` after every change of the clipboard, whichever
+//! application made it. No permission is needed.
 //!
-//! On each change the thread opens the clipboard and reads, in this order:
-//! the formats applications use to say that a clipboard monitor or
-//! clipboard history must not keep what they copied
+//! On each change the thread, and only it, opens the clipboard and reads, in
+//! this order: the formats applications use to say that a clipboard monitor
+//! or clipboard history must not keep what they copied
 //! (`ExcludeClipboardContentFromMonitorProcessing`, the older `Clipboard
 //! Viewer Ignore`, `CanIncludeInClipboardHistory` and
 //! `CanUploadToCloudClipboard` as a DWORD of 0); then, only if none of them
 //! forbids it, the text (`CF_UNICODETEXT`); and the file name of the
 //! process whose window owns the clipboard. What is kept is decided by
-//! `clipboard::accept`, the same on every system.
+//! `clipboard::accept`, the same on every system. A change is read once: if
+//! reading it fails (another program holds the clipboard open), the thread
+//! tries again shortly, a few times, before giving up on that change.
 //!
-//! Dropping the watch ends the thread: it stops listening and destroys its
-//! window before the drop returns.
+//! Reading can wait on the program that copied (a program that renders its
+//! data only when asked), however long it takes. Dropping the watch never
+//! waits on it for more than a moment: it tells the thread to stop and
+//! leaves it to end on its own after [`STOP_WAIT`]; Pane closed the sink's
+//! fence before, so what such a late read returns is dropped. A panic while
+//! handling a change is caught in the window procedure and logged, and the
+//! listener goes on listening.
 
 use std::cell::RefCell;
-use std::sync::Once;
-use std::sync::mpsc;
+use std::io::Write;
+use std::sync::Arc;
 use std::time::Duration;
 
 use ::windows::Win32::Foundation::{
@@ -29,36 +37,41 @@ use ::windows::Win32::System::DataExchange::{
     GetClipboardOwner, GetClipboardSequenceNumber, IsClipboardFormatAvailable, OpenClipboard,
     RegisterClipboardFormatW, RemoveClipboardFormatListener, SetClipboardData,
 };
-use ::windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use ::windows::Win32::System::Memory::{
     GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock,
 };
 use ::windows::Win32::System::Threading::{
-    GetCurrentThreadId, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
-    QueryFullProcessImageNameW,
+    OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
 use ::windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
-    GetWindowThreadProcessId, HWND_MESSAGE, MSG, PostThreadMessageW, RegisterClassW,
-    WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLIPBOARDUPDATE, WNDCLASSW,
+    DefWindowProcW, GetWindowThreadProcessId, KillTimer, SetTimer, WM_CLIPBOARDUPDATE, WM_TIMER,
 };
 use ::windows::core::{PCWSTR, PWSTR, w};
 
 use super::{ClipboardSystem, Content, MAX_TEXT_BYTES, Markers, Observation, Sink, Watch};
+use crate::threads::windows::{MessageThread, Window, WindowClass, stop_sent};
 
 /// `CF_UNICODETEXT`: text as UTF-16, ending with a NUL.
 const CF_UNICODETEXT: u32 = 13;
 
-/// Ends the listener thread.
-const WM_STOP: u32 = WM_APP + 2;
-
-/// The class of the listener's message-only window.
-const CLASS: PCWSTR = w!("PaneClipboardListener");
+/// The listener's window, which receives the clipboard's changes.
+static LISTENER_CLASS: WindowClass = WindowClass::new("PaneClipboardListener", listener_procedure);
+/// The window that owns what Pane puts on the clipboard.
+static WRITER_CLASS: WindowClass = WindowClass::new("PaneClipboardWriter", plain_procedure);
 
 /// How often, and how long apart, Pane tries to open the clipboard while
 /// another application holds it open.
 const OPEN_TRIES: u32 = 10;
 const OPEN_WAIT: Duration = Duration::from_millis(20);
+
+/// The timer that has the listener read a change again after reading it
+/// failed; how long after, and how often at most.
+const RETRY_TIMER: usize = 1;
+const RETRY_WAIT_MS: u32 = 250;
+const READ_TRIES: u32 = 5;
+
+/// How long dropping the watch waits for the listener to end.
+pub(crate) const STOP_WAIT: Duration = Duration::from_secs(1);
 
 /// The system's clipboard on Windows.
 pub struct WindowsClipboard;
@@ -68,64 +81,58 @@ impl ClipboardSystem for WindowsClipboard {
         None
     }
 
-    fn watch(&self, sink: Sink) -> Result<Watch, String> {
-        let (started, thread) = mpsc::channel();
-        let handle = std::thread::Builder::new()
-            .name("pane-clipboard".into())
-            .spawn(move || listen(sink, &started))
-            .map_err(|error| error.to_string())?;
-        match thread.recv() {
-            Ok(Ok(thread)) => Ok(Box::new(Listening {
-                thread,
-                handle: Some(handle),
-            })),
-            Ok(Err(problem)) => {
-                let _ = handle.join();
-                Err(problem)
-            }
-            Err(_) => Err("the clipboard thread did not start".into()),
-        }
+    fn watch(&self, sink: Arc<dyn Sink>) -> Result<Watch, String> {
+        let thread = MessageThread::spawn(
+            "pane-clipboard",
+            move || start_listening(sink),
+            // The listener gets no thread messages but its stop.
+            |_, _| {},
+            stop_listening,
+        )
+        .map_err(|problem| format!("Pane could not watch the clipboard: {problem}"))?;
+        Ok(Watch::new(Listening(thread)))
     }
 
     fn write_text(&self, text: &str) -> Result<(), String> {
-        let _open = Open::clipboard(None)?;
-        // SAFETY: the clipboard is open by this thread.
-        unsafe { EmptyClipboard() }.map_err(|error| error.message())?;
-        let mut units: Vec<u16> = text.encode_utf16().collect();
-        units.push(0);
-        put(CF_UNICODETEXT, bytes_of(&units))
+        let owner = WRITER_CLASS.message_window()?;
+        write(&owner, text, &[])
+        // The clipboard is closed, then the window destroyed: what was put
+        // on the clipboard stays there.
     }
 }
 
 /// The listener thread, until dropped.
-struct Listening {
-    thread: u32,
-    handle: Option<std::thread::JoinHandle<()>>,
-}
+struct Listening(MessageThread);
 
 impl Drop for Listening {
     fn drop(&mut self) {
-        // SAFETY: posting a message with no pointers to a thread id.
-        let posted = unsafe { PostThreadMessageW(self.thread, WM_STOP, WPARAM(0), LPARAM(0)) };
-        if posted.is_ok()
-            && let Some(handle) = self.handle.take()
-        {
-            let _ = handle.join();
+        if !self.0.stop(Some(STOP_WAIT)) {
+            log(
+                "Pane stopped watching the clipboard while a read was still waiting on the program that copied; it ends on its own",
+            );
         }
     }
 }
 
 /// What the listener's window procedure uses, on the listener thread.
 struct Listener {
-    sink: Sink,
+    sink: Arc<dyn Sink>,
     formats: Formats,
-    /// The clipboard's sequence number when it was last read, so a change
-    /// reported twice is read once.
-    last: u32,
+    /// The clipboard's sequence number when it was last read in full (or
+    /// given up on): a change reported twice is read once.
+    read_through: u32,
+    /// How many times reading the latest change failed.
+    failures: u32,
 }
 
 thread_local! {
     static LISTENER: RefCell<Option<Listener>> = const { RefCell::new(None) };
+}
+
+/// Writes `message` to standard error, if there is one; never what was
+/// copied. Unlike `eprintln!`, it cannot panic.
+fn log(message: &str) {
+    let _ = writeln!(std::io::stderr(), "{message}");
 }
 
 /// The registered formats that carry an application's markers.
@@ -153,159 +160,136 @@ impl Formats {
     }
 }
 
-/// Registers the listener's window class, once per process.
-fn register_class() -> Result<(), String> {
-    static REGISTERED: Once = Once::new();
-    let mut problem = None;
-    REGISTERED.call_once(|| {
-        // SAFETY: no arguments; the module is this process's executable.
-        let instance = match unsafe { GetModuleHandleW(PCWSTR::null()) } {
-            Ok(instance) => instance,
-            Err(error) => {
-                problem = Some(error.message());
-                return;
-            }
-        };
-        let class = WNDCLASSW {
-            lpfnWndProc: Some(window_procedure),
-            hInstance: instance.into(),
-            lpszClassName: CLASS,
-            ..WNDCLASSW::default()
-        };
-        // SAFETY: `class` is fully initialized and its strings are static.
-        if unsafe { RegisterClassW(&class) } == 0 {
-            problem = Some(::windows::core::Error::from_thread().message());
-        }
-    });
-    match problem {
-        Some(problem) => Err(format!("Pane could not watch the clipboard: {problem}")),
-        None => Ok(()),
-    }
-}
-
-/// A message-only window of the listener's class, on the calling thread.
-fn message_window() -> Result<HWND, String> {
-    register_class()?;
-    // SAFETY: no arguments; the module is this process's executable.
-    let instance = unsafe { GetModuleHandleW(PCWSTR::null()) }.map_err(|error| error.message())?;
-    // SAFETY: the class is registered and its name is static; a
-    // message-only window has no size, menu or creation data.
-    unsafe {
-        CreateWindowExW(
-            WINDOW_EX_STYLE::default(),
-            CLASS,
-            w!("Pane clipboard"),
-            WINDOW_STYLE::default(),
-            0,
-            0,
-            0,
-            0,
-            Some(HWND_MESSAGE),
-            None,
-            Some(instance.into()),
-            None,
-        )
-    }
-    .map_err(|error| format!("Pane could not watch the clipboard: {}", error.message()))
-}
-
-/// The listener thread: listens to clipboard changes, reporting each to
-/// `sink`, until told to stop.
-fn listen(sink: Sink, started: &mpsc::Sender<Result<u32, String>>) {
-    let window = match message_window() {
-        Ok(window) => window,
-        Err(problem) => {
-            let _ = started.send(Err(problem));
-            return;
-        }
-    };
+/// On the listener thread: makes its window and starts listening, reporting
+/// to `sink`.
+fn start_listening(sink: Arc<dyn Sink>) -> Result<(Window, Option<HWND>), String> {
+    let window = LISTENER_CLASS.message_window()?;
     // SAFETY: `window` is this thread's own window.
-    if let Err(error) = unsafe { AddClipboardFormatListener(window) } {
-        // SAFETY: as above.
-        let _ = unsafe { DestroyWindow(window) };
-        let _ = started.send(Err(format!(
-            "Pane could not watch the clipboard: {}",
-            error.message()
-        )));
-        return;
-    }
+    unsafe { AddClipboardFormatListener(window.handle()) }.map_err(|error| error.message())?;
     LISTENER.with(|listener| {
         *listener.borrow_mut() = Some(Listener {
             sink,
             formats: Formats::register(),
             // SAFETY: no arguments.
-            last: unsafe { GetClipboardSequenceNumber() },
+            read_through: unsafe { GetClipboardSequenceNumber() },
+            failures: 0,
         });
     });
-    // SAFETY: no arguments; it only reads the calling thread's id.
-    let thread = unsafe { GetCurrentThreadId() };
-    if started.send(Ok(thread)).is_ok() {
-        let mut message = MSG::default();
-        loop {
-            // SAFETY: `message` is a valid, writable MSG for the call's
-            // duration; with no window it receives all of this thread's
-            // messages.
-            if unsafe { GetMessageW(&mut message, None, 0, 0) }.0 <= 0 {
-                break;
-            }
-            if message.hwnd.is_invalid() && message.message == WM_STOP {
-                break;
-            }
-            // SAFETY: a message this thread's queue returned.
-            unsafe { DispatchMessageW(&message) };
-        }
-    }
-    // SAFETY: `window` is this thread's own window, still listening.
-    unsafe {
-        let _ = RemoveClipboardFormatListener(window);
-        let _ = DestroyWindow(window);
-    }
+    let handle = window.handle();
+    Ok((window, Some(handle)))
+}
+
+/// On the listener thread, as it ends: stops listening and lets go of the
+/// sink; the window is destroyed as it is dropped.
+fn stop_listening(window: Window) {
+    // SAFETY: `window` is this thread's own window.
+    let _ = unsafe { RemoveClipboardFormatListener(window.handle()) };
     LISTENER.with(|listener| listener.borrow_mut().take());
 }
 
-extern "system" fn window_procedure(
+/// Reads the clipboard's latest change, unless it was read already, and
+/// reports it; if reading fails, tries again later.
+fn observe(window: HWND, listener: &mut Listener) {
+    // SAFETY: no arguments.
+    if unsafe { GetClipboardSequenceNumber() } == listener.read_through {
+        return;
+    }
+    let ticket = listener.sink.reading();
+    match read(window, listener.formats) {
+        Ok((sequence, observation)) => {
+            listener.read_through = sequence;
+            listener.failures = 0;
+            listener.sink.observed(ticket, observation);
+        }
+        Err(problem) => {
+            listener.failures += 1;
+            if listener.failures < READ_TRIES {
+                // SAFETY: this thread's own window; the timer is killed
+                // when it fires.
+                unsafe { SetTimer(Some(window), RETRY_TIMER, RETRY_WAIT_MS, None) };
+                log(&format!(
+                    "Pane could not read the clipboard, and tries again: {problem}"
+                ));
+            } else {
+                // SAFETY: no arguments.
+                listener.read_through = unsafe { GetClipboardSequenceNumber() };
+                listener.failures = 0;
+                log(&format!(
+                    "Pane could not read the clipboard, and skips this change: {problem}"
+                ));
+            }
+        }
+    }
+}
+
+extern "system" fn listener_procedure(
     window: HWND,
     message: u32,
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    if message == WM_CLIPBOARDUPDATE {
-        LISTENER.with(|listener| {
-            if let Some(listener) = listener.borrow_mut().as_mut() {
-                // SAFETY: no arguments.
-                let sequence = unsafe { GetClipboardSequenceNumber() };
-                if sequence == listener.last {
-                    return;
-                }
-                listener.last = sequence;
-                match read(window, listener.formats) {
-                    Ok(observation) => (listener.sink)(observation),
-                    // Never what was copied: only that it was not read.
-                    Err(problem) => eprintln!("Pane could not read the clipboard: {problem}"),
-                }
-            }
-        });
+    // A panic must not unwind into Windows, which would end Pane.
+    std::panic::catch_unwind(|| handle(window, message, wparam, lparam)).unwrap_or_else(|_| {
+        log("Pane's clipboard listener failed on a change; it goes on listening");
+        LRESULT(0)
+    })
+}
+
+fn handle(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if stop_sent(message) {
         return LRESULT(0);
     }
+    let changed = match message {
+        WM_CLIPBOARDUPDATE => true,
+        WM_TIMER if wparam.0 == RETRY_TIMER => {
+            // SAFETY: this thread's own window and timer.
+            let _ = unsafe { KillTimer(Some(window), RETRY_TIMER) };
+            true
+        }
+        _ => false,
+    };
+    if !changed {
+        // SAFETY: the arguments are those this procedure was called with.
+        return unsafe { DefWindowProcW(window, message, wparam, lparam) };
+    }
+    LISTENER.with(|listener| {
+        // Not borrowed already: nothing a read waits on calls back into it.
+        if let Ok(mut listener) = listener.try_borrow_mut()
+            && let Some(listener) = listener.as_mut()
+        {
+            observe(window, listener);
+        }
+    });
+    LRESULT(0)
+}
+
+extern "system" fn plain_procedure(
+    window: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     // SAFETY: the arguments are those this procedure was called with.
     unsafe { DefWindowProcW(window, message, wparam, lparam) }
 }
 
-/// The clipboard, open by this thread until dropped.
-struct Open;
+/// The clipboard, opened by a window of this thread until dropped.
+struct OpenedClipboard;
 
-impl Open {
-    /// Opens the clipboard for `owner` (none: the calling task), trying
+impl OpenedClipboard {
+    /// Opens the clipboard for `owner`, a window of this thread, trying
     /// again for a moment while another application holds it open.
-    fn clipboard(owner: Option<HWND>) -> Result<Open, String> {
+    fn by(owner: HWND) -> Result<OpenedClipboard, String> {
         let mut last = String::new();
-        for _ in 0..OPEN_TRIES {
-            // SAFETY: `owner` is a window of this thread, or none.
-            match unsafe { OpenClipboard(owner) } {
-                Ok(()) => return Ok(Open),
+        for attempt in 0..OPEN_TRIES {
+            if attempt > 0 {
+                std::thread::sleep(OPEN_WAIT);
+            }
+            // SAFETY: `owner` is a window of this thread.
+            match unsafe { OpenClipboard(Some(owner)) } {
+                Ok(()) => return Ok(OpenedClipboard),
                 Err(error) => last = error.message(),
             }
-            std::thread::sleep(OPEN_WAIT);
         }
         Err(format!(
             "another application keeps the clipboard open ({last})"
@@ -313,7 +297,7 @@ impl Open {
     }
 }
 
-impl Drop for Open {
+impl Drop for OpenedClipboard {
     fn drop(&mut self) {
         // SAFETY: the clipboard is open by this thread.
         let _ = unsafe { CloseClipboard() };
@@ -356,10 +340,12 @@ fn flag(format: u32) -> Option<bool> {
     Some(u32::from_le_bytes(value) != 0)
 }
 
-/// Reads the open clipboard's markers, then its text only if they allow
-/// it, and its owner.
-fn read(window: HWND, formats: Formats) -> Result<Observation, String> {
-    let _open = Open::clipboard(Some(window))?;
+/// Opens the clipboard and reads its markers, then its text only if they
+/// allow it, and its owner; with the sequence number of what it read.
+fn read(window: HWND, formats: Formats) -> Result<(u32, Observation), String> {
+    let _open = OpenedClipboard::by(window)?;
+    // SAFETY: no arguments. While the clipboard is open, nothing changes it.
+    let sequence = unsafe { GetClipboardSequenceNumber() };
     let markers = Markers {
         exclude_from_monitoring: available(formats.exclude) || available(formats.viewer_ignore),
         include_in_history: flag(formats.history),
@@ -384,11 +370,12 @@ fn read(window: HWND, formats: Formats) -> Result<Observation, String> {
             None => Content::Other,
         }
     };
-    Ok(Observation {
+    let observation = Observation {
         content,
         markers,
         source: owner_program(),
-    })
+    };
+    Ok((sequence, observation))
 }
 
 /// The file name of the process whose window owns the clipboard, if the
@@ -426,12 +413,35 @@ fn owner_program() -> Option<String> {
     path.rsplit(['\\', '/']).next().map(str::to_owned)
 }
 
-fn bytes_of(units: &[u16]) -> Vec<u8> {
-    units.iter().flat_map(|unit| unit.to_le_bytes()).collect()
+/// Puts `text` on the clipboard, replacing what was there, with each of
+/// `markers` (a registered format's name and its DWORD value), owned by
+/// `owner`, a window of this thread.
+fn write(owner: &Window, text: &str, markers: &[(&str, u32)]) -> Result<(), String> {
+    let _open = OpenedClipboard::by(owner.handle())?;
+    // SAFETY: the clipboard is open by this thread; emptying it makes
+    // `owner` its owner.
+    unsafe { EmptyClipboard() }.map_err(|error| error.message())?;
+    let mut units: Vec<u16> = text.encode_utf16().collect();
+    units.push(0);
+    put(
+        CF_UNICODETEXT,
+        &units
+            .iter()
+            .flat_map(|unit| unit.to_le_bytes())
+            .collect::<Vec<u8>>(),
+    )?;
+    for (name, value) in markers {
+        let mut wide: Vec<u16> = name.encode_utf16().collect();
+        wide.push(0);
+        // SAFETY: `wide` is NUL-terminated and outlives the call.
+        let format = unsafe { RegisterClipboardFormatW(PCWSTR(wide.as_ptr())) };
+        put(format, &value.to_le_bytes())?;
+    }
+    Ok(())
 }
 
 /// Puts `bytes` on the open, emptied clipboard as `format`.
-fn put(format: u32, bytes: Vec<u8>) -> Result<(), String> {
+fn put(format: u32, bytes: &[u8]) -> Result<(), String> {
     // SAFETY: a new moveable block of at least one byte, written within its
     // size while locked; the clipboard owns it once set, and it is freed
     // here otherwise.
@@ -453,92 +463,23 @@ fn put(format: u32, bytes: Vec<u8>) -> Result<(), String> {
     Ok(())
 }
 
-/// For the Windows tests: putting text with markers on the clipboard, as a
-/// password manager does, from a window of this process, and saving and
-/// restoring what was on it, so that a test leaves the user's clipboard as
-/// it was. The saved contents are held in memory only.
+/// For the Windows adapter's test: putting text with markers on the
+/// clipboard, as a password manager does, owned by a window of this
+/// process. It replaces what was on the clipboard, which is not saved.
 #[doc(hidden)]
 pub mod testing {
-    use super::*;
-    use ::windows::Win32::System::DataExchange::EnumClipboardFormats;
+    use super::{WRITER_CLASS, Window, write};
 
-    /// A window of this process that owns the clipboard, until dropped.
-    pub struct Owner(HWND);
-
-    impl Drop for Owner {
-        fn drop(&mut self) {
-            // SAFETY: this thread's own window.
-            let _ = unsafe { DestroyWindow(self.0) };
-        }
-    }
+    /// The window of this process that owns what the test put on the
+    /// clipboard, until dropped (by the thread that put it).
+    pub struct Owner(#[allow(dead_code)] Window);
 
     /// Puts `text` on the clipboard with each of `markers`, a registered
     /// format's name and its DWORD value, owned by a window of this process
     /// while the returned owner is kept.
     pub fn set_text(text: &str, markers: &[(&str, u32)]) -> Result<Owner, String> {
-        let owner = Owner(message_window()?);
-        let window = owner.0;
-        (|| -> Result<(), String> {
-            let _open = Open::clipboard(Some(window))?;
-            // SAFETY: the clipboard is open by this thread.
-            unsafe { EmptyClipboard() }.map_err(|error| error.message())?;
-            let mut units: Vec<u16> = text.encode_utf16().collect();
-            units.push(0);
-            put(CF_UNICODETEXT, bytes_of(&units))?;
-            for (name, value) in markers {
-                let mut wide: Vec<u16> = name.encode_utf16().collect();
-                wide.push(0);
-                // SAFETY: `wide` is NUL-terminated and outlives the call.
-                let format = unsafe { RegisterClipboardFormatW(PCWSTR(wide.as_ptr())) };
-                put(format, value.to_le_bytes().to_vec())?;
-            }
-            Ok(())
-        })()?;
-        Ok(owner)
-    }
-
-    /// What was on the clipboard, format by format, in memory only.
-    pub struct Saved(Vec<(u32, Vec<u8>)>);
-
-    /// Formats whose data is a GDI handle, not global memory; not saved.
-    fn gdi(format: u32) -> bool {
-        matches!(format, 2 | 3 | 9 | 14 | 0x80 | 0x82 | 0x83 | 0x8E)
-            || (0x300..=0x3FF).contains(&format)
-    }
-
-    /// Saves every format on the clipboard held in global memory. Bitmaps
-    /// are saved as their device-independent form, which Windows provides
-    /// alongside.
-    pub fn save() -> Result<Saved, String> {
-        let _open = Open::clipboard(None)?;
-        let mut saved = Vec::new();
-        let mut format = 0;
-        loop {
-            // SAFETY: the clipboard is open by this thread.
-            format = unsafe { EnumClipboardFormats(format) };
-            if format == 0 {
-                break;
-            }
-            if gdi(format) {
-                continue;
-            }
-            if let Some(bytes) = bytes(format, usize::MAX) {
-                saved.push((format, bytes));
-            }
-        }
-        Ok(Saved(saved))
-    }
-
-    impl Saved {
-        /// Puts back what [`save`] saved, emptying the clipboard first.
-        pub fn restore(self) -> Result<(), String> {
-            let _open = Open::clipboard(None)?;
-            // SAFETY: the clipboard is open by this thread.
-            unsafe { EmptyClipboard() }.map_err(|error| error.message())?;
-            for (format, bytes) in self.0 {
-                put(format, bytes)?;
-            }
-            Ok(())
-        }
+        let owner = WRITER_CLASS.message_window()?;
+        write(&owner, text, markers)?;
+        Ok(Owner(owner))
     }
 }

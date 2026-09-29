@@ -20,6 +20,7 @@ mod packages;
 mod platform;
 mod runtime;
 mod search;
+mod threads;
 
 pub use helpers::runner::{MAX_HELPER_INPUT, MAX_HELPER_OUTPUT};
 #[doc(hidden)]

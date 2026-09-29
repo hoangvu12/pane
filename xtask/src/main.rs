@@ -33,6 +33,8 @@ const PREBUILT: &[&str] = &[
     "sample_helper_ts",
     "sample_files_js",
     "sample_files_ts",
+    "sample_clipboard_js",
+    "sample_clipboard_ts",
 ];
 
 fn main() -> ExitCode {
@@ -184,7 +186,7 @@ fn echo_helper(root: &Path, out: &Path) -> Result<(), String> {
 /// (package folder in `guests/packages`, component) of each sample package,
 /// and of the default extensions (the calculator, applications and
 /// quicklinks).
-const SAMPLE_PACKAGES: [(&str, &str); 28] = [
+const SAMPLE_PACKAGES: [(&str, &str); 30] = [
     ("sample-rust", "sample_rust"),
     ("sample-settings", "sample_settings"),
     ("sample-js", "sample_js"),
@@ -213,6 +215,8 @@ const SAMPLE_PACKAGES: [(&str, &str); 28] = [
     ("sample-helper-ts", "sample_helper_ts"),
     ("sample-files-js", "sample_files_js"),
     ("sample-files-ts", "sample_files_ts"),
+    ("sample-clipboard-js", "sample_clipboard_js"),
+    ("sample-clipboard-ts", "sample_clipboard_ts"),
 ];
 
 /// Rebuilds `guests/prebuilt/` from the JS/TS sample sources, then refreshes

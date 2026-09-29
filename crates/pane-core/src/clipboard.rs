@@ -7,10 +7,12 @@
 //! ([`accept`]): only plain text ([`Content::Text`]) of at most
 //! [`MAX_TEXT_BYTES`], not blank, not marked by the application that copied
 //! it as something a clipboard monitor or clipboard history must not keep
-//! ([`Markers`]), and not copied from a program the user excluded. The kept
-//! items are the package's extension data of their own kind (see
-//! `extension_data`), newest first, one item per text ([`add`]) and at most
-//! [`MAX_ITEMS`] of them.
+//! ([`Markers`]), and not copied from a program the user excluded
+//! ([`ProgramName`]). Each package's history is typed and kept in its own
+//! file ([`history`]), newest first, one item per text and at most
+//! [`MAX_ITEMS`] of them; it is the package's extension data (the kind
+//! `extension_data::DataKind::ClipboardHistory`, whose storage hooks
+//! dispatch here).
 //!
 //! The system is reached through one small trait, [`ClipboardSystem`], with
 //! one adapter per system, chosen by [`native`]:
@@ -22,18 +24,23 @@
 //!
 //! An adapter watches the clipboard only while Pane holds the [`Watch`] it
 //! returned, which Pane does exactly while some package keeps clipboard
-//! history ([`Capture`]).
+//! history ([`Capture`]). Pane fences what it reports: once Pane stops
+//! watching, or items are deleted, a change the adapter was still reading
+//! is dropped, so a slow or stuck read never delays stopping and never
+//! brings back what was deleted.
 
-use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::extension_data::ExtensionData;
+use crate::extension_data::{ExtensionData, PackageData};
 
+pub(crate) mod history;
 #[cfg(target_os = "windows")]
 mod windows;
+
+pub use history::Item;
 #[cfg(target_os = "windows")]
 pub use windows::WindowsClipboard;
 #[cfg(target_os = "windows")]
@@ -112,12 +119,12 @@ pub enum Skip {
     /// It is longer than [`MAX_TEXT_BYTES`].
     TooLong,
     /// It was copied from this excluded program.
-    Excluded(String),
+    Excluded(ProgramName),
 }
 
 /// The text of `observation` if Pane keeps it for a package that excluded
-/// the programs `excluded` (as [`program_name`] writes them), or why not.
-pub fn accept<'a>(observation: &'a Observation, excluded: &[String]) -> Result<&'a str, Skip> {
+/// the programs `excluded`, or why not.
+pub fn accept<'a>(observation: &'a Observation, excluded: &[ProgramName]) -> Result<&'a str, Skip> {
     if !observation.markers.allow() {
         return Err(Skip::Marked);
     }
@@ -127,7 +134,7 @@ pub fn accept<'a>(observation: &'a Observation, excluded: &[String]) -> Result<&
         Content::Other => return Err(Skip::NotText),
     };
     if let Some(source) = &observation.source
-        && let Some(program) = excluded.iter().find(|program| matches(source, program))
+        && let Some(program) = excluded.iter().find(|program| program.names(source))
     {
         return Err(Skip::Excluded(program.clone()));
     }
@@ -140,41 +147,67 @@ pub fn accept<'a>(observation: &'a Observation, excluded: &[String]) -> Result<&
     Ok(text)
 }
 
-/// Whether the program `source` (a file name) is the excluded `program`:
-/// the same file name, or the same name without its extension, ignoring
-/// case, so `KeePass` excludes `KeePass.exe`.
-fn matches(source: &str, program: &str) -> bool {
-    let source = source.to_lowercase();
-    let stem = source
-        .rsplit_once('.')
-        .map_or(source.as_str(), |(stem, _)| stem);
-    source == program || stem == program
+/// A program the user excluded, by its file name, trimmed and lowercased,
+/// such as `keepass.exe`. A name read from the history file is lowercased
+/// too, whatever case it was written in.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "String", into = "String")]
+pub struct ProgramName(String);
+
+impl ProgramName {
+    /// `name` as an excluded program, or why it is not a program's file
+    /// name.
+    pub fn parse(name: &str) -> Result<ProgramName, String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("Name the program's file, such as KeePass.exe".into());
+        }
+        if name.contains(['/', '\\', ':']) {
+            return Err(format!(
+                "“{name}” is a path: name only the program's file, such as KeePass.exe"
+            ));
+        }
+        if name.chars().count() > MAX_PROGRAM_NAME {
+            return Err(format!(
+                "A program's file name has at most {MAX_PROGRAM_NAME} characters"
+            ));
+        }
+        Ok(ProgramName::from(name.to_owned()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Whether the program `source` (a file name) is this one: the same
+    /// file name, or the same name without its extension, ignoring case,
+    /// so `KeePass` excludes `KeePass.exe`.
+    pub fn names(&self, source: &str) -> bool {
+        let source = source.trim().to_lowercase();
+        let stem = source
+            .rsplit_once('.')
+            .map_or(source.as_str(), |(stem, _)| stem);
+        source == self.0 || stem == self.0
+    }
 }
 
-/// `name` as Pane keeps an excluded program: trimmed and lowercased, such
-/// as `keepass.exe`; or why it is not a program's file name.
-pub fn program_name(name: &str) -> Result<String, String> {
-    let name = name.trim();
-    if name.is_empty() {
-        return Err("Name the program's file, such as KeePass.exe".into());
+impl From<String> for ProgramName {
+    fn from(name: String) -> ProgramName {
+        ProgramName(name.trim().to_lowercase())
     }
-    if name.contains(['/', '\\', ':']) {
-        return Err(format!(
-            "“{name}” is a path: name only the program's file, such as KeePass.exe"
-        ));
+}
+
+impl From<ProgramName> for String {
+    fn from(name: ProgramName) -> String {
+        name.0
     }
-    if name.chars().count() > MAX_PROGRAM_NAME {
-        return Err(format!(
-            "A program's file name has at most {MAX_PROGRAM_NAME} characters"
-        ));
-    }
-    Ok(name.to_lowercase())
 }
 
 /// Whether Pane keeps what is copied for a package.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum CaptureState {
-    /// Never turned on (or turned off): nothing is kept. Every package
+    /// Never turned on, or turned off: nothing is kept. Every package
     /// starts so.
     #[default]
     Off,
@@ -184,165 +217,41 @@ pub enum CaptureState {
     Paused,
 }
 
-/// One kept text.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Item {
-    /// Identifies it among the package's items; later items have greater
-    /// ids.
-    pub id: String,
-    pub text: String,
-    /// When it was copied, in milliseconds since the Unix epoch.
-    pub copied_at: u64,
-    /// The program it was copied from, if the system said.
-    pub source: Option<String>,
-}
-
-// A package's clipboard history is kept as string values by key, like every
-// kind of extension data: `capture` ("on" or "paused"; missing is off),
-// `excluded` (a JSON list of program names) and one `item:<id>` per item (a
-// JSON object), whose ids are 16 digits so that they sort by age.
-const CAPTURE: &str = "capture";
-const EXCLUDED: &str = "excluded";
-const ITEM: &str = "item:";
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ItemJson {
-    text: String,
-    copied_at: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    source: Option<String>,
-}
-
-/// The capture state kept in `values`.
-pub(crate) fn capture_state(values: &BTreeMap<String, String>) -> CaptureState {
-    match values.get(CAPTURE).map(String::as_str) {
-        Some("on") => CaptureState::On,
-        Some("paused") => CaptureState::Paused,
-        _ => CaptureState::Off,
+impl CaptureState {
+    pub fn is_off(&self) -> bool {
+        *self == CaptureState::Off
     }
 }
 
-/// Keeps `state` in `values`.
-pub(crate) fn set_capture_state(values: &mut BTreeMap<String, String>, state: CaptureState) {
-    match state {
-        CaptureState::Off => values.remove(CAPTURE),
-        CaptureState::On => values.insert(CAPTURE.into(), "on".into()),
-        CaptureState::Paused => values.insert(CAPTURE.into(), "paused".into()),
-    };
+/// Taken by an adapter just before it reads a change of the clipboard, and
+/// handed back with what it read ([`Sink::observed`]): if Pane stopped
+/// watching or items were deleted meanwhile, what it read is dropped. The
+/// default ticket is for a sink of an adapter's own tests, which fences
+/// nothing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Ticket(u64);
+
+/// Where an adapter reports the changes of the clipboard, from its own
+/// thread.
+pub trait Sink: Send + Sync + 'static {
+    /// Called before the adapter reads a change.
+    fn reading(&self) -> Ticket;
+
+    /// What the adapter read with `ticket`.
+    fn observed(&self, ticket: Ticket, observation: Observation);
 }
 
-/// The programs excluded in `values`.
-pub(crate) fn excluded(values: &BTreeMap<String, String>) -> Vec<String> {
-    values
-        .get(EXCLUDED)
-        .and_then(|list| serde_json::from_str(list).ok())
-        .unwrap_or_default()
-}
+/// Watching the clipboard: the adapter's listener, which stops listening
+/// when this is dropped. Dropping it never waits long for a listener stuck
+/// in a read; Pane stops using the listener's reports before it drops this.
+pub struct Watch(#[allow(dead_code)] Box<dyn Send>);
 
-/// Keeps `programs` as the excluded programs in `values`: each as
-/// [`program_name`] writes it, once, in the order given.
-pub(crate) fn set_excluded(
-    values: &mut BTreeMap<String, String>,
-    programs: &[String],
-) -> Result<(), String> {
-    let mut kept: Vec<String> = Vec::new();
-    for program in programs {
-        let program = program_name(program)?;
-        if !kept.contains(&program) {
-            kept.push(program);
-        }
-    }
-    if kept.len() > MAX_EXCLUDED {
-        return Err(format!("At most {MAX_EXCLUDED} programs can be excluded"));
-    }
-    if kept.is_empty() {
-        values.remove(EXCLUDED);
-    } else {
-        let list = serde_json::to_string(&kept).map_err(|error| error.to_string())?;
-        values.insert(EXCLUDED.into(), list);
-    }
-    Ok(())
-}
-
-/// The items kept in `values`, newest first. A value that cannot be read
-/// is left out.
-pub(crate) fn items(values: &BTreeMap<String, String>) -> Vec<Item> {
-    values
-        .iter()
-        .rev()
-        .filter_map(|(key, value)| {
-            let id = key.strip_prefix(ITEM)?;
-            let item: ItemJson = serde_json::from_str(value).ok()?;
-            Some(Item {
-                id: id.to_owned(),
-                text: item.text,
-                copied_at: item.copied_at,
-                source: item.source,
-            })
-        })
-        .collect()
-}
-
-/// How many items `values` keeps.
-pub(crate) fn count(values: &BTreeMap<String, String>) -> usize {
-    values.keys().filter(|key| key.starts_with(ITEM)).count()
-}
-
-/// Keeps `text`, copied from `source` at `now`, as the newest item in
-/// `values`: an item with the same text moves to the front instead of being
-/// kept twice, and beyond [`MAX_ITEMS`] the oldest go.
-pub(crate) fn add(
-    values: &mut BTreeMap<String, String>,
-    text: &str,
-    source: Option<&str>,
-    now: u64,
-) {
-    let next = values
-        .keys()
-        .filter_map(|key| key.strip_prefix(ITEM)?.parse::<u64>().ok())
-        .max()
-        .map_or(1, |last| last + 1);
-    let same: Vec<String> = items(values)
-        .into_iter()
-        .filter(|item| item.text == text)
-        .map(|item| format!("{ITEM}{}", item.id))
-        .collect();
-    for key in same {
-        values.remove(&key);
-    }
-    let item = ItemJson {
-        text: text.to_owned(),
-        copied_at: now,
-        source: source.map(str::to_owned),
-    };
-    let value = serde_json::to_string(&item).expect("an item is always JSON");
-    values.insert(format!("{ITEM}{next:016}"), value);
-    let mut kept: Vec<String> = values
-        .keys()
-        .filter(|key| key.starts_with(ITEM))
-        .cloned()
-        .collect();
-    while kept.len() > MAX_ITEMS {
-        values.remove(&kept.remove(0));
+impl Watch {
+    /// A watch that stops when `listener` is dropped.
+    pub fn new(listener: impl Send + 'static) -> Watch {
+        Watch(Box::new(listener))
     }
 }
-
-/// Removes every item from `values`, keeping the capture state and the
-/// excluded programs; returns how many there were.
-pub(crate) fn clear(values: &mut BTreeMap<String, String>) -> usize {
-    let before = values.len();
-    values.retain(|key, _| !key.starts_with(ITEM));
-    before - values.len()
-}
-
-/// Receives each change of the clipboard an adapter observes, on the
-/// adapter's thread.
-pub type Sink = Box<dyn Fn(Observation) + Send + Sync + 'static>;
-
-/// Watching the clipboard, which stops when it is dropped: the adapter no
-/// longer listens and calls its sink no more once the drop returns.
-pub type Watch = Box<dyn Send>;
 
 /// The system's clipboard, as Pane watches and writes it.
 pub trait ClipboardSystem: Send + Sync + 'static {
@@ -352,7 +261,7 @@ pub trait ClipboardSystem: Send + Sync + 'static {
     /// Starts watching: `sink` is told of each later change of the
     /// clipboard (not of what is on it now) until the returned watch is
     /// dropped.
-    fn watch(&self, sink: Sink) -> Result<Watch, String>;
+    fn watch(&self, sink: Arc<dyn Sink>) -> Result<Watch, String>;
 
     /// Puts `text` on the clipboard, as copying it would.
     fn write_text(&self, text: &str) -> Result<(), String>;
@@ -390,7 +299,7 @@ impl ClipboardSystem for Unavailable {
         Some(self.0.clone())
     }
 
-    fn watch(&self, _sink: Sink) -> Result<Watch, String> {
+    fn watch(&self, _sink: Arc<dyn Sink>) -> Result<Watch, String> {
         Err(self.0.clone())
     }
 
@@ -422,9 +331,62 @@ pub(crate) struct Capture {
 
 #[derive(Default)]
 struct Watching {
-    watch: Option<Watch>,
+    /// The adapter's watch, with the fence of its reports.
+    current: Option<(Watch, Arc<Fence>)>,
     /// Why the adapter could not start watching, until it next can.
     problem: Option<String>,
+}
+
+/// Lets a watch's reports through until it is closed. A report is kept
+/// while holding it, so once [`Fence::close`] returns, none is kept any
+/// more.
+struct Fence(Mutex<bool>);
+
+impl Fence {
+    fn lock(&self) -> MutexGuard<'_, bool> {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn close(&self) {
+        *self.lock() = false;
+    }
+}
+
+/// Where a watch reports: it keeps what the packages capturing now accept.
+struct CaptureSink {
+    data: ExtensionData,
+    fence: Arc<Fence>,
+}
+
+impl Sink for CaptureSink {
+    fn reading(&self) -> Ticket {
+        Ticket(self.data.clipboard_history().deletions())
+    }
+
+    fn observed(&self, ticket: Ticket, observation: Observation) {
+        let open = self.fence.lock();
+        if !*open {
+            return;
+        }
+        let running = self.data.running_owners();
+        let now = now();
+        self.data.clipboard_history().capture(ticket.0, |packages| {
+            let mut changed = false;
+            for (owner, history) in packages.iter_mut() {
+                if history.capture != CaptureState::On || !running.contains(owner) {
+                    continue;
+                }
+                if let Ok(text) = accept(&observation, &history.excluded) {
+                    history.add(text, observation.source.as_deref(), now);
+                    changed = true;
+                }
+            }
+            changed
+        });
+        drop(open);
+    }
 }
 
 impl Capture {
@@ -459,36 +421,153 @@ impl Capture {
             .or_else(|| self.lock().problem.clone())
     }
 
+    /// Whether some package keeps clipboard history now: its capture is on
+    /// and its code may run.
+    fn capturing(&self) -> bool {
+        let running = self.data.running_owners();
+        self.data
+            .clipboard_history()
+            .capturing_owners()
+            .iter()
+            .any(|owner| running.contains(owner))
+    }
+
     /// Starts or stops watching, as the packages' capture states and
-    /// generations now require.
+    /// generations now require. Stopping closes the watch's fence, then
+    /// drops it with nothing locked, so it never waits for a read in
+    /// progress.
     pub fn reconcile(&self) {
-        let wanted = self.system.unavailable().is_none() && self.data.capturing();
-        let mut watching = self.lock();
-        if !wanted {
-            // Dropping the watch waits for the adapter to stop.
-            watching.watch = None;
-            watching.problem = None;
-            return;
-        }
-        if watching.watch.is_some() {
-            return;
-        }
-        let data = self.data.clone();
-        match self.system.watch(Box::new(move |observation| {
-            data.capture(&observation, now())
-        })) {
-            Ok(watch) => {
-                watching.watch = Some(watch);
+        let wanted = self.system.unavailable().is_none() && self.capturing();
+        let stopping = {
+            let mut watching = self.lock();
+            if wanted {
+                if watching.current.is_none() {
+                    let fence = Arc::new(Fence(Mutex::new(true)));
+                    let sink = Arc::new(CaptureSink {
+                        data: self.data.clone(),
+                        fence: fence.clone(),
+                    });
+                    match self.system.watch(sink) {
+                        Ok(watch) => {
+                            watching.current = Some((watch, fence));
+                            watching.problem = None;
+                        }
+                        Err(problem) => watching.problem = Some(problem),
+                    }
+                }
+                None
+            } else {
                 watching.problem = None;
+                watching.current.take()
             }
-            Err(problem) => watching.problem = Some(problem),
+        };
+        if let Some((watch, fence)) = stopping {
+            fence.close();
+            drop(watch);
         }
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Watching> {
+    fn lock(&self) -> MutexGuard<'_, Watching> {
         self.watching
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+/// A package's clipboard history as its commands see it.
+pub(crate) struct Status {
+    pub capture: CaptureState,
+    /// Why Pane does not watch the clipboard although it should, or cannot.
+    pub problem: Option<String>,
+    pub excluded: Vec<ProgramName>,
+    pub items: usize,
+}
+
+/// What a command of the package with `data` does with its clipboard
+/// history through `capture` (none: this Pane does not watch the
+/// clipboard). Code whose generation ended reads and changes nothing more.
+pub(crate) struct Commands<'a> {
+    pub data: &'a PackageData,
+    pub capture: Option<Arc<Capture>>,
+}
+
+impl Commands<'_> {
+    fn unavailable() -> String {
+        none().unavailable().unwrap_or_default()
+    }
+
+    fn system(&self) -> Result<Arc<dyn ClipboardSystem>, String> {
+        self.capture
+            .as_ref()
+            .map(|capture| capture.system().clone())
+            .ok_or_else(Commands::unavailable)
+    }
+
+    pub fn status(&self) -> Result<Status, String> {
+        let history = self.data.clipboard_history()?.get(self.data.owner())?;
+        let problem = match &self.capture {
+            Some(capture) => capture.problem(),
+            None => Some(Commands::unavailable()),
+        };
+        Ok(Status {
+            capture: history.capture,
+            problem,
+            excluded: history.excluded,
+            items: history.items.len(),
+        })
+    }
+
+    pub fn set_capture(&self, state: CaptureState) -> Result<(), String> {
+        let system = self.system()?;
+        if state == CaptureState::On
+            && let Some(reason) = system.unavailable()
+        {
+            return Err(reason);
+        }
+        self.update(|history| {
+            history.capture = state;
+            Ok(())
+        })
+    }
+
+    pub fn set_excluded(&self, programs: &[String]) -> Result<(), String> {
+        self.update(|history| history.set_excluded(programs))
+    }
+
+    /// The kept items, newest first.
+    pub fn items(&self) -> Result<Vec<Item>, String> {
+        Ok(self.data.clipboard_history()?.get(self.data.owner())?.items)
+    }
+
+    /// Puts the kept item `id` on the clipboard again.
+    pub fn copy(&self, id: &str) -> Result<(), String> {
+        let system = self.system()?;
+        let item = self
+            .items()?
+            .into_iter()
+            .find(|item| item.id.to_string() == id)
+            .ok_or("that item is no longer kept")?;
+        system.write_text(&item.text)
+    }
+
+    /// Deletes every kept item; returns how many there were. A change the
+    /// adapter was reading meanwhile is not kept.
+    pub fn clear(&self) -> Result<usize, String> {
+        self.update(|history| Ok(history.clear()))
+    }
+
+    fn update<R>(
+        &self,
+        change: impl FnOnce(&mut history::PackageHistory) -> Result<R, String>,
+    ) -> Result<R, String> {
+        let (answer, capture_changed) = self
+            .data
+            .clipboard_history()?
+            .update(self.data.owner(), change)?;
+        if capture_changed {
+            self.data.changed();
+        }
+        Ok(answer)
     }
 }
 
@@ -569,14 +648,15 @@ mod tests {
 
     #[test]
     fn text_from_an_excluded_program_is_not_kept() {
-        let excluded = vec![program_name(" KeePass.exe ").unwrap(), "1password".into()];
+        let keepass = ProgramName::parse(" KeePass.exe ").unwrap();
+        let excluded = vec![keepass.clone(), ProgramName::from("1Password".to_string())];
         assert_eq!(
             accept(&from("secret", "KEEPASS.EXE"), &excluded),
-            Err(Skip::Excluded("keepass.exe".into()))
+            Err(Skip::Excluded(keepass))
         );
         assert_eq!(
             accept(&from("secret", "1Password.exe"), &excluded),
-            Err(Skip::Excluded("1password".into()))
+            Err(Skip::Excluded(ProgramName::from("1password".to_string())))
         );
         assert_eq!(accept(&from("note", "notepad.exe"), &excluded), Ok("note"));
         // A program the system does not name is not excluded.
@@ -589,63 +669,24 @@ mod tests {
     }
 
     #[test]
-    fn a_program_is_named_by_its_file() {
-        assert_eq!(program_name("KeePass.exe"), Ok("keepass.exe".into()));
-        assert!(program_name("  ").is_err());
-        assert!(program_name(r"C:\Program Files\KeePass.exe").is_err());
-        assert!(program_name(&"a".repeat(261)).is_err());
-    }
-
-    #[test]
-    fn items_are_newest_first_once_per_text_and_bounded() {
-        let mut values = BTreeMap::new();
-        add(&mut values, "one", Some("notepad.exe"), 10);
-        add(&mut values, "two", None, 20);
-        let texts = |values: &BTreeMap<String, String>| -> Vec<String> {
-            items(values).into_iter().map(|item| item.text).collect()
-        };
-        assert_eq!(texts(&values), ["two", "one"]);
-        assert_eq!(items(&values)[1].source.as_deref(), Some("notepad.exe"));
-        assert_eq!(items(&values)[1].copied_at, 10);
-        // Copying "one" again moves it to the front, with its new time.
-        add(&mut values, "one", None, 30);
-        assert_eq!(texts(&values), ["one", "two"]);
-        assert_eq!(items(&values)[0].copied_at, 30);
-        assert!(items(&values)[0].id > items(&values)[1].id);
-        for number in 0..MAX_ITEMS {
-            add(&mut values, &format!("item {number}"), None, 40);
-        }
-        assert_eq!(count(&values), MAX_ITEMS);
-        assert_eq!(texts(&values)[0], format!("item {}", MAX_ITEMS - 1));
-        assert!(!texts(&values).contains(&"two".to_string()));
-        assert!(!texts(&values).contains(&"one".to_string()));
-    }
-
-    #[test]
-    fn capture_state_and_exclusions_are_kept_apart_from_items() {
-        let mut values = BTreeMap::new();
-        assert_eq!(capture_state(&values), CaptureState::Off);
-        set_capture_state(&mut values, CaptureState::On);
-        assert_eq!(capture_state(&values), CaptureState::On);
-        set_capture_state(&mut values, CaptureState::Paused);
-        assert_eq!(capture_state(&values), CaptureState::Paused);
-        let programs = [
-            "KeePass.exe".to_string(),
-            "keepass.exe".into(),
-            "Bitwarden.exe".into(),
-        ];
-        set_excluded(&mut values, &programs).unwrap();
-        assert_eq!(excluded(&values), ["keepass.exe", "bitwarden.exe"]);
-        assert!(set_excluded(&mut values, &["a/b".into()]).is_err());
-        assert_eq!(excluded(&values), ["keepass.exe", "bitwarden.exe"]);
-        add(&mut values, "kept", None, 1);
-        assert_eq!(count(&values), 1);
-        assert_eq!(clear(&mut values), 1);
-        assert_eq!(count(&values), 0);
-        assert_eq!(capture_state(&values), CaptureState::Paused);
-        assert_eq!(excluded(&values), ["keepass.exe", "bitwarden.exe"]);
-        set_excluded(&mut values, &[]).unwrap();
-        set_capture_state(&mut values, CaptureState::Off);
-        assert!(values.is_empty());
+    fn a_program_is_named_by_its_file_in_lower_case() {
+        assert_eq!(
+            ProgramName::parse("KeePass.exe").unwrap().as_str(),
+            "keepass.exe"
+        );
+        assert!(ProgramName::parse("  ").is_err());
+        assert!(ProgramName::parse(r"C:\Program Files\KeePass.exe").is_err());
+        assert!(ProgramName::parse(&"a".repeat(261)).is_err());
+        // However it was written in the file.
+        let read: Vec<ProgramName> =
+            serde_json::from_str(r#"["KeePass.EXE", " Bitwarden "]"#).unwrap();
+        assert_eq!(
+            read,
+            [
+                ProgramName::from("keepass.exe".to_string()),
+                ProgramName::from("bitwarden".to_string())
+            ]
+        );
+        assert!(read[0].names("KEEPASS.exe") && read[1].names("Bitwarden.exe"));
     }
 }

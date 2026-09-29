@@ -1,12 +1,15 @@
-//! Clipboard history, a default extension, through the launcher's public
-//! interface, with a fake system clipboard: nothing is kept until the user
-//! turns it on in the command; then Pane watches the clipboard and keeps
-//! plain text, except what is marked as not to be kept or comes from an
-//! excluded program; pausing, disabling and uninstalling stop the watch at
-//! once, and a restart watches again only where history is on and the
-//! package enabled. The package is the one `cargo xtask guests` assembles
-//! in `target/guests/packages/clipboard-history`; since only Windows has a
-//! clipboard adapter so far, most tests install a copy whose manifest
+//! Clipboard history through the launcher's public interface, with a fake
+//! system clipboard, for the Clipboard History default extension (Rust) and
+//! the JavaScript and TypeScript clipboard samples alike: nothing is kept
+//! until the user turns it on in the command; then Pane watches the
+//! clipboard and keeps plain text, except what is marked as not to be kept
+//! or comes from an excluded program; pausing, turning it off, disabling
+//! and uninstalling stop the watch at once, and a restart watches again only
+//! where history is on and the package enabled. A change the system was
+//! still reading when the watch stopped or the history was cleared is not
+//! kept, and stopping never waits for it. The packages are the ones `cargo
+//! xtask guests` assembles in `target/guests/packages`; since only Windows
+//! has a clipboard adapter so far, the tests install a copy whose manifest
 //! declares every system, so the same checks run everywhere. The system's
 //! real clipboard is never used here.
 
@@ -16,20 +19,53 @@ mod platforms;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use futures::executor::block_on;
 use pane_core::clipboard::{
-    ClipboardSystem, Content, MAX_ITEMS, Markers, Observation, Sink, Watch,
+    ClipboardSystem, Content, MAX_ITEMS, MAX_TEXT_BYTES, Markers, Observation, Sink, Ticket, Watch,
 };
 use pane_core::{Launcher, Runtime, Screen, Status, Unavailable};
 use serde_json::Value;
 use tempfile::TempDir;
 
-const TITLE: &str = "Clipboard History";
 const MANAGE_ROW: &str = "Manage extensions…";
 const TURN_ON: &str = "Turn on clipboard history";
+const TURN_OFF: &str = "Turn off clipboard history";
 const PAUSE: &str = "Pause clipboard history";
 const RESUME: &str = "Resume clipboard history";
+const CLEAR: &str = "Clear clipboard history";
+const EXCLUDE: &str = "Exclude a program";
+
+/// A package with a clipboard history command, in one language.
+struct Fixture {
+    /// The assembled package under `target/guests/packages`.
+    package: &'static str,
+    component: &'static str,
+    /// Its package's title.
+    title: &'static str,
+    /// Its command's title.
+    command: &'static str,
+}
+
+const RUST: Fixture = Fixture {
+    package: "clipboard-history",
+    component: "clipboard_history.wasm",
+    title: "Clipboard History",
+    command: "Clipboard History",
+};
+const JAVASCRIPT: Fixture = Fixture {
+    package: "sample-clipboard-js",
+    component: "sample_clipboard_js.wasm",
+    title: "JavaScript clipboard sample",
+    command: "Clipboard history (JavaScript)",
+};
+const TYPESCRIPT: Fixture = Fixture {
+    package: "sample-clipboard-ts",
+    component: "sample_clipboard_ts.wasm",
+    title: "TypeScript clipboard sample",
+    command: "Clipboard history (TypeScript)",
+};
 
 fn built(path: &str) -> PathBuf {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -46,7 +82,7 @@ fn built(path: &str) -> PathBuf {
 #[derive(Default)]
 struct Clipboard {
     /// Where changes go while Pane watches.
-    sink: Option<Arc<Sink>>,
+    sink: Option<Arc<dyn Sink>>,
     /// How many times Pane started watching.
     started: usize,
     /// What Pane put on the clipboard.
@@ -70,6 +106,28 @@ impl Drop for FakeWatch {
     }
 }
 
+/// A change the fake system has begun reading, as a slow read would be.
+struct Reading {
+    sink: Arc<dyn Sink>,
+    ticket: Ticket,
+}
+
+impl Reading {
+    /// Finishes the read with `text`, as a system would report it however
+    /// late.
+    fn finish(self, text: &str) {
+        self.sink.observed(self.ticket, copied(text, None));
+    }
+}
+
+fn copied(text: &str, source: Option<&str>) -> Observation {
+    Observation {
+        content: Content::Text(text.into()),
+        markers: Markers::default(),
+        source: source.map(str::to_owned),
+    }
+}
+
 impl FakeClipboard {
     fn watching(&self) -> bool {
         self.inner.lock().unwrap().sink.is_some()
@@ -83,13 +141,19 @@ impl FakeClipboard {
         self.inner.lock().unwrap().written.clone()
     }
 
+    /// Begins reading a change, if Pane watches.
+    fn begin_read(&self) -> Option<Reading> {
+        let sink = self.inner.lock().unwrap().sink.clone()?;
+        let ticket = sink.reading();
+        Some(Reading { sink, ticket })
+    }
+
     /// Reports `observation` as a change of the clipboard, if Pane
     /// watches; returns whether it did.
     fn change(&self, observation: Observation) -> bool {
-        let sink = self.inner.lock().unwrap().sink.clone();
-        match sink {
-            Some(sink) => {
-                sink(observation);
+        match self.begin_read() {
+            Some(reading) => {
+                reading.sink.observed(reading.ticket, observation);
                 true
             }
             None => false,
@@ -98,11 +162,7 @@ impl FakeClipboard {
 
     /// Reports `text` copied from `source`.
     fn copy(&self, text: &str, source: Option<&str>) -> bool {
-        self.change(Observation {
-            content: Content::Text(text.into()),
-            markers: Markers::default(),
-            source: source.map(str::to_owned),
-        })
+        self.change(copied(text, source))
     }
 }
 
@@ -111,15 +171,15 @@ impl ClipboardSystem for FakeClipboard {
         self.unavailable.clone()
     }
 
-    fn watch(&self, sink: Sink) -> Result<Watch, String> {
+    fn watch(&self, sink: Arc<dyn Sink>) -> Result<Watch, String> {
         if let Some(reason) = &self.unavailable {
             return Err(reason.clone());
         }
         let mut inner = self.inner.lock().unwrap();
         assert!(inner.sink.is_none(), "Pane watches the clipboard once");
-        inner.sink = Some(Arc::new(sink));
+        inner.sink = Some(sink);
         inner.started += 1;
-        Ok(Box::new(FakeWatch(self.inner.clone())))
+        Ok(Watch::new(FakeWatch(self.inner.clone())))
     }
 
     fn write_text(&self, text: &str) -> Result<(), String> {
@@ -133,20 +193,22 @@ impl ClipboardSystem for FakeClipboard {
 /// Pane's data location and the package's source folder for one test,
 /// which outlive restarts.
 struct Pane {
+    fixture: &'static Fixture,
     data: TempDir,
     source: TempDir,
     clipboard: FakeClipboard,
 }
 
 impl Pane {
-    fn new() -> Pane {
-        Pane::with(FakeClipboard::default())
+    fn new(fixture: &'static Fixture) -> Pane {
+        Pane::with(fixture, FakeClipboard::default())
     }
 
-    fn with(clipboard: FakeClipboard) -> Pane {
+    fn with(fixture: &'static Fixture, clipboard: FakeClipboard) -> Pane {
         let source = tempfile::tempdir().unwrap();
-        copy_package(source.path(), true);
+        copy_package(fixture, source.path(), true);
         Pane {
+            fixture,
             data: tempfile::tempdir().unwrap(),
             source,
             clipboard,
@@ -170,60 +232,125 @@ impl Pane {
     /// Starts Pane with the package installed.
     fn installed(&self) -> Launcher {
         let launcher = self.start();
-        block_on(launcher.install_package(self.folder()));
+        install(&launcher, self.folder());
+        launcher
+    }
+
+    fn history_path(&self) -> PathBuf {
+        self.data
+            .path()
+            .join("extensions")
+            .join("clipboard-history.json")
+    }
+
+    /// Every package's clipboard history as Pane keeps it on disk.
+    fn history_file(&self) -> Option<Value> {
+        let text = fs::read_to_string(self.history_path()).ok()?;
+        Some(serde_json::from_str(&text).unwrap())
+    }
+
+    /// The texts kept on disk, newest first, for the only package that
+    /// keeps any.
+    fn kept_on_disk(&self) -> Vec<String> {
+        let Some(file) = self.history_file() else {
+            return Vec::new();
+        };
+        assert_eq!(file["version"], 1);
+        let packages = file["packages"].as_object().unwrap();
+        assert!(packages.len() <= 1, "{packages:?}");
+        let Some(history) = packages.values().next() else {
+            return Vec::new();
+        };
+        history["items"]
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .map(|item| item["text"].as_str().unwrap().to_owned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Opens the command from root search, showing its view as it is now.
+    fn open(&self, launcher: &Launcher) {
+        launcher.back();
+        launcher.back();
+        block_on(launcher.set_query("clipboard"));
+        select_title(launcher, self.fixture.command);
+        block_on(launcher.activate_selected());
+        assert_eq!(
+            launcher.view().screen,
+            Screen::Command,
+            "{:?}",
+            launcher.view().status
+        );
+    }
+
+    /// The kept texts the command lists, newest first: the rows after its
+    /// controls.
+    fn listed(&self, launcher: &Launcher) -> Vec<String> {
+        self.open(launcher);
+        launcher
+            .view()
+            .rows
+            .into_iter()
+            .filter(|row| {
+                row.subtitle
+                    .as_deref()
+                    .is_some_and(|subtitle| subtitle.ends_with("Enter copies it"))
+            })
+            .map(|row| row.title)
+            .collect()
+    }
+
+    fn turn_on(&self, launcher: &Launcher) {
+        self.open(launcher);
+        assert_eq!(run(launcher, TURN_ON), result("Clipboard history is on"));
+    }
+
+    /// From root search, uninstalls the package with the confirmation row
+    /// `choice`, returning the confirmation's details.
+    fn uninstall(&self, launcher: &Launcher, choice: &str) -> Vec<String> {
+        launcher.back();
+        launcher.back();
+        select_title(launcher, MANAGE_ROW);
+        block_on(launcher.activate_selected());
+        select_title(launcher, &format!("Uninstall {}", self.fixture.title));
+        block_on(launcher.activate_selected());
+        assert!(matches!(launcher.view().screen, Screen::Confirm { .. }));
+        let details = launcher.view().details().to_vec();
+        select_title(launcher, choice);
+        block_on(launcher.activate_selected());
         assert!(
             matches!(launcher.view().status, Status::Result(_)),
             "{:?}",
             launcher.view().status
         );
-        launcher.back();
-        launcher
-    }
-
-    /// Every package's clipboard history as Pane keeps it on disk.
-    fn history_file(&self) -> Option<Value> {
-        let path = self
-            .data
-            .path()
-            .join("extensions")
-            .join("clipboard-history.json");
-        let text = fs::read_to_string(path).ok()?;
-        Some(serde_json::from_str(&text).unwrap())
-    }
-
-    /// The texts kept on disk, for the only package that keeps any.
-    fn kept_on_disk(&self) -> Vec<String> {
-        let Some(file) = self.history_file() else {
-            return Vec::new();
-        };
-        let packages = file["packages"].as_object().unwrap();
-        assert!(packages.len() <= 1, "{packages:?}");
-        let Some(values) = packages.values().next() else {
-            return Vec::new();
-        };
-        let mut items: Vec<(&String, &Value)> = values
-            .as_object()
-            .unwrap()
-            .iter()
-            .filter(|(key, _)| key.starts_with("item:"))
-            .collect();
-        items.sort_by(|a, b| b.0.cmp(a.0));
-        items
-            .into_iter()
-            .map(|(_, value)| {
-                let item: Value = serde_json::from_str(value.as_str().unwrap()).unwrap();
-                item["text"].as_str().unwrap().to_owned()
-            })
-            .collect()
+        details
     }
 }
 
-/// Copies the assembled package into `folder`; with `everywhere`, its
-/// command declares every system, so it is available where these tests run.
-fn copy_package(folder: &Path, everywhere: bool) {
-    let package = built("packages/clipboard-history");
-    let component = "clipboard_history.wasm";
-    fs::copy(package.join(component), folder.join(component)).unwrap();
+fn install(launcher: &Launcher, folder: &Path) {
+    block_on(launcher.install_package(folder));
+    assert!(
+        matches!(launcher.view().status, Status::Result(_)),
+        "{:?}",
+        launcher.view().status
+    );
+    launcher.back();
+}
+
+/// Copies the assembled package of `fixture` into `folder`; with
+/// `everywhere`, its command declares every system, so it is available
+/// where these tests run.
+fn copy_package(fixture: &Fixture, folder: &Path, everywhere: bool) {
+    let package = built(&format!("packages/{}", fixture.package));
+    fs::copy(
+        package.join(fixture.component),
+        folder.join(fixture.component),
+    )
+    .unwrap();
     let manifest = fs::read_to_string(package.join("pane.json")).unwrap();
     let mut manifest: Value = serde_json::from_str(&manifest).unwrap();
     assert_eq!(
@@ -263,21 +390,6 @@ fn select_title(launcher: &Launcher, title: &str) {
     launcher.select(index);
 }
 
-/// Opens the command from root search, showing its view as it is now.
-fn open(launcher: &Launcher) {
-    launcher.back();
-    launcher.back();
-    block_on(launcher.set_query("clipboard"));
-    select_title(launcher, TITLE);
-    block_on(launcher.activate_selected());
-    assert_eq!(
-        launcher.view().screen,
-        Screen::Command,
-        "{:?}",
-        launcher.view().status
-    );
-}
-
 /// Runs the item titled `title` of the open command.
 fn run(launcher: &Launcher, title: &str) -> Status {
     select_title(launcher, title);
@@ -285,43 +397,17 @@ fn run(launcher: &Launcher, title: &str) -> Status {
     launcher.view().status
 }
 
-/// The kept texts the command lists, newest first: the rows after its
-/// controls.
-fn listed(launcher: &Launcher) -> Vec<String> {
-    open(launcher);
-    launcher
-        .view()
-        .rows
-        .into_iter()
-        .filter(|row| {
-            row.subtitle
-                .as_deref()
-                .is_some_and(|subtitle| subtitle.ends_with("Enter copies it"))
-        })
-        .map(|row| row.title)
-        .collect()
-}
-
-fn turn_on(launcher: &Launcher) {
-    open(launcher);
-    assert_eq!(
-        run(launcher, TURN_ON),
-        Status::Result("Clipboard history is on".into())
-    );
-}
-
 fn result(text: &str) -> Status {
     Status::Result(text.into())
 }
 
-#[test]
-fn nothing_is_watched_or_kept_until_history_is_turned_on() {
-    let pane = Pane::new();
+fn nothing_is_watched_or_kept_until_history_is_turned_on(fixture: &'static Fixture) {
+    let pane = Pane::new(fixture);
     let launcher = pane.installed();
     assert!(!pane.clipboard.watching());
 
-    open(&launcher);
-    assert_eq!(titles(&launcher), [TURN_ON, "Exclude a program"]);
+    pane.open(&launcher);
+    assert_eq!(titles(&launcher), [TURN_ON, EXCLUDE]);
     assert_eq!(
         subtitle(&launcher, TURN_ON),
         "Off · Pane keeps nothing you copy until you turn it on. Once on, it keeps the text you \
@@ -338,7 +424,8 @@ fn nothing_is_watched_or_kept_until_history_is_turned_on() {
     assert!(pane.clipboard.copy("hello", Some("notepad.exe")));
     assert!(pane.clipboard.copy("second line\nand more", None));
 
-    assert_eq!(listed(&launcher), ["second line", "hello"]);
+    assert_eq!(pane.listed(&launcher), ["second line", "hello"]);
+    assert_eq!(titles(&launcher)[..4], [PAUSE, TURN_OFF, EXCLUDE, CLEAR]);
     assert_eq!(
         subtitle(&launcher, "hello"),
         "just now · from notepad.exe · Enter copies it"
@@ -352,22 +439,53 @@ fn nothing_is_watched_or_kept_until_history_is_turned_on() {
         "On · 2 items kept · Text you copy is kept on this computer"
     );
     assert_eq!(pane.kept_on_disk(), ["second line\nand more", "hello"]);
-    let file = fs::read_to_string(pane.data.path().join("extensions/clipboard-history.json"));
-    assert!(!file.unwrap().contains("before"));
+    let file = fs::read_to_string(pane.history_path()).unwrap();
+    assert!(!file.contains("before"));
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let path = pane.data.path().join("extensions/clipboard-history.json");
-        let mode = fs::metadata(path).unwrap().permissions().mode();
+        let mode = fs::metadata(pane.history_path())
+            .unwrap()
+            .permissions()
+            .mode();
         assert_eq!(mode & 0o777, 0o600);
     }
 }
 
-#[test]
-fn marked_blank_other_and_long_content_is_not_kept() {
-    let pane = Pane::new();
+fn turning_history_off_stops_the_watch_and_keeps_the_items(fixture: &'static Fixture) {
+    let pane = Pane::new(fixture);
     let launcher = pane.installed();
-    turn_on(&launcher);
+    pane.turn_on(&launcher);
+    pane.clipboard.copy("kept", None);
+    pane.open(&launcher);
+    assert_eq!(
+        subtitle(&launcher, TURN_OFF),
+        "Stops keeping what you copy; the kept items stay until you clear them"
+    );
+    assert_eq!(run(&launcher, TURN_OFF), result("Clipboard history is off"));
+    assert!(!pane.clipboard.watching());
+    assert!(!pane.clipboard.copy("while off", None));
+    // Off after a restart too, with its item still listed.
+    drop(launcher);
+    let launcher = pane.start();
+    assert!(!pane.clipboard.watching());
+    assert_eq!(pane.listed(&launcher), ["kept"]);
+    assert_eq!(titles(&launcher)[..3], [TURN_ON, EXCLUDE, CLEAR]);
+    // Paused, it can be turned off too.
+    assert_eq!(run(&launcher, TURN_ON), result("Clipboard history is on"));
+    pane.open(&launcher);
+    assert_eq!(run(&launcher, PAUSE), result("Clipboard history is paused"));
+    pane.open(&launcher);
+    assert_eq!(titles(&launcher)[..2], [RESUME, TURN_OFF]);
+    assert_eq!(run(&launcher, TURN_OFF), result("Clipboard history is off"));
+    pane.open(&launcher);
+    assert_eq!(titles(&launcher)[0], TURN_ON);
+}
+
+fn marked_blank_other_and_long_content_is_not_kept(fixture: &'static Fixture) {
+    let pane = Pane::new(fixture);
+    let launcher = pane.installed();
+    pane.turn_on(&launcher);
     let marked = |markers: Markers| Observation {
         content: Content::Text("hunter2".into()),
         markers,
@@ -396,22 +514,21 @@ fn marked_blank_other_and_long_content_is_not_kept() {
         source: None,
     });
     pane.clipboard.copy("   \n", None);
-    pane.clipboard
-        .copy(&"x".repeat(pane_core::clipboard::MAX_TEXT_BYTES + 1), None);
+    pane.clipboard.copy(&"x".repeat(MAX_TEXT_BYTES + 1), None);
     pane.clipboard.copy("kept", None);
 
-    assert_eq!(listed(&launcher), ["kept"]);
+    assert_eq!(pane.listed(&launcher), ["kept"]);
     assert_eq!(pane.kept_on_disk(), ["kept"]);
-    let file = fs::read_to_string(pane.data.path().join("extensions/clipboard-history.json"));
-    assert!(!file.unwrap().contains("hunter2"));
+    let file = fs::read_to_string(pane.history_path()).unwrap();
+    assert!(!file.contains("hunter2"));
 }
 
-#[test]
-fn text_from_an_excluded_program_is_not_kept() {
-    let pane = Pane::new();
+fn text_from_an_excluded_program_is_not_kept(fixture: &'static Fixture) {
+    let pane = Pane::new(fixture);
     let launcher = pane.installed();
-    turn_on(&launcher);
-    select_title(&launcher, "Exclude a program");
+    pane.turn_on(&launcher);
+    pane.open(&launcher);
+    select_title(&launcher, EXCLUDE);
     block_on(launcher.activate_selected());
     assert!(launcher.view().form().is_some());
     launcher.set_field_value("program", r"C:\KeePass.exe");
@@ -426,9 +543,9 @@ fn text_from_an_excluded_program_is_not_kept() {
 
     pane.clipboard.copy("secret", Some("KEEPASS.EXE"));
     pane.clipboard.copy("note", Some("notepad.exe"));
-    assert_eq!(listed(&launcher), ["note"]);
+    assert_eq!(pane.listed(&launcher), ["note"]);
     assert_eq!(
-        subtitle(&launcher, "Exclude a program"),
+        subtitle(&launcher, EXCLUDE),
         "Text copied from it is never kept · 1 excluded"
     );
     assert_eq!(
@@ -436,21 +553,20 @@ fn text_from_an_excluded_program_is_not_kept() {
         result("Text copied from keepass.exe is kept again")
     );
     pane.clipboard.copy("secret again", Some("keepass.exe"));
-    assert_eq!(listed(&launcher), ["secret again", "note"]);
+    assert_eq!(pane.listed(&launcher), ["secret again", "note"]);
 }
 
-#[test]
-fn pausing_stops_the_watch_and_resuming_starts_it_again() {
-    let pane = Pane::new();
+fn pausing_stops_the_watch_and_resuming_starts_it_again(fixture: &'static Fixture) {
+    let pane = Pane::new(fixture);
     let launcher = pane.installed();
-    turn_on(&launcher);
+    pane.turn_on(&launcher);
     pane.clipboard.copy("one", None);
-    open(&launcher);
+    pane.open(&launcher);
     assert_eq!(run(&launcher, PAUSE), result("Clipboard history is paused"));
     assert!(!pane.clipboard.watching());
     assert!(!pane.clipboard.copy("while paused", None));
 
-    open(&launcher);
+    pane.open(&launcher);
     assert_eq!(
         subtitle(&launcher, RESUME),
         "Paused · 1 item kept · Nothing you copy is kept until you resume"
@@ -459,21 +575,20 @@ fn pausing_stops_the_watch_and_resuming_starts_it_again() {
     drop(launcher);
     let launcher = pane.start();
     assert!(!pane.clipboard.watching());
-    open(&launcher);
+    pane.open(&launcher);
     assert_eq!(
         run(&launcher, RESUME),
         result("Clipboard history is on again")
     );
     assert!(pane.clipboard.watching());
     pane.clipboard.copy("two", None);
-    assert_eq!(listed(&launcher), ["two", "one"]);
+    assert_eq!(pane.listed(&launcher), ["two", "one"]);
 }
 
-#[test]
-fn disabling_stops_the_watch_and_a_restart_watches_only_while_enabled() {
-    let pane = Pane::new();
+fn disabling_stops_the_watch_and_a_restart_watches_only_while_enabled(fixture: &'static Fixture) {
+    let pane = Pane::new(fixture);
     let launcher = pane.installed();
-    turn_on(&launcher);
+    pane.turn_on(&launcher);
     pane.clipboard.copy("kept", None);
     let identity = launcher.packages()[0].identity.clone();
 
@@ -496,31 +611,72 @@ fn disabling_stops_the_watch_and_a_restart_watches_only_while_enabled() {
     assert!(pane.clipboard.watching());
     pane.clipboard.copy("after restart", None);
     assert_eq!(
-        listed(&launcher),
+        pane.listed(&launcher),
         ["after restart", "after enabling", "kept"]
     );
 }
 
-#[test]
-fn enter_copies_an_item_again_and_it_moves_to_the_front() {
-    let pane = Pane::new();
+fn a_slow_read_never_delays_stopping_and_is_not_kept_after_it(fixture: &'static Fixture) {
+    let pane = Pane::new(fixture);
     let launcher = pane.installed();
-    turn_on(&launcher);
+    pane.turn_on(&launcher);
+    let identity = launcher.packages()[0].identity.clone();
+
+    // A read still in progress (a hung clipboard owner) when the package
+    // is disabled: disabling does not wait for it, and it keeps nothing,
+    // even once the package is enabled again and a new watch runs.
+    let reading = pane.clipboard.begin_read().unwrap();
+    let started = Instant::now();
+    block_on(launcher.set_enabled(&identity, false));
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(!pane.clipboard.watching());
+    block_on(launcher.set_enabled(&identity, true));
+    assert!(pane.clipboard.watching());
+    reading.finish("read too late");
+    assert!(pane.kept_on_disk().is_empty());
+
+    // Pausing likewise.
+    let reading = pane.clipboard.begin_read().unwrap();
+    pane.open(&launcher);
+    assert_eq!(run(&launcher, PAUSE), result("Clipboard history is paused"));
+    reading.finish("paused meanwhile");
+    assert!(pane.kept_on_disk().is_empty());
+    assert!(pane.listed(&launcher).is_empty());
+}
+
+fn a_read_begun_before_clearing_is_not_kept_after_it(fixture: &'static Fixture) {
+    let pane = Pane::new(fixture);
+    let launcher = pane.installed();
+    pane.turn_on(&launcher);
+    pane.clipboard.copy("old", None);
+    let reading = pane.clipboard.begin_read().unwrap();
+    pane.open(&launcher);
+    assert_eq!(run(&launcher, CLEAR), result("Deleted 1 kept item"));
+    reading.finish("read before clearing");
+    assert!(pane.kept_on_disk().is_empty());
+    // A change read after clearing is kept.
+    pane.clipboard.copy("after clearing", None);
+    assert_eq!(pane.listed(&launcher), ["after clearing"]);
+}
+
+fn enter_copies_an_item_again_and_it_moves_to_the_front(fixture: &'static Fixture) {
+    let pane = Pane::new(fixture);
+    let launcher = pane.installed();
+    pane.turn_on(&launcher);
     pane.clipboard.copy("first", None);
     pane.clipboard.copy("second", None);
-    assert_eq!(listed(&launcher), ["second", "first"]);
+    assert_eq!(pane.listed(&launcher), ["second", "first"]);
 
     assert_eq!(run(&launcher, "first"), result("Copied to the clipboard"));
     assert_eq!(pane.clipboard.written(), ["first"]);
-    assert_eq!(listed(&launcher), ["first", "second"]);
+    assert_eq!(pane.listed(&launcher), ["first", "second"]);
     assert_eq!(pane.kept_on_disk(), ["first", "second"]);
 }
 
-#[test]
-fn at_most_the_newest_items_are_kept_and_clear_deletes_them_all() {
-    let pane = Pane::new();
+fn at_most_the_newest_items_are_kept_and_clear_deletes_them_all(fixture: &'static Fixture) {
+    let pane = Pane::new(fixture);
     let launcher = pane.installed();
-    turn_on(&launcher);
+    pane.turn_on(&launcher);
     for number in 0..=MAX_ITEMS {
         pane.clipboard.copy(&format!("item {number}"), None);
     }
@@ -529,48 +685,26 @@ fn at_most_the_newest_items_are_kept_and_clear_deletes_them_all() {
     assert_eq!(kept[0], format!("item {MAX_ITEMS}"));
     assert!(!kept.contains(&"item 0".to_string()));
 
-    open(&launcher);
+    pane.open(&launcher);
     assert_eq!(
-        run(&launcher, "Clear clipboard history"),
+        run(&launcher, CLEAR),
         result(&format!("Deleted {MAX_ITEMS} kept items"))
     );
     assert!(pane.kept_on_disk().is_empty());
     // History is still on.
     assert!(pane.clipboard.watching());
     pane.clipboard.copy("after clearing", None);
-    assert_eq!(listed(&launcher), ["after clearing"]);
+    assert_eq!(pane.listed(&launcher), ["after clearing"]);
 }
 
-/// From root search, uninstalls the package with the confirmation row
-/// `choice`, returning the confirmation's details.
-fn uninstall(launcher: &Launcher, choice: &str) -> Vec<String> {
-    launcher.back();
-    launcher.back();
-    select_title(launcher, MANAGE_ROW);
-    block_on(launcher.activate_selected());
-    select_title(launcher, &format!("Uninstall {TITLE}"));
-    block_on(launcher.activate_selected());
-    assert!(matches!(launcher.view().screen, Screen::Confirm { .. }));
-    let details = launcher.view().details().to_vec();
-    select_title(launcher, choice);
-    block_on(launcher.activate_selected());
-    assert!(
-        matches!(launcher.view().status, Status::Result(_)),
-        "{:?}",
-        launcher.view().status
-    );
-    details
-}
-
-#[test]
-fn uninstalling_stops_the_watch_and_deletes_the_history_if_asked() {
-    let pane = Pane::new();
+fn uninstalling_stops_the_watch_and_deletes_the_history_if_asked(fixture: &'static Fixture) {
+    let pane = Pane::new(fixture);
     let launcher = pane.installed();
-    turn_on(&launcher);
+    pane.turn_on(&launcher);
     pane.clipboard.copy("one", None);
     pane.clipboard.copy("two", None);
 
-    let details = uninstall(&launcher, "Uninstall and delete saved data");
+    let details = pane.uninstall(&launcher, "Uninstall and delete saved data");
     assert!(
         details.contains(&"Saved data: 2 clipboard history items".to_string()),
         "{details:?}"
@@ -580,14 +714,13 @@ fn uninstalling_stops_the_watch_and_deletes_the_history_if_asked() {
     assert!(launcher.retained_data().is_empty());
 }
 
-#[test]
-fn uninstalling_and_keeping_the_history_keeps_it_for_a_reinstall() {
-    let pane = Pane::new();
+fn uninstalling_and_keeping_the_history_keeps_it_for_a_reinstall(fixture: &'static Fixture) {
+    let pane = Pane::new(fixture);
     let launcher = pane.installed();
-    turn_on(&launcher);
+    pane.turn_on(&launcher);
     pane.clipboard.copy("kept", None);
 
-    uninstall(&launcher, "Uninstall and keep saved data");
+    pane.uninstall(&launcher, "Uninstall and keep saved data");
     assert!(!pane.clipboard.watching());
     assert_eq!(pane.kept_on_disk(), ["kept"]);
     assert_eq!(launcher.retained_data().len(), 1);
@@ -595,8 +728,11 @@ fn uninstalling_and_keeping_the_history_keeps_it_for_a_reinstall() {
     select_title(&launcher, MANAGE_ROW);
     block_on(launcher.activate_selected());
     assert!(
-        subtitle(&launcher, &format!("Delete retained data of {TITLE}"))
-            .contains("keeps 1 clipboard history item"),
+        subtitle(
+            &launcher,
+            &format!("Delete retained data of {}", fixture.title)
+        )
+        .contains("keeps 1 clipboard history item"),
         "{:?}",
         launcher.view().rows
     );
@@ -604,18 +740,20 @@ fn uninstalling_and_keeping_the_history_keeps_it_for_a_reinstall() {
     drop(launcher);
     let launcher = pane.installed();
     assert!(pane.clipboard.watching());
-    assert_eq!(listed(&launcher), ["kept"]);
+    assert_eq!(pane.listed(&launcher), ["kept"]);
 }
 
-#[test]
-fn where_the_clipboard_cannot_be_watched_history_stays_off_and_says_why() {
+fn where_the_clipboard_cannot_be_watched_history_stays_off_and_says_why(fixture: &'static Fixture) {
     let reason = "Not available: the test's clipboard cannot be watched";
-    let pane = Pane::with(FakeClipboard {
-        unavailable: Some(reason.into()),
-        ..FakeClipboard::default()
-    });
+    let pane = Pane::with(
+        fixture,
+        FakeClipboard {
+            unavailable: Some(reason.into()),
+            ..FakeClipboard::default()
+        },
+    );
     let launcher = pane.installed();
-    open(&launcher);
+    pane.open(&launcher);
     assert!(subtitle(&launcher, TURN_ON).starts_with(&format!("{reason} · Off")));
     assert_eq!(
         run(&launcher, TURN_ON),
@@ -625,16 +763,15 @@ fn where_the_clipboard_cannot_be_watched_history_stays_off_and_says_why() {
     assert!(pane.history_file().is_none());
 }
 
-#[test]
-fn without_a_clipboard_pane_keeps_nothing_and_says_so() {
-    let pane = Pane::new();
+fn without_a_clipboard_pane_keeps_nothing_and_says_so(fixture: &'static Fixture) {
+    let pane = Pane::new(fixture);
     let launcher = Launcher::with_packages(
         Runtime::start(),
         vec![],
         pane.data.path().join("extensions"),
     );
-    block_on(launcher.install_package(pane.folder()));
-    open(&launcher);
+    install(&launcher, pane.folder());
+    pane.open(&launcher);
     assert!(
         subtitle(&launcher, TURN_ON)
             .starts_with("Not available: this Pane does not watch the clipboard · Off"),
@@ -651,22 +788,20 @@ fn without_a_clipboard_pane_keeps_nothing_and_says_so() {
     );
 }
 
-#[test]
-fn the_default_package_is_offered_only_on_windows_so_far() {
+fn the_package_is_offered_only_on_windows_so_far(fixture: &'static Fixture) {
     let data = tempfile::tempdir().unwrap();
     let source = tempfile::tempdir().unwrap();
-    copy_package(source.path(), false);
+    copy_package(fixture, source.path(), false);
     let launcher =
         Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"))
             .with_clipboard(pane_core::clipboard::none());
-    block_on(launcher.install_package(source.path()));
-    launcher.back();
+    install(&launcher, source.path());
     block_on(launcher.set_query("clipboard"));
     let row = launcher
         .view()
         .rows
         .into_iter()
-        .find(|row| row.title == TITLE)
+        .find(|row| row.title == fixture.command)
         .expect("the command is listed");
     if platforms::this_system() == pane_core::Platform::Windows {
         assert_eq!(row.unavailable, None);
@@ -680,3 +815,36 @@ fn the_default_package_is_offered_only_on_windows_so_far() {
         );
     }
 }
+
+/// Declares one test per check for each language's clipboard package.
+macro_rules! contract {
+    ($($check:ident),* $(,)?) => {
+        mod rust {
+            $(#[test] fn $check() { super::$check(&super::RUST) })*
+        }
+        mod javascript {
+            $(#[test] fn $check() { super::$check(&super::JAVASCRIPT) })*
+        }
+        mod typescript {
+            $(#[test] fn $check() { super::$check(&super::TYPESCRIPT) })*
+        }
+    };
+}
+
+contract!(
+    nothing_is_watched_or_kept_until_history_is_turned_on,
+    turning_history_off_stops_the_watch_and_keeps_the_items,
+    marked_blank_other_and_long_content_is_not_kept,
+    text_from_an_excluded_program_is_not_kept,
+    pausing_stops_the_watch_and_resuming_starts_it_again,
+    disabling_stops_the_watch_and_a_restart_watches_only_while_enabled,
+    a_slow_read_never_delays_stopping_and_is_not_kept_after_it,
+    a_read_begun_before_clearing_is_not_kept_after_it,
+    enter_copies_an_item_again_and_it_moves_to_the_front,
+    at_most_the_newest_items_are_kept_and_clear_deletes_them_all,
+    uninstalling_stops_the_watch_and_deletes_the_history_if_asked,
+    uninstalling_and_keeping_the_history_keeps_it_for_a_reinstall,
+    where_the_clipboard_cannot_be_watched_history_stays_off_and_says_why,
+    without_a_clipboard_pane_keeps_nothing_and_says_so,
+    the_package_is_offered_only_on_windows_so_far,
+);

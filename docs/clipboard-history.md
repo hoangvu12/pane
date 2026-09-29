@@ -5,11 +5,12 @@ US65, US66, US70, US71; T10, T21, T22; contributions to G5 and G7, not
 claims that they pass. Once the user turns it on, Pane keeps the text they
 copy on this computer, and the **Clipboard History** default extension lists
 it, newest first; Enter on an item copies it again. It starts off, can be
-paused and resumed, and disabling the extension stops it too. Expiry and the
+paused, resumed and turned off again, and disabling the extension stops it
+too. Expiry and the
 remaining deletion controls are [#36](https://github.com/hoangvu12/pane/issues/36);
 macOS and Linux observation are [#37](https://github.com/hoangvu12/pane/issues/37)
 and [#38](https://github.com/hoangvu12/pane/issues/38). The architecture is
-recorded in [ADR 0017](adr/0017-host-keeps-clipboard-history-for-an-extension.md)
+recorded in [ADR 0020](adr/0020-host-keeps-clipboard-history-for-an-extension.md)
 (proposed).
 
 ## Where it lives
@@ -28,8 +29,14 @@ recorded in [ADR 0017](adr/0017-host-keeps-clipboard-history-for-an-extension.md
   has an adapter, so on macOS and Linux it is listed as unavailable with
   #19's reason ("Not available on Linux: this command supports only
   Windows") and never runs. Rust commands use the import through
-  `pane_guest::clipboard_history`; JavaScript and TypeScript commands cannot
-  yet (it is not in their world, so their prebuilt samples are unchanged).
+  `pane_guest::clipboard_history`; JavaScript and TypeScript commands import
+  it when their package.json sets `"pane": { "clipboardHistory": true }`
+  ([`guests/js/clipboard.d.ts`](../guests/js/clipboard.d.ts)), and only
+  then, as for `files`. The samples
+  [`sample-clipboard-js`](../guests/sample-clipboard-js) and
+  [`sample-clipboard-ts`](../guests/sample-clipboard-ts) implement the same
+  command in JavaScript and TypeScript, and the launcher tests run the same
+  checks on all three.
 - **System adapter** behind one small trait
   ([`pane_core::clipboard`](../crates/pane-core/src/clipboard.rs)), chosen
   by `clipboard::native()`: the Windows listener, or on other systems one
@@ -47,6 +54,7 @@ The command's rows, in order:
 | Row | Enter |
 | --- | --- |
 | "Turn on clipboard history" (off), "Pause clipboard history" (on) or "Resume clipboard history" (paused), subtitled with the state, the number kept and, if Pane cannot watch the clipboard, why | turns it on, pauses or resumes it; each row does only that, so pressing it again before the command is opened anew changes nothing more |
+| "Turn off clipboard history", while on or paused | turns it off: nothing is kept and Pane stops watching for it; the kept items stay until cleared |
 | "Exclude a program" | a form taking a program's file name, such as `KeePass.exe` |
 | "Stop excluding keepass.exe", one per excluded program | removes the exclusion |
 | "Clear clipboard history", while items are kept | deletes every kept item; whether history is kept does not change |
@@ -64,10 +72,19 @@ line answers, and the rows change the next time the command is opened.
   and not [paused](pausing.md) after a failure). Pausing the history,
   disabling the package, Pane pausing it, uninstalling it, or turning
   another package's history off when it was the last one drops the
-  listener at once (on Windows the listener's thread has removed itself and
-  ended before the change returns). Enabling the package, resuming or
-  turning it on starts it again. A change that arrives while the package's
-  code may not run is not kept, even if the listener has not stopped yet.
+  listener at once: Pane stops taking its reports first, then tells its
+  thread to stop and waits at most 1 s for it (on Windows the thread removes
+  itself and ends; one stuck in a read, waiting on the program that copied,
+  is left to end on its own, and what it reads then is dropped). Enabling
+  the package, resuming or turning it on starts it again. A change that
+  arrives while the package's code may not run is not kept, even if the
+  listener has not stopped yet, and neither is one whose read began before
+  the history was cleared.
+- **Read once, tried again.** On Windows only the listener's thread reads
+  the clipboard. A change is marked read only once it was read; if another
+  program holds the clipboard open, the thread tries again 250 ms later, up
+  to five times, before skipping that change. A failure in the listener is
+  logged, never with what was copied, and it goes on listening.
 - **Across restarts.** The capture state is kept with the history: after a
   restart Pane watches again, before any command opens, only where history
   is on and the package enabled; paused stays paused, disabled stays
@@ -124,11 +141,19 @@ no owner, so its program is unknown and never excluded).
 - The history is the package's extension data of a kind of its own,
   **clipboard history**, in `clipboard-history.json` beside the other kinds,
   under the package identity's key, written by Pane only (never by the
-  extension directly), atomically, and readable only by the user on macOS
-  and Linux (mode 0600; on Windows the data folder's permissions). Its
-  values: `capture` ("on" or "paused"; missing is off), `excluded` (a list
-  of program names) and one `item:<id>` per item (`text`, `copiedAt` in
-  milliseconds since the Unix epoch, `source`).
+  extension directly), atomically, and readable only by the user: mode 0600
+  on macOS and Linux, and on Windows a protected DACL giving the user and
+  SYSTEM only full control, inheriting nothing from the folder, set as each
+  new version of the file is created, before it replaces the old one. The
+  file is typed and versioned: `{"version": 1, "packages": {<identity key>:
+  {"capture", "excluded", "items", "nextId"}}}`, with `capture` "on" or
+  "paused" (missing is off), `excluded` lowercase program names, and
+  `items` newest first, each with its `id`, `text`, `copiedAt` (milliseconds
+  since the Unix epoch) and `source`.
+- It is written after each change, outside the lock that captures and
+  commands share, so a copy never waits on another's write. A change is on
+  disk when the call that made it returns; a crash before that loses only
+  that change (the file is replaced atomically, never torn).
 - It is **saved data**, like settings and content: Clear cache keeps it;
   uninstalling asks, "Saved data: 12 clipboard history items", and
   "Uninstall and delete saved data" removes it, while "keep" keeps it as
@@ -155,17 +180,24 @@ no owner, so its program is unknown and never excluded).
 
 - Capture rules ([`clipboard.rs`](../crates/pane-core/src/clipboard.rs) unit
   tests): plain, marked, withheld, other, blank and long content; excluded
-  programs; program names; newest first, one per text and at most 100;
-  state, exclusions and clearing kept apart. The package's generation
+  programs; program names, lowercased also when read from the file; newest
+  first, one per text and at most 100; state, exclusions and clearing kept
+  apart; the typed, versioned file; a capture begun before a deletion
+  keeping nothing. Stopping a thread within a limit, or leaving it
+  ([`threads.rs`](../crates/pane-core/src/threads.rs)); on Windows, the
+  owner-only DACL ([`atomic.rs`](../crates/pane-core/src/atomic.rs)). The package's generation
   ([`extension_data.rs`](../crates/pane-core/src/extension_data.rs)):
   nothing kept while off, paused by Pane or uninstalled, and each change
   starting or stopping the watch.
 - Launcher public interface ([`crates/pane-core/tests/clipboard.rs`](../crates/pane-core/tests/clipboard.rs)),
-  with the real Clipboard History guest and a fake system clipboard (a copy
-  of the package declaring every system): nothing watched or kept until
-  turned on, then kept, on disk too with mode 0600; markers, blank, other and
-  long content; excluding and including a program through the form; pause
-  and resume, also across a restart; disable stopping the watch, a restart
+  with the real Clipboard History guest and the JavaScript and TypeScript
+  samples alike, and a fake system clipboard (a copy of each package
+  declaring every system): nothing watched or kept until turned on, then
+  kept, on disk too with mode 0600; markers, blank, other and long content;
+  excluding and including a program through the form; pause and resume,
+  also across a restart; turning it off keeping the items; a read still
+  waiting when the package is disabled or paused neither delaying it nor
+  kept, even once a new watch runs; a read begun before Clear not kept; disable stopping the watch, a restart
   while disabled not watching, enable and a restart watching again; Enter
   copying an item again; the 100-item bound and Clear; uninstall deleting
   or keeping (retained, and kept on for a reinstall); a system that cannot
@@ -174,9 +206,15 @@ no owner, so its program is unknown and never excluded).
 - Windows adapter ([`crates/pane-core/tests/clipboard_adapter.rs`](../crates/pane-core/tests/clipboard_adapter.rs),
   Windows only) against the real clipboard, with text only the test puts
   there: plain text reported with its owner (the test's own process), each
-  of the four markers withholding the text, markers of 1 allowing it, a
-  written text reported, and nothing once the watch is dropped. It saves the
-  clipboard's formats in memory first and puts them back at the end.
+  of the four markers read and withholding the text, `CanIncludeInClipboardHistory`
+  1 allowing it, a written text reported, and nothing once the watch is
+  dropped. It **replaces what is on the clipboard** and does not put it
+  back, so it runs only with `PANE_TEST_REAL_CLIPBOARD=1`, which CI's
+  Windows runner sets; elsewhere it passes without doing anything. Its
+  marked copies also say `CanIncludeInClipboardHistory` 0 where the check
+  allows, so Windows' own history (Win+V) does not keep them, and it never
+  says `CanUploadToCloudClipboard` 1; withheld reports count only when this
+  test's process owns the clipboard with the markers it set.
 - Native GUI smokes, screenshots 280 to 285: on Windows (with a data folder
   of its own, copying only its own `pane-smoke-...` text through the
   clipboard API and putting back what was on the clipboard, in memory only)
@@ -201,7 +239,6 @@ no owner, so its program is unknown and never excluded).
   ones (100), or deleted with the package's saved data (#36).
 - The command's rows are read when it opens; they do not change while it is
   open, even as text is copied.
-- JavaScript and TypeScript commands cannot use the import yet.
 - More than one package may keep history; each keeps its own, and Pane
   watches once for all of them.
 - The files are replaced atomically but not locked (as every kind of

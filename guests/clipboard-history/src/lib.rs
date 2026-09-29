@@ -1,8 +1,8 @@
 //! Pane's clipboard history, a default extension: once the user turns it
 //! on in its command, Pane keeps the text they copy on this computer, and
 //! the command lists it, newest first; Enter on an item copies it again.
-//! It starts off, and can be paused and resumed; disabling the extension
-//! stops it too. Programs can be excluded by their file name.
+//! It starts off, and can be paused, resumed and turned off again; disabling
+//! the extension stops it too. Programs can be excluded by their file name.
 //!
 //! Pane's host does the watching and keeping (`pane:extension/clipboard-history`):
 //! this command only shows the history and the user's controls, and nothing
@@ -24,12 +24,13 @@ use pane_guest::{
 struct ClipboardHistory;
 pane_guest::export!(ClipboardHistory);
 
-// The items that turn keeping on, pause it and resume it. Each does only
-// that, so pressing one again before the view is shown anew changes nothing
-// more.
+// The items that turn keeping on, pause it, resume it and turn it off. Each
+// does only that, so pressing one again before the view is shown anew
+// changes nothing more.
 const TURN_ON: &str = "turn-on";
 const PAUSE: &str = "pause";
 const RESUME: &str = "resume";
+const TURN_OFF: &str = "turn-off";
 /// The item whose form excludes a program.
 const EXCLUDE: &str = "exclude";
 /// The prefix of the item that no longer excludes the program named by the
@@ -169,6 +170,13 @@ impl Guest for ClipboardHistory {
     async fn get_view() -> Result<View, String> {
         let status = history::status()?;
         let mut items = vec![toggle(&status)];
+        if status.capture != Capture::Off {
+            items.push(item(
+                TURN_OFF,
+                "Turn off clipboard history".into(),
+                "Stops keeping what you copy; the kept items stay until you clear them".into(),
+            ));
+        }
         let excluded = match status.excluded.len() {
             0 => "None excluded".to_string(),
             count => format!("{count} excluded"),
@@ -218,6 +226,7 @@ impl Guest for ClipboardHistory {
             TURN_ON => Some((Capture::On, "Clipboard history is on")),
             PAUSE => Some((Capture::Paused, "Clipboard history is paused")),
             RESUME => Some((Capture::On, "Clipboard history is on again")),
+            TURN_OFF => Some((Capture::Off, "Clipboard history is off")),
             _ => None,
         };
         if let Some((capture, done)) = wanted {

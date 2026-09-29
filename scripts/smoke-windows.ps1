@@ -1336,22 +1336,23 @@ try {
 # while it is paused or the extension is disabled, also after a restart,
 # and once enabled again it is kept again, also after a restart. Enter on
 # a kept item copies it again. The smoke copies only text of its own
-# ("pane-smoke-..."): it saves what was on the clipboard before, in memory
-# only, and puts it back at the end. A data folder of its own.
+# ("pane-smoke-..."), and so replaces what was on the clipboard without
+# reading or putting it back: run it on CI's runner or a desktop given to
+# it, as the rest of the smoke already takes over the keyboard. A data
+# folder of its own.
 $data = Join-Path $OutDir "clipboard-data"
 if (Test-Path $data) { Remove-Item -Recurse -Force $data }
 $env:PANE_DATA_DIR = $data
 $registry = Join-Path $data "extensions/installed.json"
 $history = Join-Path $data "extensions/clipboard-history.json"
 Add-Type @"
-using System; using System.Collections.Generic; using System.Runtime.InteropServices; using System.Text; using System.Threading;
+using System; using System.Runtime.InteropServices; using System.Text; using System.Threading;
 public static class PaneClip {
     [DllImport("user32.dll")] static extern bool OpenClipboard(IntPtr owner);
     [DllImport("user32.dll")] static extern bool CloseClipboard();
     [DllImport("user32.dll")] static extern bool EmptyClipboard();
     [DllImport("user32.dll")] static extern IntPtr GetClipboardData(uint format);
     [DllImport("user32.dll")] static extern IntPtr SetClipboardData(uint format, IntPtr memory);
-    [DllImport("user32.dll")] static extern uint EnumClipboardFormats(uint format);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern uint RegisterClipboardFormatW(string name);
     [DllImport("kernel32.dll")] static extern IntPtr GlobalAlloc(uint flags, UIntPtr bytes);
     [DllImport("kernel32.dll")] static extern IntPtr GlobalLock(IntPtr memory);
@@ -1398,32 +1399,6 @@ public static class PaneClip {
             return end < 0 ? text : text.Substring(0, end);
         } finally { CloseClipboard(); }
     }
-    // Formats whose data is a GDI handle rather than global memory.
-    static bool Gdi(uint format) {
-        return format == 2 || format == 3 || format == 9 || format == 14 || format == 0x80 || format == 0x82
-            || format == 0x83 || format == 0x8E || (format >= 0x300 && format <= 0x3FF);
-    }
-    // What is on the clipboard, format by format, held in memory only.
-    public static List<KeyValuePair<uint, byte[]>> Save() {
-        var saved = new List<KeyValuePair<uint, byte[]>>();
-        Open();
-        try {
-            uint format = 0;
-            while ((format = EnumClipboardFormats(format)) != 0) {
-                if (Gdi(format)) continue;
-                byte[] bytes = Get(format);
-                if (bytes != null) saved.Add(new KeyValuePair<uint, byte[]>(format, bytes));
-            }
-        } finally { CloseClipboard(); }
-        return saved;
-    }
-    public static void Restore(List<KeyValuePair<uint, byte[]>> saved) {
-        Open();
-        try {
-            EmptyClipboard();
-            foreach (var entry in saved) Put(entry.Key, entry.Value);
-        } finally { CloseClipboard(); }
-    }
 }
 "@
 function Copy-Text($text, $marker) { [PaneClip]::SetText($text, $marker); Start-Sleep -Milliseconds 500 }
@@ -1431,10 +1406,9 @@ function Copy-Text($text, $marker) { [PaneClip]::SetText($text, $marker); Start-
 function Kept-Texts {
     if (-not (Test-Path $history)) { return @() }
     $file = Get-Content -Raw $history | ConvertFrom-Json
-    $items = foreach ($package in $file.packages.PSObject.Properties) {
-        $package.Value.PSObject.Properties | Where-Object { $_.Name -like "item:*" }
-    }
-    return @($items | Sort-Object Name -Descending | ForEach-Object { ($_.Value | ConvertFrom-Json).text })
+    # {"version": 1, "packages": {<identity>: {"items": [...newest first]}}}
+    $items = foreach ($package in $file.packages.PSObject.Properties) { $package.Value.items }
+    return @($items | ForEach-Object { $_.text })
 }
 function Not-Kept($text) {
     Start-Sleep -Seconds 2
@@ -1450,78 +1424,73 @@ function Open-Manage {
     Send "manage"; Start-Sleep -Seconds 1
     Send "{ENTER}"; Start-Sleep -Seconds 1
 }
-$saved = [PaneClip]::Save()
-try {
-    $process = Start-Pane "stderr-clipboard.log" @("--install", "target/guests/packages/clipboard-history")
-    Send "{ENTER}"   # Install; Clipboard History is selected
-    Wait-For $registry "clipboard-history" $true; Start-Sleep -Seconds 1
-    Copy-Text "pane-smoke-before" $null   # while history is off
-    Send "{ENTER}"; Start-Sleep -Seconds 3   # open Clipboard History
-    Capture "280-clipboard-off.png"
-    Check "280-clipboard-off.png" "aab4c0"   # "Off · Pane keeps nothing you copy until you turn it on ..."
-    Send "{ENTER}"   # Turn on clipboard history
-    Wait-For $history '"capture": "on"' $true; Start-Sleep -Seconds 1
-    Capture "281-clipboard-on.png"
-    Check "281-clipboard-on.png" "9fd8a8"   # "Clipboard history is on"
-    Copy-Text "pane-smoke-kept" $null
-    Copy-Text "pane-smoke-secret" "ExcludeClipboardContentFromMonitorProcessing"
-    Copy-Text "pane-smoke-no-history" "CanIncludeInClipboardHistory"
-    Copy-Text "pane-smoke-no-cloud" "CanUploadToCloudClipboard"
-    Copy-Text "pane-smoke-second" $null
-    Wait-For $history "pane-smoke-second" $true
-    if (((Kept-Texts) -join ",") -ne "pane-smoke-second,pane-smoke-kept") { throw "kept: $(Kept-Texts)" }
-    Open-History
-    Capture "282-clipboard-kept.png"
-    Check "282-clipboard-kept.png" "aab4c0"   # the two kept items, newest first
-    Send "{ENTER}"   # Pause clipboard history
-    Wait-For $history '"capture": "paused"' $true
-    Copy-Text "pane-smoke-paused" $null
-    Not-Kept "pane-smoke-paused"
-    Open-History
-    Send "{ENTER}"   # Resume clipboard history
-    Wait-For $history '"capture": "on"' $true
-    Copy-Text "pane-smoke-resumed" $null
-    Wait-For $history "pane-smoke-resumed" $true
-    Open-History
-    Send "{DOWN 4}{ENTER}"; Start-Sleep -Seconds 2   # the second kept item, pane-smoke-second
-    Capture "283-clipboard-copied.png"
-    Check "283-clipboard-copied.png" "9fd8a8"   # "Copied to the clipboard"
-    if ([PaneClip]::GetText() -ne "pane-smoke-second") { throw "Enter did not copy the item" }
-    Start-Sleep -Seconds 1
-    if ((Kept-Texts)[0] -ne "pane-smoke-second") { throw "the copied item did not move to the front" }
-    Open-Manage
-    Send "{ENTER}"   # disable Clipboard History, the first row
-    Wait-For $registry '"disabled": true' $true; Start-Sleep -Seconds 1
-    Capture "284-clipboard-disabled.png"
-    Check "284-clipboard-disabled.png" "9fd8a8"   # "Disabled Clipboard History"
-    Copy-Text "pane-smoke-disabled" $null
-    Not-Kept "pane-smoke-disabled"
-    Stop-Pane $process
-    $process = Start-Pane "stderr-clipboard-disabled.log"
-    Copy-Text "pane-smoke-restarted-disabled" $null
-    Not-Kept "pane-smoke-restarted-disabled"
-    Open-Manage
-    Send "{ENTER}"   # enable Clipboard History
-    Wait-For $registry '"disabled": true' $false; Start-Sleep -Seconds 1
-    Copy-Text "pane-smoke-enabled" $null
-    Wait-For $history "pane-smoke-enabled" $true
-    Stop-Pane $process
-    $process = Start-Pane "stderr-clipboard-restarted.log"
-    Copy-Text "pane-smoke-after-restart" $null
-    Wait-For $history "pane-smoke-after-restart" $true
-    Open-History
-    Capture "285-clipboard-after-restart.png"
-    Check "285-clipboard-after-restart.png" "aab4c0"   # kept again after the restart
-    $shots = "280-clipboard-off", "281-clipboard-on", "282-clipboard-kept", "283-clipboard-copied", "284-clipboard-disabled", "285-clipboard-after-restart" | ForEach-Object { Join-Path $OutDir "$_.png" }
-    python "$PSScriptRoot/check_screenshot.py" --distinct @shots
-    if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: clipboard history changed nothing" }
-    Stop-Pane $process
-    $expected = "pane-smoke-after-restart,pane-smoke-enabled,pane-smoke-second,pane-smoke-resumed,pane-smoke-kept"
-    if (((Kept-Texts) -join ",") -ne $expected) { throw "kept: $(Kept-Texts)" }
-    foreach ($never in "before", "secret", "no-history", "no-cloud", "paused", "disabled", "restarted-disabled") {
-        if (Select-String -Quiet -SimpleMatch "pane-smoke-$never" $history) { throw "pane-smoke-$never was kept" }
-    }
-} finally {
-    [PaneClip]::Restore($saved)
+$process = Start-Pane "stderr-clipboard.log" @("--install", "target/guests/packages/clipboard-history")
+Send "{ENTER}"   # Install; Clipboard History is selected
+Wait-For $registry "clipboard-history" $true; Start-Sleep -Seconds 1
+Copy-Text "pane-smoke-before" $null   # while history is off
+Send "{ENTER}"; Start-Sleep -Seconds 3   # open Clipboard History
+Capture "280-clipboard-off.png"
+Check "280-clipboard-off.png" "aab4c0"   # "Off · Pane keeps nothing you copy until you turn it on ..."
+Send "{ENTER}"   # Turn on clipboard history
+Wait-For $history '"capture": "on"' $true; Start-Sleep -Seconds 1
+Capture "281-clipboard-on.png"
+Check "281-clipboard-on.png" "9fd8a8"   # "Clipboard history is on"
+Copy-Text "pane-smoke-kept" $null
+Copy-Text "pane-smoke-secret" "ExcludeClipboardContentFromMonitorProcessing"
+Copy-Text "pane-smoke-no-history" "CanIncludeInClipboardHistory"
+Copy-Text "pane-smoke-no-cloud" "CanUploadToCloudClipboard"
+Copy-Text "pane-smoke-second" $null
+Wait-For $history "pane-smoke-second" $true
+if (((Kept-Texts) -join ",") -ne "pane-smoke-second,pane-smoke-kept") { throw "kept: $(Kept-Texts)" }
+Open-History
+Capture "282-clipboard-kept.png"
+Check "282-clipboard-kept.png" "aab4c0"   # the two kept items, newest first
+Send "{ENTER}"   # Pause clipboard history
+Wait-For $history '"capture": "paused"' $true
+Copy-Text "pane-smoke-paused" $null
+Not-Kept "pane-smoke-paused"
+Open-History
+Send "{ENTER}"   # Resume clipboard history
+Wait-For $history '"capture": "on"' $true
+Copy-Text "pane-smoke-resumed" $null
+Wait-For $history "pane-smoke-resumed" $true
+Open-History
+Send "{DOWN 5}{ENTER}"; Start-Sleep -Seconds 2   # the second kept item, pane-smoke-second, after Pause, Turn off, Exclude, Clear and the first
+Capture "283-clipboard-copied.png"
+Check "283-clipboard-copied.png" "9fd8a8"   # "Copied to the clipboard"
+if ([PaneClip]::GetText() -ne "pane-smoke-second") { throw "Enter did not copy the item" }
+Start-Sleep -Seconds 1
+if ((Kept-Texts)[0] -ne "pane-smoke-second") { throw "the copied item did not move to the front" }
+Open-Manage
+Send "{ENTER}"   # disable Clipboard History, the first row
+Wait-For $registry '"disabled": true' $true; Start-Sleep -Seconds 1
+Capture "284-clipboard-disabled.png"
+Check "284-clipboard-disabled.png" "9fd8a8"   # "Disabled Clipboard History"
+Copy-Text "pane-smoke-disabled" $null
+Not-Kept "pane-smoke-disabled"
+Stop-Pane $process
+$process = Start-Pane "stderr-clipboard-disabled.log"
+Copy-Text "pane-smoke-restarted-disabled" $null
+Not-Kept "pane-smoke-restarted-disabled"
+Open-Manage
+Send "{ENTER}"   # enable Clipboard History
+Wait-For $registry '"disabled": true' $false; Start-Sleep -Seconds 1
+Copy-Text "pane-smoke-enabled" $null
+Wait-For $history "pane-smoke-enabled" $true
+Stop-Pane $process
+$process = Start-Pane "stderr-clipboard-restarted.log"
+Copy-Text "pane-smoke-after-restart" $null
+Wait-For $history "pane-smoke-after-restart" $true
+Open-History
+Capture "285-clipboard-after-restart.png"
+Check "285-clipboard-after-restart.png" "aab4c0"   # kept again after the restart
+$shots = "280-clipboard-off", "281-clipboard-on", "282-clipboard-kept", "283-clipboard-copied", "284-clipboard-disabled", "285-clipboard-after-restart" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: clipboard history changed nothing" }
+Stop-Pane $process
+$expected = "pane-smoke-after-restart,pane-smoke-enabled,pane-smoke-second,pane-smoke-resumed,pane-smoke-kept"
+if (((Kept-Texts) -join ",") -ne $expected) { throw "kept: $(Kept-Texts)" }
+foreach ($never in "before", "secret", "no-history", "no-cloud", "paused", "disabled", "restarted-disabled") {
+    if (Select-String -Quiet -SimpleMatch "pane-smoke-$never" $history) { throw "pane-smoke-$never was kept" }
 }
 Write-Output "screenshots in $OutDir"

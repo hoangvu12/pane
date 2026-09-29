@@ -1433,86 +1433,70 @@ impl applications::Host for GuestState {
 }
 
 impl GuestState {
-    /// The data of the guest's package, which keeps its clipboard history.
-    fn history(&self) -> Result<&PackageData, String> {
-        self.data.as_ref().ok_or_else(|| {
-            "only installed packages keep clipboard history; this command is built into Pane".into()
-        })
-    }
-
-    /// Where the guest's package keeps clipboard history, and its data; or
-    /// why it cannot.
-    fn clipboard(&self) -> Result<(Arc<Capture>, &PackageData), String> {
-        let data = self.history()?;
+    /// What the guest's package does with its clipboard history.
+    fn clipboard(&self) -> Result<clipboard::Commands<'_>, String> {
+        let data = self.data.as_ref().ok_or(
+            "only installed packages keep clipboard history; this command is built into Pane",
+        )?;
         let capture = lock(&self.clipboard)
             .as_ref()
-            .and_then(std::sync::Weak::upgrade)
-            .ok_or_else(|| clipboard::none().unavailable().unwrap_or_default())?;
-        Ok((capture, data))
+            .and_then(std::sync::Weak::upgrade);
+        Ok(clipboard::Commands { data, capture })
     }
 }
 
-fn to_capture(state: CaptureState) -> clipboard_history::Capture {
-    match state {
-        CaptureState::Off => clipboard_history::Capture::Off,
-        CaptureState::On => clipboard_history::Capture::On,
-        CaptureState::Paused => clipboard_history::Capture::Paused,
+impl From<CaptureState> for clipboard_history::Capture {
+    fn from(state: CaptureState) -> Self {
+        match state {
+            CaptureState::Off => clipboard_history::Capture::Off,
+            CaptureState::On => clipboard_history::Capture::On,
+            CaptureState::Paused => clipboard_history::Capture::Paused,
+        }
     }
+}
+
+impl From<clipboard_history::Capture> for CaptureState {
+    fn from(capture: clipboard_history::Capture) -> Self {
+        match capture {
+            clipboard_history::Capture::Off => CaptureState::Off,
+            clipboard_history::Capture::On => CaptureState::On,
+            clipboard_history::Capture::Paused => CaptureState::Paused,
+        }
+    }
+}
+
+/// A count for a guest, which cannot exceed `u32` in practice.
+fn count(count: usize) -> u32 {
+    u32::try_from(count).unwrap_or(u32::MAX)
 }
 
 impl clipboard_history::Host for GuestState {
     fn status(&mut self) -> Result<clipboard_history::HistoryStatus, String> {
-        let data = self.history()?;
-        let problem = match self.clipboard() {
-            Ok((capture, _)) => capture.problem(),
-            Err(problem) => Some(problem),
-        };
-        let (state, excluded, items) = data.clipboard(|values| {
-            Ok((
-                clipboard::capture_state(values),
-                clipboard::excluded(values),
-                clipboard::count(values),
-            ))
-        })?;
+        let status = self.clipboard()?.status()?;
         Ok(clipboard_history::HistoryStatus {
-            capture: to_capture(state),
-            problem,
-            excluded,
-            items: u32::try_from(items).unwrap_or(u32::MAX),
+            capture: status.capture.into(),
+            problem: status.problem,
+            excluded: status.excluded.into_iter().map(String::from).collect(),
+            items: count(status.items),
         })
     }
 
     fn set_capture(&mut self, wanted: clipboard_history::Capture) -> Result<(), String> {
-        let (capture, data) = self.clipboard()?;
-        let state = match wanted {
-            clipboard_history::Capture::Off => CaptureState::Off,
-            clipboard_history::Capture::On => CaptureState::On,
-            clipboard_history::Capture::Paused => CaptureState::Paused,
-        };
-        if state == CaptureState::On
-            && let Some(reason) = capture.system().unavailable()
-        {
-            return Err(reason);
-        }
-        data.clipboard(|values| {
-            clipboard::set_capture_state(values, state);
-            Ok(())
-        })
+        self.clipboard()?.set_capture(wanted.into())
     }
 
     fn set_excluded(&mut self, programs: Vec<String>) -> Result<(), String> {
-        let data = self.history()?;
-        data.clipboard(|values| clipboard::set_excluded(values, &programs))
+        self.clipboard()?.set_excluded(&programs)
     }
 
     fn entries(&mut self) -> Result<Vec<clipboard_history::Entry>, String> {
-        let data = self.history()?;
         let now = clipboard::now();
-        let items = data.clipboard(|values| Ok(clipboard::items(values)))?;
-        Ok(items
+        Ok(self
+            .clipboard()?
+            .items()?
             .into_iter()
             .map(|item| clipboard_history::Entry {
-                id: item.id,
+                id: item.id.to_string(),
                 text: item.text,
                 copied_at: item.copied_at,
                 age_seconds: now.saturating_sub(item.copied_at) / 1000,
@@ -1522,19 +1506,11 @@ impl clipboard_history::Host for GuestState {
     }
 
     fn copy(&mut self, id: String) -> Result<(), String> {
-        let (capture, data) = self.clipboard()?;
-        let items = data.clipboard(|values| Ok(clipboard::items(values)))?;
-        let item = items
-            .into_iter()
-            .find(|item| item.id == id)
-            .ok_or("that item is no longer kept")?;
-        capture.system().write_text(&item.text)
+        self.clipboard()?.copy(&id)
     }
 
     fn clear(&mut self) -> Result<u32, String> {
-        let data = self.history()?;
-        let cleared = data.clipboard(|values| Ok(clipboard::clear(values)))?;
-        Ok(u32::try_from(cleared).unwrap_or(u32::MAX))
+        Ok(count(self.clipboard()?.clear()?))
     }
 }
 
