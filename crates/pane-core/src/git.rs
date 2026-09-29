@@ -1496,7 +1496,8 @@ fn apply_delta(base: &[u8], delta: &[u8], most: u64) -> Result<Vec<u8>, String> 
     while at < delta.len() {
         let op = delta[at];
         at += 1;
-        if op & 0x80 != 0 {
+        // What the instruction adds: a part of the base, or its own bytes.
+        let piece = if op & 0x80 != 0 {
             let mut offset = 0usize;
             let mut size = 0usize;
             for bit in 0..4 {
@@ -1514,20 +1515,21 @@ fn apply_delta(base: &[u8], delta: &[u8], most: u64) -> Result<Vec<u8>, String> 
             if size == 0 {
                 size = 0x10000;
             }
-            let copied = base
-                .get(offset..offset.checked_add(size).ok_or_else(damaged)?)
-                .ok_or_else(damaged)?;
-            out.extend_from_slice(copied);
+            base.get(offset..offset.checked_add(size).ok_or_else(damaged)?)
+                .ok_or_else(damaged)?
         } else if op != 0 {
             let inserted = delta.get(at..at + usize::from(op)).ok_or_else(damaged)?;
-            out.extend_from_slice(inserted);
             at += usize::from(op);
+            inserted
         } else {
             return Err(damaged());
-        }
-        if out.len() as u64 > target {
+        };
+        // Before it is added: a copy may be 16 MiB past what the budget
+        // counted for the object.
+        if (out.len() + piece.len()) as u64 > target {
             return Err(damaged());
         }
+        out.extend_from_slice(piece);
     }
     if out.len() as u64 != target {
         return Err(damaged());
@@ -2515,6 +2517,18 @@ mod tests {
             crate::peak_memory::peak_while(|| check_out(&objects, &id, &out, Limits::default()));
         let (subject, _) = result.unwrap();
         assert_eq!(subject, format!("{}…", "\u{fffd}".repeat(200)));
+        assert!(peak < 1 << 20, "{peak} bytes held");
+    }
+
+    #[test]
+    fn a_delta_making_more_than_it_says_is_refused_before_it_is_held() {
+        let base = vec![0u8; 2 << 20];
+        // Says it makes 1 KiB of the 2 MiB base, then copies all of it.
+        let mut delta = vec![0x80, 0x80, 0x80, 0x01, 0x80, 0x08];
+        delta.extend([0x80 | 0x10 | 0x20 | 0x40, 0x00, 0x00, 0x20]);
+        let (result, peak) =
+            crate::peak_memory::peak_while(|| apply_delta(&base, &delta, MAX_UNPACKED));
+        assert_eq!(result.unwrap_err(), "it has a damaged delta");
         assert!(peak < 1 << 20, "{peak} bytes held");
     }
 
