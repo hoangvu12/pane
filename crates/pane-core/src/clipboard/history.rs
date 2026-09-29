@@ -613,9 +613,7 @@ impl Wake {
         let target = state.pokes;
         let (state, _) = self
             .condvar
-            .wait_timeout_while(state, limit, |state| {
-                !state.stopped && state.swept < target
-            })
+            .wait_timeout_while(state, limit, |state| !state.stopped && state.swept < target)
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         state.swept >= target
     }
