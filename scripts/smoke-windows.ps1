@@ -1270,7 +1270,14 @@ function Capture-Until($name, $color, $seconds) {
     $deadline = (Get-Date).AddSeconds($seconds)
     while ($true) {
         Capture $name
-        python "$PSScriptRoot/check_screenshot.py" (Join-Path $OutDir $name) $color 20 *> $null
+        # Only its exit code matters. Windows PowerShell 5.1 turns a native
+        # program's redirected standard error into errors, which "Stop" would
+        # throw at the first failed check, so it runs with "Continue" in a
+        # scope of its own.
+        & {
+            $ErrorActionPreference = "Continue"
+            python "$PSScriptRoot/check_screenshot.py" (Join-Path $OutDir $name) $color 20 *> $null
+        }
         if ($LASTEXITCODE -eq 0) { return }
         if ((Get-Date) -gt $deadline) { Check $name $color; return }
         Start-Sleep -Milliseconds 500
