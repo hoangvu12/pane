@@ -276,6 +276,13 @@ impl LauncherWindow {
         self.show_until_done(pending, window, cx);
     }
 
+    /// Fetches and shows the revision of the Git repository `spec` names,
+    /// as [`LauncherWindow::preview_package`] shows a folder.
+    pub fn preview_git(&mut self, spec: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let pending = self.launcher.preview_git(spec);
+        self.show_until_done(pending, window, cx);
+    }
+
     /// Asks for the folder to grant the package with `identity` with the
     /// platform's folder picker, then has Pane check and record it.
     /// Cancelling changes nothing. A debug build run by the native smokes
@@ -597,10 +604,13 @@ impl Render for LauncherWindow {
             Screen::BuildDetails { .. } => ("", "Enter build again · Esc back"),
         };
         // A confirmation, and a package preview offering Install or Update
-        // (an npm package's has several more lines), keep their choices in
+        // (an npm or Git package's has several more lines), keep their choices in
         // view.
-        let confirm = matches!(view.screen, Screen::Confirm { .. })
-            || (matches!(view.screen, Screen::Package { .. }) && !view.rows.is_empty());
+        let preview = matches!(view.screen, Screen::Package { .. }) && !view.rows.is_empty();
+        let confirm = matches!(view.screen, Screen::Confirm { .. }) || preview;
+        // A preview has one or two rows (Install or Update) and more lines
+        // to read, which may take more of the window than a confirmation's.
+        let details_share = if preview { 0.62 } else { 0.4 };
         let details: Vec<_> = view
             .details()
             .iter()
@@ -704,8 +714,8 @@ impl Render for LauncherWindow {
             .text_color(rgb(0xf1f3f5))
             .child(div().text_xl().child(view.title.clone()))
             // A confirmation's or preview's long details scroll within 40%
-            // of the window, leaving the rest to its choices, which stay
-            // visible.
+            // (a preview's 62%) of the window, leaving the rest to its
+            // choices, which stay visible.
             .when(!details.is_empty(), |root| {
                 root.child(
                     div()
@@ -716,7 +726,7 @@ impl Render for LauncherWindow {
                         .when(confirm, |details| {
                             details
                                 .flex_shrink(1.)
-                                .max_h(relative(0.4))
+                                .max_h(relative(details_share))
                                 .overflow_y_scroll()
                         })
                         .children(details),

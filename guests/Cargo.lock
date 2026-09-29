@@ -159,6 +159,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "git-greeter"
+version = "0.1.0"
+dependencies = [
+ "pane-guest",
+ "serde_json",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

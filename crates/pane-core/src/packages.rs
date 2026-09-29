@@ -18,6 +18,7 @@ use std::path::{Component as PathPart, Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::atomic::{Readers, write_atomically};
+use crate::git::{GitOrigin, GitRevision, GitSpec, InstalledGit, Repository};
 use crate::helpers::runner;
 use crate::launcher::CommandRegistration;
 use crate::npm::{Fetched, NpmOrigin, NpmPackage, NpmSpec};
@@ -45,13 +46,14 @@ const PACKAGES_DIR: &str = "packages";
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PackageIdentity(Source);
 
-/// A package's source, as `installed.json` records it: `"local": "<folder>"`
-/// or `"npm": "<package name>"`.
+/// A package's source, as `installed.json` records it: `"local": "<folder>"`,
+/// `"npm": "<package name>"` or `"git": "<host>/<repository path>"`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(untagged)]
 enum Source {
     Local { local: String },
     Npm { npm: String },
+    Git { git: String },
 }
 
 impl PackageIdentity {
@@ -87,7 +89,30 @@ impl PackageIdentity {
         match &self.0 {
             Source::Local { local } => format!("local:{local}"),
             Source::Npm { npm } => format!("npm:{npm}"),
+            Source::Git { git } => format!("git:{git}"),
         }
+    }
+
+    /// The identity of the Git repository `repository`, whatever the
+    /// revision: `git:` and its host and path (see [`GitSpec::parse`]).
+    pub fn git(repository: &Repository) -> PackageIdentity {
+        PackageIdentity(Source::Git {
+            git: repository.name().to_owned(),
+        })
+    }
+
+    /// The host and path of a Git package's repository.
+    pub fn git_repository(&self) -> Option<&str> {
+        match &self.0 {
+            Source::Git { git } => Some(git),
+            _ => None,
+        }
+    }
+
+    /// Whether the package was downloaded (from npm or Git) rather than
+    /// installed from a folder on this computer.
+    pub(crate) fn is_published(&self) -> bool {
+        !matches!(self.0, Source::Local { .. })
     }
 
     /// The identity of the npm package `name` (checked by
@@ -102,7 +127,7 @@ impl PackageIdentity {
     pub fn npm_name(&self) -> Option<&str> {
         match &self.0 {
             Source::Npm { npm } => Some(npm),
-            Source::Local { .. } => None,
+            Source::Local { .. } | Source::Git { .. } => None,
         }
     }
 
@@ -110,7 +135,7 @@ impl PackageIdentity {
     pub fn local_folder(&self) -> Option<&Path> {
         match &self.0 {
             Source::Local { local } => Some(Path::new(local)),
-            Source::Npm { .. } => None,
+            Source::Npm { .. } | Source::Git { .. } => None,
         }
     }
 
@@ -128,18 +153,20 @@ impl PackageIdentity {
     /// Fails, with the path, only for a path that cannot be an identity (not
     /// absolute or not Unicode).
     ///
-    /// An `npm:` source is the npm package it names, whatever its version.
-    /// A package from npm cannot name a `local:` folder: its folder is on its
-    /// author's computer, not the user's.
+    /// An `npm:` source is the npm package it names, whatever its version,
+    /// and a `git:` source the repository it names, whatever its revision.
+    /// A package from npm or Git cannot name a `local:` folder: its folder is
+    /// on its author's computer, not the user's.
     pub(crate) fn dependency(&self, source: &str) -> Result<PackageIdentity, PathBuf> {
         let path = match SourceSpec::parse(source) {
             Ok(SourceSpec::Npm(spec)) => return Ok(PackageIdentity::npm(&spec.name)),
+            Ok(SourceSpec::Git(spec)) => return Ok(PackageIdentity::git(&spec.repository)),
             Ok(SourceSpec::Local(path)) => path,
             Err(_) => return Err(PathBuf::from(source)),
         };
         let folder = match &self.0 {
             Source::Local { local } => Path::new(local).join(&path),
-            Source::Npm { .. } => return Err(PathBuf::from(path)),
+            Source::Npm { .. } | Source::Git { .. } => return Err(PathBuf::from(path)),
         };
         if let Ok(identity) = PackageIdentity::local(&folder) {
             return Ok(identity);
@@ -208,7 +235,17 @@ impl fmt::Display for PackageIdentity {
         match &self.0 {
             Source::Local { local } => write!(f, "local folder {local}"),
             Source::Npm { npm } => write!(f, "npm package {npm}"),
+            Source::Git { git } => write!(f, "Git repository {git}"),
         }
+    }
+}
+
+/// `text` with its first letter in uppercase.
+pub(crate) fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
     }
 }
 
@@ -743,25 +780,30 @@ impl Manifest {
 
 /// A package source as it is written: in a manifest's `dependencies`, or
 /// by a caller naming a package by its identity. It is `local:` and a
-/// folder path, or `npm:` and a package name with an optional exact
-/// version. This is the one place such text is read; a Git source (Q10)
-/// would be another kind.
+/// folder path, `npm:` and a package name with an optional exact version,
+/// or `git:` and a repository with an optional reference. This is the one
+/// place such text is read.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SourceSpec {
     /// `local:<path>`: the path as written, not yet checked or resolved.
     Local(String),
     /// `npm:<name>[@<version>]`.
     Npm(NpmSpec),
+    /// `git:<repository>[@<reference>]`.
+    Git(GitSpec),
 }
 
 /// Why text is not a [`SourceSpec`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SourceError {
-    /// It starts with neither `local:` nor `npm:`.
+    /// It starts with none of `local:`, `npm:` and `git:`.
     UnknownKind,
     /// It is `npm:` and not a package name with an optional exact version,
     /// for this reason.
     Npm(String),
+    /// It is `git:` and not a repository with an optional reference, for
+    /// this reason.
+    Git(String),
 }
 
 impl SourceSpec {
@@ -771,6 +813,9 @@ impl SourceSpec {
             Some(("npm", spec)) => NpmSpec::parse(spec)
                 .map(SourceSpec::Npm)
                 .map_err(SourceError::Npm),
+            Some(("git", spec)) => GitSpec::parse(spec)
+                .map(SourceSpec::Git)
+                .map_err(SourceError::Git),
             _ => Err(SourceError::UnknownKind),
         }
     }
@@ -788,13 +833,14 @@ fn check_source(source: &str, id: &str) -> Result<(), PackageError> {
         )))
     };
     let path = match SourceSpec::parse(source) {
-        Ok(SourceSpec::Npm(_)) => return Ok(()),
+        Ok(SourceSpec::Npm(_) | SourceSpec::Git(_)) => return Ok(()),
         Ok(SourceSpec::Local(path)) => path,
         Err(SourceError::Npm(why)) => return invalid(&format!("is not an npm package: {why}")),
+        Err(SourceError::Git(why)) => return invalid(&format!("is not a Git repository: {why}")),
         Err(SourceError::UnknownKind) => {
             return invalid(
-                "must be `local:` followed by a folder path or `npm:` followed by a package \
-                 name; other sources are not supported yet",
+                "must be `local:` followed by a folder path, `npm:` followed by a package name \
+                 or `git:` followed by a repository; other sources are not supported yet",
             );
         }
     };
@@ -965,6 +1011,9 @@ pub enum PackageError {
     /// A package from npm cannot be downloaded, unpacked or installed; the
     /// message says why.
     Npm(String),
+    /// A package from Git cannot be fetched, written out or installed; the
+    /// message says why.
+    Git(String),
 }
 
 impl fmt::Display for PackageError {
@@ -1023,7 +1072,7 @@ impl fmt::Display for PackageError {
             PackageError::Dependencies(problems) => {
                 write!(f, "Nothing was installed: {}", problems.join("; "))
             }
-            PackageError::Npm(message) => f.write_str(message),
+            PackageError::Npm(message) | PackageError::Git(message) => f.write_str(message),
         }
     }
 }
@@ -1042,9 +1091,11 @@ pub(crate) struct SourcePackage {
     /// Where a package from npm was downloaded from; `None` for a local
     /// folder.
     pub npm: Option<NpmOrigin>,
-    /// For a package from npm, its download, removed from the downloads
-    /// folder once the last copy of this package is dropped.
-    _download: Option<std::sync::Arc<crate::npm::Download>>,
+    /// Where a package from Git was fetched from; `None` otherwise.
+    pub git: Option<GitOrigin>,
+    /// For a package from npm or Git, its download, removed from the
+    /// downloads folder once the last copy of this package is dropped.
+    _download: Option<std::sync::Arc<crate::downloads::Download>>,
     /// Whether a component of it imports `wasi:http` (it can make web
     /// requests), as checking its components found; `false` until they are
     /// checked.
@@ -1097,9 +1148,79 @@ impl SourcePackage {
             manifest,
             manifest_text,
             npm: Some(origin),
+            git: None,
             _download: Some(std::sync::Arc::new(download)),
             network: false,
         })
+    }
+
+    /// Reads the revision of a Git package that Pane fetched and wrote out,
+    /// as the package with its Git identity. Explains, rather than as for a
+    /// folder, a revision without `pane.json` at the repository's root and
+    /// one without its built components (a source-only revision), and a
+    /// component stored with Git LFS.
+    pub(crate) fn read_git(fetched: crate::git::Fetched) -> Result<SourcePackage, PackageError> {
+        let crate::git::Fetched { download, origin } = fetched;
+        let folder = download.folder().to_path_buf();
+        let revision = format!(
+            "{} (commit {}) of the Git repository {}",
+            origin.revision.describe(),
+            origin.revision.short_commit(),
+            origin.repository.name()
+        );
+        let revision = capitalized(&revision);
+        let (manifest, manifest_text) = match Manifest::read_text(&folder) {
+            Ok(read) => read,
+            Err(PackageError::NoManifest(_)) => {
+                return Err(PackageError::Git(format!(
+                    "{revision} is not a Pane extension: it has no {MANIFEST_FILE} at the \
+                     repository's root. Pane installs a repository whose root holds a \
+                     {MANIFEST_FILE} and the built WebAssembly components it names"
+                )));
+            }
+            Err(PackageError::MissingComponent { command, component }) => {
+                return Err(PackageError::Git(format!(
+                    "{revision} holds only the source of \"{command}\": its built component {} \
+                     is not in it. Pane does not build packages from Git or run anything in a \
+                     repository; install a release revision whose commit includes the built \
+                     components (its author's release tag or branch), or build it yourself and \
+                     install the folder",
+                    component.display()
+                )));
+            }
+            Err(error) => return Err(error),
+        };
+        for (_, component) in manifest.components() {
+            let path = component.to_string_lossy().replace('\\', "/");
+            if origin.lfs_pointers.contains(&path) {
+                return Err(PackageError::Git(format!(
+                    "{revision} stores its component {path} with Git LFS, which Pane does not \
+                     fetch: its author must commit the built component itself in a release \
+                     revision"
+                )));
+            }
+        }
+        Ok(SourcePackage {
+            identity: PackageIdentity::git(&origin.repository),
+            folder,
+            manifest,
+            manifest_text,
+            npm: None,
+            git: Some(origin),
+            _download: Some(std::sync::Arc::new(download)),
+            network: false,
+        })
+    }
+
+    /// What identifies the download this package was read from, when it
+    /// was downloaded: its npm tarball's integrity or its Git commit. A new
+    /// download with the same `pane.json` is another plan.
+    pub(crate) fn fingerprint(&self) -> Option<String> {
+        match (&self.npm, &self.git) {
+            (Some(npm), _) => Some(npm.integrity.clone()),
+            (None, Some(git)) => Some(git.revision.commit.clone()),
+            (None, None) => None,
+        }
     }
 
     /// Reads the package staged in `folder`, such as a development build,
@@ -1115,6 +1236,7 @@ impl SourcePackage {
             manifest,
             manifest_text,
             npm: None,
+            git: None,
             _download: None,
             network: false,
         })
@@ -1133,6 +1255,7 @@ impl SourcePackage {
             manifest,
             manifest_text,
             npm: None,
+            git: None,
             _download: None,
             network: false,
         })
@@ -1158,6 +1281,9 @@ pub struct InstalledPackage {
     /// For a package from npm, the npm version installed and whether it is
     /// pinned to it.
     pub npm: Option<NpmPackage>,
+    /// For a package from Git, the address it was fetched from and the
+    /// revision installed.
+    pub git: Option<InstalledGit>,
     /// Whether a component of it imports `wasi:http`, so its code can make
     /// web requests, as found when it was installed, updated or reloaded.
     pub uses_network: bool,
@@ -1177,6 +1303,7 @@ impl InstalledPackage {
         uses_network: bool,
         recorded: &[ResolvedJson],
         npm: Option<&NpmRecordJson>,
+        git: Option<&GitRecordJson>,
     ) -> InstalledPackage {
         let manifest = Manifest::read_installed(&location);
         let dependencies = match &manifest {
@@ -1194,12 +1321,14 @@ impl InstalledPackage {
             Err(_) => Vec::new(),
         };
         let npm = npm.and_then(|npm| npm.package(&identity));
+        let git = git.and_then(|git| git.installed(&identity));
         InstalledPackage {
             manifest,
             identity,
             location,
             enabled,
             npm,
+            git,
             uses_network,
             dependencies,
         }
@@ -1219,10 +1348,15 @@ impl InstalledPackage {
     pub fn title(&self) -> String {
         match &self.manifest {
             Ok(manifest) => manifest.title.clone(),
-            Err(_) => match (self.identity.local_folder(), self.identity.npm_name()) {
-                (Some(folder), _) => folder_name(folder),
-                (None, Some(name)) => name.to_owned(),
-                (None, None) => self.identity.to_string(),
+            Err(_) => match (
+                self.identity.local_folder(),
+                self.identity.npm_name(),
+                self.identity.git_repository(),
+            ) {
+                (Some(folder), ..) => folder_name(folder),
+                (None, Some(name), _) => name.to_owned(),
+                (None, None, Some(repository)) => repository.to_owned(),
+                (None, None, None) => self.identity.to_string(),
             },
         }
     }
@@ -1389,6 +1523,10 @@ struct RecordJson {
     /// (or the dependency that installed it) pinned it to that version.
     #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
     npm: Option<NpmRecordJson>,
+    /// For a package from Git, the address fetched and the revision
+    /// installed.
+    #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
+    git: Option<GitRecordJson>,
     /// The managed folder under `packages/`.
     dir: String,
     /// Set when the user disabled the package; absent means enabled.
@@ -1435,6 +1573,49 @@ impl NpmRecordJson {
             name: identity.npm_name()?.to_owned(),
             version: self.version.clone(),
             pinned: self.pinned,
+        })
+    }
+}
+
+/// An installed [`InstalledGit`] as its record writes it, beside the
+/// repository its source records: `"git": "github.com/o/r", "gitUrl":
+/// "https://github.com/o/r.git", "gitRef": "refs/tags/v1.0.0",
+/// "gitCommit": "<id>", "pinned": true`. `gitRef` is absent for the default
+/// branch and for a commit named by its id; `pinned` is set for a tag and a
+/// commit.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct GitRecordJson {
+    #[serde(rename = "gitUrl")]
+    url: String,
+    #[serde(rename = "gitRef", default, skip_serializing_if = "Option::is_none")]
+    reference: Option<String>,
+    #[serde(rename = "gitCommit")]
+    commit: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pinned: bool,
+}
+
+impl GitRecordJson {
+    fn of(origin: &GitOrigin) -> GitRecordJson {
+        GitRecordJson {
+            url: origin.repository.url().to_owned(),
+            reference: origin.revision.ref_name(),
+            commit: origin.revision.commit.clone(),
+            pinned: origin.revision.pinned(),
+        }
+    }
+
+    /// The Git copy this records for the package with `identity`, a Git
+    /// one.
+    fn installed(&self, identity: &PackageIdentity) -> Option<InstalledGit> {
+        identity.git_repository()?;
+        Some(InstalledGit {
+            url: self.url.clone(),
+            revision: GitRevision::from_record(
+                self.reference.as_deref(),
+                &self.commit,
+                self.pinned,
+            ),
         })
     }
 }
@@ -1597,6 +1778,7 @@ impl Store {
                     record.network,
                     &record.dependencies,
                     record.npm.as_ref(),
+                    record.git.as_ref(),
                 )
             })
             .collect()
@@ -1933,6 +2115,7 @@ impl Store {
             .npm
             .as_ref()
             .map(|origin| NpmRecordJson::of(&origin.package));
+        let git = package.git.as_ref().map(GitRecordJson::of);
         // An update keeps the record, so a disabled package stays disabled.
         let enabled = match updated.packages.iter_mut().find(|r| &r.source == local) {
             Some(record) => {
@@ -1941,6 +2124,7 @@ impl Store {
                 record.paused = None;
                 record.dependencies = dependencies.clone();
                 record.npm = npm.clone();
+                record.git = git.clone();
                 record.network = package.network;
                 !record.disabled
             }
@@ -1951,6 +2135,7 @@ impl Store {
                 updated.packages.push(RecordJson {
                     source: local.clone(),
                     npm: npm.clone(),
+                    git: git.clone(),
                     dir,
                     disabled: false,
                     paused: None,
@@ -1987,6 +2172,7 @@ impl Store {
             package.network,
             &dependencies,
             npm.as_ref(),
+            git.as_ref(),
         ))
     }
 }

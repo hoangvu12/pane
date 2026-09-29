@@ -76,7 +76,7 @@ use pausing::{Pauses, Recorder};
 const INSTALL_FROM_FOLDER: &str = "pane.install-from-folder";
 
 /// The folder beside the managed copies where packages downloaded from npm
-/// are unpacked until they are installed.
+/// or Git are written until they are installed.
 const DOWNLOADS_DIR: &str = "downloads";
 
 /// The id of the root row that installs a package from npm.
@@ -85,6 +85,13 @@ const INSTALL_FROM_NPM: &str = "pane.install-from-npm";
 /// The id of the npm package field of Pane's own form that asks which npm
 /// package to install.
 const NPM_PACKAGE_FIELD: &str = "package";
+
+/// The id of the root row that installs a package from a Git repository.
+const INSTALL_FROM_GIT: &str = "pane.install-from-git";
+
+/// The id of the repository field of Pane's own form that asks which Git
+/// repository to install from.
+const GIT_REPOSITORY_FIELD: &str = "repository";
 
 /// The id of the root row that lists installed packages to enable or
 /// disable them.
@@ -707,6 +714,8 @@ enum FormPurpose {
     Alias(String),
     /// Previews the npm package it names (Pane's own).
     Npm,
+    /// Previews the Git repository it names (Pane's own).
+    Git,
 }
 
 /// What the launcher keeps about the open custom view besides its snapshot.
@@ -807,6 +816,8 @@ enum Entry {
     InstallFromFolder,
     /// Ask which npm package to install (root).
     AskNpm,
+    /// Ask which Git repository to install from (root).
+    AskGit,
     /// Run the open command's item with this id.
     Run(String),
     /// Open this form of the open command's item with this id.
@@ -931,7 +942,7 @@ impl Launcher {
     ) -> Self {
         let store = Arc::new(Mutex::new(Store::open(packages_dir.clone())));
         // Only an install in progress needs what it downloaded.
-        crate::npm::remove_abandoned_downloads(
+        crate::downloads::remove_abandoned(
             &packages_dir.join(DOWNLOADS_DIR),
             std::time::SystemTime::now(),
         );
@@ -1807,6 +1818,10 @@ impl Launcher {
                 self.show_npm_form(&mut state);
                 None
             }
+            Some(Entry::AskGit) => {
+                self.show_git_form(&mut state);
+                None
+            }
             Some(Entry::InstallFromFolder | Entry::ChooseFolder(_)) | None => None,
             Some(entry) => {
                 state.view.status = Status::Running;
@@ -1885,6 +1900,7 @@ impl Launcher {
                     | Entry::Unavailable(_)
                     | Entry::InstallFromFolder
                     | Entry::AskNpm
+                    | Entry::AskGit
                     | Entry::ChooseFolder(_)
                     | Entry::StopSharingFolder(_)
                     | Entry::Install(..)
@@ -1934,24 +1950,41 @@ impl Launcher {
     /// would install. Without a version it is the latest; with one,
     /// installing pins the package to it. Nothing in the package runs.
     pub fn preview_npm(&self, spec: &str) -> impl Future<Output = ()> + Send + 'static {
+        let asked = spec.trim().to_owned();
         let request = crate::npm::NpmSpec::parse(spec)
             .map(install::Request::Npm)
-            .map_err(|why| (spec.trim().to_owned(), why));
+            .map_err(|why| (format!("npm package: {asked}"), asked, why));
+        self.preview(request)
+    }
+
+    /// Fetches the revision of the Git repository `spec` names (an address
+    /// such as `https://github.com/owner/repo`, `github.com/owner/repo` or
+    /// `git@github.com:owner/repo`, with an optional `@<branch, tag or
+    /// commit>`) and shows it as [`Launcher::preview_package`] shows a
+    /// folder, with the revision it would install. Without a reference it is
+    /// the default branch, tracked; a branch is tracked, a tag or a commit
+    /// pinned. For an installed repository named without one, the installed
+    /// reference is kept. Nothing in the repository runs.
+    pub fn preview_git(&self, spec: &str) -> impl Future<Output = ()> + Send + 'static {
+        let asked = spec.trim().to_owned();
+        let request = crate::git::GitSpec::parse(spec)
+            .map(install::Request::Git)
+            .map_err(|why| (format!("Git repository: {asked}"), asked, why));
         self.preview(request)
     }
 
     /// Previews the package `request` names, or explains why the text asked
-    /// for (and the reason) names none.
+    /// for (its detail line, the text and the reason) names none.
     fn preview(
         &self,
-        request: Result<install::Request, (String, String)>,
+        request: Result<install::Request, (String, String, String)>,
     ) -> impl Future<Output = ()> + Send + 'static {
         let epoch = self.start_running();
         let launcher = self.clone();
         async move {
             let request = match request {
                 Ok(request) => request,
-                Err((asked, why)) => {
+                Err((detail, asked, why)) => {
                     let mut state = launcher.lock();
                     if state.screen_epoch == epoch {
                         launcher.leave_command(&mut state);
@@ -1960,7 +1993,7 @@ impl Launcher {
                             status: Status::Error(why),
                             ..LauncherView::new(
                                 Screen::Package {
-                                    details: vec![format!("npm package: {asked}")],
+                                    details: vec![detail],
                                 },
                                 format!("Cannot install {asked}"),
                             )
@@ -1984,7 +2017,8 @@ impl Launcher {
 
     /// `request`, or for an npm package without a version that is installed
     /// pinned to one, that version: updating it keeps its pin, which only
-    /// naming another version changes.
+    /// naming another version changes. Likewise a Git repository without a
+    /// reference keeps the branch, tag or commit it is installed from.
     fn keeping_pin(&self, request: install::Request) -> install::Request {
         match request {
             install::Request::Npm(spec) if spec.version.is_none() => {
@@ -1996,6 +2030,19 @@ impl Launcher {
                     .map(|npm| npm.version.clone());
                 install::Request::Npm(crate::npm::NpmSpec {
                     version: pinned,
+                    ..spec
+                })
+            }
+            // A repository named without a reference keeps the one it is
+            // installed from: its branch, tag or commit.
+            install::Request::Git(spec) if spec.reference.is_none() => {
+                let state = self.lock();
+                let installed = state
+                    .package(&PackageIdentity::git(&spec.repository))
+                    .and_then(|package| package.git.as_ref())
+                    .and_then(|git| git.revision.asked_as());
+                install::Request::Git(crate::git::GitSpec {
+                    reference: installed,
                     ..spec
                 })
             }
@@ -2045,6 +2092,32 @@ impl Launcher {
         state.screen_epoch += 1;
     }
 
+    /// Shows Pane's own form asking which Git repository to install from.
+    fn show_git_form(&self, state: &mut State) {
+        let form = FormView {
+            fields: vec![FormField {
+                id: GIT_REPOSITORY_FIELD.into(),
+                label: "Git repository: its address, and @ a branch, tag or commit to install \
+                        that one"
+                    .into(),
+                kind: FieldKind::Text {
+                    placeholder: Some("such as https://github.com/owner/repo@v1.0.0".into()),
+                },
+                value: String::new(),
+                error: None,
+            }],
+            submit_label: "Show package".into(),
+        };
+        let view = LauncherView::new(Screen::Form(form), "Install extension from Git");
+        let return_to = std::mem::replace(&mut state.view, view);
+        state.form = Some(OpenForm {
+            purpose: FormPurpose::Git,
+            return_to,
+            submitting: false,
+        });
+        state.screen_epoch += 1;
+    }
+
     /// Installs the package in `folder` as an explicit install request, with
     /// the required dependencies it is missing, as the preview would show
     /// them. A package whose identity is already installed is rejected:
@@ -2058,6 +2131,14 @@ impl Launcher {
     /// npm name is already installed is rejected, whatever its version.
     pub fn install_npm(&self, spec: &str) -> impl Future<Output = ()> + Send + 'static {
         self.install_unplanned(crate::npm::NpmSpec::parse(spec).map(install::Request::Npm))
+    }
+
+    /// Installs the revision of the Git repository `spec` names as an
+    /// explicit install request, as [`Launcher::install_package`] installs a
+    /// folder: a repository already installed, in any of its equivalent
+    /// forms, is rejected, whatever the reference.
+    pub fn install_git(&self, spec: &str) -> impl Future<Output = ()> + Send + 'static {
+        self.install_unplanned(crate::git::GitSpec::parse(spec).map(install::Request::Git))
     }
 
     fn install_unplanned(
@@ -2559,6 +2640,13 @@ impl Launcher {
                 unavailable: None,
             };
             add(row, Entry::AskNpm, None, None);
+            let row = Row {
+                id: INSTALL_FROM_GIT.into(),
+                title: "Install extension from Git…".into(),
+                subtitle: Some("Fetch an extension package from a Git repository".into()),
+                unavailable: None,
+            };
+            add(row, Entry::AskGit, None, None);
         }
         // Retained data is managed there too, while nothing is installed.
         if self.installation.is_some() && !(state.packages.is_empty() && state.retained.is_empty())
@@ -2617,14 +2705,15 @@ impl Launcher {
             }
             _ => None,
         };
-        // Pane's own npm form previews the package it names; the form stays
-        // until the preview replaces it, and Back meanwhile discards it.
-        let npm = match (&state.view.screen, &mut state.form) {
+        // Pane's own npm and Git forms preview the package they name; the
+        // form stays until the preview replaces it, and Back meanwhile
+        // discards it.
+        let named = match (&state.view.screen, &mut state.form) {
             (
                 Screen::Form(form),
                 Some(
                     open @ OpenForm {
-                        purpose: FormPurpose::Npm,
+                        purpose: FormPurpose::Npm | FormPurpose::Git,
                         submitting: false,
                         ..
                     },
@@ -2632,7 +2721,8 @@ impl Launcher {
             ) => {
                 open.submitting = true;
                 state.view.status = Status::Running;
-                form.fields.first().map(|field| field.value.clone())
+                let git = matches!(open.purpose, FormPurpose::Git);
+                form.fields.first().map(|field| (git, field.value.clone()))
             }
             _ => None,
         };
@@ -2676,8 +2766,10 @@ impl Launcher {
             if let Some(change) = alias_change {
                 launcher.finish_choice_change(change).await;
             }
-            if let Some(spec) = npm {
-                launcher.preview_npm(&spec).await;
+            match named {
+                Some((false, spec)) => launcher.preview_npm(&spec).await,
+                Some((true, spec)) => launcher.preview_git(&spec).await,
+                None => {}
             }
             if let Some((component, item_id, values)) = submission {
                 launcher
@@ -3542,8 +3634,8 @@ fn extension_rows(
                     (details, Entry::PauseDetails(package.identity.clone())),
                 ]
             });
-            // A package from npm has no source folder to reload from; to
-            // replace its code, install it from npm again (Update).
+            // A package from npm or Git has no source folder to reload from;
+            // to replace its code, install it again (Update).
             let local = package.identity.local_folder().is_some();
             std::iter::once((reload, Entry::Reload(package.identity.clone())))
                 .filter(move |_| local)
@@ -3616,6 +3708,12 @@ fn preview_view(
             .map(|installed| installed.version.as_str());
         details.extend(npm_lines(npm, pinned_to));
     }
+    if let Some(git) = &package.git {
+        let installed = installed
+            .as_ref()
+            .and_then(|installed| installed.git.as_ref());
+        details.extend(git_lines(git, installed));
+    }
     let titles: Vec<&str> = manifest.commands.iter().map(|c| c.title.as_str()).collect();
     if !titles.is_empty() {
         details.push(format!("Commands: {}", titles.join(", ")));
@@ -3663,22 +3761,41 @@ fn preview_view(
     };
     let (row, entry) = match installed {
         Some(installed) => {
-            details.push(match (&installed.npm, installed.version()) {
-                (Some(npm), _) => format!(
-                    "Installed: npm version {}{} of this package",
-                    npm.version,
-                    if npm.pinned { ", pinned" } else { "" }
-                ),
-                (None, Some(version)) => format!("Installed: version {version} from this folder"),
-                (None, None) => "Installed from this folder".into(),
-            });
+            details.push(
+                match (&installed.npm, &installed.git, installed.version()) {
+                    (Some(npm), _, _) => format!(
+                        "Installed: npm version {}{} of this package",
+                        npm.version,
+                        if npm.pinned { ", pinned" } else { "" }
+                    ),
+                    (None, Some(git), _) => format!(
+                        "Installed: {} (commit {}) of this repository",
+                        git.revision.describe(),
+                        git.revision.short_commit()
+                    ),
+                    (None, None, Some(version)) => {
+                        format!("Installed: version {version} from this folder")
+                    }
+                    (None, None, None) => "Installed from this folder".into(),
+                },
+            );
             if !installed.enabled {
                 details.push("Disabled: enable it in Manage extensions".into());
             }
-            let replace = match package.npm.as_ref().map(|npm| &npm.package) {
-                Some(npm) if npm.pinned => format!("npm version {}, pinned", npm.version),
-                Some(npm) => format!("npm version {}, the latest", npm.version),
-                None => "this folder's contents".into(),
+            let replace = match (package.npm.as_ref().map(|npm| &npm.package), &package.git) {
+                (Some(npm), _) if npm.pinned => format!("npm version {}, pinned", npm.version),
+                (Some(npm), _) => format!("npm version {}, the latest", npm.version),
+                (None, Some(git)) => format!(
+                    "{} (commit {}){}",
+                    git.revision.describe(),
+                    git.revision.short_commit(),
+                    if git.revision.pinned() {
+                        ", pinned"
+                    } else {
+                        ", tracked"
+                    }
+                ),
+                (None, None) => "this folder's contents".into(),
             };
             let row = Row {
                 id: "update".into(),
@@ -3753,6 +3870,68 @@ fn npm_lines(npm: &crate::npm::NpmOrigin, pinned_to: Option<&str>) -> Vec<String
             platform::join(&ignored)
         ));
     }
+    lines
+}
+
+/// The preview's lines about the Git revision a package was fetched from,
+/// whether it is tracked or pinned, and what Pane does not do with it;
+/// `installed` is the installed copy's, if the repository is installed.
+fn git_lines(
+    git: &crate::git::GitOrigin,
+    installed: Option<&crate::git::InstalledGit>,
+) -> Vec<String> {
+    use crate::git::GitRef;
+    let revision = &git.revision;
+    let kept = installed.is_some_and(|installed| {
+        installed.revision.reference == revision.reference && revision.pinned()
+    });
+    let what = match &revision.reference {
+        GitRef::Default { .. } => format!(
+            "Revision: {}, tracked: an update fetches that branch again",
+            revision.describe()
+        ),
+        GitRef::Branch(_) => format!(
+            "Revision: {}, tracked: an update fetches that branch again",
+            revision.describe()
+        ),
+        GitRef::Tag(_) | GitRef::Commit if kept => format!(
+            "Revision: {}, which it is pinned to: name another branch, tag or commit to change it",
+            revision.describe()
+        ),
+        GitRef::Tag(_) | GitRef::Commit => format!(
+            "Revision: {}, which you named: installing pins it to that revision",
+            revision.describe()
+        ),
+    };
+    let subject = match git.subject.as_str() {
+        "" => String::new(),
+        subject => format!(" “{subject}”"),
+    };
+    // Where it was served, not who made it: a commit's id proves its
+    // contents, while a host sharing storage between forks serves a fork's
+    // commits at this address too.
+    let served = match git.repository.written_as_ssh() {
+        true => format!(
+            "SSH address fetched over HTTPS from {}",
+            git.repository.url()
+        ),
+        false => format!("served at {}", git.repository.url()),
+    };
+    let mut lines = vec![
+        what,
+        format!(
+            "Fetched: commit {}{subject}, {served}; each object checked against its id",
+            revision.commit
+        ),
+    ];
+    if let Some(caution) = git.caution() {
+        lines.push(format!("Caution: {caution}"));
+    }
+    // One short line, so that the preview's Git lines fit above Install.
+    // What the package runs, its components and any helpers, is listed as
+    // its Commands, Operations and Helpers: only what Pane itself never
+    // does is said here.
+    lines.push("Pane builds nothing and runs no repository hooks, scripts or submodules".into());
     lines
 }
 
@@ -3983,3 +4162,6 @@ async fn off_thread<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static
 fn first_index(rows: &[Row]) -> Option<usize> {
     (!rows.is_empty()).then_some(0)
 }
+
+#[cfg(test)]
+mod git_lines_tests;

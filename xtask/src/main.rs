@@ -3,8 +3,10 @@
 //! - `guests`: build the Rust guests and copy them, with the prebuilt JS/TS
 //!   sample components from `guests/prebuilt/`, into `target/guests/`, and
 //!   assemble the sample packages into `target/guests/packages/`, with the
-//!   helper sample's native helper built for this system, and the npm
-//!   sample into `target/guests/npm/`, packed as npm packs it.
+//!   helper sample's native helper built for this system, the npm sample
+//!   into `target/guests/npm/`, packed as npm packs it, and the Git sample
+//!   into `target/guests/git/greeter/`, its source with its built component
+//!   under `dist/`, as a release revision holds it.
 //! - `js-guests`: rebuild the prebuilt JS/TS sample components with the pinned
 //!   toolchain in `tools/componentize-js` (prerequisites: guests/README.md),
 //!   then run `guests`.
@@ -106,6 +108,7 @@ fn guests() -> Result<(), String> {
                 "mismatched_api",
                 "failing_start",
                 "refusing_view",
+                "git_greeter",
             ],
         ),
         ("guests/fixtures/mixed-p2", &["mixed_p2"]),
@@ -153,6 +156,7 @@ fn guests() -> Result<(), String> {
     }
     echo_helper(&root, &out)?;
     npm_sample(&root, &out)?;
+    git_sample(&root, &out)?;
     println!("guests built into {}", out.display());
     Ok(())
 }
@@ -242,6 +246,30 @@ fn npm_sample(root: &Path, out: &Path) -> Result<(), String> {
     let packed = out.join("npm/pane-samples-greeter-0.1.0.tgz");
     std::fs::write(&packed, tgz)
         .map_err(|error| format!("write {} failed: {error}", packed.display()))?;
+    Ok(())
+}
+
+/// Assembles the Git sample (`guests/git/greeter`) into
+/// `target/guests/git/greeter/`: its source files (`pane.json`,
+/// `Cargo.toml`, `README.md`, `src/lib.rs`) and, under `dist/`, the
+/// component built from them, `dist/git_greeter.wasm`. The tests and smokes
+/// commit the source files as a source-only revision and then `dist/` as a
+/// release revision of a repository they make; it is never pushed anywhere.
+fn git_sample(root: &Path, out: &Path) -> Result<(), String> {
+    let source = root.join("guests/git/greeter");
+    let dest = out.join("git/greeter");
+    let _ = std::fs::remove_dir_all(&dest);
+    for file in ["pane.json", "Cargo.toml", "README.md", "src/lib.rs"] {
+        let to = dest.join(file);
+        std::fs::create_dir_all(to.parent().expect("inside the sample"))
+            .map_err(|error| error.to_string())?;
+        std::fs::copy(source.join(file), &to)
+            .map_err(|error| format!("copy {file} of the Git sample failed: {error}"))?;
+    }
+    let built = out.join("git_greeter.wasm");
+    std::fs::create_dir_all(dest.join("dist")).map_err(|error| error.to_string())?;
+    std::fs::copy(&built, dest.join("dist/git_greeter.wasm"))
+        .map_err(|error| format!("copy {} failed: {error}", built.display()))?;
     Ok(())
 }
 

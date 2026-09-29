@@ -15,10 +15,23 @@ export PANE_DATA_DIR=$out/data
 
 pid=
 npm_registry_pid=
-trap '[ -n "$pid" ] && kill "$pid" 2>/dev/null; [ -n "$npm_registry_pid" ] && kill "$npm_registry_pid" 2>/dev/null || true' EXIT
+repository_server_pid=
+trap '[ -n "$pid" ] && kill "$pid" 2>/dev/null; [ -n "$npm_registry_pid" ] && kill "$npm_registry_pid" 2>/dev/null; [ -n "$repository_server_pid" ] && kill "$repository_server_pid" 2>/dev/null || true' EXIT
 
 capture() { screencapture -x "$out/$1"; }
 check() { python3 "$(dirname "$0")/check_screenshot.py" "$out/$1" "$2" ${3:+"$3"}; }
+# Captures screenshot $1 until it shows text in color $2, for at most $3
+# seconds, then checks it: for a view that appears once work in the
+# background ends, whenever that is.
+capture_until() {
+  local deadline=$((SECONDS + $3))
+  while :; do
+    capture "$1"
+    check "$1" "$2" >/dev/null 2>&1 && return 0
+    [ "$SECONDS" -lt "$deadline" ] || { check "$1" "$2"; return 1; }
+    sleep 0.5
+  done
+}
 # Prints "x y": where the screenshot shows the given color.
 locate() { python3 "$(dirname "$0")/check_screenshot.py" --locate "$out/$1" "$2"; }
 # Clicks the primary button at x y in the pixels of screenshot $3: Quartz
@@ -169,7 +182,7 @@ key 36; sleep 2   # "Use a formal greeting"
 capture 16-setting-saved.png
 check 16-setting-saved.png 9fd8a8   # "Saved the formal greeting"
 key 53; sleep 1
-for ((i = 0; i < 10; i++)); do key 125; done   # the last row
+for ((i = 0; i < 14; i++)); do key 125; done   # the last row
 key 36; sleep 1
 key 125; key 36; sleep 2
 capture 17-disabled.png
@@ -186,7 +199,7 @@ start_pane
 capture 18-restarted-disabled.png
 check 18-restarted-disabled.png 8a96a3
 python3 "$(dirname "$0")/check_screenshot.py" --same "$out/12-restarted.png" "$out/18-restarted-disabled.png"
-for ((i = 0; i < 10; i++)); do key 125; done
+for ((i = 0; i < 14; i++)); do key 125; done
 key 36; sleep 1
 key 125; key 36; sleep 2
 capture 19-enabled.png
@@ -517,7 +530,7 @@ export PANE_DATA_DIR=$out/hotkeys-data
 rm -rf "$PANE_DATA_DIR"
 start_pane --install target/guests/packages/sample-settings
 key 36; sleep 2   # Install; Greeting is selected
-for ((i = 0; i < 10; i++)); do key 125; done   # Manage extensions…
+for ((i = 0; i < 14; i++)); do key 125; done   # Manage extensions…
 key 36; sleep 1
 key 125; key 125; key 125; key 125; key 36; sleep 1   # "Hotkey for Greeting"
 capture 52-hotkey-screen.png
@@ -543,7 +556,7 @@ capture 56-hotkey-after-restart.png
 check 56-hotkey-after-restart.png 364355 3000   # Greeting's first item, selected
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{53-hotkey-assigned,56-hotkey-after-restart}.png
 key 53; sleep 1
-for ((i = 0; i < 10; i++)); do key 125; done   # Manage extensions…
+for ((i = 0; i < 14; i++)); do key 125; done   # Manage extensions…
 key 36; sleep 1
 key 36; sleep 2   # disable Settings sample
 key 53; sleep 1
@@ -581,7 +594,7 @@ type_text greet; sleep 1
 capture 60-paused-after-restart.png
 check 60-paused-after-restart.png d6a36a   # Greeting is still paused
 key 53; sleep 1   # Escape clears the query
-for ((i = 0; i < 10; i++)); do key 125; done   # Manage extensions…
+for ((i = 0; i < 14; i++)); do key 125; done   # Manage extensions…
 key 36; sleep 1
 key 125; key 125; key 125; key 36; sleep 1   # "Why Settings sample is paused"
 capture 61-pause-details.png
@@ -619,7 +632,7 @@ for ((i = 0; i < 3; i++)); do key 125; done
 key 36   # "Save a note"
 wait_for "$PANE_DATA_DIR/extensions/content.json" '"note": "Water the plants"' present
 key 53; sleep 1   # root search
-for ((i = 0; i < 10; i++)); do key 125; done   # Manage extensions…
+for ((i = 0; i < 14; i++)); do key 125; done   # Manage extensions…
 key 36; sleep 1
 for ((i = 0; i < 3; i++)); do key 125; done
 key 36; sleep 1   # "Uninstall Settings sample"
@@ -660,7 +673,7 @@ export PANE_DATA_DIR=$out/aliases-data
 rm -rf "$PANE_DATA_DIR"
 start_pane --install target/guests/packages/sample-query
 key 36; sleep 2   # Install; Echo is selected
-for ((i = 0; i < 10; i++)); do key 125; done   # Manage extensions…
+for ((i = 0; i < 14; i++)); do key 125; done   # Manage extensions…
 key 36; sleep 1
 for ((i = 0; i < 5; i++)); do key 125; done   # "Alias for Echo"
 key 36; sleep 1
@@ -694,7 +707,7 @@ stop_pane
 grep -q '"ec"' "$PANE_DATA_DIR/extensions/aliases.json" || { echo "alias not recorded"; exit 1; }
 grep -q '#echo"' "$PANE_DATA_DIR/extensions/aliases.json" || { echo "fallback not recorded"; exit 1; }
 start_pane
-for ((i = 0; i < 10; i++)); do key 125; done   # Manage extensions…
+for ((i = 0; i < 14; i++)); do key 125; done   # Manage extensions…
 key 36; sleep 1
 key 36; sleep 2   # disable Query sample
 key 53; sleep 1
@@ -761,7 +774,7 @@ key 126; key 36; sleep 2   # Up: Echo after waiting
 helpers_running || { echo "the waiting helper is not running"; exit 1; }
 capture 92-helper-waiting.png
 key 53; sleep 1   # root search; the helper keeps running
-for ((i = 0; i < 10; i++)); do key 125; done   # Manage extensions…
+for ((i = 0; i < 14; i++)); do key 125; done   # Manage extensions…
 key 36; sleep 1
 key 36; sleep 2   # disable Helper sample
 capture 93-helper-disabled.png
@@ -880,9 +893,9 @@ PY
   local built=$copy/$component before=$out/develop-$sample-before.wasm
   start_pane --install "$copy"
   key 36; sleep 2   # Install
-  for ((i = 0; i < 10; i++)); do key 125; done   # Manage extensions…
+  for ((i = 0; i < 14; i++)); do key 125; done   # Manage extensions…
   key 36; sleep 1
-  for ((i = 0; i < 10; i++)); do key 125; done   # Develop <title>
+  for ((i = 0; i < 14; i++)); do key 125; done   # Develop <title>
   key 36; sleep 2
   capture "$n-$sample-develop-started.png"
   check "$n-$sample-develop-started.png" 9fd8a8   # "Developing <title>: each save in ..."
@@ -932,9 +945,9 @@ PY
   key 53; sleep 1
 
   # Stopped: a save builds nothing.
-  for ((i = 0; i < 10; i++)); do key 125; done   # Manage extensions…
+  for ((i = 0; i < 14; i++)); do key 125; done   # Manage extensions…
   key 36; sleep 1
-  for ((i = 0; i < 10; i++)); do key 125; done   # Stop developing <title>
+  for ((i = 0; i < 14; i++)); do key 125; done   # Stop developing <title>
   key 36; sleep 2
   capture "$((n + 8))-$sample-stopped.png"
   check "$((n + 8))-$sample-stopped.png" 9fd8a8   # "Stopped developing <title>"
@@ -967,7 +980,7 @@ export PANE_DATA_DIR=$out/disable-dependents-data
 rm -rf "$PANE_DATA_DIR"
 start_pane --install target/guests/packages/sample-dependencies
 key 36; sleep 3   # Install
-for ((i = 0; i < 10; i++)); do key 125; done   # Manage extensions…
+for ((i = 0; i < 14; i++)); do key 125; done   # Manage extensions…
 key 36; sleep 1
 key 36; sleep 1   # disable JavaScript operations sample: asks first
 capture 140-disable-dependents-asked.png
@@ -1060,7 +1073,7 @@ key 36; sleep 2   # Greeting: nothing runs
 capture 204-runtime-refused.png
 check 204-runtime-refused.png f08c8c   # "Extension runtime unavailable: it stopped after crashing ..."
 key 53; sleep 1   # clears the query
-for ((i = 0; i < 10; i++)); do key 125; done   # Manage extensions…
+for ((i = 0; i < 14; i++)); do key 125; done   # Manage extensions…
 key 36; sleep 1
 capture 205-runtime-manage.png   # Restart the extension runtime, Why the extension runtime stopped
 key 125; key 36; sleep 1   # Why the extension runtime stopped
@@ -1189,7 +1202,7 @@ export PANE_DATA_DIR=$out/uninstall-dependents-data
 rm -rf "$PANE_DATA_DIR"
 start_pane --install target/guests/packages/sample-dependencies
 key 36; sleep 3   # Install
-for ((i = 0; i < 10; i++)); do key 125; done   # Manage extensions…
+for ((i = 0; i < 14; i++)); do key 125; done   # Manage extensions…
 key 36; sleep 1
 for ((i = 0; i < 6; i++)); do key 125; done   # Uninstall JavaScript operations sample
 key 36; sleep 1   # asks first
@@ -1205,7 +1218,7 @@ stop_pane
 [ "$(grep -c '"dir"' "$PANE_DATA_DIR/extensions/installed.json")" = 0 ] || { echo "not both uninstalled"; exit 1; }
 start_pane --install target/guests/packages/sample-operations-js
 key 36; sleep 3   # Install the dependency alone
-for ((i = 0; i < 10; i++)); do key 125; done   # Manage extensions…
+for ((i = 0; i < 14; i++)); do key 125; done   # Manage extensions…
 key 36; sleep 1
 capture 183-uninstall-dependents-reinstalled-alone.png   # only the JavaScript operations sample is listed
 check 183-uninstall-dependents-reinstalled-alone.png aab4c0
@@ -1218,7 +1231,7 @@ stop_pane
 # the network), with a data folder of its own. Installing the local
 # Dependencies from npm sample shows the npm package it requires and
 # installs both; its command calls the npm package's greet operation. Then
-# "Install extension from npm…" (root's second-to-last row) asks for the
+# "Install extension from npm…" (root's third-to-last row) asks for the
 # npm package in a form; naming the installed one offers Update, and its
 # command runs: "Hello from the npm package".
 export PANE_DATA_DIR=$out/npm-data
@@ -1240,8 +1253,8 @@ key 36; sleep 3   # "Greet through the required greeter"
 capture 262-npm-dependency-called.png
 check 262-npm-dependency-called.png 9fd8a8   # "Hello, Pane, from the npm package"
 key 53; sleep 1
-for ((i = 0; i < 10; i++)); do key 125; done   # Manage extensions…, the last row
-key 126; key 36; sleep 1   # Install extension from npm…
+for ((i = 0; i < 14; i++)); do key 125; done   # Manage extensions…, the last row
+key 126; key 126; key 36; sleep 1   # Install extension from npm…
 capture 263-npm-form.png
 check 263-npm-form.png 8a96a3   # the form's hint line
 type_text @pane-samples/greeter
@@ -1262,6 +1275,52 @@ unset PANE_NPM_REGISTRY
 grep -q '"npm": "@pane-samples/greeter"' "$PANE_DATA_DIR/extensions/installed.json" || { echo "npm package not recorded"; exit 1; }
 grep -q '"npmVersion": "0.1.0"' "$PANE_DATA_DIR/extensions/installed.json" || { echo "npm version not recorded"; exit 1; }
 [ "$(grep -c '"dir"' "$PANE_DATA_DIR/extensions/installed.json")" = 2 ] || { echo "not both installed"; exit 1; }
+
+# Git packages (#46), from a repository the smoke makes with git from the
+# Git sample `cargo xtask guests` assembled (target/guests/git/greeter: its
+# source on main, its built component on the branch release, tagged v0.1.0),
+# served over Git's smart HTTP protocol from 127.0.0.1
+# (scripts/repository_server.py; nothing reaches the network), with a data
+# folder of its own. `--install git:<address>` names the default branch,
+# which holds the source only: explained, nothing offered. Then "Install
+# extension from Git…" (root's last row: with nothing installed in this data
+# folder, there is no Manage extensions… yet) asks for the repository
+# in a form; naming the tag previews the release revision, pinned, and
+# installs it, and its command runs: "Hello from the Git repository".
+export PANE_DATA_DIR=$out/git-data
+rm -rf "$PANE_DATA_DIR" "$out/git-repositories"
+python3 "$(dirname "$0")/repository_server.py" make-sample target/guests/git/greeter "$out/git-repositories/greeter"
+rm -f "$out/repository-server.port"
+python3 "$(dirname "$0")/repository_server.py" serve "$out/git-repositories" "$out/repository-server.port" 2>>"$out/repository-server.log" &
+repository_server_pid=$!
+for _ in $(seq 50); do [ -s "$out/repository-server.port" ] && break; sleep 0.1; done
+[ -s "$out/repository-server.port" ] || { echo "the local repository server did not start"; exit 1; }
+repository=http://127.0.0.1:$(cat "$out/repository-server.port")/greeter.git
+start_pane --install "git:$repository"
+# The fetch runs after the window shows: capture until its explanation does.
+capture_until 300-git-source-only.png f08c8c 60   # "The default branch, main (commit …) of the Git repository … holds only the source of …"
+key 53; sleep 1
+for ((i = 0; i < 14; i++)); do key 125; done   # the last row
+key 36; sleep 1   # Install extension from Git…
+capture 301-git-form.png
+check 301-git-form.png 8a96a3   # the form's hint line
+type_text "$repository@v0.1.0"
+key 36; sleep 3
+capture 302-git-preview.png
+check 302-git-preview.png aab4c0   # "Source: Git repository 127.0.0.1:<port>/greeter", "Revision: tag v0.1.0, which you named: …"
+key 36; sleep 3   # Install; Greeter from Git is selected
+capture 303-git-installed.png
+check 303-git-installed.png 9fd8a8   # "Installed Greeter from Git"
+key 36; sleep 3   # open Greeter from Git
+key 36; sleep 2   # "Say hello"
+capture 304-git-command-ran.png
+check 304-git-command-ran.png 9fd8a8   # "Hello from the Git repository"
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{300-git-source-only,301-git-form,302-git-preview,303-git-installed,304-git-command-ran}.png
+stop_pane
+kill "$repository_server_pid"; wait "$repository_server_pid" 2>/dev/null || true; repository_server_pid=
+release=$(python3 "$(dirname "$0")/repository_server.py" commit "$out/git-repositories/greeter" v0.1.0)
+python3 "$(dirname "$0")/check_git_record.py" "$PANE_DATA_DIR/extensions/installed.json" "$release" || { echo "Git package not recorded as installed from v0.1.0"; exit 1; }
+[ -z "$(ls -A "$PANE_DATA_DIR/extensions/downloads" 2>/dev/null)" ] || { echo "a Git download was left"; exit 1; }
 
 # File search (#29): Files, a default extension (its data folder is this
 # phase's own; Files is selected once installed, and Pane's own "Choose

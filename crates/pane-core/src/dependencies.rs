@@ -139,11 +139,12 @@ pub(crate) enum ProblemKind {
     /// The package names its own folder.
     Itself,
     /// It is not installed and its source cannot be installed: `from` names
-    /// that source (a folder, or "npm package <name>").
+    /// that source (a folder, "npm package <name>" or "Git repository
+    /// <repository>").
     CannotInstall { from: String, error: PackageError },
-    /// The dependent comes from npm and names a local folder, which is on
-    /// its author's computer, not the user's.
-    LocalFromNpm { source: String },
+    /// The dependent comes from npm or Git (`from`) and names a local
+    /// folder, which is on its author's computer, not the user's.
+    LocalFromPublished { from: &'static str, source: String },
     /// More than [`MAX_INSTALLED_WITH`] packages would be installed.
     TooMany,
     /// Its installed copy cannot be read.
@@ -169,6 +170,16 @@ pub(crate) enum ProblemKind {
         target: Named,
         operation: String,
         reason: String,
+    },
+    /// It is a Git package the dependent names at reference `wanted`, and
+    /// the plan's copy is another revision, `have` (its reference and
+    /// commit): the installed one (`by` is `None`), or the one fetched for
+    /// the dependent named by `by`.
+    GitRevision {
+        target: Named,
+        wanted: String,
+        have: String,
+        by: Option<String>,
     },
     /// It is an npm package the dependent pins to npm version `wanted`, and
     /// the plan's copy has version `have`: the installed one (`by` is
@@ -218,12 +229,35 @@ impl fmt::Display for Problem {
                 f,
                 "{dependent} requires `{id}` from {from}, which cannot be installed: {error}"
             ),
-            ProblemKind::LocalFromNpm { source } => write!(
+            ProblemKind::LocalFromPublished { from, source } => write!(
                 f,
-                "{dependent} comes from npm but names the local folder `{source}` as its \
-                 dependency `{id}`; a package published to npm can depend only on packages from \
-                 npm"
+                "{dependent} comes from {from} but names the local folder `{source}` as its \
+                 dependency `{id}`; a package published to npm or Git can depend only on \
+                 packages from npm or Git"
             ),
+            ProblemKind::GitRevision {
+                target,
+                wanted,
+                have,
+                by,
+            } => {
+                let title = &target.title;
+                write!(f, "{dependent} requires {title} at {wanted}, and ")?;
+                match by {
+                    None => write!(
+                        f,
+                        "{have} is installed; Pane does not replace the installed copy while \
+                         installing another extension: update it to {wanted} (Git repository \
+                         {}@{wanted}) if {dependent} needs that revision",
+                        target.identity.git_repository().unwrap_or(title)
+                    ),
+                    Some(other) => write!(
+                        f,
+                        "{other} requires {have}; Pane installs one copy of each package, so \
+                         they cannot both have theirs"
+                    ),
+                }
+            }
             ProblemKind::NpmVersion {
                 target,
                 wanted,
@@ -328,8 +362,9 @@ impl fmt::Display for Problem {
 pub(crate) struct Assumptions {
     pub requested: PackageIdentity,
     requested_manifest: String,
-    /// The integrity of the requested package's npm tarball, if it comes
-    /// from npm: a new tarball with the same `pane.json` is another plan.
+    /// The integrity of the requested package's npm tarball, or its Git
+    /// commit, if it was downloaded: a new download with the same
+    /// `pane.json` is another plan.
     requested_tarball: Option<String>,
     pub packages: Vec<(PackageIdentity, Assumed)>,
 }
@@ -337,7 +372,7 @@ pub(crate) struct Assumptions {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Assumed {
     /// Not installed; installed from a source holding this `pane.json`, and,
-    /// from npm, the tarball with this integrity.
+    /// from npm, the tarball with this integrity, or from Git, this commit.
     Installs(String, Option<String>),
     /// Installed at this managed location, enabled or not, paused or not.
     Installed {
@@ -378,7 +413,9 @@ impl Assumptions {
 
 impl Plan {
     /// The preview's lines about the dependencies: each required target once
-    /// (not the requested package itself), then the optional ones.
+    /// (not the requested package itself), followed by a caution for one
+    /// from Git whose commit no branch or tag points to, then the optional
+    /// ones.
     pub fn lines(&self) -> Vec<String> {
         let requested = &self.requested;
         let mut shown: Vec<&PackageIdentity> = vec![&requested.identity];
@@ -409,6 +446,17 @@ impl Plan {
                     format!("{needs}: {name}, installed but {}", paused_reason("it"))
                 }
             });
+            // A Git dependency named by a commit no branch or tag points to
+            // is cautioned about as the requested package would be.
+            let caution = self
+                .install
+                .iter()
+                .find(|package| package.identity == required.target.identity)
+                .and_then(|package| package.git.as_ref())
+                .and_then(crate::git::GitOrigin::caution);
+            if let Some(caution) = caution {
+                lines.push(format!("Caution ({name}): {caution}"));
+            }
         }
         for optional in &self.optional {
             let id = &optional.id;
@@ -501,7 +549,7 @@ pub(crate) fn plan(
             assumptions: Assumptions {
                 requested: requested.identity.clone(),
                 requested_manifest: requested.manifest_text().to_owned(),
-                requested_tarball: requested.npm.as_ref().map(|npm| npm.integrity.clone()),
+                requested_tarball: requested.fingerprint(),
                 packages: Vec::new(),
             },
             requested_manifest: requested.manifest.clone(),
@@ -564,15 +612,23 @@ impl<R: FnMut(&PackageIdentity, &str) -> Result<SourcePackage, PackageError>> Pl
                 }
                 continue;
             }
-            let local_from_npm = package.identity.npm_name().is_some()
+            let local_from_published = package.identity.is_published()
                 && matches!(
                     SourceSpec::parse(&dependency.source),
                     Ok(SourceSpec::Local(_))
                 );
-            if local_from_npm && dependency.required {
-                self.plan.problems.push(problem(ProblemKind::LocalFromNpm {
-                    source: dependency.source.clone(),
-                }));
+            if local_from_published && dependency.required {
+                let from = if package.identity.npm_name().is_some() {
+                    "npm"
+                } else {
+                    "Git"
+                };
+                self.plan
+                    .problems
+                    .push(problem(ProblemKind::LocalFromPublished {
+                        from,
+                        source: dependency.source.clone(),
+                    }));
                 continue;
             }
             let target = package.identity.dependency(&dependency.source);
@@ -665,7 +721,7 @@ impl<R: FnMut(&PackageIdentity, &str) -> Result<SourcePackage, PackageError>> Pl
                         title: source.manifest.title.clone(),
                     };
                     self.plan.required.push(edge(named, RequiredState::Install));
-                    let tarball = source.npm.as_ref().map(|npm| npm.integrity.clone());
+                    let tarball = source.fingerprint();
                     self.plan.assumptions.packages.push((
                         target,
                         Assumed::Installs(source.manifest_text().to_owned(), tarball),
@@ -801,6 +857,14 @@ impl<R: FnMut(&PackageIdentity, &str) -> Result<SourcePackage, PackageError>> Pl
                     .and_then(|installed| installed.npm.as_ref())
                     .map(|npm| (npm.version.clone(), None))
             };
+            self.check_git_revisions(
+                requested,
+                target,
+                &named,
+                installed,
+                &demands,
+                &mut problems,
+            );
             if let Some((have, by)) = have {
                 for demand in &demands {
                     let wanted = match SourceSpec::parse(&demand.dependency.source) {
@@ -822,6 +886,84 @@ impl<R: FnMut(&PackageIdentity, &str) -> Result<SourcePackage, PackageError>> Pl
             }
         }
         self.plan.problems.extend(problems);
+    }
+}
+
+impl<R> Planner<'_, R> {
+    /// Checks that the Git revision each dependent names for `target` (a
+    /// branch, a tag or a commit) is the one of the plan's copy: the one
+    /// installed, or the one fetched for the first dependent found to need
+    /// it.
+    fn check_git_revisions(
+        &self,
+        requested: &SourcePackage,
+        target: &PackageIdentity,
+        named: &Named,
+        installed: Option<&InstalledPackage>,
+        demands: &[&Demand],
+        problems: &mut Vec<Problem>,
+    ) {
+        let (revision, by) = if *target == requested.identity {
+            let Some(git) = &requested.git else { return };
+            (git.revision.clone(), Some(requested.manifest.title.clone()))
+        } else if let Some(source) = self.plan.install.iter().find(|p| p.identity == *target) {
+            let Some(git) = &source.git else { return };
+            (
+                git.revision.clone(),
+                Some(demands[0].dependent.title.clone()),
+            )
+        } else if let Some(git) = installed.and_then(|installed| installed.git.as_ref()) {
+            (git.revision.clone(), None)
+        } else {
+            return;
+        };
+        let have = format!(
+            "{} (commit {})",
+            revision.describe(),
+            revision.short_commit()
+        );
+        for demand in demands {
+            let Ok(SourceSpec::Git(spec)) = SourceSpec::parse(&demand.dependency.source) else {
+                continue;
+            };
+            let Some(wanted) = spec.reference else {
+                continue;
+            };
+            if git_matches(&wanted, &revision) {
+                continue;
+            }
+            problems.push(Problem {
+                dependent: demand.dependent.clone(),
+                id: demand.dependency.id.clone(),
+                kind: ProblemKind::GitRevision {
+                    target: named.clone(),
+                    wanted,
+                    have: have.clone(),
+                    by: by.clone(),
+                },
+            });
+        }
+    }
+}
+
+/// Whether the reference `wanted` (as a dependency names it) is `revision`:
+/// its commit, its branch or its tag.
+fn git_matches(wanted: &str, revision: &crate::git::GitRevision) -> bool {
+    use crate::git::GitRef;
+    if wanted.eq_ignore_ascii_case(&revision.commit) {
+        return true;
+    }
+    match &revision.reference {
+        GitRef::Branch(branch) => {
+            wanted == branch || wanted.strip_prefix("refs/heads/") == Some(branch.as_str())
+        }
+        GitRef::Tag(tag) => {
+            wanted == tag || wanted.strip_prefix("refs/tags/") == Some(tag.as_str())
+        }
+        GitRef::Default {
+            branch: Some(branch),
+        } => wanted == branch || wanted.strip_prefix("refs/heads/") == Some(branch.as_str()),
+        GitRef::Default { branch: None } | GitRef::Commit => false,
     }
 }
 

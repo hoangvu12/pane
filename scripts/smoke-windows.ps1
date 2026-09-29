@@ -178,7 +178,7 @@ Send "{ENTER}"; Start-Sleep -Seconds 2   # "Use a formal greeting"
 Capture "16-setting-saved.png"
 Check "16-setting-saved.png" "9fd8a8"   # "Saved the formal greeting"
 Send "{ESC}"; Start-Sleep -Seconds 1
-Send "{DOWN 10}"   # the last row
+Send "{DOWN 14}"   # the last row
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2
 Capture "17-disabled.png"
@@ -196,7 +196,7 @@ Capture "18-restarted-disabled.png"
 Check "18-restarted-disabled.png" "8a96a3"
 python "$PSScriptRoot/check_screenshot.py" --same (Join-Path $OutDir "12-restarted.png") (Join-Path $OutDir "18-restarted-disabled.png")
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: root after the restart lists the disabled package" }
-Send "{DOWN 10}"
+Send "{DOWN 14}"
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2
 Capture "19-enabled.png"
@@ -534,7 +534,7 @@ if (Test-Path $data) { Remove-Item -Recurse -Force $data }
 $env:PANE_DATA_DIR = $data
 $process = Start-Pane "stderr-hotkeys.log" @("--install", "target/guests/packages/sample-settings")
 Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Greeting is selected
-Send "{DOWN 10}"   # Manage extensions…
+Send "{DOWN 14}"   # Manage extensions…
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{DOWN 4}{ENTER}"; Start-Sleep -Seconds 1   # "Hotkey for Greeting"
 Capture "52-hotkey-screen.png"
@@ -564,7 +564,7 @@ $shots = "53-hotkey-assigned", "56-hotkey-after-restart" | ForEach-Object { Join
 python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the hotkey did not open Greeting after a restart" }
 Send "{ESC}"; Start-Sleep -Seconds 1
-Send "{DOWN 10}"   # Manage extensions…
+Send "{DOWN 14}"   # Manage extensions…
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{ENTER}"; Start-Sleep -Seconds 2   # disable Settings sample
 Send "{ESC}"; Start-Sleep -Seconds 1
@@ -606,7 +606,7 @@ Send "greet"; Start-Sleep -Seconds 1
 Capture "60-paused-after-restart.png"
 Check "60-paused-after-restart.png" "d6a36a"   # Greeting is still paused
 Send "{ESC}"; Start-Sleep -Seconds 1   # clears the query
-Send "{DOWN 10}"   # Manage extensions…
+Send "{DOWN 14}"   # Manage extensions…
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{DOWN 3}{ENTER}"; Start-Sleep -Seconds 1   # "Why Settings sample is paused"
 Capture "61-pause-details.png"
@@ -648,7 +648,7 @@ Send "{DOWN 3}"
 Send "{ENTER}"   # "Save a note"
 Wait-For (Join-Path $data "extensions/content.json") '"note": "Water the plants"' $true
 Send "{ESC}"; Start-Sleep -Seconds 1   # root search
-Send "{DOWN 10}"   # Manage extensions…
+Send "{DOWN 14}"   # Manage extensions…
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{DOWN 3}{ENTER}"; Start-Sleep -Seconds 1   # "Uninstall Settings sample"
 Send "{ENTER}"   # "Uninstall and keep saved data"
@@ -690,7 +690,7 @@ if (Test-Path $data) { Remove-Item -Recurse -Force $data }
 $env:PANE_DATA_DIR = $data
 $process = Start-Pane "stderr-aliases.log" @("--install", "target/guests/packages/sample-query")
 Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Echo is selected
-Send "{DOWN 10}"   # Manage extensions…
+Send "{DOWN 14}"   # Manage extensions…
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{DOWN 5}{ENTER}"; Start-Sleep -Seconds 1   # "Alias for Echo"
 Send "ec"
@@ -730,7 +730,7 @@ $aliases = Join-Path $data "extensions/aliases.json"
 if (-not (Select-String -Quiet -SimpleMatch '"ec"' $aliases)) { throw "alias not recorded" }
 if (-not (Select-String -Quiet -SimpleMatch '#echo"' $aliases)) { throw "fallback not recorded" }
 $process = Start-Pane "stderr-aliases-restart.log"
-Send "{DOWN 10}"   # Manage extensions…
+Send "{DOWN 14}"   # Manage extensions…
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{ENTER}"; Start-Sleep -Seconds 2   # disable Query sample
 Send "{ESC}"; Start-Sleep -Seconds 1
@@ -810,7 +810,7 @@ Send "{UP}{ENTER}"; Start-Sleep -Seconds 2   # Echo after waiting
 if (-not (Helpers-Running)) { throw "the waiting helper is not running" }
 Capture "92-helper-waiting.png"
 Send "{ESC}"; Start-Sleep -Seconds 1   # root search; the helper keeps running
-Send "{DOWN 10}"   # Manage extensions…
+Send "{DOWN 14}"   # Manage extensions…
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{ENTER}"; Start-Sleep -Seconds 2   # disable Helper sample
 Capture "93-helper-disabled.png"
@@ -925,8 +925,8 @@ function Develop-Sample($sample, $title, $component, $source, $n, $greeting, $br
     $log = "stderr-develop-$sample.log"
     $process = Start-Pane $log @("--install", $copy)
     Send "{ENTER}"; Start-Sleep -Seconds 2   # Install
-    Send "{DOWN 10}{ENTER}"; Start-Sleep -Seconds 1   # Manage extensions
-    Send "{DOWN 10}{ENTER}"; Start-Sleep -Seconds 2   # Develop <title>
+    Send "{DOWN 14}{ENTER}"; Start-Sleep -Seconds 1   # Manage extensions
+    Send "{DOWN 14}{ENTER}"; Start-Sleep -Seconds 2   # Develop <title>
     Capture "$n-$sample-develop-started.png"
     Check "$n-$sample-develop-started.png" "9fd8a8"   # "Developing <title>: each save in ..."
     Send "{ESC}"; Start-Sleep -Seconds 1
@@ -976,8 +976,8 @@ function Develop-Sample($sample, $title, $component, $source, $n, $greeting, $br
     Send "{ESC}"; Start-Sleep -Seconds 1
 
     # Stopped: a save builds nothing.
-    Send "{DOWN 10}{ENTER}"; Start-Sleep -Seconds 1   # Manage extensions
-    Send "{DOWN 10}{ENTER}"; Start-Sleep -Seconds 2   # Stop developing <title>
+    Send "{DOWN 14}{ENTER}"; Start-Sleep -Seconds 1   # Manage extensions
+    Send "{DOWN 14}{ENTER}"; Start-Sleep -Seconds 2   # Stop developing <title>
     Capture "$($n + 8)-$sample-stopped.png"
     Check "$($n + 8)-$sample-stopped.png" "9fd8a8"   # "Stopped developing <title>"
     Copy-Item -Force $built $before
@@ -1010,7 +1010,7 @@ if (Test-Path $data) { Remove-Item -Recurse -Force $data }
 $env:PANE_DATA_DIR = $data
 $process = Start-Pane "stderr-disable-dependents.log" @("--install", "target/guests/packages/sample-dependencies")
 Send "{ENTER}"; Start-Sleep -Seconds 3   # Install
-for ($i = 0; $i -lt 10; $i++) { Send "{DOWN}" }   # Manage extensions...
+for ($i = 0; $i -lt 14; $i++) { Send "{DOWN}" }   # Manage extensions...
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{ENTER}"; Start-Sleep -Seconds 1   # disable JavaScript operations sample: asks first
 Capture "140-disable-dependents-asked.png"
@@ -1112,7 +1112,7 @@ Send "{ENTER}"; Start-Sleep -Seconds 2   # Greeting: nothing runs
 Capture "204-runtime-refused.png"
 Check "204-runtime-refused.png" "f08c8c"   # "Extension runtime unavailable: it stopped after crashing ..."
 Send "{ESC}"; Start-Sleep -Seconds 1   # clears the query
-Send "{DOWN 10}"   # Manage extensions…
+Send "{DOWN 14}"   # Manage extensions…
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Capture "205-runtime-manage.png"   # Restart the extension runtime, Why the extension runtime stopped
 Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 1   # Why the extension runtime stopped
@@ -1249,7 +1249,7 @@ if (Test-Path $data) { Remove-Item -Recurse -Force $data }
 $env:PANE_DATA_DIR = $data
 $process = Start-Pane "stderr-uninstall-dependents.log" @("--install", "target/guests/packages/sample-dependencies")
 Send "{ENTER}"; Start-Sleep -Seconds 3   # Install
-for ($i = 0; $i -lt 10; $i++) { Send "{DOWN}" }   # Manage extensions...
+for ($i = 0; $i -lt 14; $i++) { Send "{DOWN}" }   # Manage extensions...
 Send "{ENTER}"; Start-Sleep -Seconds 1
 for ($i = 0; $i -lt 6; $i++) { Send "{DOWN}" }   # Uninstall JavaScript operations sample
 Send "{ENTER}"; Start-Sleep -Seconds 1   # asks first
@@ -1266,7 +1266,7 @@ $record = Join-Path $data "extensions/installed.json"
 if ((Select-String -SimpleMatch '"dir"' $record).Count -ne 0) { throw "not both uninstalled" }
 $process = Start-Pane "stderr-uninstall-dependents-again.log" @("--install", "target/guests/packages/sample-operations-js")
 Send "{ENTER}"; Start-Sleep -Seconds 3   # Install the dependency alone
-for ($i = 0; $i -lt 10; $i++) { Send "{DOWN}" }   # Manage extensions...
+for ($i = 0; $i -lt 14; $i++) { Send "{DOWN}" }   # Manage extensions...
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Capture "183-uninstall-dependents-reinstalled-alone.png"   # only the JavaScript operations sample is listed
 Check "183-uninstall-dependents-reinstalled-alone.png" "aab4c0"
@@ -1281,7 +1281,7 @@ if ((Select-String -SimpleMatch '"dir"' $record).Count -ne 1) { throw "not the d
 # the network), with a data folder of its own. Installing the local
 # Dependencies from npm sample shows the npm package it requires and
 # installs both; its command calls the npm package's greet operation. Then
-# "Install extension from npm..." (root's second-to-last row) asks for the
+# "Install extension from npm..." (root's third-to-last row) asks for the
 # npm package in a form; naming the installed one offers Update, and its
 # command runs: "Hello from the npm package".
 $data = Join-Path $OutDir "npm-data"
@@ -1307,8 +1307,8 @@ try {
     Capture "262-npm-dependency-called.png"
     Check "262-npm-dependency-called.png" "9fd8a8"   # "Hello, Pane, from the npm package"
     Send "{ESC}"; Start-Sleep -Seconds 1
-    for ($i = 0; $i -lt 10; $i++) { Send "{DOWN}" }   # Manage extensions..., the last row
-    Send "{UP}{ENTER}"; Start-Sleep -Seconds 1   # Install extension from npm...
+    for ($i = 0; $i -lt 14; $i++) { Send "{DOWN}" }   # Manage extensions..., the last row
+    Send "{UP 2}{ENTER}"; Start-Sleep -Seconds 1   # Install extension from npm...
     Capture "263-npm-form.png"
     Check "263-npm-form.png" "8a96a3"   # the form's hint line
     Send "@pane-samples/greeter"
@@ -1334,6 +1334,96 @@ $record = Join-Path $data "extensions/installed.json"
 if (-not (Select-String -Quiet -SimpleMatch '"npm": "@pane-samples/greeter"' $record)) { throw "npm package not recorded" }
 if (-not (Select-String -Quiet -SimpleMatch '"npmVersion": "0.1.0"' $record)) { throw "npm version not recorded" }
 if ((Select-String -SimpleMatch '"dir"' $record).Count -ne 2) { throw "not both installed" }
+
+# Git packages (#46), from a repository the smoke makes with git from the
+# Git sample `cargo xtask guests` assembled (target/guests/git/greeter: its
+# source on main, its built component on the branch release, tagged v0.1.0),
+# served over Git's smart HTTP protocol from 127.0.0.1
+# (scripts/repository_server.py; nothing reaches the network), with a data
+# folder of its own. `--install git:<address>` names the default branch,
+# which holds the source only: explained, nothing offered. Then "Install
+# extension from Git..." (root's last row: with nothing installed in this data
+# folder, there is no Manage extensions... yet) asks for the repository
+# in a form; naming the tag previews the release revision, pinned, and
+# installs it, and its command runs: "Hello from the Git repository".
+$data = Join-Path $OutDir "git-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+$repositories = Join-Path $OutDir "git-repositories"
+if (Test-Path $repositories) { Remove-Item -Recurse -Force $repositories }
+python "$PSScriptRoot/repository_server.py" make-sample target/guests/git/greeter (Join-Path $repositories "greeter")
+if ($LASTEXITCODE -ne 0) { throw "the Git sample's repository was not made" }
+$portFile = Join-Path $OutDir "repository-server.port"
+if (Test-Path $portFile) { Remove-Item -Force $portFile }
+# Captures $name until it shows text in $color, for at most $seconds, then
+# checks it: for a view that appears once work in the background ends,
+# whenever that is.
+function Capture-Until($name, $color, $seconds) {
+    $deadline = (Get-Date).AddSeconds($seconds)
+    while ($true) {
+        Capture $name
+        # Only its exit code matters. Windows PowerShell 5.1 turns a native
+        # program's redirected standard error into errors, which "Stop" would
+        # throw at the first failed check, so it runs with "Continue" in a
+        # scope of its own.
+        & {
+            $ErrorActionPreference = "Continue"
+            python "$PSScriptRoot/check_screenshot.py" (Join-Path $OutDir $name) $color 20 *> $null
+        }
+        if ($LASTEXITCODE -eq 0) { return }
+        if ((Get-Date) -gt $deadline) { Check $name $color; return }
+        Start-Sleep -Milliseconds 500
+    }
+}
+$server = Start-Process python -PassThru -NoNewWindow `
+    -ArgumentList @("`"$PSScriptRoot/repository_server.py`"", "serve", "`"$repositories`"", "`"$portFile`"") `
+    -RedirectStandardError (Join-Path $OutDir "repository-server.log")
+$process = $null
+try {
+    for ($i = 0; $i -lt 50 -and -not (Test-Path $portFile); $i++) { Start-Sleep -Milliseconds 100 }
+    if (-not (Test-Path $portFile)) { throw "the local repository server did not start" }
+    $repository = "http://127.0.0.1:$((Get-Content $portFile).Trim())/greeter.git"
+    $process = Start-Pane "stderr-git.log" @("--install", "git:$repository")
+    # The fetch runs after the window shows: capture until its explanation does.
+    Capture-Until "300-git-source-only.png" "f08c8c" 60   # "The default branch, main (commit ...) of the Git repository ... holds only the source of ..."
+    Send "{ESC}"; Start-Sleep -Seconds 1
+    for ($i = 0; $i -lt 14; $i++) { Send "{DOWN}" }   # the last row
+    Send "{ENTER}"; Start-Sleep -Seconds 1   # Install extension from Git...
+    Capture "301-git-form.png"
+    Check "301-git-form.png" "8a96a3"   # the form's hint line
+    Send "$repository@v0.1.0"
+    Send "{ENTER}"; Start-Sleep -Seconds 3
+    Capture "302-git-preview.png"
+    Check "302-git-preview.png" "aab4c0"   # "Source: Git repository 127.0.0.1:<port>/greeter", "Revision: tag v0.1.0, which you named: ..."
+    Send "{ENTER}"; Start-Sleep -Seconds 3   # Install; Greeter from Git is selected
+    Capture "303-git-installed.png"
+    Check "303-git-installed.png" "9fd8a8"   # "Installed Greeter from Git"
+    Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greeter from Git
+    Send "{ENTER}"; Start-Sleep -Seconds 2   # "Say hello"
+    Capture "304-git-command-ran.png"
+    Check "304-git-command-ran.png" "9fd8a8"   # "Hello from the Git repository"
+    $shots = "300-git-source-only", "301-git-form", "302-git-preview", "303-git-installed", "304-git-command-ran" | ForEach-Object { Join-Path $OutDir "$_.png" }
+    python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+    if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: installing from Git changed nothing" }
+    Stop-Pane $process
+} finally {
+    # A failure above leaves Pane running: stop it too, before the server.
+    if ($process -and -not $process.HasExited) {
+        Stop-Process -Id $process.Id -ErrorAction SilentlyContinue
+        $process.WaitForExit()
+    }
+    Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
+}
+$release = (python "$PSScriptRoot/repository_server.py" commit (Join-Path $repositories "greeter") v0.1.0)
+if ($LASTEXITCODE -ne 0) { throw "the tag's commit was not found" }
+$record = Join-Path $data "extensions/installed.json"
+$fromGit = @((Get-Content -Raw $record | ConvertFrom-Json).packages | Where-Object { $_.git })
+if ($fromGit.Count -ne 1) { throw "not one package from Git recorded: $($fromGit.Count)" }
+if ($fromGit[0].gitRef -ne "refs/tags/v0.1.0") { throw "Git reference not recorded: $($fromGit[0].gitRef)" }
+if ($fromGit[0].gitCommit -ne $release.Trim()) { throw "Git commit not recorded: $($fromGit[0].gitCommit)" }
+if ($fromGit[0].pinned -ne $true) { throw "Git tag not recorded as pinned" }
+$downloads = Join-Path $data "extensions/downloads"
+if ((Test-Path $downloads) -and (Get-ChildItem $downloads)) { throw "a Git download was left" }
 
 # File search (#29): Files, a default extension (its data folder is this
 # phase's own; Files is selected once installed, and Pane's own "Choose

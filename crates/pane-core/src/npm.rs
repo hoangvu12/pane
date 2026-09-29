@@ -28,12 +28,12 @@ use std::fmt;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use serde::Deserialize;
 use sha2::{Digest, Sha512};
 
+use crate::downloads::{Download, check_part};
 use crate::http::{Answer, GetError, OwnLimits};
 
 /// The public npm registry.
@@ -349,34 +349,6 @@ pub(crate) struct Fetched {
     pub origin: NpmOrigin,
 }
 
-/// A downloaded package unpacked into a folder of its own in Pane's
-/// downloads folder, which is removed when this is dropped: once whatever
-/// read it (a preview, an install, a plan's dependency) is done with it,
-/// whether it was installed or refused. No two downloads share a folder, so
-/// removing one never removes what another preview or install is reading.
-#[derive(Debug)]
-pub(crate) struct Download {
-    folder: PathBuf,
-}
-
-impl Download {
-    /// The unpacked package.
-    pub(crate) fn folder(&self) -> &Path {
-        &self.folder
-    }
-}
-
-impl Drop for Download {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.folder);
-    }
-}
-
-/// How long a download may stay in the downloads folder before a starting
-/// Pane takes it as abandoned (left by a Pane that stopped) and removes it;
-/// a younger one may be another Pane's preview or install in progress.
-pub const ABANDONED_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
-
 #[derive(Deserialize)]
 struct MetadataJson {
     #[serde(default, rename = "dist-tags")]
@@ -515,7 +487,7 @@ pub(crate) fn fetch(
     check_integrity(&bytes, &integrity).map_err(|why| {
         format!("The download of npm package {name}@{version} {why}; nothing was installed")
     })?;
-    let download = unpack_into(downloads, &bytes)
+    let download = Download::create(downloads, |folder| unpack(&bytes, folder))
         .map_err(|why| format!("npm package {name}@{version} cannot be unpacked safely: {why}"))?;
     let package = read_package_json(download.folder())?;
     if package.name.as_deref() != Some(name.as_str())
@@ -602,33 +574,6 @@ fn base64(bytes: &[u8]) -> String {
         }
     }
     text
-}
-
-/// Unpacks the tarball `tgz` into a new folder of its own in `downloads`,
-/// named by when it was begun (seconds since 1970), this process and a
-/// count: `<seconds>-<process>-<count>`, first unpacked as
-/// `.<seconds>-<process>-<count>` and renamed once complete.
-fn unpack_into(downloads: &Path, tgz: &[u8]) -> Result<Download, String> {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let begun = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs());
-    let name = format!(
-        "{begun}-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    );
-    fs::create_dir_all(downloads).map_err(|error| error.to_string())?;
-    let partial = downloads.join(format!(".{name}"));
-    let unpacked = unpack(tgz, &partial);
-    let folder = downloads.join(&name);
-    let unpacked =
-        unpacked.and_then(|()| fs::rename(&partial, &folder).map_err(|error| error.to_string()));
-    if let Err(why) = unpacked {
-        let _ = fs::remove_dir_all(&partial);
-        return Err(why);
-    }
-    Ok(Download { folder })
 }
 
 /// Unpacks the gzipped tarball `tgz` into `dest`, which must not exist,
@@ -867,81 +812,6 @@ fn inside(raw: &[u8], is_dir: bool) -> Result<Option<PathBuf>, &'static str> {
     Ok((!path.as_os_str().is_empty()).then_some(path))
 }
 
-/// Checks one part of a path, the same on every system, so that a package
-/// Pane unpacks on one unpacks on all: no `\`, `:`, `<`, `>`, `"`, `|`,
-/// `?`, `*` or control character, no trailing `.` or space, and no Windows
-/// device name (`con`, `conin$`, `nul`, `com1`, `lpt³`…, with or without an
-/// extension), compared by character.
-fn check_part(part: &str) -> Result<(), &'static str> {
-    match part {
-        "" | "." => return Err("which has an empty or `.` part"),
-        ".." => return Err("which climbs out with `..`"),
-        _ => {}
-    }
-    if part
-        .chars()
-        .any(|c| matches!(c, '\\' | ':' | '<' | '>' | '"' | '|' | '?' | '*') || c.is_control())
-    {
-        return Err("whose name has a character Windows does not allow, such as `\\`, `:` or `?`");
-    }
-    if part.ends_with('.') || part.ends_with(' ') {
-        return Err("whose name ends with `.` or a space");
-    }
-    // Windows reads a device name whatever follows its first dot, and
-    // ignores spaces before it.
-    let stem: Vec<char> = part
-        .split('.')
-        .next()
-        .unwrap_or(part)
-        .trim_end_matches(' ')
-        .chars()
-        .flat_map(char::to_lowercase)
-        .collect();
-    let is = |name: &str| stem.iter().copied().eq(name.chars());
-    let numbered = |prefix: &str| {
-        stem.len() == 4
-            && stem[..3].iter().copied().eq(prefix.chars())
-            && matches!(stem[3], '0'..='9' | '\u{b9}' | '\u{b2}' | '\u{b3}')
-    };
-    let device = ["con", "prn", "aux", "nul", "conin$", "conout$"]
-        .iter()
-        .any(|name| is(name))
-        || numbered("com")
-        || numbered("lpt");
-    if device {
-        return Err("which is a Windows device name");
-    }
-    Ok(())
-}
-
-/// Removes what `downloads` holds that was begun more than
-/// [`ABANDONED_AFTER`] before `now`, or whose name does not say when it was
-/// begun, when Pane starts: downloads a Pane that stopped left behind. A
-/// younger one is kept, since another Pane on this data folder may be
-/// previewing or installing from it.
-pub(crate) fn remove_abandoned_downloads(downloads: &Path, now: std::time::SystemTime) {
-    let Ok(entries) = fs::read_dir(downloads) else {
-        return;
-    };
-    let now = now
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs());
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let begun = name
-            .to_str()
-            .map(|name| name.trim_start_matches('.'))
-            .and_then(|name| name.split('-').next())
-            .and_then(|seconds| seconds.parse::<u64>().ok());
-        let abandoned =
-            begun.is_none_or(|begun| begun.saturating_add(ABANDONED_AFTER.as_secs()) < now);
-        if abandoned {
-            let path = entry.path();
-            let _ = fs::remove_dir_all(&path).or_else(|_| fs::remove_file(&path));
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1115,8 +985,8 @@ mod tests {
         let downloads = dir.path().join("downloads");
         let tgz = tarball(&[("package/pane.json", Regular, b"{}")]);
         // The same tarball twice, as two previews of one package would.
-        let first = unpack_into(&downloads, &tgz).unwrap();
-        let second = unpack_into(&downloads, &tgz).unwrap();
+        let first = Download::create(&downloads, |folder| unpack(&tgz, folder)).unwrap();
+        let second = Download::create(&downloads, |folder| unpack(&tgz, folder)).unwrap();
         assert_ne!(first.folder(), second.folder());
         let kept = second.folder().to_path_buf();
         drop(first);
@@ -1125,7 +995,7 @@ mod tests {
         assert_eq!(fs::read_dir(&downloads).unwrap().count(), 0);
         // One refused leaves nothing either.
         let refused = tarball(&[("package/../x", Regular, b"")]);
-        assert!(unpack_into(&downloads, &refused).is_err());
+        assert!(Download::create(&downloads, |folder| unpack(&refused, folder)).is_err());
         assert_eq!(fs::read_dir(&downloads).unwrap().count(), 0);
     }
 
@@ -1133,7 +1003,7 @@ mod tests {
     fn only_downloads_begun_long_ago_are_taken_as_abandoned() {
         let dir = tempfile::tempdir().unwrap();
         let now = std::time::UNIX_EPOCH + Duration::from_secs(1_000_000);
-        let day = ABANDONED_AFTER.as_secs();
+        let day = crate::downloads::ABANDONED_AFTER.as_secs();
         for name in [
             format!("{}-1-0", 1_000_000 - day - 1),
             format!(".{}-1-1", 1_000_000 - day - 1),
@@ -1145,7 +1015,7 @@ mod tests {
         }
         fs::write(dir.path().join("stray"), b"").unwrap();
 
-        remove_abandoned_downloads(dir.path(), now);
+        crate::downloads::remove_abandoned(dir.path(), now);
 
         let mut left: Vec<String> = fs::read_dir(dir.path())
             .unwrap()
