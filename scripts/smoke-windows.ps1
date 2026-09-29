@@ -1573,6 +1573,7 @@ function History-Field($name) { (python "$PSScriptRoot/clipboard_history.py" fie
 # The kept texts, newest first, joined by commas ("" when none).
 function Kept-Joined { (python "$PSScriptRoot/clipboard_history.py" texts $extensions) -join "" }
 python "$PSScriptRoot/clipboard_history.py" backdate $extensions 8 pane-smoke-kept
+if ($LASTEXITCODE -ne 0) { throw "could not backdate the history" }
 python "$PSScriptRoot/clipboard_history.py" backdate $extensions 0.084 pane-smoke-enabled
 if ($LASTEXITCODE -ne 0) { throw "could not backdate the history" }
 $process = Start-Pane "stderr-clipboard-expiry.log"

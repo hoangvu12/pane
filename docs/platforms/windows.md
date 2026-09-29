@@ -354,8 +354,9 @@ one more copy, Turn off and delete clipboard history deletes that and turns
 history off (no `capture` in the file), the clipboard still holding the
 copied text, and a later copy is not kept. The #35 step that copies an item
 again now takes Enter on the item, then Enter on "Copy it again". Written
-and checked for syntax only here: **not run on Windows yet**; CI's next
-green Windows run of the branch is its evidence.
+on Linux without PowerShell, so it was only reviewed by reading: **not run
+or even parsed yet**; CI's next green Windows run of the branch is its
+evidence.
 
 ## Text input and accessibility findings
 
