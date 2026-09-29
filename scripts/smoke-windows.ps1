@@ -1394,7 +1394,7 @@ try {
 # CanIncludeInClipboardHistory, CanUploadToCloudClipboard); nothing is kept
 # while it is paused or the extension is disabled, also after a restart,
 # and once enabled again it is kept again, also after a restart. Enter on
-# a kept item copies it again. The smoke copies only text of its own
+# a kept item, then on its first choice, copies it again. The smoke copies only text of its own
 # ("pane-smoke-..."), and so replaces what was on the clipboard without
 # reading or putting it back: run it on CI's runner or a desktop given to
 # it, as the rest of the smoke already takes over the keyboard. A data
@@ -1514,12 +1514,14 @@ Wait-For $history '"capture": "on"' $true
 Copy-Text "pane-smoke-resumed" $null
 Wait-For $history "pane-smoke-resumed" $true
 Open-History
-Send "{DOWN 5}{ENTER}"; Start-Sleep -Seconds 2   # the second kept item, pane-smoke-second, after Pause, Turn off, Exclude, Clear and the first
+Send "{DOWN 8}{ENTER}"; Start-Sleep -Seconds 1   # the second kept item, pane-smoke-second, after Pause, Turn off, Keep items for, Exclude, Clear, Turn off and delete, Delete recent and the first
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Copy it again, the first of its choices (#36)
 Capture "283-clipboard-copied.png"
 Check "283-clipboard-copied.png" "9fd8a8"   # "Copied to the clipboard"
 if ([PaneClip]::GetText() -ne "pane-smoke-second") { throw "Enter did not copy the item" }
 Start-Sleep -Seconds 1
 if ((Kept-Texts)[0] -ne "pane-smoke-second") { throw "the copied item did not move to the front" }
+Send "{ESC}"   # from the item's form to the command's list
 Open-Manage
 Send "{ENTER}"   # disable Clipboard History, the first row
 Wait-For $registry '"disabled": true' $true; Start-Sleep -Seconds 1
@@ -1552,4 +1554,73 @@ if (((Kept-Texts) -join ",") -ne $expected) { throw "kept: $(Kept-Texts)" }
 foreach ($never in "before", "secret", "no-history", "no-cloud", "paused", "disabled", "restarted-disabled") {
     if (Select-String -Quiet -SimpleMatch "pane-smoke-$never" $history) { throw "pane-smoke-$never was kept" }
 }
+
+# Clipboard history expiry and deletion (#36), on the history just kept.
+# With Pane stopped, the smoke makes pane-smoke-kept 8 days old (past the
+# default 7-day retention) and pane-smoke-enabled 2 hours old, as a downtime
+# would: once Pane starts again, before the command shows anything,
+# pane-smoke-kept is gone from the file and the list. Then, in the command:
+# Enter on pane-smoke-second and "Delete it" deletes that item alone; Delete
+# recent items (the last hour) deletes the two copied in this smoke's last
+# minutes and keeps pane-smoke-enabled; keeping items for 1 hour deletes
+# pane-smoke-enabled at once; and after one more copy, "Turn off and delete
+# clipboard history" deletes it and turns history off, so a later copy is not
+# kept. Deleting never changes what is on the clipboard. The rows: Pause,
+# Turn off, Keep items for…, Exclude a program, Clear, Turn off and delete,
+# Delete recent items, then the items, newest first.
+$extensions = Join-Path $data "extensions"
+function History-Field($name) { (python "$PSScriptRoot/clipboard_history.py" field $extensions $name) -join "" }
+# The kept texts, newest first, joined by commas ("" when none).
+function Kept-Joined { (python "$PSScriptRoot/clipboard_history.py" texts $extensions) -join "" }
+python "$PSScriptRoot/clipboard_history.py" backdate $extensions 8 pane-smoke-kept
+python "$PSScriptRoot/clipboard_history.py" backdate $extensions 0.084 pane-smoke-enabled
+if ($LASTEXITCODE -ne 0) { throw "could not backdate the history" }
+$process = Start-Pane "stderr-clipboard-expiry.log"
+Start-Sleep -Seconds 1
+if ((Kept-Joined) -ne "pane-smoke-after-restart,pane-smoke-enabled,pane-smoke-second,pane-smoke-resumed") { throw "kept after starting: $(Kept-Joined)" }
+Open-History
+Capture "400-clipboard-expired.png"
+Check "400-clipboard-expired.png" "aab4c0"   # pane-smoke-kept is no longer listed
+$onClipboard = [PaneClip]::GetText()
+Send "{DOWN 9}{ENTER}"; Start-Sleep -Seconds 1   # pane-smoke-second: Copy it again or Delete it
+Send "{DOWN}{ENTER}"   # Delete it
+Wait-For $history "pane-smoke-second" $false; Start-Sleep -Seconds 1
+Capture "401-clipboard-item-deleted.png"
+Check "401-clipboard-item-deleted.png" "9fd8a8"   # "Deleted the kept item"
+if ((Kept-Joined) -ne "pane-smoke-after-restart,pane-smoke-enabled,pane-smoke-resumed") { throw "kept: $(Kept-Joined)" }
+if ([PaneClip]::GetText() -ne $onClipboard) { throw "deleting an item changed the clipboard" }
+Send "{ESC}"   # from the item's form to the command's list
+Open-History
+Send "{DOWN 6}{ENTER}"; Start-Sleep -Seconds 1   # Delete recent items: 15 minutes, hour or day
+Send "{DOWN}{ENTER}"   # the last hour
+Wait-For $history "pane-smoke-resumed" $false; Start-Sleep -Seconds 1
+Capture "402-clipboard-recent-deleted.png"
+Check "402-clipboard-recent-deleted.png" "9fd8a8"   # "Deleted 2 kept items"
+if ((Kept-Joined) -ne "pane-smoke-enabled") { throw "kept: $(Kept-Joined)" }
+Send "{ESC}"
+Open-History
+Send "{DOWN 2}{ENTER}"; Start-Sleep -Seconds 1   # Keep items for 7 days: 1 hour, 1 day, 7, 30 or 90 days
+Send "{ENTER}"   # 1 hour
+Wait-For $history '"retentionSeconds": 3600' $true; Start-Sleep -Seconds 1
+Capture "403-clipboard-retention-changed.png"
+Check "403-clipboard-retention-changed.png" "9fd8a8"   # "Items are kept for 1 hour; deleted 1 older item"
+if ((Kept-Joined) -ne "") { throw "kept: $(Kept-Joined)" }
+Copy-Text "pane-smoke-final" $null
+Wait-For $history "pane-smoke-final" $true
+Send "{ESC}"
+Open-History
+Send "{DOWN 5}{ENTER}"   # Turn off and delete clipboard history
+Wait-For $history "pane-smoke-final" $false; Start-Sleep -Seconds 1
+Capture "404-clipboard-turned-off-and-deleted.png"
+Check "404-clipboard-turned-off-and-deleted.png" "9fd8a8"   # "Clipboard history is off; deleted 1 kept item"
+if ((History-Field "capture") -ne "") { throw "history is still $(History-Field 'capture')" }
+if ([PaneClip]::GetText() -ne "pane-smoke-final") { throw "deleting history changed the clipboard" }
+Copy-Text "pane-smoke-after-off" $null
+Not-Kept "pane-smoke-after-off"
+$shots = "400-clipboard-expired", "401-clipboard-item-deleted", "402-clipboard-recent-deleted", "403-clipboard-retention-changed", "404-clipboard-turned-off-and-deleted" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: clipboard history expiry and deletion changed nothing" }
+Stop-Pane $process
+if ((Kept-Joined) -ne "") { throw "kept: $(Kept-Joined)" }
+if ((History-Field "retentionSeconds") -ne "3600") { throw "retention: $(History-Field 'retentionSeconds')" }
 Write-Output "screenshots in $OutDir"

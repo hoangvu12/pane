@@ -326,6 +326,18 @@ color); Enter shows that as the error and does not open it, and no
 `clipboard-history.json` appears. No clipboard is read. **Not run on macOS
 yet.**
 
+## Clipboard history expiry (#36)
+
+The clipboard phase goes on (screenshots 400 to 402) where the command never
+runs: with Pane stopped, the smoke writes the history of the installed
+package as a downtime would leave it (`scripts/clipboard_history.py`):
+history on, one item copied 8 days ago and one a day ago. Once Pane starts,
+the old one is gone from the file, and the uninstall confirmation counts
+"Saved data: 1 clipboard history item"; kept as retained data and made 8
+days old while Pane is stopped, it is gone once Pane starts again, the
+extension list's last row reading "keeps clipboard history settings". No
+clipboard is read. **Not run on macOS yet.**
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms now have a text field. The

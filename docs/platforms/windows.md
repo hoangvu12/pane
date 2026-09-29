@@ -338,6 +338,25 @@ the branch is their evidence: until then the listener's delivery, the
 retry and stop paths, the markers as real password managers set them, the
 owner lookup and the DACL are unverified natively.
 
+## Clipboard history expiry and deletion (#36)
+
+The clipboard phase goes on (screenshots 400 to 404, [clipboard
+history](../clipboard-history.md#checks)) with the history it kept. With
+Pane stopped, the smoke makes `pane-smoke-kept` 8 days old and
+`pane-smoke-enabled` 2 hours old in `clipboard-history.json`
+(`scripts/clipboard_history.py`), as a downtime would; once Pane starts,
+the first is gone from the file and the list before the command shows
+anything. Then, in the command: Enter on `pane-smoke-second` and "Delete
+it" deletes that item alone, and the clipboard is unchanged; Delete recent
+items (the last hour) deletes the two copied minutes before and keeps
+`pane-smoke-enabled`; keeping items for 1 hour deletes it at once; after
+one more copy, Turn off and delete clipboard history deletes that and turns
+history off (no `capture` in the file), the clipboard still holding the
+copied text, and a later copy is not kept. The #35 step that copies an item
+again now takes Enter on the item, then Enter on "Copy it again". Written
+and checked for syntax only here: **not run on Windows yet**; CI's next
+green Windows run of the branch is its evidence.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** the smoke now also opens the Rust command's
