@@ -1469,4 +1469,47 @@ check 281-clipboard-explained.png f08c8c   # the reason as the error; the comman
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{280-clipboard-unavailable,281-clipboard-explained}.png
 stop_pane
 if [ -e "$PANE_DATA_DIR/extensions/clipboard-history.json" ]; then echo "clipboard history was kept on Linux"; exit 1; fi
+
+# Clipboard history expiry (#36): items expire after their package's
+# retention (7 days unless the user chose otherwise), whether or not the
+# extension runs; here its command never runs at all. With Pane stopped, the
+# smoke writes the history file as Pane would have left it before a
+# downtime, for the package just installed: history on, one item copied 8
+# days ago and one a day ago. Once Pane starts, before anything shows it, the
+# old one is gone from the file, and uninstalling counts only the other
+# ("Saved data: 1 clipboard history item"; its Uninstall row follows its
+# state, Reload and Clear cache rows). Kept as retained data and made 8 days
+# old while Pane is stopped again, it is gone once Pane starts: the retained
+# data keeps only the clipboard history settings (the extension list's last
+# row). No clipboard is read or written.
+extensions=$PANE_DATA_DIR/extensions
+kept_texts() { python3 "$(dirname "$0")/clipboard_history.py" texts "$extensions"; }
+python3 "$(dirname "$0")/clipboard_history.py" seed "$extensions" pane-smoke-expired=8 pane-smoke-kept=1
+[ "$(kept_texts)" = pane-smoke-kept,pane-smoke-expired ] || { echo "seeded: $(kept_texts)"; exit 1; }
+start_pane
+[ "$(kept_texts)" = pane-smoke-kept ] || { echo "kept after starting: $(kept_texts)"; exit 1; }
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" type --delay 50 manage; sleep 1
+"$xdotool" key Return; sleep 1   # Manage extensions…
+"$xdotool" key Down Down Down Return; sleep 1   # "Uninstall Clipboard History"
+capture 400-clipboard-expired-uninstall.png
+check 400-clipboard-expired-uninstall.png aab4c0   # "Saved data: 1 clipboard history item"
+"$xdotool" key Return   # "Uninstall and keep saved data"
+wait_for "$extensions/installed.json" '"retained"' present; sleep 1
+capture 401-clipboard-uninstalled-kept.png
+check 401-clipboard-uninstalled-kept.png 9fd8a8   # "Uninstalled Clipboard History; its settings and content are kept"
+stop_pane
+python3 "$(dirname "$0")/clipboard_history.py" backdate "$extensions" 8
+start_pane
+[ -z "$(kept_texts)" ] || { echo "retained after starting: $(kept_texts)"; exit 1; }
+[ "$(python3 "$(dirname "$0")/clipboard_history.py" field "$extensions" capture)" = on ] || { echo "the choice was not kept"; exit 1; }
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" type --delay 50 manage; sleep 1
+"$xdotool" key Return; sleep 1   # Manage extensions…
+for ((i = 0; i < 40; i++)); do "$xdotool" key Down; done
+sleep 1
+capture 402-clipboard-retained-expired.png   # "Delete retained data of Clipboard History", "keeps clipboard history settings"
+check 402-clipboard-retained-expired.png 364355 3000   # the selected row
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{400-clipboard-expired-uninstall,401-clipboard-uninstalled-kept,402-clipboard-retained-expired}.png
+stop_pane
 echo "screenshots in $out"

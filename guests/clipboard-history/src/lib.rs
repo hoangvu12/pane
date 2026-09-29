@@ -1,8 +1,12 @@
 //! Pane's clipboard history, a default extension: once the user turns it
 //! on in its command, Pane keeps the text they copy on this computer, and
-//! the command lists it, newest first; Enter on an item copies it again.
-//! It starts off, and can be paused, resumed and turned off again; disabling
-//! the extension stops it too. Programs can be excluded by their file name.
+//! the command lists it, newest first; Enter on an item copies it again or
+//! deletes it. It starts off, and can be paused, resumed and turned off
+//! again; disabling the extension stops it too. Programs can be excluded by
+//! their file name. Items are kept for 7 days unless the user chooses
+//! another time, and Pane deletes them then, whether this command runs or
+//! not; the recent ones can be deleted together, all of them with Clear
+//! (history stays on), or all of them with history turned off.
 //!
 //! Pane's host does the watching and keeping (`pane:extension/clipboard-history`):
 //! this command only shows the history and the user's controls, and nothing
@@ -17,7 +21,7 @@ use pane_guest::alloc::{
 };
 use pane_guest::clipboard_history::{self as history, Capture, Entry, HistoryStatus};
 use pane_guest::{
-    CustomView, Field, FieldKind, FieldValue, Form, FormError, Guest, Item, NoCustomView,
+    Choice, CustomView, Field, FieldKind, FieldValue, Form, FormError, Guest, Item, NoCustomView,
     TextField, View,
 };
 
@@ -38,6 +42,12 @@ const EXCLUDE: &str = "exclude";
 const INCLUDE: &str = "include:";
 /// The item that deletes every kept item.
 const CLEAR: &str = "clear";
+/// The item that turns keeping off and deletes every kept item.
+const TURN_OFF_AND_CLEAR: &str = "turn-off-and-clear";
+/// The item whose form chooses how long items are kept.
+const RETENTION: &str = "retention";
+/// The item whose form deletes the items copied recently.
+const DELETE_RECENT: &str = "delete-recent";
 /// The prefix of a kept item, followed by its id.
 const ENTRY: &str = "entry:";
 /// The item shown while nothing is kept.
@@ -45,6 +55,90 @@ const EMPTY: &str = "empty";
 
 /// The longest title of a kept item, in characters.
 const TITLE_CHARS: usize = 80;
+
+/// How long items can be kept, in seconds.
+const RETENTIONS: [u64; 5] = [3600, 86_400, 7 * 86_400, 30 * 86_400, 90 * 86_400];
+
+/// How recent the items deleted together can be, in seconds, and what that
+/// is called.
+const RECENT: [(u64, &str); 3] = [
+    (900, "15 minutes"),
+    (3600, "hour"),
+    (86_400, "day"),
+];
+
+/// A time span such as "1 hour" or "7 days".
+fn span(seconds: u64) -> String {
+    let (count, one, many) = match seconds {
+        _ if seconds % 86_400 == 0 => (seconds / 86_400, "day", "days"),
+        _ if seconds % 3600 == 0 => (seconds / 3600, "hour", "hours"),
+        _ if seconds % 60 == 0 => (seconds / 60, "minute", "minutes"),
+        _ => (seconds, "second", "seconds"),
+    };
+    if count == 1 {
+        format!("1 {one}")
+    } else {
+        format!("{count} {many}")
+    }
+}
+
+fn choice(id: String, label: String) -> Choice {
+    Choice { id, label }
+}
+
+/// The retention form. A form starts on its first choice, so the retention
+/// now comes first: submitting the form unchanged changes nothing.
+fn retention_form(current: u64) -> Form {
+    let others = RETENTIONS.iter().copied().filter(|&seconds| seconds != current);
+    Form {
+        title: "Keep clipboard history items for".into(),
+        fields: vec![Field {
+            id: "retention".into(),
+            label: "Keep each item for".into(),
+            kind: FieldKind::Choice(
+                core::iter::once(current)
+                    .chain(others)
+                    .map(|seconds| choice(seconds.to_string(), span(seconds)))
+                    .collect(),
+            ),
+        }],
+        submit_label: "Keep".into(),
+    }
+}
+
+fn recent_form() -> Form {
+    Form {
+        title: "Delete recent clipboard history items".into(),
+        fields: vec![Field {
+            id: "since".into(),
+            label: "Copied in the last".into(),
+            kind: FieldKind::Choice(
+                RECENT
+                    .iter()
+                    .map(|&(seconds, label)| choice(seconds.to_string(), label.into()))
+                    .collect(),
+            ),
+        }],
+        submit_label: "Delete".into(),
+    }
+}
+
+/// The form an item opens: copy it again (first, so Enter twice copies)
+/// or delete it.
+fn entry_form(title: String) -> Form {
+    Form {
+        title,
+        fields: vec![Field {
+            id: "action".into(),
+            label: "What to do with it".into(),
+            kind: FieldKind::Choice(vec![
+                choice("copy".into(), "Copy it again".into()),
+                choice("delete".into(), "Delete it".into()),
+            ]),
+        }],
+        submit_label: "OK".into(),
+    }
+}
 
 fn item(id: &str, title: String, subtitle: String) -> Item {
     Item {
@@ -149,12 +243,12 @@ fn entry_item(entry: &Entry) -> Item {
     if lines > 1 {
         about.push(format!("{lines} lines"));
     }
-    about.push("Enter copies it".into());
-    item(
-        &format!("{ENTRY}{}", entry.id),
-        title_of(&entry.text),
-        about.join(" · "),
-    )
+    about.push("Enter copies or deletes it".into());
+    let title = title_of(&entry.text);
+    Item {
+        form: Some(entry_form(title.clone())),
+        ..item(&format!("{ENTRY}{}", entry.id), title, about.join(" · "))
+    }
 }
 
 fn form_error(message: String) -> FormError {
@@ -177,6 +271,16 @@ impl Guest for ClipboardHistory {
                 "Stops keeping what you copy; the kept items stay until you clear them".into(),
             ));
         }
+        items.push(Item {
+            form: Some(retention_form(status.retention_seconds)),
+            ..item(
+                RETENTION,
+                format!("Keep items for {}", span(status.retention_seconds)),
+                "Older items are deleted, also while Pane is stopped or the extension is \
+                 disabled · Enter changes it"
+                    .into(),
+            )
+        });
         let excluded = match status.excluded.len() {
             0 => "None excluded".to_string(),
             count => format!("{count} excluded"),
@@ -206,6 +310,24 @@ impl Guest for ClipboardHistory {
                     plural(status.items, "item", "items")
                 ),
             ));
+            if status.capture != Capture::Off {
+                items.push(item(
+                    TURN_OFF_AND_CLEAR,
+                    "Turn off and delete clipboard history".into(),
+                    format!(
+                        "Deletes the {} kept and keeps nothing you copy from now on",
+                        plural(status.items, "item", "items")
+                    ),
+                ));
+            }
+            items.push(Item {
+                form: Some(recent_form()),
+                ..item(
+                    DELETE_RECENT,
+                    "Delete recent items".into(),
+                    "Deletes what you copied in the last 15 minutes, hour or day".into(),
+                )
+            });
         }
         items.extend(entries.iter().map(entry_item));
         if entries.is_empty() && status.capture == Capture::On {
@@ -240,6 +362,13 @@ impl Guest for ClipboardHistory {
                 plural(cleared, "kept item", "kept items")
             ));
         }
+        if item_id == TURN_OFF_AND_CLEAR {
+            let cleared = history::turn_off_and_clear()?;
+            return Ok(format!(
+                "Clipboard history is off; deleted {}",
+                plural(cleared, "kept item", "kept items")
+            ));
+        }
         if item_id == EMPTY {
             return Ok("Nothing is kept yet".into());
         }
@@ -257,13 +386,58 @@ impl Guest for ClipboardHistory {
     }
 
     async fn submit_form(item_id: String, values: Vec<FieldValue>) -> Result<String, FormError> {
+        let value = |id: &str| {
+            values
+                .iter()
+                .find(|value| value.id == id)
+                .map_or("", |value| value.value.trim())
+        };
+        if let Some(id) = item_id.strip_prefix(ENTRY) {
+            if value("action") == "delete" {
+                return match history::delete_items(&[id.into()]).map_err(form_error)? {
+                    0 => Err(form_error("That item is no longer kept".into())),
+                    _ => Ok("Deleted the kept item".into()),
+                };
+            }
+            history::copy(id).map_err(form_error)?;
+            return Ok("Copied to the clipboard".into());
+        }
+        if item_id == RETENTION {
+            let seconds: u64 = value("retention")
+                .parse()
+                .map_err(|_| form_error("Choose how long items are kept".into()))?;
+            let before = history::status().map_err(form_error)?.items;
+            history::set_retention(seconds).map_err(form_error)?;
+            let after = history::status().map_err(form_error)?.items;
+            let kept = format!("Items are kept for {}", span(seconds));
+            return Ok(match before.saturating_sub(after) {
+                0 => kept,
+                deleted => format!(
+                    "{kept}; deleted {}",
+                    plural(deleted, "older item", "older items")
+                ),
+            });
+        }
+        if item_id == DELETE_RECENT {
+            let seconds: u64 = value("since")
+                .parse()
+                .map_err(|_| form_error("Choose how recent the items are".into()))?;
+            let ids: Vec<String> = history::entries()
+                .map_err(form_error)?
+                .into_iter()
+                .filter(|entry| entry.age_seconds < seconds)
+                .map(|entry| entry.id)
+                .collect();
+            let deleted = history::delete_items(&ids).map_err(form_error)?;
+            return Ok(format!(
+                "Deleted {}",
+                plural(deleted, "kept item", "kept items")
+            ));
+        }
         if item_id != EXCLUDE {
             return Err(form_error(format!("unknown form: {item_id}")));
         }
-        let program = values
-            .iter()
-            .find(|value| value.id == "program")
-            .map_or("", |value| value.value.trim());
+        let program = value("program");
         let mut excluded = history::status().map_err(form_error)?.excluded;
         excluded.push(program.into());
         history::set_excluded(&excluded).map_err(|message| FormError {

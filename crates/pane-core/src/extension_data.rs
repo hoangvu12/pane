@@ -366,6 +366,14 @@ impl ExtensionData {
         &self.clipboard
     }
 
+    /// Removes the clipboard history items that expired, now and from now
+    /// on on a thread of Pane's own whenever they expire, whether their
+    /// package runs, is disabled or was uninstalled with its data kept.
+    pub fn keep_expiring_clipboard_history(&self) {
+        self.clipboard.sweep();
+        self.clipboard.keep_expiring();
+    }
+
     /// Removes every cache value of the package with `identity`, and nothing
     /// else: its other kinds of data and other packages' caches stay. Works
     /// whether or not the package is enabled or its code loads. The cache
@@ -472,7 +480,7 @@ impl ExtensionData {
         if kind == DataKind::ClipboardHistory {
             // Its items, and its choices as one more.
             let history = self.clipboard.get(&identity.key())?;
-            let choices = !(history.capture.is_off() && history.excluded.is_empty());
+            let choices = history.has_choices();
             return Ok(history.items.len() + usize::from(choices));
         }
         let mut store = self.lock();

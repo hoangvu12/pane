@@ -40,10 +40,13 @@ interface clipboard-history {
     excluded: list<string>,
     /// How many items are kept.
     items: u32,
+    /// How long each item is kept after it was copied, in seconds: Pane
+    /// deletes it then, whether the extension runs or not.
+    retention-seconds: u64,
   }
 
   record entry {
-    /// Identifies it to `copy`.
+    /// Identifies it to `copy` and `delete-items`.
     id: string,
     text: string,
     /// When it was copied, in milliseconds since the Unix epoch.
@@ -65,7 +68,12 @@ interface clipboard-history {
   /// matched ignoring case, with or without their extension.
   set-excluded: func(programs: list<string>) -> result<_, string>;
 
-  /// The kept items, newest first.
+  /// Keeps each item `seconds` after it was copied, from 60 (1 minute) to
+  /// 31536000 (365 days); items already older are deleted at once, and
+  /// none that was deleted comes back.
+  set-retention: func(seconds: u64) -> result<_, string>;
+
+  /// The kept items, newest first; none that expired.
   entries: func() -> result<list<entry>, string>;
 
   /// Puts the kept item `id` on the clipboard again.
@@ -74,6 +82,16 @@ interface clipboard-history {
   /// Deletes every kept item; whether history is kept and the excluded
   /// programs stay as they are. Returns how many were deleted.
   clear: func() -> result<u32, string>;
+
+  /// Deletes the kept items `ids` (from `entries`); an id no longer kept is
+  /// passed over. Returns how many were deleted. Never changes what is on
+  /// the system's clipboard.
+  delete-items: func(ids: list<string>) -> result<u32, string>;
+
+  /// Turns keeping off and deletes every kept item at once, so nothing
+  /// copied meanwhile is kept; the excluded programs and the retention
+  /// stay. Returns how many items were deleted.
+  turn-off-and-clear: func() -> result<u32, string>;
 }
 
 /// The clipboard history import alone, for guest bindings.

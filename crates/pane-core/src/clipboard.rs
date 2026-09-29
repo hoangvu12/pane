@@ -28,6 +28,13 @@
 //! watching, or items are deleted, a change the adapter was still reading
 //! is dropped, so a slow or stuck read never delays stopping and never
 //! brings back what was deleted.
+//!
+//! Kept items expire: each is kept for its package's retention (by default
+//! [`DEFAULT_RETENTION_SECONDS`]) after it was copied, told by a [`Clock`].
+//! The store removes expired items before anything reads them and, while
+//! Pane runs, when they expire, whether the package runs or not, so
+//! neither a disabled package nor a stopped Pane keeps them longer
+//! ([`history`]).
 
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -53,6 +60,17 @@ pub const MAX_ITEMS: usize = 100;
 /// The longest text Pane keeps, in bytes of UTF-8; longer text is not kept
 /// at all (not cut short).
 pub const MAX_TEXT_BYTES: usize = 32 * 1024;
+
+/// How long an item is kept after it was copied unless the user chose
+/// otherwise: 7 days. Provisional (#36), pending the user's decision.
+pub const DEFAULT_RETENTION_SECONDS: u64 = 7 * 86_400;
+
+/// The shortest retention a package can choose: 1 minute.
+pub const MIN_RETENTION_SECONDS: u64 = 60;
+
+/// The longest retention a package can choose: 365 days, so that history
+/// is always finite.
+pub const MAX_RETENTION_SECONDS: u64 = 365 * 86_400;
 
 /// The most programs a package can exclude.
 pub const MAX_EXCLUDED: usize = 64;
@@ -308,13 +326,80 @@ impl ClipboardSystem for Unavailable {
     }
 }
 
-/// Milliseconds since the Unix epoch, now.
-pub(crate) fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| {
-            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+/// Tells the time for clipboard history: when an item was copied and
+/// whether it expired.
+pub trait Clock: Send + Sync + 'static {
+    /// Now, in milliseconds since the Unix epoch.
+    fn now(&self) -> u64;
+
+    /// Has `changed` called whenever this clock is set other than by time
+    /// passing (the system's never is), so that expiry is looked at again.
+    fn on_change(&self, changed: Box<dyn Fn() + Send + Sync>) {
+        let _ = changed;
+    }
+}
+
+/// The system's clock.
+pub struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now(&self) -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |since| {
+                u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+            })
+    }
+}
+
+/// A clock that stands still until it is set or advanced, for tests and
+/// development builds ([`crate::Launcher::with_clock`]).
+#[cfg(any(test, debug_assertions))]
+#[doc(hidden)]
+pub struct ManualClock {
+    now: Mutex<u64>,
+    listeners: Mutex<Vec<Box<dyn Fn() + Send + Sync>>>,
+}
+
+#[cfg(any(test, debug_assertions))]
+impl ManualClock {
+    /// A clock showing `now`, in milliseconds since the Unix epoch.
+    pub fn at(now: u64) -> Arc<ManualClock> {
+        Arc::new(ManualClock {
+            now: Mutex::new(now),
+            listeners: Mutex::new(Vec::new()),
         })
+    }
+
+    /// Moves the clock `by` forward.
+    pub fn advance(&self, by: std::time::Duration) {
+        {
+            let mut now = self.now.lock().unwrap_or_else(|p| p.into_inner());
+            *now = now.saturating_add(u64::try_from(by.as_millis()).unwrap_or(u64::MAX));
+        }
+        for listener in self
+            .listeners
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+        {
+            listener();
+        }
+    }
+}
+
+#[cfg(any(test, debug_assertions))]
+impl Clock for ManualClock {
+    fn now(&self) -> u64 {
+        *self.now.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn on_change(&self, changed: Box<dyn Fn() + Send + Sync>) {
+        self.listeners
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(changed);
+    }
 }
 
 /// Watches the clipboard exactly while some package keeps clipboard
@@ -371,20 +456,21 @@ impl Sink for CaptureSink {
             return;
         }
         let running = self.data.running_owners();
-        let now = now();
-        self.data.clipboard_history().capture(ticket.0, |packages| {
-            let mut changed = false;
-            for (owner, history) in packages.iter_mut() {
-                if history.capture != CaptureState::On || !running.contains(owner) {
-                    continue;
+        self.data
+            .clipboard_history()
+            .capture(ticket.0, |packages, now| {
+                let mut changed = false;
+                for (owner, history) in packages.iter_mut() {
+                    if history.capture != CaptureState::On || !running.contains(owner) {
+                        continue;
+                    }
+                    if let Ok(text) = accept(&observation, &history.excluded) {
+                        history.add(text, observation.source.as_deref(), now);
+                        changed = true;
+                    }
                 }
-                if let Ok(text) = accept(&observation, &history.excluded) {
-                    history.add(text, observation.source.as_deref(), now);
-                    changed = true;
-                }
-            }
-            changed
-        });
+                changed
+            });
         drop(open);
     }
 }
@@ -481,6 +567,8 @@ pub(crate) struct Status {
     pub problem: Option<String>,
     pub excluded: Vec<ProgramName>,
     pub items: usize,
+    /// How long each item is kept after it was copied, in seconds.
+    pub retention_seconds: u64,
 }
 
 /// What a command of the package with `data` does with its clipboard
@@ -512,6 +600,7 @@ impl Commands<'_> {
         Ok(Status {
             capture: history.capture,
             problem,
+            retention_seconds: history.retention(),
             excluded: history.excluded,
             items: history.items.len(),
         })
@@ -534,9 +623,17 @@ impl Commands<'_> {
         self.update(|history| history.set_excluded(programs))
     }
 
-    /// The kept items, newest first.
-    pub fn items(&self) -> Result<Vec<Item>, String> {
-        Ok(self.data.clipboard_history()?.get(self.data.owner())?.items)
+    /// Keeps each item `seconds` after it was copied; items already older
+    /// are deleted at once.
+    pub fn set_retention(&self, seconds: u64) -> Result<(), String> {
+        self.update(|history| history.set_retention(seconds))
+    }
+
+    /// The kept items, newest first, none expired, with the time now.
+    pub fn items(&self) -> Result<(Vec<Item>, u64), String> {
+        let store = self.data.clipboard_history()?;
+        let items = store.get(self.data.owner())?.items;
+        Ok((items, store.now()))
     }
 
     /// Puts the kept item `id` on the clipboard again.
@@ -544,9 +641,10 @@ impl Commands<'_> {
         let system = self.system()?;
         let item = self
             .items()?
+            .0
             .into_iter()
             .find(|item| item.id.to_string() == id)
-            .ok_or("that item is no longer kept")?;
+            .ok_or("That item is no longer kept")?;
         system.write_text(&item.text)
     }
 
@@ -554,6 +652,24 @@ impl Commands<'_> {
     /// adapter was reading meanwhile is not kept.
     pub fn clear(&self) -> Result<usize, String> {
         self.update(|history| Ok(history.clear()))
+    }
+
+    /// Deletes the kept items `ids`; returns how many were kept. An id no
+    /// longer kept is passed over. A change the adapter was reading
+    /// meanwhile is not kept.
+    pub fn delete(&self, ids: &[String]) -> Result<usize, String> {
+        let ids: Vec<u64> = ids.iter().filter_map(|id| id.parse().ok()).collect();
+        self.update(|history| Ok(history.delete(&ids)))
+    }
+
+    /// Turns history off and deletes every kept item at once, so nothing
+    /// copied meanwhile is kept; returns how many items there were. The
+    /// excluded programs and the retention stay.
+    pub fn turn_off_and_clear(&self) -> Result<usize, String> {
+        self.update(|history| {
+            history.capture = CaptureState::Off;
+            Ok(history.clear())
+        })
     }
 
     fn update<R>(
