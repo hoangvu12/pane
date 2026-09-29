@@ -450,6 +450,9 @@ struct PackageFiles {
     kept: Option<Kept>,
     /// The visit and grant version of the listing being made, if any.
     running: Option<(u64, u64)>,
+    /// The visit and grant version whose listing the package's latest
+    /// `list-folder()` was told is still being made, if it was told that.
+    told_listing: Option<(u64, u64)>,
     /// The visit and grant version of the latest listing that ended, kept
     /// or not. Both only grow, so a wait for one listing ends when it, or a
     /// newer one that replaced it, has ended, and never when an older one
@@ -464,6 +467,7 @@ impl Default for PackageFiles {
         PackageFiles {
             kept: None,
             running: None,
+            told_listing: None,
             done: watch::Sender::new((0, 0)),
             worker: None,
         }
@@ -602,6 +606,7 @@ impl FileAccess {
             && kept.visit == visit
             && kept.version == version
         {
+            package.told_listing = None;
             return match &kept.result {
                 Ok(listing) => Ok(FolderState::Ready {
                     files: listing
@@ -635,21 +640,25 @@ impl FileAccess {
             if worker.send(job).is_err() {
                 package.running = None;
                 package.worker = None;
+                package.told_listing = None;
                 return Err("Pane's folder listing for this extension stopped".into());
             }
         }
+        package.told_listing = Some((visit, version));
         Ok(FolderState::Listing)
     }
 
-    /// Resolves once the listing being made for the package with identity
-    /// key `owner` in this visit ends, or a newer one that replaced it;
-    /// `None` when none is being made. An older listing that ends meanwhile
-    /// (one stopped when root search was left) does not resolve it.
+    /// When the package with identity key `owner` was last told this
+    /// visit's listing is still being made: resolves once that listing ends
+    /// (at once if it already has), or a newer one that replaced it. An
+    /// older listing that ends meanwhile (one stopped when root search was
+    /// left) does not resolve it. `None` when the package was not told so,
+    /// or was told so in an earlier visit or of an earlier grant.
     pub(crate) fn listed(&self, owner: &str) -> Option<impl Future<Output = ()> + Send + 'static> {
         let state = self.state();
         let current = (state.visit, state.version);
         let package = state.packages.get(owner)?;
-        if package.running != Some(current) {
+        if package.told_listing != Some(current) {
             return None;
         }
         let mut done = package.done.subscribe();
@@ -961,5 +970,36 @@ mod tests {
             access.folder_state("owner", None),
             Ok(FolderState::Ready { files, .. }) if files.len() == 1
         ));
+    }
+
+    #[test]
+    fn a_listing_that_ended_before_the_wait_is_made_is_waited_for_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("Granted");
+        fs::create_dir_all(&folder).unwrap();
+        let gated = Arc::new(Gated::default());
+        let access = FileAccess::default();
+        access.set_folders(gated.clone());
+        access.grant("owner", &folder).unwrap();
+
+        // The package is told the folder is listing, and the listing ends
+        // before the launcher asks what to wait for.
+        assert_eq!(access.folder_state("owner", None), Ok(FolderState::Listing));
+        gated.let_one_return();
+        gated.wait_until_started(1);
+        while access.state().packages["owner"].running.is_some() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let listed = access
+            .listed("owner")
+            .expect("the package was told the folder is listing");
+        assert!(listed.now_or_never().is_some());
+
+        // Told the listing, it has nothing more to wait for.
+        assert!(matches!(
+            access.folder_state("owner", None),
+            Ok(FolderState::Ready { .. })
+        ));
+        assert!(access.listed("owner").is_none());
     }
 }
