@@ -625,12 +625,14 @@ xtask guests` packed) and points the development build at it with
 Dependencies from npm sample previews it (frame 260: "Requires: Greeter from
 npm, installed with it from npm:@pane-samples/greeter"); Enter installs both
 (261) and "Greet through the required greeter" answers "Hello, Pane, from
-JavaScript" from the npm package's guest (262). Up from root's last row is
+the npm package" from the npm package's own component (262; the item's
+subtitle is the Rust dependencies sample's, shared with the local
+Dependencies sample). Up from root's last row is
 "Install extension from npm…", whose form (263) takes
 `@pane-samples/greeter`; its preview (264) shows the npm lines and, the
 package being installed, **Update**, which Enter chooses ("Updated Greeter
 from npm to 0.1.0", 265); its command's "Say hello" answers "Hello from the
-JavaScript guest" (266). `installed.json` must then hold both packages and
+npm package" (266). `installed.json` must then hold both packages and
 record the npm name and version. Run locally on 2026-09-29 (same Ubuntu
 26.04.1 / Xvfb / lavapipe setup): all checks of the whole smoke passed and
 frames 260 to 266 were looked at. A first run showed the Update row pushed
@@ -643,13 +645,17 @@ disconnected": the smoke's registry (Python's HTTP/1.0 server) closed the
 connection kept from the metadata request as the tarball's was sent on it,
 about one download in forty. Pane now opens a connection per npm request;
 the whole smoke then passed again and frames 260 to 266 were looked at.
+After #45's review (npm through #30's HTTP client, raw tar reading, a
+download folder each, the npm sample's own component answering as the npm
+package), the whole smoke passed again on 2026-09-29 and frames 260 to 266
+were looked at; the kept frames below are from that run.
 
 | Step | Evidence |
 | --- | --- |
 | Installing the dependency from npm: "Installed Dependencies from npm sample with Greeter from npm, which it requires" | [261-npm-dependency-installed.png](evidence/linux-x11/261-npm-dependency-installed.png) |
-| The npm package's `greet`, called by the dependency id: "Hello, Pane, from JavaScript" | [262-npm-dependency-called.png](evidence/linux-x11/262-npm-dependency-called.png) |
+| The npm package's `greet`, called by the dependency id: "Hello, Pane, from the npm package" | [262-npm-dependency-called.png](evidence/linux-x11/262-npm-dependency-called.png) |
 | The preview: "Source: npm package @pane-samples/greeter", "npm version: 0.1.0, the latest", the tarball and its sha512 integrity, what Pane runs, and Update in view | [264-npm-preview.png](evidence/linux-x11/264-npm-preview.png) |
-| Its command: "Hello from the JavaScript guest" | [266-npm-command-ran.png](evidence/linux-x11/266-npm-command-ran.png) |
+| Its command: "Hello from the npm package" | [266-npm-command-ran.png](evidence/linux-x11/266-npm-command-ran.png) |
 
 (The kept frames are cropped to Pane's window; the smoke checks the whole
 frames. Frame 260 shows the local checkout path and is not kept.)
