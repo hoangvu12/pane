@@ -141,7 +141,7 @@ An extension package published to the npm registry: a tarball holding its packag
 _Avoid_: Node package, npm module (Pane runs no Node code), plugin from npm
 
 **Git-distributed package**:
-An extension package distributed as a Git repository whose root holds its package manifest, identified by its repository (host and path, without `.git` or a reference): the same repository written as an HTTPS, SSH or scheme-less address is one package. Pane fetches the one revision asked for itself, over HTTPS, checks every object against its id and writes out only its files and folders, then installs it like a local package, into a managed copy, while it keeps its Git source identity. Pane runs nothing from the repository: no build, hook, filter or submodule.
+An extension package distributed as a Git repository whose root holds its package manifest, identified by its repository (host and path, without `.git` or a reference; the path in lowercase on github.com, gitlab.com, bitbucket.org and codeberg.org, which ignore its case, and as written elsewhere): the same repository written as an HTTPS, SSH or scheme-less address is one package. Pane fetches the one revision asked for itself, over HTTPS, checks every object against its id and writes out only its files and folders, then installs it like a local package, into a managed copy, while it keeps its Git source identity. Pane runs nothing from the repository: no build, hook, filter or submodule.
 _Avoid_: Cloned extension, repository checkout (Pane keeps no repository)
 
 **Release revision**:

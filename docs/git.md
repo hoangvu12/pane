@@ -44,7 +44,8 @@ An address is any of `https://github.com/owner/repo`,
 `https://github.com/owner/repo.git`, `github.com/owner/repo`,
 `git@github.com:owner/repo.git` and `ssh://git@github.com/owner/repo`, with
 or without `git:` or `git+` before it. Pane fetches each over HTTPS from the
-same host and path (it has no SSH), keeping `.git` as written.
+same host and path (it has no SSH), as written, `.git` and case included;
+the preview says when an SSH address was fetched over HTTPS.
 
 The preview is the one a folder has, with lines of its own:
 
@@ -55,11 +56,19 @@ The preview is the one a folder has, with lines of its own:
   installing pins it to that revision", "Revision: commit 1a2b3c4d5e6f,
   which you named: …", or, for an installed pinned copy, "…, which it is
   pinned to: name another branch, tag or commit to change it".
-- "Fetched: commit <full id> “<commit subject>” from <address>, each object
-  checked against its id".
-- "Runs only the WebAssembly components its pane.json names, in Pane:
-  nothing in the repository is built or run to install it (no hooks,
-  scripts or submodules)".
+- "Fetched: commit <full id> “<commit subject>”, served at <address>; each
+  object checked against its id", or, for an SSH address, "…, SSH address
+  fetched over HTTPS from https://…; …". It says where the commit was
+  served, not who made it ([provenance](#a-commit-id-pins-contents-not-provenance)).
+  The subject, like any text the server chooses, is shown without control
+  or bidirectional characters and cut to 200 characters.
+- For a commit named by its id that no branch or tag of the repository
+  points to: "Caution: no branch or tag of github.com/owner/repo points to
+  commit 1a2b3c4d5e6f. A host that shares storage between forks, as GitHub
+  does, can serve a fork's or a pull request's commit at this address, so
+  its id alone does not show that this repository made it".
+- "Runs only the components its pane.json names: nothing in the repository
+  is built or run (no hooks, scripts or submodules)".
 
 Install copies `pane.json`, the components it names and this system's
 helper files into Pane, as for a folder, and records the package in
@@ -76,7 +85,12 @@ preview is shown, once an install ends and on every failure.
 
 The identity is the repository without its reference: `git:` and the host
 in lowercase (with its port, unless it is HTTPS's 443) and the path without
-a trailing `/` or `.git`, its case kept (`git:github.com/owner/repo`). Every
+a trailing `/` or `.git` (`git:github.com/owner/repo`). On github.com,
+gitlab.com, bitbucket.org and codeberg.org, which serve a repository at any
+case of its path, the path is lowercased as well and `.git` dropped in any
+case, so `github.com/Owner/Repo` and `github.com/owner/repo` are one package
+(the user's decision); on any other host, or one of those on another port,
+the path keeps its case, since a server may tell the two apart. Every
 address form above names the same package, so a second install is refused
 ("Already installed from Git repository github.com/owner/repo; use Update to
 replace the installed copy") and choosing it again, with any reference,
@@ -93,6 +107,21 @@ Moving a repository to another host or path makes another package.
 | `@main`, `@refs/heads/main` | that branch's commit | fetches that branch again (tracked) |
 | `@v1.0.0`, `@refs/tags/v1.0.0` | the commit the tag points to | installs that tag again (pinned) |
 | `@<40 hexadecimal digits>` | that commit | installs that commit again (pinned) |
+
+### A commit id pins contents, not provenance
+
+A commit id pins the bytes: the files are exactly that commit's tree. It
+does not show that the repository at the address made the commit. GitHub
+(and other hosts that share object storage between a repository and its
+forks) serves a commit that exists only in a fork, or in a pull request
+never merged, at the upstream repository's address too, so
+`trusted/repo@<id>` can install code the owners of `trusted/repo` never
+accepted. Pane cannot tell from the server where a commit came from, so
+when a commit is named by its id it also lists the repository's `HEAD`,
+branches and tags (peeled) and cautions on the preview when none of them
+points to that commit. A branch or a tag is resolved from the repository's
+own listing, so a fork's commit is never installed through one; prefer a
+tag the repository's owners published when choosing what to pin.
 
 Naming another reference changes the recorded one. A name that is both a
 branch and a tag is refused until written `refs/heads/…` or `refs/tags/…`;
@@ -140,9 +169,9 @@ installed or left in the downloads folder:
 | A redirect | "…/info/refs?service=git-upload-pack answered 301, sending Pane elsewhere: Pane follows no redirect, so name the repository by the address it moved to" |
 | An older server | "The Git repository … is not served with Git's protocol version 2 over HTTPS, which Pane needs …"; SHA-256 repositories are refused too |
 | No such reference | "The Git repository … has no branch or tag named nope"; "… has both a branch and a tag named x; name the one to install as …@refs/heads/x or …@refs/tags/x"; a commit it does not have: "Could not fetch commit … of …: …" |
-| Too large | a reference listing over 16 MiB, a pack over 64 MiB, more than 20,000 objects or 512 MiB of them inflated, files over 256 MiB, more than 10,000 files and folders, folders more than 32 deep |
+| Too large | a reference listing over 16 MiB, a pack over 64 MiB, more than 20,000 objects, more than 256 MiB of its contents in memory at once (entries inflated and objects its deltas make, together), a chain of more than 4096 deltas, files over 256 MiB, more than 10,000 files and folders, folders more than 32 deep |
 | A damaged or forged pack | its checksum, a zlib stream, a delta, an object whose id does not match (so the tree is not the commit's), or data crafted to collide under SHA-1 |
-| An unsafe tree | "… cannot be installed safely: its tree contains `dist/link`, a symbolic link; Pane takes only files and folders every system can write"; also a submodule, a `.git` or `git~1` entry, two names differing only in case, and every name npm's unpacking refuses ([npm](npm.md#what-is-refused)) |
+| An unsafe tree | "… cannot be installed safely: its tree contains `dist/link`, a symbolic link; Pane takes only files and folders every system can write"; also a submodule, a `.git` or `git~1` entry, two names differing only in case, an entry that is not one plain name (`a/b`, `../x`, an absolute `/path`, `\`, `.`, `..`: refused before anything is written outside the download folder), and every name npm's unpacking refuses ([npm](npm.md#what-is-refused)) |
 | Not a Pane extension | "… is not a Pane extension: it has no pane.json at the repository's root …" |
 | Source-only | [above](#layout-release-and-source-only-revisions) |
 | Git LFS | "… stores its component dist/x.wasm with Git LFS, which Pane does not fetch: …" |
@@ -198,10 +227,16 @@ yet.
 
 - Unit tests in [`git.rs`](../crates/pane-core/src/git.rs): address forms
   and their identity, references, HTTPS only (plain HTTP from a loopback
-  address in tests), pkt-lines, packs (checksum, deltas by offset and by
-  id, a missing base, object counts), trees (links, submodules, `.git`,
-  unsafe names, names differing in case, limits of entries, size and
-  depth), files without execute permission and Git LFS pointers.
+  address in tests), case folded on github.com, gitlab.com, bitbucket.org
+  and codeberg.org only, SSH addresses noted, pkt-lines, packs (checksum,
+  deltas by offset and by id, a missing base, object counts, 2,000 deltas
+  against ids written base last, a chain of 4096 deltas and one longer, the
+  shared memory budget with deltas' instructions let go), trees (links,
+  submodules, `.git`, unsafe names, names differing in case, limits of
+  entries, size and depth), files without execute permission, Git LFS
+  pointers, and a server's text (subject, `ERR`) shown without control or
+  bidirectional characters and cut. `downloads.rs` checks that a name is
+  one plain name (`a/b`, `../x`, `/abs`, `sub/.git`, `..`, `.`, `\`).
 - [`crates/pane-core/tests/repositories.rs`](../crates/pane-core/tests/repositories.rs),
   against Git's own server (`git upload-pack`) on 127.0.0.1: preview,
   install and run from a tag, after a restart without fetching again; the
@@ -209,7 +244,14 @@ yet.
   and a tag pinned; the identity across address forms, a local copy of the
   same code beside it; a local package requiring a Git one at a tag; a
   dependency naming another revision; a Git package naming a local folder;
-  a link and a submodule; hooks, filters and install scripts never running
+  a link and a submodule; hand-made hostile trees (`../x`, `../../x`, an
+  absolute path, a folder `../x`, `dist/x`, `..\x`, `sub/.git`) writing
+  nothing outside the download and leaving no download behind; a commit
+  only a pull request's reference holds, previewed with the caution, and
+  commits, branches and tags a reference points to without it; another
+  case of the path on a host treated as github.com is the installed
+  package, and a dependency spelled so resolves to it without fetching;
+  hooks, filters and install scripts never running
   and components taken as committed; missing repositories, references and
   commits, ambiguous names, redirects, sign-in, protocol version 0, a
   `# service` line, an unreachable server; the form.
@@ -229,11 +271,15 @@ yet.
   commit other than choosing the repository again, no history browser and
   no publishing to a host.
 - Signed tags and commits are not checked; the commit id, checked object by
-  object, is the pin.
+  object, is the pin, and it proves contents, not provenance: a fork's
+  commit served at the repository's address is only cautioned about.
 - Tags and branches are resolved on the server; a server that does not
   allow fetching an unadvertised commit id refuses a commit named by its id
   (GitHub, GitLab and Git's own server allow it).
 - The pack and its objects are held in memory while the revision is written
-  (at most 64 MiB and 512 MiB).
+  (at most 64 MiB and 256 MiB).
+- Only github.com, gitlab.com, bitbucket.org and codeberg.org fold the
+  path's case; another host that ignores case (a self-hosted GitLab, say)
+  makes `Owner/Repo` and `owner/repo` two packages.
 - The HTTPS path to a real host is not exercised by the checks, which never
   reach the network ([by hand](#trying-a-real-host-by-hand)).
