@@ -776,6 +776,24 @@ frames were looked at.
 
 (Cropped to Pane's window; the smoke checks the whole frames.)
 
+### Clipboard history expiry (#36)
+
+The clipboard phase goes on (screenshots 400 to 402, [clipboard
+history](../clipboard-history.md#checks)) where the command never runs:
+with Pane stopped, the smoke writes the history of the installed package as
+a downtime would leave it (`scripts/clipboard_history.py`): history on, one
+item copied 8 days ago and one a day ago. Once Pane starts, the old one is
+gone from the file (checked by parsing it), and the uninstall confirmation
+reads "Saved data: 1 clipboard history item"; kept as retained data and made
+8 days old while Pane is stopped, it is gone once Pane starts again, with
+the capture choice kept, and the extension list's last row reads "Delete
+retained data of Clipboard History", "Not installed · keeps clipboard
+history settings". No clipboard is read. Run locally on 2026-09-29 as a
+phase alone and within the whole smoke (same Ubuntu 26.04.1 / Xvfb /
+lavapipe setup): its checks passed, and frames 400 and 402 were looked at.
+The frames show this computer's source folder, so they are not kept as
+evidence here.
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms have a text field (GPUI CE's

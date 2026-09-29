@@ -743,11 +743,17 @@ for entry in history::entries()? {
 ```
 
 `status()` says whether it is on, why Pane cannot watch the clipboard (such
-as on a system without an adapter), the excluded programs and the count;
-`set-excluded` replaces the excluded programs, `copy(id)` puts an item on the
-clipboard again and `clear()` deletes every item. Pane keeps plain text
+as on a system without an adapter), the excluded programs, the count and
+the retention; `set-excluded` replaces the excluded programs, `copy(id)`
+puts an item on the clipboard again, `clear()` deletes every item and keeps
+history on, `delete-items(ids)` deletes some, and `turn-off-and-clear()`
+turns history off and deletes every item at once. Pane keeps plain text
 only, never text marked by its application as not to be kept, and nothing
-while the package is disabled. The [Clipboard History](clipboard-history)
+while the package is disabled. Each item is kept for the retention after
+it was copied (7 days unless `set-retention(seconds)` chose 1 minute to
+365 days), and Pane deletes it then itself, whether the command runs or
+not: `entries()` never lists an expired item, so a command needs no expiry
+of its own. The [Clipboard History](clipboard-history)
 default extension is the example; see [clipboard history](../docs/clipboard-history.md).
 Only Windows has a clipboard adapter so far, so its package declares
 `"platforms": ["windows"]`.
@@ -762,9 +768,11 @@ does not import it. Each function throws, on failure, an object whose
 import * as history from "pane:extension/clipboard-history@0.1.0";
 
 history.setCapture("on");
+history.setRetention(86400); // keep each item for a day
 for (const entry of history.entries()) {
   // entry.text, entry.ageSeconds, entry.source ("notepad.exe")
 }
+history.deleteItems(["7"]); // `delete-items`: `delete` is a JavaScript keyword
 ```
 
 [`sample-clipboard-js`](sample-clipboard-js) and

@@ -4,21 +4,28 @@ Added for [#35](https://github.com/hoangvu12/pane/issues/35) (Windows):
 US65, US66, US70, US71; T10, T21, T22; contributions to G5 and G7, not
 claims that they pass. Once the user turns it on, Pane keeps the text they
 copy on this computer, and the **Clipboard History** default extension lists
-it, newest first; Enter on an item copies it again. It starts off, can be
-paused, resumed and turned off again, and disabling the extension stops it
-too. Expiry and the
-remaining deletion controls are [#36](https://github.com/hoangvu12/pane/issues/36);
+it, newest first; Enter on an item copies it again or deletes it. It starts
+off, can be paused, resumed and turned off again, and disabling the
+extension stops it too.
+[#36](https://github.com/hoangvu12/pane/issues/36) added expiry and the
+remaining deletion controls (US67, US68, US69; T10, T21; G5, again
+contributions): items are kept for 7 days unless the user chooses another
+time, and Pane deletes them then, whether the extension runs or not
+([Expiry](#expiry)); an item, the recent ones, all of them (Clear), or all
+of them with history turned off can be deleted ([Deleting](#deleting)).
 macOS and Linux observation are [#37](https://github.com/hoangvu12/pane/issues/37)
 and [#38](https://github.com/hoangvu12/pane/issues/38). The architecture is
 recorded in [ADR 0020](adr/0020-host-keeps-clipboard-history-for-an-extension.md)
-(proposed).
+and, for expiry, [ADR 0023](adr/0023-host-expires-clipboard-history-by-its-own-clock.md)
+(both proposed).
 
 ## Where it lives
 
 - **Host capability**, in the core: `pane:extension/clipboard-history`
   ([`wit/clipboard.wit`](../wit/clipboard.wit)), a host import any command
   of an installed package may use: `status`, `set-capture` (off, on,
-  paused), `set-excluded`, `entries`, `copy` and `clear`. The host watches
+  paused), `set-excluded`, `set-retention`, `entries`, `copy`, `clear`,
+  `delete-items` and `turn-off-and-clear`. The host watches
   the clipboard and keeps the history itself, so nothing of the extension
   runs while the clipboard changes, and the history is the package's
   [extension data](extension-data.md) whatever the extension does.
@@ -54,11 +61,14 @@ The command's rows, in order:
 | Row | Enter |
 | --- | --- |
 | "Turn on clipboard history" (off), "Pause clipboard history" (on) or "Resume clipboard history" (paused), subtitled with the state, the number kept and, if Pane cannot watch the clipboard, why | turns it on, pauses or resumes it; each row does only that, so pressing it again before the command is opened anew changes nothing more |
-| "Turn off clipboard history", while on or paused | turns it off: nothing is kept and Pane stops watching for it; the kept items stay until cleared |
+| "Turn off clipboard history", while on or paused | turns it off: nothing is kept and Pane stops watching for it; the kept items stay until cleared (or expire) |
+| "Keep items for 7 days" (the retention now), subtitled "Older items are deleted, also while Pane is stopped or the extension is disabled · Enter changes it" | a form choosing 1 hour, 1 day, 7 days, 30 days or 90 days, listing the retention now first, which is chosen when it opens, so submitting it unchanged (Enter twice) changes nothing; items already older are deleted at once ("Items are kept for 1 hour; deleted 1 older item") |
 | "Exclude a program" | a form taking a program's file name, such as `KeePass.exe` |
 | "Stop excluding keepass.exe", one per excluded program | removes the exclusion |
 | "Clear clipboard history", while items are kept | deletes every kept item; whether history is kept does not change |
-| One row per kept item, newest first: its first line with content (at most 80 characters), subtitled "5 min ago · from notepad.exe · 2 lines · Enter copies it" | puts its text on the clipboard again ("Copied to the clipboard"); the copy is a change like any other, so it moves to the front |
+| "Turn off and delete clipboard history", while items are kept and history is on or paused | turns history off and deletes every kept item at once ("Clipboard history is off; deleted 2 kept items"): the spec's **Disable and delete history** |
+| "Delete recent items", while items are kept | a form choosing the last 15 minutes, hour or day; deletes the items copied then ("Deleted 2 kept items") |
+| One row per kept item, newest first: its first line with content (at most 80 characters), subtitled "5 min ago · from notepad.exe · 2 lines · Enter copies or deletes it" | a form, titled with the item, choosing "Copy it again" (first, so Enter twice copies) or "Delete it": copying puts its text on the clipboard again ("Copied to the clipboard"), and the copy is a change like any other, so it moves to the front; deleting deletes that item alone ("Deleted the kept item"), or says "That item is no longer kept" |
 | "Nothing kept yet", while on and empty | nothing |
 
 The rows are the command's view when it opens: after an action the status
@@ -88,7 +98,7 @@ line answers, and the rows change the next time the command is opened.
 - **Across restarts.** The capture state is kept with the history: after a
   restart Pane watches again, before any command opens, only where history
   is on and the package enabled; paused stays paused, disabled stays
-  disabled and keeps its history (retention while disabled is #36).
+  disabled and keeps its history (until it expires).
 - **What is kept** ([`clipboard::accept`](../crates/pane-core/src/clipboard.rs)),
   the same on every system:
   - plain text only (Windows `CF_UNICODETEXT`); a copy with text and other
@@ -104,12 +114,67 @@ line answers, and the rows change the next time the command is opened.
   - one item per text: copying a kept text again moves it to the front with
     its new time;
   - at most 100 items per package (`MAX_ITEMS`); beyond that the oldest go.
-    This bounds the file; it is not the retention policy (#36).
+    This bounds the file; the retention ([Expiry](#expiry)) bounds how long.
 - **Local only.** The history stays in Pane's data folder; Pane sends none
   of it anywhere and no other extension can read it through Pane (only the
   package that keeps it). This is not a boundary against trusted extensions
   or other programs running as the user
   ([policy](extension-policy-proposal.md#clipboard-history)).
+
+## Expiry
+
+Each item is kept for its package's **retention** after it was copied, 7
+days unless the user chose another time (`DEFAULT_RETENTION_SECONDS`), and
+then Pane deletes it ([ADR 0023](adr/0023-host-expires-clipboard-history-by-its-own-clock.md)):
+
+- **Whether the extension runs or not.** Pane removes expired items itself,
+  never by running the extension: before anything reads, counts or changes
+  any package's history (the command's rows, an uninstall's "Saved data",
+  a retained-data row, a copy, Enter on an item), and, while Pane runs, on
+  a thread of its own when each item expires (and at least hourly, in case
+  the system's time changed). So an item expires while its package is
+  disabled, paused after a failure, or uninstalled with its data kept, and
+  an item that expired while Pane was stopped is gone before anything shows
+  it after the restart.
+- **Never restarted.** An item's time is when it was copied (`copiedAt`),
+  so disabling and enabling the package, pausing, turning history off and
+  on or restarting Pane does not give it more time. Copying the same text
+  again keeps it as a new copy, with its new time.
+- **Configurable and finite.** The command offers 1 hour, 1 day, 7 days,
+  30 days and 90 days; the host accepts any time from 1 minute to 365 days
+  (`set-retention`), so history never grows without end. A shorter
+  retention deletes the items already older at once; a longer one keeps
+  the kept items, and those copied later, longer (what expired stays gone).
+  The retention is one of the package's choices, like whether history is
+  kept and the excluded programs: it stays when the items go, and in
+  retained data ("keeps clipboard history settings").
+- The defaults and choices are provisional, pending the user's decision
+  ([current decisions](current-decisions.md)).
+
+## Deleting
+
+| Control | Deletes | Afterwards |
+| --- | --- | --- |
+| Enter on an item, "Delete it" | that item | history stays as it was |
+| "Delete recent items" | the items copied in the last 15 minutes, hour or day | history stays as it was |
+| "Clear clipboard history" | every item | history stays on (or paused): what is copied next is kept |
+| "Turn off and delete clipboard history" | every item | history is off: nothing more is kept, also after a restart, until it is turned on |
+| Expiry | each item once its retention passed | unchanged |
+| Uninstall and delete saved data, Delete retained data | every item and every choice | the package keeps nothing |
+
+- A deletion is one change of the file, written before the command's
+  answer: turning history off and deleting its items happen together, so
+  nothing copied in between is kept.
+- A clipboard change Pane was still reading when items were deleted (by
+  any control but expiry) is dropped rather than kept afterwards, so
+  deleting never brings an item back; what is copied after a deletion is
+  kept as usual.
+- A row shown before a deletion stays until the command is opened again;
+  Enter on a deleted item says "That item is no longer kept" and changes
+  nothing.
+- Deleting is not forensic erasure (the file is replaced; its old blocks
+  may remain on the disk), and it never changes what is on the system's
+  clipboard.
 
 ## Sensitive markers
 
@@ -146,10 +211,15 @@ no owner, so its program is unknown and never excluded).
   SYSTEM only full control, inheriting nothing from the folder, set as each
   new version of the file is created, before it replaces the old one. The
   file is typed and versioned: `{"version": 1, "packages": {<identity key>:
-  {"capture", "excluded", "items", "nextId"}}}`, with `capture` "on" or
-  "paused" (missing is off), `excluded` lowercase program names, and
-  `items` newest first, each with its `id`, `text`, `copiedAt` (milliseconds
-  since the Unix epoch) and `source`.
+  {"capture", "excluded", "retentionSeconds", "items", "nextId"}}}`, with
+  `capture` "on" or "paused" (missing is off), `excluded` lowercase program
+  names, `retentionSeconds` the retention the user chose (missing is the
+  default), and `items` newest first, each with its `id`, `text`, `copiedAt`
+  (milliseconds since the Unix epoch) and `source`. A package whose items
+  all went and that has no choices left keeps only its `nextId`, so its
+  ids are never given twice (it counts as keeping nothing). A
+  `retentionSeconds` outside 1 minute to 365 days, as only an edited file
+  can hold, is taken as the nearest bound.
 - It is written after each change, outside the lock that captures and
   commands share, so a copy never waits on another's write. A change is on
   disk when the call that made it returns; a crash before that loses only
@@ -169,10 +239,8 @@ no owner, so its program is unknown and never excluded).
   history items", or "clipboard history settings" when only the state and
   exclusions are kept), which "Delete retained data" removes. Reinstalling
   the same source after keeping it keeps history as it was, on if it was on.
-- "Clear clipboard history" in the command deletes every item of the
-  package and keeps its state and exclusions. Per-item deletion, "Disable
-  and delete history" and expiry are #36. Deleting is not forensic erasure,
-  and never changes what is on the system's clipboard.
+- The command deletes items as [Deleting](#deleting) says, and Pane
+  expires them ([Expiry](#expiry)); both remove them from the file.
 
 ## Per platform
 
@@ -199,7 +267,19 @@ no owner, so its program is unknown and never excluded).
   starting or stopping the watch; with #18, no change landing after a
   runtime thread's fence closed, and fenced code reading nothing. The
   runtime ([`runtime.rs`](../crates/pane-core/src/runtime.rs)): a slow
-  clipboard history call is Pane's time, never the guest's.
+  clipboard history call is Pane's time, never the guest's. Retention and expiry
+  ([`history.rs`](../crates/pane-core/src/clipboard/history.rs)): an item
+  kept until exactly its retention passed; the retention's bounds; items
+  deleted by id, an id no longer kept passed over and counted as a
+  deletion; a file left by a downtime counted, read and rewritten without
+  what expired (a package left with nothing keeping only its next id,
+  also when the file had none), a written retention out of bounds taken as
+  the nearest, and a later copy of an expired text kept as new with a new
+  id; a shorter retention deleting older items at once; the expiry thread
+  removing an item when a test's clock passes its time, with nothing
+  reading the store, and ending with it. Tests wait for the expiry thread
+  by its own word (a sweep begun after the last change ended), never by
+  sleeping or polling.
 - Launcher public interface ([`crates/pane-core/tests/clipboard.rs`](../crates/pane-core/tests/clipboard.rs)),
   with the real Clipboard History guest and the JavaScript and TypeScript
   samples alike, and a fake system clipboard (a copy of each package
@@ -213,7 +293,20 @@ no owner, so its program is unknown and never excluded).
   copying an item again; the 100-item bound and Clear; uninstall deleting
   or keeping (retained, and kept on for a reinstall); a system that cannot
   watch, and a launcher without a clipboard; the real package unavailable on
-  macOS and Linux with its reason.
+  macOS and Linux with its reason. With a clock the tests move
+  (`Launcher::with_clock`, a `ManualClock`; no test waits for time to pass):
+  items expiring 7 days after they were copied, while the package is
+  disabled and Pane stopped, gone from the file once Pane starts, and not
+  given more time by enabling it again; the retention's form starting on
+  the retention now, so submitting it unchanged changes nothing; the
+  retention changed through its form, older items deleted at once, kept
+  across a restart and applied to later items; expired items removed from the file while Pane runs with
+  the package disabled and nothing reading the history; one item deleted,
+  a read begun before that not bringing it back, its stale row deleting
+  nothing and the clipboard untouched; the recent items deleted together;
+  Turn off and delete stopping the watch, dropping a read in progress and
+  staying off after a restart; retained history expiring without the
+  extension.
 - Windows adapter ([`crates/pane-core/tests/clipboard_adapter.rs`](../crates/pane-core/tests/clipboard_adapter.rs),
   Windows only) against the real clipboard, with text only the test puts
   there: plain text reported with its owner (the test's own process), each
@@ -233,7 +326,20 @@ no owner, so its program is unknown and never excluded).
   Enter copying an item again, disabled, disabled across a restart,
   enabled and kept again across a restart, with `clipboard-history.json`
   checked at each step; on macOS and Linux (280 and 281) the command listed
-  as unavailable and explained, with no history file. See the
+  as unavailable and explained, with no history file. For #36,
+  screenshots 400 to 404 on Windows: with Pane stopped, the smoke makes one
+  kept item 8 days old and one 2 hours old (`scripts/clipboard_history.py`);
+  after the restart the first is gone before the command shows anything,
+  then one item is deleted through its form, the recent ones through Delete
+  recent items (the last hour), the 2-hour-old one by keeping items for 1
+  hour, and the last with Turn off and delete, after which a copy is not
+  kept, and the clipboard still holds what was copied last. On macOS and
+  Linux (400 to 402, where the command never runs) the smoke writes a
+  history for the installed package with one item 8 days old and one a day
+  old: after the start the first is gone from the file and the uninstall
+  confirmation counts "Saved data: 1 clipboard history item"; kept as
+  retained data and made 8 days old while Pane is stopped, it is gone once
+  Pane starts, leaving "keeps clipboard history settings". See the
   [Windows](platforms/windows.md#clipboard-history-35),
   [macOS](platforms/macos.md#clipboard-history-35) and
   [Linux](platforms/linux.md#clipboard-history-35) notes for where they have
@@ -246,8 +352,14 @@ no owner, so its program is unknown and never excluded).
 - Detection of sensitive content is only what applications declare
   (markers) and the programs the user excludes; the owning process can be a
   helper or unknown.
-- No finite retention yet: items stay until cleared, pushed out by newer
-  ones (100), or deleted with the package's saved data (#36).
+- The retention's default (7 days) and choices are provisional. Expiry
+  follows the system's time: an item copied while the time was set far
+  ahead is kept until then, and setting the time back keeps items longer.
+- There is no action panel, so deleting one item is a choice in the
+  item's form, and Enter twice (not once) copies an item again.
+- A disabled package's history cannot be deleted without enabling it
+  (uninstalling, or its expiry, can); a retained one has Delete retained
+  data.
 - The command's rows are read when it opens; they do not change while it is
   open, even as text is copied.
 - More than one package may keep history; each keeps its own, and Pane
