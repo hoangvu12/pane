@@ -16,12 +16,9 @@
 //! `target/guests/packages`; the tests give Pane a fake system clipboard
 //! and install a copy whose manifest declares every system, so the same
 //! checks run everywhere (the real adapters are checked by
-//! `clipboard_adapter.rs` on Windows and `clipboard_adapter_linux.rs`
-//! where an X11 display is given). The system's real clipboard is never
-//! used here.
-
-#[path = "support/platforms.rs"]
-mod platforms;
+//! `clipboard_adapter.rs` on Windows, `clipboard_adapter_linux.rs` where
+//! an X11 display is given and `clipboard_adapter_macos.rs` on macOS).
+//! The system's real clipboard is never used here.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -33,7 +30,7 @@ use pane_core::clipboard::{
     ClipboardSystem, Clock, Content, MAX_ITEMS, MAX_TEXT_BYTES, ManualClock, Markers, Observation,
     Sink, SystemClock, Ticket, Watch,
 };
-use pane_core::{Launcher, Runtime, Screen, Status, Unavailable};
+use pane_core::{Launcher, Runtime, Screen, Status};
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -225,7 +222,7 @@ impl Pane {
 
     fn with(fixture: &'static Fixture, clipboard: FakeClipboard) -> Pane {
         let source = tempfile::tempdir().unwrap();
-        copy_package(fixture, source.path(), true);
+        copy_package(fixture, source.path());
         Pane {
             fixture,
             data: tempfile::tempdir().unwrap(),
@@ -392,10 +389,10 @@ fn install(launcher: &Launcher, folder: &Path) {
     launcher.back();
 }
 
-/// Copies the assembled package of `fixture` into `folder`; with
-/// `everywhere`, its command declares every system, so it is available
-/// where these tests run.
-fn copy_package(fixture: &Fixture, folder: &Path, everywhere: bool) {
+/// Copies the assembled package of `fixture` into `folder` as it was
+/// assembled: its command declares every system with an adapter, so it is
+/// available where these tests run.
+fn copy_package(fixture: &Fixture, folder: &Path) {
     let package = built(&format!("packages/{}", fixture.package));
     fs::copy(
         package.join(fixture.component),
@@ -403,14 +400,13 @@ fn copy_package(fixture: &Fixture, folder: &Path, everywhere: bool) {
     )
     .unwrap();
     let manifest = fs::read_to_string(package.join("pane.json")).unwrap();
-    let mut manifest: Value = serde_json::from_str(&manifest).unwrap();
+    let manifest: Value = serde_json::from_str(&manifest).unwrap();
+    // The packages declare the systems with an adapter (#35 Windows,
+    // #38 Linux, #37 macOS); nothing is rewritten here.
     assert_eq!(
         manifest["commands"][0]["platforms"],
-        serde_json::json!(["windows", "linux"])
+        serde_json::json!(["windows", "macos", "linux"])
     );
-    if everywhere {
-        manifest["commands"][0]["platforms"] = serde_json::json!(["windows", "macos", "linux"]);
-    }
     fs::write(folder.join("pane.json"), manifest.to_string()).unwrap();
 }
 
@@ -884,7 +880,7 @@ fn without_a_clipboard_pane_keeps_nothing_and_says_so(fixture: &'static Fixture)
 fn the_package_is_offered_only_where_an_adapter_exists(fixture: &'static Fixture) {
     let data = tempfile::tempdir().unwrap();
     let source = tempfile::tempdir().unwrap();
-    copy_package(fixture, source.path(), false);
+    copy_package(fixture, source.path());
     let launcher =
         Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"))
             .with_clipboard(pane_core::clipboard::none());
@@ -896,19 +892,12 @@ fn the_package_is_offered_only_where_an_adapter_exists(fixture: &'static Fixture
         .into_iter()
         .find(|row| row.title == fixture.command)
         .expect("the command is listed");
-    if platforms::this_system() == pane_core::Platform::Windows
-        || platforms::this_system() == pane_core::Platform::Linux
-    {
-        assert_eq!(row.unavailable, None);
-    } else {
-        assert_eq!(
-            row.unavailable,
-            Some(Unavailable::OnThisSystem(platforms::only(
-                "this command",
-                "Windows and Linux"
-            )))
-        );
-    }
+    // Every system Pane runs on now has an adapter (Windows #35, Linux
+    // #38, macOS #37), so the command is offered everywhere. This Pane
+    // watches none, but availability is the package's declaration; where
+    // a real adapter refuses to watch, the command's own rows say so (the
+    // checks above).
+    assert_eq!(row.unavailable, None, "{:?}", row);
 }
 
 fn items_expire_after_the_retention_also_while_disabled_or_stopped(fixture: &'static Fixture) {

@@ -22,8 +22,9 @@
 //! - Linux: the X11 `CLIPBOARD` selection, watched through XFIXES on a
 //!   thread of Pane's own ([`linux`]); a Wayland session or a display that
 //!   does not answer says so instead;
-//! - macOS: none yet (#37), so clipboard history is unavailable there and
-//!   says why.
+//! - macOS: the pasteboard's change count, polled on a thread of Pane's
+//!   own ([`macos`]);
+//! - any other system: clipboard history is unavailable there and says why.
 //!
 //! An adapter watches the clipboard only while Pane holds the [`Watch`] it
 //! returned, which Pane does exactly while some package keeps clipboard
@@ -49,6 +50,8 @@ use crate::extension_data::{ExtensionData, PackageData};
 pub(crate) mod history;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -58,11 +61,13 @@ pub use linux::LinuxClipboard;
 #[cfg(target_os = "linux")]
 #[doc(hidden)]
 pub use linux::testing;
+#[cfg(target_os = "macos")]
+pub use macos::MacosClipboard;
+#[cfg(target_os = "macos")]
+#[doc(hidden)]
+pub use macos::testing;
 #[cfg(target_os = "windows")]
 pub use windows::WindowsClipboard;
-#[cfg(target_os = "windows")]
-#[doc(hidden)]
-pub use windows::testing;
 
 /// The most items Pane keeps for a package: copying more drops the oldest.
 pub const MAX_ITEMS: usize = 100;
@@ -296,8 +301,9 @@ pub trait ClipboardSystem: Send + Sync + 'static {
 }
 
 /// This system's adapter: Windows' clipboard format listener, Linux's
-/// watcher of the X11 CLIPBOARD selection, or one that explains why
-/// clipboard history is unavailable here.
+/// watcher of the X11 CLIPBOARD selection, macOS's watcher of the
+/// pasteboard's change count, or one that explains why clipboard history
+/// is unavailable here.
 pub fn native() -> Arc<dyn ClipboardSystem> {
     #[cfg(target_os = "windows")]
     {
@@ -310,12 +316,16 @@ pub fn native() -> Arc<dyn ClipboardSystem> {
             Err(reason) => Arc::new(Unavailable(reason)),
         }
     }
-    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    #[cfg(target_os = "macos")]
+    {
+        Arc::new(MacosClipboard)
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
         let here = crate::platform::Platform::current()
             .map_or_else(|| std::env::consts::OS.to_string(), |p| p.to_string());
         Arc::new(Unavailable(format!(
-            "Not available on {here}: Pane watches the clipboard only on Windows and Linux so far"
+            "Not available on {here}: Pane watches the clipboard only on Windows, macOS and Linux"
         )))
     }
 }
