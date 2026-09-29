@@ -662,8 +662,9 @@ npm, installed with it from npm:@pane-samples/greeter"); Enter installs both
 (261) and "Greet through the required greeter" answers "Hello, Pane, from
 the npm package" from the npm package's own component (262; the item's
 subtitle is the Rust dependencies sample's, shared with the local
-Dependencies sample). Up from root's last row is
-"Install extension from npm…", whose form (263) takes
+Dependencies sample). Two rows up from root's last row is
+"Install extension from npm…" (since #46 added "Install extension from
+Git…" after it), whose form (263) takes
 `@pane-samples/greeter`; its preview (264) shows the npm lines and, the
 package being installed, **Update**, which Enter chooses ("Updated Greeter
 from npm to 0.1.0", 265); its command's "Say hello" answers "Hello from the
@@ -694,6 +695,53 @@ were looked at; the kept frames below are from that run.
 
 (The kept frames are cropped to Pane's window; the smoke checks the whole
 frames. Frame 260 shows the local checkout path and is not kept.)
+
+### Git packages (#46)
+
+A phase after the npm one, with a data folder of its own ([Git
+packages](../git.md)), makes the Git sample's repository with
+`scripts/repository_server.py make-sample` from
+`target/guests/git/greeter` (the source on `main`, the build on the branch
+`release`, tagged `v0.1.0`; `git` runs in the script with none of the user's
+configuration, never in Pane) and serves it on 127.0.0.1 with
+`scripts/repository_server.py serve`, which answers each request with `git
+upload-pack --stateless-rpc`; nothing reaches the network. `--install
+git:http://127.0.0.1:<port>/greeter.git` (the default branch) is explained
+as source-only, with nothing offered (frame 300, captured again every half
+second until the explanation's color shows, for up to 60 s: "The default branch, main
+(commit …) of the Git repository 127.0.0.1:<port>/greeter holds only the
+source of "Greeter from Git" …"). Escape, then root's last row (with nothing
+installed in this data folder there is no "Manage extensions…") is "Install
+extension from Git…", whose form (301) takes `<address>@v0.1.0`; its
+preview (302) shows "Source: Git repository 127.0.0.1:<port>/greeter",
+"Revision: tag v0.1.0, which you named: installing pins it to that
+revision", the commit fetched ("Fetched: commit … “Release 0.1.0”, served at
+http://127.0.0.1:<port>/greeter.git; …") and "Pane builds nothing and runs
+no repository hooks, …", with Install in view below them (a preview's details
+may take 62% of the window since the review, so none is cut); Enter installs it
+(303, "Installed Greeter from Git") and its command's "Say hello" answers
+"Hello from the Git repository" (304). `installed.json`, read as JSON
+(`scripts/check_git_record.py`), must then record one package from Git with
+`"gitRef": "refs/tags/v0.1.0"`, `pinned` and the `gitCommit` the tag points
+to (`scripts/repository_server.py commit`), and `extensions/downloads/` must
+be empty. Run locally on 2026-09-29 (same
+Ubuntu 26.04.1 / Xvfb / lavapipe setup): the phase passed on its own first,
+after a first run found the form row one row lower than written (no Manage
+extensions… row in a fresh data folder); then the whole smoke passed and
+frames 300 to 304 were looked at. After the review, with #36 merged, the
+whole smoke passed again, frames 300 to 304 were looked at, and 300 and 302
+were recorded again: 302 now shows every Git line whole above Install (304
+was unchanged). After the second review the whole smoke passed again and
+300 and 302 were recorded once more: 302 shows the reworded last Git line.
+
+| Step | Evidence |
+| --- | --- |
+| The default branch, source only: explained, nothing installed | [300-git-source-only.png](evidence/linux-x11/300-git-source-only.png) |
+| The preview of the tag: its identity, the pinned revision, the commit fetched and Install in view | [302-git-preview.png](evidence/linux-x11/302-git-preview.png) |
+| Its command: "Hello from the Git repository" | [304-git-command-ran.png](evidence/linux-x11/304-git-command-ran.png) |
+
+(Cropped to Pane's window, as above; no frame of this phase shows a local
+path.)
 
 ### Files (#29)
 

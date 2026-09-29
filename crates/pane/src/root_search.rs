@@ -115,7 +115,7 @@ impl LauncherWindow {
                     self.query.focus(window, cx);
                 }
             }
-            // A form of Pane's own (the npm package form), or a form or
+            // A form of Pane's own (the npm or Git package form), or a form or
             // custom view opened from a command's search, has taken focus
             // already.
             None if was_shown && self.form.is_none() && self.custom_view.is_none() => {

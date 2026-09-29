@@ -791,8 +791,8 @@ fn an_npm_package_naming_a_local_folder_is_refused() {
     assert_eq!(
         error_of(&launcher),
         "Nothing was installed: Greeter from npm comes from npm but names the local folder \
-         `local:../helper` as its dependency `helper`; a package published to npm can depend \
-         only on packages from npm"
+         `local:../helper` as its dependency `helper`; a package published to npm or Git can \
+         depend only on packages from npm or Git"
     );
 }
 

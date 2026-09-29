@@ -564,8 +564,8 @@ fn a_package_is_called_by_its_identity_only() {
         fixture_run(&launcher, "Call a relative source"),
         error(
             "not-found: `local:../b` is not a package identity; use `local:` followed by \
-             the absolute folder path Pane shows for the package, or `npm:` followed by its \
-             npm package name"
+             the absolute folder path Pane shows for the package, `npm:` followed by its npm \
+             package name, or `git:` followed by its repository"
         )
     );
     assert_eq!(
@@ -771,6 +771,7 @@ fn a_package_that_only_publishes_operations_adds_no_command() {
         [
             "Install extension from folder…",
             "Install extension from npm…",
+            "Install extension from Git…",
             "Manage extensions…"
         ]
     );

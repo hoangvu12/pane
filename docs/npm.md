@@ -11,7 +11,8 @@ to install it.
 
 ## Installing one
 
-- **Install extension from npm…**, the second-to-last row of root search,
+- **Install extension from npm…**, root search's row before **Install
+  extension from Git…** ([Git](git.md)),
   opens a form of Pane's own with one field, the npm package: its name
   (`@pane-samples/greeter`, `greeter`) and optionally an exact version
   (`greeter@1.2.3`). **Show package** downloads it and shows the preview;
@@ -43,7 +44,8 @@ are copied into Pane), while it keeps its npm identity, and records it in
 other.
 
 Each download is unpacked into a folder of its own under the data folder's
-`extensions/downloads/`, named `<seconds>-<process>-<count>` by when it was
+`extensions/downloads/` (which Git packages share since #46,
+`crates/pane-core/src/downloads.rs`), named `<seconds>-<process>-<count>` by when it was
 begun, and removed as soon as nothing reads it: once the preview is shown
 (the downloads of the npm dependencies it planned too; installing downloads
 again), once an install ends, and on every failure, a component failing its
@@ -114,7 +116,8 @@ local or an npm package. The plan, claims and rollback are #42's:
 - A package from npm cannot name a `local:` folder, which is on its
   author's computer: "… comes from npm but names the local folder
   `local:../helper` as its dependency `helper`; a package published to npm
-  can depend only on packages from npm".
+  or Git can depend only on packages from npm or Git". Since #46 it can
+  name a `git:` source ([Git](git.md#dependencies-from-git)).
 - An operation call by identity takes `npm:<name>` (without a version) as
   it takes `local:<folder>`.
 - One whose component imports `wasi:http` is recorded, and listed, as using
@@ -135,7 +138,7 @@ installed or left unpacked:
 | The tarball is elsewhere | "Pane does not download <name>@<version>: its tarball address … is not on the registry …: Pane downloads a package only from the registry that describes it, over HTTPS" |
 | The download does not match | "The download of npm package <name>@<version> does not match the sha512 integrity the registry gives (it is sha512-…); nothing was installed" |
 | Too large | more than 16 MiB of metadata, a 64 MiB tarball, 256 MiB unpacked or 10,000 entries (extension headers count), or an extension header larger than 64 KiB |
-| An unsafe entry | "… cannot be unpacked safely: its tarball contains a symbolic link, `package/x`; Pane unpacks only files and folders" (also hard links, long link names, devices and named pipes), or "… contains `package/../../x`, which climbs out with `..`; Pane unpacks only paths inside the package" (also absolute paths, empty or `.` parts, names with `\ : < > " \| ? *` or a control character, names ending in `.` or a space, and Windows device names such as `con`, `nul`, `conin$`, `com1` or `lpt³`, refused on every system alike), or a file appearing twice |
+| An unsafe entry | "… cannot be unpacked safely: its tarball contains a symbolic link, `package/x`; Pane unpacks only files and folders" (also hard links, long link names, devices and named pipes), or "… contains `package/../../x`, which climbs out with `..`; Pane unpacks only paths inside the package" (also absolute paths, empty or `.` parts, names longer than 255 bytes, names with `\ : < > " \| ? *` or a control character, names ending in `.` or a space, and Windows device names such as `con`, `nul`, `conin$`, `com1` or `lpt³`, refused on every system alike), or a file appearing twice |
 | An ambiguous tarball | a PAX header giving an entry another size than its own header ("its tarball gives `package/x` two sizes …"), a global header that changes paths or sizes, or an extension header describing no entry |
 | Another package's tarball | "The tarball of npm package <name>@<version> holds <other>@<version>, not the package asked for" |
 | Not a Pane extension | "npm package <name>@<version> is not a Pane extension: it has no pane.json. Pane installs npm packages published as Pane extensions (a pane.json and the WebAssembly components it names); it does not run other npm packages, which need Node.js and npm" |

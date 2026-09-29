@@ -295,7 +295,7 @@ with a data folder of its own, starts `scripts/npm_registry.py` on
 development build at it with `PANE_NPM_REGISTRY`: it installs the local
 Dependencies from npm sample, which downloads and installs the npm package
 it requires, calls its `greet` operation, then names the npm package in
-"Install extension from npm…" (Up from the last row), updates it and runs
+"Install extension from npm…" (two rows up from the last row), updates it and runs
 its command, which answers "Hello from the npm package"; `installed.json`
 must then record `"npm": "@pane-samples/greeter"` at `"npmVersion":
 "0.1.0"` with both packages. The real registry would be reached through the
@@ -305,6 +305,31 @@ reaches the network; [by hand](../npm.md#trying-the-real-registry-by-hand),
 not run); nothing else in it is specific to macOS.
 The packing, in `cargo xtask guests`, runs in CI on macOS. **Not run on
 macOS yet.**
+
+## Git packages (#46)
+
+A phase of the smoke (screenshots 300 to 304, [Git packages](../git.md)),
+with a data folder of its own, makes the Git sample's repository with
+`scripts/repository_server.py make-sample` (the source on `main`, the build
+on `release`, tagged `v0.1.0`; `git` runs there with none of the user's
+configuration) and serves it on 127.0.0.1 with `scripts/repository_server.py
+serve`, which runs `git upload-pack`: `--install git:<address>` explains the
+default branch as source-only (300, captured again every half second until
+the explanation's color shows, for up to 60 s, rather than after a fixed
+delay), then "Install extension from Git…"
+(root's last row there, with nothing installed) takes `<address>@v0.1.0`
+(301), previews the tag, pinned (302), installs it (303) and runs its
+command, which answers "Hello from the Git repository" (304);
+`installed.json`, read as JSON (`scripts/check_git_record.py` on macOS), must then
+record one package from Git with `"gitRef": "refs/tags/v0.1.0"`, `pinned`
+and the `gitCommit` the tag points to (`repository_server.py commit`), and
+the downloads folder must be empty. Pane itself runs no
+`git`; the address is plain `http://` on a loopback address, which only a
+development build fetches, so the smoke never reaches the network, and the
+HTTPS path to a real host ([by hand](../git.md#trying-a-real-host-by-hand))
+is not exercised. Tree names are refused alike on every system (the same
+rules as npm's, plus `.git`, `git~1` and names differing only in case).
+The phase types the address with System Events. **Not run on macOS yet.**
 
 ## Files (#29)
 
