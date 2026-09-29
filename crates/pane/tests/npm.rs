@@ -126,7 +126,7 @@ fn a_package_named_in_the_npm_form_is_previewed_installed_and_run(cx: &mut TestA
     let view = press_enter_on(&window, cx, "Say hello");
     assert_eq!(
         view.status,
-        Status::Result("Hello from the JavaScript guest".into())
+        Status::Result("Hello from the npm package".into())
     );
     assert!(cx.debug_bounds("status-result").is_some());
 }

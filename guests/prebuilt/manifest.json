@@ -115,6 +115,12 @@
       "inputs_sha256": "cf4258231293b120fe0e62ea1d77b8b9ed2b51d53317cf2e6f7470890879abab",
       "bytes": 4065930,
       "sha256": "ef7a6947ed7bfb6100b6d28270b8f183f5d4192e559cdddb69445bdbd734a1ac"
+    },
+    "sample_npm_js.wasm": {
+      "source": "guests/sample-npm-js",
+      "inputs_sha256": "460379b855f6586aff09842e8da7556b9627fae2f793a9b010fbcd1c793b22cf",
+      "bytes": 4054571,
+      "sha256": "31d0b1b3b552f6c3f6128a1130bba75e2df10e3f5e7bd41ead1da9baa04258c2"
     }
   }
 }

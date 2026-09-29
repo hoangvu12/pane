@@ -303,12 +303,8 @@ pub fn greeter_files(guests: &Path, version: &str) -> Vec<(&'static str, Vec<u8>
         ("package.json", with_version("package.json")),
         ("pane.json", with_version("pane.json")),
         (
-            "sample_js.wasm",
-            std::fs::read(folder.join("sample_js.wasm")).unwrap(),
-        ),
-        (
-            "sample_operations_js.wasm",
-            std::fs::read(folder.join("sample_operations_js.wasm")).unwrap(),
+            "sample_npm_js.wasm",
+            std::fs::read(folder.join("sample_npm_js.wasm")).unwrap(),
         ),
     ]
 }

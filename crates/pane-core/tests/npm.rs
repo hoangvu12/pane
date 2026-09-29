@@ -3,7 +3,8 @@
 //! (`support/npm_registry.rs`): nothing here reaches the network or the real
 //! npm registry. The npm sample `cargo xtask guests` assembles
 //! (`target/guests/npm/greeter`, from `guests/npm/greeter`) is the package:
-//! a JavaScript command and a `greet` operation.
+//! a JavaScript command and a `greet` operation, whose answers name the npm
+//! package ("Hello from the npm package").
 //!
 //! What is checked: the preview before anything is installed; installing
 //! and running its command; the npm name as the identity, so that a second
@@ -242,7 +243,7 @@ fn a_package_from_npm_is_previewed_installed_and_its_command_runs() {
     assert_eq!(record.get("local"), None);
     assert_eq!(
         run(&launcher, "Greeter from npm", "Say hello"),
-        Status::Result("Hello from the JavaScript guest".into())
+        Status::Result("Hello from the npm package".into())
     );
     // What was downloaded is removed once installed; the managed copy has
     // only the manifest and the components it names.
@@ -253,10 +254,7 @@ fn a_package_from_npm_is_previewed_installed_and_its_command_runs() {
         .map(|e| e.unwrap().file_name().into_string().unwrap())
         .collect();
     files.sort();
-    assert_eq!(
-        files,
-        ["pane.json", "sample_js.wasm", "sample_operations_js.wasm"]
-    );
+    assert_eq!(files, ["pane.json", "sample_npm_js.wasm"]);
 
     // After a restart it is listed from its managed copy, with nothing
     // downloaded again.
@@ -266,7 +264,7 @@ fn a_package_from_npm_is_previewed_installed_and_its_command_runs() {
     assert_eq!(installed(&launcher), ["Greeter from npm"]);
     assert_eq!(
         run(&launcher, "Greeter from npm", "Say hello"),
-        Status::Result("Hello from the JavaScript guest".into())
+        Status::Result("Hello from the npm package".into())
     );
     assert_eq!(dirs.registry.requests().len(), asked);
 }
@@ -314,7 +312,7 @@ fn a_package_whose_component_fails_its_check_keeps_nothing_downloaded() {
 
     block_on(launcher.preview_npm(GREETER));
     let error = error_of(&launcher);
-    assert!(error.contains("sample_js.wasm"), "{error}");
+    assert!(error.contains("sample_npm_js.wasm"), "{error}");
     dirs.wait_for_no_downloads();
     block_on(launcher.install_npm(GREETER));
     assert!(launcher.packages().is_empty());
@@ -508,7 +506,7 @@ fn a_local_package_requiring_an_npm_package_installs_it_and_calls_it_by_id() {
             "Greet through an npm dependency",
             "Greet through the required greeter"
         ),
-        Status::Result("Hello, Pane, from JavaScript".into())
+        Status::Result("Hello, Pane, from the npm package".into())
     );
     // The dependency's record names the npm package.
     let text = fs::read_to_string(dirs.packages_dir().join("installed.json")).unwrap();
@@ -561,7 +559,7 @@ fn an_installed_npm_dependency_is_used_as_it_is_and_a_disabled_one_stays_disable
             "Greet through dependencies",
             "Greet through the required greeter"
         ),
-        Status::Result("Hello, Pane, from JavaScript".into())
+        Status::Result("Hello, Pane, from the npm package".into())
     );
 
     // Disabled, it stays so, and the preview says it.

@@ -1187,7 +1187,7 @@ stop_pane
 # installs both; its command calls the npm package's greet operation. Then
 # "Install extension from npm…" (root's second-to-last row) asks for the
 # npm package in a form; naming the installed one offers Update, and its
-# command runs: "Hello from the JavaScript guest".
+# command runs: "Hello from the npm package".
 export PANE_DATA_DIR=$out/npm-data
 rm -rf "$PANE_DATA_DIR"
 rm -f "$out/npm-registry.port"
@@ -1206,7 +1206,7 @@ check 261-npm-dependency-installed.png 9fd8a8   # "Installed Dependencies from n
 "$xdotool" key Return; sleep 3   # open it
 "$xdotool" key Return; sleep 3   # "Greet through the required greeter"
 capture 262-npm-dependency-called.png
-check 262-npm-dependency-called.png 9fd8a8   # "Hello, Pane, from JavaScript"
+check 262-npm-dependency-called.png 9fd8a8   # "Hello, Pane, from the npm package"
 "$xdotool" key Escape; sleep 1
 for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…, the last row
 "$xdotool" key Up Return; sleep 1   # Install extension from npm…
@@ -1222,7 +1222,7 @@ check 265-npm-updated.png 9fd8a8   # "Updated Greeter from npm to 0.1.0"
 "$xdotool" key Return; sleep 3   # open Greeter from npm
 "$xdotool" key Return; sleep 2   # "Say hello"
 capture 266-npm-command-ran.png
-check 266-npm-command-ran.png 9fd8a8   # "Hello from the JavaScript guest"
+check 266-npm-command-ran.png 9fd8a8   # "Hello from the npm package"
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{260-npm-dependency-preview,261-npm-dependency-installed,262-npm-dependency-called,263-npm-form,264-npm-preview,265-npm-updated,266-npm-command-ran}.png
 stop_pane
 kill "$npm_registry_pid"; wait "$npm_registry_pid" 2>/dev/null || true; npm_registry_pid=

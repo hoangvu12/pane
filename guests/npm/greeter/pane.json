@@ -8,10 +8,10 @@
       "id": "sample",
       "title": "Greeter from npm",
       "subtitle": "A JavaScript command installed from an npm package",
-      "component": "sample_js.wasm"
+      "component": "sample_npm_js.wasm"
     }
   ],
   "operations": [
-    { "id": "greet", "version": 1, "component": "sample_operations_js.wasm" }
+    { "id": "greet", "version": 1, "component": "sample_npm_js.wasm" }
   ]
 }

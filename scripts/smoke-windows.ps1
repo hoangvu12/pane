@@ -1191,7 +1191,7 @@ if ((Select-String -SimpleMatch '"dir"' $record).Count -ne 1) { throw "not the d
 # installs both; its command calls the npm package's greet operation. Then
 # "Install extension from npm..." (root's second-to-last row) asks for the
 # npm package in a form; naming the installed one offers Update, and its
-# command runs: "Hello from the JavaScript guest".
+# command runs: "Hello from the npm package".
 $data = Join-Path $OutDir "npm-data"
 if (Test-Path $data) { Remove-Item -Recurse -Force $data }
 $env:PANE_DATA_DIR = $data
@@ -1213,7 +1213,7 @@ try {
     Send "{ENTER}"; Start-Sleep -Seconds 3   # open it
     Send "{ENTER}"; Start-Sleep -Seconds 3   # "Greet through the required greeter"
     Capture "262-npm-dependency-called.png"
-    Check "262-npm-dependency-called.png" "9fd8a8"   # "Hello, Pane, from JavaScript"
+    Check "262-npm-dependency-called.png" "9fd8a8"   # "Hello, Pane, from the npm package"
     Send "{ESC}"; Start-Sleep -Seconds 1
     for ($i = 0; $i -lt 10; $i++) { Send "{DOWN}" }   # Manage extensions..., the last row
     Send "{UP}{ENTER}"; Start-Sleep -Seconds 1   # Install extension from npm...
@@ -1229,7 +1229,7 @@ try {
     Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greeter from npm
     Send "{ENTER}"; Start-Sleep -Seconds 2   # "Say hello"
     Capture "266-npm-command-ran.png"
-    Check "266-npm-command-ran.png" "9fd8a8"   # "Hello from the JavaScript guest"
+    Check "266-npm-command-ran.png" "9fd8a8"   # "Hello from the npm package"
     $shots = "260-npm-dependency-preview", "261-npm-dependency-installed", "262-npm-dependency-called", "263-npm-form", "264-npm-preview", "265-npm-updated", "266-npm-command-ran" | ForEach-Object { Join-Path $OutDir "$_.png" }
     python "$PSScriptRoot/check_screenshot.py" --distinct @shots
     if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: installing from npm changed nothing" }
