@@ -216,7 +216,10 @@ no owner, so its program is unknown and never excluded).
   names, `retentionSeconds` the retention the user chose (missing is the
   default), and `items` newest first, each with its `id`, `text`, `copiedAt`
   (milliseconds since the Unix epoch) and `source`. A package whose items
-  all expired and that has no choices left is removed from the file.
+  all went and that has no choices left keeps only its `nextId`, so its
+  ids are never given twice (it counts as keeping nothing). A
+  `retentionSeconds` outside 1 minute to 365 days, as only an edited file
+  can hold, is taken as the nearest bound.
 - It is written after each change, outside the lock that captures and
   commands share, so a copy never waits on another's write. A change is on
   disk when the call that made it returns; a crash before that loses only
@@ -258,10 +261,14 @@ no owner, so its program is unknown and never excluded).
   kept until exactly its retention passed; the retention's bounds; items
   deleted by id, an id no longer kept passed over and counted as a
   deletion; a file left by a downtime counted, read and rewritten without
-  what expired (a package left with nothing removed), and a later copy of
-  an expired text kept as new; a shorter retention deleting older items at
-  once; the expiry thread removing an item when a test's clock passes its
-  time, with nothing reading the store, and ending with it.
+  what expired (a package left with nothing keeping only its next id,
+  also when the file had none), a written retention out of bounds taken as
+  the nearest, and a later copy of an expired text kept as new with a new
+  id; a shorter retention deleting older items at once; the expiry thread
+  removing an item when a test's clock passes its time, with nothing
+  reading the store, and ending with it. Tests wait for the expiry thread
+  by its own word (a sweep begun after the last change ended), never by
+  sleeping or polling.
 - Launcher public interface ([`crates/pane-core/tests/clipboard.rs`](../crates/pane-core/tests/clipboard.rs)),
   with the real Clipboard History guest and the JavaScript and TypeScript
   samples alike, and a fake system clipboard (a copy of each package
