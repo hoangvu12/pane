@@ -133,11 +133,11 @@ A package whose manifest names components that have not been built, in a folder 
 _Avoid_: Broken install
 
 **npm-distributed package**:
-An extension package published to the npm registry: a tarball holding its package manifest and built components, identified by its npm name without version. Pane downloads it itself, checks its integrity, unpacks only its files and folders and installs it as a local folder, running none of its npm install scripts and installing none of its npm dependencies.
+An extension package published to the npm registry: a tarball holding its package manifest and built components, identified by its npm name without version. Pane downloads it itself, checks its integrity and unpacks only its files and folders; the unpacked package is then installed like a local package, into a managed copy, while it keeps its npm source identity. Pane runs none of its npm install scripts and installs none of its npm dependencies.
 _Avoid_: Node package, npm module (Pane runs no Node code), plugin from npm
 
 **Pinned version**:
-The exact npm version the user, or a dependency's source, named when a package from npm was installed or updated, recorded so that it is not taken for the latest; updating without a version unpins it. An installed required dependency is not replaced by installing another package whatever its version.
+The exact npm version the user, or a dependency's source, named when a package from npm was installed or updated, recorded so that it is not taken for the latest; updating without a version keeps it, and naming another version changes it. A dependency's source that names a version must get that version: an installed copy of another version is a conflict, since installing another package never replaces an installed required dependency.
 _Avoid_: Locked version, version range
 
 **Managed copy**:

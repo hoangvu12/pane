@@ -261,14 +261,18 @@ and points the development build at it with `PANE_NPM_REGISTRY`: it installs
 the local Dependencies from npm sample, which downloads and installs the npm
 package it requires, calls its `greet` operation, then names the npm package
 in "Install extension from npm…" (Up from the last row; SendKeys types
-`@pane-samples/greeter`), updates it and runs its command; `installed.json`
-must then record `"npm": "@pane-samples/greeter"` at `"npmVersion":
-"0.1.0"` with both packages. Unpacking refuses `\`, `:`, trailing dots and
-spaces and device names such as `con` on every system, so a tarball that
-would write elsewhere on Windows is refused everywhere; the real registry's
-certificate would be checked by the Windows verifier through
-`rustls-platform-verifier`, which no check exercises (the smoke never
-reaches the network). The packing, in `cargo xtask guests`, runs in CI on
+`@pane-samples/greeter`), updates it and runs its command, which answers
+"Hello from the npm package"; `installed.json` must then record `"npm":
+"@pane-samples/greeter"` at `"npmVersion": "0.1.0"` with both packages.
+Unpacking refuses, on every system alike, the names Windows reads
+differently or cannot write: `\ : < > " | ? *`, control characters,
+trailing dots and spaces, and device names such as `con`, `conin$`,
+`conout$`, `com1` or `lpt³` (compared by character, with any extension), so
+a tarball Linux accepts never fails or writes elsewhere on Windows; the
+real registry would be reached through the HTTP client guests' requests
+use, trusting the certificates rustls-native-certs reads from the Windows
+certificate store, which no check exercises (the smoke never reaches the
+network; [by hand](../npm.md#trying-the-real-registry-by-hand), not run). The packing, in `cargo xtask guests`, runs in CI on
 Windows. **Not run on Windows yet.**
 
 ## Files (#29)

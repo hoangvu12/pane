@@ -275,11 +275,13 @@ development build at it with `PANE_NPM_REGISTRY`: it installs the local
 Dependencies from npm sample, which downloads and installs the npm package
 it requires, calls its `greet` operation, then names the npm package in
 "Install extension from npm…" (Up from the last row), updates it and runs
-its command; `installed.json` must then record `"npm":
-"@pane-samples/greeter"` at `"npmVersion": "0.1.0"` with both packages.
-Certificates of the real registry would be checked by the Security
-framework through `rustls-platform-verifier`, which no check exercises (the
-smoke never reaches the network); nothing else in it is specific to macOS.
+its command, which answers "Hello from the npm package"; `installed.json`
+must then record `"npm": "@pane-samples/greeter"` at `"npmVersion":
+"0.1.0"` with both packages. The real registry would be reached through the
+HTTP client guests' requests use, trusting the certificates rustls-native-certs
+reads from the system keychains, which no check exercises (the smoke never
+reaches the network; [by hand](../npm.md#trying-the-real-registry-by-hand),
+not run); nothing else in it is specific to macOS.
 The packing, in `cargo xtask guests`, runs in CI on macOS. **Not run on
 macOS yet.**
 

@@ -68,9 +68,12 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   sample too ([Dependencies](#dependencies-on-other-extensions)); held by
   `crates/pane-core/tests/dependencies.rs`.
 - `npm/greeter`: `@pane-samples/greeter`, the npm-distributed sample: an
-  npm package holding a `pane.json`, a JavaScript command (the JavaScript
-  sample's component) and the JavaScript operations sample's `greet`
-  operation. `"private": true` keeps `npm publish` from publishing it;
+  npm package holding a `pane.json` and one JavaScript component,
+  `sample_npm_js.wasm` (from `sample-npm-js`, prebuilt like the other
+  JavaScript samples), whose command answers "Hello from the npm package"
+  and whose `greet` operation answers "Hello, <name>, from the npm package",
+  so it is plain which copy runs. `"private": true` keeps `npm publish` from
+  publishing it;
   `cargo xtask guests` assembles it in `target/guests/npm/greeter/` and packs
   it as `npm pack` does into `target/guests/npm/pane-samples-greeter-0.1.0.tgz`
   ([Publishing a package to npm](#publishing-a-package-to-npm)).
@@ -996,8 +999,10 @@ installing it installs what it needs
   to, so moving your source folder later does not change it. Or `npm:` and
   an npm package name, optionally with an exact version
   (`npm:@pane-samples/greeter@0.1.0`), which Pane downloads when it is
-  missing ([npm](../docs/npm.md#dependencies-from-npm)); a package you
-  publish to npm can only use `npm:` sources. Git is not supported yet.
+  missing ([npm](../docs/npm.md#dependencies-from-npm)); a version pins it,
+  so an installed copy of another version is a conflict Pane explains
+  rather than a version your package did not ask for. A package you publish
+  to npm can only use `npm:` sources. Git is not supported yet.
 - `optional` (default `false`): a required dependency is installed with your
   package when it is missing; an optional one never is, and a call to it
   when it is not installed is `not-found` (the
@@ -1376,9 +1381,9 @@ it: publish what is **built**.
    Its dependencies on other Pane packages are `npm:` sources.
 3. **Check the tarball** with `npm pack --dry-run`: it lists what users
    will download. Helpers keep their files; Pane sets their mode itself.
-   Symbolic links, and paths a system reads differently (`\`, `:`, a name
-   ending in `.` or a space, `con`, `nul`…), make Pane refuse the whole
-   tarball.
+   Symbolic links, and names some system reads differently or cannot write
+   (`\ : < > " | ? *`, a name ending in `.` or a space, `con`, `nul`,
+   `com1`…, on every system alike), make Pane refuse the whole tarball.
 4. **Try it before publishing**: `npm pack` makes the `.tgz`; serve it from
    a registry on this computer and point a development build of Pane at it
    with `PANE_NPM_REGISTRY=http://127.0.0.1:<port>/`

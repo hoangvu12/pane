@@ -79,9 +79,12 @@ installed still reaches it.
 
 An `npm:` source is the npm package it names, whatever version it gives:
 its identity is the name (`npm:<name>`), recorded as
-`{ "id": "greeter", "npm": "<name>" }`. A version in the source matters only
-when Pane installs it: that version, pinned; an installed copy is used
-whatever its version ([npm](npm.md#dependencies-from-npm)).
+`{ "id": "greeter", "npm": "<name>" }`. A version in the source is a pin:
+Pane installs that version, pinned, and the one copy must have it, so an
+installed copy of another version, or another dependent pinning another
+version, is a conflict rather than a version the dependent did not ask for
+([npm](npm.md#dependencies-from-npm)). Without a version, an installed copy
+is used whatever its version.
 
 A guest calls a dependency with its id where it would give an identity:
 
@@ -165,6 +168,9 @@ installed:", listing each:
   Pane's checks.
 - **Local from npm**: a package from npm names a `local:` folder, which is
   on its author's computer.
+- **npm version**: an `npm:` source pins a version the plan's one copy does
+  not have: the installed one, the one another dependent pins, or the
+  latest one taken for a dependent that pins none.
 - **Incompatible**: it does not publish an operation the dependent calls, or
   publishes it at another version, or not on this system.
 - **Pinned**: an installed dependency that is incompatible is not replaced.
@@ -402,8 +408,9 @@ check the set again when chosen with one step (`still_shown` in
 - [`crates/pane-core/tests/npm.rs`](../crates/pane-core/tests/npm.rs)
   drives npm dependencies from a local registry: a local package requiring
   an npm one, installed with it and called by id, an installed one used as
-  it is and a disabled one kept, a pinned source, one that cannot be
-  downloaded, and an npm package naming a local folder
+  it is and a disabled one kept, a pinned source, a pin conflicting with the
+  installed version or with another dependent's, one using the network,
+  one that cannot be downloaded, and an npm package naming a local folder
   ([npm](npm.md#checks)).
 - [`crates/pane/tests/install.rs`](../crates/pane/tests/install.rs): the
   question in the native window at Pane's size with long source paths,
