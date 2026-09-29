@@ -16,6 +16,7 @@ members = [
     "sample-dependencies",
     "sample-query",
     "sample-search",
+    "sample-schedule",
     "sample-helper",
     "fixtures/faulty",
     "fixtures/operations",

@@ -405,6 +405,32 @@ pub struct ManifestOperation {
     pub platforms: Option<Vec<Platform>>,
 }
 
+/// The scheduled work a command declares: the action of its component's
+/// item `item` runs every `every_seconds` seconds while the package's code
+/// may run (see `launcher/schedules`). One schedule kind: a fixed
+/// interval.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ManifestSchedule {
+    /// How often the item's action runs, in seconds.
+    pub every_seconds: u64,
+    /// The item whose action runs, as the command's `run-action` answers
+    /// it; the command's list view usually lists it, so the user can run
+    /// it too.
+    pub item: String,
+}
+
+/// The shortest interval a command's schedule may declare: 1 second.
+/// Provisional (#47), pending the user's decision on scheduling intervals.
+pub const MIN_SCHEDULE_SECONDS: u64 = 1;
+
+/// The longest interval a command's schedule may declare: 30 days, so a
+/// schedule is always finite. Provisional (#47), pending the user's
+/// decision on scheduling intervals.
+pub const MAX_SCHEDULE_SECONDS: u64 = 30 * 86_400;
+
+/// The longest item id a command's schedule may name, in characters.
+const MAX_SCHEDULE_ITEM: usize = 256;
+
 /// A command a package contributes to root search.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ManifestCommand {
@@ -434,6 +460,10 @@ pub struct ManifestCommand {
     /// an online service; root search never asks it. Its component then
     /// also exports `pane:extension/command-search`.
     pub search: bool,
+    /// The scheduled work the command declares (`"schedule"`), if any:
+    /// Pane runs the action of `schedule.item` every
+    /// `schedule.every_seconds` seconds while the package's code may run.
+    pub schedule: Option<ManifestSchedule>,
 }
 
 #[derive(Deserialize)]
@@ -511,6 +541,16 @@ struct CommandJson {
     takes_query: bool,
     #[serde(default)]
     search: bool,
+    #[serde(default)]
+    schedule: Option<ScheduleJson>,
+}
+
+/// A command's `schedule`, as `pane.json` writes it.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ScheduleJson {
+    every_seconds: u64,
+    item: String,
 }
 
 impl Manifest {
@@ -675,6 +715,10 @@ impl Manifest {
                     command.id
                 )));
             }
+            let schedule = command
+                .schedule
+                .map(|schedule| parse_schedule(&command.id, schedule))
+                .transpose()?;
             let component = inside_package(&command.component, "component")?;
             let platforms = parse_platforms(
                 command.platforms,
@@ -690,6 +734,7 @@ impl Manifest {
                 indexed_results: command.indexed_results,
                 takes_query: command.takes_query,
                 search: command.search,
+                schedule,
             });
         }
         let mut operations: Vec<ManifestOperation> = Vec::new();
@@ -776,6 +821,42 @@ impl Manifest {
             .iter()
             .find(|dependency| dependency.id == id)
     }
+}
+
+/// The `schedule` of the command with id `id`, as `pane.json` writes it,
+/// checked.
+fn parse_schedule(id: &str, schedule: ScheduleJson) -> Result<ManifestSchedule, PackageError> {
+    let invalid = |message: String| PackageError::InvalidManifest(message);
+    if schedule.every_seconds < MIN_SCHEDULE_SECONDS {
+        return Err(invalid(format!(
+            "the schedule of command `{id}` has `everySeconds` {}, below the \
+             {MIN_SCHEDULE_SECONDS}-second minimum",
+            schedule.every_seconds
+        )));
+    }
+    if schedule.every_seconds > MAX_SCHEDULE_SECONDS {
+        return Err(invalid(format!(
+            "the schedule of command `{id}` has `everySeconds` {}, above the \
+             {MAX_SCHEDULE_SECONDS}-second maximum",
+            schedule.every_seconds
+        )));
+    }
+    if schedule.item.trim().is_empty() {
+        return Err(invalid(format!(
+            "the schedule of command `{id}` names no `item`; name the item whose action the \
+             schedule runs"
+        )));
+    }
+    if schedule.item.chars().count() > MAX_SCHEDULE_ITEM {
+        return Err(invalid(format!(
+            "the `item` of the schedule of command `{id}` is longer than \
+             {MAX_SCHEDULE_ITEM} characters"
+        )));
+    }
+    Ok(ManifestSchedule {
+        every_seconds: schedule.every_seconds,
+        item: schedule.item,
+    })
 }
 
 /// A package source as it is written: in a manifest's `dependencies`, or
@@ -1431,6 +1512,29 @@ impl InstalledPackage {
             .zip(&manifest.commands)
             .filter(|((_, unavailable), command)| command.indexed_results && unavailable.is_none())
             .map(|((registration, _), _)| registration)
+            .collect()
+    }
+
+    /// The commands of this package that declare scheduled work and can run
+    /// on this system, with what each schedule runs; none if the package
+    /// cannot be read. A command unavailable on this system is never
+    /// scheduled, like an action the user cannot invoke.
+    pub(crate) fn scheduled_commands(&self) -> Vec<(CommandRegistration, ManifestSchedule)> {
+        let Ok(manifest) = &self.manifest else {
+            return Vec::new();
+        };
+        self.available_commands()
+            .into_iter()
+            .zip(&manifest.commands)
+            .filter(|((_, unavailable), command)| {
+                command.schedule.is_some() && unavailable.is_none()
+            })
+            .filter_map(|((registration, _), command)| {
+                command
+                    .schedule
+                    .clone()
+                    .map(|schedule| (registration, schedule))
+            })
             .collect()
     }
 }
