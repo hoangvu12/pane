@@ -516,6 +516,22 @@ pub(crate) fn shown(text: &str) -> String {
     out
 }
 
+/// The most bytes of a server's text Pane decodes to show it: enough for
+/// [`MAX_SHOWN`] characters of four bytes each.
+const MAX_DECODED: usize = 1024;
+
+/// `bytes`, text a server chose that may be long or not UTF-8, as [`shown`]
+/// shows it, decoding at most [`MAX_DECODED`] bytes of it, so that showing
+/// it never takes a multiple of its size.
+fn shown_bytes(bytes: &[u8]) -> String {
+    let head = &bytes[..bytes.len().min(MAX_DECODED)];
+    let mut out = shown(&String::from_utf8_lossy(head));
+    if head.len() < bytes.len() && !out.ends_with('…') {
+        out.push('…');
+    }
+    out
+}
+
 /// Whether `text` is a full SHA-1 commit id.
 fn is_commit_id(text: &str) -> bool {
     text.len() == 40 && text.chars().all(|c| c.is_ascii_hexdigit())
@@ -1602,7 +1618,9 @@ fn write_tree(
             .try_into()
             .expect("twenty bytes");
         rest = &rest[20..];
-        let shown = format!("{prefix}{}", shown(&String::from_utf8_lossy(raw_name)));
+        // Shown from its start only: a name is checked, and a longer one
+        // refused, before any more of it is read.
+        let shown = format!("{prefix}{}", shown_bytes(raw_name));
         let name = std::str::from_utf8(raw_name)
             .map_err(|_| format!("its tree contains `{shown}`, whose name is not valid UTF-8"))?;
         let refuse = |why: &str| {
@@ -1680,7 +1698,7 @@ fn write_tree(
             }
             "120000" => return refuse("a symbolic link"),
             "160000" => return refuse("a submodule, which Pane does not fetch"),
-            other => return refuse(&format!("an entry of mode {other}")),
+            other => return refuse(&format!("an entry of mode {}", self::shown(other))),
         }
     }
     Ok(())
@@ -2415,6 +2433,52 @@ mod tests {
         let (_, data) = &objects[&object_id(Kind::Blob, &contents).unwrap()];
         assert_eq!(data[..], contents[..]);
         assert_eq!(data.capacity(), contents.len());
+    }
+
+    /// A tree of `entries` (mode, name, id) written as given.
+    fn raw_tree_of(entries: &[(&[u8], &[u8], Id)]) -> Vec<u8> {
+        let mut tree = Vec::new();
+        for (mode, name, id) in entries {
+            tree.extend(*mode);
+            tree.push(b' ');
+            tree.extend(*name);
+            tree.push(0);
+            tree.extend(id);
+        }
+        tree
+    }
+
+    #[test]
+    fn a_long_or_undecodable_name_or_mode_is_refused_without_taking_memory() {
+        // 2 MiB each, which compress to a few KiB: each refused, and what is
+        // held while it is refused is not a multiple of it.
+        let long = vec![b'a'; 2 << 20];
+        let undecodable = vec![0xff; 2 << 20];
+        let cases: [(&[u8], &[u8], &str); 3] = [
+            (
+                b"100644",
+                &long,
+                "whose name is longer than the 255 bytes every system takes",
+            ),
+            (b"100644", &undecodable, "whose name is not valid UTF-8"),
+            (&long, b"x", "an entry of mode aaaa"),
+        ];
+        for (mode, name, why) in cases {
+            let (pack, commit) = repository(|entries| {
+                let file = blob(entries, b"x");
+                raw_tree_of(&[(mode, name, file)])
+            });
+            let objects = read_pack(&pack, Limits::default()).unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let out = dir.path().join("out");
+            let (result, peak) = crate::peak_memory::peak_while(|| {
+                check_out(&objects, &commit, &out, Limits::default())
+            });
+            let error = result.unwrap_err();
+            assert!(error.contains(why), "{why}: {}", shown(&error));
+            assert!(error.len() < 2000, "{why}: {} bytes", error.len());
+            assert!(peak < 1 << 20, "{why}: {peak} bytes held");
+        }
     }
 
     #[test]

@@ -99,14 +99,22 @@ pub(crate) fn remove_abandoned(downloads: &Path, now: std::time::SystemTime) {
     }
 }
 
+/// The longest name, in bytes, every system takes: ext4's and APFS's limit
+/// (NTFS takes 255 UTF-16 units, which 255 bytes of UTF-8 never exceed).
+const MAX_NAME: usize = 255;
+
 /// Checks one part of a path in a downloaded package, the same on every
-/// system, so that a package Pane unpacks on one unpacks on all: exactly one
-/// plain name (no `/`, `\`, `.` or `..`, so that joining it to a folder
-/// names something inside that folder), no `:`, `<`, `>`, `"`, `|`, `?`, `*`
-/// or control character, no trailing `.` or space, and no Windows device
-/// name (`con`, `conin$`, `nul`, `com1`, `lpt³`…, with or without an
-/// extension), compared by character.
+/// system, so that a package Pane unpacks on one unpacks on all: at most
+/// [`MAX_NAME`] bytes (checked first, so that a longer one is not read),
+/// exactly one plain name (no `/`, `\`, `.` or `..`, so that joining it to
+/// a folder names something inside that folder), no `:`, `<`, `>`, `"`,
+/// `|`, `?`, `*` or control character, no trailing `.` or space, and no
+/// Windows device name (`con`, `conin$`, `nul`, `com1`, `lpt³`…, with or
+/// without an extension), compared by character.
 pub(crate) fn check_part(part: &str) -> Result<(), &'static str> {
+    if part.len() > MAX_NAME {
+        return Err("whose name is longer than the 255 bytes every system takes");
+    }
     match part {
         "" | "." => return Err("which has an empty or `.` part"),
         ".." => return Err("which climbs out with `..`"),
@@ -142,6 +150,8 @@ pub(crate) fn check_part(part: &str) -> Result<(), &'static str> {
         .trim_end_matches(' ')
         .chars()
         .flat_map(char::to_lowercase)
+        // The longest device name has 7 characters: 8 tell it from them.
+        .take(8)
         .collect();
     let is = |name: &str| stem.iter().copied().eq(name.chars());
     let numbered = |prefix: &str| {
@@ -189,6 +199,20 @@ mod tests {
             "./a",
         ] {
             assert!(check_part(name).is_err(), "{name:?} was taken");
+        }
+    }
+
+    #[test]
+    fn a_part_is_at_most_255_bytes() {
+        assert_eq!(check_part(&"a".repeat(255)), Ok(()));
+        assert_eq!(check_part(&"é".repeat(127)), Ok(()));
+        for name in ["a".repeat(256), "é".repeat(128), "a".repeat(1 << 20)] {
+            assert_eq!(
+                check_part(&name),
+                Err("whose name is longer than the 255 bytes every system takes"),
+                "{}",
+                name.len()
+            );
         }
     }
 }

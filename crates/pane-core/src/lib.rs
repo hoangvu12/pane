@@ -20,6 +20,8 @@ mod links;
 pub mod npm;
 mod operations;
 mod packages;
+#[cfg(test)]
+mod peak_memory;
 mod platform;
 mod runtime;
 mod search;
