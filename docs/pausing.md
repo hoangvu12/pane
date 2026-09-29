@@ -226,10 +226,13 @@ Added for [#18](https://github.com/hoangvu12/pane/issues/18) (US77, US78,
 US80, T18, T19, G3; contributions, not a claim that the whole scenario or
 gate passes). The runtime serves one guest call at a time, so a call that
 never finishes holds every other extension's calls behind it. Pane bounds
-each way a call can fail to finish, tells them apart, and **never blames a
-healthy extension**: only a guest's own computing counts against it
-([`runtime/deadlines.rs`](../crates/pane-core/src/runtime/deadlines.rs);
-every value is an explicit, **provisional** choice):
+the ways a call fails to finish that it can tell apart (a guest computing,
+a native helper that does not exit, the runtime thread itself stuck) and
+**never blames a healthy extension**: only a guest's own computing counts
+against it ([`runtime/deadlines.rs`](../crates/pane-core/src/runtime/deadlines.rs);
+every value is an explicit, **provisional** choice). Some ways are not
+bounded yet: a guest waiting on a clock, one looping on Pane's host calls,
+and a host call that never returns (see the limits below):
 
 | What does not finish | Limit | What Pane does | Whose failure |
 | --- | --- | --- | --- |
@@ -337,9 +340,10 @@ How it works:
   runtime's own state. What remains: the runtime thread reports a
   package's failure to the launcher, which takes the launcher's lock
   briefly; a thread stuck inside that would have stopped the launcher too.
-- Other active extensions: their calls wait behind a computing guest for
-  up to the compute limit, then run; their instances and open views are
-  kept. After a runtime hang, every extension's instances and views go with
+- Other active extensions: their calls wait behind the running call,
+  behind a computing guest for up to the compute limit, and behind one
+  waiting or looping on host calls until it ends or its generation does
+  (see the limits below); their instances and open views are kept. After a runtime hang, every extension's instances and views go with
   the abandoned thread, as after a crash.
 
 **Provisional, pending user confirmation:** the limits (5 seconds of a
@@ -372,6 +376,23 @@ Limits:
   stuck until Pane restarts.
 - A call waiting on another extension's operation, or on a clock, has no
   time limit; a user cannot cancel a running action yet.
+- A guest looping on Pane's host calls (saving a setting over and over,
+  say) is charged only its own computing between them, so the compute
+  limit may take very long to reach, and each call's heartbeat keeps the
+  watchdog from giving up; the same holds for one waiting on a clock
+  again and again. Meanwhile every other extension's calls wait, and no
+  extension is named. A host call that never returns (a hung disk, or on
+  Windows a clipboard owner that does not answer while `copy` puts an
+  item back on the clipboard) is never given up on, and nothing says so.
+  Not in #18; a proposed follow-up is a wall-clock notice naming the
+  running package ("… is taking long"), with no blame or pause, user
+  cancellation of a running call, and `copy` run off the runtime thread
+  with a timeout.
+- After a give-up, the abandoned thread keeps what it held until it
+  returns: its guests' web requests keep their connection slots (four
+  per package), so a package whose requests it held has fewer
+  connections, or none, meanwhile; and a thread stuck spinning in native
+  code keeps a processor core busy until it returns or Pane quits.
 - Stopping a computing guest drops its instance and what it keeps in
   memory, like any stopped call.
 

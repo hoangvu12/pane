@@ -2,9 +2,11 @@
 //! cooperating (#18).
 //!
 //! The runtime thread serves one guest call at a time, so a call that never
-//! finishes holds every other extension's calls behind it. Pane bounds each
-//! way a call can fail to finish, and never charges a guest for work that
-//! is not its own:
+//! finishes holds every other extension's calls behind it. Pane bounds the
+//! ways a call fails to finish that it can tell apart, and never charges a
+//! guest for work that is not its own. Not bounded yet: a guest waiting on a
+//! clock or looping on Pane's host calls (charged only its computing between
+//! them), and a host call that never returns (see `docs/pausing.md`).
 //!
 //! - **An unresponsive call**: a guest computing without waiting (a busy
 //!   loop). The engine counts epochs ([`TICK`] apart) and every store yields
