@@ -374,6 +374,40 @@ fn check_reference(reference: &str) -> Result<String, String> {
     Ok(reference.to_owned())
 }
 
+/// The most characters of a server's text (a commit subject, a refusal)
+/// Pane shows.
+const MAX_SHOWN: usize = 200;
+
+/// `text`, which a server chose, as Pane shows it in a preview or an error:
+/// without control characters (a terminal escape, a line break), without
+/// the characters that reorder text (bidirectional overrides, embeddings
+/// and isolates, which can show `exe.txt` as `txt.exe`) or separate lines,
+/// and at most [`MAX_SHOWN`] characters, `…` marking where it was cut.
+pub(crate) fn shown(text: &str) -> String {
+    let hidden = |c: char| {
+        c.is_control()
+            || matches!(
+                c,
+                '\u{061c}'
+                    | '\u{200e}'
+                    | '\u{200f}'
+                    | '\u{202a}'..='\u{202e}'
+                    | '\u{2066}'..='\u{2069}'
+                    | '\u{2028}'
+                    | '\u{2029}'
+            )
+    };
+    let mut out = String::new();
+    for (count, c) in text.chars().filter(|&c| !hidden(c)).enumerate() {
+        if count == MAX_SHOWN {
+            out.push('…');
+            break;
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// Whether `text` is a full SHA-1 commit id.
 fn is_commit_id(text: &str) -> bool {
     text.len() == 40 && text.chars().all(|c| c.is_ascii_hexdigit())
@@ -621,7 +655,7 @@ impl<'a> PktReader<'a> {
                     .map_err(|_| "the answer has a line that is not UTF-8")?;
                 let text = text.strip_suffix('\n').unwrap_or(text);
                 if let Some(message) = text.strip_prefix("ERR ") {
-                    return Err(format!("the server refused: {message}"));
+                    return Err(format!("the server refused: {}", shown(message)));
                 }
                 Ok(Ok(text))
             }
@@ -674,8 +708,9 @@ impl<'a> Remote<'a> {
                 "object-format" => {
                     if value != "sha1" {
                         return Err(format!(
-                            "The Git repository {name} uses {value} object ids; Pane reads only \
-                             repositories with SHA-1 ids"
+                            "The Git repository {name} uses {} object ids; Pane reads only \
+                             repositories with SHA-1 ids",
+                            shown(value)
                         ));
                     }
                     object_format = true;
@@ -760,7 +795,7 @@ impl<'a> Remote<'a> {
             };
             let mut parts = line.split(' ');
             let (Some(id), Some(ref_name)) = (parts.next(), parts.next()) else {
-                return Err(damaged(line));
+                return Err(damaged(&format!("`{}`", shown(line))));
             };
             if !is_commit_id(id) {
                 // An unborn HEAD ("unborn HEAD symref-target:…") has none.
@@ -775,7 +810,7 @@ impl<'a> Remote<'a> {
                     commit = peeled.to_ascii_lowercase();
                 }
                 if let Some(symref) = attribute.strip_prefix("symref-target:") {
-                    target = Some(symref.to_owned());
+                    target = Some(shown(symref));
                 }
             }
             found.push((ref_name.to_owned(), commit, target));
@@ -880,7 +915,7 @@ impl<'a> Remote<'a> {
                     Some((3, message)) => {
                         return Err(format!(
                             "Could not fetch commit {commit} of {name}: the server failed: {}",
-                            String::from_utf8_lossy(message).trim_end()
+                            shown(String::from_utf8_lossy(message).trim_end())
                         ));
                     }
                     _ => return Err(damaged("a pack line on no known band")),
@@ -1379,7 +1414,7 @@ fn check_out(
         .ok_or("its commit names no tree")?;
     let subject = text
         .split_once("\n\n")
-        .map(|(_, message)| message.lines().next().unwrap_or("").trim().to_owned())
+        .map(|(_, message)| shown(message.lines().next().unwrap_or("").trim()))
         .unwrap_or_default();
     fs::create_dir(dest).map_err(|error| error.to_string())?;
     let mut tally = Tally {
@@ -1430,7 +1465,7 @@ fn write_tree(
             .try_into()
             .expect("twenty bytes");
         rest = &rest[20..];
-        let shown = format!("{prefix}{}", String::from_utf8_lossy(raw_name));
+        let shown = format!("{prefix}{}", shown(&String::from_utf8_lossy(raw_name)));
         let name = std::str::from_utf8(raw_name)
             .map_err(|_| format!("its tree contains `{shown}`, whose name is not valid UTF-8"))?;
         let refuse = |why: &str| {
@@ -1964,6 +1999,65 @@ mod tests {
         )
         .unwrap();
         assert_eq!(lfs, ["x.wasm"]);
+    }
+
+    #[test]
+    fn text_from_the_server_is_shown_without_control_or_bidi_characters_and_short() {
+        assert_eq!(shown("Release 0.1.0"), "Release 0.1.0");
+        // A terminal escape, a bell, and a right-to-left override that
+        // would show `exe.txt` as `txt.exe`.
+        assert_eq!(
+            shown("Fix\u{1b}[31m red\u{7} \u{202e}exe.txt\u{2066}x\u{2069}\u{200f}"),
+            "Fix[31m red exe.txtx"
+        );
+        let long = "é".repeat(500);
+        let short = shown(&long);
+        assert_eq!(short.chars().count(), 201, "{short}");
+        assert!(short.ends_with('…'));
+        assert_eq!(shown(&"a".repeat(200)), "a".repeat(200));
+    }
+
+    #[test]
+    fn a_commit_subject_and_a_refusal_from_the_server_are_shown_safely() {
+        let (pack, _) = repository(|entries| {
+            let file = blob(entries, b"x");
+            tree_of(&[("100644", "pane.json", file)])
+        });
+        let objects = read_pack(&pack, Limits::default()).unwrap();
+        let tree = objects
+            .iter()
+            .find(|(_, (kind, _))| *kind == Kind::Tree)
+            .map(|(id, _)| *id)
+            .unwrap();
+        let commit = format!(
+            "tree {}\nauthor A <a@a> 0 +0000\ncommitter A <a@a> 0 +0000\n\n\u{202e}gnp.exe \
+             \u{1b}]0;title\u{7}{}\n",
+            hex(&tree),
+            "x".repeat(400)
+        );
+        let (pack, _) = pack_of(&[
+            (3, Vec::new(), b"x".to_vec()),
+            (
+                2,
+                Vec::new(),
+                tree_of(&[("100644", "pane.json", object_id(Kind::Blob, b"x").unwrap())]),
+            ),
+            (1, Vec::new(), commit.clone().into_bytes()),
+        ]);
+        let id = hex(&object_id(Kind::Commit, commit.as_bytes()).unwrap());
+        let objects = read_pack(&pack, Limits::default()).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let (subject, _) =
+            check_out(&objects, &id, &dir.path().join("out"), Limits::default()).unwrap();
+        assert!(subject.starts_with("gnp.exe ]0;titlexxx"), "{subject}");
+        assert_eq!(subject.chars().count(), 201);
+
+        let mut data = pkt("ERR \u{202e}denied\u{1b}[2J\n");
+        data.extend_from_slice(FLUSH);
+        assert_eq!(
+            PktReader::new(&data).line(),
+            Err("the server refused: denied[2J".into())
+        );
     }
 
     #[test]
