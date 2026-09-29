@@ -305,8 +305,19 @@ HTTP client guests' requests use, trusting the certificates rustls-native-certs
 reads from the system keychains, which no check exercises (the smoke never
 reaches the network; [by hand](../npm.md#trying-the-real-registry-by-hand),
 not run); nothing else in it is specific to macOS.
-The packing, in `cargo xtask guests`, runs in CI on macOS. **Not run on
-macOS yet.**
+The packing, in `cargo xtask guests`, runs in CI on macOS. The phase's
+first run, in CI (run 36536816781 of the fork `wasimysaid/pane`, at
+ca9563b), stopped before Pane started: "the local npm registry did not
+start", with nothing in `npm-registry.log` and no port file after the
+smoke's 5 s wait. The likely cause, not confirmed on macOS: Python's
+`HTTPServer.server_bind` looks the address up in reverse DNS
+(`socket.getfqdn`) before it listens, which is reported to take many
+seconds on macOS runners. Both local servers (`npm_registry.py` and
+`repository_server.py`) now skip that lookup, whose name nothing uses, and
+the smoke waits up to 60 s for the port file, stopping early if the server
+exits. The fix was checked by reading only, and on Linux with reverse
+lookups slowed to 8 s (the old servers then failed the same way). **Not run
+on macOS yet.**
 
 ## Git packages (#46)
 
@@ -331,7 +342,10 @@ development build fetches, so the smoke never reaches the network, and the
 HTTPS path to a real host ([by hand](../git.md#trying-a-real-host-by-hand))
 is not exercised. Tree names are refused alike on every system (the same
 rules as npm's, plus `.git`, `git~1` and names differing only in case).
-The phase types the address with System Events. **Not run on macOS yet.**
+The phase types the address with System Events. Its repository server
+skips the reverse DNS lookup the npm phase's first run stopped on (above)
+and is waited for as long; checked by reading only. **Not run on macOS
+yet.**
 
 ## Files (#29)
 

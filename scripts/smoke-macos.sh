@@ -1257,8 +1257,9 @@ rm -rf "$PANE_DATA_DIR"
 rm -f "$out/npm-registry.port"
 python3 "$(dirname "$0")/npm_registry.py" target/guests/npm "$out/npm-registry.port" 2>>"$out/npm-registry.log" &
 npm_registry_pid=$!
-for _ in $(seq 50); do [ -s "$out/npm-registry.port" ] && break; sleep 0.1; done
-[ -s "$out/npm-registry.port" ] || { echo "the local npm registry did not start"; exit 1; }
+# Generous: a slow runner may take seconds to start Python.
+for _ in $(seq 600); do [ -s "$out/npm-registry.port" ] && break; kill -0 "$npm_registry_pid" 2>/dev/null || break; sleep 0.1; done
+[ -s "$out/npm-registry.port" ] || { echo "the local npm registry did not start (see $out/npm-registry.log)"; exit 1; }
 export PANE_NPM_REGISTRY=http://127.0.0.1:$(cat "$out/npm-registry.port")/
 start_pane --install target/guests/packages/sample-dependencies-npm
 capture 260-npm-dependency-preview.png
@@ -1311,8 +1312,8 @@ python3 "$(dirname "$0")/repository_server.py" make-sample target/guests/git/gre
 rm -f "$out/repository-server.port"
 python3 "$(dirname "$0")/repository_server.py" serve "$out/git-repositories" "$out/repository-server.port" 2>>"$out/repository-server.log" &
 repository_server_pid=$!
-for _ in $(seq 50); do [ -s "$out/repository-server.port" ] && break; sleep 0.1; done
-[ -s "$out/repository-server.port" ] || { echo "the local repository server did not start"; exit 1; }
+for _ in $(seq 600); do [ -s "$out/repository-server.port" ] && break; kill -0 "$repository_server_pid" 2>/dev/null || break; sleep 0.1; done
+[ -s "$out/repository-server.port" ] || { echo "the local repository server did not start (see $out/repository-server.log)"; exit 1; }
 repository=http://127.0.0.1:$(cat "$out/repository-server.port")/greeter.git
 start_pane --install "git:$repository"
 # The fetch runs after the window shows: capture until its explanation does.

@@ -1306,7 +1306,8 @@ $registry = Start-Process python -PassThru -NoNewWindow `
     -ArgumentList @("`"$PSScriptRoot/npm_registry.py`"", "target/guests/npm", "`"$portFile`"") `
     -RedirectStandardError (Join-Path $OutDir "npm-registry.log")
 try {
-    for ($i = 0; $i -lt 50 -and -not (Test-Path $portFile); $i++) { Start-Sleep -Milliseconds 100 }
+    # Generous: a slow runner may take seconds to start Python.
+    for ($i = 0; $i -lt 600 -and -not (Test-Path $portFile) -and -not $registry.HasExited; $i++) { Start-Sleep -Milliseconds 100 }
     if (-not (Test-Path $portFile)) { throw "the local npm registry did not start" }
     $env:PANE_NPM_REGISTRY = "http://127.0.0.1:$((Get-Content $portFile).Trim())/"
     $process = Start-Pane "stderr-npm.log" @("--install", "target/guests/packages/sample-dependencies-npm")
@@ -1393,7 +1394,7 @@ $server = Start-Process python -PassThru -NoNewWindow `
     -RedirectStandardError (Join-Path $OutDir "repository-server.log")
 $process = $null
 try {
-    for ($i = 0; $i -lt 50 -and -not (Test-Path $portFile); $i++) { Start-Sleep -Milliseconds 100 }
+    for ($i = 0; $i -lt 600 -and -not (Test-Path $portFile) -and -not $server.HasExited; $i++) { Start-Sleep -Milliseconds 100 }
     if (-not (Test-Path $portFile)) { throw "the local repository server did not start" }
     $repository = "http://127.0.0.1:$((Get-Content $portFile).Trim())/greeter.git"
     $process = Start-Pane "stderr-git.log" @("--install", "git:$repository")

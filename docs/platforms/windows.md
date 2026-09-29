@@ -296,7 +296,11 @@ real registry would be reached through the HTTP client guests' requests
 use, trusting the certificates rustls-native-certs reads from the Windows
 certificate store, which no check exercises (the smoke never reaches the
 network; [by hand](../npm.md#trying-the-real-registry-by-hand), not run). The packing, in `cargo xtask guests`, runs in CI on
-Windows. **Not run on Windows yet.**
+Windows. After the macOS smoke's first run ([macOS](macos.md#npm-packages-45)),
+the registry and the Git phase's repository server skip a reverse DNS
+lookup before they listen, and the smoke waits up to 60 s for their port
+files, stopping early if a server exits; on Windows that change was checked
+by reading only. **Not run on Windows yet.**
 
 ## Git packages (#46)
 

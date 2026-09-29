@@ -14,6 +14,7 @@ import hashlib
 import http.server
 import json
 import os
+import socketserver
 import sys
 import tarfile
 
@@ -72,7 +73,18 @@ class Registry(http.server.BaseHTTPRequestHandler):
         sys.stderr.write("npm registry: " + (format % args) + "\n")
 
 
-server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Registry)
+class Server(http.server.ThreadingHTTPServer):
+    """ThreadingHTTPServer without its reverse DNS lookup: HTTPServer's own
+    server_bind names the server with socket.getfqdn of its address before
+    it listens, and that lookup can block for many seconds on some hosts
+    (as reported for macOS CI runners). The name is never used."""
+
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
+server = Server(("127.0.0.1", 0), Registry)
 with open(port_file + ".tmp", "w") as f:
     f.write(str(server.server_address[1]))
 os.replace(port_file + ".tmp", port_file)
