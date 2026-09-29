@@ -450,7 +450,7 @@ Limits:
   [`crates/pane/tests/unresponsive.rs`](../crates/pane/tests/unresponsive.rs):
   in the window, keys are answered while the guest computes, and the error,
   the pause toast, the paused command's reason and Retry render. The
-  native smokes' unresponsive phase (frames 240 to 247, data folder
+  native smokes' unresponsive phase (frames 240 to 248, data folder
   `unresponsive-data`) does the same with real key events.
 - [`crates/pane-core/tests/operations.rs`](../crates/pane-core/tests/operations.rs):
   a target that keeps crashing is paused and its caller is not; a target

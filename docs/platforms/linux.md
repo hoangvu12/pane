@@ -589,13 +589,15 @@ is checked but not kept, as its row shows the local package path.
 
 A phase of its own, after the runtime-crash phase, with its own data
 folder (`unresponsive-data`, [extensions that stop responding](../pausing.md#when-an-extension-stops-responding)).
-It shortens the runtime's limits through the fault file
-(`limits:2,4,15`: 2 seconds of a guest's own computing, "not responding
+It sets the runtime's limits through the fault file, first
+`limits:60,4,15` (a minute of a guest's own computing, "not responding
 yet" after 4 seconds without progress, given up on after 15), installs
 the settings sample and runs **Stop responding**, which computes without
-waiting: while it computes, Escape returns to root search and Manage
-extensions opens (frame 240). Run again, the call is stopped after 2
-seconds of its computing (thread CPU time) with its error; the third time
+waiting: while it still computes (Pane's standard error has stopped no
+call yet), Escape returns to root search and Manage extensions opens
+(frame 240). Then `limits:2,4,15` stops that call at once, as it computed
+longer. Run again, the call is stopped after 2 seconds of its computing
+(thread CPU time) with its error; the third time
 pauses the package, whose saved `busy` note stays "started"; the pause
 details and Retry work. Then the fault file's `hang` blocks the runtime
 thread: opening Greeting first shows that the runtime is not responding

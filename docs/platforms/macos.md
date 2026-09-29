@@ -256,11 +256,13 @@ disable); **not run on macOS yet**.
 
 The unresponsive phase (screenshots 240 to 248, data folder
 `unresponsive-data`, [extensions that stop responding](../pausing.md#when-an-extension-stops-responding))
-shortens the runtime's limits through the fault file
-(`limits:2,4,15`), installs the settings sample and runs its **Stop
-responding**, which computes without waiting: while it computes, Escape
-and Manage extensions must answer (the details color); run again, the call
-must be stopped after 2 seconds of its own computing (thread CPU time from
+sets the runtime's limits through the fault file, first `limits:60,4,15`
+(a minute of a guest's own computing), installs the settings sample and
+runs its **Stop responding**, which computes without waiting: while it
+still computes (Pane's standard error has stopped no call yet), Escape and
+Manage extensions must answer (the details color, frame 240); then
+`limits:2,4,15` must stop that call at once, as it computed longer; run
+again, the call must be stopped after 2 seconds of its own computing (thread CPU time from
 `GetThreadTimes` on Windows, `CLOCK_THREAD_CPUTIME_ID` on macOS) with the
 error color, and the third time pause the package (the error and reason
 colors), with the saved `busy` note still "started"; the pause details and
