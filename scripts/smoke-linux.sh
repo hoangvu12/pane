@@ -1729,6 +1729,11 @@ wait_for "$history" '"retentionSeconds": 3600' present; sleep 1
 capture 403-clipboard-retention-changed.png
 check 403-clipboard-retention-changed.png 9fd8a8   # "Items are kept for 1 hour; deleted 1 older item"
 [ -z "$(kept_texts)" ] || { echo "kept: $(kept_texts)"; exit 1; }
+# The retention form stays open after its choice, so one Escape returns
+# to the command's list before `copy` leaves it for root search (without
+# this, the typed text goes to the list, which has no text field, and
+# nothing is copied).
+"$xdotool" key Escape; sleep 1   # from the retention form to the command's list
 copy pane-smoke-final
 wait_for "$history" pane-smoke-final present
 open_history
