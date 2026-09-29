@@ -103,7 +103,8 @@ impl Network {
     }
 
     /// Sets the limits of requests started from now on. A package's
-    /// connection limit is set when it first connects.
+    /// connection limit is set when it first connects. For tests only.
+    #[cfg(any(test, debug_assertions))]
     pub(crate) fn set_limits(&self, limits: HttpLimits) {
         *lock(&self.limits) = limits;
     }
