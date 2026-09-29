@@ -1519,7 +1519,7 @@ if ($LASTEXITCODE -ne 0) { throw "could not build the fixture service" }
 function Start-FixtureService($log, $port) {
     $path = Join-Path $OutDir $log
     $service = Start-Process -FilePath "target/debug/examples/fixture_service.exe" -ArgumentList "--port", "$port" `
-        -PassThru -RedirectStandardOutput $path -RedirectStandardError "$path.err"
+        -PassThru -NoNewWindow -RedirectStandardOutput $path -RedirectStandardError "$path.err"
     for ($i = 0; $i -lt 50; $i++) {
         $listening = if (Test-Path $path) { Select-String -Pattern 'listening on http://127\.0\.0\.1:(\d+)' $path }
         if ($listening) {

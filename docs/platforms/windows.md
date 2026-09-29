@@ -358,6 +358,14 @@ command's "Service address" form is set to the service; its search field
 sends "aurora" (results listed, Enter shows a package's details); "slow" then "ember"
 must log the held search as abandoned; the service's 503, then the service
 stopped, are errors; restarted, a search lists results again. Windows retries a refused connection for about two seconds, so the offline step waits longer.
+The phase's first run, in CI (run 36536816781 of the fork
+`wasimysaid/pane`, at ca9563b), passed up to 168 and failed at 169, "the
+Pane window is not visible": `Start-Process` without `-NoNewWindow` gave
+the restarted fixture service a console window of its own, which came to
+the front over Pane and took the keys typed next (the restarted service
+logged no search; the screenshot shows its console window). The service now
+starts with `-NoNewWindow`, as the npm registry and the repository server
+do. The fix was checked by reading only (no PowerShell or Windows here).
 **Not run on Windows yet.**
 
 ## Clipboard history (#35)
