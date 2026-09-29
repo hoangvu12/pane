@@ -566,12 +566,21 @@ impl Meter {
     }
 }
 
+/// `duration` as a message says it: "1 second", "5 seconds", "0.5 seconds".
+pub(crate) fn seconds(duration: Duration) -> String {
+    if duration == Duration::from_secs(1) {
+        "1 second".into()
+    } else {
+        format!("{} seconds", duration.as_secs_f32())
+    }
+}
+
 /// Why a guest call was stopped as unresponsive, for its error.
 pub(super) fn computed_too_long(limit: Duration) -> String {
     format!(
-        "it computed for {} seconds without finishing, so Pane stopped it; other extensions' \
-         calls waited meanwhile",
-        limit.as_secs_f32()
+        "it computed for {} without finishing, so Pane stopped it; other extensions' calls \
+         waited meanwhile",
+        seconds(limit)
     )
 }
 
@@ -878,6 +887,20 @@ mod tests {
             "a crash was handled first"
         );
         assert!(!crashed.given_up() && !crashed.fence().closed());
+    }
+
+    /// A limit reads as a person would say it.
+    #[test]
+    fn a_limit_is_said_in_seconds_one_second_singular() {
+        assert_eq!(seconds(secs(1)), "1 second");
+        assert_eq!(seconds(secs(5)), "5 seconds");
+        assert_eq!(seconds(Duration::from_millis(500)), "0.5 seconds");
+        assert_eq!(seconds(Duration::from_millis(1500)), "1.5 seconds");
+        assert!(
+            computed_too_long(secs(1)).starts_with("it computed for 1 second without finishing"),
+            "{}",
+            computed_too_long(secs(1))
+        );
     }
 
     /// A host call's CPU time is not the guest's.

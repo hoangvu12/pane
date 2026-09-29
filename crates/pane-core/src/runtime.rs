@@ -3438,7 +3438,7 @@ mod tests {
         let Err(CallError::Unresponsive(reason)) = &busy else {
             panic!("expected it stopped as unresponsive, got {busy:?}");
         };
-        assert!(reason.contains("computed for 1 seconds"), "{reason}");
+        assert!(reason.contains("computed for 1 second without"), "{reason}");
         assert_eq!(
             saved(&packages, &identity, "busy").as_deref(),
             Some("started")

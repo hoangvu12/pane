@@ -922,8 +922,8 @@ fn supervise(
             return Err(HelperError::new(
                 HelperErrorKind::Failed,
                 format!(
-                    "helper `{name}` did not finish within {} seconds; Pane ended it",
-                    spec.limit.as_secs()
+                    "helper `{name}` did not finish within {}; Pane ended it",
+                    crate::runtime::deadlines::seconds(spec.limit)
                 ),
             ));
         }
@@ -1364,7 +1364,7 @@ mod tests {
         assert_eq!(error.kind, HelperErrorKind::Failed);
         assert_eq!(
             error.message,
-            "helper `echo` did not finish within 1 seconds; Pane ended it"
+            "helper `echo` did not finish within 1 second; Pane ended it"
         );
         assert!(started.elapsed() >= Duration::from_secs(1));
         assert!(

@@ -119,11 +119,11 @@ impl RuntimeFailure {
                 "Pane's extension runtime, which runs every extension, stopped unexpectedly.".into()
             }
             RuntimeFailure::Unresponsive => format!(
-                "Pane's extension runtime, which runs every extension, made no progress for {} \
-                 seconds, so Pane gave up on it. It was not running an extension's code (an \
+                "Pane's extension runtime, which runs every extension, made no progress for {}, \
+                 so Pane gave up on it. It was not running an extension's code (an \
                  extension computing for too long is stopped by itself, and named) nor inside \
                  one of Pane's host calls; which code held it is not known.",
-                limits.unresponsive.as_secs()
+                deadlines::seconds(limits.unresponsive)
             ),
         }
     }
@@ -546,11 +546,11 @@ fn watchdog(shared: Weak<Shared>, watch: Arc<Watch>, number: u64) {
                             number,
                             RuntimeFailure::Unresponsive,
                             format!(
-                                "its thread made no progress for {} seconds; its last known \
+                                "its thread made no progress for {}; its last known \
                                  work was {}. It was not running an extension's code, which \
                                  yields to Pane at every tick, nor inside a host call Pane \
                                  marks; which code held it is not known",
-                                limits.unresponsive.as_secs(),
+                                deadlines::seconds(limits.unresponsive),
                                 watch.what().describe()
                             ),
                         );
