@@ -156,7 +156,8 @@ pub mod clipboard_history {
     });
 
     pub use pane::extension::clipboard_history::{
-        Capture, Entry, HistoryStatus, clear, copy, entries, set_capture, set_excluded, status,
+        Capture, Entry, HistoryStatus, clear, copy, delete_items, entries, set_capture, set_excluded,
+        set_retention, status, turn_off_and_clear,
     };
 }
 

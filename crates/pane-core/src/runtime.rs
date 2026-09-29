@@ -1478,6 +1478,7 @@ impl clipboard_history::Host for GuestState {
             problem: status.problem,
             excluded: status.excluded.into_iter().map(String::from).collect(),
             items: count(status.items),
+            retention_seconds: status.retention_seconds,
         })
     }
 
@@ -1489,11 +1490,13 @@ impl clipboard_history::Host for GuestState {
         self.clipboard()?.set_excluded(&programs)
     }
 
+    fn set_retention(&mut self, seconds: u64) -> Result<(), String> {
+        self.clipboard()?.set_retention(seconds)
+    }
+
     fn entries(&mut self) -> Result<Vec<clipboard_history::Entry>, String> {
-        let now = clipboard::now();
-        Ok(self
-            .clipboard()?
-            .items()?
+        let (items, now) = self.clipboard()?.items()?;
+        Ok(items
             .into_iter()
             .map(|item| clipboard_history::Entry {
                 id: item.id.to_string(),
@@ -1511,6 +1514,14 @@ impl clipboard_history::Host for GuestState {
 
     fn clear(&mut self) -> Result<u32, String> {
         Ok(count(self.clipboard()?.clear()?))
+    }
+
+    fn delete_items(&mut self, ids: Vec<String>) -> Result<u32, String> {
+        Ok(count(self.clipboard()?.delete(&ids)?))
+    }
+
+    fn turn_off_and_clear(&mut self) -> Result<u32, String> {
+        Ok(count(self.clipboard()?.turn_off_and_clear()?))
     }
 }
 

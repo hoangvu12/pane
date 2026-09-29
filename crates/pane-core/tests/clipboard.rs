@@ -7,7 +7,12 @@
 //! and uninstalling stop the watch at once, and a restart watches again only
 //! where history is on and the package enabled. A change the system was
 //! still reading when the watch stopped or the history was cleared is not
-//! kept, and stopping never waits for it. The packages are the ones `cargo
+//! kept, and stopping never waits for it. Items expire after the package's
+//! retention (7 days unless the user chose otherwise), by a clock the tests
+//! set, also while the package is disabled or uninstalled and while Pane is
+//! stopped; they can be deleted one at a time, the recent ones together,
+//! all of them (Clear, which keeps history on) or all of them with history
+//! turned off. The packages are the ones `cargo
 //! xtask guests` assembles in `target/guests/packages`; since only Windows
 //! has a clipboard adapter so far, the tests install a copy whose manifest
 //! declares every system, so the same checks run everywhere. The system's
@@ -23,7 +28,8 @@ use std::time::{Duration, Instant};
 
 use futures::executor::block_on;
 use pane_core::clipboard::{
-    ClipboardSystem, Content, MAX_ITEMS, MAX_TEXT_BYTES, Markers, Observation, Sink, Ticket, Watch,
+    ClipboardSystem, Clock, Content, MAX_ITEMS, MAX_TEXT_BYTES, ManualClock, Markers, Observation,
+    Sink, SystemClock, Ticket, Watch,
 };
 use pane_core::{Launcher, Runtime, Screen, Status, Unavailable};
 use serde_json::Value;
@@ -36,6 +42,13 @@ const PAUSE: &str = "Pause clipboard history";
 const RESUME: &str = "Resume clipboard history";
 const CLEAR: &str = "Clear clipboard history";
 const EXCLUDE: &str = "Exclude a program";
+const KEEP_7_DAYS: &str = "Keep items for 7 days";
+const TURN_OFF_AND_DELETE: &str = "Turn off and delete clipboard history";
+const DELETE_RECENT: &str = "Delete recent items";
+
+const MINUTE: Duration = Duration::from_secs(60);
+const HOUR: Duration = Duration::from_secs(3600);
+const DAY: Duration = Duration::from_secs(86_400);
 
 /// A package with a clipboard history command, in one language.
 struct Fixture {
@@ -197,6 +210,10 @@ struct Pane {
     data: TempDir,
     source: TempDir,
     clipboard: FakeClipboard,
+    /// Pane's clock for clipboard history, which moves only when a test
+    /// advances it. It starts a year ahead of the system's, which the
+    /// launcher uses before it is given this one.
+    clock: Arc<ManualClock>,
 }
 
 impl Pane {
@@ -212,6 +229,7 @@ impl Pane {
             data: tempfile::tempdir().unwrap(),
             source,
             clipboard,
+            clock: ManualClock::at(SystemClock.now() + 365 * 86_400_000),
         }
     }
 
@@ -226,6 +244,7 @@ impl Pane {
             vec![],
             self.data.path().join("extensions"),
         )
+        .with_clock(self.clock.clone())
         .with_clipboard(Arc::new(self.clipboard.clone()))
     }
 
@@ -298,7 +317,7 @@ impl Pane {
             .filter(|row| {
                 row.subtitle
                     .as_deref()
-                    .is_some_and(|subtitle| subtitle.ends_with("Enter copies it"))
+                    .is_some_and(|subtitle| subtitle.ends_with("Enter copies or deletes it"))
             })
             .map(|row| row.title)
             .collect()
@@ -307,6 +326,21 @@ impl Pane {
     fn turn_on(&self, launcher: &Launcher) {
         self.open(launcher);
         assert_eq!(run(launcher, TURN_ON), result("Clipboard history is on"));
+    }
+
+    /// Opens the command and submits the form of its row `title` with
+    /// `values`, returning the status.
+    fn submit(&self, launcher: &Launcher, title: &str, values: &[(&str, &str)]) -> Status {
+        self.open(launcher);
+        submit(launcher, title, values)
+    }
+
+    /// The only package's history as the file holds it.
+    fn history_of_the_package(&self) -> Value {
+        let file = self.history_file().expect("the history file");
+        let packages = file["packages"].as_object().unwrap();
+        assert_eq!(packages.len(), 1, "{packages:?}");
+        packages.values().next().unwrap().clone()
     }
 
     /// From root search, uninstalls the package with the confirmation row
@@ -397,6 +431,28 @@ fn run(launcher: &Launcher, title: &str) -> Status {
     launcher.view().status
 }
 
+/// Submits the form of the row `title` of the open command with `values`,
+/// returning the status.
+fn submit(launcher: &Launcher, title: &str, values: &[(&str, &str)]) -> Status {
+    select_title(launcher, title);
+    block_on(launcher.activate_selected());
+    assert!(launcher.view().form().is_some(), "{:?}", launcher.view());
+    for (field, value) in values {
+        launcher.set_field_value(field, value);
+    }
+    block_on(launcher.submit_form());
+    launcher.view().status
+}
+
+/// Waits for `done`, which a thread of Pane's does, without timing it.
+fn eventually(what: &str, done: impl Fn() -> bool) {
+    let limit = Instant::now() + Duration::from_secs(300);
+    while !done() {
+        assert!(Instant::now() < limit, "never happened: {what}");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 fn result(text: &str) -> Status {
     Status::Result(text.into())
 }
@@ -407,7 +463,7 @@ fn nothing_is_watched_or_kept_until_history_is_turned_on(fixture: &'static Fixtu
     assert!(!pane.clipboard.watching());
 
     pane.open(&launcher);
-    assert_eq!(titles(&launcher), [TURN_ON, EXCLUDE]);
+    assert_eq!(titles(&launcher), [TURN_ON, KEEP_7_DAYS, EXCLUDE]);
     assert_eq!(
         subtitle(&launcher, TURN_ON),
         "Off · Pane keeps nothing you copy until you turn it on. Once on, it keeps the text you \
@@ -425,14 +481,25 @@ fn nothing_is_watched_or_kept_until_history_is_turned_on(fixture: &'static Fixtu
     assert!(pane.clipboard.copy("second line\nand more", None));
 
     assert_eq!(pane.listed(&launcher), ["second line", "hello"]);
-    assert_eq!(titles(&launcher)[..4], [PAUSE, TURN_OFF, EXCLUDE, CLEAR]);
+    assert_eq!(
+        titles(&launcher)[..7],
+        [
+            PAUSE,
+            TURN_OFF,
+            KEEP_7_DAYS,
+            EXCLUDE,
+            CLEAR,
+            TURN_OFF_AND_DELETE,
+            DELETE_RECENT
+        ]
+    );
     assert_eq!(
         subtitle(&launcher, "hello"),
-        "just now · from notepad.exe · Enter copies it"
+        "just now · from notepad.exe · Enter copies or deletes it"
     );
     assert_eq!(
         subtitle(&launcher, "second line"),
-        "just now · 2 lines · Enter copies it"
+        "just now · 2 lines · Enter copies or deletes it"
     );
     assert_eq!(
         subtitle(&launcher, PAUSE),
@@ -470,7 +537,12 @@ fn turning_history_off_stops_the_watch_and_keeps_the_items(fixture: &'static Fix
     let launcher = pane.start();
     assert!(!pane.clipboard.watching());
     assert_eq!(pane.listed(&launcher), ["kept"]);
-    assert_eq!(titles(&launcher)[..3], [TURN_ON, EXCLUDE, CLEAR]);
+    assert_eq!(
+        titles(&launcher)[..4],
+        [TURN_ON, KEEP_7_DAYS, EXCLUDE, CLEAR]
+    );
+    // Turning it off and deleting it is offered only while it is kept.
+    assert!(!titles(&launcher).contains(&TURN_OFF_AND_DELETE.to_string()));
     // Paused, it can be turned off too.
     assert_eq!(run(&launcher, TURN_ON), result("Clipboard history is on"));
     pane.open(&launcher);
@@ -667,7 +739,12 @@ fn enter_copies_an_item_again_and_it_moves_to_the_front(fixture: &'static Fixtur
     pane.clipboard.copy("second", None);
     assert_eq!(pane.listed(&launcher), ["second", "first"]);
 
-    assert_eq!(run(&launcher, "first"), result("Copied to the clipboard"));
+    // Enter opens the item's choice, which copies it again unless
+    // deleting is chosen.
+    assert_eq!(
+        submit(&launcher, "first", &[]),
+        result("Copied to the clipboard")
+    );
     assert_eq!(pane.clipboard.written(), ["first"]);
     assert_eq!(pane.listed(&launcher), ["first", "second"]);
     assert_eq!(pane.kept_on_disk(), ["first", "second"]);
@@ -816,6 +893,214 @@ fn the_package_is_offered_only_on_windows_so_far(fixture: &'static Fixture) {
     }
 }
 
+fn items_expire_after_the_retention_also_while_disabled_or_stopped(fixture: &'static Fixture) {
+    let pane = Pane::new(fixture);
+    let launcher = pane.installed();
+    pane.turn_on(&launcher);
+    pane.clipboard.copy("old", None);
+    pane.clock.advance(3 * DAY);
+    pane.clipboard.copy("new", None);
+    assert_eq!(pane.listed(&launcher), ["new", "old"]);
+    assert!(subtitle(&launcher, "old").starts_with("3 days ago · "));
+    let identity = launcher.packages()[0].identity.clone();
+
+    // Disabled, then Pane stopped, until "old" is 7 days old.
+    block_on(launcher.set_enabled(&identity, false));
+    drop(launcher);
+    pane.clock.advance(4 * DAY);
+    let launcher = pane.start();
+    // Gone from the file once Pane starts, before the package runs or
+    // anything shows it.
+    assert_eq!(pane.kept_on_disk(), ["new"]);
+    block_on(launcher.set_enabled(&identity, true));
+    assert_eq!(pane.listed(&launcher), ["new"]);
+    // Enabling it again did not start its time again: "new" goes 7 days
+    // after it was copied.
+    pane.clock.advance(3 * DAY - MINUTE);
+    assert_eq!(pane.listed(&launcher), ["new"]);
+    pane.clock.advance(MINUTE);
+    assert!(pane.listed(&launcher).is_empty());
+    assert!(pane.kept_on_disk().is_empty());
+    // History is still on.
+    assert!(pane.clipboard.copy("after", None));
+    assert_eq!(pane.listed(&launcher), ["after"]);
+}
+
+fn the_retention_can_be_changed_and_applies_to_kept_items(fixture: &'static Fixture) {
+    let pane = Pane::new(fixture);
+    let launcher = pane.installed();
+    pane.turn_on(&launcher);
+    pane.clipboard.copy("two hours old", None);
+    pane.clock.advance(2 * HOUR);
+    pane.clipboard.copy("new", None);
+    pane.open(&launcher);
+    assert_eq!(
+        subtitle(&launcher, KEEP_7_DAYS),
+        "Older items are deleted, also while Pane is stopped or the extension is disabled · \
+         Enter changes it"
+    );
+    assert_eq!(
+        submit(&launcher, KEEP_7_DAYS, &[("retention", "3600")]),
+        result("Items are kept for 1 hour; deleted 1 older item")
+    );
+    assert_eq!(pane.listed(&launcher), ["new"]);
+    assert_eq!(pane.history_of_the_package()["retentionSeconds"], 3600);
+    assert!(titles(&launcher).contains(&"Keep items for 1 hour".to_string()));
+    // Kept across a restart.
+    drop(launcher);
+    let launcher = pane.start();
+    pane.clock.advance(HOUR - MINUTE);
+    assert_eq!(pane.listed(&launcher), ["new"]);
+    pane.clock.advance(MINUTE);
+    assert!(pane.listed(&launcher).is_empty());
+    // A longer retention keeps what is copied from now on longer.
+    assert_eq!(
+        pane.submit(
+            &launcher,
+            "Keep items for 1 hour",
+            &[("retention", "2592000")]
+        ),
+        result("Items are kept for 30 days")
+    );
+    pane.clipboard.copy("kept a month", None);
+    pane.clock.advance(29 * DAY);
+    assert_eq!(pane.listed(&launcher), ["kept a month"]);
+}
+
+fn expired_items_leave_the_file_while_pane_runs_without_the_extension(fixture: &'static Fixture) {
+    let pane = Pane::new(fixture);
+    let launcher = pane.installed();
+    pane.turn_on(&launcher);
+    pane.clipboard.copy("soon gone", None);
+    pane.clock.advance(DAY);
+    pane.clipboard.copy("kept longer", None);
+    let identity = launcher.packages()[0].identity.clone();
+    block_on(launcher.set_enabled(&identity, false));
+    // Nothing reads the history or runs the package: Pane removes the item
+    // from the file when it expires.
+    pane.clock.advance(6 * DAY);
+    eventually("the expired item removed from the file", || {
+        pane.kept_on_disk() == ["kept longer"]
+    });
+    assert!(!pane.clipboard.watching());
+    pane.clock.advance(DAY);
+    eventually("the second item removed from the file", || {
+        pane.kept_on_disk().is_empty()
+    });
+    // What the user chose stays.
+    assert_eq!(pane.history_of_the_package()["capture"], "on");
+}
+
+fn an_item_can_be_deleted_on_its_own(fixture: &'static Fixture) {
+    let pane = Pane::new(fixture);
+    let launcher = pane.installed();
+    pane.turn_on(&launcher);
+    pane.clipboard.copy("keep me", None);
+    pane.clipboard.copy("delete me", None);
+    pane.clipboard.copy("keep me too", None);
+    let reading = pane.clipboard.begin_read().unwrap();
+    assert_eq!(
+        pane.submit(&launcher, "delete me", &[("action", "delete")]),
+        result("Deleted the kept item")
+    );
+    // A read begun before the deletion does not bring anything back.
+    reading.finish("delete me");
+    assert_eq!(pane.kept_on_disk(), ["keep me too", "keep me"]);
+    // Its row, until the command is opened again, deletes nothing more.
+    launcher.back();
+    assert_eq!(
+        submit(&launcher, "delete me", &[("action", "delete")]),
+        Status::Error("That item is no longer kept".into())
+    );
+    launcher.back();
+    assert_eq!(
+        submit(&launcher, "delete me", &[]),
+        Status::Error("That item is no longer kept".into())
+    );
+    assert_eq!(pane.listed(&launcher), ["keep me too", "keep me"]);
+    // Deleting never touches the system's clipboard.
+    assert!(pane.clipboard.written().is_empty());
+    // History is still on.
+    assert!(pane.clipboard.copy("later", None));
+}
+
+fn recent_items_can_be_deleted_together(fixture: &'static Fixture) {
+    let pane = Pane::new(fixture);
+    let launcher = pane.installed();
+    pane.turn_on(&launcher);
+    pane.clipboard.copy("earlier", None);
+    pane.clock.advance(2 * HOUR);
+    pane.clipboard.copy("recent", None);
+    pane.clock.advance(10 * MINUTE);
+    pane.clipboard.copy("just now", None);
+    pane.open(&launcher);
+    assert_eq!(
+        subtitle(&launcher, DELETE_RECENT),
+        "Deletes what you copied in the last 15 minutes, hour or day"
+    );
+    assert_eq!(
+        submit(&launcher, DELETE_RECENT, &[("since", "3600")]),
+        result("Deleted 2 kept items")
+    );
+    assert_eq!(pane.kept_on_disk(), ["earlier"]);
+    assert_eq!(
+        pane.submit(&launcher, DELETE_RECENT, &[("since", "900")]),
+        result("Deleted 0 kept items")
+    );
+    assert_eq!(pane.listed(&launcher), ["earlier"]);
+    assert!(pane.clipboard.watching());
+}
+
+fn turning_off_and_deleting_keeps_nothing_more(fixture: &'static Fixture) {
+    let pane = Pane::new(fixture);
+    let launcher = pane.installed();
+    pane.turn_on(&launcher);
+    pane.clipboard.copy("one", None);
+    pane.clipboard.copy("two", None);
+    pane.open(&launcher);
+    assert_eq!(
+        subtitle(&launcher, TURN_OFF_AND_DELETE),
+        "Deletes the 2 items kept and keeps nothing you copy from now on"
+    );
+    let reading = pane.clipboard.begin_read().unwrap();
+    assert_eq!(
+        run(&launcher, TURN_OFF_AND_DELETE),
+        result("Clipboard history is off; deleted 2 kept items")
+    );
+    reading.finish("copied meanwhile");
+    assert!(!pane.clipboard.watching());
+    assert!(!pane.clipboard.copy("after", None));
+    assert!(pane.kept_on_disk().is_empty());
+    // Off after a restart too, unlike Clear, which keeps history on.
+    drop(launcher);
+    let launcher = pane.start();
+    assert!(!pane.clipboard.watching());
+    assert!(pane.listed(&launcher).is_empty());
+    assert_eq!(titles(&launcher), [TURN_ON, KEEP_7_DAYS, EXCLUDE]);
+}
+
+fn retained_history_expires_without_the_extension(fixture: &'static Fixture) {
+    let pane = Pane::new(fixture);
+    let launcher = pane.installed();
+    pane.turn_on(&launcher);
+    pane.clipboard.copy("kept", None);
+    pane.uninstall(&launcher, "Uninstall and keep saved data");
+    drop(launcher);
+    pane.clock.advance(7 * DAY);
+    let launcher = pane.start();
+    assert!(pane.kept_on_disk().is_empty());
+    select_title(&launcher, MANAGE_ROW);
+    block_on(launcher.activate_selected());
+    let retained = subtitle(
+        &launcher,
+        &format!("Delete retained data of {}", fixture.title),
+    );
+    assert!(
+        retained.contains("clipboard history settings") && !retained.contains("item"),
+        "{retained}"
+    );
+}
+
 /// Declares one test per check for each language's clipboard package.
 macro_rules! contract {
     ($($check:ident),* $(,)?) => {
@@ -847,4 +1132,11 @@ contract!(
     where_the_clipboard_cannot_be_watched_history_stays_off_and_says_why,
     without_a_clipboard_pane_keeps_nothing_and_says_so,
     the_package_is_offered_only_on_windows_so_far,
+    items_expire_after_the_retention_also_while_disabled_or_stopped,
+    the_retention_can_be_changed_and_applies_to_kept_items,
+    expired_items_leave_the_file_while_pane_runs_without_the_extension,
+    an_item_can_be_deleted_on_its_own,
+    recent_items_can_be_deleted_together,
+    turning_off_and_deleting_keeps_nothing_more,
+    retained_history_expires_without_the_extension,
 );

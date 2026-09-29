@@ -29,11 +29,16 @@ declare module "pane:extension/clipboard-history@0.1.0" {
     excluded: string[];
     /** How many items are kept. */
     items: number;
+    /**
+     * How long each item is kept after it was copied, in seconds: Pane
+     * deletes it then, whether the extension runs or not.
+     */
+    retentionSeconds: number;
   }
 
   /** One kept item. */
   export interface Entry {
-    /** Identifies it to `copy`. */
+    /** Identifies it to `copy` and `deleteItems`. */
     id: string;
     text: string;
     /** When it was copied, in milliseconds since the Unix epoch. */
@@ -55,7 +60,13 @@ declare module "pane:extension/clipboard-history@0.1.0" {
    * ignoring case, with or without their extension.
    */
   export function setExcluded(programs: string[]): void;
-  /** The kept items, newest first. */
+  /**
+   * Keeps each item `seconds` after it was copied, from 60 (1 minute) to
+   * 31536000 (365 days); items already older are deleted at once, and none
+   * that was deleted comes back.
+   */
+  export function setRetention(seconds: number): void;
+  /** The kept items, newest first; none that expired. */
   export function entries(): Entry[];
   /** Puts the kept item `id` on the clipboard again. */
   export function copy(id: string): void;
@@ -64,4 +75,16 @@ declare module "pane:extension/clipboard-history@0.1.0" {
    * programs stay as they are. Returns how many were deleted.
    */
   export function clear(): number;
+  /**
+   * Deletes the kept items `ids` (from `entries`); an id no longer kept is
+   * passed over. Returns how many were deleted. Never changes what is on the
+   * system's clipboard.
+   */
+  export function deleteItems(ids: string[]): number;
+  /**
+   * Turns keeping off and deletes every kept item at once, so nothing copied
+   * meanwhile is kept; the excluded programs and the retention stay. Returns
+   * how many items were deleted.
+   */
+  export function turnOffAndClear(): number;
 }

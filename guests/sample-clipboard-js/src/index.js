@@ -6,8 +6,10 @@
 // text the user copies for this package once they turn it on here, through
 // `pane:extension/clipboard-history` (imported because package.json sets
 // `"pane": { "clipboardHistory": true }`); the command only shows the
-// history and the user's controls: turn on, pause, resume, turn off, exclude
-// a program, clear, and Enter on an item copies it again.
+// history and the user's controls: turn on, pause, resume, turn off, how
+// long items are kept (Pane deletes them then, whether the command runs or
+// not), exclude a program, clear, turn off and delete, delete recent items,
+// and Enter on an item copies it again or deletes it.
 // @ts-check
 import * as history from "pane:extension/clipboard-history@0.1.0";
 
@@ -24,6 +26,17 @@ const CAPTURES = {
 const INCLUDE = "include:";
 const ENTRY = "entry:";
 
+/** How long items can be kept, in seconds. */
+const RETENTIONS = [3600, 86400, 7 * 86400, 30 * 86400, 90 * 86400];
+
+/** How recent the items deleted together can be, in seconds, and what that is called. */
+/** @type {[number, string][]} */
+const RECENT = [
+  [900, "15 minutes"],
+  [3600, "hour"],
+  [86400, "day"],
+];
+
 /**
  * A host function's result, or an `Error` with the reason it failed.
  * @template T
@@ -35,6 +48,20 @@ function host(call) {
     return call();
   } catch (error) {
     throw new Error(String(/** @type {any} */ (error).payload));
+  }
+}
+
+/**
+ * A host function's result, or a form error with the reason it failed.
+ * @template T
+ * @param {() => T} call
+ * @returns {T}
+ */
+function forForm(call) {
+  try {
+    return call();
+  } catch (error) {
+    throw { message: String(/** @type {any} */ (error).payload) };
   }
 }
 
@@ -52,6 +79,40 @@ const item = (id, title, subtitle) => ({ id, title, subtitle });
  * @param {string} many
  */
 const plural = (count, one, many) => (count === 1 ? `1 ${one}` : `${count} ${many}`);
+
+/**
+ * A time span such as "1 hour" or "7 days".
+ * @param {number} seconds
+ */
+function span(seconds) {
+  /** @type {[number, string, string]} */
+  const [count, one, many] =
+    seconds % 86400 === 0
+      ? [seconds / 86400, "day", "days"]
+      : seconds % 3600 === 0
+        ? [seconds / 3600, "hour", "hours"]
+        : seconds % 60 === 0
+          ? [seconds / 60, "minute", "minutes"]
+          : [seconds, "second", "seconds"];
+  return plural(count, one, many);
+}
+
+/**
+ * A form with one choice field.
+ * @param {string} title
+ * @param {string} id
+ * @param {string} label
+ * @param {[string, string][]} choices
+ * @param {string} submitLabel
+ * @returns {import("@pane/extension").Form}
+ */
+function choiceForm(title, id, label, choices, submitLabel) {
+  return {
+    title,
+    fields: [{ id, label, kind: { tag: "choice", val: choices.map(([id, label]) => ({ id, label })) } }],
+    submitLabel,
+  };
+}
 
 /** @param {history.HistoryStatus} status */
 function toggle(status) {
@@ -101,8 +162,22 @@ function entryItem(entry) {
   if (entry.source) about.push(`from ${entry.source}`);
   const lines = entry.text.split(/\r?\n/).length - (entry.text.endsWith("\n") ? 1 : 0);
   if (lines > 1) about.push(`${lines} lines`);
-  about.push("Enter copies it");
-  return item(`${ENTRY}${entry.id}`, titleOf(entry.text), about.join(" · "));
+  about.push("Enter copies or deletes it");
+  const title = titleOf(entry.text);
+  return {
+    ...item(`${ENTRY}${entry.id}`, title, about.join(" · ")),
+    // Copying again comes first, so Enter twice copies.
+    form: choiceForm(
+      title,
+      "action",
+      "What to do with it",
+      [
+        ["copy", "Copy it again"],
+        ["delete", "Delete it"],
+      ],
+      "OK",
+    ),
+  };
 }
 
 /** @type {import("@pane/extension").Command} */
@@ -119,6 +194,20 @@ export const command = {
         ),
       );
     }
+    items.push({
+      ...item(
+        "retention",
+        `Keep items for ${span(status.retentionSeconds)}`,
+        "Older items are deleted, also while Pane is stopped or the extension is disabled · Enter changes it",
+      ),
+      form: choiceForm(
+        "Keep clipboard history items for",
+        "retention",
+        "Keep each item for",
+        RETENTIONS.map((seconds) => [String(seconds), span(seconds)]),
+        "Keep",
+      ),
+    });
     const excluded = status.excluded.length === 0 ? "None excluded" : `${status.excluded.length} excluded`;
     items.push({
       ...item("exclude", "Exclude a program", `Text copied from it is never kept · ${excluded}`),
@@ -148,6 +237,25 @@ export const command = {
           `Deletes the ${plural(status.items, "item", "items")} kept; whether history is kept does not change`,
         ),
       );
+      if (status.capture !== "off") {
+        items.push(
+          item(
+            "turn-off-and-clear",
+            "Turn off and delete clipboard history",
+            `Deletes the ${plural(status.items, "item", "items")} kept and keeps nothing you copy from now on`,
+          ),
+        );
+      }
+      items.push({
+        ...item("delete-recent", "Delete recent items", "Deletes what you copied in the last 15 minutes, hour or day"),
+        form: choiceForm(
+          "Delete recent clipboard history items",
+          "since",
+          "Copied in the last",
+          RECENT.map(([seconds, label]) => [String(seconds), label]),
+          "Delete",
+        ),
+      });
     }
     items.push(...entries.map(entryItem));
     if (entries.length === 0 && status.capture === "on") {
@@ -165,6 +273,9 @@ export const command = {
     if (itemId === "clear") {
       return `Deleted ${plural(host(history.clear), "kept item", "kept items")}`;
     }
+    if (itemId === "turn-off-and-clear") {
+      return `Clipboard history is off; deleted ${plural(host(history.turnOffAndClear), "kept item", "kept items")}`;
+    }
     if (itemId === "empty") return "Nothing is kept yet";
     if (itemId.startsWith(INCLUDE)) {
       const program = itemId.slice(INCLUDE.length);
@@ -180,8 +291,34 @@ export const command = {
   },
 
   async submitForm(itemId, values) {
+    /** @param {string} id */
+    const value = (id) => (values.find((value) => value.id === id)?.value ?? "").trim();
+    if (itemId.startsWith(ENTRY)) {
+      const id = itemId.slice(ENTRY.length);
+      if (value("action") === "delete") {
+        if (forForm(() => history.deleteItems([id])) === 0) throw { message: "That item is no longer kept" };
+        return "Deleted the kept item";
+      }
+      forForm(() => history.copy(id));
+      return "Copied to the clipboard";
+    }
+    if (itemId === "retention") {
+      const seconds = Number(value("retention"));
+      const before = forForm(history.status).items;
+      forForm(() => history.setRetention(seconds));
+      const deleted = before - forForm(history.status).items;
+      const kept = `Items are kept for ${span(seconds)}`;
+      return deleted > 0 ? `${kept}; deleted ${plural(deleted, "older item", "older items")}` : kept;
+    }
+    if (itemId === "delete-recent") {
+      const seconds = Number(value("since"));
+      const ids = forForm(history.entries)
+        .filter((entry) => entry.ageSeconds < seconds)
+        .map((entry) => entry.id);
+      return `Deleted ${plural(forForm(() => history.deleteItems(ids)), "kept item", "kept items")}`;
+    }
     if (itemId !== "exclude") throw { message: `unknown form: ${itemId}` };
-    const program = (values.find((value) => value.id === "program")?.value ?? "").trim();
+    const program = value("program");
     const excluded = host(history.status).excluded;
     try {
       history.setExcluded([...excluded, program]);
