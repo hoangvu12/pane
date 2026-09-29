@@ -831,12 +831,13 @@ fn parse_token(id: &str, visit: u64, version: u64) -> Option<usize> {
 /// granted folder's listing, never waiting for one.
 impl wit::Host for GuestState {
     fn list_folder(&mut self) -> Result<wit::FolderState, String> {
-        // Stopped code starts no more work.
+        // Answers from what the listing worker found; never waits for it.
+        let _host = self.host();
+        // Stopped code starts no more work: checked once the host call is
+        // marked, from when Pane no longer decides to give up on the thread.
         if let Some(end) = self.stopped() {
             return Err(crate::runtime::stopped_code(end));
         }
-        // Answers from what the listing worker found; never waits for it.
-        let _host = self.host();
         let Some(owner) = self.owner() else {
             return Ok(wit::FolderState::NotGranted);
         };

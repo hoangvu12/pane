@@ -1624,11 +1624,12 @@ impl GuestState {
 
 impl applications::Host for GuestState {
     fn installed(&mut self) -> Result<Vec<applications::Application>, String> {
-        // Stopped code starts no more work.
+        // Stopped code starts no more work: checked once the host call is
+        // marked, from when Pane no longer decides to give up on the thread.
+        let _host = self.host();
         if let Some(end) = self.stopped() {
             return Err(stopped_code(end));
         }
-        let _host = self.host();
         Ok(self
             .applications()
             .installed()?
@@ -1642,11 +1643,12 @@ impl applications::Host for GuestState {
     }
 
     fn open(&mut self, id: String) -> Result<(), String> {
-        // Stopped code starts no more work.
+        // Stopped code opens nothing: checked once the host call is
+        // marked, from when Pane no longer decides to give up on the thread.
+        let _host = self.host();
         if let Some(end) = self.stopped() {
             return Err(stopped_code(end));
         }
-        let _host = self.host();
         self.applications().open(&id)
     }
 }
@@ -1662,10 +1664,11 @@ impl GuestState {
         &self,
         call: impl FnOnce(clipboard::Commands<'_>) -> Result<R, String>,
     ) -> Result<R, String> {
+        let _host = self.host();
+        // Checked once the call is marked, as applications' are.
         if let Some(end) = self.stopped() {
             return Err(stopped_code(end));
         }
-        let _host = self.host();
         let data = self.data.as_ref().ok_or(
             "only installed packages keep clipboard history; this command is built into Pane",
         )?;
