@@ -39,6 +39,8 @@ const PREBUILT: &[&str] = &[
     "sample_clipboard_js",
     "sample_clipboard_ts",
     "sample_npm_js",
+    "sample_schedule_js",
+    "sample_schedule_ts",
 ];
 
 fn main() -> ExitCode {
@@ -101,6 +103,7 @@ fn guests() -> Result<(), String> {
                 "sample_dependencies",
                 "sample_query",
                 "sample_search",
+                "sample_schedule",
                 "sample_helper",
                 "faulty",
                 "operations_fixture",
@@ -276,7 +279,7 @@ fn git_sample(root: &Path, out: &Path) -> Result<(), String> {
 /// (package folder in `guests/packages`, component) of each sample package,
 /// and of the default extensions (the calculator, applications and
 /// quicklinks).
-const SAMPLE_PACKAGES: [(&str, &str); 31] = [
+const SAMPLE_PACKAGES: [(&str, &str); 34] = [
     ("sample-rust", "sample_rust"),
     ("sample-settings", "sample_settings"),
     ("sample-js", "sample_js"),
@@ -299,6 +302,9 @@ const SAMPLE_PACKAGES: [(&str, &str); 31] = [
     ("sample-query-js", "sample_query_js"),
     ("sample-query-ts", "sample_query_ts"),
     ("sample-search", "sample_search"),
+    ("sample-schedule", "sample_schedule"),
+    ("sample-schedule-js", "sample_schedule_js"),
+    ("sample-schedule-ts", "sample_schedule_ts"),
     ("sample-search-js", "sample_search_js"),
     ("sample-search-ts", "sample_search_ts"),
     ("sample-helper", "sample_helper"),

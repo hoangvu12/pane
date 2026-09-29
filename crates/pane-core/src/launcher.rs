@@ -19,6 +19,11 @@
 //! `pausing`). The one exception is root search's own calls for results
 //! computed from the query: a search owns them, so a newer query, or
 //! leaving root search, cancels those still pending.
+//!
+//! Scheduled work follows the same model (see `launcher/schedules`): a
+//! command whose manifest declares a schedule runs its item's action every
+//! interval while the package's code may run, each run a call into the
+//! generation current when the scheduler asked for it.
 
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
@@ -63,6 +68,7 @@ mod pausing;
 mod recovery;
 mod reload;
 mod retained;
+mod schedules;
 mod uninstall;
 
 use aliases::AliasChoices;
@@ -71,6 +77,7 @@ use developing::Developing;
 pub use developing::{BuildFailure, Development};
 use hotkeys::Bindings;
 use pausing::{Pauses, Recorder};
+use schedules::Schedules;
 
 /// The id of the root row that installs a package from a local folder.
 const INSTALL_FROM_FOLDER: &str = "pane.install-from-folder";
@@ -438,6 +445,11 @@ pub struct Launcher {
     /// Keeps the clipboard history of the packages that keep one, given
     /// with the system's clipboard ([`Launcher::with_clipboard`]).
     clipboard: Option<Arc<Capture>>,
+    /// Runs the scheduled work of the installed commands whose manifests
+    /// declare a schedule, by the launcher's clock
+    /// ([`Launcher::with_clock`]). Only a launcher that installs packages
+    /// schedules anything.
+    schedules: Option<Arc<Schedules>>,
     /// Reads packages from folders and downloads them from npm.
     sources: install::Sources,
     /// The packages being developed: built and reloaded on save.
@@ -451,6 +463,7 @@ pub struct Launcher {
 
 /// A launcher that does not keep itself or its runtime running, for the
 /// runtime to hold.
+#[derive(Clone)]
 struct WeakLauncher {
     runtime: Result<WeakRuntime, CallError>,
     commands: Arc<[CommandRegistration]>,
@@ -460,6 +473,9 @@ struct WeakLauncher {
     /// Held weakly, so that Pane stops watching the clipboard as soon as
     /// the launcher is dropped.
     clipboard: Option<std::sync::Weak<Capture>>,
+    /// Held weakly, so that Pane stops running scheduled work as soon as
+    /// the launcher is dropped.
+    schedules: Option<std::sync::Weak<Schedules>>,
     sources: install::Sources,
     developing: std::sync::Weak<Developing>,
     changes: Option<ChangeSender>,
@@ -484,6 +500,7 @@ impl WeakLauncher {
             links: self.links.clone(),
             hotkeys: self.hotkeys.clone(),
             clipboard,
+            schedules: self.schedules.as_ref().and_then(std::sync::Weak::upgrade),
             sources: self.sources.clone(),
             developing: self.developing.upgrade()?,
             changes: self.changes.clone(),
@@ -1038,13 +1055,14 @@ impl Launcher {
             registry: crate::npm::Registry::npmjs(),
             downloads: installation.as_ref().map(|i| i.dir.join(DOWNLOADS_DIR)),
         };
-        let launcher = Launcher {
+        let mut launcher = Launcher {
             runtime,
             commands: commands.into(),
             installation,
             links: Arc::new(NoOpener),
             hotkeys: system_hotkeys::none(),
             clipboard: None,
+            schedules: None,
             sources,
             developing: Arc::new(Developing::new(None, None)),
             changes: None,
@@ -1061,6 +1079,14 @@ impl Launcher {
                 }),
                 data: Some(data.clone()),
             }));
+        }
+        // Scheduled work follows the system's clock until a test or a
+        // development build gives the launcher another one.
+        if let Some(installation) = &launcher.installation {
+            let schedules =
+                Schedules::start(Arc::new(crate::clipboard::SystemClock), &installation.data);
+            schedules.run(launcher.downgrade());
+            launcher.schedules = Some(schedules);
         }
         launcher.report_failures();
         launcher.show_root(&mut launcher.lock(), None);
@@ -1089,18 +1115,22 @@ impl Launcher {
         Launcher { sources, ..self }
     }
 
-    /// This launcher telling the time for clipboard history by `clock`
-    /// rather than the system's clock, for tests and development builds:
-    /// items are kept and expire by it. Items that already expired by the
-    /// system's clock were removed when the launcher started, so `clock`
-    /// should not stand before it. Release builds have no way to replace
+    /// This launcher telling the time for clipboard history and scheduled
+    /// work by `clock` rather than the system's clock, for tests and
+    /// development builds: clipboard items are kept and expire by it, and
+    /// scheduled commands run by it, their intervals restarting from its
+    /// now. Items that already expired by the system's clock were removed
+    /// when the launcher started. Release builds have no way to replace
     /// the system's clock.
     #[cfg(any(test, debug_assertions))]
     pub fn with_clock(self, clock: Arc<dyn crate::clipboard::Clock>) -> Self {
         if let Some(installation) = &self.installation {
             let history = installation.data.clipboard_history();
-            history.set_clock(clock);
+            history.set_clock(clock.clone());
             history.sweep();
+        }
+        if let Some(schedules) = &self.schedules {
+            schedules.follow(clock);
         }
         self
     }
@@ -1115,6 +1145,19 @@ impl Launcher {
         self.installation
             .as_ref()
             .is_some_and(|installation| installation.data.clipboard_history().wait_swept(limit))
+    }
+
+    /// Waits until the scheduler looked at every change of the clock and of
+    /// the installed packages so far, and every scheduled run it started
+    /// has reported; `false` if it did not within `limit`. For tests and
+    /// development builds, which so wait for scheduled work without timing
+    /// it.
+    #[cfg(any(test, debug_assertions))]
+    #[doc(hidden)]
+    pub fn wait_for_schedules(&self, limit: std::time::Duration) -> bool {
+        self.schedules
+            .as_ref()
+            .is_some_and(|schedules| schedules.settled(limit))
     }
 
     /// This launcher registering the global hotkeys the user assigns with
@@ -1181,6 +1224,7 @@ impl Launcher {
             links: self.links.clone(),
             hotkeys: self.hotkeys.clone(),
             clipboard: self.clipboard.as_ref().map(Arc::downgrade),
+            schedules: self.schedules.as_ref().map(Arc::downgrade),
             sources: self.sources.clone(),
             developing: Arc::downgrade(&self.developing),
             changes: self.changes.clone(),
