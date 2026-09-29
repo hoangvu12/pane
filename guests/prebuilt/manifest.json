@@ -118,15 +118,15 @@
     },
     "sample_clipboard_js.wasm": {
       "source": "guests/sample-clipboard-js",
-      "inputs_sha256": "91805f4762fa91fb90d62a690355476dd748eb052fc4d8c4ce4acae50722e078",
-      "bytes": 4119825,
-      "sha256": "f73b49f9eee90c9cfb5836fa8d9196c20bdbffcaaa54ce028f3632d63e6bebf8"
+      "inputs_sha256": "59b53e5e5dd7d7957547f2614753aa8cf9c6e37a5d885f787523cc661d3828d2",
+      "bytes": 4123217,
+      "sha256": "6f35cb0de85578586ebe074542e87d4560413caa3efbc5fa205fc1be4951350e"
     },
     "sample_clipboard_ts.wasm": {
       "source": "guests/sample-clipboard-ts",
-      "inputs_sha256": "bb07559d7851bd507a936d25c8440a58cb8708710bbfa76be144edab2a81fb0b",
-      "bytes": 4118586,
-      "sha256": "09be39ab455faaad7ba97ff12c15ab0062e6a511795835141ddd0d8dc7341678"
+      "inputs_sha256": "d2df71f2e0ad3c958cbc50bd4d029b7eb2ce396ed0feb59d22654a19cefdbd2a",
+      "bytes": 4122201,
+      "sha256": "3941aa0c930803151817394135483be778be9227ec085340b7d833a9d0fcecd9"
     },
     "sample_npm_js.wasm": {
       "source": "guests/sample-npm-js",

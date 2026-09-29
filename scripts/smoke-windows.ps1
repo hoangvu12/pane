@@ -1599,8 +1599,8 @@ Check "402-clipboard-recent-deleted.png" "9fd8a8"   # "Deleted 2 kept items"
 if ((Kept-Joined) -ne "pane-smoke-enabled") { throw "kept: $(Kept-Joined)" }
 Send "{ESC}"
 Open-History
-Send "{DOWN 2}{ENTER}"; Start-Sleep -Seconds 1   # Keep items for 7 days: 1 hour, 1 day, 7, 30 or 90 days
-Send "{ENTER}"   # 1 hour
+Send "{DOWN 2}{ENTER}"; Start-Sleep -Seconds 1   # Keep items for 7 days: 7 days (the retention now, chosen), 1 hour, 1 day, 30 or 90 days
+Send "{DOWN}{ENTER}"   # 1 hour, the second choice
 Wait-For $history '"retentionSeconds": 3600' $true; Start-Sleep -Seconds 1
 Capture "403-clipboard-retention-changed.png"
 Check "403-clipboard-retention-changed.png" "9fd8a8"   # "Items are kept for 1 hour; deleted 1 older item"

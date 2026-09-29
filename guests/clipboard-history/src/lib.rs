@@ -86,16 +86,19 @@ fn choice(id: String, label: String) -> Choice {
     Choice { id, label }
 }
 
-fn retention_form() -> Form {
+/// The retention form. A form starts on its first choice, so the retention
+/// now comes first: submitting the form unchanged changes nothing.
+fn retention_form(current: u64) -> Form {
+    let others = RETENTIONS.iter().copied().filter(|&seconds| seconds != current);
     Form {
         title: "Keep clipboard history items for".into(),
         fields: vec![Field {
             id: "retention".into(),
             label: "Keep each item for".into(),
             kind: FieldKind::Choice(
-                RETENTIONS
-                    .iter()
-                    .map(|&seconds| choice(seconds.to_string(), span(seconds)))
+                core::iter::once(current)
+                    .chain(others)
+                    .map(|seconds| choice(seconds.to_string(), span(seconds)))
                     .collect(),
             ),
         }],
@@ -269,7 +272,7 @@ impl Guest for ClipboardHistory {
             ));
         }
         items.push(Item {
-            form: Some(retention_form()),
+            form: Some(retention_form(status.retention_seconds)),
             ..item(
                 RETENTION,
                 format!("Keep items for {}", span(status.retention_seconds)),

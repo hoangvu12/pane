@@ -155,7 +155,11 @@ async function getView(): Promise<View> {
       "Keep clipboard history items for",
       "retention",
       "Keep each item for",
-      RETENTIONS.map((seconds) => [String(seconds), span(seconds)]),
+      // A form starts on its first choice, so the retention now comes first:
+      // submitting the form unchanged changes nothing.
+      [status.retentionSeconds, ...RETENTIONS.filter((seconds) => seconds !== status.retentionSeconds)].map(
+        (seconds) => [String(seconds), span(seconds)],
+      ),
       "Keep",
     ),
   });

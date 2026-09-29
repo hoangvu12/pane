@@ -335,6 +335,21 @@ impl Pane {
         submit(launcher, title, values)
     }
 
+    /// Opens the command and the form of its row `title`, returning its
+    /// first field's choices, the chosen one first as the form starts.
+    fn choices(&self, launcher: &Launcher, title: &str) -> Vec<String> {
+        self.open(launcher);
+        select_title(launcher, title);
+        block_on(launcher.activate_selected());
+        let view = launcher.view();
+        let field = &view.form().expect("a form").fields[0];
+        let pane_core::FieldKind::Choice(choices) = &field.kind else {
+            panic!("{field:?}");
+        };
+        assert_eq!(field.value, choices[0].id, "the first choice is chosen");
+        choices.iter().map(|choice| choice.label.clone()).collect()
+    }
+
     /// The only package's history as the file holds it.
     fn history_of_the_package(&self) -> Value {
         let file = self.history_file().expect("the history file");
@@ -939,10 +954,26 @@ fn the_retention_can_be_changed_and_applies_to_kept_items(fixture: &'static Fixt
         "Older items are deleted, also while Pane is stopped or the extension is disabled · \
          Enter changes it"
     );
+    // The form starts on the retention now: Enter twice changes nothing.
+    assert_eq!(
+        pane.choices(&launcher, KEEP_7_DAYS),
+        ["7 days", "1 hour", "1 day", "30 days", "90 days"]
+    );
+    block_on(launcher.submit_form());
+    assert_eq!(launcher.view().status, result("Items are kept for 7 days"));
+    assert_eq!(pane.listed(&launcher), ["new", "two hours old"]);
     assert_eq!(
         submit(&launcher, KEEP_7_DAYS, &[("retention", "3600")]),
         result("Items are kept for 1 hour; deleted 1 older item")
     );
+    // The form starts on the retention now, so submitting it unchanged
+    // (Enter twice) changes nothing.
+    assert_eq!(
+        pane.choices(&launcher, "Keep items for 1 hour"),
+        ["1 hour", "1 day", "7 days", "30 days", "90 days"]
+    );
+    block_on(launcher.submit_form());
+    assert_eq!(launcher.view().status, result("Items are kept for 1 hour"));
     assert_eq!(pane.listed(&launcher), ["new"]);
     assert_eq!(pane.history_of_the_package()["retentionSeconds"], 3600);
     assert!(titles(&launcher).contains(&"Keep items for 1 hour".to_string()));

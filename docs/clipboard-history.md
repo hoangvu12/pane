@@ -62,7 +62,7 @@ The command's rows, in order:
 | --- | --- |
 | "Turn on clipboard history" (off), "Pause clipboard history" (on) or "Resume clipboard history" (paused), subtitled with the state, the number kept and, if Pane cannot watch the clipboard, why | turns it on, pauses or resumes it; each row does only that, so pressing it again before the command is opened anew changes nothing more |
 | "Turn off clipboard history", while on or paused | turns it off: nothing is kept and Pane stops watching for it; the kept items stay until cleared (or expire) |
-| "Keep items for 7 days" (the retention now), subtitled "Older items are deleted, also while Pane is stopped or the extension is disabled · Enter changes it" | a form choosing 1 hour, 1 day, 7 days, 30 days or 90 days (the first is chosen when it opens); items already older are deleted at once ("Items are kept for 1 hour; deleted 1 older item") |
+| "Keep items for 7 days" (the retention now), subtitled "Older items are deleted, also while Pane is stopped or the extension is disabled · Enter changes it" | a form choosing 1 hour, 1 day, 7 days, 30 days or 90 days, listing the retention now first, which is chosen when it opens, so submitting it unchanged (Enter twice) changes nothing; items already older are deleted at once ("Items are kept for 1 hour; deleted 1 older item") |
 | "Exclude a program" | a form taking a program's file name, such as `KeePass.exe` |
 | "Stop excluding keepass.exe", one per excluded program | removes the exclusion |
 | "Clear clipboard history", while items are kept | deletes every kept item; whether history is kept does not change |
