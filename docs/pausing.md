@@ -257,7 +257,8 @@ How it works:
   neither is available), **less the time inside Pane's host calls**. Every
   host import marks its entry and exit in one place (`Watch::host`, and
   `hosted` for a host call's future: saving data, running a helper,
-  sending a web request). So a slow save, a slow system call or a machine
+  sending a web request and receiving its response; a host call inside
+  another is counted once). So a slow save, a slow system call or a machine
   too loaded to run the thread never counts against the guest. A guest
   that waits is not polled at all. The meter is **per call and
   cumulative**: awaiting between parts of a computation does not reset
@@ -270,11 +271,12 @@ How it works:
 - **Saving** is written by a writer thread: the runtime thread changes the
   value in memory and awaits the write, so it never waits on the file
   system. **Helpers** are found and started on a thread of their own.
-  [Clipboard history](clipboard-history.md) (#35) is the exception: a
-  command's change to it (turning it on, pausing, excluding a program,
+  [Clipboard history](clipboard-history.md) (#35, #36) is the exception:
+  a command's change to it (turning it on, pausing, excluding a program,
+  setting the retention, deleting items, clearing, turning it off and
   clearing) is written by the runtime thread inside its marked host call,
   so the write is never charged to the guest nor given up on, but the
-  thread waits for it.
+  thread waits for it. Its expiry runs on a thread of its own.
 - **The watchdog.** Each runtime thread has a heartbeat, bumped at each
   poll of its work, each epoch yield of a guest and as each host call
   starts and ends. A watchdog thread looks every 100 ms. A thread waiting
@@ -303,9 +305,10 @@ How it works:
   is in the diagnostics. No extension is named or paused.
 - **The fence.** A thread cannot be ended from outside: the stuck one is
   abandoned, and its fence closes. Stopped code is one check that every
-  host interface goes through (`GuestState::stopped`,
-  `PackageData::stopped`): data, applications, operations, helpers, the
-  folder listing, web requests and clipboard history (its reads too) all
+  host interface goes through (`runtime::code_stopped`, through
+  `GuestState::stopped` and `PackageData::stopped`): data, applications,
+  operations, helpers, the folder listing, web requests and clipboard
+  history (its reads too) all
   refuse code whose generation ended or whose thread's fence closed. A
   save, or a change of clipboard history, checks and stages its change
   while holding the fence open, and closing waits for it, so no save
