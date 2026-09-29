@@ -342,7 +342,7 @@ fn a_source_only_revision_is_explained_and_nothing_is_installed() {
     assert_eq!(
         error,
         format!(
-            "The default branch (main) (commit {}) of the Git repository {} holds only the \
+            "The default branch, main (commit {}) of the Git repository {} holds only the \
              source of \"Greeter from Git\": its built component dist/git_greeter.wasm is not in \
              it. Pane does not build packages from Git or run anything in a repository; install \
              a release revision whose commit includes the built components (its author's \

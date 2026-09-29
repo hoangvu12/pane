@@ -1,0 +1,239 @@
+# Extension packages from Git repositories
+
+Added for [#46](https://github.com/hoangvu12/pane/issues/46) (US16–US18,
+US20–US24, T11, T12, G4, G6; contributions), following
+[ADR 0012](adr/0012-pi-style-source-identity.md)'s Git identity and the
+proposed [ADR 0021](adr/0021-pane-fetches-git-packages-itself.md). A Pane
+extension can be distributed as a public Git repository whose root holds its
+`pane.json`. Pane fetches the one revision the user names and installs it
+itself: the user needs no Git, compiler or other tool, and nothing in the
+repository runs to install it.
+
+## Layout: release and source-only revisions
+
+A repository is a package when its root holds `pane.json`. A revision (a
+commit) can be installed when its tree also holds the built components
+`pane.json` names, and this system's helper files: a **release revision**,
+such as a release tag or a release branch the author commits the build to.
+A revision holding only the source is **source-only**: Pane explains it and
+installs nothing, since it never builds anything ("The default branch, main
+(commit 2cefb4e216e6) of the Git repository github.com/owner/repo holds only
+the source of "Greeter from Git": its built component dist/git_greeter.wasm
+is not in it. Pane does not build packages from Git or run anything in a
+repository; install a release revision whose commit includes the built
+components (its author's release tag or branch), or build it yourself and
+install the folder"). Not every tag of a repository is installable, and
+Pane does not look for one that is.
+
+The author example is [`guests/git/greeter`](../guests/git/greeter), a Rust
+package's source whose README gives the steps from source to release
+revision ([Publishing a package from a Git repository](../guests/README.md#publishing-a-package-from-a-git-repository)).
+The controlled repository the tests and smokes make from it has the source
+alone on `main` and the build on the branch `release`, tagged `v0.1.0`.
+
+## Installing one
+
+- **Install extension from Git…**, root search's row after "Install
+  extension from npm…", opens a form of Pane's own with one field, the
+  repository: its address and optionally `@` and a branch, tag or commit.
+  **Show package** fetches it and shows the preview; Back returns to root
+  search, discarding a fetch in progress.
+- `pane --install git:<address>[@<reference>]` opens the same preview.
+
+An address is any of `https://github.com/owner/repo`,
+`https://github.com/owner/repo.git`, `github.com/owner/repo`,
+`git@github.com:owner/repo.git` and `ssh://git@github.com/owner/repo`, with
+or without `git:` or `git+` before it. Pane fetches each over HTTPS from the
+same host and path (it has no SSH), keeping `.git` as written.
+
+The preview is the one a folder has, with lines of its own:
+
+- "Source: Git repository github.com/owner/repo": the identity.
+- The revision and whether it is tracked or pinned: "Revision: the default
+  branch, main, tracked: an update fetches that branch again", "Revision:
+  branch release, tracked: …", "Revision: tag v1.0.0, which you named:
+  installing pins it to that revision", "Revision: commit 1a2b3c4d5e6f,
+  which you named: …", or, for an installed pinned copy, "…, which it is
+  pinned to: name another branch, tag or commit to change it".
+- "Fetched: commit <full id> “<commit subject>” from <address>, each object
+  checked against its id".
+- "Runs only the WebAssembly components its pane.json names, in Pane:
+  nothing in the repository is built or run to install it (no hooks,
+  scripts or submodules)".
+
+Install copies `pane.json`, the components it names and this system's
+helper files into Pane, as for a folder, and records the package in
+`installed.json` as `"git": "<host>/<path>", "gitUrl": "<address fetched>",
+"gitRef": "refs/tags/v1.0.0", "gitCommit": "<id>", "pinned": true` (no
+`gitRef` for the default branch or a commit named by its id; `pinned` for a
+tag or a commit). Its commands then run like any other.
+
+The revision is written into a download folder of its own under the data
+folder's `extensions/downloads/`, the one npm downloads use, removed once the
+preview is shown, once an install ends and on every failure.
+
+## Identity
+
+The identity is the repository without its reference: `git:` and the host
+in lowercase (with its port, unless it is HTTPS's 443) and the path without
+a trailing `/` or `.git`, its case kept (`git:github.com/owner/repo`). Every
+address form above names the same package, so a second install is refused
+("Already installed from Git repository github.com/owner/repo; use Update to
+replace the installed copy") and choosing it again, with any reference,
+offers **Update**. A copy of the same code from a folder or from npm is
+another package, installed beside it and never changed by it: Pane does not
+merge sources, move data between them or infer personal and project scopes.
+Moving a repository to another host or path makes another package.
+
+## References, tracking and pins
+
+| Named | Installs | An update without a reference |
+| --- | --- | --- |
+| nothing | the default branch's commit (its `HEAD`) | fetches the default branch again (tracked) |
+| `@main`, `@refs/heads/main` | that branch's commit | fetches that branch again (tracked) |
+| `@v1.0.0`, `@refs/tags/v1.0.0` | the commit the tag points to | installs that tag again (pinned) |
+| `@<40 hexadecimal digits>` | that commit | installs that commit again (pinned) |
+
+Naming another reference changes the recorded one. A name that is both a
+branch and a tag is refused until written `refs/heads/…` or `refs/tags/…`;
+an abbreviated commit id is not accepted. Nothing updates by itself yet
+([#50](https://github.com/hoangvu12/pane/issues/50) adds updates of tracked
+branches); an update keeps the identity, its data, whether it is disabled,
+its hotkeys and aliases, as a folder's does. A Git package has no **Reload**
+or **Develop** row: it has no source folder on this computer.
+
+## Dependencies from Git
+
+A `pane.json` dependency's `source` may be `git:<address>` or
+`git:<address>@<reference>` ([dependencies](dependencies.md#declaring)), in a
+local, npm or Git package. The plan, claims and rollback are #42's:
+
+- A missing required one is fetched while the preview is worked out, listed
+  as "Requires: Greeter from Git, installed with it from
+  git:https://github.com/owner/repo@v1.0.0", and installed first, at the
+  reference named (tracked or pinned as above).
+- An installed one is used as it is, and never fetched again, unless the
+  source names a reference the installed copy is not at: "Nothing was
+  installed: Caller requires Greeter from Git at v1.0.0, and branch release
+  (commit …) is installed; Pane does not replace the installed copy while
+  installing another extension: update it to v1.0.0 (Git repository
+  github.com/owner/repo@v1.0.0) if Caller needs that revision". Two
+  dependents naming different references conflict likewise.
+- Its record is `{ "id": "greeter", "git": "<host>/<path>" }`; a call by the
+  dependency id reaches it, and a call by identity takes `git:` and any
+  address form of the repository, without a reference.
+- A package from npm or Git cannot name a `local:` folder: "… comes from Git
+  but names the local folder `local:../helper` as its dependency `helper`; a
+  package published to npm or Git can depend only on packages from npm or
+  Git".
+
+## What is refused
+
+Each is explained on the preview, which then offers nothing, and nothing is
+installed or left in the downloads folder:
+
+| Case | Status |
+| --- | --- |
+| Not an address Pane fetches | "`ftp://…` is not a Git repository address: Pane fetches Git repositories over HTTPS, and does not use `ftp://`"; plain `http://` ("… only over HTTPS …"), credentials in the address, `?`, `#`, `%`, `..` |
+| No repository there | "There is no Git repository at https://…" |
+| A private repository | "The Git repository … asks to sign in (its server answered 401): Pane sends no credentials, so it installs only from public repositories" |
+| A redirect | "…/info/refs?service=git-upload-pack answered 301, sending Pane elsewhere: Pane follows no redirect, so name the repository by the address it moved to" |
+| An older server | "The Git repository … is not served with Git's protocol version 2 over HTTPS, which Pane needs …"; SHA-256 repositories are refused too |
+| No such reference | "The Git repository … has no branch or tag named nope"; "… has both a branch and a tag named x; name the one to install as …@refs/heads/x or …@refs/tags/x"; a commit it does not have: "Could not fetch commit … of …: …" |
+| Too large | a reference listing over 16 MiB, a pack over 64 MiB, more than 20,000 objects or 512 MiB of them inflated, files over 256 MiB, more than 10,000 files and folders, folders more than 32 deep |
+| A damaged or forged pack | its checksum, a zlib stream, a delta, an object whose id does not match (so the tree is not the commit's), or data crafted to collide under SHA-1 |
+| An unsafe tree | "… cannot be installed safely: its tree contains `dist/link`, a symbolic link; Pane takes only files and folders every system can write"; also a submodule, a `.git` or `git~1` entry, two names differing only in case, and every name npm's unpacking refuses ([npm](npm.md#what-is-refused)) |
+| Not a Pane extension | "… is not a Pane extension: it has no pane.json at the repository's root …" |
+| Source-only | [above](#layout-release-and-source-only-revisions) |
+| Git LFS | "… stores its component dist/x.wasm with Git LFS, which Pane does not fetch: …" |
+
+Then every check a folder gets applies: its manifest, WASI 0.3 imports, the
+extension API shape, its platforms and its helpers for this system.
+
+## What never runs
+
+Pane has no `git` program, library or configuration of its own: the
+repository's hooks, `.gitattributes` filters and line-ending conversions,
+`core.fsmonitor`, `core.sshCommand`, `uploadpack` and `protocol.allow`
+settings and `GIT_*` variables cannot apply, and files are written exactly
+as committed. Submodules and Git LFS objects are never fetched; build
+scripts (`build.rs`, `package.json` scripts, Makefiles) are never run.
+
+## The client
+
+The requests go through Pane's one HTTP client (hyper, rustls and the
+system's certificates, [ADR 0018](adr/0018-extensions-reach-the-network-through-wasi-http.md),
+[ADR 0019](adr/0019-pane-downloads-npm-packages-itself.md)): a new
+connection per request, no proxy, no redirect, no credentials, a
+User-Agent of `git/pane-<version>`, at most 30 s to connect, 60 s between
+pieces and 5 minutes per request. The fetch asks for the one commit without
+history (`deepen 1`) when the server offers it. Only a development build or
+a test fetches plain `http://`, and only from a loopback address written as
+one; the tests and smokes serve their repositories that way
+([`repo_server.rs`](../crates/pane-core/tests/support/repo_server.rs),
+[`scripts/repository_server.py`](../scripts/repository_server.py)), so none
+of them reaches the network. Those servers, not Pane, run `git upload-pack`,
+with none of the user's Git configuration.
+
+### Trying a real host by hand
+
+No check reaches a real Git host; a contributor can try one by hand, with a
+public repository holding a Pane package's release revision:
+
+1. `cargo build --release -p pane`.
+2. `PANE_DATA_DIR=<a new folder> target/release/pane --install
+   git:https://github.com/<owner>/<repo>@<tag>`. The preview's "Fetched:"
+   line names the commit; compare it with `git ls-remote <address> <tag>`
+   (its peeled `^{}` line for an annotated tag).
+3. Choose **Install**, run its command, and check that
+   `<folder>/extensions/installed.json` records `gitRef` and `gitCommit`,
+   and that `<folder>/extensions/downloads/` is empty.
+4. To see a refusal, name the repository's development branch if it holds
+   only the source, or any repository without `pane.json`.
+
+**Not run**: no one has tried this against GitHub, GitLab or another host
+yet.
+
+## Checks
+
+- Unit tests in [`git.rs`](../crates/pane-core/src/git.rs): address forms
+  and their identity, references, HTTPS only (plain HTTP from a loopback
+  address in tests), pkt-lines, packs (checksum, deltas by offset and by
+  id, a missing base, object counts), trees (links, submodules, `.git`,
+  unsafe names, names differing in case, limits of entries, size and
+  depth), files without execute permission and Git LFS pointers.
+- [`crates/pane-core/tests/repositories.rs`](../crates/pane-core/tests/repositories.rs),
+  against Git's own server (`git upload-pack`) on 127.0.0.1: preview,
+  install and run from a tag, after a restart without fetching again; the
+  source-only default branch; a tracked branch moving and updated, a commit
+  and a tag pinned; the identity across address forms, a local copy of the
+  same code beside it; a local package requiring a Git one at a tag; a
+  dependency naming another revision; a Git package naming a local folder;
+  a link and a submodule; hooks, filters and install scripts never running
+  and components taken as committed; missing repositories, references and
+  commits, ambiguous names, redirects, sign-in, protocol version 0, a
+  `# service` line, an unreachable server; the form.
+- [`crates/pane/tests/repositories.rs`](../crates/pane/tests/repositories.rs):
+  the form, the source-only explanation, preview, Install in view and the
+  command running in the native window at Pane's size.
+- The native smokes' own phase (frames 300 to 304;
+  [Linux](platforms/linux.md#git-packages-46)).
+
+## Limits
+
+- Public repositories over HTTPS only: no SSH, credentials, proxies or
+  private hosts' sign-in; SHA-256 repositories are refused.
+- The package must be at the repository's root; submodules and Git LFS are
+  not fetched.
+- No automatic updates of tracked branches yet (#50), no check for a newer
+  commit other than choosing the repository again, no history browser and
+  no publishing to a host.
+- Signed tags and commits are not checked; the commit id, checked object by
+  object, is the pin.
+- Tags and branches are resolved on the server; a server that does not
+  allow fetching an unadvertised commit id refuses a commit named by its id
+  (GitHub, GitLab and Git's own server allow it).
+- The pack and its objects are held in memory while the revision is written
+  (at most 64 MiB and 512 MiB).
+- The HTTPS path to a real host is not exercised by the checks, which never
+  reach the network ([by hand](#trying-a-real-host-by-hand)).

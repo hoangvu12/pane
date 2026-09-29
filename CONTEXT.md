@@ -129,12 +129,24 @@ The `pane.json` file that declares a package's title, version, required extensio
 _Avoid_: package.json (npm's file)
 
 **Source-only package**:
-A package whose manifest names components that have not been built, in a folder or published to npm without them; Pane explains it rather than installing it, and never builds it.
+A package whose manifest names components that have not been built, in a folder, published to npm without them, or a Git revision holding only the source; Pane explains it rather than installing it, and never builds it.
 _Avoid_: Broken install
 
 **npm-distributed package**:
 An extension package published to the npm registry: a tarball holding its package manifest and built components, identified by its npm name without version. Pane downloads it itself, checks its integrity and unpacks only its files and folders; the unpacked package is then installed like a local package, into a managed copy, while it keeps its npm source identity. Pane runs none of its npm install scripts and installs none of its npm dependencies.
 _Avoid_: Node package, npm module (Pane runs no Node code), plugin from npm
+
+**Git-distributed package**:
+An extension package distributed as a Git repository whose root holds its package manifest, identified by its repository (host and path, without `.git` or a reference): the same repository written as an HTTPS, SSH or scheme-less address is one package. Pane fetches the one revision asked for itself, over HTTPS, checks every object against its id and writes out only its files and folders, then installs it like a local package, into a managed copy, while it keeps its Git source identity. Pane runs nothing from the repository: no build, hook, filter or submodule.
+_Avoid_: Cloned extension, repository checkout (Pane keeps no repository)
+
+**Release revision**:
+A Git revision of a Git-distributed package whose commit holds the built components its manifest names, such as a release tag or a release branch its author commits the built files to; only a release revision can be installed. A revision holding only the source is a source-only package.
+_Avoid_: Release (a Pane release), build
+
+**Tracked reference**:
+The branch a Git-distributed package was installed from (the repository's default branch when none was named): an update fetches that branch again, whatever commit it has moved to. A tag or a commit named by its id is a pinned revision instead, which an update keeps; naming another reference changes either.
+_Avoid_: Channel, floating version
 
 **Pinned version**:
 The exact npm version the user, or a dependency's source, named when a package from npm was installed or updated, recorded so that it is not taken for the latest; updating without a version keeps it, and naming another version changes it. A dependency's source that names a version must get that version: an installed copy of another version is a conflict, since installing another package never replaces an installed required dependency.

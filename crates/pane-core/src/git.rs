@@ -456,13 +456,13 @@ impl GitRevision {
         &self.commit[..self.commit.len().min(12)]
     }
 
-    /// "the default branch (main)", "branch main", "tag v1.0.0" or "commit
+    /// "the default branch, main", "branch main", "tag v1.0.0" or "commit
     /// 1a2b3c4d5e6f".
     pub fn describe(&self) -> String {
         match &self.reference {
             GitRef::Default {
                 branch: Some(branch),
-            } => format!("the default branch ({branch})"),
+            } => format!("the default branch, {branch}"),
             GitRef::Default { branch: None } => "the default branch".into(),
             GitRef::Branch(branch) => format!("branch {branch}"),
             GitRef::Tag(tag) => format!("tag {tag}"),

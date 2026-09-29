@@ -24,9 +24,11 @@ export PANE_DATA_DIR=$out/data
 xvfb_pid=
 pane_pid=
 npm_registry_pid=
+repository_server_pid=
 cleanup() {
   [ -n "$pane_pid" ] && kill "$pane_pid" 2>/dev/null || true
   [ -n "$npm_registry_pid" ] && kill "$npm_registry_pid" 2>/dev/null || true
+  [ -n "$repository_server_pid" ] && kill "$repository_server_pid" 2>/dev/null || true
   [ -n "$xvfb_pid" ] && kill "$xvfb_pid" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -195,7 +197,7 @@ start_pane --install target/guests/packages/sample-settings
 capture 16-setting-saved.png
 check 16-setting-saved.png 9fd8a8   # "Saved the formal greeting"
 "$xdotool" key Escape; sleep 1
-for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # the last row
+for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done   # the last row
 "$xdotool" key Return; sleep 1
 "$xdotool" key Down key Return; sleep 2
 capture 17-disabled.png
@@ -213,7 +215,7 @@ start_pane
 capture 18-restarted-disabled.png
 check 18-restarted-disabled.png 8a96a3
 python3 "$(dirname "$0")/check_screenshot.py" --same "$out/12-restarted.png" "$out/18-restarted-disabled.png"
-for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done
+for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done
 "$xdotool" key Return; sleep 1
 "$xdotool" key Down key Return; sleep 2
 capture 19-enabled.png
@@ -576,7 +578,7 @@ rm -rf "$PANE_DATA_DIR"
 start_pane --install target/guests/packages/sample-settings
 "$xdotool" windowfocus --sync "$window"
 "$xdotool" key Return; sleep 2   # Install; Greeting is selected
-for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done   # Manage extensions…
 "$xdotool" key Return; sleep 1
 "$xdotool" key Down Down Down Down Return; sleep 1   # "Hotkey for Greeting"
 capture 52-hotkey-screen.png
@@ -601,7 +603,7 @@ check 56-hotkey-after-restart.png 364355 3000   # Greeting's first item, selecte
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{54-unfocused,56-hotkey-after-restart}.png
 "$xdotool" windowfocus --sync "$window"   # no window manager: Pane is focused here
 "$xdotool" key Escape; sleep 1
-for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done   # Manage extensions…
 "$xdotool" key Return; sleep 1
 "$xdotool" key Return; sleep 2   # disable Settings sample
 "$xdotool" key Escape; sleep 1
@@ -640,7 +642,7 @@ start_pane
 capture 60-paused-after-restart.png
 check 60-paused-after-restart.png d6a36a   # Greeting is still paused
 "$xdotool" key Escape; sleep 1   # clears the query
-for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done   # Manage extensions…
 "$xdotool" key Return; sleep 1
 "$xdotool" key Down Down Down Return; sleep 1   # "Why Settings sample is paused"
 capture 61-pause-details.png
@@ -679,7 +681,7 @@ for ((i = 0; i < 3; i++)); do "$xdotool" key Down; done
 "$xdotool" key Return   # "Save a note"
 wait_for "$PANE_DATA_DIR/extensions/content.json" '"note": "Water the plants"' present
 "$xdotool" key Escape; sleep 1   # root search
-for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done   # Manage extensions…
 "$xdotool" key Return; sleep 1
 "$xdotool" key Down Down Down Return; sleep 1   # "Uninstall Settings sample"
 "$xdotool" key Return   # "Uninstall and keep saved data"
@@ -721,7 +723,7 @@ rm -rf "$PANE_DATA_DIR"
 start_pane --install target/guests/packages/sample-query
 "$xdotool" windowfocus --sync "$window"
 "$xdotool" key Return; sleep 2   # Install; Echo is selected
-for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done   # Manage extensions…
 "$xdotool" key Return; sleep 1
 for ((i = 0; i < 5; i++)); do "$xdotool" key Down; done   # "Alias for Echo"
 "$xdotool" key Return; sleep 1
@@ -756,7 +758,7 @@ grep -q '"ec"' "$PANE_DATA_DIR/extensions/aliases.json" || { echo "alias not rec
 grep -q '#echo"' "$PANE_DATA_DIR/extensions/aliases.json" || { echo "fallback not recorded"; exit 1; }
 start_pane
 "$xdotool" windowfocus --sync "$window"
-for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done   # Manage extensions…
 "$xdotool" key Return; sleep 1
 "$xdotool" key Return; sleep 2   # disable Query sample
 "$xdotool" key Escape; sleep 1
@@ -826,7 +828,7 @@ if helpers_running; then echo "a cancelled helper is still running"; exit 1; fi
 helpers_running || { echo "the waiting helper is not running"; exit 1; }
 capture 92-helper-waiting.png
 "$xdotool" key Escape; sleep 1   # root search; the helper keeps running
-for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done   # Manage extensions…
 "$xdotool" key Return; sleep 1
 "$xdotool" key Return; sleep 2   # disable Helper sample
 capture 93-helper-disabled.png
@@ -930,9 +932,9 @@ PY
   start_pane --install "$copy"
   "$xdotool" windowfocus --sync "$window"
   "$xdotool" key Return; sleep 2   # Install
-  for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+  for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done   # Manage extensions…
   "$xdotool" key Return; sleep 1
-  for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Develop <title>
+  for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done   # Develop <title>
   "$xdotool" key Return; sleep 2
   capture "$n-$sample-develop-started.png"
   check "$n-$sample-develop-started.png" 9fd8a8   # "Developing <title>: each save in ..."
@@ -982,9 +984,9 @@ PY
   "$xdotool" key Escape; sleep 1
 
   # Stopped: a save builds nothing.
-  for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+  for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done   # Manage extensions…
   "$xdotool" key Return; sleep 1
-  for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Stop developing <title>
+  for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done   # Stop developing <title>
   "$xdotool" key Return; sleep 2
   capture "$((n + 8))-$sample-stopped.png"
   check "$((n + 8))-$sample-stopped.png" 9fd8a8   # "Stopped developing <title>"
@@ -1018,7 +1020,7 @@ rm -rf "$PANE_DATA_DIR"
 start_pane --install target/guests/packages/sample-dependencies
 "$xdotool" windowfocus --sync "$window"
 "$xdotool" key Return; sleep 3   # Install
-for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done   # Manage extensions…
 "$xdotool" key Return; sleep 1
 "$xdotool" key Return; sleep 1   # disable JavaScript operations sample: asks first
 capture 140-disable-dependents-asked.png
@@ -1113,7 +1115,7 @@ check 203-runtime-stopped.png f08c8c   # the runtime stopped; its answer is lost
 capture 204-runtime-refused.png
 check 204-runtime-refused.png f08c8c   # "Extension runtime unavailable: it stopped after crashing ..."
 "$xdotool" key Escape; sleep 1   # clears the query
-for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done   # Manage extensions…
 "$xdotool" key Return; sleep 1
 capture 205-runtime-manage.png   # Restart the extension runtime, Why the extension runtime stopped
 "$xdotool" key Down Return; sleep 1   # Why the extension runtime stopped
@@ -1155,7 +1157,7 @@ rm -rf "$PANE_DATA_DIR"
 start_pane --install target/guests/packages/sample-dependencies
 "$xdotool" windowfocus --sync "$window"
 "$xdotool" key Return; sleep 3   # Install
-for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done   # Manage extensions…
 "$xdotool" key Return; sleep 1
 for ((i = 0; i < 6; i++)); do "$xdotool" key Down; done   # Uninstall JavaScript operations sample
 "$xdotool" key Return; sleep 1   # asks first
@@ -1172,7 +1174,7 @@ stop_pane
 start_pane --install target/guests/packages/sample-operations-js
 "$xdotool" windowfocus --sync "$window"
 "$xdotool" key Return; sleep 3   # Install the dependency alone
-for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…
+for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done   # Manage extensions…
 "$xdotool" key Return; sleep 1
 capture 183-uninstall-dependents-reinstalled-alone.png   # only the JavaScript operations sample is listed
 check 183-uninstall-dependents-reinstalled-alone.png aab4c0
@@ -1185,7 +1187,7 @@ stop_pane
 # the network), with a data folder of its own. Installing the local
 # Dependencies from npm sample shows the npm package it requires and
 # installs both; its command calls the npm package's greet operation. Then
-# "Install extension from npm…" (root's second-to-last row) asks for the
+# "Install extension from npm…" (root's third-to-last row) asks for the
 # npm package in a form; naming the installed one offers Update, and its
 # command runs: "Hello from the npm package".
 export PANE_DATA_DIR=$out/npm-data
@@ -1208,8 +1210,8 @@ check 261-npm-dependency-installed.png 9fd8a8   # "Installed Dependencies from n
 capture 262-npm-dependency-called.png
 check 262-npm-dependency-called.png 9fd8a8   # "Hello, Pane, from the npm package"
 "$xdotool" key Escape; sleep 1
-for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensions…, the last row
-"$xdotool" key Up Return; sleep 1   # Install extension from npm…
+for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done   # Manage extensions…, the last row
+"$xdotool" key Up Up Return; sleep 1   # Install extension from npm…
 capture 263-npm-form.png
 check 263-npm-form.png 8a96a3   # the form's hint line
 "$xdotool" type --delay 50 @pane-samples/greeter
@@ -1230,6 +1232,53 @@ unset PANE_NPM_REGISTRY
 grep -q '"npm": "@pane-samples/greeter"' "$PANE_DATA_DIR/extensions/installed.json" || { echo "npm package not recorded"; exit 1; }
 grep -q '"npmVersion": "0.1.0"' "$PANE_DATA_DIR/extensions/installed.json" || { echo "npm version not recorded"; exit 1; }
 [ "$(grep -c '"dir"' "$PANE_DATA_DIR/extensions/installed.json")" = 2 ] || { echo "not both installed"; exit 1; }
+
+# Git packages (#46), from a repository the smoke makes with git from the
+# Git sample `cargo xtask guests` assembled (target/guests/git/greeter: its
+# source on main, its built component on the branch release, tagged v0.1.0),
+# served over Git's smart HTTP protocol from 127.0.0.1
+# (scripts/repository_server.py; nothing reaches the network), with a data
+# folder of its own. `--install git:<address>` names the default branch,
+# which holds the source only: explained, nothing offered. Then "Install
+# extension from Git…" (root's last row: with nothing installed in this data
+# folder, there is no Manage extensions… yet) asks for the repository
+# in a form; naming the tag previews the release revision, pinned, and
+# installs it, and its command runs: "Hello from the Git repository".
+export PANE_DATA_DIR=$out/git-data
+rm -rf "$PANE_DATA_DIR" "$out/git-repositories"
+python3 "$(dirname "$0")/repository_server.py" make-sample target/guests/git/greeter "$out/git-repositories/greeter"
+rm -f "$out/repository-server.port"
+python3 "$(dirname "$0")/repository_server.py" serve "$out/git-repositories" "$out/repository-server.port" 2>>"$out/repository-server.log" &
+repository_server_pid=$!
+for _ in $(seq 50); do [ -s "$out/repository-server.port" ] && break; sleep 0.1; done
+[ -s "$out/repository-server.port" ] || { echo "the local repository server did not start"; exit 1; }
+repository=http://127.0.0.1:$(cat "$out/repository-server.port")/greeter.git
+start_pane --install "git:$repository"
+"$xdotool" windowfocus --sync "$window"; sleep 2
+capture 300-git-source-only.png
+check 300-git-source-only.png f08c8c   # "The default branch, main (commit …) of the Git repository … holds only the source of …"
+"$xdotool" key Escape; sleep 1
+for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done   # the last row
+"$xdotool" key Return; sleep 1   # Install extension from Git…
+capture 301-git-form.png
+check 301-git-form.png 8a96a3   # the form's hint line
+"$xdotool" type --delay 50 "$repository@v0.1.0"
+"$xdotool" key Return; sleep 3
+capture 302-git-preview.png
+check 302-git-preview.png aab4c0   # "Source: Git repository 127.0.0.1:<port>/greeter", "Revision: tag v0.1.0, which you named: …"
+"$xdotool" key Return; sleep 3   # Install; Greeter from Git is selected
+capture 303-git-installed.png
+check 303-git-installed.png 9fd8a8   # "Installed Greeter from Git"
+"$xdotool" key Return; sleep 3   # open Greeter from Git
+"$xdotool" key Return; sleep 2   # "Say hello"
+capture 304-git-command-ran.png
+check 304-git-command-ran.png 9fd8a8   # "Hello from the Git repository"
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{300-git-source-only,301-git-form,302-git-preview,303-git-installed,304-git-command-ran}.png
+stop_pane
+kill "$repository_server_pid"; wait "$repository_server_pid" 2>/dev/null || true; repository_server_pid=
+grep -q '"gitRef": "refs/tags/v0.1.0"' "$PANE_DATA_DIR/extensions/installed.json" || { echo "Git reference not recorded"; exit 1; }
+grep -q '"gitCommit": "' "$PANE_DATA_DIR/extensions/installed.json" || { echo "Git commit not recorded"; exit 1; }
+[ -z "$(ls -A "$PANE_DATA_DIR/extensions/downloads" 2>/dev/null)" ] || { echo "a Git download was left"; exit 1; }
 
 # File search (#29): Files, a default extension (its data folder is this
 # phase's own; Files is selected once installed, and Pane's own "Choose

@@ -81,6 +81,19 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   requiring it as `npm:@pane-samples/greeter`; held by
   `crates/pane-core/tests/npm.rs` and `crates/pane/tests/npm.rs`, from a
   local registry.
+- `git/greeter`: the Git-distributed sample, a Rust package's **source**
+  (`pane.json` naming `dist/git_greeter.wasm`, `Cargo.toml`, `src/lib.rs`
+  and a README of the author's steps), whose command answers "Hello from the
+  Git repository" and whose `greet` operation answers "Hello, <name>, from
+  the Git repository". `cargo xtask guests` builds it and assembles it in
+  `target/guests/git/greeter/` with its component under `dist/`, as a
+  release revision holds it. The tests and smokes make its repository with
+  `git`: the source alone on `main` (a source-only revision) and the build
+  on the branch `release`, tagged `v0.1.0`
+  ([Publishing a package from a Git repository](#publishing-a-package-from-a-git-repository));
+  held by `crates/pane-core/tests/repositories.rs` and
+  `crates/pane/tests/repositories.rs`, from a repository served on
+  127.0.0.1.
 - `sample-query`, `sample-query-js`, `sample-query-ts`: Echo, the smallest
   command that takes a query, in Rust, JavaScript and TypeScript:
   it answers the text the user sends it from root search through its alias
@@ -1001,8 +1014,12 @@ installing it installs what it needs
   (`npm:@pane-samples/greeter@0.1.0`), which Pane downloads when it is
   missing ([npm](../docs/npm.md#dependencies-from-npm)); a version pins it,
   so an installed copy of another version is a conflict Pane explains
-  rather than a version your package did not ask for. A package you publish
-  to npm can only use `npm:` sources. Git is not supported yet.
+  rather than a version your package did not ask for. Or `git:` and a Git
+  repository,
+  optionally with `@` and a branch, tag or commit
+  (`git:https://github.com/owner/repo@v1.0.0`), which Pane fetches when it
+  is missing ([Git](../docs/git.md#dependencies-from-git)). A package
+  published to npm or Git can use only `npm:` and `git:` sources.
 - `optional` (default `false`): a required dependency is installed with your
   package when it is missing; an optional one never is, and a call to it
   when it is not installed is `not-found` (the
@@ -1398,6 +1415,58 @@ The sample [`npm/greeter`](npm/greeter) is such a package, kept
 assembles and packs it on each contributor system, without npm; `npm pack`
 in the assembled `target/guests/npm/greeter` makes the same list of files,
 and its tarball installs alike.
+
+## Publishing a package from a Git repository
+
+A Pane package can also be installed from a public Git repository, with
+**Install extension from Git…** (or `pane --install git:<address>`), without
+Git, a compiler or any other tool on the user's computer
+([details](../docs/git.md)). Pane fetches the one revision the user names
+over HTTPS and installs its files exactly as it installs a folder; it builds
+nothing and runs nothing from the repository (no hooks, no submodules, no
+Git LFS). So what users install must be a **release revision**: a commit
+whose tree holds the built components.
+
+1. **Keep `pane.json` at the repository's root**, naming each component
+   where the release revision will hold it, such as `dist/command.wasm`.
+   A revision without them (your development branch, if you keep build
+   outputs out of it) is explained to users as source-only.
+2. **Build, then commit the build on a release reference.** For example:
+
+   ```sh
+   cargo build --release --target wasm32-wasip2
+   mkdir -p dist && cp target/wasm32-wasip2/release/command.wasm dist/
+   git switch -c release            # or: git switch release
+   git add -f dist                  # -f if dist/ is in .gitignore
+   git commit -m "Release 1.0.0"
+   git tag v1.0.0
+   git push origin release v1.0.0
+   ```
+
+   Commit every native helper for each target you support, too; files are
+   installed without their execute bit, and Pane sets a helper's mode
+   itself.
+3. **Tell users what to name**: `https://<host>/<owner>/<repo>@v1.0.0` (a
+   tag: pinned to it) or `…@release` (a branch: tracked, each update
+   fetching its newest commit). Without a reference, Pane installs the
+   repository's default branch, which is only right if that branch holds
+   the build.
+4. **Keep the tree portable**: symbolic links, submodules, a `.git` entry,
+   two names in a folder that differ only in case, and names some system
+   reads differently or cannot write (`\ : < > " | ? *`, a name ending in
+   `.` or a space, `con`, `nul`, `com1`…) make Pane refuse the revision on
+   every system.
+5. **Try it before pushing**: serve the repository on this computer
+   ([`scripts/repository_server.py`](../scripts/repository_server.py)
+   `serve <folder> <port-file>`) and name
+   `http://127.0.0.1:<port>/<repo>.git@<reference>` in a development build
+   of Pane, which alone accepts a plain `http://` address on a loopback
+   address.
+
+The repository's identity is its host and path (`github.com/owner/repo`),
+whatever the reference: moving it to another host or path makes another
+package. Its dependencies on other Pane packages are `npm:` or `git:`
+sources. The sample [`git/greeter`](git/greeter) is such a package's source.
 
 Uninstalling is not implemented yet.
 

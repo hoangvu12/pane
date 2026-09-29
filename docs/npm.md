@@ -11,7 +11,8 @@ to install it.
 
 ## Installing one
 
-- **Install extension from npm…**, the second-to-last row of root search,
+- **Install extension from npm…**, root search's row before **Install
+  extension from Git…** ([Git](git.md)),
   opens a form of Pane's own with one field, the npm package: its name
   (`@pane-samples/greeter`, `greeter`) and optionally an exact version
   (`greeter@1.2.3`). **Show package** downloads it and shows the preview;
@@ -43,7 +44,8 @@ are copied into Pane), while it keeps its npm identity, and records it in
 other.
 
 Each download is unpacked into a folder of its own under the data folder's
-`extensions/downloads/`, named `<seconds>-<process>-<count>` by when it was
+`extensions/downloads/` (which Git packages share since #46,
+`crates/pane-core/src/downloads.rs`), named `<seconds>-<process>-<count>` by when it was
 begun, and removed as soon as nothing reads it: once the preview is shown
 (the downloads of the npm dependencies it planned too; installing downloads
 again), once an install ends, and on every failure, a component failing its
@@ -114,7 +116,8 @@ local or an npm package. The plan, claims and rollback are #42's:
 - A package from npm cannot name a `local:` folder, which is on its
   author's computer: "… comes from npm but names the local folder
   `local:../helper` as its dependency `helper`; a package published to npm
-  can depend only on packages from npm".
+  or Git can depend only on packages from npm or Git". Since #46 it can
+  name a `git:` source ([Git](git.md#dependencies-from-git)).
 - An operation call by identity takes `npm:<name>` (without a version) as
   it takes `local:<folder>`.
 - One whose component imports `wasi:http` is recorded, and listed, as using

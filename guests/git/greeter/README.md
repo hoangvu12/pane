@@ -16,10 +16,10 @@ A **release** revision adds the built component:
    xtask guests` from Pane's checkout builds it with the other samples).
 2. Copy `target/wasm32-wasip2/release/git_greeter.wasm` to
    `dist/git_greeter.wasm` beside `pane.json`.
-3. Commit `dist/` on a release branch or tag, never on the branch you
-   develop on if you keep build outputs out of it: for example `git switch
-   -c release`, `git add -f dist`, `git commit -m "Release 0.1.0"`, `git tag
-   v0.1.0`, and push the branch and the tag.
+3. Commit `dist/` on a release branch and tag that commit, keeping your
+   development branch free of build outputs if you like: for example `git
+   switch -c release`, `git add -f dist`, `git commit -m "Release 0.1.0"`,
+   `git tag v0.1.0`, then push the branch and the tag.
 
 Users then install `https://<host>/<owner>/<repo>@v0.1.0` (pinned to the
 tag) or `…@release` (tracking the branch) from **Install extension from
