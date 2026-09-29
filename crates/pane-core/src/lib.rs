@@ -37,8 +37,9 @@ pub use launcher::{
 pub use links::LinkOpener;
 pub use operations::{MAX_CALL_DEPTH, MAX_OPERATION_JSON};
 pub use packages::{
-    EXTENSION_API, InstalledPackage, MANIFEST_FILE, MANIFEST_VERSION, Manifest, ManifestCommand,
-    ManifestHelper, ManifestOperation, PackageError, PackageIdentity, RetainedData, SavedData,
+    EXTENSION_API, InstalledPackage, MANIFEST_FILE, MANIFEST_VERSION, MAX_SCHEDULE_SECONDS,
+    MIN_SCHEDULE_SECONDS, Manifest, ManifestCommand, ManifestHelper, ManifestOperation,
+    ManifestSchedule, PackageError, PackageIdentity, RetainedData, SavedData,
 };
 pub use pane_target::{Arch, Target};
 pub use platform::Platform;

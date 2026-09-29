@@ -326,14 +326,18 @@ impl ClipboardSystem for Unavailable {
     }
 }
 
-/// Tells the time for clipboard history: when an item was copied and
-/// whether it expired.
+/// Tells the time for the work Pane does by its own clock rather than the
+/// user's asking: clipboard history (when an item was copied and whether
+/// it expired) and scheduled work (when a run is due). Tests and
+/// development builds give the launcher another clock
+/// ([`crate::Launcher::with_clock`]); release builds keep the system's.
 pub trait Clock: Send + Sync + 'static {
     /// Now, in milliseconds since the Unix epoch.
     fn now(&self) -> u64;
 
     /// Has `changed` called whenever this clock is set other than by time
-    /// passing (the system's never is), so that expiry is looked at again.
+    /// passing (the system's never is), so that expiry and due scheduled
+    /// work are looked at again.
     fn on_change(&self, changed: Box<dyn Fn() + Send + Sync>) {
         let _ = changed;
     }

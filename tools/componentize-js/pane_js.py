@@ -79,6 +79,8 @@ SAMPLES = [
     ("sample_clipboard_js.wasm", "guests/sample-clipboard-js"),
     ("sample_clipboard_ts.wasm", "guests/sample-clipboard-ts"),
     ("sample_npm_js.wasm", "guests/sample-npm-js"),
+    ("sample_schedule_js.wasm", "guests/sample-schedule-js"),
+    ("sample_schedule_ts.wasm", "guests/sample-schedule-ts"),
 ]
 # Pane's WIT, copied beside the world in guests/js/wit.
 PANE_WIT = ["extension.wit", "data.wit", "root-results.wit", "operations.wit", "applications.wit", "query.wit",

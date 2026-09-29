@@ -353,6 +353,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sample-schedule"
+version = "0.1.0"
+dependencies = [
+ "pane-guest",
+ "wasip3",
+]
+
+[[package]]
 name = "sample-search"
 version = "0.1.0"
 dependencies = [
