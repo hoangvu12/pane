@@ -1090,6 +1090,18 @@ impl Launcher {
         self
     }
 
+    /// Waits until Pane's clipboard history expiry thread swept after every
+    /// change of the history and of the clock so far; `false` if it did not
+    /// within `limit`. For tests and development builds, which so wait for
+    /// expiry without timing it.
+    #[cfg(any(test, debug_assertions))]
+    #[doc(hidden)]
+    pub fn wait_for_clipboard_expiry(&self, limit: std::time::Duration) -> bool {
+        self.installation
+            .as_ref()
+            .is_some_and(|installation| installation.data.clipboard_history().wait_swept(limit))
+    }
+
     /// This launcher registering the global hotkeys the user assigns with
     /// `hotkeys`, normally the system's ([`crate::hotkeys::native`]); the
     /// recorded ones are registered now. Without it, assigning a hotkey

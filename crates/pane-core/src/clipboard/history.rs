@@ -503,6 +503,15 @@ impl HistoryStore {
         }
     }
 
+    /// Waits until the expiry thread swept after every change and clock
+    /// change so far, and let go of the store; `false` if it did not within
+    /// `limit` (it does not run, or never got to run). For tests, which so
+    /// wait for expiry without timing it.
+    #[cfg(any(test, debug_assertions))]
+    pub fn wait_swept(&self, limit: Duration) -> bool {
+        self.wake.wait_swept(limit)
+    }
+
     /// Writes `pending`, if any, reporting a failure on standard error.
     fn write_logged(&self, pending: Option<Pending>) {
         if let Some(pending) = pending
@@ -545,6 +554,7 @@ fn expire_until_dropped(store: &Weak<HistoryStore>, wake: &Wake) {
         let next = kept.sweep();
         let now = kept.now();
         drop(kept);
+        wake.swept(seen);
         let wait = next.map_or(MAX_EXPIRY_WAIT, |at| {
             Duration::from_millis(at.saturating_sub(now)).min(MAX_EXPIRY_WAIT)
         });
@@ -566,6 +576,10 @@ struct Wake {
 struct WakeState {
     stopped: bool,
     pokes: u64,
+    /// The pokes seen before the thread's last sweep began, told once that
+    /// sweep ended and the thread let go of the store (for tests).
+    #[cfg_attr(not(any(test, debug_assertions)), allow(dead_code))]
+    swept: u64,
 }
 
 impl Wake {
@@ -583,6 +597,27 @@ impl Wake {
     fn stop(&self) {
         self.lock().stopped = true;
         self.condvar.notify_all();
+    }
+
+    /// Notes that a sweep that began after `seen` pokes ended.
+    fn swept(&self, seen: u64) {
+        self.lock().swept = seen;
+        self.condvar.notify_all();
+    }
+
+    /// Waits at most `limit` until a sweep begun after every poke so far
+    /// ended; returns whether one did.
+    #[cfg(any(test, debug_assertions))]
+    fn wait_swept(&self, limit: Duration) -> bool {
+        let state = self.lock();
+        let target = state.pokes;
+        let (state, _) = self
+            .condvar
+            .wait_timeout_while(state, limit, |state| {
+                !state.stopped && state.swept < target
+            })
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.swept >= target
     }
 
     /// How many times it was poked, or `None` once stopped.
@@ -958,19 +993,14 @@ mod tests {
             .unwrap();
         store.keep_expiring();
         clock.advance(std::time::Duration::from_secs(7 * 86_400));
-        // Nothing reads the store: the thread does it, whenever it runs.
-        let limit = std::time::Instant::now() + std::time::Duration::from_secs(300);
-        while fs::read_to_string(dir.path().join(FILE))
-            .unwrap()
-            .contains("soon gone")
-        {
-            assert!(
-                std::time::Instant::now() < limit,
-                "the item was never removed"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        // Dropping the store stops the thread; it keeps no store alive.
+        // Nothing reads the store: the thread does it once the clock moved.
+        assert!(store.wait_swept(Duration::from_secs(300)));
+        let package = &on_disk(dir.path())["packages"]["a"];
+        assert_eq!(package["items"], Value::Null);
+        // Its ids are not given again.
+        assert_eq!(package["nextId"], 1);
+        // Dropping the store stops the thread, which let go of it after its
+        // sweep: it keeps no store alive.
         let weak = Arc::downgrade(&store);
         drop(store);
         assert!(weak.upgrade().is_none());

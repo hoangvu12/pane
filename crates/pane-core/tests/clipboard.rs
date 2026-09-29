@@ -459,13 +459,12 @@ fn submit(launcher: &Launcher, title: &str, values: &[(&str, &str)]) -> Status {
     launcher.view().status
 }
 
-/// Waits for `done`, which a thread of Pane's does, without timing it.
-fn eventually(what: &str, done: impl Fn() -> bool) {
-    let limit = Instant::now() + Duration::from_secs(300);
-    while !done() {
-        assert!(Instant::now() < limit, "never happened: {what}");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+/// Waits until Pane's expiry thread swept after the clock last moved.
+fn expiry_swept(launcher: &Launcher) {
+    assert!(
+        launcher.wait_for_clipboard_expiry(Duration::from_secs(300)),
+        "the expiry thread never swept"
+    );
 }
 
 fn result(text: &str) -> Status {
@@ -1009,15 +1008,14 @@ fn expired_items_leave_the_file_while_pane_runs_without_the_extension(fixture: &
     block_on(launcher.set_enabled(&identity, false));
     // Nothing reads the history or runs the package: Pane removes the item
     // from the file when it expires.
+    // (The test reads the file itself, never through Pane.)
     pane.clock.advance(6 * DAY);
-    eventually("the expired item removed from the file", || {
-        pane.kept_on_disk() == ["kept longer"]
-    });
+    expiry_swept(&launcher);
+    assert_eq!(pane.kept_on_disk(), ["kept longer"]);
     assert!(!pane.clipboard.watching());
     pane.clock.advance(DAY);
-    eventually("the second item removed from the file", || {
-        pane.kept_on_disk().is_empty()
-    });
+    expiry_swept(&launcher);
+    assert!(pane.kept_on_disk().is_empty());
     // What the user chose stays.
     assert_eq!(pane.history_of_the_package()["capture"], "on");
 }
