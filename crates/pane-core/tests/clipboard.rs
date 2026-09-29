@@ -12,11 +12,13 @@
 //! set, also while the package is disabled or uninstalled and while Pane is
 //! stopped; they can be deleted one at a time, the recent ones together,
 //! all of them (Clear, which keeps history on) or all of them with history
-//! turned off. The packages are the ones `cargo
-//! xtask guests` assembles in `target/guests/packages`; since only Windows
-//! has a clipboard adapter so far, the tests install a copy whose manifest
-//! declares every system, so the same checks run everywhere. The system's
-//! real clipboard is never used here.
+//! turned off. The packages are the ones `cargo xtask guests` assembles in
+//! `target/guests/packages`; the tests give Pane a fake system clipboard
+//! and install a copy whose manifest declares every system, so the same
+//! checks run everywhere (the real adapters are checked by
+//! `clipboard_adapter.rs` on Windows and `clipboard_adapter_linux.rs`
+//! where an X11 display is given). The system's real clipboard is never
+//! used here.
 
 #[path = "support/platforms.rs"]
 mod platforms;
@@ -404,7 +406,7 @@ fn copy_package(fixture: &Fixture, folder: &Path, everywhere: bool) {
     let mut manifest: Value = serde_json::from_str(&manifest).unwrap();
     assert_eq!(
         manifest["commands"][0]["platforms"],
-        serde_json::json!(["windows"])
+        serde_json::json!(["windows", "linux"])
     );
     if everywhere {
         manifest["commands"][0]["platforms"] = serde_json::json!(["windows", "macos", "linux"]);
@@ -879,7 +881,7 @@ fn without_a_clipboard_pane_keeps_nothing_and_says_so(fixture: &'static Fixture)
     );
 }
 
-fn the_package_is_offered_only_on_windows_so_far(fixture: &'static Fixture) {
+fn the_package_is_offered_only_where_an_adapter_exists(fixture: &'static Fixture) {
     let data = tempfile::tempdir().unwrap();
     let source = tempfile::tempdir().unwrap();
     copy_package(fixture, source.path(), false);
@@ -894,14 +896,16 @@ fn the_package_is_offered_only_on_windows_so_far(fixture: &'static Fixture) {
         .into_iter()
         .find(|row| row.title == fixture.command)
         .expect("the command is listed");
-    if platforms::this_system() == pane_core::Platform::Windows {
+    if platforms::this_system() == pane_core::Platform::Windows
+        || platforms::this_system() == pane_core::Platform::Linux
+    {
         assert_eq!(row.unavailable, None);
     } else {
         assert_eq!(
             row.unavailable,
             Some(Unavailable::OnThisSystem(platforms::only(
                 "this command",
-                "Windows"
+                "Windows and Linux"
             )))
         );
     }
@@ -1160,7 +1164,7 @@ contract!(
     uninstalling_and_keeping_the_history_keeps_it_for_a_reinstall,
     where_the_clipboard_cannot_be_watched_history_stays_off_and_says_why,
     without_a_clipboard_pane_keeps_nothing_and_says_so,
-    the_package_is_offered_only_on_windows_so_far,
+    the_package_is_offered_only_where_an_adapter_exists,
     items_expire_after_the_retention_also_while_disabled_or_stopped,
     the_retention_can_be_changed_and_applies_to_kept_items,
     expired_items_leave_the_file_while_pane_runs_without_the_extension,

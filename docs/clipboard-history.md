@@ -13,9 +13,10 @@ contributions): items are kept for 7 days unless the user chooses another
 time, and Pane deletes them then, whether the extension runs or not
 ([Expiry](#expiry)); an item, the recent ones, all of them (Clear), or all
 of them with history turned off can be deleted ([Deleting](#deleting)).
-macOS and Linux observation are [#37](https://github.com/hoangvu12/pane/issues/37)
-and [#38](https://github.com/hoangvu12/pane/issues/38). The architecture is
-recorded in [ADR 0020](adr/0020-host-keeps-clipboard-history-for-an-extension.md)
+[#38](https://github.com/hoangvu12/pane/issues/38) added the Linux (X11)
+adapter, so the package declares Windows and Linux; macOS observation is
+[#37](https://github.com/hoangvu12/pane/issues/37), still open. The
+architecture is recorded in [ADR 0020](adr/0020-host-keeps-clipboard-history-for-an-extension.md)
 and, for expiry, [ADR 0023](adr/0023-host-expires-clipboard-history-by-its-own-clock.md)
 (both proposed).
 
@@ -32,10 +33,10 @@ and, for expiry, [ADR 0023](adr/0023-host-expires-clipboard-history-by-its-own-c
 - **Default extension**, [`guests/clipboard-history`](../guests/clipboard-history)
   (Rust), package [`guests/packages/clipboard-history`](../guests/packages/clipboard-history):
   its command, "Clipboard History", shows the controls and the kept items.
-  It declares Windows only (`"platforms": ["windows"]`), since only Windows
-  has an adapter, so on macOS and Linux it is listed as unavailable with
-  #19's reason ("Not available on Linux: this command supports only
-  Windows") and never runs. Rust commands use the import through
+  It declares Windows and Linux (`"platforms": ["windows", "linux"]`),
+  the two systems with an adapter, so on macOS it is listed as unavailable
+  with #19's reason ("Not available on macOS: this command supports only
+  Windows and Linux") and never runs. Rust commands use the import through
   `pane_guest::clipboard_history`; JavaScript and TypeScript commands import
   it when their package.json sets `"pane": { "clipboardHistory": true }`
   ([`guests/js/clipboard.d.ts`](../guests/js/clipboard.d.ts)), and only
@@ -46,8 +47,9 @@ and, for expiry, [ADR 0023](adr/0023-host-expires-clipboard-history-by-its-own-c
   checks on all three.
 - **System adapter** behind one small trait
   ([`pane_core::clipboard`](../crates/pane-core/src/clipboard.rs)), chosen
-  by `clipboard::native()`: the Windows listener, or on other systems one
-  that says clipboard history is unavailable there.
+  by `clipboard::native()`: the Windows listener, the Linux watcher of the
+  X11 `CLIPBOARD` selection ([`linux.rs`](../crates/pane-core/src/clipboard/linux.rs)),
+  or on other systems one that says clipboard history is unavailable there.
 
 Acquiring the package automatically at setup is
 [#51](https://github.com/hoangvu12/pane/issues/51) to
@@ -90,11 +92,16 @@ line answers, and the rows change the next time the command is opened.
   arrives while the package's code may not run is not kept, even if the
   listener has not stopped yet, and neither is one whose read began before
   the history was cleared.
-- **Read once, tried again.** On Windows only the listener's thread reads
-  the clipboard. A change is marked read only once it was read; if another
-  program holds the clipboard open, the thread tries again 250 ms later, up
-  to five times, before skipping that change. A failure in the listener is
-  logged, never with what was copied, and it goes on listening.
+- **Read once, tried again.** On Windows and Linux only the listener's
+  thread reads the clipboard. A change is marked read only once it was
+  read; on Windows, if another program holds the clipboard open, the
+  thread tries again 250 ms later, up to five times, before skipping that
+  change, and on Linux the watcher waits at most 4 s for the program that
+  copied to answer its request for the text (and at most 500 ms for each
+  piece of a text sent in pieces), then skips that change; every wait
+  while reading is bounded, so an abandoned read always ends by itself.
+  A failure in the listener is logged, never with what was copied, and it
+  goes on listening.
 - **Across restarts.** The capture state is kept with the history: after a
   restart Pane watches again, before any command opens, only where history
   is on and the package enabled; paused stays paused, disabled stays
@@ -107,10 +114,16 @@ line answers, and the rows change the next time the command is opened.
   - at most 32 KiB of UTF-8 (`MAX_TEXT_BYTES`); longer text is not kept at
     all rather than cut short;
   - not empty or white space only;
-  - not marked by the copying application as not to be kept (below);
+  - not marked by the copying application as not to be kept (below, and
+    on Linux never: [the X11 clipboard has no such
+    formats](#sensitive-markers), so only an excluded program keeps a
+    marked copy out);
   - not copied from an excluded program, matched by the owning process's
     file name, ignoring case, with or without its extension (`KeePass`
-    excludes `KeePass.exe`); at most 64 programs;
+    excludes `KeePass.exe`); on Linux the owner is the process the owner
+    window's `_NET_WM_PID` names (the file `/proc` shows, or the process's
+    name), or the window's `WM_CLASS` (usually the program's name), and a
+    window that says neither has an unknown owner; at most 64 programs;
   - one item per text: copying a kept text again moves it to the front with
     its new time;
   - at most 100 items per package (`MAX_ITEMS`); beyond that the oldest go.
@@ -201,6 +214,16 @@ owning process is the one whose window owns the clipboard, which is
 sometimes a helper process or none at all (a copy made without a window has
 no owner, so its program is unknown and never excluded).
 
+**The X11 clipboard has no such formats**: nothing in its protocol lets an
+application mark a copy as not to be kept, so Pane's Linux watcher reports
+no markers (there is nothing to read before the text) and keeps every text
+an excluded program did not copy. A de-facto `x-kde-passwordManagerHint`
+selection target exists that KeePassXC sets and Klipper honors on KDE, but
+it is no standard, not every password manager sets it and Pane does not
+read it; on Linux, excluding the password manager's program (by the name
+its window names) is the only supported way to keep a copy out, and
+capture stays local by default all the same. macOS is #37, still open.
+
 ## Ownership and deletion
 
 - The history is the package's extension data of a kind of its own,
@@ -246,11 +269,12 @@ no owner, so its program is unknown and never excluded).
 
 | | Windows (#35) | macOS (#37) | Linux (#38) |
 | --- | --- | --- | --- |
-| Observed with | `AddClipboardFormatListener` on a message-only window of a thread of Pane's own (`WM_CLIPBOARDUPDATE`), reading the markers first, then `CF_UNICODETEXT`, and the owner through `GetClipboardOwner`, `GetWindowThreadProcessId` and `QueryFullProcessImageNameW` | not yet | not yet |
-| Written back with | `SetClipboardData(CF_UNICODETEXT)` | | |
-| Permission | none | | |
-| Unavailable | | the command is listed as "Not available on macOS: this command supports only Windows" | "Not available on Linux: this command supports only Windows" |
-| Baseline | Windows 10/11; CI `windows-2025` | | |
+| Observed with | `AddClipboardFormatListener` on a message-only window of a thread of Pane's own (`WM_CLIPBOARDUPDATE`), reading the markers first, then `CF_UNICODETEXT`, and the owner through `GetClipboardOwner`, `GetWindowThreadProcessId` and `QueryFullProcessImageNameW` | not yet | XFIXES selection events (`XFixesSelectSelectionInput`) on a window of a thread of Pane's own, then a selection transfer to that window (`ConvertSelection`): the text as `UTF8_STRING`, or `STRING` (Latin-1) if the owner refuses that, read at most a little over 32 KiB, in pieces (`INCR`) if the owner sends them; the owner through its window's `_NET_WM_PID` and `/proc`, or its `WM_CLASS` |
+| Written back with | `SetClipboardData(CF_UNICODETEXT)` | | taking the `CLIPBOARD` selection with a window of Pane's own that serves it to whoever pastes until another program copies, and offering it to the clipboard manager when Pane stops |
+| Permission | none | | none |
+| Markers | the four Windows formats ([above](#sensitive-markers)) | | none: X11 has no formats for it, so only an excluded program is kept off |
+| Unavailable | | the command is listed as "Not available on macOS: this command supports only Windows and Linux" | on Wayland ("Not available on Linux with Wayland: … Run Pane in an X11 session") or with no display: the command still opens, its first row says why, turning it on answers the reason, and the other rows work |
+| Baseline | Windows 10/11; CI `windows-2025` | | X11 only; CI `ubuntu-24.04` under Xvfb. No Wayland session (with or without XWayland), real desktop or compositor has been run |
 
 ## Checks
 
@@ -292,8 +316,8 @@ no owner, so its program is unknown and never excluded).
   while disabled not watching, enable and a restart watching again; Enter
   copying an item again; the 100-item bound and Clear; uninstall deleting
   or keeping (retained, and kept on for a reinstall); a system that cannot
-  watch, and a launcher without a clipboard; the real package unavailable on
-  macOS and Linux with its reason. With a clock the tests move
+  watch, and a launcher without a clipboard; the real package unavailable
+  on macOS with its reason. With a clock the tests move
   (`Launcher::with_clock`, a `ManualClock`; no test waits for time to pass):
   items expiring 7 days after they were copied, while the package is
   disabled and Pane stopped, gone from the file once Pane starts, and not
@@ -319,27 +343,49 @@ no owner, so its program is unknown and never excluded).
   allows, so Windows' own history (Win+V) does not keep them, and it never
   says `CanUploadToCloudClipboard` 1; withheld reports count only when this
   test's process owns the clipboard with the markers it set.
+- Linux adapter ([`crates/pane-core/tests/clipboard_adapter_linux.rs`](../crates/pane-core/tests/clipboard_adapter_linux.rs),
+  Linux only) against the real X11 clipboard, with text only the test puts
+  there: plain text reported with the markers default (X11 has none) and
+  its owner (the test's own process, which its window's `_NET_WM_PID`
+  names), a copy no text can be read from (an image) reported as no text
+  with an unknown owner, a written text reported, and nothing once the
+  watch is dropped; without a display, `clipboard::native` says why. It
+  **replaces what is on the clipboard** and does not put it back, so it
+  runs only with `PANE_TEST_REAL_CLIPBOARD=1` and an X11 display, which
+  CI's Linux runner gives it under Xvfb; elsewhere it passes without doing
+  anything. The pure parts (the session's refusals, Latin-1, the WM_CLASS
+  and `/proc` reads) are unit tests that run everywhere Linux builds.
 - Native GUI smokes, screenshots 280 to 285: on Windows (with a data folder
   of its own, copying only its own `pane-smoke-...` text through the
   clipboard API and putting back what was on the clipboard, in memory only)
   off, turned on, kept without the four marked texts, paused, resumed,
   Enter copying an item again, disabled, disabled across a restart,
   enabled and kept again across a restart, with `clipboard-history.json`
-  checked at each step; on macOS and Linux (280 and 281) the command listed
-  as unavailable and explained, with no history file. For #36,
-  screenshots 400 to 404 on Windows: with Pane stopped, the smoke makes one
-  kept item 8 days old and one 2 hours old (`scripts/clipboard_history.py`);
-  after the restart the first is gone before the command shows anything,
-  then one item is deleted through its form, the recent ones through Delete
-  recent items (the last hour), the 2-hour-old one by keeping items for 1
-  hour, and the last with Turn off and delete, after which a copy is not
-  kept, and the clipboard still holds what was copied last. On macOS and
-  Linux (400 to 402, where the command never runs) the smoke writes a
-  history for the installed package with one item 8 days old and one a day
-  old: after the start the first is gone from the file and the uninstall
-  confirmation counts "Saved data: 1 clipboard history item"; kept as
-  retained data and made 8 days old while Pane is stopped, it is gone once
-  Pane starts, leaving "keeps clipboard history settings". See the
+  checked at each step; on Linux (280 to 287) the same steps with the
+  smoke's own copies typed into root search and copied with Ctrl+A and
+  Ctrl+C (through the window's X11 clipboard; Xvfb is the smoke's own
+  display, so nothing of the user's is touched), no marked texts (X11 has
+  no formats for them), and the copy and the clipboard's survival checked
+  by pasting into root search and comparing frames; on macOS (280 and 281)
+  the command listed as unavailable and explained, with no history file.
+  For #36, screenshots 400 to 404 on Windows: with Pane stopped, the smoke
+  makes one kept item 8 days old and one 2 hours old
+  (`scripts/clipboard_history.py`); after the restart the first is gone
+  before the command shows anything, then one item is deleted through its
+  form, the recent ones through Delete recent items (the last hour), the
+  2-hour-old one by keeping items for 1 hour, and the last with Turn off
+  and delete, after which a copy is not kept, and the clipboard still
+  holds what was copied last. Linux (400 to 406) runs the same steps on
+  the history it kept, with the clipboard still holding what was copied
+  last checked by pasting (there is no direct clipboard read on Linux;
+  Windows reads the clipboard API, which is why its phase checks it after
+  each deletion). On macOS (400 to 402, where the command never runs) the
+  smoke writes a history for the installed package with one item 8 days
+  old and one a day old: after the start the first is gone from the file
+  and the uninstall confirmation counts "Saved data: 1 clipboard history
+  item"; kept as retained data and made 8 days old while Pane is stopped,
+  it is gone once Pane starts, leaving "keeps clipboard history settings".
+  See the
   [Windows](platforms/windows.md#clipboard-history-35),
   [macOS](platforms/macos.md#clipboard-history-35) and
   [Linux](platforms/linux.md#clipboard-history-35) notes for where they have
@@ -347,11 +393,20 @@ no owner, so its program is unknown and never excluded).
 
 ## Limits
 
-- Windows only; macOS (#37) and Linux (#38) observation are not built.
+- Windows and Linux (X11); macOS observation (#37) is not built, and on
+  Linux a Wayland session is refused rather than relied on XWayland's
+  clipboard bridge. A Linux session with no display at all says so.
 - Text only; no images, files or rich text, and no text longer than 32 KiB.
+  On Linux only `UTF8_STRING` and `STRING` (Latin-1) are read: a copy
+  offered only as `COMPOUND_TEXT` or a `text/plain` MIME target is kept as
+  no text, and text is read lossily and ends at its first NUL, as the
+  Windows reader's does.
 - Detection of sensitive content is only what applications declare
-  (markers) and the programs the user excludes; the owning process can be a
-  helper or unknown.
+  (markers) and the programs the user excludes; on Linux, where nothing
+  can be declared, only an excluded program can; the owning process can be
+  a helper or unknown, and on Linux a window that names neither a process
+  nor a class (the window's own clipboard server, say) has an unknown
+  owner.
 - The retention's default (7 days) and choices are provisional. Expiry
   follows the system's time: an item copied while the time was set far
   ahead is kept until then, and setting the time back keeps items longer.
