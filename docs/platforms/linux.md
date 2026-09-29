@@ -604,10 +604,12 @@ thread: opening Greeting first shows that the runtime is not responding
 yet, then answers that it stopped responding once Pane gave up on it,
 Manage extensions' first row opens the runtime's details, and after
 `release` a fresh thread saves the formal greeting; `installed.json`
-records no pause. Run locally
-on 2026-09-29 after the #18 review (Ubuntu 26.04.1 LTS, kernel
+records no pause (read as JSON). Run locally on 2026-09-29 after the
+second #18 review, with #46 merged (Ubuntu 26.04.1 LTS, kernel
 7.0.0-31-generic, x86_64, same Xvfb/lavapipe setup): all checks of the
-whole smoke passed, and frames 240 to 248 were looked at.
+whole smoke passed, frame 240 was taken while the first Stop responding
+still computed (no call stopped yet; Pane stopped it once the limit was
+shortened after the frame), and frames 240 to 248 were looked at.
 
 | Step | Evidence |
 | --- | --- |
