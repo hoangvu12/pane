@@ -603,17 +603,18 @@ yet, then answers that it stopped responding once Pane gave up on it,
 Manage extensions' first row opens the runtime's details, and after
 `release` a fresh thread saves the formal greeting; `installed.json`
 records no pause. Run locally
-on 2026-09-29 (Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64, same
-Xvfb/lavapipe setup): all checks of the whole smoke passed, and frames 240
-to 247 were looked at.
+on 2026-09-29 after the #18 review (Ubuntu 26.04.1 LTS, kernel
+7.0.0-31-generic, x86_64, same Xvfb/lavapipe setup): all checks of the
+whole smoke passed, and frames 240 to 248 were looked at.
 
 | Step | Evidence |
 | --- | --- |
-| The second run: "The extension stopped responding: it computed for 5 seconds without waiting for anything, so Pane stopped it; other extensions' calls waited meanwhile" | [241-unresponsive-stopped.png](evidence/linux-x11/241-unresponsive-stopped.png) |
+| The second run: "The extension stopped responding: it computed for 2 seconds without finishing, so Pane stopped it; other extensions' calls waited meanwhile" | [241-unresponsive-stopped.png](evidence/linux-x11/241-unresponsive-stopped.png) |
 | The third: "Settings sample stopped responding 3 times within 5 minutes and is paused …", Greeting listed with why | [242-unresponsive-paused.png](evidence/linux-x11/242-unresponsive-paused.png) |
-| The runtime thread made to hang: "Extension runtime unavailable: it stopped responding before answering and was started again; Pane does not run this again by itself" | [245-unresponsive-runtime.png](evidence/linux-x11/245-unresponsive-runtime.png) |
-| The runtime's details: stopped responding for 10 seconds, none named or paused, the stuck thread abandoned, what it was doing | [246-unresponsive-runtime-details.png](evidence/linux-x11/246-unresponsive-runtime-details.png) |
-| A fresh thread: "Saved the formal greeting" | [247-unresponsive-runs-again.png](evidence/linux-x11/247-unresponsive-runs-again.png) |
+| The runtime thread made to hang, first: "Pane's extension runtime is not responding yet. Pane starts it again if it stays stuck; saved data is kept." | [245-unresponsive-not-yet.png](evidence/linux-x11/245-unresponsive-not-yet.png) |
+| Then given up on: "Extension runtime unavailable: it stopped responding before answering and was started again; Pane does not run this again by itself" | [246-unresponsive-runtime.png](evidence/linux-x11/246-unresponsive-runtime.png) |
+| The runtime's details: no progress for 15 seconds, not in an extension's code nor a host call, which code held it not known, none named or paused, the stuck thread abandoned, its last known work | [247-unresponsive-runtime-details.png](evidence/linux-x11/247-unresponsive-runtime-details.png) |
+| A fresh thread: "Saved the formal greeting" | [248-unresponsive-runs-again.png](evidence/linux-x11/248-unresponsive-runs-again.png) |
 
 Frames 240 (the extension list while the guest computes), 243 (the pause
 details) and 244 ("Started Settings sample" on the extension list) are
