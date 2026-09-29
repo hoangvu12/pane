@@ -1254,7 +1254,14 @@ stop_pane
 unset PANE_TEST_RUNTIME_FAULTS
 [ "$(saved busy)" = started ] || { echo "Stop responding finished after it was stopped"; exit 1; }
 [ "$(saved greeting-style)" = formal ] || { echo "the fresh runtime did not save"; exit 1; }
-if grep -q '"paused"' "$PANE_DATA_DIR/extensions/installed.json"; then echo "a package was paused for the runtime's hang"; exit 1; fi
+# No package record of installed.json holds a pause (read as JSON, not as text).
+paused_packages=$(python3 - "$PANE_DATA_DIR/extensions/installed.json" <<'PY'
+import json, sys
+record = json.load(open(sys.argv[1], encoding="utf-8"))
+print(sum(1 for package in record["packages"] if "paused" in package))
+PY
+)
+[ "$paused_packages" = 0 ] || { echo "a package was paused for the runtime's hang"; exit 1; }
 
 # Uninstalling a required dependency: installed with the dependencies sample
 # (whose install and data folder are this phase's own), the JavaScript

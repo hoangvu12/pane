@@ -1244,8 +1244,10 @@ Stop-Pane $process
 Remove-Item Env:PANE_TEST_RUNTIME_FAULTS
 if ((Saved-Setting "busy") -ne "started") { throw "Stop responding finished after it was stopped" }
 if ((Saved-Setting "greeting-style") -ne "formal") { throw "the fresh runtime did not save" }
-$record = Join-Path $data "extensions/installed.json"
-if (Select-String -Quiet -SimpleMatch '"paused"' $record) { throw "a package was paused for the runtime's hang" }
+# No package record of installed.json holds a pause (read as JSON, not as text).
+$record = Get-Content -Raw (Join-Path $data "extensions/installed.json") | ConvertFrom-Json
+$paused = @($record.packages | Where-Object { $_.PSObject.Properties.Name -contains "paused" })
+if ($paused.Count -ne 0) { throw "a package was paused for the runtime's hang" }
 
 # Uninstalling a required dependency: installed with the dependencies sample
 # (whose install and data folder are this phase's own), the JavaScript
