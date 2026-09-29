@@ -286,9 +286,10 @@ no owner, so its program is unknown and never excluded).
   (`Launcher::with_clock`, a `ManualClock`; no test waits for time to pass):
   items expiring 7 days after they were copied, while the package is
   disabled and Pane stopped, gone from the file once Pane starts, and not
-  given more time by enabling it again; the retention changed through its
-  form, older items deleted at once, kept across a restart and applied to
-  later items; expired items removed from the file while Pane runs with
+  given more time by enabling it again; the retention's form starting on
+  the retention now, so submitting it unchanged changes nothing; the
+  retention changed through its form, older items deleted at once, kept
+  across a restart and applied to later items; expired items removed from the file while Pane runs with
   the package disabled and nothing reading the history; one item deleted,
   a read begun before that not bringing it back, its stale row deleting
   nothing and the clipboard untouched; the recent items deleted together;
