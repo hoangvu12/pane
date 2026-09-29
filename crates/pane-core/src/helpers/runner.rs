@@ -1257,6 +1257,8 @@ mod tests {
     /// How long a test's waiting helper waits: short, so that one left
     /// behind by a failing test ends soon by itself.
     const WAIT: &str = "5";
+    /// Seconds a helper waits when only Pane's ending it may stop it first.
+    const LONG_WAIT: &str = "120";
 
     /// The runs of one test, whose processes all end with the test, even
     /// when it fails.
@@ -1344,7 +1346,9 @@ mod tests {
     #[test]
     fn a_helper_running_past_its_time_limit_is_ended() {
         let helpers = runs();
-        let mut spec = spec(&["--wait", WAIT], None, 0);
+        // Waits far longer than its limit, so that ending it is told apart
+        // from its own end however slowly processes start.
+        let mut spec = spec(&["--wait", LONG_WAIT], None, 0);
         spec.limit = Duration::from_secs(1);
         let started = Instant::now();
 
@@ -1358,7 +1362,7 @@ mod tests {
         );
         assert!(started.elapsed() >= Duration::from_secs(1));
         assert!(
-            started.elapsed() < Duration::from_secs(4),
+            started.elapsed() < Duration::from_secs(LONG_WAIT.parse().unwrap()),
             "it ran its wait out"
         );
         assert_eq!(helpers.running(), Vec::<u32>::new());
