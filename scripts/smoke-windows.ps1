@@ -1145,17 +1145,20 @@ if (-not (Select-String -Quiet -SimpleMatch '"disabled": true' $record)) { throw
 if (Select-String -Quiet -SimpleMatch '"paused"' $record) { throw "a package was paused for the runtime's crash" }
 # Recovering from an extension that stops responding (#18). The settings
 # sample's last item, Stop responding, computes without waiting for up to a
-# minute. The phase shortens the runtime's limits through the fault file
-# (PANE_TEST_RUNTIME_FAULTS): 2 seconds of a guest's own computing, "not
-# responding yet" after 4 seconds without progress, given up on after 15.
-# While it computes, the window answers keys: Escape returns to root search
-# and Manage extensions opens. Pane stops the call after 2 seconds of its
-# computing, says why, and the third time pauses the package (a failure of
-# its own); Retry starts it again. Then the runtime thread itself is made to
-# hang through the fault file: the status line says it is not responding
-# yet, then Pane gives up on it, names and pauses no extension, and Manage
-# extensions says the runtime stopped responding; a fresh thread runs the
-# next call. A data folder of its own keeps the rows in a known order.
+# minute. The phase sets the runtime's limits through the fault file
+# (PANE_TEST_RUNTIME_FAULTS): "not responding yet" after 4 seconds without
+# progress, given up on after 15, and a guest's own computing at first a
+# minute, so that the first Stop responding still computes when frame 240
+# is taken (Pane's standard error has stopped no call yet): meanwhile the
+# window answers keys, Escape returns to root search and Manage extensions
+# opens. The compute limit then becomes 2 seconds, which the running call
+# has passed, so Pane stops it at once; each later call is stopped after 2
+# seconds of its computing, says why, and the third time pauses the
+# package (a failure of its own); Retry starts it again. Then the runtime
+# thread itself is made to hang through the fault file: the status line
+# says it is not responding yet, then Pane gives up on it, names and
+# pauses no extension, and Manage extensions says the runtime stopped
+# responding; a fresh thread runs the next call. A data folder of its own keeps the rows in a known order.
 $data = Join-Path $OutDir "unresponsive-data"
 if (Test-Path $data) { Remove-Item -Recurse -Force $data }
 $env:PANE_DATA_DIR = $data
@@ -1169,9 +1172,13 @@ function Saved-Setting($key) {
     }
     "none"
 }
+# How many calls Pane stopped as unresponsive, as its standard error says.
+function Stopped-Calls {
+    @(Select-String -SimpleMatch "stopped responding" (Join-Path $OutDir "stderr-unresponsive.log") -ErrorAction SilentlyContinue).Count
+}
 $env:PANE_TEST_RUNTIME_FAULTS = $fault
 $process = Start-Pane "stderr-unresponsive.log" @("--install", "target/guests/packages/sample-settings")
-Inject-Fault "limits:2,4,15"
+Inject-Fault "limits:60,4,15"   # a minute of computing: frame 240 is taken while it computes
 Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Greeting is selected
 Send "{ENTER}"; Start-Sleep -Seconds 2   # open Greeting
 Send "{DOWN 9}"   # Stop responding
@@ -1182,7 +1189,11 @@ Send "{DOWN 10}"   # Manage extensions…
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Capture "240-unresponsive-window-answers.png"   # the extension list, while the guest computes
 Check "240-unresponsive-window-answers.png" "aab4c0"   # its rows' subtitles
-Send "{ESC}"; Start-Sleep -Seconds 6   # it is stopped meanwhile (its answer is not shown here)
+if ((Stopped-Calls) -ne 0) { throw "Stop responding was stopped before frame 240" }
+Inject-Fault "limits:2,4,15"   # it has computed longer: Pane stops it at its next tick
+for ($i = 0; $i -lt 300 -and (Stopped-Calls) -lt 1; $i++) { Start-Sleep -Milliseconds 100 }
+if ((Stopped-Calls) -lt 1) { throw "Stop responding was not stopped at the shorter limit" }
+Send "{ESC}"; Start-Sleep -Seconds 1   # its answer is not shown here
 Send "greet"; Start-Sleep -Seconds 1
 Send "{ENTER}"; Start-Sleep -Seconds 2   # open Greeting
 Send "{DOWN 9}"   # Stop responding
@@ -1233,8 +1244,10 @@ Stop-Pane $process
 Remove-Item Env:PANE_TEST_RUNTIME_FAULTS
 if ((Saved-Setting "busy") -ne "started") { throw "Stop responding finished after it was stopped" }
 if ((Saved-Setting "greeting-style") -ne "formal") { throw "the fresh runtime did not save" }
-$record = Join-Path $data "extensions/installed.json"
-if (Select-String -Quiet -SimpleMatch '"paused"' $record) { throw "a package was paused for the runtime's hang" }
+# No package record of installed.json holds a pause (read as JSON, not as text).
+$record = Get-Content -Raw (Join-Path $data "extensions/installed.json") | ConvertFrom-Json
+$paused = @($record.packages | Where-Object { $_.PSObject.Properties.Name -contains "paused" })
+if ($paused.Count -ne 0) { throw "a package was paused for the runtime's hang" }
 
 # Uninstalling a required dependency: installed with the dependencies sample
 # (whose install and data folder are this phase's own), the JavaScript
@@ -1293,7 +1306,8 @@ $registry = Start-Process python -PassThru -NoNewWindow `
     -ArgumentList @("`"$PSScriptRoot/npm_registry.py`"", "target/guests/npm", "`"$portFile`"") `
     -RedirectStandardError (Join-Path $OutDir "npm-registry.log")
 try {
-    for ($i = 0; $i -lt 50 -and -not (Test-Path $portFile); $i++) { Start-Sleep -Milliseconds 100 }
+    # Generous: a slow runner may take seconds to start Python.
+    for ($i = 0; $i -lt 600 -and -not (Test-Path $portFile) -and -not $registry.HasExited; $i++) { Start-Sleep -Milliseconds 100 }
     if (-not (Test-Path $portFile)) { throw "the local npm registry did not start" }
     $env:PANE_NPM_REGISTRY = "http://127.0.0.1:$((Get-Content $portFile).Trim())/"
     $process = Start-Pane "stderr-npm.log" @("--install", "target/guests/packages/sample-dependencies-npm")
@@ -1380,7 +1394,7 @@ $server = Start-Process python -PassThru -NoNewWindow `
     -RedirectStandardError (Join-Path $OutDir "repository-server.log")
 $process = $null
 try {
-    for ($i = 0; $i -lt 50 -and -not (Test-Path $portFile); $i++) { Start-Sleep -Milliseconds 100 }
+    for ($i = 0; $i -lt 600 -and -not (Test-Path $portFile) -and -not $server.HasExited; $i++) { Start-Sleep -Milliseconds 100 }
     if (-not (Test-Path $portFile)) { throw "the local repository server did not start" }
     $repository = "http://127.0.0.1:$((Get-Content $portFile).Trim())/greeter.git"
     $process = Start-Pane "stderr-git.log" @("--install", "git:$repository")
@@ -1505,7 +1519,7 @@ if ($LASTEXITCODE -ne 0) { throw "could not build the fixture service" }
 function Start-FixtureService($log, $port) {
     $path = Join-Path $OutDir $log
     $service = Start-Process -FilePath "target/debug/examples/fixture_service.exe" -ArgumentList "--port", "$port" `
-        -PassThru -RedirectStandardOutput $path -RedirectStandardError "$path.err"
+        -PassThru -NoNewWindow -RedirectStandardOutput $path -RedirectStandardError "$path.err"
     for ($i = 0; $i -lt 50; $i++) {
         $listening = if (Test-Path $path) { Select-String -Pattern 'listening on http://127\.0\.0\.1:(\d+)' $path }
         if ($listening) {

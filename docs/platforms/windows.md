@@ -242,11 +242,13 @@ disable); **not run on Windows yet**.
 
 The unresponsive phase (screenshots 240 to 248, data folder
 `unresponsive-data`, [extensions that stop responding](../pausing.md#when-an-extension-stops-responding))
-shortens the runtime's limits through the fault file
-(`limits:2,4,15`), installs the settings sample and runs its **Stop
-responding**, which computes without waiting: while it computes, Escape
-and Manage extensions must answer (the details color); run again, the call
-must be stopped after 2 seconds of its own computing (thread CPU time from
+sets the runtime's limits through the fault file, first `limits:60,4,15`
+(a minute of a guest's own computing), installs the settings sample and
+runs its **Stop responding**, which computes without waiting: while it
+still computes (Pane's standard error has stopped no call yet), Escape and
+Manage extensions must answer (the details color, frame 240); then
+`limits:2,4,15` must stop that call at once, as it computed longer; run
+again, the call must be stopped after 2 seconds of its own computing (thread CPU time from
 `GetThreadTimes` on Windows, `CLOCK_THREAD_CPUTIME_ID` on macOS) with the
 error color, and the third time pause the package (the error and reason
 colors), with the saved `busy` note still "started"; the pause details and
@@ -294,7 +296,11 @@ real registry would be reached through the HTTP client guests' requests
 use, trusting the certificates rustls-native-certs reads from the Windows
 certificate store, which no check exercises (the smoke never reaches the
 network; [by hand](../npm.md#trying-the-real-registry-by-hand), not run). The packing, in `cargo xtask guests`, runs in CI on
-Windows. **Not run on Windows yet.**
+Windows. After the macOS smoke's first run ([macOS](macos.md#npm-packages-45)),
+the registry and the Git phase's repository server skip a reverse DNS
+lookup before they listen, and the smoke waits up to 60 s for their port
+files, stopping early if a server exits; on Windows that change was checked
+by reading only. **Not run on Windows yet.**
 
 ## Git packages (#46)
 
@@ -352,6 +358,14 @@ command's "Service address" form is set to the service; its search field
 sends "aurora" (results listed, Enter shows a package's details); "slow" then "ember"
 must log the held search as abandoned; the service's 503, then the service
 stopped, are errors; restarted, a search lists results again. Windows retries a refused connection for about two seconds, so the offline step waits longer.
+The phase's first run, in CI (run 36536816781 of the fork
+`wasimysaid/pane`, at ca9563b), passed up to 168 and failed at 169, "the
+Pane window is not visible": `Start-Process` without `-NoNewWindow` gave
+the restarted fixture service a console window of its own, which came to
+the front over Pane and took the keys typed next (the restarted service
+logged no search; the screenshot shows its console window). The service now
+starts with `-NoNewWindow`, as the npm registry and the repository server
+do. The fix was checked by reading only (no PowerShell or Windows here).
 **Not run on Windows yet.**
 
 ## Clipboard history (#35)

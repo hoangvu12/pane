@@ -61,11 +61,7 @@ const RETENTIONS: [u64; 5] = [3600, 86_400, 7 * 86_400, 30 * 86_400, 90 * 86_400
 
 /// How recent the items deleted together can be, in seconds, and what that
 /// is called.
-const RECENT: [(u64, &str); 3] = [
-    (900, "15 minutes"),
-    (3600, "hour"),
-    (86_400, "day"),
-];
+const RECENT: [(u64, &str); 3] = [(900, "15 minutes"), (3600, "hour"), (86_400, "day")];
 
 /// A time span such as "1 hour" or "7 days".
 fn span(seconds: u64) -> String {
@@ -89,7 +85,10 @@ fn choice(id: String, label: String) -> Choice {
 /// The retention form. A form starts on its first choice, so the retention
 /// now comes first: submitting the form unchanged changes nothing.
 fn retention_form(current: u64) -> Form {
-    let others = RETENTIONS.iter().copied().filter(|&seconds| seconds != current);
+    let others = RETENTIONS
+        .iter()
+        .copied()
+        .filter(|&seconds| seconds != current);
     Form {
         title: "Keep clipboard history items for".into(),
         fields: vec![Field {

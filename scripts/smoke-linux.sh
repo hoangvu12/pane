@@ -1157,17 +1157,20 @@ grep -q '"disabled": true' "$PANE_DATA_DIR/extensions/installed.json" || { echo 
 if grep -q '"paused"' "$PANE_DATA_DIR/extensions/installed.json"; then echo "a package was paused for the runtime's crash"; exit 1; fi
 # Recovering from an extension that stops responding (#18). The settings
 # sample's last item, Stop responding, computes without waiting for up to a
-# minute. The phase shortens the runtime's limits through the fault file
-# (PANE_TEST_RUNTIME_FAULTS): 2 seconds of a guest's own computing, "not
-# responding yet" after 4 seconds without progress, given up on after 15.
-# While it computes, the window answers keys: Escape returns to root search
-# and Manage extensions opens. Pane stops the call after 2 seconds of its
-# computing, says why, and the third time pauses the package (a failure of
-# its own); Retry starts it again. Then the runtime thread itself is made to
-# hang through the fault file: the status line says it is not responding
-# yet, then Pane gives up on it, names and pauses no extension, and Manage
-# extensions says the runtime stopped responding; a fresh thread runs the
-# next call. A data folder of its own keeps the rows in a known order.
+# minute. The phase sets the runtime's limits through the fault file
+# (PANE_TEST_RUNTIME_FAULTS): "not responding yet" after 4 seconds without
+# progress, given up on after 15, and a guest's own computing at first a
+# minute, so that the first Stop responding still computes when frame 240
+# is taken (Pane's standard error has stopped no call yet): meanwhile the
+# window answers keys, Escape returns to root search and Manage extensions
+# opens. The compute limit then becomes 2 seconds, which the running call
+# has passed, so Pane stops it at once; each later call is stopped after 2
+# seconds of its computing, says why, and the third time pauses the
+# package (a failure of its own); Retry starts it again. Then the runtime
+# thread itself is made to hang through the fault file: the status line
+# says it is not responding yet, then Pane gives up on it, names and
+# pauses no extension, and Manage extensions says the runtime stopped
+# responding; a fresh thread runs the next call. A data folder of its own keeps the rows in a known order.
 export PANE_DATA_DIR=$out/unresponsive-data
 rm -rf "$PANE_DATA_DIR"
 fault=$out/unresponsive-fault
@@ -1180,9 +1183,13 @@ packages = json.load(open(sys.argv[1], encoding="utf-8"))["packages"]
 print(next((values[sys.argv[2]] for values in packages.values() if sys.argv[2] in values), "none"))
 PY
 }
+# How many calls Pane stopped as unresponsive since this phase began, as
+# its standard error says.
+stderr_before=$(cat "$out/stderr.log" 2>/dev/null | wc -l)
+stopped_calls() { tail -n +"$((stderr_before + 1))" "$out/stderr.log" | grep -c "stopped responding" || true; }
 export PANE_TEST_RUNTIME_FAULTS=$fault
 start_pane --install target/guests/packages/sample-settings
-inject limits:2,4,15
+inject limits:60,4,15   # a minute of computing: frame 240 is taken while it computes
 "$xdotool" windowfocus --sync "$window"
 "$xdotool" key Return; sleep 2   # Install; Greeting is selected
 "$xdotool" key Return; sleep 2   # open Greeting
@@ -1194,7 +1201,11 @@ for ((i = 0; i < 10; i++)); do "$xdotool" key Down; done   # Manage extensionsâ€
 "$xdotool" key Return; sleep 1
 capture 240-unresponsive-window-answers.png   # the extension list, while the guest computes
 check 240-unresponsive-window-answers.png aab4c0   # its rows' subtitles
-"$xdotool" key Escape; sleep 6   # it is stopped meanwhile (its answer is not shown here)
+[ "$(stopped_calls)" = 0 ] || { echo "Stop responding was stopped before frame 240"; exit 1; }
+inject limits:2,4,15   # it has computed longer: Pane stops it at its next tick
+for _ in $(seq 300); do [ "$(stopped_calls)" -ge 1 ] && break; sleep 0.1; done
+[ "$(stopped_calls)" -ge 1 ] || { echo "Stop responding was not stopped at the shorter limit"; exit 1; }
+"$xdotool" key Escape; sleep 1   # its answer is not shown here
 "$xdotool" type --delay 50 greet; sleep 1
 "$xdotool" key Return; sleep 2   # open Greeting
 for ((i = 0; i < 9; i++)); do "$xdotool" key Down; done   # Stop responding
@@ -1243,7 +1254,14 @@ stop_pane
 unset PANE_TEST_RUNTIME_FAULTS
 [ "$(saved busy)" = started ] || { echo "Stop responding finished after it was stopped"; exit 1; }
 [ "$(saved greeting-style)" = formal ] || { echo "the fresh runtime did not save"; exit 1; }
-if grep -q '"paused"' "$PANE_DATA_DIR/extensions/installed.json"; then echo "a package was paused for the runtime's hang"; exit 1; fi
+# No package record of installed.json holds a pause (read as JSON, not as text).
+paused_packages=$(python3 - "$PANE_DATA_DIR/extensions/installed.json" <<'PY'
+import json, sys
+record = json.load(open(sys.argv[1], encoding="utf-8"))
+print(sum(1 for package in record["packages"] if "paused" in package))
+PY
+)
+[ "$paused_packages" = 0 ] || { echo "a package was paused for the runtime's hang"; exit 1; }
 
 # Uninstalling a required dependency: installed with the dependencies sample
 # (whose install and data folder are this phase's own), the JavaScript
@@ -1296,8 +1314,9 @@ rm -rf "$PANE_DATA_DIR"
 rm -f "$out/npm-registry.port"
 python3 "$(dirname "$0")/npm_registry.py" target/guests/npm "$out/npm-registry.port" 2>>"$out/npm-registry.log" &
 npm_registry_pid=$!
-for _ in $(seq 50); do [ -s "$out/npm-registry.port" ] && break; sleep 0.1; done
-[ -s "$out/npm-registry.port" ] || { echo "the local npm registry did not start"; exit 1; }
+# Generous: a slow runner may take seconds to start Python.
+for _ in $(seq 600); do [ -s "$out/npm-registry.port" ] && break; kill -0 "$npm_registry_pid" 2>/dev/null || break; sleep 0.1; done
+[ -s "$out/npm-registry.port" ] || { echo "the local npm registry did not start (see $out/npm-registry.log)"; exit 1; }
 export PANE_NPM_REGISTRY=http://127.0.0.1:$(cat "$out/npm-registry.port")/
 start_pane --install target/guests/packages/sample-dependencies-npm
 "$xdotool" windowfocus --sync "$window"
@@ -1351,8 +1370,8 @@ python3 "$(dirname "$0")/repository_server.py" make-sample target/guests/git/gre
 rm -f "$out/repository-server.port"
 python3 "$(dirname "$0")/repository_server.py" serve "$out/git-repositories" "$out/repository-server.port" 2>>"$out/repository-server.log" &
 repository_server_pid=$!
-for _ in $(seq 50); do [ -s "$out/repository-server.port" ] && break; sleep 0.1; done
-[ -s "$out/repository-server.port" ] || { echo "the local repository server did not start"; exit 1; }
+for _ in $(seq 600); do [ -s "$out/repository-server.port" ] && break; kill -0 "$repository_server_pid" 2>/dev/null || break; sleep 0.1; done
+[ -s "$out/repository-server.port" ] || { echo "the local repository server did not start (see $out/repository-server.log)"; exit 1; }
 repository=http://127.0.0.1:$(cat "$out/repository-server.port")/greeter.git
 start_pane --install "git:$repository"
 "$xdotool" windowfocus --sync "$window"
