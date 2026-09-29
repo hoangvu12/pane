@@ -466,24 +466,30 @@ fn unadvertised(repository: &str, commit: &str) -> String {
     )
 }
 
+impl Greeter {
+    /// Makes a commit on top of the release that only a pull request's
+    /// reference holds, as a fork's commit is served from the repository it
+    /// was proposed to; its id.
+    fn proposed(&self) -> String {
+        self.repo
+            .git(&["switch", "--quiet", "-c", "proposed", "release"]);
+        let proposed = self
+            .repo
+            .commit(&[("NOTES.md", b"proposed".to_vec())], "Proposed");
+        self.repo.git(&["switch", "--quiet", "main"]);
+        self.repo
+            .git(&["update-ref", "refs/pull/1/head", &proposed]);
+        self.repo.git(&["branch", "--quiet", "-D", "proposed"]);
+        proposed
+    }
+}
+
 #[test]
 fn a_commit_no_branch_or_tag_points_to_is_previewed_with_a_caution() {
     let dirs = Dirs::new();
     let greeter = dirs.greeter();
     let repository = &dirs.identity("greeter")[4..];
-    // A commit only a pull request's reference holds, as a fork's commit is
-    // served from the repository it was proposed to.
-    greeter
-        .repo
-        .git(&["switch", "--quiet", "-c", "proposed", "release"]);
-    let proposed = greeter
-        .repo
-        .commit(&[("NOTES.md", b"proposed".to_vec())], "Proposed");
-    greeter.repo.git(&["switch", "--quiet", "main"]);
-    greeter
-        .repo
-        .git(&["update-ref", "refs/pull/1/head", &proposed]);
-    greeter.repo.git(&["branch", "--quiet", "-D", "proposed"]);
+    let proposed = greeter.proposed();
     let launcher = dirs.launcher();
 
     block_on(launcher.preview_git(&format!("{}@{proposed}", greeter.url)));
@@ -663,6 +669,46 @@ fn a_local_package_requiring_a_git_package_installs_it_and_calls_it_by_id() {
             "Greet through the required greeter"
         ),
         Status::Result("Hello, Pane, from the Git repository".into())
+    );
+    dirs.wait_for_no_downloads();
+}
+
+#[test]
+fn a_dependency_on_a_commit_no_branch_or_tag_points_to_is_previewed_with_a_caution() {
+    let dirs = Dirs::new();
+    let greeter = dirs.greeter();
+    let repository = &dirs.identity("greeter")[4..];
+    let proposed = greeter.proposed();
+    let source = format!("git:{}@{proposed}", greeter.url);
+    let folder = dirs.caller(&format!(
+        r#"{{ "id": "greeter", "source": "{source}",
+              "operations": [{{ "id": "greet", "version": 1 }}] }}"#
+    ));
+    let launcher = dirs.launcher();
+
+    block_on(launcher.preview_package(&folder));
+    let details = details(&launcher);
+    let requires = format!("Requires: Greeter from Git, installed with it from {source}");
+    let caution =
+        unadvertised(repository, &proposed).replacen("Caution:", "Caution (Greeter from Git):", 1);
+    let at = details.iter().position(|line| *line == requires);
+    assert!(
+        at.is_some_and(|at| details.get(at + 1) == Some(&caution)),
+        "{details:#?}"
+    );
+    assert_eq!(titles(&launcher), ["Install"]);
+
+    // A dependency on a commit a tag points to has none.
+    let folder = dirs.caller(&format!(
+        r#"{{ "id": "greeter", "source": "git:{}@{}",
+              "operations": [{{ "id": "greet", "version": 1 }}] }}"#,
+        greeter.url, greeter.release
+    ));
+    block_on(launcher.preview_package(&folder));
+    let details = self::details(&launcher);
+    assert!(
+        !details.iter().any(|line| line.starts_with("Caution")),
+        "{details:#?}"
     );
     dirs.wait_for_no_downloads();
 }

@@ -119,7 +119,9 @@ never merged, at the upstream repository's address too, so
 accepted. Pane cannot tell from the server where a commit came from, so
 when a commit is named by its id it also lists the repository's `HEAD`,
 branches and tags (peeled) and cautions on the preview when none of them
-points to that commit. A branch or a tag is resolved from the repository's
+points to that commit: for the package previewed, and for each Git
+dependency installed with a package ("Caution (Greeter from Git): no branch
+or tag of … points to commit …", below its "Requires:" line). A branch or a tag is resolved from the repository's
 own listing, so a fork's commit is never installed through one; prefer a
 tag the repository's owners published when choosing what to pin.
 
@@ -140,7 +142,9 @@ local, npm or Git package. The plan, claims and rollback are #42's:
 - A missing required one is fetched while the preview is worked out, listed
   as "Requires: Greeter from Git, installed with it from
   git:https://github.com/owner/repo@v1.0.0", and installed first, at the
-  reference named (tracked or pinned as above).
+  reference named (tracked or pinned as above). A commit named by its id
+  that no branch or tag points to is cautioned about on the next line, as
+  for a package ([provenance](#a-commit-id-pins-contents-not-provenance)).
 - An installed one is used as it is, and never fetched again, unless the
   source names a reference the installed copy is not at: "Nothing was
   installed: Caller requires Greeter from Git at v1.0.0, and branch release
@@ -272,7 +276,10 @@ yet.
   no publishing to a host.
 - Signed tags and commits are not checked; the commit id, checked object by
   object, is the pin, and it proves contents, not provenance: a fork's
-  commit served at the repository's address is only cautioned about.
+  commit served at the repository's address is only cautioned about, on
+  the preview of the package named by that commit or of the package that
+  requires it; an installed dependency is not fetched again, so it is not
+  checked again.
 - Tags and branches are resolved on the server; a server that does not
   allow fetching an unadvertised commit id refuses a commit named by its id
   (GitHub, GitLab and Git's own server allow it).

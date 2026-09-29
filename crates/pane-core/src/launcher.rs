@@ -3917,14 +3917,8 @@ fn git_lines(
             revision.commit
         ),
     ];
-    if !git.advertised {
-        lines.push(format!(
-            "Caution: no branch or tag of {} points to commit {}. A host that shares storage \
-             between forks, as GitHub does, can serve a fork's or a pull request's commit at \
-             this address, so its id alone does not show that this repository made it",
-            git.repository.name(),
-            revision.short_commit()
-        ));
+    if let Some(caution) = git.caution() {
+        lines.push(format!("Caution: {caution}"));
     }
     // One short line, so that the preview's Git lines fit above Install
     // (what does run, the components, is listed as Commands).

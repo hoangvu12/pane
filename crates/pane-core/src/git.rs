@@ -648,6 +648,23 @@ pub struct GitOrigin {
     pub lfs_pointers: Vec<String>,
 }
 
+impl GitOrigin {
+    /// Why its commit may not be this repository's, when no branch or tag
+    /// points to it (only a commit named by its id can be so), for a preview
+    /// to caution with; `None` otherwise.
+    pub(crate) fn caution(&self) -> Option<String> {
+        (!self.advertised).then(|| {
+            format!(
+                "no branch or tag of {} points to commit {}. A host that shares storage between \
+                 forks, as GitHub does, can serve a fork's or a pull request's commit at this \
+                 address, so its id alone does not show that this repository made it",
+                self.repository.name(),
+                self.revision.short_commit()
+            )
+        })
+    }
+}
+
 /// A package from Git as installed: the address it was fetched from and
 /// the revision installed.
 #[derive(Clone, Debug, PartialEq, Eq)]

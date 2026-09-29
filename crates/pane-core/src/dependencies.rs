@@ -413,7 +413,9 @@ impl Assumptions {
 
 impl Plan {
     /// The preview's lines about the dependencies: each required target once
-    /// (not the requested package itself), then the optional ones.
+    /// (not the requested package itself), followed by a caution for one
+    /// from Git whose commit no branch or tag points to, then the optional
+    /// ones.
     pub fn lines(&self) -> Vec<String> {
         let requested = &self.requested;
         let mut shown: Vec<&PackageIdentity> = vec![&requested.identity];
@@ -444,6 +446,17 @@ impl Plan {
                     format!("{needs}: {name}, installed but {}", paused_reason("it"))
                 }
             });
+            // A Git dependency named by a commit no branch or tag points to
+            // is cautioned about as the requested package would be.
+            let caution = self
+                .install
+                .iter()
+                .find(|package| package.identity == required.target.identity)
+                .and_then(|package| package.git.as_ref())
+                .and_then(crate::git::GitOrigin::caution);
+            if let Some(caution) = caution {
+                lines.push(format!("Caution ({name}): {caution}"));
+            }
         }
         for optional in &self.optional {
             let id = &optional.id;
