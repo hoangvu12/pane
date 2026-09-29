@@ -138,6 +138,9 @@ pub struct Repository {
     /// Whether it is on this computer and may be fetched over plain HTTP
     /// (tests and development builds only).
     loopback: bool,
+    /// Whether it was named by an SSH address (`ssh://…`, `user@host:path`),
+    /// which Pane fetches over HTTPS instead, from the same host and path.
+    ssh: bool,
 }
 
 impl Repository {
@@ -150,6 +153,55 @@ impl Repository {
     pub fn url(&self) -> &str {
         &self.url
     }
+
+    /// Whether it was named by an SSH address, fetched over HTTPS instead.
+    pub fn written_as_ssh(&self) -> bool {
+        self.ssh
+    }
+}
+
+/// The hosts that serve a repository at any case of its path, so that
+/// `Owner/Repo` and `owner/repo` are one repository there: their paths are
+/// compared in lowercase (the user's decision for #46). Any other host, or
+/// one of these on another port, keeps the path's case.
+const CASE_INSENSITIVE_HOSTS: &[&str] =
+    &["github.com", "gitlab.com", "bitbucket.org", "codeberg.org"];
+
+/// Hosts (`host:port`) tests treat as ignoring case, as they cannot serve
+/// github.com from 127.0.0.1.
+#[cfg(any(test, debug_assertions))]
+static CASE_INSENSITIVE_FOR_TESTS: std::sync::Mutex<Vec<String>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// Has Pane compare the paths of repositories on `host_port` (such as
+/// `127.0.0.1:43127`) in lowercase, as it does on github.com: for tests
+/// only, whose servers are on 127.0.0.1.
+#[cfg(any(test, debug_assertions))]
+pub fn ignore_case_on_host_for_tests(host_port: &str) {
+    CASE_INSENSITIVE_FOR_TESTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push(host_port.to_owned());
+}
+
+/// Whether the server at `host` and `port` (`None`: the scheme's own)
+/// serves a repository at any case of its path.
+fn ignores_case(host: &str, port: Option<u16>) -> bool {
+    #[cfg(any(test, debug_assertions))]
+    {
+        let host_port = match port {
+            Some(port) => format!("{host}:{port}"),
+            None => host.to_owned(),
+        };
+        let listed = CASE_INSENSITIVE_FOR_TESTS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(&host_port);
+        if listed {
+            return true;
+        }
+    }
+    port.is_none() && CASE_INSENSITIVE_HOSTS.contains(&host)
 }
 
 /// A Git package to install, as the user or a dependency names it: a
@@ -206,6 +258,8 @@ impl GitSpec {
             Some((scheme, rest)) => (Some(scheme.to_ascii_lowercase()), rest),
             None => (None, text),
         };
+        let ssh =
+            matches!(scheme.as_deref(), Some("ssh")) || (scheme.is_none() && is_scp_form(text));
         // (host with optional port, path with optional reference, fetched
         // over plain HTTP from this computer)
         let (authority, path, plain) = match scheme.as_deref() {
@@ -242,20 +296,14 @@ impl GitSpec {
                     "Pane fetches Git repositories over HTTPS, and does not use `{other}://`"
                 ));
             }
+            None if ssh => {
+                let at = text.find('@').expect("an scp-like address has `@`");
+                let colon = text.find(':').expect("an scp-like address has `:`");
+                (text[at + 1..colon].to_owned(), &text[colon + 1..], false)
+            }
             None => {
-                let colon = text.find(':');
-                let slash = text.find('/');
-                let at = text.find('@');
-                match (at, colon) {
-                    // `user@host:path`, as scp and Git write SSH addresses.
-                    (Some(at), Some(colon)) if at < colon && slash.is_none_or(|s| colon < s) => {
-                        (text[at + 1..colon].to_owned(), &text[colon + 1..], false)
-                    }
-                    _ => {
-                        let (authority, path) = text.split_once('/').unwrap_or((text, ""));
-                        (authority.to_owned(), path, false)
-                    }
-                }
+                let (authority, path) = text.split_once('/').unwrap_or((text, ""));
+                (authority.to_owned(), path, false)
             }
         };
         let Some((host, port)) = split_host(&authority) else {
@@ -270,9 +318,21 @@ impl GitSpec {
             None => (path, None),
         };
         let path = path.trim_matches('/');
-        let (path, dot_git) = match path.strip_suffix(".git") {
-            Some(stripped) => (stripped.trim_end_matches('/'), true),
-            None => (path, false),
+        let folded = ignores_case(&host, port);
+        // `.git` as written, kept in the address fetched; in any case where
+        // the host ignores case. (Not yet checked to be ASCII: `get` rather
+        // than slicing, which could split a character.)
+        let suffix = path
+            .len()
+            .checked_sub(4)
+            .and_then(|start| Some((start, path.get(start..)?)))
+            .filter(|(_, suffix)| match folded {
+                true => suffix.eq_ignore_ascii_case(".git"),
+                false => *suffix == ".git",
+            });
+        let (path, dot_git) = match suffix {
+            Some((start, suffix)) => (path[..start].trim_end_matches('/'), Some(suffix)),
+            None => (path, None),
         };
         if path.is_empty() {
             return refused("it names no repository after the host, such as github.com/owner/repo");
@@ -292,17 +352,30 @@ impl GitSpec {
             None => host.clone(),
         };
         let scheme = if plain { "http" } else { "https" };
+        // The path is ASCII (checked above), so lowercasing it is exact.
+        let identity_path = match folded {
+            true => path.to_ascii_lowercase(),
+            false => path.to_owned(),
+        };
         Ok(GitSpec {
             repository: Repository {
-                name: format!("{host_port}/{path}"),
-                url: format!(
-                    "{scheme}://{host_port}/{path}{}",
-                    if dot_git { ".git" } else { "" }
-                ),
+                name: format!("{host_port}/{identity_path}"),
+                url: format!("{scheme}://{host_port}/{path}{}", dot_git.unwrap_or("")),
                 loopback: plain,
+                ssh,
             },
             reference,
         })
+    }
+}
+
+/// Whether `text`, written without a scheme, is `user@host:path`, as scp
+/// and Git write SSH addresses: an `@` before a `:` before any `/`.
+fn is_scp_form(text: &str) -> bool {
+    let slash = text.find('/');
+    match (text.find('@'), text.find(':')) {
+        (Some(at), Some(colon)) => at < colon && slash.is_none_or(|s| colon < s),
+        _ => false,
     }
 }
 
@@ -545,6 +618,13 @@ impl GitRevision {
 pub struct GitOrigin {
     pub repository: Repository,
     pub revision: GitRevision,
+    /// Whether the repository's default branch, a branch or a tag points to
+    /// the commit, as the server listed them (always, but for a commit named
+    /// by its id). A commit id proves the contents, not where the commit came
+    /// from: a host that shares storage between forks, as GitHub does,
+    /// serves a fork's or a pull request's commit at the repository's
+    /// address too.
+    pub advertised: bool,
     /// The first line of the commit's message.
     pub subject: String,
     /// Files of the revision that are Git LFS pointers rather than their
@@ -582,7 +662,7 @@ pub(crate) fn fetch_within(
     limits: Limits,
 ) -> Result<Fetched, String> {
     let remote = Remote::connect(&spec.repository)?;
-    let revision = remote.resolve(spec.reference.as_deref())?;
+    let (revision, advertised) = remote.resolve(spec.reference.as_deref())?;
     let pack = remote.fetch(&revision.commit, limits)?;
     let name = spec.repository.name();
     let objects = read_pack(&pack, limits)
@@ -605,6 +685,7 @@ pub(crate) fn fetch_within(
         origin: GitOrigin {
             repository: spec.repository.clone(),
             revision,
+            advertised,
             subject,
             lfs_pointers,
         },
@@ -781,39 +862,108 @@ impl<'a> Remote<'a> {
     }
 
     /// Resolves `reference` (none: the default branch) to the revision to
-    /// fetch.
-    fn resolve(&self, reference: Option<&str>) -> Result<GitRevision, String> {
-        let name = self.repository.name();
+    /// fetch, and says whether the repository's default branch, one of its
+    /// branches or one of its tags points to its commit (always, but for a
+    /// commit named by its id).
+    fn resolve(&self, reference: Option<&str>) -> Result<(GitRevision, bool), String> {
         if let Some(commit) = reference.filter(|r| is_commit_id(r)) {
-            return Ok(GitRevision {
-                reference: GitRef::Commit,
-                commit: commit.to_ascii_lowercase(),
-            });
+            let commit = commit.to_ascii_lowercase();
+            // A host sharing storage between forks serves a fork's commit
+            // too: see whether this repository's own references name it.
+            let found = self.list_refs(&["HEAD", "refs/heads/", "refs/tags/"])?;
+            let advertised = found.iter().any(|(_, id, _)| *id == commit);
+            return Ok((
+                GitRevision {
+                    reference: GitRef::Commit,
+                    commit,
+                },
+                advertised,
+            ));
         }
-        let mut arguments = vec!["symrefs".to_owned(), "peel".to_owned()];
+        let name = self.repository.name();
         let (heads, tags) = match reference {
-            None => {
-                arguments.push("ref-prefix HEAD".into());
-                (None, None)
-            }
-            Some(reference) => {
-                let (heads, tags) = match (
-                    reference.strip_prefix("refs/heads/"),
-                    reference.strip_prefix("refs/tags/"),
-                ) {
-                    (Some(branch), _) => (Some(format!("refs/heads/{branch}")), None),
-                    (_, Some(tag)) => (None, Some(format!("refs/tags/{tag}"))),
-                    _ => (
-                        Some(format!("refs/heads/{reference}")),
-                        Some(format!("refs/tags/{reference}")),
-                    ),
-                };
-                for prefix in heads.iter().chain(&tags) {
-                    arguments.push(format!("ref-prefix {prefix}"));
-                }
-                (heads, tags)
-            }
+            None => (None, None),
+            Some(reference) => match (
+                reference.strip_prefix("refs/heads/"),
+                reference.strip_prefix("refs/tags/"),
+            ) {
+                (Some(branch), _) => (Some(format!("refs/heads/{branch}")), None),
+                (_, Some(tag)) => (None, Some(format!("refs/tags/{tag}"))),
+                _ => (
+                    Some(format!("refs/heads/{reference}")),
+                    Some(format!("refs/tags/{reference}")),
+                ),
+            },
         };
+        let prefixes: Vec<&str> = match reference {
+            None => vec!["HEAD"],
+            Some(_) => heads.iter().chain(&tags).map(String::as_str).collect(),
+        };
+        let found = self.list_refs(&prefixes)?;
+        let find = |wanted: &Option<String>| {
+            wanted.as_ref().and_then(|wanted| {
+                found
+                    .iter()
+                    .find(|(name, ..)| name == wanted)
+                    .map(|(_, commit, _)| commit.clone())
+            })
+        };
+        let Some(reference) = reference else {
+            let Some((_, commit, target)) = found.iter().find(|(name, ..)| name == "HEAD") else {
+                return Err(format!(
+                    "The Git repository {name} has no default branch; name the branch, tag or \
+                     commit to install, such as {name}@v1.0.0"
+                ));
+            };
+            let branch = target
+                .as_deref()
+                .and_then(|target| target.strip_prefix("refs/heads/"))
+                .map(ToOwned::to_owned);
+            return Ok((
+                GitRevision {
+                    reference: GitRef::Default { branch },
+                    commit: commit.clone(),
+                },
+                true,
+            ));
+        };
+        let short = |full: &Option<String>, prefix: &str| {
+            full.as_deref()
+                .and_then(|full| full.strip_prefix(prefix))
+                .map(ToOwned::to_owned)
+        };
+        let revision = match (find(&heads), find(&tags)) {
+            (Some(_), Some(_)) => Err(format!(
+                "The Git repository {name} has both a branch and a tag named {reference}; name \
+                 the one to install as {name}@refs/heads/{reference} or {name}@refs/tags/{reference}"
+            )),
+            (Some(commit), None) => Ok(GitRevision {
+                reference: GitRef::Branch(short(&heads, "refs/heads/").unwrap_or_default()),
+                commit,
+            }),
+            (None, Some(commit)) => Ok(GitRevision {
+                reference: GitRef::Tag(short(&tags, "refs/tags/").unwrap_or_default()),
+                commit,
+            }),
+            (None, None) => Err(format!(
+                "The Git repository {name} has no branch or tag named {reference}"
+            )),
+        }?;
+        Ok((revision, true))
+    }
+
+    /// The references whose names start with one of `prefixes` (`ls-refs`,
+    /// peeled): each one's name, the commit it points to and, for a
+    /// symbolic one such as `HEAD`, the reference it points to.
+    fn list_refs(
+        &self,
+        prefixes: &[&str],
+    ) -> Result<Vec<(String, String, Option<String>)>, String> {
+        let name = self.repository.name();
+        let mut arguments = vec!["symrefs".to_owned(), "peel".to_owned()];
+        for prefix in prefixes {
+            arguments.push(format!("ref-prefix {prefix}"));
+        }
         let answer = self
             .command("ls-refs", &arguments, MAX_REFS)
             .map_err(|why| format!("Could not list the references of {name}: {why}"))?;
@@ -850,52 +1000,7 @@ impl<'a> Remote<'a> {
             }
             found.push((ref_name.to_owned(), commit, target));
         }
-        let find = |wanted: &Option<String>| {
-            wanted.as_ref().and_then(|wanted| {
-                found
-                    .iter()
-                    .find(|(name, ..)| name == wanted)
-                    .map(|(_, commit, _)| commit.clone())
-            })
-        };
-        let Some(reference) = reference else {
-            let Some((_, commit, target)) = found.iter().find(|(name, ..)| name == "HEAD") else {
-                return Err(format!(
-                    "The Git repository {name} has no default branch; name the branch, tag or \
-                     commit to install, such as {name}@v1.0.0"
-                ));
-            };
-            let branch = target
-                .as_deref()
-                .and_then(|target| target.strip_prefix("refs/heads/"))
-                .map(ToOwned::to_owned);
-            return Ok(GitRevision {
-                reference: GitRef::Default { branch },
-                commit: commit.clone(),
-            });
-        };
-        let short = |full: &Option<String>, prefix: &str| {
-            full.as_deref()
-                .and_then(|full| full.strip_prefix(prefix))
-                .map(ToOwned::to_owned)
-        };
-        match (find(&heads), find(&tags)) {
-            (Some(_), Some(_)) => Err(format!(
-                "The Git repository {name} has both a branch and a tag named {reference}; name \
-                 the one to install as {name}@refs/heads/{reference} or {name}@refs/tags/{reference}"
-            )),
-            (Some(commit), None) => Ok(GitRevision {
-                reference: GitRef::Branch(short(&heads, "refs/heads/").unwrap_or_default()),
-                commit,
-            }),
-            (None, Some(commit)) => Ok(GitRevision {
-                reference: GitRef::Tag(short(&tags, "refs/tags/").unwrap_or_default()),
-                commit,
-            }),
-            (None, None) => Err(format!(
-                "The Git repository {name} has no branch or tag named {reference}"
-            )),
-        }
+        Ok(found)
     }
 
     /// Fetches the one commit `commit`, without its history, as a pack.
@@ -1603,8 +1708,9 @@ mod tests {
         ];
         for form in forms {
             let parsed = spec(form);
-            assert_eq!(parsed.repository.name(), "github.com/Owner/Repo", "{form}");
+            assert_eq!(parsed.repository.name(), "github.com/owner/repo", "{form}");
             assert_eq!(parsed.reference, None, "{form}");
+            // Fetched as written.
             assert!(
                 parsed
                     .repository
@@ -1612,11 +1718,7 @@ mod tests {
                     .starts_with("https://github.com/Owner/Repo")
             );
         }
-        // The path keeps its case; another port is another server.
-        assert_eq!(
-            spec("github.com/owner/repo").repository.name(),
-            "github.com/owner/repo"
-        );
+        // Another port is another server.
         assert_eq!(
             spec("https://git.example.org:8443/a/b").repository.name(),
             "git.example.org:8443/a/b"
@@ -1630,6 +1732,71 @@ mod tests {
             spec("github.com/o/r").repository.url(),
             "https://github.com/o/r"
         );
+    }
+
+    #[test]
+    fn hosts_that_ignore_case_name_one_repository_in_any_case_and_others_keep_it() {
+        // GitHub, GitLab, Bitbucket and Codeberg serve a repository at any
+        // case of its path: one package, fetched as written.
+        for host in ["github.com", "gitlab.com", "bitbucket.org", "codeberg.org"] {
+            let forms = [
+                format!("https://{host}/Owner/Repo"),
+                format!("https://{host}/owner/repo"),
+                format!("https://{host}/OWNER/REPO.GIT"),
+                format!("git@{}:Owner/Repo.Git", host.to_uppercase()),
+            ];
+            for form in &forms {
+                let parsed = spec(form);
+                assert_eq!(
+                    parsed.repository.name(),
+                    format!("{host}/owner/repo"),
+                    "{form}"
+                );
+            }
+            assert_eq!(
+                spec(&forms[2]).repository.url(),
+                format!("https://{host}/OWNER/REPO.GIT")
+            );
+            // A reference keeps its case: branches and tags are not folded.
+            assert_eq!(
+                spec(&format!("{host}/O/R@Release")).reference.as_deref(),
+                Some("Release")
+            );
+        }
+        // Any other host, or one of those on another port, keeps its case.
+        assert_eq!(
+            spec("https://git.example.org/Owner/Repo").repository.name(),
+            "git.example.org/Owner/Repo"
+        );
+        assert_eq!(
+            spec("https://github.com:8443/Owner/Repo").repository.name(),
+            "github.com:8443/Owner/Repo"
+        );
+        assert_eq!(
+            spec("https://gitlab.example.com/Owner/Repo.GIT")
+                .repository
+                .name(),
+            "gitlab.example.com/Owner/Repo.GIT"
+        );
+    }
+
+    #[test]
+    fn an_ssh_address_is_known_to_be_fetched_over_https() {
+        for form in [
+            "git@github.com:o/r.git",
+            "ssh://git@github.com/o/r",
+            "git+ssh://git@github.com/o/r",
+            "git:ssh://git@github.com:22/o/r",
+        ] {
+            assert!(spec(form).repository.written_as_ssh(), "{form}");
+        }
+        for form in [
+            "https://github.com/o/r",
+            "github.com/o/r",
+            "git:github.com/o/r",
+        ] {
+            assert!(!spec(form).repository.written_as_ssh(), "{form}");
+        }
     }
 
     #[test]
@@ -1681,6 +1848,9 @@ mod tests {
             "https://github.com/o/r?x=1",
             "https://github.com/o/%72",
             "https://github.com/o/../r",
+            "https://github.com/o/réé",
+            "https://github.com/o/é",
+            "https://example.org/o/aé",
             "https:///o/r",
             "https://github.com",
             "github.com",

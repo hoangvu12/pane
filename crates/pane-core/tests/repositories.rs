@@ -240,11 +240,11 @@ fn a_release_tag_is_previewed_installed_and_its_command_runs() {
         "Version: 0.1.0".into(),
         "Revision: tag v0.1.0, which you named: installing pins it to that revision".into(),
         format!(
-            "Fetched: commit {} “Release 0.1.0” from {}, each object checked against its id",
+            "Fetched: commit {} “Release 0.1.0”, served at {}; each object checked against its id",
             greeter.release, greeter.url
         ),
-        "Runs only the WebAssembly components its pane.json names, in Pane: nothing in the \
-         repository is built or run to install it (no hooks, scripts or submodules)"
+        "Runs only the components its pane.json names: nothing in the repository is built or \
+         run (no hooks, scripts or submodules)"
             .into(),
         "Commands: Greeter from Git".into(),
         "Operations: greet (version 1)".into(),
@@ -457,6 +457,61 @@ fn a_branch_is_tracked_and_a_tag_or_commit_is_pinned() {
     assert_eq!(installed(&launcher), ["Greeter from Git"]);
 }
 
+/// The preview's caution about a commit named by its id that no branch or
+/// tag of `repository` points to.
+fn unadvertised(repository: &str, commit: &str) -> String {
+    format!(
+        "Caution: no branch or tag of {repository} points to commit {}. A host that shares \
+         storage between forks, as GitHub does, can serve a fork's or a pull request's commit at \
+         this address, so its id alone does not show that this repository made it",
+        short(commit)
+    )
+}
+
+#[test]
+fn a_commit_no_branch_or_tag_points_to_is_previewed_with_a_caution() {
+    let dirs = Dirs::new();
+    let greeter = dirs.greeter();
+    let repository = &dirs.identity("greeter")[4..];
+    // A commit only a pull request's reference holds, as a fork's commit is
+    // served from the repository it was proposed to.
+    greeter
+        .repo
+        .git(&["switch", "--quiet", "-c", "proposed", "release"]);
+    let proposed = greeter
+        .repo
+        .commit(&[("NOTES.md", b"proposed".to_vec())], "Proposed");
+    greeter.repo.git(&["switch", "--quiet", "main"]);
+    greeter
+        .repo
+        .git(&["update-ref", "refs/pull/1/head", &proposed]);
+    greeter.repo.git(&["branch", "--quiet", "-D", "proposed"]);
+    let launcher = dirs.launcher();
+
+    block_on(launcher.preview_git(&format!("{}@{proposed}", greeter.url)));
+    let details = details(&launcher);
+    assert!(
+        has(&details, &unadvertised(repository, &proposed)),
+        "{details:#?}"
+    );
+    assert_eq!(titles(&launcher), ["Install"]);
+
+    // A commit a branch or a tag points to (here both) has no caution.
+    block_on(launcher.preview_git(&format!("{}@{}", greeter.url, greeter.release)));
+    let details = self::details(&launcher);
+    assert!(
+        !details.iter().any(|line| line.starts_with("Caution:")),
+        "{details:#?}"
+    );
+    // Nor does a tag or a branch, whose commit the server itself named.
+    block_on(launcher.preview_git(&format!("{}@v0.1.0", greeter.url)));
+    let details = self::details(&launcher);
+    assert!(
+        !details.iter().any(|line| line.starts_with("Caution:")),
+        "{details:#?}"
+    );
+}
+
 #[test]
 fn equivalent_addresses_are_one_package_and_a_local_copy_is_another() {
     let dirs = Dirs::new();
@@ -505,6 +560,78 @@ fn equivalent_addresses_are_one_package_and_a_local_copy_is_another() {
     assert_eq!(
         run(&launcher, "Greeter from Git", "Say hello"),
         Status::Result(HELLO.into())
+    );
+}
+
+#[test]
+fn on_a_host_that_ignores_case_another_spelling_is_the_same_package() {
+    let dirs = Dirs::new();
+    let greeter = dirs.greeter();
+    // This server stands for github.com, which serves a repository at any
+    // case of its path: it serves the repository under both spellings.
+    let host = dirs
+        .server
+        .url()
+        .trim_start_matches("http://")
+        .trim_end_matches('/');
+    pane_core::git::ignore_case_on_host_for_tests(host);
+    let upper = dirs.server.serve("Greeter", &greeter.repo);
+    let launcher = dirs.launcher();
+
+    block_on(launcher.install_git(&format!("{upper}@v0.1.0")));
+    assert_eq!(installed(&launcher), ["Greeter from Git"]);
+    assert_eq!(
+        launcher.packages()[0].identity.key(),
+        dirs.identity("greeter")
+    );
+    // Fetched as written.
+    assert_eq!(dirs.record("greeter")["gitUrl"], upper.as_str());
+
+    // The other spelling is the installed package.
+    block_on(launcher.install_git(&format!("{}@release", greeter.url)));
+    assert_eq!(
+        error_of(&launcher),
+        format!(
+            "Already installed from Git repository {}; use Update to replace the installed copy",
+            &dirs.identity("greeter")[4..]
+        )
+    );
+    let shouted = dirs.server.serve("GREETER", &greeter.repo);
+    block_on(launcher.preview_git(&format!("{shouted}@v0.1.0")));
+    assert_eq!(
+        titles(&launcher),
+        ["Update"],
+        "{:?}",
+        launcher.view().status
+    );
+
+    // A dependency spelled in another case resolves to the installed copy.
+    let folder = dirs.caller(&format!(
+        r#"{{ "id": "greeter", "source": "git:{}@v0.1.0",
+              "operations": [{{ "id": "greet", "version": 1 }}] }}"#,
+        greeter.url.replace("/greeter.git", "/Greeter")
+    ));
+    let requests = dirs.server.requests().len();
+    block_on(launcher.preview_package(&folder));
+    let details = details(&launcher);
+    assert!(
+        has(&details, "Requires: Greeter from Git, already installed"),
+        "{details:#?}"
+    );
+    block_on(launcher.activate_selected());
+    assert_eq!(installed(&launcher), ["Greeter from Git", "Caller"]);
+    assert_eq!(
+        dirs.server.requests().len(),
+        requests,
+        "nothing fetched again"
+    );
+    assert_eq!(
+        run(
+            &launcher,
+            "Greet through dependencies",
+            "Greet through the required greeter"
+        ),
+        Status::Result("Hello, Pane, from the Git repository".into())
     );
 }
 

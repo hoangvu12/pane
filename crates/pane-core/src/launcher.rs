@@ -3868,17 +3868,38 @@ fn git_lines(
         "" => String::new(),
         subject => format!(" “{subject}”"),
     };
-    vec![
-        what,
-        format!(
-            "Fetched: commit {}{subject} from {}, each object checked against its id",
-            revision.commit,
+    // Where it was served, not who made it: a commit's id proves its
+    // contents, while a host sharing storage between forks serves a fork's
+    // commits at this address too.
+    let served = match git.repository.written_as_ssh() {
+        true => format!(
+            "SSH address fetched over HTTPS from {}",
             git.repository.url()
         ),
-        "Runs only the WebAssembly components its pane.json names, in Pane: nothing in the \
-         repository is built or run to install it (no hooks, scripts or submodules)"
+        false => format!("served at {}", git.repository.url()),
+    };
+    let mut lines = vec![
+        what,
+        format!(
+            "Fetched: commit {}{subject}, {served}; each object checked against its id",
+            revision.commit
+        ),
+    ];
+    if !git.advertised {
+        lines.push(format!(
+            "Caution: no branch or tag of {} points to commit {}. A host that shares storage \
+             between forks, as GitHub does, can serve a fork's or a pull request's commit at \
+             this address, so its id alone does not show that this repository made it",
+            git.repository.name(),
+            revision.short_commit()
+        ));
+    }
+    lines.push(
+        "Runs only the components its pane.json names: nothing in the repository is built or \
+         run (no hooks, scripts or submodules)"
             .into(),
-    ]
+    );
+    lines
 }
 
 /// Replaces the command view with `form`, which belongs to item `item_id`.
@@ -4090,3 +4111,6 @@ async fn off_thread<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static
 fn first_index(rows: &[Row]) -> Option<usize> {
     (!rows.is_empty()).then_some(0)
 }
+
+#[cfg(test)]
+mod git_lines_tests;
