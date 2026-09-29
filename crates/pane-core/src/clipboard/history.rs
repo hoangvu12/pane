@@ -93,15 +93,25 @@ impl PackageHistory {
         !self.has_choices() && self.items.is_empty()
     }
 
+    /// Whether the file need not keep it at all: nothing is kept and no
+    /// item was ever kept, so no id could be given twice once it is gone.
+    fn is_forgettable(&self) -> bool {
+        self.is_empty() && self.next_id == 0
+    }
+
     /// Whether the user chose anything for it: keeping history, excluded
     /// programs or how long items are kept.
     pub fn has_choices(&self) -> bool {
         !self.capture.is_off() || !self.excluded.is_empty() || self.retention_seconds.is_some()
     }
 
-    /// How long each item is kept after it was copied, in seconds.
+    /// How long each item is kept after it was copied, in seconds: within
+    /// [`MIN_RETENTION_SECONDS`] and [`MAX_RETENTION_SECONDS`] however the
+    /// file was written, so history is always finite.
     pub fn retention(&self) -> u64 {
-        self.retention_seconds.unwrap_or(DEFAULT_RETENTION_SECONDS)
+        self.retention_seconds
+            .unwrap_or(DEFAULT_RETENTION_SECONDS)
+            .clamp(MIN_RETENTION_SECONDS, MAX_RETENTION_SECONDS)
     }
 
     /// Keeps each item `seconds` after it was copied from now on, or says
@@ -128,6 +138,7 @@ impl PackageHistory {
 
     /// Removes the items that expired by `now`; returns how many.
     pub fn expire(&mut self, now: u64) -> usize {
+        self.keep_ids_used();
         let before = self.items.len();
         let items = std::mem::take(&mut self.items);
         self.items = items
@@ -145,6 +156,7 @@ impl PackageHistory {
     /// Removes the items whose ids are `ids`; returns how many there were.
     /// An id not kept (deleted, expired or never kept) is passed over.
     pub fn delete(&mut self, ids: &[u64]) -> usize {
+        self.keep_ids_used();
         let before = self.items.len();
         self.items.retain(|item| !ids.contains(&item.id));
         before - self.items.len()
@@ -174,7 +186,16 @@ impl PackageHistory {
     /// Removes every item, keeping the capture state and the excluded
     /// programs; returns how many there were.
     pub fn clear(&mut self) -> usize {
+        self.keep_ids_used();
         std::mem::take(&mut self.items).len()
+    }
+
+    /// Makes sure the next id is past every kept item's (a file written
+    /// without `nextId` may hold items), before any of them goes, so that
+    /// no id is ever given to a package twice.
+    fn keep_ids_used(&mut self) {
+        let past = self.items.iter().map(|item| item.id + 1).max().unwrap_or(0);
+        self.next_id = self.next_id.max(past);
     }
 
     /// Replaces the excluded programs with `programs`, each once, in the
@@ -367,7 +388,7 @@ impl HistoryStore {
             history.expire(now);
             let capture_changed = history.capture != before.capture;
             let pending = state.change(|file| {
-                if history.is_empty() {
+                if history.is_forgettable() {
                     file.packages.remove(owner);
                 } else {
                     file.packages.insert(owner.to_owned(), history);
@@ -605,7 +626,7 @@ impl State {
         let mut expired = 0;
         file.packages.retain(|_, history| {
             expired += history.expire(now);
-            !history.is_empty()
+            !history.is_forgettable()
         });
         (expired > 0).then(|| self.change(|_| {}))
     }
@@ -642,6 +663,11 @@ mod tests {
     use serde_json::Value;
 
     const DAY: u64 = 86_400_000;
+
+    /// The history file in `dir`, parsed.
+    fn on_disk(dir: &Path) -> Value {
+        serde_json::from_str(&fs::read_to_string(dir.join(FILE)).unwrap()).unwrap()
+    }
 
     /// A store of `dir` whose clock shows `now` until advanced.
     fn store_at(dir: &Path, now: u64) -> (Arc<HistoryStore>, Arc<ManualClock>) {
@@ -762,8 +788,9 @@ mod tests {
         assert!(store.get("a").unwrap().items.is_empty());
         store.capture(store.deletions(), add);
         assert_eq!(store.get("a").unwrap().items.len(), 1);
-        let on_disk = fs::read_to_string(dir.path().join(FILE)).unwrap();
-        assert!(on_disk.contains("late") && !on_disk.contains("old"));
+        let items = &on_disk(dir.path())["packages"]["a"]["items"];
+        assert_eq!(items.as_array().unwrap().len(), 1);
+        assert_eq!(items[0]["text"], "late");
     }
 
     #[test]
@@ -836,8 +863,13 @@ mod tests {
                     {{ "id": 1, "text": "b gone", "copiedAt": {new} }} ], "nextId": 2 }},
                 "c": {{ "capture": "paused" }},
                 "d": {{ "items": [
-                    {{ "id": 1, "text": "d gone", "copiedAt": 0 }} ], "nextId": 2 }} }} }}"#,
-                new = 6 * DAY
+                    {{ "id": 1, "text": "d gone", "copiedAt": 0 }} ], "nextId": 2 }},
+                "e": {{ "items": [
+                    {{ "id": 4, "text": "e gone", "copiedAt": 0 }} ] }},
+                "f": {{ "retentionSeconds": 0, "items": [
+                    {{ "id": 0, "text": "f kept", "copiedAt": {fresh} }} ], "nextId": 1 }} }} }}"#,
+                new = 6 * DAY,
+                fresh = 8 * DAY - 30_000
             ),
         )
         .unwrap();
@@ -847,14 +879,23 @@ mod tests {
         assert_eq!(counts.get("a"), Some(&1));
         assert_eq!(counts.get("c"), Some(&0));
         assert_eq!(counts.get("b"), Some(&0));
-        // "d" keeps nothing at all any more.
+        // "d" and "e" keep nothing the user sees any more.
         assert_eq!(counts.get("d"), None);
+        assert_eq!(counts.get("e"), None);
+        // A retention written out of bounds is taken as the nearest bound.
+        assert_eq!(counts.get("f"), Some(&1));
+        assert_eq!(store.get("f").unwrap().retention(), 60);
         assert_eq!(texts(&store.get("a").unwrap()), ["a new"]);
-        // Reading removed them from the file too, with "d".
-        let on_disk: Value =
-            serde_json::from_str(&fs::read_to_string(dir.path().join(FILE)).unwrap()).unwrap();
+        // Reading removed them from the file too; "d" and "e" stay only
+        // with the id their next item gets, so no id is given twice.
+        let on_disk = on_disk(dir.path());
         let packages = on_disk["packages"].as_object().unwrap();
-        assert_eq!(packages.keys().collect::<Vec<_>>(), ["a", "b", "c"]);
+        assert_eq!(
+            packages.keys().collect::<Vec<_>>(),
+            ["a", "b", "c", "d", "e", "f"]
+        );
+        assert_eq!(packages["d"], serde_json::json!({ "nextId": 2 }));
+        assert_eq!(packages["e"], serde_json::json!({ "nextId": 5 }));
         assert_eq!(packages["b"]["retentionSeconds"], 3600);
         assert_eq!(packages["a"]["items"].as_array().unwrap().len(), 1);
         assert_eq!(packages["a"]["nextId"], 3);
@@ -889,11 +930,14 @@ mod tests {
         store
             .update("a", |history| history.set_retention(3600))
             .unwrap();
-        let on_disk = fs::read_to_string(dir.path().join(FILE)).unwrap();
-        assert!(
-            on_disk.contains("newer") && !on_disk.contains("older"),
-            "{on_disk}"
-        );
+        let items = &on_disk(dir.path())["packages"]["a"]["items"];
+        let texts: Vec<&str> = items
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["text"].as_str().unwrap())
+            .collect();
+        assert_eq!(texts, ["newer"]);
         assert!(
             store
                 .update("a", |history| history.set_retention(1))
