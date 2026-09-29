@@ -29,7 +29,9 @@
 //!
 //! The pack, the objects, the files and the folders are limited in size and
 //! number ([`MAX_PACK`], [`MAX_OBJECTS`], [`MAX_UNPACKED`], [`MAX_ENTRIES`],
-//! [`MAX_DEPTH`]).
+//! [`MAX_DEPTH`]), and what a pack takes in memory while it is read,
+//! inflated entries and the objects its deltas make together, by one budget
+//! ([`MAX_INFLATED`]).
 //!
 //! Only `https://` addresses are fetched. SSH (`ssh://`, `git@host:path`) and
 //! scheme-less (`host/path`) addresses name the same repository, fetched
@@ -64,10 +66,15 @@ pub const MAX_UNPACKED: u64 = 256 << 20;
 pub const MAX_ENTRIES: usize = 10_000;
 /// The deepest folders may nest in the revision.
 pub const MAX_DEPTH: usize = 32;
-/// The most the pack's objects may take once inflated, all together.
-const MAX_INFLATED: u64 = 512 << 20;
-/// The longest chain of deltas Pane follows to one object.
-const MAX_DELTA_CHAIN: usize = 256;
+/// The most a pack's contents may take in memory while Pane reads it, all
+/// together: its entries once inflated (whole objects and the instructions
+/// of deltas not yet applied) and the objects its deltas make. A delta's
+/// instructions are let go, and no longer count, once it is applied.
+pub const MAX_INFLATED: u64 = 256 << 20;
+/// The longest chain of deltas Pane follows to one object. Deltas are
+/// resolved without recursion, and [`MAX_INFLATED`] bounds what a chain
+/// makes, so this only refuses what no Git writes (its default is 50).
+const MAX_DELTA_CHAIN: usize = 4096;
 
 /// The limits a fetch works within; smaller in tests.
 #[derive(Clone, Copy, Debug)]
@@ -77,6 +84,7 @@ pub(crate) struct Limits {
     pub unpacked: u64,
     pub entries: usize,
     pub depth: usize,
+    pub inflated: u64,
 }
 
 impl Default for Limits {
@@ -87,7 +95,34 @@ impl Default for Limits {
             unpacked: MAX_UNPACKED,
             entries: MAX_ENTRIES,
             depth: MAX_DEPTH,
+            inflated: MAX_INFLATED,
         }
+    }
+}
+
+/// What a pack's contents take in memory while it is read, within
+/// [`Limits::inflated`].
+struct Budget {
+    used: u64,
+    most: u64,
+}
+
+impl Budget {
+    /// Counts `bytes` more, before they are allocated, or refuses them.
+    fn take(&mut self, bytes: u64) -> Result<(), String> {
+        self.used = self.used.saturating_add(bytes);
+        if self.used > self.most {
+            return Err(format!(
+                "its objects take more than the {} MiB Pane reads",
+                self.most >> 20
+            ));
+        }
+        Ok(())
+    }
+
+    /// Counts `bytes` let go.
+    fn give_back(&mut self, bytes: u64) {
+        self.used = self.used.saturating_sub(bytes);
     }
 }
 
@@ -1099,7 +1134,10 @@ fn read_pack(pack: &[u8], limits: Limits) -> Result<Objects, String> {
     }
     let mut at = 12;
     let mut stored: Vec<(usize, Stored)> = Vec::with_capacity(count);
-    let mut inflated_total: u64 = 0;
+    let mut budget = Budget {
+        used: 0,
+        most: limits.inflated,
+    };
     for _ in 0..count {
         let offset = at;
         let byte = |at: &mut usize| -> Result<u8, String> {
@@ -1155,13 +1193,7 @@ fn read_pack(pack: &[u8], limits: Limits) -> Result<Objects, String> {
                 most >> 20
             ));
         }
-        inflated_total += size;
-        if inflated_total > MAX_INFLATED {
-            return Err(format!(
-                "its objects take more than the {} MiB Pane reads",
-                MAX_INFLATED >> 20
-            ));
-        }
+        budget.take(size)?;
         let (data, used) = inflate(&body[at..], size)?;
         at += used;
         let entry = match (kind, base) {
@@ -1178,7 +1210,7 @@ fn read_pack(pack: &[u8], limits: Limits) -> Result<Objects, String> {
     if at != body.len() {
         return Err("it has data after its last entry".into());
     }
-    resolve(stored, limits)
+    resolve(stored, limits, budget)
 }
 
 /// Inflates the zlib stream at the start of `input`, which must hold
@@ -1211,113 +1243,108 @@ fn inflate(input: &[u8], size: u64) -> Result<(Vec<u8>, usize), String> {
     Ok((out, inflater.total_in() as usize))
 }
 
-/// Resolves the deltas of `stored` and computes every object's id. The
-/// objects, deltas resolved, may take at most [`MAX_INFLATED`] bytes in all.
-fn resolve(mut stored: Vec<(usize, Stored)>, limits: Limits) -> Result<Objects, String> {
+/// Resolves the deltas of `stored` and computes every object's id, within
+/// `budget` ([`Limits::inflated`]), which already counts the entries as
+/// inflated.
+///
+/// Each delta waits on its base: an offset delta on the entry at that
+/// offset, a delta against an id on the object with that id, whichever
+/// entry makes it. Starting from the whole objects, each object made is
+/// taken from a work list, and the deltas waiting on it are applied and
+/// added to the list: every delta is applied once, in time linear in the
+/// pack, without recursion however long its chain. A delta's instructions
+/// are let go once it is applied.
+fn resolve(
+    mut stored: Vec<(usize, Stored)>,
+    limits: Limits,
+    mut budget: Budget,
+) -> Result<Objects, String> {
     let index: HashMap<usize, usize> = stored
         .iter()
         .enumerate()
         .map(|(i, (offset, _))| (*offset, i))
         .collect();
-    let mut resolved: Vec<Option<(Kind, Rc<Vec<u8>>)>> = vec![None; stored.len()];
+    // The deltas waiting on each entry (offset deltas) and on each id.
+    let mut on_entry: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut on_id: HashMap<Id, Vec<usize>> = HashMap::new();
+    // (entry, its kind, its contents, the deltas it took to make it)
+    let mut work: Vec<(usize, Kind, Rc<Vec<u8>>, usize)> = Vec::new();
     let mut objects = Objects::new();
-    let most = limits.unpacked.max(1 << 20);
-    let mut total: u64 = 0;
-    let mut count = |data: &[u8]| {
-        total += data.len() as u64;
-        if total > MAX_INFLATED {
-            return Err(format!(
-                "its objects take more than the {} MiB Pane reads",
-                MAX_INFLATED >> 20
-            ));
-        }
-        Ok(())
-    };
-    // Whole objects first, moved rather than copied.
+    let mut unresolved = 0;
     for (i, (_, entry)) in stored.iter_mut().enumerate() {
-        if let Stored::Whole(kind, data) = entry {
-            let data = Rc::new(std::mem::take(data));
-            count(&data)?;
-            let id = object_id(*kind, &data)?;
-            objects.insert(id, (*kind, data.clone()));
-            resolved[i] = Some((*kind, data));
+        match entry {
+            // Moved rather than copied: already counted as inflated.
+            Stored::Whole(kind, data) => {
+                work.push((i, *kind, Rc::new(std::mem::take(data)), 0));
+            }
+            Stored::OffsetDelta(offset, _) => {
+                let base = *index.get(offset).ok_or("it has a delta with no base")?;
+                on_entry.entry(base).or_default().push(i);
+                unresolved += 1;
+            }
+            Stored::RefDelta(id, _) => {
+                on_id.entry(*id).or_default().push(i);
+                unresolved += 1;
+            }
         }
     }
-    // Deltas against an offset resolve in one pass; a delta against an id
-    // may need its base resolved first, so passes repeat while they make
-    // progress.
-    loop {
-        let mut progress = false;
-        let mut waiting = false;
-        for i in 0..stored.len() {
-            if resolved[i].is_some() {
-                continue;
+    let most = limits.unpacked.max(1 << 20);
+    while let Some((i, kind, data, chain)) = work.pop() {
+        let id = object_id(kind, &data)?;
+        let waiting = on_entry
+            .remove(&i)
+            .into_iter()
+            .chain(on_id.remove(&id))
+            .flatten();
+        for delta_at in waiting {
+            if chain + 1 > MAX_DELTA_CHAIN {
+                return Err("it has a chain of deltas too long to follow".into());
             }
-            // The chain from entry i down to a resolved base.
-            let mut chain = vec![i];
-            let base = loop {
-                let current = *chain.last().expect("never empty");
-                if chain.len() > MAX_DELTA_CHAIN {
-                    return Err("it has a chain of deltas too long to follow".into());
-                }
-                match &stored[current].1 {
-                    Stored::OffsetDelta(offset, _) => {
-                        let base = *index.get(offset).ok_or("it has a delta with no base")?;
-                        if let Some(done) = &resolved[base] {
-                            break Some(done.clone());
-                        }
-                        if chain.contains(&base) {
-                            return Err("it has deltas that are each other's base".into());
-                        }
-                        chain.push(base);
-                    }
-                    Stored::RefDelta(id, _) => match objects.get(id) {
-                        Some((kind, data)) => break Some((*kind, data.clone())),
-                        None => break None,
-                    },
-                    Stored::Whole(..) => unreachable!("whole objects are resolved first"),
-                }
+            let (Stored::OffsetDelta(_, delta) | Stored::RefDelta(_, delta)) =
+                &mut stored[delta_at].1
+            else {
+                unreachable!("only deltas wait on a base");
             };
-            let Some((kind, mut data)) = base else {
-                waiting = true;
-                continue;
-            };
-            // `chain` holds the deltas to apply, the one nearest the base
-            // last.
-            while let Some(current) = chain.pop() {
-                let (Stored::OffsetDelta(_, delta) | Stored::RefDelta(_, delta)) =
-                    &stored[current].1
-                else {
-                    unreachable!("whole objects are resolved first");
-                };
-                data = Rc::new(apply_delta(&data, delta, most)?);
-                count(&data)?;
-                let id = object_id(kind, &data)?;
-                objects.insert(id, (kind, data.clone()));
-                resolved[current] = Some((kind, data.clone()));
-            }
-            progress = true;
+            let delta = std::mem::take(delta);
+            let target = delta_target(&delta, most)?;
+            budget.take(target)?;
+            let made = apply_delta(&data, &delta, most)?;
+            budget.give_back(delta.len() as u64);
+            drop(delta);
+            unresolved -= 1;
+            work.push((delta_at, kind, Rc::new(made), chain + 1));
         }
-        if !waiting {
-            break;
-        }
-        if !progress {
-            return Err("it has a delta whose base it does not hold".into());
-        }
+        objects.insert(id, (kind, data));
+    }
+    if unresolved > 0 {
+        return Err("it has a delta whose base it does not hold".into());
     }
     Ok(objects)
 }
 
-/// Applies the Git delta `delta` to `base`, making at most `most` bytes.
-fn apply_delta(base: &[u8], delta: &[u8], most: u64) -> Result<Vec<u8>, String> {
+/// The size of what the Git delta `delta` makes, if at most `most` bytes.
+fn delta_target(delta: &[u8], most: u64) -> Result<u64, String> {
+    let (_, target, _) = delta_sizes(delta)?;
+    if target > most {
+        return Err(format!(
+            "it has an object of {target} bytes, more than the {} MiB Pane takes",
+            most >> 20
+        ));
+    }
+    Ok(target)
+}
+
+/// The sizes a Git delta starts with, of its base and of what it makes,
+/// and where its instructions start.
+fn delta_sizes(delta: &[u8]) -> Result<(u64, u64, usize), String> {
     let damaged = || "it has a damaged delta".to_owned();
     let mut at = 0;
-    let varint = |at: &mut usize| -> Result<u64, String> {
+    let mut varint = || -> Result<u64, String> {
         let mut value = 0u64;
         let mut shift = 0;
         loop {
-            let byte = *delta.get(*at).ok_or_else(damaged)?;
-            *at += 1;
+            let byte = *delta.get(at).ok_or_else(damaged)?;
+            at += 1;
             if shift > 57 {
                 return Err(damaged());
             }
@@ -1328,16 +1355,18 @@ fn apply_delta(base: &[u8], delta: &[u8], most: u64) -> Result<Vec<u8>, String> 
             }
         }
     };
-    let source = varint(&mut at)?;
-    let target = varint(&mut at)?;
+    let source = varint()?;
+    let target = varint()?;
+    Ok((source, target, at))
+}
+
+/// Applies the Git delta `delta` to `base`, making at most `most` bytes.
+fn apply_delta(base: &[u8], delta: &[u8], most: u64) -> Result<Vec<u8>, String> {
+    let damaged = || "it has a damaged delta".to_owned();
+    let (source, _, mut at) = delta_sizes(delta)?;
+    let target = delta_target(delta, most)?;
     if source != base.len() as u64 {
         return Err(damaged());
-    }
-    if target > most {
-        return Err(format!(
-            "it has an object of {target} bytes, more than the {} MiB Pane takes",
-            most >> 20
-        ));
     }
     let mut out = Vec::with_capacity(target as usize);
     while at < delta.len() {
@@ -2058,6 +2087,148 @@ mod tests {
             PktReader::new(&data).line(),
             Err("the server refused: denied[2J".into())
         );
+    }
+
+    /// A delta against a base of `source` bytes: copy all of it, then insert
+    /// `inserted`.
+    fn delta_appending(source: usize, inserted: &[u8]) -> Vec<u8> {
+        let varint = |mut value: usize, out: &mut Vec<u8>| loop {
+            let byte = (value & 0x7f) as u8;
+            value >>= 7;
+            if value == 0 {
+                out.push(byte);
+                break;
+            }
+            out.push(byte | 0x80);
+        };
+        let mut delta = Vec::new();
+        varint(source, &mut delta);
+        varint(source + inserted.len(), &mut delta);
+        if source > 0 {
+            // Copy from offset 0, a size of three bytes.
+            delta.push(0x80 | 0x10 | 0x20 | 0x40);
+            delta.extend(&(source as u32).to_le_bytes()[..3]);
+        }
+        for chunk in inserted.chunks(0x7f) {
+            delta.push(chunk.len() as u8);
+            delta.extend(chunk);
+        }
+        delta
+    }
+
+    /// A pack of blob `base` followed by a chain of `links` offset deltas,
+    /// each against the entry before it and appending `appended` to it.
+    fn offset_chain(base: &[u8], links: usize, appended: &[u8]) -> (Vec<u8>, Vec<u8>) {
+        // Each entry's header and zlib stream, to learn the distance back.
+        let mut entries = vec![(3u8, Vec::new(), base.to_vec())];
+        let mut size = base.len();
+        let mut last = base.to_vec();
+        for _ in 0..links {
+            entries.push((6, Vec::new(), delta_appending(size, appended)));
+            size += appended.len();
+            last.extend(appended);
+        }
+        // Offsets depend on each entry's length; write the pack once to
+        // learn them, then fill in each distance (one to three bytes).
+        let (_, offsets) = pack_of(&entries);
+        let encode = |mut distance: usize| {
+            let mut bytes = vec![(distance & 0x7f) as u8];
+            distance >>= 7;
+            while distance > 0 {
+                distance -= 1;
+                bytes.insert(0, 0x80 | (distance & 0x7f) as u8);
+                distance >>= 7;
+            }
+            bytes
+        };
+        // The distances change the offsets they depend on: iterate until
+        // they settle.
+        let mut offsets = offsets;
+        loop {
+            for i in 1..entries.len() {
+                entries[i].1 = encode(offsets[i] - offsets[i - 1]);
+            }
+            let (_, again) = pack_of(&entries);
+            if again == offsets {
+                break;
+            }
+            offsets = again;
+        }
+        (pack_of(&entries).0, last)
+    }
+
+    #[test]
+    fn a_long_chain_of_deltas_is_followed_without_recursion_up_to_its_limit() {
+        let (pack, last) = offset_chain(b"base", MAX_DELTA_CHAIN, b"");
+        let objects = read_pack(&pack, Limits::default()).unwrap();
+        assert!(objects.values().any(|(_, data)| data[..] == last[..]));
+        let (pack, _) = offset_chain(b"base", MAX_DELTA_CHAIN + 1, b"");
+        assert_eq!(
+            read_pack(&pack, Limits::default()).unwrap_err(),
+            "it has a chain of deltas too long to follow"
+        );
+    }
+
+    #[test]
+    fn deltas_against_ids_resolve_in_any_order() {
+        // A chain of ref deltas written base last, each needing the next.
+        let mut blobs = vec![b"v".to_vec()];
+        for i in 0..2000 {
+            let mut next = blobs.last().unwrap().clone();
+            next.push(b'a' + (i % 26) as u8);
+            blobs.push(next);
+        }
+        let mut entries = Vec::new();
+        for pair in blobs.windows(2).rev() {
+            let base_id = object_id(Kind::Blob, &pair[0]).unwrap();
+            entries.push((
+                7,
+                base_id.to_vec(),
+                delta_appending(pair[0].len(), &pair[1][pair[0].len()..]),
+            ));
+        }
+        entries.push((3, Vec::new(), blobs[0].clone()));
+        let (pack, _) = pack_of(&entries);
+        let objects = read_pack(&pack, Limits::default()).unwrap();
+        assert_eq!(objects.len(), blobs.len());
+        let last = object_id(Kind::Blob, blobs.last().unwrap()).unwrap();
+        assert_eq!(objects[&last].1[..], blobs.last().unwrap()[..]);
+    }
+
+    #[test]
+    fn stored_entries_and_resolved_objects_share_one_budget() {
+        // A base of 1000 bytes and four deltas each copying all of it: 1000
+        // bytes inflated for the base, a few for each delta, and 1000 for
+        // each object a delta makes.
+        let base = vec![7u8; 1000];
+        let base_id = object_id(Kind::Blob, &base).unwrap();
+        let mut entries = vec![(3u8, Vec::new(), base.clone())];
+        for i in 0..4u8 {
+            entries.push((7, base_id.to_vec(), delta_appending(1000, &[i])));
+        }
+        let (pack, _) = pack_of(&entries);
+        let within = |inflated| Limits {
+            inflated,
+            ..Limits::default()
+        };
+        assert!(read_pack(&pack, within(6000)).is_ok());
+        let error = read_pack(&pack, within(4000)).unwrap_err();
+        assert!(error.starts_with("its objects take more than"), "{error}");
+
+        // A delta's instructions are let go once it is applied: four deltas
+        // of 1000 inserted bytes each (about 1010 bytes of instructions)
+        // make objects of 1000 bytes; kept, they would take about 8050, but
+        // at most one delta's and its object's are held at once: about 5060.
+        let base = b"b".to_vec();
+        let base_id = object_id(Kind::Blob, &base).unwrap();
+        let mut entries = vec![(3u8, Vec::new(), base.clone())];
+        for i in 0..4u8 {
+            let mut inserted = vec![i; 999];
+            inserted[0] = b'x';
+            entries.push((7, base_id.to_vec(), delta_appending(1, &inserted)));
+        }
+        let (pack, _) = pack_of(&entries);
+        assert!(read_pack(&pack, within(5500)).is_ok());
     }
 
     #[test]
