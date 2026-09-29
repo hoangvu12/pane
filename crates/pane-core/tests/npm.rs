@@ -272,6 +272,83 @@ fn a_package_from_npm_is_previewed_installed_and_its_command_runs() {
 }
 
 #[test]
+fn a_preview_keeps_nothing_it_downloaded() {
+    let dirs = Dirs::new();
+    dirs.publish_greeter("0.1.0");
+    let folder = dirs.sample_in("sample-dependencies-npm", "sample-dependencies-npm");
+    let launcher = dirs.launcher();
+
+    // The npm package itself, then one a local package requires: once
+    // shown, neither download is needed (installing downloads again).
+    block_on(launcher.preview_npm(GREETER));
+    assert_eq!(titles(&launcher), ["Install"]);
+    dirs.wait_for_no_downloads();
+    block_on(launcher.preview_package(&folder));
+    assert!(has(
+        &details(&launcher),
+        "Requires: Greeter from npm, installed with it from npm:@pane-samples/greeter"
+    ));
+    dirs.wait_for_no_downloads();
+    // Left for root, then installed: nothing is kept either.
+    launcher.back();
+    block_on(launcher.preview_package(&folder));
+    block_on(launcher.activate_selected());
+    assert_eq!(
+        installed(&launcher),
+        ["Greeter from npm", "Dependencies from npm sample"]
+    );
+    dirs.wait_for_no_downloads();
+}
+
+#[test]
+fn a_package_whose_component_fails_its_check_keeps_nothing_downloaded() {
+    let dirs = Dirs::new();
+    let mut files = greeter_files(&guests(), "0.1.0");
+    for (path, contents) in &mut files {
+        if path.ends_with(".wasm") {
+            *contents = b"not a component".to_vec();
+        }
+    }
+    dirs.registry.publish(GREETER, "0.1.0", pack(&files));
+    let launcher = dirs.launcher();
+
+    block_on(launcher.preview_npm(GREETER));
+    let error = error_of(&launcher);
+    assert!(error.contains("sample_js.wasm"), "{error}");
+    dirs.wait_for_no_downloads();
+    block_on(launcher.install_npm(GREETER));
+    assert!(launcher.packages().is_empty());
+    dirs.wait_for_no_downloads();
+}
+
+#[test]
+fn a_start_removes_only_downloads_abandoned_long_ago() {
+    let dirs = Dirs::new();
+    let downloads = dirs.packages_dir().join("downloads");
+    // Named by when they were begun, in seconds since 1970: one a day and
+    // more ago (left by a Pane that stopped), one begun just now (another
+    // Pane's install in progress on this data folder).
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let abandoned = downloads.join(format!("{}-4242-0", now - 25 * 60 * 60));
+    let unfinished = downloads.join(format!(".{}-4242-1", now - 25 * 60 * 60));
+    let in_progress = downloads.join(format!("{now}-4343-0"));
+    let unpacking = downloads.join(format!(".{now}-4343-1"));
+    for folder in [&abandoned, &unfinished, &in_progress, &unpacking] {
+        fs::create_dir_all(folder).unwrap();
+        fs::write(folder.join("pane.json"), "{}").unwrap();
+    }
+
+    let _launcher = dirs.launcher();
+
+    assert!(!abandoned.exists() && !unfinished.exists());
+    assert!(in_progress.join("pane.json").exists());
+    assert!(unpacking.join("pane.json").exists());
+}
+
+#[test]
 fn the_form_in_root_search_asks_for_the_npm_package() {
     let dirs = Dirs::new();
     dirs.publish_greeter("0.1.0");

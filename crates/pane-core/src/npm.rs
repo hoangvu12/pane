@@ -337,9 +337,37 @@ pub struct NpmOrigin {
 /// A package downloaded and unpacked.
 pub(crate) struct Fetched {
     /// The unpacked package: the tarball's top folder.
-    pub folder: PathBuf,
+    pub download: Download,
     pub origin: NpmOrigin,
 }
+
+/// A downloaded package unpacked into a folder of its own in Pane's
+/// downloads folder, which is removed when this is dropped: once whatever
+/// read it (a preview, an install, a plan's dependency) is done with it,
+/// whether it was installed or refused. No two downloads share a folder, so
+/// removing one never removes what another preview or install is reading.
+#[derive(Debug)]
+pub(crate) struct Download {
+    folder: PathBuf,
+}
+
+impl Download {
+    /// The unpacked package.
+    pub(crate) fn folder(&self) -> &Path {
+        &self.folder
+    }
+}
+
+impl Drop for Download {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.folder);
+    }
+}
+
+/// How long a download may stay in the downloads folder before a starting
+/// Pane takes it as abandoned (left by a Pane that stopped) and removes it;
+/// a younger one may be another Pane's preview or install in progress.
+pub const ABANDONED_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
 
 #[derive(Deserialize)]
 struct MetadataJson {
@@ -479,9 +507,9 @@ pub(crate) fn fetch(
     check_integrity(&bytes, &integrity).map_err(|why| {
         format!("The download of npm package {name}@{version} {why}; nothing was installed")
     })?;
-    let folder = unpack_into(downloads, &bytes, &integrity)
+    let download = unpack_into(downloads, &bytes)
         .map_err(|why| format!("npm package {name}@{version} cannot be unpacked safely: {why}"))?;
-    let package = read_package_json(&folder)?;
+    let package = read_package_json(download.folder())?;
     if package.name.as_deref() != Some(name.as_str())
         || package.version.as_deref() != Some(version.as_str())
     {
@@ -500,7 +528,7 @@ pub(crate) fn fetch(
         .map(|script| (*script).to_owned())
         .collect();
     Ok(Fetched {
-        folder,
+        download,
         origin: NpmOrigin {
             pinned: spec.version.is_some(),
             version,
@@ -565,42 +593,31 @@ fn base64(bytes: &[u8]) -> String {
     text
 }
 
-/// Unpacks the tarball `tgz`, whose integrity is `integrity`, into a folder
-/// of its own in `downloads`, named after the integrity: a folder that
-/// another fetch of the same tarball unpacked already is used as it is.
-fn unpack_into(downloads: &Path, tgz: &[u8], integrity: &str) -> Result<PathBuf, String> {
+/// Unpacks the tarball `tgz` into a new folder of its own in `downloads`,
+/// named by when it was begun (seconds since 1970), this process and a
+/// count: `<seconds>-<process>-<count>`, first unpacked as
+/// `.<seconds>-<process>-<count>` and renamed once complete.
+fn unpack_into(downloads: &Path, tgz: &[u8]) -> Result<Download, String> {
     static NEXT: AtomicU64 = AtomicU64::new(0);
-    let digest = Sha512::digest(integrity.as_bytes());
-    let name: String = digest[..16].iter().map(|b| format!("{b:02x}")).collect();
-    let folder = downloads.join(&name);
-    if folder.join(".complete").is_file() {
-        return Ok(folder);
-    }
-    fs::create_dir_all(downloads).map_err(|error| error.to_string())?;
-    let partial = downloads.join(format!(
-        ".{name}-{}-{}",
+    let begun = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    let name = format!(
+        "{begun}-{}-{}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let unpacked = unpack(tgz, &partial).and_then(|()| {
-        fs::write(partial.join(".complete"), b"").map_err(|error| error.to_string())
-    });
+    );
+    fs::create_dir_all(downloads).map_err(|error| error.to_string())?;
+    let partial = downloads.join(format!(".{name}"));
+    let unpacked = unpack(tgz, &partial);
+    let folder = downloads.join(&name);
+    let unpacked =
+        unpacked.and_then(|()| fs::rename(&partial, &folder).map_err(|error| error.to_string()));
     if let Err(why) = unpacked {
         let _ = fs::remove_dir_all(&partial);
         return Err(why);
     }
-    match fs::rename(&partial, &folder) {
-        Ok(()) => Ok(folder),
-        // Unpacked by another fetch meanwhile.
-        Err(_) if folder.join(".complete").is_file() => {
-            let _ = fs::remove_dir_all(&partial);
-            Ok(folder)
-        }
-        Err(error) => {
-            let _ = fs::remove_dir_all(&partial);
-            Err(error.to_string())
-        }
-    }
+    Ok(Download { folder })
 }
 
 /// Unpacks the gzipped tarball `tgz` into `dest`, which must not exist,
@@ -886,16 +903,31 @@ fn check_part(part: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
-/// Removes the unpacked downloads in `downloads`: all of them, when Pane
-/// starts, since only an install in progress needs one.
-pub(crate) fn remove_downloads(downloads: &Path) {
-    let _ = fs::remove_dir_all(downloads);
-}
-
-/// `folder`, an unpacked download in `downloads`, is no longer needed.
-pub(crate) fn remove_download(downloads: &Path, folder: &Path) {
-    if folder.parent() == Some(downloads) {
-        let _ = fs::remove_dir_all(folder);
+/// Removes what `downloads` holds that was begun more than
+/// [`ABANDONED_AFTER`] before `now`, or whose name does not say when it was
+/// begun, when Pane starts: downloads a Pane that stopped left behind. A
+/// younger one is kept, since another Pane on this data folder may be
+/// previewing or installing from it.
+pub(crate) fn remove_abandoned_downloads(downloads: &Path, now: std::time::SystemTime) {
+    let Ok(entries) = fs::read_dir(downloads) else {
+        return;
+    };
+    let now = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let begun = name
+            .to_str()
+            .map(|name| name.trim_start_matches('.'))
+            .and_then(|name| name.split('-').next())
+            .and_then(|seconds| seconds.parse::<u64>().ok());
+        let abandoned =
+            begun.is_none_or(|begun| begun.saturating_add(ABANDONED_AFTER.as_secs()) < now);
+        if abandoned {
+            let path = entry.path();
+            let _ = fs::remove_dir_all(&path).or_else(|_| fs::remove_file(&path));
+        }
     }
 }
 
@@ -1064,6 +1096,55 @@ mod tests {
         assert_eq!(base64(b"fo"), "Zm8=");
         assert_eq!(base64(b"foo"), "Zm9v");
         assert_eq!(base64(&[0xfb, 0xff]), "+/8=");
+    }
+
+    #[test]
+    fn each_download_has_a_folder_of_its_own_removed_when_it_is_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let downloads = dir.path().join("downloads");
+        let tgz = tarball(&[("package/pane.json", Regular, b"{}")]);
+        // The same tarball twice, as two previews of one package would.
+        let first = unpack_into(&downloads, &tgz).unwrap();
+        let second = unpack_into(&downloads, &tgz).unwrap();
+        assert_ne!(first.folder(), second.folder());
+        let kept = second.folder().to_path_buf();
+        drop(first);
+        assert_eq!(fs::read(kept.join("pane.json")).unwrap(), b"{}");
+        drop(second);
+        assert_eq!(fs::read_dir(&downloads).unwrap().count(), 0);
+        // One refused leaves nothing either.
+        let refused = tarball(&[("package/../x", Regular, b"")]);
+        assert!(unpack_into(&downloads, &refused).is_err());
+        assert_eq!(fs::read_dir(&downloads).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn only_downloads_begun_long_ago_are_taken_as_abandoned() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = std::time::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let day = ABANDONED_AFTER.as_secs();
+        for name in [
+            format!("{}-1-0", 1_000_000 - day - 1),
+            format!(".{}-1-1", 1_000_000 - day - 1),
+            "not-a-download".to_owned(),
+            format!("{}-2-0", 1_000_000 - day),
+            format!(".{}-2-1", 1_000_000 - 5),
+        ] {
+            fs::create_dir(dir.path().join(name)).unwrap();
+        }
+        fs::write(dir.path().join("stray"), b"").unwrap();
+
+        remove_abandoned_downloads(dir.path(), now);
+
+        let mut left: Vec<String> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            [".999995-2-1".to_owned(), format!("{}-2-0", 1_000_000 - day)]
+        );
     }
 
     #[test]

@@ -916,7 +916,10 @@ impl Launcher {
     ) -> Self {
         let store = Arc::new(Mutex::new(Store::open(packages_dir.clone())));
         // Only an install in progress needs what it downloaded.
-        crate::npm::remove_downloads(&packages_dir.join(DOWNLOADS_DIR));
+        crate::npm::remove_abandoned_downloads(
+            &packages_dir.join(DOWNLOADS_DIR),
+            std::time::SystemTime::now(),
+        );
         let installation = Installation {
             data: ExtensionData::open(&packages_dir),
             dir: packages_dir,

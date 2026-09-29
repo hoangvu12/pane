@@ -91,34 +91,10 @@ impl Sources {
                 "this launcher does not install packages".into(),
             ));
         };
+        // Its download is removed with the package read from it, or at once
+        // if it cannot be read.
         let fetched = npm::fetch(&self.registry, spec, downloads).map_err(PackageError::Npm)?;
-        let folder = fetched.folder.clone();
-        let read = SourcePackage::read_npm(&spec.name, fetched);
-        if read.is_err() {
-            // Nothing will install from it.
-            npm::remove_download(downloads, &folder);
-        }
-        read
-    }
-
-    /// Removes, in the background, the downloads of `packages` from npm,
-    /// which are no longer needed once they are installed or not.
-    fn remove_downloads<'a>(&self, packages: impl Iterator<Item = &'a SourcePackage>) {
-        let Some(downloads) = self.downloads.clone() else {
-            return;
-        };
-        let folders: Vec<PathBuf> = packages
-            .filter(|package| package.npm.is_some())
-            .map(|package| package.folder.clone())
-            .collect();
-        if folders.is_empty() {
-            return;
-        }
-        std::thread::spawn(move || {
-            for folder in folders {
-                npm::remove_download(&downloads, &folder);
-            }
-        });
+        SourcePackage::read_npm(&spec.name, fetched)
     }
 }
 
@@ -361,7 +337,8 @@ impl Launcher {
     /// can be installed, claims what it relies on (unless `claimed` already
     /// holds it), then installs or updates it with those it is missing: all
     /// of them or, removing again what it installed when one fails, none.
-    /// What it downloaded from npm is removed again afterwards.
+    /// What it downloaded from npm is removed with the packages read from
+    /// it, once they are installed or not.
     async fn install_planned(
         &self,
         request: Request,
@@ -376,17 +353,8 @@ impl Launcher {
         };
         let package = self.read_and_check(request).await.map_err(failed)?;
         let (package, plan) = self.plan_dependencies(package).await;
-        let sources = self.sources();
-        let downloaded: Vec<SourcePackage> = std::iter::once(&package)
-            .chain(&plan.install)
-            .filter(|package| package.npm.is_some())
-            .cloned()
-            .collect();
-        let result = self
-            .install_plan(store, package, plan, mode, shown, claimed)
-            .await;
-        sources.remove_downloads(downloaded.iter());
-        result
+        self.install_plan(store, package, plan, mode, shown, claimed)
+            .await
     }
 
     /// Installs `package` with `plan`, as [`Launcher::install_planned`]

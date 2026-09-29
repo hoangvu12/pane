@@ -1010,6 +1010,9 @@ pub(crate) struct SourcePackage {
     /// Where a package from npm was downloaded from; `None` for a local
     /// folder.
     pub npm: Option<NpmOrigin>,
+    /// For a package from npm, its download, removed from the downloads
+    /// folder once the last copy of this package is dropped.
+    _download: Option<std::sync::Arc<crate::npm::Download>>,
     /// Whether a component of it imports `wasi:http` (it can make web
     /// requests), as checking its components found; `false` until they are
     /// checked.
@@ -1022,7 +1025,8 @@ impl SourcePackage {
     /// folder, a tarball without `pane.json` (an ordinary npm package, which
     /// Pane does not run) and one without its built components.
     pub(crate) fn read_npm(name: &str, fetched: Fetched) -> Result<SourcePackage, PackageError> {
-        let Fetched { folder, origin } = fetched;
+        let Fetched { download, origin } = fetched;
+        let folder = download.folder().to_path_buf();
         let spec = format!("{name}@{}", origin.version);
         let (manifest, manifest_text) = match Manifest::read_text(&folder) {
             Ok(read) => read,
@@ -1060,6 +1064,7 @@ impl SourcePackage {
             manifest,
             manifest_text,
             npm: Some(origin),
+            _download: Some(std::sync::Arc::new(download)),
             network: false,
         })
     }
@@ -1077,6 +1082,7 @@ impl SourcePackage {
             manifest,
             manifest_text,
             npm: None,
+            _download: None,
             network: false,
         })
     }
@@ -1094,6 +1100,7 @@ impl SourcePackage {
             manifest,
             manifest_text,
             npm: None,
+            _download: None,
             network: false,
         })
     }
