@@ -290,7 +290,12 @@ How it works:
   comes back if it carries on. After 30 seconds, Pane gives up on it,
   exactly as last seen: a thread that left its poll or beat meanwhile
   (checked under the lock it leaves its poll under) is left alone.
-  Compiling a component is exempt. Giving up: every call the thread held
+  Compiling a component is exempt. Only time the watchdog itself saw
+  counts: the time between two of its looks counts at most one second
+  (`LOOK_GAP`), so a whole process stopped meanwhile (by a debugger,
+  SIGSTOP or Ctrl-Z, or a computer asleep on a system whose clock counts
+  sleep), whose runtime thread did not run either, is not given up on as
+  it resumes. Giving up: every call the thread held
   (running or queued, and `Runtime::running` or `view_count` asked of it)
   answers "Extension runtime unavailable: it stopped responding before
   answering and was started again; Pane does not run this again by

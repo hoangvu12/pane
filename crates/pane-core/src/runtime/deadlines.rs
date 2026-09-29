@@ -30,7 +30,8 @@
 //!   ends. A watchdog thread that sees the count still, while the thread is
 //!   inside one poll and not inside a host call, says so after
 //!   [`WARN_AFTER`] ("not responding yet") and gives up on it after
-//!   [`UNRESPONSIVE_LIMIT`]. Which extension, if any, caused it is not
+//!   [`UNRESPONSIVE_LIMIT`], counting only time it saw ([`LOOK_GAP`]: a
+//!   stopped process is not a stuck thread). Which extension, if any, caused it is not
 //!   known, so none is named or paused; every call it held is answered,
 //!   its helpers are ended and a fresh thread serves calls (see
 //!   `supervisor`). A thread cannot be ended from outside, so the stuck one
@@ -69,6 +70,13 @@ pub const UNRESPONSIVE_LIMIT: Duration = Duration::from_secs(30);
 
 /// How often the watchdog looks at the runtime thread.
 pub(super) const WATCH_EVERY: Duration = Duration::from_millis(100);
+
+/// The most the time between two of the watchdog's looks counts as a
+/// thread's quiet time. A longer gap means the watchdog itself did not run:
+/// the whole process was stopped (by a debugger, SIGSTOP or Ctrl-Z) or the
+/// computer slept on a system whose clock counts it, and the runtime thread
+/// did not run either, so that time is not the thread's.
+pub(super) const LOOK_GAP: Duration = Duration::from_secs(1);
 
 /// The limits a runtime applies ([`COMPUTE_LIMIT`], [`WARN_AFTER`],
 /// [`UNRESPONSIVE_LIMIT`]). Tests and smokes shorten them in debug builds
@@ -444,7 +452,11 @@ pub(super) enum Verdict {
 /// How long a thread has made no progress, from what the watchdog saw.
 pub(super) struct Quiet {
     last: Option<Progress>,
-    since: Instant,
+    /// How long the thread has been seen quiet: the time between the
+    /// watchdog's looks since, each counting at most [`LOOK_GAP`].
+    quiet: Duration,
+    /// When the watchdog last looked.
+    looked: Instant,
     warned: bool,
 }
 
@@ -452,26 +464,32 @@ impl Quiet {
     pub(super) fn new(now: Instant) -> Quiet {
         Quiet {
             last: None,
-            since: now,
+            quiet: Duration::ZERO,
+            looked: now,
             warned: false,
         }
     }
 
     /// What `seen` at `now` means. The thread is quiet while it stays inside
     /// one poll, outside any host call, with its heartbeat still; waiting
-    /// for work (outside any poll) or inside a host call is not quiet.
+    /// for work (outside any poll) or inside a host call is not quiet. Only
+    /// time the watchdog saw counts: a longer gap since its last look than
+    /// [`LOOK_GAP`] (the whole process was stopped) counts as that much.
     pub(super) fn observe(&mut self, now: Instant, seen: Progress, limits: &Limits) -> Verdict {
+        let since_last_look = now.saturating_duration_since(self.looked).min(LOOK_GAP);
+        self.looked = now;
         let moving =
             seen.poll.is_none() || seen.sheltered || self.last.is_none_or(|last| last != seen);
         if moving {
             self.last = Some(seen);
-            self.since = now;
+            self.quiet = Duration::ZERO;
             return match std::mem::take(&mut self.warned) {
                 true => Verdict::Recovered,
                 false => Verdict::Fine,
             };
         }
-        let quiet = now.saturating_duration_since(self.since);
+        self.quiet += since_last_look;
+        let quiet = self.quiet;
         if quiet >= limits.unresponsive {
             Verdict::GiveUp
         } else if quiet >= limits.warn && !self.warned {
@@ -688,55 +706,124 @@ mod tests {
         }
     }
 
+    fn secs(secs: u64) -> Duration {
+        Duration::from_secs(secs)
+    }
+
+    /// The watchdog's looks at one thread, with when each was taken.
+    struct Looks {
+        start: Instant,
+        /// When the last look was taken, after `start`.
+        at: Duration,
+        quiet: Quiet,
+    }
+
+    impl Looks {
+        fn new() -> Looks {
+            let start = Instant::now();
+            Looks {
+                start,
+                at: Duration::ZERO,
+                quiet: Quiet::new(start),
+            }
+        }
+
+        /// Looks once, `after` the previous look, seeing `seen`.
+        fn look(&mut self, after: Duration, seen: Progress) -> Verdict {
+            self.at += after;
+            self.quiet.observe(self.start + self.at, seen, &limits())
+        }
+
+        /// Looks every [`WATCH_EVERY`], as the watchdog does, until `until`
+        /// after the start, seeing `seen` each time: what it made of each
+        /// look other than [`Verdict::Fine`], with when.
+        fn until(&mut self, until: Duration, seen: Progress) -> Vec<(Duration, Verdict)> {
+            let mut verdicts = Vec::new();
+            while self.at < until {
+                let verdict = self.look(WATCH_EVERY, seen);
+                if verdict != Verdict::Fine {
+                    verdicts.push((self.at, verdict));
+                }
+            }
+            verdicts
+        }
+    }
+
     #[test]
     fn a_thread_still_inside_one_poll_warns_then_is_given_up() {
-        let start = Instant::now();
-        let mut quiet = Quiet::new(start);
-        let s = |secs| start + Duration::from_secs(secs);
-        assert_eq!(quiet.observe(s(0), inside(1, 5), &limits()), Verdict::Fine);
-        assert_eq!(quiet.observe(s(9), inside(1, 5), &limits()), Verdict::Fine);
-        assert_eq!(quiet.observe(s(10), inside(1, 5), &limits()), Verdict::Slow);
-        assert_eq!(quiet.observe(s(20), inside(1, 5), &limits()), Verdict::Fine);
+        let mut looks = Looks::new();
+        assert_eq!(looks.look(Duration::ZERO, inside(1, 5)), Verdict::Fine);
         assert_eq!(
-            quiet.observe(s(30), inside(1, 5), &limits()),
-            Verdict::GiveUp
+            looks.until(secs(30), inside(1, 5)),
+            [(secs(10), Verdict::Slow), (secs(30), Verdict::GiveUp)]
         );
     }
 
     #[test]
     fn a_heartbeat_a_new_poll_waiting_or_a_host_call_is_progress() {
-        let start = Instant::now();
-        let s = |secs| start + Duration::from_secs(secs);
-        let mut quiet = Quiet::new(start);
-        quiet.observe(s(0), inside(1, 5), &limits());
-        assert_eq!(quiet.observe(s(12), inside(1, 5), &limits()), Verdict::Slow);
+        let mut looks = Looks::new();
+        looks.look(Duration::ZERO, inside(1, 5));
+        assert_eq!(
+            looks.until(secs(12), inside(1, 5)),
+            [(secs(10), Verdict::Slow)]
+        );
         // A beat: a guest yielded, or a host call started or ended.
+        assert_eq!(looks.look(WATCH_EVERY, inside(1, 6)), Verdict::Recovered);
+        let beat = looks.at;
         assert_eq!(
-            quiet.observe(s(13), inside(1, 6), &limits()),
-            Verdict::Recovered
+            looks.until(beat + secs(30), inside(1, 6)),
+            [
+                (beat + secs(10), Verdict::Slow),
+                (beat + secs(30), Verdict::GiveUp)
+            ]
         );
-        assert_eq!(
-            quiet.observe(s(43), inside(1, 6), &limits()),
-            Verdict::GiveUp
-        );
-        let mut quiet = Quiet::new(start);
-        quiet.observe(s(0), inside(1, 5), &limits());
+
+        let mut looks = Looks::new();
+        looks.look(Duration::ZERO, inside(1, 5));
         // Inside a host call for long, such as a save waiting for its file.
         let sheltered = Progress {
             sheltered: true,
             ..inside(1, 5)
         };
-        assert_eq!(quiet.observe(s(100), sheltered, &limits()), Verdict::Fine);
+        assert_eq!(looks.until(secs(100), sheltered), []);
         // Waiting for work, outside any poll.
         let idle = Progress {
             poll: None,
             beats: 5,
             sheltered: false,
         };
-        assert_eq!(quiet.observe(s(200), idle, &limits()), Verdict::Fine);
+        assert_eq!(looks.until(secs(200), idle), []);
+        // A new poll: quiet again from its first look, not given up on
+        // before its own limit.
         assert_eq!(
-            quiet.observe(s(229), inside(2, 5), &limits()),
-            Verdict::Fine
+            looks.until(secs(229), inside(2, 5)),
+            [(secs(200) + WATCH_EVERY + secs(10), Verdict::Slow)]
+        );
+    }
+
+    /// When the whole process is stopped (by a debugger, SIGSTOP or Ctrl-Z,
+    /// or while the computer sleeps on a system whose clock counts it), the
+    /// watchdog does not run either, and neither does the thread: the time
+    /// between two looks counts at most [`LOOK_GAP`], so the thread is
+    /// never given up on as it resumes, only once it stays quiet for its
+    /// limits while the watchdog looks.
+    #[test]
+    fn an_hour_the_whole_process_was_stopped_is_not_quiet_time() {
+        let mut looks = Looks::new();
+        looks.look(Duration::ZERO, inside(1, 5));
+        assert_eq!(looks.until(secs(5), inside(1, 5)), []);
+
+        assert_eq!(looks.look(secs(3600), inside(1, 5)), Verdict::Fine);
+
+        // 5 seconds seen quiet before the stop, at most LOOK_GAP for it.
+        let resumed = looks.at;
+        let seen = secs(5) + LOOK_GAP;
+        assert_eq!(
+            looks.until(resumed + secs(30) - seen, inside(1, 5)),
+            [
+                (resumed + secs(10) - seen, Verdict::Slow),
+                (resumed + secs(30) - seen, Verdict::GiveUp)
+            ]
         );
     }
 
