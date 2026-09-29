@@ -935,8 +935,12 @@ impl Launcher {
             &packages_dir.join(DOWNLOADS_DIR),
             std::time::SystemTime::now(),
         );
+        let data = ExtensionData::open(&packages_dir);
+        // Expired clipboard history goes before anything shows it, whether
+        // or not its package runs.
+        data.keep_expiring_clipboard_history();
         let installation = Installation {
-            data: ExtensionData::open(&packages_dir),
+            data,
             dir: packages_dir,
             records: Recorder::start(store.clone()),
             store,
@@ -1072,6 +1076,34 @@ impl Launcher {
             ..self.sources.clone()
         };
         Launcher { sources, ..self }
+    }
+
+    /// This launcher telling the time for clipboard history by `clock`
+    /// rather than the system's clock, for tests and development builds:
+    /// items are kept and expire by it. Items that already expired by the
+    /// system's clock were removed when the launcher started, so `clock`
+    /// should not stand before it. Release builds have no way to replace
+    /// the system's clock.
+    #[cfg(any(test, debug_assertions))]
+    pub fn with_clock(self, clock: Arc<dyn crate::clipboard::Clock>) -> Self {
+        if let Some(installation) = &self.installation {
+            let history = installation.data.clipboard_history();
+            history.set_clock(clock);
+            history.sweep();
+        }
+        self
+    }
+
+    /// Waits until Pane's clipboard history expiry thread swept after every
+    /// change of the history and of the clock so far; `false` if it did not
+    /// within `limit`. For tests and development builds, which so wait for
+    /// expiry without timing it.
+    #[cfg(any(test, debug_assertions))]
+    #[doc(hidden)]
+    pub fn wait_for_clipboard_expiry(&self, limit: std::time::Duration) -> bool {
+        self.installation
+            .as_ref()
+            .is_some_and(|installation| installation.data.clipboard_history().wait_swept(limit))
     }
 
     /// This launcher registering the global hotkeys the user assigns with

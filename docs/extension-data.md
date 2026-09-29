@@ -34,7 +34,11 @@ clipboard and writes the items for the package, which reads and controls
 them through `pane:extension/clipboard-history`
 ([`wit/clipboard.wit`](../wit/clipboard.wit)). It counts as saved data with
 settings and content ("Saved data: 1 setting and 12 clipboard history
-items").
+items"). Its items expire (#36): Pane deletes each once the package's
+retention passed since it was copied, without running the package, also
+while it is disabled or uninstalled with its data kept, and before counting
+or showing anything after downtime, so these counts never include an
+expired item ([expiry](clipboard-history.md#expiry)).
 
 The settings sample in [Rust](../guests/sample-settings/src/lib.rs),
 [JavaScript](../guests/sample-settings-js/src/index.js) and

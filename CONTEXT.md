@@ -89,8 +89,12 @@ A named web address the user saves through the Quicklinks default extension's fo
 _Avoid_: Bookmark, shortcut, alias
 
 **Clipboard history**:
-The text a user copies, which Pane keeps on this computer for an installed package once the user turned it on in the package's command, watching the clipboard only while the history is on and the package runs; a copy its application marks as not to be kept (as password managers do), or from a program the user excluded, is not kept. It is that package's extension data of a kind of its own, written by Pane, never sent anywhere; the Clipboard History default extension shows it.
+The text a user copies, which Pane keeps on this computer for an installed package once the user turned it on in the package's command, watching the clipboard only while the history is on and the package runs; a copy its application marks as not to be kept (as password managers do), or from a program the user excluded, is not kept. Each item is kept for the package's retention after it was copied, then Pane deletes it, whether the package runs or not. It is that package's extension data of a kind of its own, written by Pane, never sent anywhere; the Clipboard History default extension shows it.
 _Avoid_: Clipboard (the system's current contents, which deleting history never changes), clipboard log, paste history
+
+**Retention**:
+How long Pane keeps each clipboard history item after it was copied (7 days unless the user chose otherwise), counted from the copy, so disabling or re-enabling the package or stopping Pane never extends it. Clearing history deletes the items and keeps history on; turning it off and deleting it (the specification's Disable and delete history) also stops keeping what is copied.
+_Avoid_: Expiry date (an item's deadline follows from its copy and the retention), TTL
 
 **Global hotkey**:
 A key combination the user assigns to an installed command in Pane, which opens that command in Pane's window while any application has focus; Pane keeps it as its own record and registers it with the system only while the command's extension is enabled.
