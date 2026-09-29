@@ -313,14 +313,22 @@ fn check_version(version: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Where an installed or previewed npm package came from.
+/// An npm package at one version, as Pane downloaded, installed and
+/// records it: its name, the version, and whether it is pinned to that
+/// version (the user, or the dependency that installed it, named it
+/// exactly, rather than taking the latest).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NpmPackage {
+    pub name: String,
+    pub version: String,
+    pub pinned: bool,
+}
+
+/// Where a previewed or installed npm package was downloaded from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NpmOrigin {
-    /// The npm version downloaded.
-    pub version: String,
-    /// Whether the user (or a dependency's source) named this exact version:
-    /// installing it pins the package to it. Otherwise it is the latest.
-    pub pinned: bool,
+    /// The package and version downloaded.
+    pub package: NpmPackage,
     /// The tarball's address.
     pub tarball: String,
     /// The tarball's sha512 integrity, as the registry gave it and Pane
@@ -530,8 +538,11 @@ pub(crate) fn fetch(
     Ok(Fetched {
         download,
         origin: NpmOrigin {
-            pinned: spec.version.is_some(),
-            version,
+            package: NpmPackage {
+                name: name.clone(),
+                version,
+                pinned: spec.version.is_some(),
+            },
             tarball,
             integrity,
             scripts,

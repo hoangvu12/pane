@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::atomic::{Readers, write_atomically};
 use crate::helpers::runner;
 use crate::launcher::CommandRegistration;
-use crate::npm::{Fetched, NpmOrigin, NpmSpec};
+use crate::npm::{Fetched, NpmOrigin, NpmPackage, NpmSpec};
 use crate::platform::{self, Platform};
 use crate::runtime::{CallError, Exports};
 use pane_target::Target;
@@ -132,15 +132,13 @@ impl PackageIdentity {
     /// A package from npm cannot name a `local:` folder: its folder is on its
     /// author's computer, not the user's.
     pub(crate) fn dependency(&self, source: &str) -> Result<PackageIdentity, PathBuf> {
-        if let Some(spec) = source.strip_prefix("npm:") {
-            return match NpmSpec::parse(spec) {
-                Ok(spec) => Ok(PackageIdentity::npm(&spec.name)),
-                Err(_) => Err(PathBuf::from(source)),
-            };
-        }
-        let path = source.strip_prefix("local:").unwrap_or(source);
+        let path = match SourceSpec::parse(source) {
+            Ok(SourceSpec::Npm(spec)) => return Ok(PackageIdentity::npm(&spec.name)),
+            Ok(SourceSpec::Local(path)) => path,
+            Err(_) => return Err(PathBuf::from(source)),
+        };
         let folder = match &self.0 {
-            Source::Local { local } => Path::new(local).join(path),
+            Source::Local { local } => Path::new(local).join(&path),
             Source::Npm { .. } => return Err(PathBuf::from(path)),
         };
         if let Ok(identity) = PackageIdentity::local(&folder) {
@@ -743,6 +741,41 @@ impl Manifest {
     }
 }
 
+/// A package source as it is written: in a manifest's `dependencies`, or
+/// by a caller naming a package by its identity. It is `local:` and a
+/// folder path, or `npm:` and a package name with an optional exact
+/// version. This is the one place such text is read; a Git source (Q10)
+/// would be another kind.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SourceSpec {
+    /// `local:<path>`: the path as written, not yet checked or resolved.
+    Local(String),
+    /// `npm:<name>[@<version>]`.
+    Npm(NpmSpec),
+}
+
+/// Why text is not a [`SourceSpec`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SourceError {
+    /// It starts with neither `local:` nor `npm:`.
+    UnknownKind,
+    /// It is `npm:` and not a package name with an optional exact version,
+    /// for this reason.
+    Npm(String),
+}
+
+impl SourceSpec {
+    pub(crate) fn parse(text: &str) -> Result<SourceSpec, SourceError> {
+        match text.split_once(':') {
+            Some(("local", path)) => Ok(SourceSpec::Local(path.to_owned())),
+            Some(("npm", spec)) => NpmSpec::parse(spec)
+                .map(SourceSpec::Npm)
+                .map_err(SourceError::Npm),
+            _ => Err(SourceError::UnknownKind),
+        }
+    }
+}
+
 /// Checks that `source`, of dependency `id`, is either `npm:` and a package
 /// name with an optional exact version (`npm:greeter@1.2.3`), or `local:` and
 /// a folder path written the same way on every system: `/` between folders,
@@ -754,17 +787,16 @@ fn check_source(source: &str, id: &str) -> Result<(), PackageError> {
             "the source `{source}` of dependency `{id}` {reason}"
         )))
     };
-    if let Some(spec) = source.strip_prefix("npm:") {
-        return match NpmSpec::parse(spec) {
-            Ok(_) => Ok(()),
-            Err(why) => invalid(&format!("is not an npm package: {why}")),
-        };
-    }
-    let Some(path) = source.strip_prefix("local:") else {
-        return invalid(
-            "must be `local:` followed by a folder path or `npm:` followed by a package name; \
-             other sources are not supported yet",
-        );
+    let path = match SourceSpec::parse(source) {
+        Ok(SourceSpec::Npm(_)) => return Ok(()),
+        Ok(SourceSpec::Local(path)) => path,
+        Err(SourceError::Npm(why)) => return invalid(&format!("is not an npm package: {why}")),
+        Err(SourceError::UnknownKind) => {
+            return invalid(
+                "must be `local:` followed by a folder path or `npm:` followed by a package \
+                 name; other sources are not supported yet",
+            );
+        }
     };
     if path.is_empty() {
         return invalid("must be `local:` followed by a folder path");
@@ -1020,14 +1052,15 @@ pub(crate) struct SourcePackage {
 }
 
 impl SourcePackage {
-    /// Reads the npm package `name` that Pane downloaded and unpacked, as
-    /// the package with its npm identity. Explains, rather than as for a
-    /// folder, a tarball without `pane.json` (an ordinary npm package, which
-    /// Pane does not run) and one without its built components.
-    pub(crate) fn read_npm(name: &str, fetched: Fetched) -> Result<SourcePackage, PackageError> {
+    /// Reads the npm package that Pane downloaded and unpacked, as the
+    /// package with its npm identity. Explains, rather than as for a folder,
+    /// a tarball without `pane.json` (an ordinary npm package, which Pane
+    /// does not run) and one without its built components.
+    pub(crate) fn read_npm(fetched: Fetched) -> Result<SourcePackage, PackageError> {
         let Fetched { download, origin } = fetched;
         let folder = download.folder().to_path_buf();
-        let spec = format!("{name}@{}", origin.version);
+        let name = origin.package.name.clone();
+        let spec = format!("{name}@{}", origin.package.version);
         let (manifest, manifest_text) = match Manifest::read_text(&folder) {
             Ok(read) => read,
             Err(PackageError::NoManifest(_)) => {
@@ -1059,7 +1092,7 @@ impl SourcePackage {
             Err(error) => return Err(error),
         };
         Ok(SourcePackage {
-            identity: PackageIdentity::npm(name),
+            identity: PackageIdentity::npm(&name),
             folder,
             manifest,
             manifest_text,
@@ -1124,7 +1157,7 @@ pub struct InstalledPackage {
     pub enabled: bool,
     /// For a package from npm, the npm version installed and whether it is
     /// pinned to it.
-    pub npm: Option<NpmInstalled>,
+    pub npm: Option<NpmPackage>,
     /// Whether a component of it imports `wasi:http`, so its code can make
     /// web requests, as found when it was installed, updated or reloaded.
     pub uses_network: bool,
@@ -1160,15 +1193,13 @@ impl InstalledPackage {
                 .collect(),
             Err(_) => Vec::new(),
         };
+        let npm = npm.and_then(|npm| npm.package(&identity));
         InstalledPackage {
             manifest,
             identity,
             location,
             enabled,
-            npm: npm.map(|npm| NpmInstalled {
-                version: npm.version.clone(),
-                pinned: npm.pinned,
-            }),
+            npm,
             uses_network,
             dependencies,
         }
@@ -1378,8 +1409,9 @@ struct RecordJson {
     network: bool,
 }
 
-/// The npm version of an installed npm package, recorded beside its name:
-/// `"npm": "greeter", "npmVersion": "1.2.3", "pinned": true`.
+/// An installed [`NpmPackage`] as its record writes it, beside the name its
+/// source records: `"npm": "greeter", "npmVersion": "1.2.3", "pinned":
+/// true`. (The name is the source's, so it is not written twice.)
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct NpmRecordJson {
     #[serde(rename = "npmVersion")]
@@ -1388,13 +1420,23 @@ struct NpmRecordJson {
     pinned: bool,
 }
 
-/// The npm version installed of a package from npm, and whether it is
-/// pinned to it: the user named that exact version to install or update it
-/// (or a dependency's source did), rather than taking the latest.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NpmInstalled {
-    pub version: String,
-    pub pinned: bool,
+impl NpmRecordJson {
+    fn of(package: &NpmPackage) -> NpmRecordJson {
+        NpmRecordJson {
+            version: package.version.clone(),
+            pinned: package.pinned,
+        }
+    }
+
+    /// The package this records for the package with `identity`, an npm
+    /// one.
+    fn package(&self, identity: &PackageIdentity) -> Option<NpmPackage> {
+        Some(NpmPackage {
+            name: identity.npm_name()?.to_owned(),
+            version: self.version.clone(),
+            pinned: self.pinned,
+        })
+    }
 }
 
 /// A dependency id and the source it resolved to.
@@ -1882,10 +1924,10 @@ impl Store {
             ..registry.clone()
         };
         let dependencies = resolved_dependencies(package);
-        let npm = package.npm.as_ref().map(|origin| NpmRecordJson {
-            version: origin.version.clone(),
-            pinned: origin.pinned,
-        });
+        let npm = package
+            .npm
+            .as_ref()
+            .map(|origin| NpmRecordJson::of(&origin.package));
         // An update keeps the record, so a disabled package stays disabled.
         let enabled = match updated.packages.iter_mut().find(|r| &r.source == local) {
             Some(record) => {

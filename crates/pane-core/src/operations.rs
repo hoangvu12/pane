@@ -30,7 +30,7 @@ use wasmtime::component::{Accessor, HasData};
 
 use crate::extension_data::{ExtensionData, PackageData};
 use crate::packages::{
-    InstalledPackage, ManifestOperation, PackageIdentity, installed_as, paused_reason,
+    InstalledPackage, ManifestOperation, PackageIdentity, SourceSpec, installed_as, paused_reason,
 };
 use crate::platform;
 use crate::runtime::{CallError, GuestState, bindings};
@@ -173,10 +173,11 @@ impl Installed {
             dependency = self.dependency(caller, source, operation, version)?;
             dependency.as_str()
         };
-        let is_identity = match source.split_once(':') {
-            Some(("local", path)) => Path::new(path).is_absolute(),
-            Some(("npm", name)) => crate::npm::check_name(name).is_ok(),
-            _ => false,
+        // An identity names a package, not a version of it.
+        let is_identity = match SourceSpec::parse(source) {
+            Ok(SourceSpec::Local(path)) => Path::new(&path).is_absolute(),
+            Ok(SourceSpec::Npm(spec)) => spec.version.is_none(),
+            Err(_) => false,
         };
         if !is_identity {
             return Err(OperationError::new(

@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use super::{Changing, Launcher, Mode, State, Status, off_thread};
 use crate::dependencies::{self, Assumptions, Plan, RequiredState};
 use crate::npm::{self, NpmSpec, Registry};
-use crate::packages::{InstalledPackage, PackageError, PackageIdentity, SourcePackage};
+use crate::packages::{InstalledPackage, PackageError, PackageIdentity, SourcePackage, SourceSpec};
 use crate::platform;
 
 /// Where a package to preview or install comes from.
@@ -73,13 +73,10 @@ impl Sources {
         identity: &PackageIdentity,
         source: &str,
     ) -> Result<SourcePackage, PackageError> {
-        match (identity.local_folder(), source.strip_prefix("npm:")) {
+        match (identity.local_folder(), SourceSpec::parse(source)) {
             (Some(folder), _) => SourcePackage::read(folder),
-            (None, Some(spec)) => {
-                let spec = NpmSpec::parse(spec).map_err(PackageError::Npm)?;
-                self.fetch(&spec)
-            }
-            (None, None) => Err(PackageError::Npm(format!(
+            (None, Ok(SourceSpec::Npm(spec))) => self.fetch(&spec),
+            (None, _) => Err(PackageError::Npm(format!(
                 "{identity} is not a source Pane can install from"
             ))),
         }
@@ -94,7 +91,7 @@ impl Sources {
         // Its download is removed with the package read from it, or at once
         // if it cannot be read.
         let fetched = npm::fetch(&self.registry, spec, downloads).map_err(PackageError::Npm)?;
-        SourcePackage::read_npm(&spec.name, fetched)
+        SourcePackage::read_npm(fetched)
     }
 }
 
@@ -422,7 +419,7 @@ impl Launcher {
                 .collect();
             (state.packages.clone(), paused)
         };
-        let sources = self.sources();
+        let sources = self.sources.clone();
         let (package, mut plan) = off_thread(move || {
             let read = |identity: &PackageIdentity, source: &str| {
                 sources.read_dependency(identity, source)

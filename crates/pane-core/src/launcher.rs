@@ -2214,15 +2214,10 @@ impl Launcher {
         &self,
         request: install::Request,
     ) -> Result<SourcePackage, PackageError> {
-        let sources = self.sources();
+        let sources = self.sources.clone();
         let mut package = off_thread(move || sources.read(&request)).await?;
         package.network = self.check_components(&package).await?;
         Ok(package)
-    }
-
-    /// Where this launcher reads packages from.
-    fn sources(&self) -> install::Sources {
-        self.sources.clone()
     }
 
     /// Like [`Launcher::read_and_check`], for a package staged in `folder`
@@ -3576,7 +3571,7 @@ fn preview_view(
             if !installed.enabled {
                 details.push("Disabled: enable it in Manage extensions".into());
             }
-            let replace = match &package.npm {
+            let replace = match package.npm.as_ref().map(|npm| &npm.package) {
                 Some(npm) if npm.pinned => format!("npm version {}, pinned", npm.version),
                 Some(npm) => format!("npm version {}, the latest", npm.version),
                 None => "this folder's contents".into(),
@@ -3617,13 +3612,13 @@ fn preview_view(
 /// and what Pane does not do with it.
 fn npm_lines(npm: &crate::npm::NpmOrigin) -> Vec<String> {
     let mut lines = vec![
-        if npm.pinned {
+        if npm.package.pinned {
             format!(
                 "npm version: {}, the version you named: installing pins it to that version",
-                npm.version
+                npm.package.version
             )
         } else {
-            format!("npm version: {}, the latest", npm.version)
+            format!("npm version: {}, the latest", npm.package.version)
         },
         format!(
             "Downloaded: {}, matching its sha512 integrity from the registry",

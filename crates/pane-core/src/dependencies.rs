@@ -34,7 +34,7 @@ use std::path::PathBuf;
 
 use crate::packages::{
     InstalledPackage, Manifest, ManifestDependency, PackageError, PackageIdentity, SourcePackage,
-    Store, installed_as, paused_reason,
+    SourceSpec, Store, installed_as, paused_reason,
 };
 use crate::platform;
 
@@ -517,8 +517,11 @@ impl<R: FnMut(&PackageIdentity, &str) -> Result<SourcePackage, PackageError>> Pl
                 }
                 continue;
             }
-            let local_from_npm =
-                package.identity.npm_name().is_some() && dependency.source.starts_with("local:");
+            let local_from_npm = package.identity.npm_name().is_some()
+                && matches!(
+                    SourceSpec::parse(&dependency.source),
+                    Ok(SourceSpec::Local(_))
+                );
             if local_from_npm && dependency.required {
                 self.plan.problems.push(problem(ProblemKind::LocalFromNpm {
                     source: dependency.source.clone(),
