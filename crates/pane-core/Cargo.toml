@@ -31,11 +31,9 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["ring",
 # The native file watcher of development mode (inotify, FSEvents,
 # ReadDirectoryChangesW), which builds a local package on save.
 notify = "8.2"
-# Installing npm packages (#45): the registry over HTTPS with the system's
-# certificate verifier (no bundled root list), the gzipped tarball, and its
-# sha512 integrity (rustls, with ring, is the one above). flate2 and sha2 are
-# already in the tree (image, Cranelift).
-ureq = { version = "3.4", default-features = false, features = ["rustls-no-provider", "platform-verifier"] }
+# Installing npm packages (#45): the gzipped tarball and its sha512
+# integrity, both already in the tree (image, Cranelift); the registry is
+# reached through `http` above.
 flate2 = "1"
 tar = { version = "0.4.44", default-features = false }
 sha2 = "0.10"

@@ -28,12 +28,13 @@ use std::fmt;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use serde::Deserialize;
 use sha2::{Digest, Sha512};
+
+use crate::http::{Answer, GetError, OwnLimits};
 
 /// The public npm registry.
 pub const NPMJS: &str = "https://registry.npmjs.org/";
@@ -87,16 +88,20 @@ impl Registry {
         }
     }
 
-    /// A registry on this computer, for tests and development: `url` must be
-    /// `http://` or `https://` on `127.0.0.1`, `localhost` or `[::1]`, with
-    /// an optional port and path. Any other address is refused, so that
-    /// nothing but the public registry is ever reached over the network.
+    /// A registry on this computer, for tests and development builds only:
+    /// `url` must be `http://` or `https://` on a loopback address written
+    /// as one (`127.0.0.1`, any `127.x.y.z`, or `[::1]`), with an optional
+    /// port and path. Any other address is refused, `localhost` included (a
+    /// name could resolve elsewhere), so that nothing but the public
+    /// registry is ever reached over the network. Release builds have no
+    /// way to replace the public registry.
+    #[cfg(any(test, debug_assertions))]
     pub fn local(url: &str) -> Result<Registry, String> {
         let refused = || {
             format!(
                 "the npm registry `{url}` is not on this computer: Pane uses \
-                 https://registry.npmjs.org/, and only a registry on 127.0.0.1, localhost or \
-                 [::1] can replace it, for tests and development"
+                 https://registry.npmjs.org/, and only a registry on a loopback address such as \
+                 127.0.0.1 or [::1] can replace it, for tests and development"
             )
         };
         let (_, authority, _) = split_url(url).ok_or_else(refused)?;
@@ -108,7 +113,15 @@ impl Registry {
             }
             _ => authority,
         };
-        if !matches!(host, "127.0.0.1" | "localhost" | "[::1]") {
+        let literal = host
+            .strip_prefix('[')
+            .and_then(|host| host.strip_suffix(']'))
+            .unwrap_or(host);
+        let loopback = literal
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback());
+        // `[::1]` in brackets, `127.0.0.1` without.
+        if !loopback || (literal.contains(':') && literal == host) {
             return Err(refused());
         }
         let mut base = url.to_owned();
@@ -122,11 +135,9 @@ impl Registry {
     }
 
     /// The registry named by `PANE_NPM_REGISTRY`, in development builds
-    /// only; `None` when it is not set, and always in release builds.
+    /// only (see [`Registry::local`]); `None` when it is not set.
+    #[cfg(any(test, debug_assertions))]
     pub fn from_dev_env() -> Option<Result<Registry, String>> {
-        if !cfg!(debug_assertions) {
-            return None;
-        }
         let url = std::env::var("PANE_NPM_REGISTRY").ok()?;
         (!url.is_empty()).then(|| Registry::local(&url))
     }
@@ -140,6 +151,26 @@ impl Registry {
     /// is written `%2f`, as npm does.
     fn metadata_url(&self, name: &str) -> String {
         format!("{}{}", self.base, name.replace('/', "%2f"))
+    }
+
+    /// Asks the registry for `url`, with `headers`, a body of at most `most`
+    /// bytes, through the connections guests' requests use
+    /// ([`crate::http::get_blocking`]): only over HTTPS unless the registry is
+    /// on this computer.
+    fn get(&self, url: &str, headers: &[(&str, &str)], most: u64) -> Result<Answer, GetError> {
+        if !self.loopback && !url.starts_with("https://") {
+            return Err(GetError::Failed(format!("`{url}` is not an HTTPS address")));
+        }
+        crate::http::get_blocking(
+            url,
+            headers,
+            most,
+            OwnLimits {
+                connect: Duration::from_secs(30),
+                between_bytes: Duration::from_secs(60),
+                deadline: Duration::from_secs(300),
+            },
+        )
     }
 
     /// Why Pane does not download `url` for this registry, if it does not:
@@ -159,38 +190,6 @@ impl Registry {
                 }
             )),
         }
-    }
-
-    fn agent(&self) -> ureq::Agent {
-        use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
-        let tls = TlsConfig::builder()
-            .provider(TlsProvider::Rustls)
-            // The system's certificates, not a list of Pane's own.
-            .root_certs(RootCerts::PlatformVerifier)
-            .unversioned_rustls_crypto_provider(Arc::new(rustls::crypto::ring::default_provider()))
-            .build();
-        let config = ureq::Agent::config_builder()
-            .https_only(!self.loopback)
-            // A redirect could lead elsewhere than the registry: its status
-            // is reported instead of followed.
-            .max_redirects(0)
-            // Each request opens its own connection: one kept from the
-            // metadata request may be closed by the server just as the
-            // tarball's is sent on it ("Peer disconnected", seen against an
-            // HTTP/1.0 server), and a download is only two requests.
-            .max_idle_connections(0)
-            .http_status_as_error(false)
-            .timeout_connect(Some(Duration::from_secs(30)))
-            .timeout_global(Some(Duration::from_secs(300)))
-            .user_agent(concat!("pane/", env!("CARGO_PKG_VERSION")))
-            .tls_config(tls);
-        // A registry on this computer is never reached through a proxy.
-        let config = if self.loopback {
-            config.proxy(None)
-        } else {
-            config
-        };
-        config.build().into()
     }
 }
 
@@ -381,23 +380,30 @@ pub(crate) fn fetch(
     downloads: &Path,
 ) -> Result<Fetched, String> {
     let name = &spec.name;
-    let agent = registry.agent();
     let metadata_url = registry.metadata_url(name);
-    let unreachable = |error: ureq::Error| {
+    let unreachable = |why: String| {
         format!(
-            "Could not reach the npm registry {} for {name}: {error}",
+            "Could not reach the npm registry {} for {name}: {why}",
             registry.url()
         )
     };
-    let mut response = agent
-        .get(&metadata_url)
-        .header(
-            "Accept",
-            "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8",
+    let response = registry
+        .get(
+            &metadata_url,
+            &[(
+                "Accept",
+                "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8",
+            )],
+            MAX_METADATA,
         )
-        .call()
-        .map_err(unreachable)?;
-    match response.status().as_u16() {
+        .map_err(|error| match error {
+            GetError::TooLarge => format!(
+                "The npm registry's description of {name} is larger than the {} MiB Pane reads",
+                MAX_METADATA >> 20
+            ),
+            GetError::Failed(why) => unreachable(why),
+        })?;
+    match response.status {
         200 => {}
         404 => {
             return Err(format!(
@@ -412,19 +418,7 @@ pub(crate) fn fetch(
             ));
         }
     }
-    let body = response
-        .body_mut()
-        .with_config()
-        .limit(MAX_METADATA)
-        .read_to_vec()
-        .map_err(|error| match error {
-            ureq::Error::BodyExceedsLimit(_) => format!(
-                "The npm registry's description of {name} is larger than the {} MiB Pane reads",
-                MAX_METADATA >> 20
-            ),
-            error => unreachable(error),
-        })?;
-    let metadata: MetadataJson = serde_json::from_slice(&body).map_err(|error| {
+    let metadata: MetadataJson = serde_json::from_slice(&response.body).map_err(|error| {
         format!("The npm registry's description of {name} cannot be read: {error}")
     })?;
     let latest = metadata.dist_tags.get("latest").cloned();
@@ -465,26 +459,23 @@ pub(crate) fn fetch(
             "Pane does not download {name}@{version}: {refusal}"
         ));
     }
-    let mut response = agent.get(&tarball).call().map_err(unreachable)?;
-    if response.status().as_u16() != 200 {
-        return Err(format!(
-            "The npm registry {} answered {} for the tarball of {name}@{version}",
-            registry.url(),
-            response.status().as_u16()
-        ));
-    }
-    let bytes = response
-        .body_mut()
-        .with_config()
-        .limit(MAX_TARBALL)
-        .read_to_vec()
+    let response = registry
+        .get(&tarball, &[], MAX_TARBALL)
         .map_err(|error| match error {
-            ureq::Error::BodyExceedsLimit(_) => format!(
+            GetError::TooLarge => format!(
                 "npm package {name}@{version} is larger than the {} MiB Pane downloads",
                 MAX_TARBALL >> 20
             ),
-            error => unreachable(error),
+            GetError::Failed(why) => unreachable(why),
         })?;
+    if response.status != 200 {
+        return Err(format!(
+            "The npm registry {} answered {} for the tarball of {name}@{version}",
+            registry.url(),
+            response.status
+        ));
+    }
+    let bytes = response.body;
     check_integrity(&bytes, &integrity).map_err(|why| {
         format!("The download of npm package {name}@{version} {why}; nothing was installed")
     })?;
@@ -1001,12 +992,18 @@ mod tests {
     fn only_a_registry_on_this_computer_replaces_npmjs() {
         for url in [
             "http://127.0.0.1:4873",
-            "http://localhost:4873/npm/",
+            "http://127.0.0.2:4873/npm/",
             "https://[::1]:8443/",
         ] {
             assert!(Registry::local(url).is_ok(), "{url}");
         }
         for url in [
+            // A name, even this one, could resolve elsewhere.
+            "http://localhost:4873/",
+            "http://LOCALHOST/",
+            "http://::1/",
+            "http://[::ffff:127.0.0.1]/",
+            "http://0.0.0.0/",
             "https://registry.npmjs.org/",
             "http://127.0.0.1.example.com/",
             "http://user@127.0.0.1/",

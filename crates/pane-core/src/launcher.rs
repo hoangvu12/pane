@@ -1043,7 +1043,9 @@ impl Launcher {
 
     /// This launcher downloading npm packages from `registry` rather than
     /// from the public npm registry: one on this computer, for tests and
-    /// development ([`crate::npm::Registry::local`]).
+    /// development ([`crate::npm::Registry::local`]). Release builds have
+    /// no way to replace the public registry.
+    #[cfg(any(test, debug_assertions))]
     pub fn with_npm_registry(self, registry: crate::npm::Registry) -> Self {
         let sources = install::Sources {
             registry,

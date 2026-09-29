@@ -194,7 +194,10 @@ struct Target {
 
 impl Target {
     fn of(request: &http::Request<WasiBody>) -> Result<Target, Error> {
-        let uri = request.uri();
+        Target::of_uri(request.uri())
+    }
+
+    fn of_uri(uri: &http::Uri) -> Result<Target, Error> {
         let tls = uri.scheme() == Some(&Scheme::HTTPS);
         let authority = uri.authority().ok_or(Error::HttpRequestUriInvalid)?;
         let host = authority
@@ -253,6 +256,47 @@ impl Ceilings {
 trait Connection: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static {}
 impl<T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static> Connection for T {}
 
+/// A connection's sending half, and the connection, which does the reading
+/// and writing while it is driven.
+type Connected<B> = (
+    hyper::client::conn::http1::SendRequest<B>,
+    hyper::client::conn::http1::Connection<TokioIo<Box<dyn Connection>>, B>,
+);
+
+/// Connects to `target` (TLS for `https`, trusting the system's
+/// certificates) and starts HTTP/1.1 on the connection, by `by`.
+async fn connect<B>(target: &Target, by: Instant) -> Result<Connected<B>, Error>
+where
+    B: Body + 'static,
+    B::Data: Send,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let connecting = TcpStream::connect((target.host.as_str(), target.port));
+    let stream = match timeout_at(by, connecting).await {
+        Ok(stream) => stream.map_err(Error::Connect)?,
+        Err(_) => return Err(Error::ConnectionTimeout),
+    };
+    let stream: Box<dyn Connection> = if target.tls {
+        let config = tls_config().map_err(|problem| Error::InternalError(Some(problem)))?;
+        let name = rustls::pki_types::ServerName::try_from(target.host.clone())
+            .map_err(|_| Error::HttpRequestUriInvalid)?;
+        let connecting = tokio_rustls::TlsConnector::from(config).connect(name, stream);
+        match timeout_at(by, connecting).await {
+            Ok(stream) => Box::new(stream.map_err(tls_error)?),
+            Err(_) => return Err(Error::ConnectionTimeout),
+        }
+    } else {
+        Box::new(stream)
+    };
+    timeout_at(
+        by,
+        hyper::client::conn::http1::handshake(TokioIo::new(stream)),
+    )
+    .await
+    .map_err(|_| Error::ConnectionTimeout)?
+    .map_err(Error::from)
+}
+
 /// Connects to `target` and sends `request`, resolving once the response's
 /// head has arrived; its body follows as it is received, within
 /// `ceilings`. The connection holds `permit` until it closes.
@@ -262,29 +306,7 @@ async fn send(
     ceilings: Ceilings,
     permit: OwnedSemaphorePermit,
 ) -> Result<(http::Response<WasiBody>, Receiving), Error> {
-    let connecting = TcpStream::connect((target.host.as_str(), target.port));
-    let stream = match timeout_at(ceilings.within(ceilings.connect), connecting).await {
-        Ok(stream) => stream.map_err(Error::Connect)?,
-        Err(_) => return Err(Error::ConnectionTimeout),
-    };
-    let stream: Box<dyn Connection> = if target.tls {
-        let config = tls_config().map_err(|problem| Error::InternalError(Some(problem)))?;
-        let name = rustls::pki_types::ServerName::try_from(target.host)
-            .map_err(|_| Error::HttpRequestUriInvalid)?;
-        let connecting = tokio_rustls::TlsConnector::from(config).connect(name, stream);
-        match timeout_at(ceilings.within(ceilings.connect), connecting).await {
-            Ok(stream) => Box::new(stream.map_err(tls_error)?),
-            Err(_) => return Err(Error::ConnectionTimeout),
-        }
-    } else {
-        Box::new(stream)
-    };
-    let (mut sender, connection) = timeout_at(
-        ceilings.within(ceilings.connect),
-        hyper::client::conn::http1::handshake(TokioIo::new(stream)),
-    )
-    .await
-    .map_err(|_| Error::ConnectionTimeout)??;
+    let (mut sender, connection) = connect(&target, ceilings.within(ceilings.connect)).await?;
 
     // The request line names only the path: the host travels in its Host
     // header, which Wasmtime set.
@@ -482,6 +504,130 @@ fn system_tls_config() -> Result<Arc<rustls::ClientConfig>, String> {
         .with_safe_default_protocol_versions()
         .map(|config| Arc::new(config.with_root_certificates(roots).with_no_client_auth()))
         .map_err(|error| error.to_string())
+}
+
+/// The ceilings of a request Pane sends for itself ([`get_blocking`]).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct OwnLimits {
+    /// Connecting, the TLS handshake included.
+    pub connect: Duration,
+    /// The wait for the response's head, and then for each piece of its
+    /// body.
+    pub between_bytes: Duration,
+    /// The whole request.
+    pub deadline: Duration,
+}
+
+/// The answer to a request Pane sent for itself.
+pub(crate) struct Answer {
+    pub status: u16,
+    pub body: Vec<u8>,
+}
+
+/// Why a request Pane sent for itself has no answer.
+#[derive(Debug)]
+pub(crate) enum GetError {
+    /// It could not be sent, or its answer not received: why.
+    Failed(String),
+    /// Its body is larger than the most asked for.
+    TooLarge,
+}
+
+/// Sends a GET for `url`, with `headers`, for Pane itself rather than for
+/// a guest (downloading npm packages), and receives its answer, whose body
+/// may be at most `most` bytes, within `limits`. It connects as a guest's
+/// request does, trusting the system's certificates for `https`, follows no
+/// redirect (a `3xx` is the answer) and uses no proxy. Blocks the calling
+/// thread, which must not be running an async runtime, on a runtime of its
+/// own.
+pub(crate) fn get_blocking(
+    url: &str,
+    headers: &[(&str, &str)],
+    most: u64,
+    limits: OwnLimits,
+) -> Result<Answer, GetError> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| GetError::Failed(error.to_string()))?;
+    runtime.block_on(get(url, headers, most, limits))
+}
+
+async fn get(
+    url: &str,
+    headers: &[(&str, &str)],
+    most: u64,
+    limits: OwnLimits,
+) -> Result<Answer, GetError> {
+    let failed = |error: Error| GetError::Failed(error.to_string());
+    let uri: http::Uri = url
+        .parse()
+        .map_err(|_| GetError::Failed(format!("`{url}` is not a web address")))?;
+    if !matches!(uri.scheme_str(), Some("http" | "https")) {
+        return Err(GetError::Failed(format!("`{url}` is not a web address")));
+    }
+    let target = Target::of_uri(&uri).map_err(failed)?;
+    let deadline = Instant::now() + limits.deadline;
+    let within = |after: Duration| (Instant::now() + after).min(deadline);
+    let (mut sender, connection) =
+        connect::<http_body_util::Empty<Bytes>>(&target, within(limits.connect))
+            .await
+            .map_err(failed)?;
+    // The connection does the reading and writing; it ends with the
+    // request, or is stopped below.
+    let driving = tokio::spawn(connection);
+    let host = uri.authority().map_or("", |authority| authority.as_str());
+    let mut request = http::Request::get(uri.path_and_query().map_or("/", |path| path.as_str()))
+        .header(http::header::HOST, host)
+        .header(
+            http::header::USER_AGENT,
+            concat!("pane/", env!("CARGO_PKG_VERSION")),
+        );
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    let request = request
+        .body(http_body_util::Empty::new())
+        .map_err(|error| GetError::Failed(error.to_string()))?;
+    let answered = async {
+        let response = timeout_at(within(limits.between_bytes), sender.send_request(request))
+            .await
+            .map_err(|_| failed(Error::ConnectionReadTimeout))?
+            .map_err(|error| failed(Error::from(error)))?;
+        let status = response.status().as_u16();
+        let announced = response
+            .headers()
+            .get(http::header::CONTENT_LENGTH)
+            .and_then(|length| length.to_str().ok()?.parse::<u64>().ok());
+        if announced.is_some_and(|length| length > most) {
+            return Err(GetError::TooLarge);
+        }
+        let mut body = response.into_body();
+        let mut received = Vec::new();
+        loop {
+            let piece = match timeout_at(within(limits.between_bytes), body.frame()).await {
+                Err(_) if Instant::now() >= deadline => {
+                    return Err(failed(Error::HttpResponseTimeout));
+                }
+                Err(_) => return Err(failed(Error::ConnectionReadTimeout)),
+                Ok(None) => break,
+                Ok(Some(piece)) => piece.map_err(|error| failed(Error::from(error)))?,
+            };
+            if let Ok(data) = piece.into_data() {
+                if received.len() as u64 + data.len() as u64 > most {
+                    return Err(GetError::TooLarge);
+                }
+                received.extend_from_slice(&data);
+            }
+        }
+        Ok(Answer {
+            status,
+            body: received,
+        })
+    }
+    .await;
+    driving.abort();
+    answered
 }
 
 #[cfg(test)]

@@ -69,6 +69,7 @@ fn main() {
         // Development builds can download npm packages from a registry on
         // this computer instead (the tests' and smokes' own); release builds
         // always use registry.npmjs.org.
+        #[cfg(debug_assertions)]
         let launcher = match pane_core::npm::Registry::from_dev_env() {
             Some(Ok(registry)) => launcher.with_npm_registry(registry),
             Some(Err(why)) => {

@@ -25,6 +25,8 @@ use tempfile::TempDir;
 
 #[path = "support/npm_registry.rs"]
 mod npm_registry;
+#[path = "support/unreachable.rs"]
+mod unreachable;
 
 use npm_registry::{Registry, greeter_files, integrity, pack, pack_raw};
 
@@ -585,22 +587,40 @@ fn a_missing_package_or_version_is_explained() {
 
 #[test]
 fn an_unreachable_registry_is_explained() {
-    // A port nothing listens on: a registry started and stopped.
-    let url = {
-        let registry = Registry::start();
-        registry.url().to_owned()
-    };
-    let dirs = Dirs::new();
-    let launcher = Launcher::with_packages(Ok(dirs.runtime.clone()), vec![], dirs.packages_dir())
-        .with_npm_registry(NpmRegistry::local(&url).unwrap());
-    block_on(launcher.preview_npm(GREETER));
-    let error = error_of(&launcher);
+    // A port that refuses connections, kept so for the whole test.
+    let closed = unreachable::ClosedPort::new();
+    let url = format!("{}/", closed.url());
+    let error = unreachable_refusal(&url);
     assert!(
         error.starts_with(&format!(
             "Could not reach the npm registry {url} for @pane-samples/greeter:"
         )),
         "{error}"
     );
+}
+
+#[test]
+fn a_registry_whose_certificate_the_system_does_not_trust_is_refused() {
+    // The system's certificates decide, as for guests' requests.
+    let untrusted = unreachable::UntrustedService::start();
+    let url = format!("{}/", untrusted.url());
+    let error = unreachable_refusal(&url);
+    assert_eq!(
+        error,
+        format!(
+            "Could not reach the npm registry {url} for @pane-samples/greeter: TLS certificate \
+             error"
+        )
+    );
+}
+
+/// Why previewing the sample from the registry at `url` is refused.
+fn unreachable_refusal(url: &str) -> String {
+    let dirs = Dirs::new();
+    let launcher = Launcher::with_packages(Ok(dirs.runtime.clone()), vec![], dirs.packages_dir())
+        .with_npm_registry(NpmRegistry::local(url).unwrap());
+    block_on(launcher.preview_npm(GREETER));
+    error_of(&launcher)
 }
 
 #[test]
