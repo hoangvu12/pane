@@ -121,11 +121,15 @@ pub(super) struct Shared {
     /// handle is dropped.
     pub(super) helpers: Helpers,
     pub(super) applications: SharedApplications,
+    pub(super) files: crate::files::FileAccess,
     pub(super) directory: SharedDirectory,
     pub(super) health: Arc<Mutex<Option<HealthReport>>>,
     /// Custom view ids, never reused, even by a restarted thread: a view
     /// the window still shows from a crashed one must not name a new view.
     pub(super) next_view: Arc<AtomicU64>,
+    /// Guests' web requests: their limits, and what each package did this
+    /// session, which a restarted thread carries on.
+    pub(super) network: Arc<crate::http::Network>,
     crashes: Mutex<Option<CrashReport>>,
     /// The number of the last thread Pane is done with (it failed and was
     /// restarted or not, the launcher told), for a call whose answer a
@@ -214,9 +218,11 @@ impl Shared {
         let shared = Arc::new(Shared {
             helpers,
             applications,
+            files: crate::files::FileAccess::default(),
             directory: SharedDirectory::default(),
             health: Arc::default(),
             next_view: Arc::default(),
+            network: Arc::default(),
             crashes: Mutex::new(None),
             handled: watch::Sender::new(0),
             abandoned: Arc::default(),

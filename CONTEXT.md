@@ -65,8 +65,16 @@ One entry root search lists for a query and can invoke, such as an extension com
 _Avoid_: Item (an item belongs to a command's own list), search hit
 
 **Computed result**:
-A root result an extension command computes from the query itself, such as the calculator's answer to "6*7", rather than one found by matching titles; it is listed above those, and invoking it performs its action, such as copying the answer.
+A root result an extension command computes from the query itself, such as the calculator's answer to "6*7", rather than one found by matching titles; it is listed above those (a file result below them), and invoking it performs its action, such as copying the answer. The search it answers owns the call asking for it: a newer query, or leaving root search, cancels a call still pending.
 _Avoid_: Suggestion, answer card, inline result
+
+**Granted folder**:
+The one folder the user grants a package through Pane's own "Choose folder…" row, which Pane records itself (not as extension data) and lists for that package's commands under the scan policy; they name its files only by the ids Pane gave them, and Pane opens one after checking it again. The Files default extension's root results come from it.
+_Avoid_: Search scope, library, preopen, the extension's folder setting
+
+**Scan policy**:
+Pane's fixed bounds on listing a granted folder, the same on every system: regular files only, breadth first in name order, at most 8 folders deep, 5,000 files and 20,000 entries, skipping hidden entries, links and unreadable subfolders; a listing that reaches a bound or skips a subfolder says it is partial. A listing is kept for one visit of root search.
+_Avoid_: Indexer, crawl, whole-disk search
 
 **Indexed result**:
 A root result an extension command supplies ahead of the query, such as an installed application; Pane asks for them once root search is used, keeps them, and matches and ranks them by title like commands, for a query that is not blank.
@@ -95,6 +103,14 @@ _Avoid_: Default action, catch-all
 **Query-taking command**:
 An extension command that declares it takes a query: text typed in root search, which Pane sends it only when the user invokes it through its alias or as a fallback, and whose answer Pane shows.
 _Avoid_: Argument (Raycast's per-field input), search provider (a provider is asked while the user types)
+
+**Command search**:
+The search field an opened command has when it searches as the user types, such as one searching an online service; Pane sends the text typed there only to that command, stops a search the text has replaced, and never asks the command from root search.
+_Avoid_: Search provider (root search asks those), query-taking command (sent text from root search once, when invoked)
+
+**Network use**:
+What Pane shows of an installed package's web requests, which it does not gate: whether its component imports `wasi:http`, and the addresses it tried to reach since Pane started.
+_Avoid_: Network permission (nothing is granted or refused)
 
 **Search provider**:
 A source of matching results for a query, such as applications, files or an online service.
@@ -166,7 +182,7 @@ _Avoid_: Unresponsive call (an extension's own), freeze of Pane (the window keep
 
 **Generation**:
 One run of an installed package's code, from when it is installed, enabled or Pane starts until it is disabled, paused or its code is replaced by a reload or an update. Every call into the package belongs to the generation current when it was asked for, and is stopped when that generation ends; its late result is discarded.
-_Avoid_: Version (a package's version is its manifest's), session, instance (one generation can start several), screen or search epoch (the launcher's counters of screens and searches, which only decide whether an answer is shown)
+_Avoid_: Version (a package's version is its manifest's), session, instance (one generation can start several), screen or search epoch (the launcher's counters of screens and searches, which decide whether an answer is shown; a search also cancels its own pending calls for computed results)
 
 **Supported platforms**:
 The operating systems a package, a command or an action declares it works on: a plain list, not a rule language. A declaration is not evidence of native support.

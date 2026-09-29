@@ -1419,7 +1419,10 @@ mod tests {
     /// generation of it, is being spawned elsewhere. Many threads copy and
     /// spawn the same few files at once; `copy_executable`'s rename and
     /// `spawn_retrying_busy`'s retry (see [`super::spawn_retrying_busy`])
-    /// must mean none of it ever fails.
+    /// must mean none of it ever fails. Unix only: Windows refuses to
+    /// replace a running program at all, which is why Pane stops a
+    /// generation's helpers before replacing their files.
+    #[cfg(unix)]
     #[test]
     fn many_threads_copying_and_spawning_the_same_helper_never_see_it_busy() {
         let helpers = runs();
