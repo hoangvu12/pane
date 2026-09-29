@@ -237,7 +237,7 @@ every value is an explicit, **provisional** choice):
 | A guest **waiting on a native helper** that does not exit | 30 seconds of the helper running (`HELPER_TIME_LIMIT`, provisional, see [helpers](helpers.md#limits)) | Ends the helper; the guest's `run` fails with "helper `echo` did not finish within 30 seconds; Pane ended it", an error it handles | No one's: an expected slow-operation error, never counted |
 | The **runtime thread itself** making no progress (a **runtime hang**): inside one poll of its work, outside any host call, with its heartbeat still | Says "not responding yet" after 10 seconds (`WARN_AFTER`), gives up after 30 seconds (`UNRESPONSIVE_LIMIT`) | Gives up on the thread, as on a [runtime crash](#when-the-extension-runtime-itself-crashes) | Unknown: no extension is named or paused |
 | A guest **waiting** on anything else (a clock, a save, an operation of another extension, a web request) | None | Nothing: waiting is not computing, and the call ends when its generation does | — |
-| A **slow host call** (Pane reading or saving a value, listing applications, answering a folder's listing) | None | Nothing: its time is Pane's, not the guest's, and the thread inside it is not stuck | — |
+| A **slow host call** (Pane reading or saving a value, listing applications, answering a folder's listing, reading or changing clipboard history) | None | Nothing: its time is Pane's, not the guest's, and the thread inside it is not stuck | — |
 
 How it works:
 
@@ -270,6 +270,11 @@ How it works:
 - **Saving** is written by a writer thread: the runtime thread changes the
   value in memory and awaits the write, so it never waits on the file
   system. **Helpers** are found and started on a thread of their own.
+  [Clipboard history](clipboard-history.md) (#35) is the exception: a
+  command's change to it (turning it on, pausing, excluding a program,
+  clearing) is written by the runtime thread inside its marked host call,
+  so the write is never charged to the guest nor given up on, but the
+  thread waits for it.
 - **The watchdog.** Each runtime thread has a heartbeat, bumped at each
   poll of its work, each epoch yield of a guest and as each host call
   starts and ends. A watchdog thread looks every 100 ms. A thread waiting
@@ -300,8 +305,9 @@ How it works:
   abandoned, and its fence closes. Stopped code is one check that every
   host interface goes through (`GuestState::stopped`,
   `PackageData::stopped`): data, applications, operations, helpers, the
-  folder listing and web requests all refuse code whose generation ended
-  or whose thread's fence closed. A save checks and stages its change
+  folder listing, web requests and clipboard history (its reads too) all
+  refuse code whose generation ended or whose thread's fence closed. A
+  save, or a change of clipboard history, checks and stages its change
   while holding the fence open, and closing waits for it, so no save
   lands after the give-up. A guest the thread still runs traps at its
   next tick (the ticker's last tick makes sure it reaches one), the thread
@@ -314,7 +320,11 @@ How it works:
   holds, or its failure would use up the restart window for the first
   one's. What runtime threads share is held only briefly and never across
   blocking work: the extension data lock while a value is read or staged
-  (a cache or uninstall removal reads its file without it), the helpers'
+  (a cache or uninstall removal reads its file without it), clipboard
+  history's lock while it is read or changed in memory (its file is written
+  after, one write at a time, so a change can wait for a write in
+  progress, the clipboard listener's or one made just before a give-up),
+  the helpers'
   lock while a run is registered (a process starts without it), the
   runtime's own state. What remains: the runtime thread reports a
   package's failure to the launcher, which takes the launcher's lock
@@ -419,12 +429,14 @@ Limits:
   helper when its thread is given up on. Unit tests in `runtime.rs` stop a
   computing guest (another command's open view kept), stop it on disable,
   never stop nor blame a guest whose host call computes for three times
-  the compute limit (`Fault::SlowHostCall`), replace a hung thread, answer
+  the compute limit (`Fault::SlowHostCall`), a clipboard history call's
+  too, replace a hung thread, answer
   `running` and `view_count` on a give-up, and never restore the obsolete
   generation of a package reloaded during a hang; `deadlines.rs` tests the
   watchdog's verdicts, the give-up race and a meter that charges neither a
   host call nor time the thread did not run; `extension_data.rs` that no
-  save lands after the fence closes; `http.rs` that fenced code sends
+  save or clipboard history change lands after the fence closes and
+  fenced code reads no clipboard history; `http.rs` that fenced code sends
   nothing; `launcher/pausing.rs` counting unresponsive calls with crashes;
   and `helpers/runner.rs` a helper past its time limit.
   [`crates/pane/tests/unresponsive.rs`](../crates/pane/tests/unresponsive.rs):

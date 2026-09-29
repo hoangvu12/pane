@@ -64,8 +64,8 @@ use super::faults::Fault;
 use super::faults::Faults;
 
 use super::{
-    CallError, Code, HealthReport, Host, Request, SharedApplications, SharedDirectory, lock,
-    unavailable,
+    CallError, Code, HealthReport, Host, Request, SharedApplications, SharedClipboard,
+    SharedDirectory, lock, unavailable,
 };
 use crate::helpers::runner::Helpers;
 
@@ -200,6 +200,7 @@ pub(super) struct Shared {
     pub(super) helpers: Helpers,
     pub(super) applications: SharedApplications,
     pub(super) files: crate::files::FileAccess,
+    pub(super) clipboard: SharedClipboard,
     pub(super) directory: SharedDirectory,
     pub(super) health: Arc<Mutex<Option<HealthReport>>>,
     /// Custom view ids, never reused, even by a restarted thread: a view
@@ -208,6 +209,11 @@ pub(super) struct Shared {
     /// Guests' web requests: their limits, and what each package did this
     /// session, which a restarted thread carries on.
     pub(super) network: Arc<crate::http::Network>,
+    /// What a search waits on before it starts, if a test replaced the
+    /// clock's [`super::SEARCH_DEBOUNCE`]; a restarted thread keeps it.
+    /// A release build has none.
+    #[cfg(any(test, debug_assertions))]
+    pub(super) search_timer: Arc<Mutex<Option<super::SearchTimer>>>,
     crashes: Mutex<Option<CrashReport>>,
     slow: Mutex<Option<SlowReport>>,
     /// The limits guest calls and the watchdog apply.
@@ -303,10 +309,13 @@ impl Shared {
             helpers,
             applications,
             files: crate::files::FileAccess::default(),
+            clipboard: SharedClipboard::default(),
             directory: SharedDirectory::default(),
             health: Arc::default(),
             next_view: Arc::default(),
             network: Arc::default(),
+            #[cfg(any(test, debug_assertions))]
+            search_timer: Arc::default(),
             crashes: Mutex::new(None),
             slow: Mutex::new(None),
             limits: Arc::default(),
