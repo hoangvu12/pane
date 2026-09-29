@@ -170,11 +170,26 @@ impl SearchStopped {
         !matches!(self.0.try_recv(), Err(oneshot::error::TryRecvError::Empty))
     }
 
-    /// Waits up to `wait` for the search to be stopped; whether it was.
-    async fn stopped_within(&mut self, wait: std::time::Duration) -> bool {
-        tokio::time::timeout(wait, &mut self.0).await.is_ok()
+    /// Waits until the search is stopped or `wait` ends, whichever comes
+    /// first; whether it was stopped (also when both are).
+    async fn stopped_before(&mut self, wait: impl Future<Output = ()>) -> bool {
+        let mut wait = std::pin::pin!(wait);
+        std::future::poll_fn(|context| {
+            if std::pin::Pin::new(&mut self.0).poll(context).is_ready() {
+                return std::task::Poll::Ready(true);
+            }
+            wait.as_mut().poll(context).map(|()| false)
+        })
+        .await
     }
 }
+
+/// What a search waits on before it starts, given [`SEARCH_DEBOUNCE`]: the
+/// clock's sleep, unless a test sets another
+/// (`Runtime::set_search_timer`, in debug builds).
+type SearchTimer = Arc<
+    dyn Fn(std::time::Duration) -> std::pin::Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync,
+>;
 
 /// How long the runtime waits before it starts a search: one the user
 /// replaces by typing on within it is stopped before its command is asked
@@ -748,6 +763,22 @@ impl Runtime {
     #[doc(hidden)]
     pub fn set_http_limits(&self, limits: http::HttpLimits) {
         self.shared.network.set_limits(limits);
+    }
+
+    /// Has every search the runtime starts from now on wait for the future
+    /// `timer` returns (given [`SEARCH_DEBOUNCE`]) instead of the clock, so
+    /// a test decides when the wait ends, and sees each search reach it,
+    /// however slow the machine is. For tests only; debug builds only.
+    #[cfg(any(test, debug_assertions))]
+    #[doc(hidden)]
+    pub fn set_search_timer(
+        &self,
+        timer: impl Fn(std::time::Duration) -> std::pin::Pin<Box<dyn Future<Output = ()> + Send>>
+        + Send
+        + Sync
+        + 'static,
+    ) {
+        *lock(&self.shared.search_timer) = Some(Arc::new(timer));
     }
 
     /// `host:port` of every address the package with identity key `owner`
@@ -1504,6 +1535,9 @@ struct Host {
     network: Arc<http::Network>,
     /// The granted folders and their listings.
     files: FileAccess,
+    /// What a search waits on before it starts, if a test replaced the
+    /// clock.
+    search_timer: Arc<Mutex<Option<SearchTimer>>>,
 }
 
 impl Code {
@@ -1692,6 +1726,7 @@ impl Host {
             applications: shared.applications.clone(),
             network: shared.network.clone(),
             files: shared.files.clone(),
+            search_timer: shared.search_timer.clone(),
         }
     }
 
@@ -2077,7 +2112,12 @@ impl Host {
     ) -> Result<Vec<SearchResult>, CallError> {
         // Replaced while it waited in the queue, or soon after: it is not
         // started.
-        if stopped.stopped() || stopped.stopped_within(SEARCH_DEBOUNCE).await {
+        let timer = lock(&self.search_timer).clone();
+        let wait = match timer {
+            Some(timer) => timer(SEARCH_DEBOUNCE),
+            None => Box::pin(tokio::time::sleep(SEARCH_DEBOUNCE)),
+        };
+        if stopped.stopped() || stopped.stopped_before(wait).await {
             return Err(CallError::Cancelled);
         }
         let instance = self.instance(path, data).await?;

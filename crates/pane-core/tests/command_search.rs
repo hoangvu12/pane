@@ -14,6 +14,8 @@ mod unreachable;
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Condvar, Mutex};
+use std::task::{Poll, Waker};
 use std::time::{Duration, Instant};
 
 use futures::executor::block_on;
@@ -360,27 +362,96 @@ fn a_cleared_search_lists_the_command_as_it_is_now() {
     }
 }
 
+/// The wait before a search starts, held by the test instead of the clock:
+/// it counts the searches that waited on it, and none ends until the test
+/// lets every wait end.
+#[derive(Default)]
+struct HeldWait {
+    state: Mutex<Waits>,
+    changed: Condvar,
+}
+
+#[derive(Default)]
+struct Waits {
+    reached: usize,
+    ended: bool,
+    wakers: Vec<Waker>,
+}
+
+impl HeldWait {
+    /// Has `runtime`'s searches wait on this.
+    fn hold(runtime: &Runtime) -> Arc<HeldWait> {
+        let held = Arc::new(HeldWait::default());
+        let timer = held.clone();
+        runtime.set_search_timer(move |_| {
+            let timer = timer.clone();
+            let mut reached = false;
+            // A search reaches the wait when it first waits on it, not when
+            // it is handed it.
+            Box::pin(std::future::poll_fn(move |context| {
+                let mut state = timer.state.lock().unwrap();
+                if !reached {
+                    reached = true;
+                    state.reached += 1;
+                    timer.changed.notify_all();
+                }
+                if state.ended {
+                    return Poll::Ready(());
+                }
+                state.wakers.push(context.waker().clone());
+                Poll::Pending
+            }))
+        });
+        held
+    }
+
+    /// Waits until `count` searches have reached the wait, for at most five
+    /// seconds.
+    fn wait_until_reached(&self, count: usize) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut state = self.state.lock().unwrap();
+        while state.reached < count {
+            let left = deadline
+                .checked_duration_since(Instant::now())
+                .unwrap_or_else(|| panic!("{count} searches never waited: {}", state.reached));
+            state = self.changed.wait_timeout(state, left).unwrap().0;
+        }
+    }
+
+    /// Ends every wait, now and from now on.
+    fn end(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.ended = true;
+        for waker in state.wakers.drain(..) {
+            waker.wake();
+        }
+    }
+}
+
 #[test]
 fn typing_on_asks_only_for_the_text_the_user_stops_at() {
     for fixture in &ALL {
         let service = Service::start();
         let pane = Pane::with(fixture);
         pane.use_service(&service.url());
-
-        // A search that asks at once is quicker than this.
         pane.search("granite");
         let asked = service.requests().len();
 
-        // Keystrokes closer together than the search's short wait: each
-        // search is stopped before it asks the service anything.
-        let typed: Vec<_> = ["a", "au", "aur", "auro", "auror", "aurora"]
+        // The first keystroke's search waits before it asks anything (it
+        // reaches the wait, and the service has heard nothing)...
+        let held = HeldWait::hold(&pane.runtime);
+        let first = pane.launcher.set_query("a");
+        held.wait_until_reached(1);
+        assert_eq!(service.requests().len(), asked, "{}", fixture.package);
+        // ...so each keystroke typed on within it stops the one before
+        // before it asks the service; only the text the user stops at is
+        // asked for once the wait ends. No clock is involved.
+        let typed: Vec<_> = ["au", "aur", "auro", "auror", "aurora"]
             .into_iter()
-            .map(|text| {
-                let search = pane.launcher.set_query(text);
-                std::thread::sleep(Duration::from_millis(60));
-                search
-            })
+            .map(|text| pane.launcher.set_query(text))
             .collect();
+        held.end();
+        block_on(first);
         for search in typed {
             block_on(search);
         }
@@ -586,6 +657,10 @@ fn a_service_that_stalls_is_given_up_on_within_the_limits() {
             )
         };
 
+        // Each ends by the test's short limit, not by Pane's own, which is
+        // far longer: the bounds leave a slow runner room, not the limits.
+        let defaults = HttpLimits::default();
+
         // A head, then nothing: the wait between two pieces of the body.
         let started = Instant::now();
         pane.search("stall");
@@ -596,7 +671,7 @@ fn a_service_that_stalls_is_given_up_on_within_the_limits() {
             fixture.package
         );
         assert!(
-            started.elapsed() < Duration::from_secs(3),
+            started.elapsed() < defaults.between_bytes / 2,
             "{:?}",
             started.elapsed()
         );
@@ -606,7 +681,7 @@ fn a_service_that_stalls_is_given_up_on_within_the_limits() {
         pane.search("drip");
         assert_eq!(pane.error(), failed("the service took too long to answer"));
         assert!(
-            started.elapsed() < Duration::from_secs(4),
+            started.elapsed() < defaults.deadline / 2,
             "{:?}",
             started.elapsed()
         );
@@ -626,7 +701,7 @@ fn a_service_that_stalls_is_given_up_on_within_the_limits() {
             fixture.package
         );
         assert!(
-            started.elapsed() < Duration::from_secs(3),
+            started.elapsed() < defaults.between_bytes / 2,
             "{:?}",
             started.elapsed()
         );

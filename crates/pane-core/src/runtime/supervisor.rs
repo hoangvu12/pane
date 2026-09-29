@@ -90,6 +90,9 @@ pub(super) struct Shared {
     /// Guests' web requests: their limits, and what each package did this
     /// session, which a restarted thread carries on.
     pub(super) network: Arc<crate::http::Network>,
+    /// What a search waits on before it starts, if a test replaced the
+    /// clock's [`super::SEARCH_DEBOUNCE`]; a restarted thread keeps it.
+    pub(super) search_timer: Arc<Mutex<Option<super::SearchTimer>>>,
     crashes: Mutex<Option<CrashReport>>,
     /// Counts the crashed threads Pane is done with (restarted or not, the
     /// launcher told), for a call whose answer a crash lost.
@@ -171,6 +174,7 @@ impl Shared {
             health: Arc::default(),
             next_view: Arc::default(),
             network: Arc::default(),
+            search_timer: Arc::default(),
             crashes: Mutex::new(None),
             handled: watch::Sender::new(0),
             cache_dir,

@@ -127,8 +127,11 @@ details Enter shows. Texts and names starting with `huge`, `stall` or
   127.0.0.1: typing in root search (the command's title, a package name,
   `slow`, `down`) sends the service nothing, while the same text in the
   command does; results, details, an encoded text, nothing found and a blank
-  text; a cleared search lists the command as it is now; keystrokes 60 ms
-  apart ask only for the last text; a newer search stops the one the service
+  text; a cleared search lists the command as it is now; the first
+  keystroke's search waits before asking anything, and keystrokes typed on
+  within its wait ask only for the last text (the wait is held by the test
+  through the debug builds' hidden `Runtime::set_search_timer`, not the
+  clock, so no gap between keystrokes is assumed); a newer search stops the one the service
   holds (the service sees the hang-up well before its ten seconds) and the
   older answer never replaces the newer; an answer to an older search
   arriving after the newer one is not shown; Escape and leaving the command
