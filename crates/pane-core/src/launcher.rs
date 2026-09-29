@@ -45,7 +45,7 @@ use crate::links::{self, LinkOpener, NoOpener};
 use crate::operations::{self, Installed};
 use crate::packages::{
     InstalledPackage, PackageError, PackageIdentity, PauseCause, RetainedData, SavedData,
-    SourcePackage, Store, folder_name, paused_reason,
+    SourcePackage, Store, paused_reason,
 };
 use crate::platform::{self, Platform};
 use crate::runtime::{
@@ -74,6 +74,17 @@ use pausing::{Pauses, Recorder};
 
 /// The id of the root row that installs a package from a local folder.
 const INSTALL_FROM_FOLDER: &str = "pane.install-from-folder";
+
+/// The folder beside the managed copies where packages downloaded from npm
+/// are unpacked until they are installed.
+const DOWNLOADS_DIR: &str = "downloads";
+
+/// The id of the root row that installs a package from npm.
+const INSTALL_FROM_NPM: &str = "pane.install-from-npm";
+
+/// The id of the npm package field of Pane's own form that asks which npm
+/// package to install.
+const NPM_PACKAGE_FIELD: &str = "package";
 
 /// The id of the root row that lists installed packages to enable or
 /// disable them.
@@ -420,6 +431,8 @@ pub struct Launcher {
     /// Keeps the clipboard history of the packages that keep one, given
     /// with the system's clipboard ([`Launcher::with_clipboard`]).
     clipboard: Option<Arc<Capture>>,
+    /// Reads packages from folders and downloads them from npm.
+    sources: install::Sources,
     /// The packages being developed: built and reloaded on save.
     developing: Arc<Developing>,
     /// Tells the window that the launcher changed in the background, such
@@ -440,6 +453,7 @@ struct WeakLauncher {
     /// Held weakly, so that Pane stops watching the clipboard as soon as
     /// the launcher is dropped.
     clipboard: Option<std::sync::Weak<Capture>>,
+    sources: install::Sources,
     developing: std::sync::Weak<Developing>,
     changes: Option<ChangeSender>,
     state: std::sync::Weak<Mutex<State>>,
@@ -463,6 +477,7 @@ impl WeakLauncher {
             links: self.links.clone(),
             hotkeys: self.hotkeys.clone(),
             clipboard,
+            sources: self.sources.clone(),
             developing: self.developing.upgrade()?,
             changes: self.changes.clone(),
             state: self.state.upgrade()?,
@@ -687,6 +702,8 @@ enum FormPurpose {
     Item(String),
     /// Sets the alias of the installed command with this id (Pane's own).
     Alias(String),
+    /// Previews the npm package it names (Pane's own).
+    Npm,
 }
 
 /// What the launcher keeps about the open custom view besides its snapshot.
@@ -785,15 +802,18 @@ enum Entry {
     Unavailable(String),
     /// Nothing in the launcher: the window asks for a folder (root).
     InstallFromFolder,
+    /// Ask which npm package to install (root).
+    AskNpm,
     /// Run the open command's item with this id.
     Run(String),
     /// Open this form of the open command's item with this id.
     Form(String, Form),
     /// Open the custom view of the open command's item with this id.
     CustomView(String, CustomViewInfo),
-    /// Install the previewed package from this folder, or replace its
-    /// installed copy, as the preview's plan assumed things to be.
-    Install(PathBuf, Mode, dependencies::Assumptions),
+    /// Install the previewed package from this folder or npm package, or
+    /// replace its installed copy, as the preview's plan assumed things to
+    /// be.
+    Install(install::Request, Mode, dependencies::Assumptions),
     /// Show the installed packages (root).
     Manage,
     /// Enable this installed package if it is disabled, else disable it, or
@@ -907,6 +927,11 @@ impl Launcher {
         packages_dir: PathBuf,
     ) -> Self {
         let store = Arc::new(Mutex::new(Store::open(packages_dir.clone())));
+        // Only an install in progress needs what it downloaded.
+        crate::npm::remove_abandoned_downloads(
+            &packages_dir.join(DOWNLOADS_DIR),
+            std::time::SystemTime::now(),
+        );
         let installation = Installation {
             data: ExtensionData::open(&packages_dir),
             dir: packages_dir,
@@ -990,6 +1015,10 @@ impl Launcher {
                 }
             }
         }
+        let sources = install::Sources {
+            registry: crate::npm::Registry::npmjs(),
+            downloads: installation.as_ref().map(|i| i.dir.join(DOWNLOADS_DIR)),
+        };
         let launcher = Launcher {
             runtime,
             commands: commands.into(),
@@ -997,6 +1026,7 @@ impl Launcher {
             links: Arc::new(NoOpener),
             hotkeys: system_hotkeys::none(),
             clipboard: None,
+            sources,
             developing: Arc::new(Developing::new(None, None)),
             changes: None,
             state: Arc::new(Mutex::new(state)),
@@ -1025,6 +1055,19 @@ impl Launcher {
         let launcher = Launcher { links, ..self };
         launcher.report_failures();
         launcher
+    }
+
+    /// This launcher downloading npm packages from `registry` rather than
+    /// from the public npm registry: one on this computer, for tests and
+    /// development ([`crate::npm::Registry::local`]). Release builds have
+    /// no way to replace the public registry.
+    #[cfg(any(test, debug_assertions))]
+    pub fn with_npm_registry(self, registry: crate::npm::Registry) -> Self {
+        let sources = install::Sources {
+            registry,
+            ..self.sources.clone()
+        };
+        Launcher { sources, ..self }
     }
 
     /// This launcher registering the global hotkeys the user assigns with
@@ -1091,6 +1134,7 @@ impl Launcher {
             links: self.links.clone(),
             hotkeys: self.hotkeys.clone(),
             clipboard: self.clipboard.as_ref().map(Arc::downgrade),
+            sources: self.sources.clone(),
             developing: Arc::downgrade(&self.developing),
             changes: self.changes.clone(),
             state: Arc::downgrade(&self.state),
@@ -1719,8 +1763,12 @@ impl Launcher {
                 reload = self.begin_reload(&mut state, identity, reload::Attempt::Retry);
                 None
             }
-            Some(Entry::Install(folder, mode, assumptions)) => {
-                install = self.begin_install(&mut state, folder, mode, assumptions);
+            Some(Entry::Install(request, mode, assumptions)) => {
+                install = self.begin_install(&mut state, request, mode, assumptions);
+                None
+            }
+            Some(Entry::AskNpm) => {
+                self.show_npm_form(&mut state);
                 None
             }
             Some(Entry::InstallFromFolder | Entry::ChooseFolder(_)) | None => None,
@@ -1800,6 +1848,7 @@ impl Launcher {
                     | Entry::Broken(_)
                     | Entry::Unavailable(_)
                     | Entry::InstallFromFolder
+                    | Entry::AskNpm
                     | Entry::ChooseFolder(_)
                     | Entry::StopSharingFolder(_)
                     | Entry::Install(..)
@@ -1840,11 +1889,52 @@ impl Launcher {
     /// package with the same identity is installed. No guest code runs. An
     /// invalid or incompatible package is explained instead.
     pub fn preview_package(&self, folder: &Path) -> impl Future<Output = ()> + Send + 'static {
+        self.preview(Ok(install::Request::Folder(folder.to_path_buf())))
+    }
+
+    /// Downloads the npm package `spec` names (`name`, `@scope/name`, with
+    /// an optional exact version: `name@1.2.3`) and shows it as
+    /// [`Launcher::preview_package`] shows a folder, with the npm version it
+    /// would install. Without a version it is the latest; with one,
+    /// installing pins the package to it. Nothing in the package runs.
+    pub fn preview_npm(&self, spec: &str) -> impl Future<Output = ()> + Send + 'static {
+        let request = crate::npm::NpmSpec::parse(spec)
+            .map(install::Request::Npm)
+            .map_err(|why| (spec.trim().to_owned(), why));
+        self.preview(request)
+    }
+
+    /// Previews the package `request` names, or explains why the text asked
+    /// for (and the reason) names none.
+    fn preview(
+        &self,
+        request: Result<install::Request, (String, String)>,
+    ) -> impl Future<Output = ()> + Send + 'static {
         let epoch = self.start_running();
         let launcher = self.clone();
-        let folder = folder.to_path_buf();
         async move {
-            let checked = match launcher.read_and_check(folder.clone()).await {
+            let request = match request {
+                Ok(request) => request,
+                Err((asked, why)) => {
+                    let mut state = launcher.lock();
+                    if state.screen_epoch == epoch {
+                        launcher.leave_command(&mut state);
+                        state.entries = Vec::new();
+                        state.view = LauncherView {
+                            status: Status::Error(why),
+                            ..LauncherView::new(
+                                Screen::Package {
+                                    details: vec![format!("npm package: {asked}")],
+                                },
+                                format!("Cannot install {asked}"),
+                            )
+                        };
+                    }
+                    return;
+                }
+            };
+            let request = launcher.keeping_pin(request);
+            let checked = match launcher.read_and_check(request.clone()).await {
                 Ok(package) => Ok(launcher.plan_dependencies(package).await),
                 Err(error) => Err(error),
             };
@@ -1852,26 +1942,71 @@ impl Launcher {
             if state.screen_epoch != epoch {
                 return;
             }
-            launcher.show_preview(&mut state, &folder, checked);
+            launcher.show_preview(&mut state, &request, checked);
         }
     }
 
-    /// Shows the package screen for `folder`, from its package and plan or
+    /// `request`, or for an npm package without a version that is installed
+    /// pinned to one, that version: updating it keeps its pin, which only
+    /// naming another version changes.
+    fn keeping_pin(&self, request: install::Request) -> install::Request {
+        match request {
+            install::Request::Npm(spec) if spec.version.is_none() => {
+                let state = self.lock();
+                let pinned = state
+                    .package(&PackageIdentity::npm(&spec.name))
+                    .and_then(|package| package.npm.as_ref())
+                    .filter(|npm| npm.pinned)
+                    .map(|npm| npm.version.clone());
+                install::Request::Npm(crate::npm::NpmSpec {
+                    version: pinned,
+                    ..spec
+                })
+            }
+            other => other,
+        }
+    }
+
+    /// Shows the package screen for `request`, from its package and plan or
     /// why it cannot be read.
     fn show_preview(
         &self,
         state: &mut State,
-        folder: &Path,
+        request: &install::Request,
         checked: Result<(SourcePackage, dependencies::Plan), PackageError>,
     ) {
         let installed = checked
             .as_ref()
             .ok()
             .and_then(|(package, _)| state.package(&package.identity).cloned());
-        let (view, entries) = preview_view(folder, checked, installed);
+        let (view, entries) = preview_view(request, checked, installed);
         self.leave_command(state);
         state.view = view;
         state.entries = entries;
+    }
+
+    /// Shows Pane's own form asking which npm package to install.
+    fn show_npm_form(&self, state: &mut State) {
+        let form = FormView {
+            fields: vec![FormField {
+                id: NPM_PACKAGE_FIELD.into(),
+                label: "npm package: its name, and a version to install that one".into(),
+                kind: FieldKind::Text {
+                    placeholder: Some("such as @scope/name or name@1.2.3".into()),
+                },
+                value: String::new(),
+                error: None,
+            }],
+            submit_label: "Show package".into(),
+        };
+        let view = LauncherView::new(Screen::Form(form), "Install extension from npm");
+        let return_to = std::mem::replace(&mut state.view, view);
+        state.form = Some(OpenForm {
+            purpose: FormPurpose::Npm,
+            return_to,
+            submitting: false,
+        });
+        state.screen_epoch += 1;
     }
 
     /// Installs the package in `folder` as an explicit install request, with
@@ -1879,10 +2014,35 @@ impl Launcher {
     /// them. A package whose identity is already installed is rejected:
     /// replacing it is an update.
     pub fn install_package(&self, folder: &Path) -> impl Future<Output = ()> + Send + 'static {
+        self.install_unplanned(Ok(install::Request::Folder(folder.to_path_buf())))
+    }
+
+    /// Installs the npm package `spec` names as an explicit install request,
+    /// as [`Launcher::install_package`] installs a folder: a package whose
+    /// npm name is already installed is rejected, whatever its version.
+    pub fn install_npm(&self, spec: &str) -> impl Future<Output = ()> + Send + 'static {
+        self.install_unplanned(crate::npm::NpmSpec::parse(spec).map(install::Request::Npm))
+    }
+
+    fn install_unplanned(
+        &self,
+        request: Result<install::Request, String>,
+    ) -> impl Future<Output = ()> + Send + 'static {
         let epoch = self.start_running();
         let launcher = self.clone();
-        let install = install::Begun::unplanned(folder.to_path_buf());
-        async move { launcher.finish_install(epoch, install).await }
+        async move {
+            match request {
+                Ok(request) => {
+                    let install = install::Begun::unplanned(request);
+                    launcher.finish_install(epoch, install).await
+                }
+                Err(why) => {
+                    if let Some(mut state) = launcher.lock_if_current(epoch) {
+                        state.view.status = Status::Error(why);
+                    }
+                }
+            }
+        }
     }
 
     /// Enables or disables the installed package with `identity` and
@@ -2107,10 +2267,15 @@ impl Launcher {
             .is_some_and(|open| replaced.contains(open))
     }
 
-    /// Reads the package in `folder` off the calling thread, then has the
-    /// runtime check each component without running it.
-    async fn read_and_check(&self, folder: PathBuf) -> Result<SourcePackage, PackageError> {
-        let mut package = off_thread(move || SourcePackage::read(&folder)).await?;
+    /// Reads the package `request` names off the calling thread (for npm,
+    /// downloading it), then has the runtime check each component without
+    /// running it.
+    async fn read_and_check(
+        &self,
+        request: install::Request,
+    ) -> Result<SourcePackage, PackageError> {
+        let sources = self.sources.clone();
+        let mut package = off_thread(move || sources.read(&request)).await?;
         package.network = self.check_components(&package).await?;
         Ok(package)
     }
@@ -2351,6 +2516,13 @@ impl Launcher {
                 unavailable: None,
             };
             add(row, Entry::InstallFromFolder, None, None);
+            let row = Row {
+                id: INSTALL_FROM_NPM.into(),
+                title: "Install extension from npm…".into(),
+                subtitle: Some("Download an extension package published to npm".into()),
+                unavailable: None,
+            };
+            add(row, Entry::AskNpm, None, None);
         }
         // Retained data is managed there too, while nothing is installed.
         if self.installation.is_some() && !(state.packages.is_empty() && state.retained.is_empty())
@@ -2409,6 +2581,25 @@ impl Launcher {
             }
             _ => None,
         };
+        // Pane's own npm form previews the package it names; the form stays
+        // until the preview replaces it, and Back meanwhile discards it.
+        let npm = match (&state.view.screen, &mut state.form) {
+            (
+                Screen::Form(form),
+                Some(
+                    open @ OpenForm {
+                        purpose: FormPurpose::Npm,
+                        submitting: false,
+                        ..
+                    },
+                ),
+            ) => {
+                open.submitting = true;
+                state.view.status = Status::Running;
+                form.fields.first().map(|field| field.value.clone())
+            }
+            _ => None,
+        };
         let submission = match (&state.view.screen, &mut state.form, &state.open) {
             (
                 Screen::Form(form),
@@ -2448,6 +2639,9 @@ impl Launcher {
         async move {
             if let Some(change) = alias_change {
                 launcher.finish_choice_change(change).await;
+            }
+            if let Some(spec) = npm {
+                launcher.preview_npm(&spec).await;
             }
             if let Some((component, item_id, values)) = submission {
                 launcher
@@ -3309,7 +3503,12 @@ fn extension_rows(
                     (details, Entry::PauseDetails(package.identity.clone())),
                 ]
             });
-            std::iter::once((reload, Entry::Reload(package.identity.clone()))).chain(paused)
+            // A package from npm has no source folder to reload from; to
+            // replace its code, install it from npm again (Update).
+            let local = package.identity.local_folder().is_some();
+            std::iter::once((reload, Entry::Reload(package.identity.clone())))
+                .filter(move |_| local)
+                .chain(paused)
         });
     let clear_cache = packages.iter().map(|package| {
         let row = Row {
@@ -3342,22 +3541,24 @@ fn extension_rows(
         .unzip()
 }
 
-/// The package screen for `folder`: what the package is and whether it can
-/// be installed, or why it cannot.
+/// The package screen for `request`: what the package is and whether it
+/// can be installed, or why it cannot.
 fn preview_view(
-    folder: &Path,
+    request: &install::Request,
     checked: Result<(SourcePackage, dependencies::Plan), PackageError>,
     installed: Option<InstalledPackage>,
 ) -> (LauncherView, Vec<Entry>) {
     let (package, plan) = match checked {
         Ok(checked) => checked,
         Err(error) => {
-            let details = vec![format!("Folder: {}", folder.display())];
+            let (asked, name) = request.describe();
             let view = LauncherView {
                 status: Status::Error(error.to_string()),
                 ..LauncherView::new(
-                    Screen::Package { details },
-                    format!("Cannot install {}", folder_name(folder)),
+                    Screen::Package {
+                        details: vec![asked],
+                    },
+                    format!("Cannot install {name}"),
                 )
             };
             return (view, Vec::new());
@@ -3367,6 +3568,14 @@ fn preview_view(
     let mut details = vec![format!("Source: {}", package.identity)];
     if let Some(version) = &manifest.version {
         details.push(format!("Version: {version}"));
+    }
+    if let Some(npm) = &package.npm {
+        let pinned_to = installed
+            .as_ref()
+            .and_then(|installed| installed.npm.as_ref())
+            .filter(|installed| installed.pinned)
+            .map(|installed| installed.version.as_str());
+        details.extend(npm_lines(npm, pinned_to));
     }
     let titles: Vec<&str> = manifest.commands.iter().map(|c| c.title.as_str()).collect();
     if !titles.is_empty() {
@@ -3415,25 +3624,33 @@ fn preview_view(
     };
     let (row, entry) = match installed {
         Some(installed) => {
-            details.push(match installed.version() {
-                Some(version) => format!("Installed: version {version} from this folder"),
-                None => "Installed from this folder".into(),
+            details.push(match (&installed.npm, installed.version()) {
+                (Some(npm), _) => format!(
+                    "Installed: npm version {}{} of this package",
+                    npm.version,
+                    if npm.pinned { ", pinned" } else { "" }
+                ),
+                (None, Some(version)) => format!("Installed: version {version} from this folder"),
+                (None, None) => "Installed from this folder".into(),
             });
             if !installed.enabled {
                 details.push("Disabled: enable it in Manage extensions".into());
             }
+            let replace = match package.npm.as_ref().map(|npm| &npm.package) {
+                Some(npm) if npm.pinned => format!("npm version {}, pinned", npm.version),
+                Some(npm) => format!("npm version {}, the latest", npm.version),
+                None => "this folder's contents".into(),
+            };
             let row = Row {
                 id: "update".into(),
                 title: "Update".into(),
-                subtitle: Some(format!(
-                    "Replace the installed copy with this folder's contents{with}"
-                )),
+                subtitle: Some(format!("Replace the installed copy with {replace}{with}")),
                 unavailable: None,
             };
             let mode = Mode::Update(installed.identity.clone());
             (
                 row,
-                Entry::Install(package.folder.clone(), mode, plan.assumptions.clone()),
+                Entry::Install(request.clone(), mode, plan.assumptions.clone()),
             )
         }
         None => {
@@ -3447,17 +3664,57 @@ fn preview_view(
             };
             (
                 row,
-                Entry::Install(
-                    package.folder.clone(),
-                    Mode::Install,
-                    plan.assumptions.clone(),
-                ),
+                Entry::Install(request.clone(), Mode::Install, plan.assumptions.clone()),
             )
         }
     };
     let view =
         LauncherView::new(Screen::Package { details }, manifest.title.clone()).with_rows(vec![row]);
     (view, vec![entry])
+}
+
+/// The preview's lines about where a package from npm was downloaded from,
+/// and what Pane does not do with it; `pinned_to` is the version the
+/// installed copy is pinned to, if it is.
+fn npm_lines(npm: &crate::npm::NpmOrigin, pinned_to: Option<&str>) -> Vec<String> {
+    let version = &npm.package.version;
+    let mut lines = vec![
+        if npm.package.pinned && pinned_to == Some(version) {
+            format!(
+                "npm version: {version}, the version it is pinned to: name another version to \
+                 change it"
+            )
+        } else if npm.package.pinned {
+            format!(
+                "npm version: {}, the version you named: installing pins it to that version",
+                npm.package.version
+            )
+        } else {
+            format!("npm version: {}, the latest", npm.package.version)
+        },
+        format!(
+            "Downloaded: {}, matching its sha512 integrity from the registry",
+            npm.tarball
+        ),
+        "Runs only the WebAssembly components its pane.json names, in Pane: no Node.js, npm \
+         install scripts or npm dependencies"
+            .into(),
+    ];
+    if !npm.scripts.is_empty() || npm.has_npm_dependencies {
+        let mut ignored = Vec::new();
+        if !npm.scripts.is_empty() {
+            let scripts: Vec<String> = npm.scripts.iter().map(|s| format!("`{s}`")).collect();
+            ignored.push(format!("its {} script", platform::join(&scripts)));
+        }
+        if npm.has_npm_dependencies {
+            ignored.push("its npm dependencies".into());
+        }
+        lines.push(format!(
+            "Not used: {}, which its package.json declares; Pane never runs or installs them",
+            platform::join(&ignored)
+        ));
+    }
+    lines
 }
 
 /// Replaces the command view with `form`, which belongs to item `item_id`.
