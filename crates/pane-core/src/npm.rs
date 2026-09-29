@@ -44,8 +44,11 @@ pub const MAX_METADATA: u64 = 16 << 20;
 pub const MAX_TARBALL: u64 = 64 << 20;
 /// The most a tarball may unpack to, all files together.
 pub const MAX_UNPACKED: u64 = 256 << 20;
-/// The most files and folders a tarball may hold.
+/// The most entries a tarball may hold: files, folders and the extension
+/// headers (long names, PAX) describing them.
 pub const MAX_ENTRIES: usize = 10_000;
+/// The largest extension header (a GNU long name, a PAX header) Pane reads.
+pub const MAX_EXTENSION: u64 = 64 << 10;
 
 /// The npm lifecycle scripts npm runs when installing a package, which Pane
 /// never runs.
@@ -615,6 +618,13 @@ fn unpack_into(downloads: &Path, tgz: &[u8], integrity: &str) -> Result<PathBuf,
 /// [`MAX_ENTRIES`] entries. Files are written without execute permission;
 /// the mode, owner and time the tarball records are ignored. Refuses the
 /// whole tarball, explaining why, at the first entry it cannot take.
+///
+/// The tarball is read entry by entry as written ("raw"), extension headers
+/// included, so that Pane, not the tar reader, decides what they mean: a
+/// GNU long name (`L`) or a PAX header's `path` names the next entry, each
+/// header is at most [`MAX_EXTENSION`] bytes and counts toward the limits,
+/// and a size a PAX header gives must be the one the entry's own header
+/// gives, so that no two readers can see different files in one tarball.
 pub(crate) fn unpack(tgz: &[u8], dest: &Path) -> Result<(), String> {
     fs::create_dir(dest).map_err(|error| error.to_string())?;
     // The decompressed stream is limited too, so a small tarball cannot
@@ -623,18 +633,63 @@ pub(crate) fn unpack(tgz: &[u8], dest: &Path) -> Result<(), String> {
     let mut archive = tar::Archive::new(stream);
     let mut total: u64 = 0;
     let mut count = 0;
+    // What the extension headers read so far say of the next entry.
+    let mut next = Described::default();
     let unreadable = |error: io::Error| format!("its tarball cannot be read: {error}");
-    for entry in archive.entries().map_err(unreadable)? {
+    let entries = archive.entries().map_err(unreadable)?.raw(true);
+    for entry in entries {
         let mut entry = entry.map_err(unreadable)?;
-        let raw = entry.path_bytes().into_owned();
-        let shown = String::from_utf8_lossy(&raw).into_owned();
+        count += 1;
+        if count > MAX_ENTRIES {
+            return Err(format!("its tarball holds more than {MAX_ENTRIES} entries"));
+        }
+        let size = entry.size();
+        let add = |total: &mut u64, size: u64| {
+            *total = total.saturating_add(size);
+            if *total > MAX_UNPACKED {
+                return Err(format!(
+                    "it unpacks to more than the {} MiB Pane allows",
+                    MAX_UNPACKED >> 20
+                ));
+            }
+            Ok(())
+        };
         let kind = entry.header().entry_type();
+        if matches!(
+            kind,
+            tar::EntryType::GNULongName
+                | tar::EntryType::GNULongLink
+                | tar::EntryType::XHeader
+                | tar::EntryType::XGlobalHeader
+        ) {
+            if size > MAX_EXTENSION {
+                return Err(format!(
+                    "its tarball has an extension header of {size} bytes; Pane reads at most {} \
+                     KiB of one",
+                    MAX_EXTENSION >> 10
+                ));
+            }
+            add(&mut total, size)?;
+            let mut data = Vec::new();
+            (&mut entry)
+                .take(size)
+                .read_to_end(&mut data)
+                .map_err(unreadable)?;
+            if data.len() as u64 != size {
+                return Err("its tarball ends inside an extension header".into());
+            }
+            next.read(kind, &data)?;
+            continue;
+        }
+        let described = std::mem::take(&mut next);
+        let raw = match described.path {
+            Some(path) => path,
+            None => entry.path_bytes().into_owned(),
+        };
+        let shown = String::from_utf8_lossy(&raw).into_owned();
         let is_dir = match kind {
             tar::EntryType::Regular | tar::EntryType::Continuous => false,
             tar::EntryType::Directory => true,
-            // Metadata for the entries after it, which the tar reader
-            // applies itself.
-            tar::EntryType::XGlobalHeader | tar::EntryType::XHeader => continue,
             other => {
                 let what = match other {
                     tar::EntryType::Symlink => "a symbolic link".to_owned(),
@@ -648,10 +703,12 @@ pub(crate) fn unpack(tgz: &[u8], dest: &Path) -> Result<(), String> {
                 ));
             }
         };
-        count += 1;
-        if count > MAX_ENTRIES {
+        if let Some(declared) = described.size
+            && declared != size
+        {
             return Err(format!(
-                "its tarball holds more than {MAX_ENTRIES} files and folders"
+                "its tarball gives `{shown}` two sizes, {size} and {declared} bytes; Pane \
+                 unpacks only entries whose size is unambiguous"
             ));
         }
         let Some(relative) = inside(&raw, is_dir).map_err(|why| {
@@ -668,14 +725,7 @@ pub(crate) fn unpack(tgz: &[u8], dest: &Path) -> Result<(), String> {
             fs::create_dir_all(&path).map_err(|error| format!("`{shown}`: {error}"))?;
             continue;
         }
-        let size = entry.header().size().map_err(unreadable)?;
-        total = total.saturating_add(size);
-        if total > MAX_UNPACKED {
-            return Err(format!(
-                "it unpacks to more than the {} MiB Pane allows",
-                MAX_UNPACKED >> 20
-            ));
-        }
+        add(&mut total, size)?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|error| format!("`{shown}`: {error}"))?;
         }
@@ -694,15 +744,90 @@ pub(crate) fn unpack(tgz: &[u8], dest: &Path) -> Result<(), String> {
             return Err(format!("its tarball ends inside `{shown}`"));
         }
     }
+    if next != Described::default() {
+        return Err("its tarball ends with an extension header that describes no entry".into());
+    }
     Ok(())
+}
+
+/// What the extension headers before an entry say of it.
+#[derive(Default, PartialEq, Eq)]
+struct Described {
+    /// Its path, from a GNU long name or a PAX `path`.
+    path: Option<Vec<u8>>,
+    /// Its size, from a PAX `size`.
+    size: Option<u64>,
+    /// Whether a GNU long name or a PAX header was read for it.
+    long_name: bool,
+    pax: bool,
+}
+
+impl Described {
+    /// Takes in the extension header of `kind` holding `data`.
+    fn read(&mut self, kind: tar::EntryType, data: &[u8]) -> Result<(), String> {
+        let twice = || Err("its tarball has two extension headers of one kind for an entry".into());
+        match kind {
+            tar::EntryType::GNULongName => {
+                if self.long_name {
+                    return twice();
+                }
+                self.long_name = true;
+                let name = data.strip_suffix(&[0]).unwrap_or(data);
+                if self.path.is_none() {
+                    self.path = Some(name.to_vec());
+                }
+                Ok(())
+            }
+            tar::EntryType::GNULongLink => Err(
+                "its tarball contains a long link name; Pane unpacks only files and folders".into(),
+            ),
+            tar::EntryType::XHeader => {
+                if self.pax {
+                    return twice();
+                }
+                self.pax = true;
+                for record in tar::PaxExtensions::new(data) {
+                    let record = record.map_err(|_| "its tarball has a damaged PAX header")?;
+                    match record.key_bytes() {
+                        // A PAX path wins over a GNU long name, as tar does.
+                        b"path" => self.path = Some(record.value_bytes().to_vec()),
+                        b"size" => {
+                            let size = record
+                                .value()
+                                .ok()
+                                .and_then(|value| value.parse().ok())
+                                .ok_or("its tarball has a PAX header with a damaged size")?;
+                            self.size = Some(size);
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(())
+            }
+            // Only one that changes no path or size (such as git's commit
+            // id) is taken, and ignored.
+            _ => {
+                for record in tar::PaxExtensions::new(data) {
+                    let record = record.map_err(|_| "its tarball has a damaged PAX header")?;
+                    if matches!(record.key_bytes(), b"path" | b"size" | b"linkpath") {
+                        return Err(
+                            "its tarball has a global header that changes paths or sizes; Pane \
+                             unpacks only entries described by their own headers"
+                                .into(),
+                        );
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 /// The path of tarball entry `raw` inside the package, without the
 /// tarball's top folder; `None` for the top folder itself. Refuses, with
 /// why, a path that is absolute, climbs out (`..`), has an empty or `.`
-/// part, or has a part some system reads differently: with `\`, `:` or a
-/// control character, ending in `.` or a space, or a Windows device name
-/// (`con`, `nul`, `com1`…).
+/// part, or has a part that some system reads differently or cannot write
+/// (see [`check_part`]).
 fn inside(raw: &[u8], is_dir: bool) -> Result<Option<PathBuf>, &'static str> {
     let text = std::str::from_utf8(raw).map_err(|_| "whose name is not valid UTF-8")?;
     if text.starts_with('/') {
@@ -723,6 +848,11 @@ fn inside(raw: &[u8], is_dir: bool) -> Result<Option<PathBuf>, &'static str> {
     Ok((!path.as_os_str().is_empty()).then_some(path))
 }
 
+/// Checks one part of a path, the same on every system, so that a package
+/// Pane unpacks on one unpacks on all: no `\`, `:`, `<`, `>`, `"`, `|`,
+/// `?`, `*` or control character, no trailing `.` or space, and no Windows
+/// device name (`con`, `conin$`, `nul`, `com1`, `lpt³`…, with or without an
+/// extension), compared by character.
 fn check_part(part: &str) -> Result<(), &'static str> {
     match part {
         "" | "." => return Err("which has an empty or `.` part"),
@@ -731,18 +861,34 @@ fn check_part(part: &str) -> Result<(), &'static str> {
     }
     if part
         .chars()
-        .any(|c| c == '\\' || c == ':' || c.is_control())
+        .any(|c| matches!(c, '\\' | ':' | '<' | '>' | '"' | '|' | '?' | '*') || c.is_control())
     {
-        return Err("whose name has `\\`, `:` or a control character");
+        return Err("whose name has a character Windows does not allow, such as `\\`, `:` or `?`");
     }
     if part.ends_with('.') || part.ends_with(' ') {
         return Err("whose name ends with `.` or a space");
     }
-    let stem = part.split('.').next().unwrap_or(part).to_ascii_lowercase();
-    let device = matches!(stem.as_str(), "con" | "prn" | "aux" | "nul")
-        || ((stem.starts_with("com") || stem.starts_with("lpt"))
-            && stem.len() == 4
-            && stem.as_bytes()[3].is_ascii_digit());
+    // Windows reads a device name whatever follows its first dot, and
+    // ignores spaces before it.
+    let stem: Vec<char> = part
+        .split('.')
+        .next()
+        .unwrap_or(part)
+        .trim_end_matches(' ')
+        .chars()
+        .flat_map(char::to_lowercase)
+        .collect();
+    let is = |name: &str| stem.iter().copied().eq(name.chars());
+    let numbered = |prefix: &str| {
+        stem.len() == 4
+            && stem[..3].iter().copied().eq(prefix.chars())
+            && matches!(stem[3], '0'..='9' | '\u{b9}' | '\u{b2}' | '\u{b3}')
+    };
+    let device = ["con", "prn", "aux", "nul", "conin$", "conout$"]
+        .iter()
+        .any(|name| is(name))
+        || numbered("com")
+        || numbered("lpt");
     if device {
         return Err("which is a Windows device name");
     }
@@ -1060,10 +1206,219 @@ mod tests {
             .map(|n| (n.as_str(), Regular, &b""[..]))
             .collect();
         let error = refused(&entries);
-        assert!(
-            error.contains("more than 10000 files and folders"),
-            "{error}"
+        assert!(error.contains("more than 10000 entries"), "{error}");
+    }
+
+    /// The data of a PAX extension header of `records` (`key`, `value`).
+    fn pax(records: &[(&str, &str)]) -> Vec<u8> {
+        let mut data = Vec::new();
+        for (key, value) in records {
+            let rest = format!(" {key}={value}\n");
+            // The length counts its own digits.
+            let mut length = rest.len() + 1;
+            while (rest.len() + length.to_string().len()) != length {
+                length += 1;
+            }
+            data.extend_from_slice(format!("{length}{rest}").as_bytes());
+        }
+        data
+    }
+
+    use tar::EntryType::{GNULongLink, GNULongName, XGlobalHeader, XHeader};
+
+    #[test]
+    fn a_size_only_a_pax_header_gives_is_never_written_empty() {
+        // The header says 0 bytes, its PAX header 4: a reader taking the
+        // header's size writes an empty file and reads the data as the next
+        // header.
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("out");
+        let pax = pax(&[("size", "4")]);
+        let tgz = tarball_declaring(&[
+            ("package/", Directory, b"", 0),
+            ("././@PaxHeader", XHeader, &pax, pax.len() as u64),
+            ("package/pane.json", Regular, b"data", 0),
+        ]);
+
+        match unpack(&tgz, &dest) {
+            Ok(()) => assert_eq!(fs::read(dest.join("pane.json")).unwrap(), b"data"),
+            Err(error) => {
+                assert!(!dest.join("pane.json").exists(), "{error}");
+                assert!(error.contains("two sizes"), "{error}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_long_name_from_a_gnu_or_pax_header_is_used_and_checked() {
+        let dir = tempfile::tempdir().unwrap();
+        let long = format!("package/{}/pane.json", "d".repeat(150));
+        let named = format!("package/{}.wasm", "p".repeat(120));
+        let pax = pax(&[("path", &named)]);
+        let tgz = tarball_declaring(&[
+            (
+                "././@LongLink",
+                GNULongName,
+                long.as_bytes(),
+                long.len() as u64,
+            ),
+            ("package/short", Regular, b"{}", 2),
+            ("././@PaxHeader", XHeader, &pax, pax.len() as u64),
+            ("package/other", Regular, b"wasm", 4),
+        ]);
+        unpack(&tgz, &dir.path().join("out")).unwrap();
+        let out = dir.path().join("out");
+        assert_eq!(
+            fs::read(out.join(&long["package/".len()..])).unwrap(),
+            b"{}"
         );
+        assert_eq!(
+            fs::read(out.join(&named["package/".len()..])).unwrap(),
+            b"wasm"
+        );
+        assert!(!out.join("short").exists() && !out.join("other").exists());
+
+        // The long name is checked as any other.
+        for escaping in ["package/../../escaped", "/etc/escaped"] {
+            let pax = self::pax(&[("path", escaping)]);
+            let error = refused_declaring(&[
+                ("././@PaxHeader", XHeader, &pax, pax.len() as u64),
+                ("package/x", Regular, b"x", 1),
+            ]);
+            assert!(error.contains("Pane unpacks only paths inside"), "{error}");
+            let error = refused_declaring(&[
+                (
+                    "././@LongLink",
+                    GNULongName,
+                    escaping.as_bytes(),
+                    escaping.len() as u64,
+                ),
+                ("package/x", Regular, b"x", 1),
+            ]);
+            assert!(error.contains("Pane unpacks only paths inside"), "{error}");
+        }
+    }
+
+    #[test]
+    fn an_extension_header_larger_than_64_kib_is_refused() {
+        let big = vec![b'a'; (MAX_EXTENSION + 1) as usize];
+        for kind in [GNULongName, XHeader, XGlobalHeader] {
+            let error = refused_declaring(&[
+                ("././@LongLink", kind, &big, big.len() as u64),
+                ("package/x", Regular, b"x", 1),
+            ]);
+            assert!(
+                error.contains("an extension header of 65537 bytes; Pane reads at most 64 KiB"),
+                "{kind:?}: {error}"
+            );
+        }
+        // Declared that large, it is refused before anything is read.
+        let error = refused_declaring(&[("././@LongLink", GNULongName, b"", u64::from(u32::MAX))]);
+        assert!(error.contains("an extension header of"), "{error}");
+    }
+
+    #[test]
+    fn extension_headers_count_toward_the_entry_limit() {
+        let pax = pax(&[("mtime", "1")]);
+        let names: Vec<String> = (0..=MAX_ENTRIES / 2)
+            .map(|i| format!("package/{i}"))
+            .collect();
+        let mut entries: Vec<(&str, tar::EntryType, &[u8], u64)> = Vec::new();
+        for name in &names {
+            entries.push(("././@PaxHeader", XHeader, &pax, pax.len() as u64));
+            entries.push((name, Regular, b"", 0));
+        }
+        let error = refused_declaring(&entries);
+        assert!(error.contains("more than 10000 entries"), "{error}");
+    }
+
+    #[test]
+    fn a_long_link_a_global_path_or_a_dangling_header_is_refused() {
+        let error = refused_declaring(&[
+            ("././@LongLink", GNULongLink, b"target", 6),
+            ("package/x", Regular, b"x", 1),
+        ]);
+        assert!(error.contains("a long link name"), "{error}");
+        let global = pax(&[("path", "package/elsewhere")]);
+        let error = refused_declaring(&[
+            (
+                "pax_global_header",
+                XGlobalHeader,
+                &global,
+                global.len() as u64,
+            ),
+            ("package/x", Regular, b"x", 1),
+        ]);
+        assert!(error.contains("a global header"), "{error}");
+        let pax = pax(&[("path", "package/x")]);
+        let error = refused_declaring(&[("././@PaxHeader", XHeader, &pax, pax.len() as u64)]);
+        assert!(error.contains("describes no entry"), "{error}");
+        // A global header that changes nothing (git's commit id) is fine.
+        let comment = self::pax(&[("comment", "0123abcd")]);
+        let dir = tempfile::tempdir().unwrap();
+        unpack(
+            &tarball_declaring(&[
+                (
+                    "pax_global_header",
+                    XGlobalHeader,
+                    &comment,
+                    comment.len() as u64,
+                ),
+                ("package/x", Regular, b"x", 1),
+            ]),
+            &dir.path().join("out"),
+        )
+        .unwrap();
+    }
+
+    /// Like [`refused`], for entries declaring their sizes.
+    fn refused_declaring(entries: &[(&str, tar::EntryType, &[u8], u64)]) -> String {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("out");
+        let error = unpack(&tarball_declaring(entries), &dest).unwrap_err();
+        let outside: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(outside, ["out"], "{error}");
+        error
+    }
+
+    #[test]
+    fn windows_names_and_characters_are_refused_on_every_system() {
+        for path in [
+            "package/CONIN$",
+            "package/conout$.txt",
+            "package/COM\u{b9}",
+            "package/com\u{b2}.js",
+            "package/LPT\u{b3}",
+            "package/lpt0.log",
+            "package/nul .txt",
+            "package/a<b",
+            "package/a>b",
+            "package/a\"b",
+            "package/a|b",
+            "package/a?b",
+            "package/a*b",
+            "package/a\u{7f}b",
+            "package/a\u{85}b",
+            "package/dir./x",
+            "package/dir /x",
+        ] {
+            let error = refused(&[(path, Regular, b"x")]);
+            assert!(error.contains("its tarball contains"), "{path}: {error}");
+        }
+        let dir = tempfile::tempdir().unwrap();
+        unpack(
+            &tarball(&[
+                ("package/coninx", Regular, b""),
+                ("package/com\u{b9}0", Regular, b""),
+                ("package/lpt", Regular, b""),
+                ("package/caf\u{e9}.txt", Regular, b""),
+            ]),
+            &dir.path().join("out"),
+        )
+        .unwrap();
     }
 
     #[test]
