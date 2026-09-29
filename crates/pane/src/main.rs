@@ -13,21 +13,29 @@ enum ToPreview {
     Folder(PathBuf),
     /// `npm:<name>` or `npm:<name>@<version>`.
     Npm(String),
+    /// `git:<repository>` or `git:<repository>@<branch, tag or commit>`.
+    Git(String),
 }
 
-/// `pane [--install <folder> | --install npm:<package>[@<version>]]`:
-/// `--install` opens with the package in `<folder>` shown for installation,
-/// as if chosen with the folder picker, or the npm package, as if named in
-/// "Install extension from npm…".
+/// `pane [--install <folder> | --install npm:<package>[@<version>] |
+/// --install git:<repository>[@<reference>]]`: `--install` opens with the
+/// package in `<folder>` shown for installation, as if chosen with the
+/// folder picker, the npm package, as if named in "Install extension from
+/// npm…", or the Git repository, as if named in "Install extension from
+/// Git…".
 fn package_to_preview() -> Option<ToPreview> {
     let mut args = std::env::args_os().skip(1);
     while let Some(arg) = args.next() {
         if arg == "--install" {
             let source = args.next()?;
-            return Some(match source.to_str().and_then(|s| s.strip_prefix("npm:")) {
-                Some(spec) => ToPreview::Npm(spec.to_owned()),
-                None => ToPreview::Folder(PathBuf::from(source)),
-            });
+            let text = source.to_str();
+            if let Some(spec) = text.and_then(|s| s.strip_prefix("npm:")) {
+                return Some(ToPreview::Npm(spec.to_owned()));
+            }
+            if let Some(spec) = text.and_then(|s| s.strip_prefix("git:")) {
+                return Some(ToPreview::Git(spec.to_owned()));
+            }
+            return Some(ToPreview::Folder(PathBuf::from(source)));
         }
     }
     None
@@ -110,6 +118,7 @@ fn main() {
                             launcher.preview_package(folder, window, cx)
                         }
                         Some(ToPreview::Npm(spec)) => launcher.preview_npm(spec, window, cx),
+                        Some(ToPreview::Git(spec)) => launcher.preview_git(spec, window, cx),
                         None => {}
                     }
                     launcher

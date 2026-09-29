@@ -276,6 +276,13 @@ impl LauncherWindow {
         self.show_until_done(pending, window, cx);
     }
 
+    /// Fetches and shows the revision of the Git repository `spec` names,
+    /// as [`LauncherWindow::preview_package`] shows a folder.
+    pub fn preview_git(&mut self, spec: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let pending = self.launcher.preview_git(spec);
+        self.show_until_done(pending, window, cx);
+    }
+
     /// Asks for the folder to grant the package with `identity` with the
     /// platform's folder picker, then has Pane check and record it.
     /// Cancelling changes nothing. A debug build run by the native smokes
@@ -597,7 +604,7 @@ impl Render for LauncherWindow {
             Screen::BuildDetails { .. } => ("", "Enter build again · Esc back"),
         };
         // A confirmation, and a package preview offering Install or Update
-        // (an npm package's has several more lines), keep their choices in
+        // (an npm or Git package's has several more lines), keep their choices in
         // view.
         let confirm = matches!(view.screen, Screen::Confirm { .. })
             || (matches!(view.screen, Screen::Package { .. }) && !view.rows.is_empty());

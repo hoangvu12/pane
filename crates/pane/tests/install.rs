@@ -13,6 +13,7 @@ use tempfile::TempDir;
 
 const INSTALL_ROW: &str = "Install extension from folder…";
 const NPM_ROW: &str = "Install extension from npm…";
+const GIT_ROW: &str = "Install extension from Git…";
 const MANAGE_ROW: &str = "Manage extensions…";
 
 /// Writes a package folder whose one command is the Rust sample.
@@ -90,7 +91,10 @@ fn a_chosen_package_is_previewed_installed_and_run(cx: &mut TestAppContext) {
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let folder = package(&sources.path().join("hello"));
     let (window, cx) = open(cx, &data);
-    assert_eq!(titles(&settle(&window, cx)), [INSTALL_ROW, NPM_ROW]);
+    assert_eq!(
+        titles(&settle(&window, cx)),
+        [INSTALL_ROW, NPM_ROW, GIT_ROW]
+    );
 
     let view = choose_folder(&window, cx, Some(folder));
     assert!(
@@ -109,7 +113,7 @@ fn a_chosen_package_is_previewed_installed_and_run(cx: &mut TestAppContext) {
     let view = settle(&window, cx);
     assert_eq!(
         titles(&view),
-        ["Say hello", INSTALL_ROW, NPM_ROW, MANAGE_ROW]
+        ["Say hello", INSTALL_ROW, NPM_ROW, GIT_ROW, MANAGE_ROW]
     );
     assert_eq!(view.status, Status::Result("Installed Hello".into()));
     assert!(cx.debug_bounds("status-result").is_some());
@@ -151,7 +155,10 @@ fn an_unsupported_folder_is_explained_and_escape_returns_to_root(cx: &mut TestAp
         "the reason is rendered"
     );
     cx.simulate_keystrokes("escape");
-    assert_eq!(titles(&settle(&window, cx)), [INSTALL_ROW, NPM_ROW]);
+    assert_eq!(
+        titles(&settle(&window, cx)),
+        [INSTALL_ROW, NPM_ROW, GIT_ROW]
+    );
 }
 
 #[gpui::test]
@@ -163,10 +170,10 @@ fn an_installed_package_is_disabled_and_enabled_from_the_extension_list(cx: &mut
     cx.simulate_keystrokes("enter");
     assert_eq!(
         titles(&settle(&window, cx)),
-        ["Say hello", INSTALL_ROW, NPM_ROW, MANAGE_ROW]
+        ["Say hello", INSTALL_ROW, NPM_ROW, GIT_ROW, MANAGE_ROW]
     );
 
-    cx.simulate_keystrokes("down down down enter");
+    cx.simulate_keystrokes("down down down down enter");
     let view = settle(&window, cx);
     assert!(
         matches!(view.screen, Screen::Extensions { .. }),
@@ -200,10 +207,10 @@ fn an_installed_package_is_disabled_and_enabled_from_the_extension_list(cx: &mut
     cx.simulate_keystrokes("escape");
     assert_eq!(
         titles(&settle(&window, cx)),
-        [INSTALL_ROW, NPM_ROW, MANAGE_ROW]
+        [INSTALL_ROW, NPM_ROW, GIT_ROW, MANAGE_ROW]
     );
 
-    cx.simulate_keystrokes("down down enter");
+    cx.simulate_keystrokes("down down down enter");
     settle(&window, cx);
     cx.simulate_keystrokes("enter");
     assert_eq!(
@@ -213,7 +220,7 @@ fn an_installed_package_is_disabled_and_enabled_from_the_extension_list(cx: &mut
     cx.simulate_keystrokes("escape");
     assert_eq!(
         titles(&settle(&window, cx)),
-        ["Say hello", INSTALL_ROW, NPM_ROW, MANAGE_ROW]
+        ["Say hello", INSTALL_ROW, NPM_ROW, GIT_ROW, MANAGE_ROW]
     );
 }
 
@@ -356,7 +363,7 @@ fn an_installed_package_cache_is_cleared_after_confirming(cx: &mut TestAppContex
     let folder = package(&sources.path().join("hello"));
     let (window, cx) = open(cx, &data);
     install(&window, cx, &folder);
-    cx.simulate_keystrokes("down down down enter");
+    cx.simulate_keystrokes("down down down down enter");
     let view = settle(&window, cx);
     assert!(matches!(view.screen, Screen::Extensions { .. }));
     assert_eq!(
@@ -494,7 +501,7 @@ fn an_installed_package_is_uninstalled_after_choosing_what_to_keep(cx: &mut Test
     let folder = package(&sources.path().join("hello"));
     let (window, cx) = open(cx, &data);
     install(&window, cx, &folder);
-    cx.simulate_keystrokes("down down down enter");
+    cx.simulate_keystrokes("down down down down enter");
     settle(&window, cx);
 
     // The fourth row asks first, with a choice about the saved data; Escape
@@ -538,7 +545,10 @@ fn an_installed_package_is_uninstalled_after_choosing_what_to_keep(cx: &mut Test
 
     // Root search no longer offers its command, nor the extension list.
     cx.simulate_keystrokes("escape");
-    assert_eq!(titles(&settle(&window, cx)), [INSTALL_ROW, NPM_ROW]);
+    assert_eq!(
+        titles(&settle(&window, cx)),
+        [INSTALL_ROW, NPM_ROW, GIT_ROW]
+    );
     assert!(folder.join("pane.json").exists(), "the source is kept");
 }
 
@@ -607,7 +617,10 @@ fn retained_data_is_deleted_from_the_extension_list_after_confirming(cx: &mut Te
 
     // Nothing is left to manage.
     cx.simulate_keystrokes("escape");
-    assert_eq!(titles(&settle(&window, cx)), [INSTALL_ROW, NPM_ROW]);
+    assert_eq!(
+        titles(&settle(&window, cx)),
+        [INSTALL_ROW, NPM_ROW, GIT_ROW]
+    );
     assert!(folder.join("pane.json").exists(), "the source is kept");
 }
 

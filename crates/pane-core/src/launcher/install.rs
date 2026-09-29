@@ -19,6 +19,7 @@ use std::path::PathBuf;
 
 use super::{Changing, Launcher, Mode, State, Status, off_thread};
 use crate::dependencies::{self, Assumptions, Plan, RequiredState};
+use crate::git::{self as git_source, GitSpec};
 use crate::npm::{self, NpmSpec, Registry};
 use crate::packages::{InstalledPackage, PackageError, PackageIdentity, SourcePackage, SourceSpec};
 use crate::platform;
@@ -30,6 +31,9 @@ pub(in crate::launcher) enum Request {
     Folder(PathBuf),
     /// A package from npm, at the version named or else the latest.
     Npm(NpmSpec),
+    /// A package from a Git repository, at the reference named or else its
+    /// default branch.
+    Git(GitSpec),
 }
 
 impl Request {
@@ -42,12 +46,17 @@ impl Request {
                 crate::packages::folder_name(folder),
             ),
             Request::Npm(spec) => (format!("npm package: {spec}"), spec.name.clone()),
+            Request::Git(spec) => (
+                format!("Git repository: {spec}"),
+                spec.repository.name().to_owned(),
+            ),
         }
     }
 }
 
-/// Reads packages from their sources: local folders, and npm packages,
-/// which it downloads from its registry into its downloads folder.
+/// Reads packages from their sources: local folders, npm packages, which it
+/// downloads from its registry, and Git repositories, which it fetches, into
+/// its downloads folder.
 #[derive(Clone)]
 pub(in crate::launcher) struct Sources {
     pub registry: Registry,
@@ -58,16 +67,18 @@ pub(in crate::launcher) struct Sources {
 
 impl Sources {
     /// Reads and validates the package `request` names. Blocks on the file
-    /// system, and for npm on the network.
+    /// system, and for npm and Git on the network.
     pub fn read(&self, request: &Request) -> Result<SourcePackage, PackageError> {
         match request {
             Request::Folder(folder) => SourcePackage::read(folder),
             Request::Npm(spec) => self.fetch(spec),
+            Request::Git(spec) => self.fetch_git(spec),
         }
     }
 
     /// Reads the package with `identity`, a dependency declared with the
-    /// source `source` (for npm, possibly naming a version).
+    /// source `source` (for npm, possibly naming a version; for Git, a
+    /// reference).
     pub fn read_dependency(
         &self,
         identity: &PackageIdentity,
@@ -76,6 +87,7 @@ impl Sources {
         match (identity.local_folder(), SourceSpec::parse(source)) {
             (Some(folder), _) => SourcePackage::read(folder),
             (None, Ok(SourceSpec::Npm(spec))) => self.fetch(&spec),
+            (None, Ok(SourceSpec::Git(spec))) => self.fetch_git(&spec),
             (None, _) => Err(PackageError::Npm(format!(
                 "{identity} is not a source Pane can install from"
             ))),
@@ -92,6 +104,17 @@ impl Sources {
         // if it cannot be read.
         let fetched = npm::fetch(&self.registry, spec, downloads).map_err(PackageError::Npm)?;
         SourcePackage::read_npm(fetched)
+    }
+
+    fn fetch_git(&self, spec: &GitSpec) -> Result<SourcePackage, PackageError> {
+        let Some(downloads) = &self.downloads else {
+            return Err(PackageError::Storage(
+                "this launcher does not install packages".into(),
+            ));
+        };
+        // As for npm, its download goes with the package read from it.
+        let fetched = git_source::fetch(spec, downloads).map_err(PackageError::Git)?;
+        SourcePackage::read_git(fetched)
     }
 }
 
@@ -334,8 +357,8 @@ impl Launcher {
     /// can be installed, claims what it relies on (unless `claimed` already
     /// holds it), then installs or updates it with those it is missing: all
     /// of them or, removing again what it installed when one fails, none.
-    /// What it downloaded from npm is removed with the packages read from
-    /// it, once they are installed or not.
+    /// What it downloaded from npm or Git is removed with the packages read
+    /// from it, once they are installed or not.
     async fn install_planned(
         &self,
         request: Request,

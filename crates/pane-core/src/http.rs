@@ -534,10 +534,11 @@ pub(crate) enum GetError {
 }
 
 /// Sends a GET for `url`, with `headers`, for Pane itself rather than for
-/// a guest (downloading npm packages), and receives its answer, whose body
-/// may be at most `most` bytes, within `limits`. It connects as a guest's
-/// request does, trusting the system's certificates for `https`, follows no
-/// redirect (a `3xx` is the answer) and uses no proxy. Blocks the calling
+/// a guest (downloading npm and Git packages), and receives its answer,
+/// whose body may be at most `most` bytes, within `limits`. It connects as a
+/// guest's request does, trusting the system's certificates for `https`,
+/// follows no redirect (a `3xx` is the answer) and uses no proxy. A
+/// `User-Agent` among `headers` replaces Pane's own. Blocks the calling
 /// thread, which must not be running an async runtime, on a runtime of its
 /// own.
 pub(crate) fn get_blocking(
@@ -546,16 +547,41 @@ pub(crate) fn get_blocking(
     most: u64,
     limits: OwnLimits,
 ) -> Result<Answer, GetError> {
+    send_blocking(http::Method::GET, url, headers, None, most, limits)
+}
+
+/// Like [`get_blocking`], a POST of `body` (Git's `git-upload-pack`
+/// requests).
+pub(crate) fn post_blocking(
+    url: &str,
+    headers: &[(&str, &str)],
+    body: Vec<u8>,
+    most: u64,
+    limits: OwnLimits,
+) -> Result<Answer, GetError> {
+    send_blocking(http::Method::POST, url, headers, Some(body), most, limits)
+}
+
+fn send_blocking(
+    method: http::Method,
+    url: &str,
+    headers: &[(&str, &str)],
+    body: Option<Vec<u8>>,
+    most: u64,
+    limits: OwnLimits,
+) -> Result<Answer, GetError> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|error| GetError::Failed(error.to_string()))?;
-    runtime.block_on(get(url, headers, most, limits))
+    runtime.block_on(own_request(method, url, headers, body, most, limits))
 }
 
-async fn get(
+async fn own_request(
+    method: http::Method,
     url: &str,
     headers: &[(&str, &str)],
+    body: Option<Vec<u8>>,
     most: u64,
     limits: OwnLimits,
 ) -> Result<Answer, GetError> {
@@ -570,24 +596,33 @@ async fn get(
     let deadline = Instant::now() + limits.deadline;
     let within = |after: Duration| (Instant::now() + after).min(deadline);
     let (mut sender, connection) =
-        connect::<http_body_util::Empty<Bytes>>(&target, within(limits.connect))
+        connect::<http_body_util::Full<Bytes>>(&target, within(limits.connect))
             .await
             .map_err(failed)?;
     // The connection does the reading and writing; it ends with the
     // request, or is stopped below.
     let driving = tokio::spawn(connection);
     let host = uri.authority().map_or("", |authority| authority.as_str());
-    let mut request = http::Request::get(uri.path_and_query().map_or("/", |path| path.as_str()))
-        .header(http::header::HOST, host)
-        .header(
+    let mut request = http::Request::builder()
+        .method(method)
+        .uri(uri.path_and_query().map_or("/", |path| path.as_str()))
+        .header(http::header::HOST, host);
+    if !headers
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("user-agent"))
+    {
+        request = request.header(
             http::header::USER_AGENT,
             concat!("pane/", env!("CARGO_PKG_VERSION")),
         );
+    }
     for (name, value) in headers {
         request = request.header(*name, *value);
     }
     let request = request
-        .body(http_body_util::Empty::new())
+        .body(http_body_util::Full::new(Bytes::from(
+            body.unwrap_or_default(),
+        )))
         .map_err(|error| GetError::Failed(error.to_string()))?;
     let answered = async {
         let response = timeout_at(within(limits.between_bytes), sender.send_request(request))

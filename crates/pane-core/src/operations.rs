@@ -173,26 +173,32 @@ impl Installed {
             dependency = self.dependency(caller, source, operation, version)?;
             dependency.as_str()
         };
-        // An identity names a package, not a version of it.
-        let is_identity = match SourceSpec::parse(source) {
-            Ok(SourceSpec::Local(path)) => Path::new(&path).is_absolute(),
-            Ok(SourceSpec::Npm(spec)) => spec.version.is_none(),
-            Err(_) => false,
+        // An identity names a package, not a version of it. A repository
+        // may be written in any of its equivalent forms.
+        let key = match SourceSpec::parse(source) {
+            Ok(SourceSpec::Local(path)) if Path::new(&path).is_absolute() => {
+                Some(source.to_owned())
+            }
+            Ok(SourceSpec::Npm(spec)) if spec.version.is_none() => Some(source.to_owned()),
+            Ok(SourceSpec::Git(spec)) if spec.reference.is_none() => {
+                Some(crate::packages::PackageIdentity::git(&spec.repository).key())
+            }
+            _ => None,
         };
-        if !is_identity {
+        let Some(key) = key else {
             return Err(OperationError::new(
                 NotFound,
                 format!(
                     "`{source}` is not a package identity; use `local:` followed by the \
-                     absolute folder path Pane shows for the package, or `npm:` followed by \
-                     its npm package name"
+                     absolute folder path Pane shows for the package, `npm:` followed by its \
+                     npm package name, or `git:` followed by its repository"
                 ),
             ));
-        }
+        };
         let Some(package) = self
             .packages
             .iter()
-            .find(|package| package.identity.key() == source)
+            .find(|package| package.identity.key() == key)
         else {
             return Err(OperationError::new(
                 NotFound,
@@ -272,7 +278,8 @@ impl Installed {
                 format!(
                     "`{id}` is not a package identity; use `local:` followed by the absolute \
                      folder path Pane shows for the package, `npm:` followed by its npm package \
-                     name, or the id of a dependency the caller's pane.json declares"
+                     name, `git:` followed by its repository, or the id of a dependency the \
+                     caller's pane.json declares"
                 ),
             )
         };

@@ -103,7 +103,7 @@ fn pressing_keys_on_the_hotkey_screen_assigns_them_and_the_hotkey_opens_the_comm
     // Root lists Say hello, the install rows, then Manage extensions…; the
     // extension list holds Hello's state, reload, cache and uninstall rows, then the
     // hotkey of Say hello.
-    cx.simulate_keystrokes("down down down enter");
+    cx.simulate_keystrokes("down down down down enter");
     settle(&window, cx);
     cx.simulate_keystrokes("down down down down enter");
     let view = settle(&window, cx);
