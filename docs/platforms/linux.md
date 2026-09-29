@@ -696,7 +696,8 @@ extensions… row in a fresh data folder); then the whole smoke passed and
 frames 300 to 304 were looked at. After the review, with #36 merged, the
 whole smoke passed again, frames 300 to 304 were looked at, and 300 and 302
 were recorded again: 302 now shows every Git line whole above Install (304
-was unchanged).
+was unchanged). After the second review the whole smoke passed again and
+300 and 302 were recorded once more: 302 shows the reworded last Git line.
 
 | Step | Evidence |
 | --- | --- |
