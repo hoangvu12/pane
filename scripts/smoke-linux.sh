@@ -1436,7 +1436,7 @@ check 400-clipboard-expired-uninstall.png aab4c0   # "Saved data: 1 clipboard hi
 "$xdotool" key Return   # "Uninstall and keep saved data"
 wait_for "$extensions/installed.json" '"retained"' present; sleep 1
 capture 401-clipboard-uninstalled-kept.png
-check 401-clipboard-uninstalled-kept.png 9fd8a8   # "Uninstalled Clipboard History; its clipboard history is kept"
+check 401-clipboard-uninstalled-kept.png 9fd8a8   # "Uninstalled Clipboard History; its settings and content are kept"
 stop_pane
 python3 "$(dirname "$0")/clipboard_history.py" backdate "$extensions" 8
 start_pane
