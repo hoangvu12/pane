@@ -102,6 +102,16 @@ jobs:
       - name: Native GUI smoke (macOS)
         if: runner.os == 'macOS'
         run: bash scripts/smoke-macos.sh smoke
+      - name: Build the macOS package (release, aarch64)
+        if: runner.os == 'macOS'
+        run: cargo xtask package-macos
+      - name: Upload the macOS package and its artifacts
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-package
+          path: target/dist/
+          if-no-files-found: error
       - name: Upload GUI smoke evidence
         if: always()
         uses: actions/upload-artifact@v4

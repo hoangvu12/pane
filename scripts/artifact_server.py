@@ -1,6 +1,7 @@
 """A local artifact source for the native smokes: serves, on 127.0.0.1
 only, the files in a folder (such as target/dist/artifacts, where
-`cargo xtask package-linux` or `cargo xtask package-windows` assembles
+`cargo xtask package-linux`, `cargo xtask package-windows` or
+`cargo xtask package-macos` assembles
 Pane's default extensions' payloads and their index) as Pane's own downloads do: the index document
 pane-defaults.json and every payload file. Nothing reaches the network or
 Pane's published downloads.
@@ -18,7 +19,7 @@ import sys
 folder, port_file = sys.argv[1], sys.argv[2]
 
 if not os.path.isfile(os.path.join(folder, "pane-defaults.json")):
-    sys.exit("artifact_server.py: %s holds no pane-defaults.json; run `cargo xtask package-linux` or `cargo xtask package-windows`" % folder)
+    sys.exit("artifact_server.py: %s holds no pane-defaults.json; run `cargo xtask package-linux`, `cargo xtask package-windows` or `cargo xtask package-macos`" % folder)
 
 TYPES = {
     ".json": "application/json",

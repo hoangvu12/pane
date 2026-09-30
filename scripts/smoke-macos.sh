@@ -1654,4 +1654,116 @@ stop_pane
 [ -z "$(kept_texts)" ] || { echo "kept: $(kept_texts)"; exit 1; }
 [ "$(field retentionSeconds)" = 3600 ] || { echo "retention: $(field retentionSeconds)"; exit 1; }
 
+# Installing Pane and acquiring its calculator (#52): the package
+# `cargo xtask package-macos --dev` builds is installed on a clean machine
+# — a fresh home folder, a PATH that holds nothing at all, so no Rust,
+# Node, npm, Git or compiler can be reached — and Pane, started from the
+# Pane.app bundle the install script made in that home's ~/Applications,
+# acquires its default extensions (the calculator, and the prebuilt-helper
+# sample with it) from the artifact source this smoke serves on 127.0.0.1
+# (scripts/artifact_server.py, the payloads `cargo xtask package-macos`
+# assembled; nothing reaches the network or Pane's published downloads).
+# The calculator answers "6*7" with 42, and the helper sample's pane-echo
+# runs: a prebuilt program from the acquired payload, no developer tool
+# anywhere. The package is the development profile, because only a
+# development build takes its artifact source from PANE_ARTIFACTS; a
+# release build uses Pane's published downloads, which no controlled
+# source may replace. The binaries are built on this machine, so they
+# carry no Gatekeeper quarantine mark (nothing is signed). (The program
+# files are removed again at the end of the phase: the uploaded evidence
+# is the screenshots and records, not the program.)
+artifact_server_pid=
+# The whole smoke's cleanup in one place: this supersedes the traps the
+# earlier phases set (each had replaced the one before), keeping every
+# server's arm so nothing is lost whatever order the phases run in.
+trap '[ -n "$pid" ] && kill "$pid" 2>/dev/null; [ -n "$npm_registry_pid" ] && kill "$npm_registry_pid" 2>/dev/null; [ -n "$repository_server_pid" ] && kill "$repository_server_pid" 2>/dev/null; [ -n "$service_pid" ] && kill "$service_pid" 2>/dev/null; [ -n "$artifact_server_pid" ] && kill "$artifact_server_pid" 2>/dev/null || true' EXIT
+cargo xtask package-macos --dev >/dev/null
+package=$(ls target/dist/pane-*-macos-*-dev.zip | head -1)
+[ -n "$package" ] || { echo "the package was not built"; exit 1; }
+home=$out/clean-home
+unpack=$out/package-unpacked
+rm -rf "$home" "$unpack"
+mkdir -p "$home" "$unpack"
+rm -f "$out/artifact-server.port"
+python3 "$(dirname "$0")/artifact_server.py" target/dist/artifacts "$out/artifact-server.port" 2>>"$out/artifact-server.log" &
+artifact_server_pid=$!
+for _ in $(seq 600); do [ -s "$out/artifact-server.port" ] && break; kill -0 "$artifact_server_pid" 2>/dev/null || break; sleep 0.1; done
+[ -s "$out/artifact-server.port" ] || { echo "the local artifact source did not start (see $out/artifact-server.log)"; exit 1; }
+unzip -q "$package" -d "$unpack"
+clean_bin=$out/clean-bin
+rm -rf "$clean_bin"; mkdir -p "$clean_bin"
+# Nothing can be reached at all from the PATH Pane runs with (/bin/sh is
+# named absolutely, so the check itself does not depend on the PATH).
+[ -z "$(env -i PATH="$clean_bin" /bin/sh -c 'command -v cargo rustc node npm git cc clang make' 2>/dev/null)" ] \
+  || { echo "the clean machine still reaches a development tool"; exit 1; }
+env -i HOME="$home" PATH="/usr/bin:/bin" bash "$unpack/pane/install.sh" >>"$out/install.log" 2>&1 \
+  || { echo "the install script failed (see $out/install.log)"; exit 1; }
+[ -x "$home/Applications/Pane.app/Contents/MacOS/pane" ] || { echo "the install script installed no pane"; exit 1; }
+start_installed() {
+  env -i HOME="$home" PATH="$clean_bin" \
+    PANE_ARTIFACTS="http://127.0.0.1:$(cat "$out/artifact-server.port")/" \
+    "$home/Applications/Pane.app/Contents/MacOS/pane" "$@" 2>>"$out/installed-stderr.log" &
+  pid=$!
+  sleep 8
+  focus_pane
+}
+start_installed
+# Pane's own data in the clean home (its path holds a space, so it is quoted).
+installed=$home/Library/Application\ Support/Pane/extensions
+# Generous: a slow runner may take a while to check both payloads'
+# components (300 s each). A wait that fails records the screen and the
+# clean home's files — the artifact upload skips hidden folders, so the
+# records are copied out where it can see them.
+record_setup_state() {
+  rm -rf "$out/clean-home-records"
+  mkdir -p "$out/clean-home-records"
+  cp -f "$installed/installed.json" "$out/clean-home-records/" 2>/dev/null || true
+  cp -r "$installed/acquired" "$out/clean-home-records/" 2>/dev/null || true
+  cp -r "$installed/downloads" "$out/clean-home-records/" 2>/dev/null || true
+  cp -f "$out/installed-stderr.log" "$out/clean-home-records/" 2>/dev/null || true
+  cp -f "$out/artifact-server.log" "$out/clean-home-records/" 2>/dev/null || true
+}
+record_setup_problem() {
+  capture 499-setup-problem.png
+  record_setup_state
+}
+wait_recorded() {
+  for _ in $(seq 3000); do
+    grep -q "$1" "$installed/installed.json" 2>/dev/null && return
+    sleep 0.1
+  done
+  echo "$installed/installed.json: $1 is not present"
+  record_setup_problem
+  exit 1
+}
+kill -0 "$pid" 2>/dev/null || { echo "the installed Pane exited during setup"; exit 1; }
+wait_recorded '"default": "calculator"'
+wait_recorded '"default": "helper-sample"'
+sleep 1
+capture 500-installed-root.png
+check 500-installed-root.png aab4c0   # root search: the calculator and Helper sample commands are listed
+type_text '6*7'; sleep 2
+capture 501-calculator-answer.png
+check 501-calculator-answer.png 364355 3000   # "42", the calculator's selected answer row
+key 36; sleep 1
+capture 502-calculator-copied.png
+check 502-calculator-copied.png 9fd8a8   # "Copied 42 to the clipboard"
+command_key a; type_text helper; sleep 1
+key 36; sleep 2   # Helper sample
+key 36; sleep 3   # "Echo through the helper"
+capture 503-helper-echoed.png
+check 503-helper-echoed.png 9fd8a8   # "Echoed \"hello from Pane\" on macOS arm64"
+[ -n "$(ls "$installed"/packages/*/helpers/*/pane-echo)" ] \
+  || { echo "the acquired payload's helper was not installed"; exit 1; }
+[ -z "$(pgrep -f pane-echo)" ] || { echo "a helper is still running"; exit 1; }
+[ "$(ls "$installed/acquired/calculator" | wc -l)" = 1 ] || { echo "the calculator's payload is not cached"; exit 1; }
+[ -z "$(ls -A "$installed/downloads" 2>/dev/null)" ] || { echo "downloads were left behind"; exit 1; }
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{500-installed-root,501-calculator-answer,503-helper-echoed}.png
+stop_pane
+kill "$artifact_server_pid"; wait "$artifact_server_pid" 2>/dev/null || true; artifact_server_pid=
+# The program files go again: the evidence is the screenshots, the
+# installed.json record and the logs.
+record_setup_state
+rm -f "$home/Applications/Pane.app/Contents/MacOS/pane" "$unpack/pane/pane"
+
 echo "screenshots in $out"

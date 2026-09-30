@@ -434,6 +434,83 @@ whether or not the extension runs, and the phase backdates and deletes
 items exactly as the Linux one does, with the pasteboard checked directly
 (`pbpaste`). **Not run on macOS yet.**
 
+## Installing Pane and acquiring its calculator (#52)
+
+A final phase, after the clipboard-expiry one, proves the whole outcome of
+[#52](https://github.com/hoangvu12/pane/issues/52)
+([installer](../installer.md)), the macOS half of what
+[#53](linux.md#installing-pane-and-acquiring-its-calculator-53) proved on
+Linux and [#51](windows.md#installing-pane-and-acquiring-its-calculator-51)
+on Windows. `cargo xtask package-macos --dev` builds the macOS package —
+a zip, like the Windows one, opened with one double-click in Finder and
+written by the same fixed-bytes writer — holding the `pane` program, the
+bash `install.sh`, a README and the bundle's `Info.plist` (the development
+profile, so its program accepts the controlled artifact source) and the
+default extensions' payloads; the smoke serves `target/dist/artifacts`
+from 127.0.0.1 with `scripts/artifact_server.py` (nothing reaches the
+network or Pane's published downloads). The package is unzipped into a
+folder of its own and its install script runs with a **clean machine's**
+environment: a fresh home folder and `PATH=/usr/bin:/bin`, so the home
+holds no data and no development tool is configured. It builds the
+`Pane.app` bundle in that home's `~/Applications` (the user's own folder,
+so no administrator rights) from the program and the `Info.plist`, and
+runs `pane --version` to check what it installed. The installed Pane then
+starts — the bundle's `Contents/MacOS/pane` — with a PATH that holds
+nothing at all (an empty folder, checked with `command -v` of cargo,
+rustc, node, npm, git, cc, clang and make), pointed at the controlled
+source with `PANE_ARTIFACTS`. It acquires the calculator and the helper
+sample by itself (`installed.json` must record both under `"default"`),
+root search lists their commands, "6*7" answers 42 and Enter copies it,
+and the Helper sample's "Echo through the helper" runs the payload's
+prebuilt `pane-echo` ("Echoed \"hello from Pane\" on macOS arm64"),
+built for `macos-aarch64` (the packaging rewrote the payload's manifest
+to that target), from the managed copy, with no developer tool
+reachable. The acquired payloads must be cached, the downloads folder
+empty, and no helper process left running. The program files are removed
+again at the phase's end, so the uploaded evidence is the screenshots and
+records (frames 500 to 503, and the `clean-home-records` folder), not the
+program. CI builds the release-profile package after the smoke and
+uploads it with the artifacts of the job (`macos-package`). Nothing is
+signed (no Apple Developer credentials exist): the smoke's binaries are
+built on the runner, so they carry no Gatekeeper quarantine mark; a
+package downloaded from the internet would, and its first launch would
+be blocked until allowed in System Settings — recorded as an execution
+prerequisite in [the installer's limits](../installer.md#limits-and-prerequisites).
+
+**Recorded 2026-09-30, this branch's machine (headless aarch64 Linux —
+no Apple toolchain, so the macOS `pane` program and its package cannot
+be built here):** what ran locally is everything that machine can run:
+`cargo check`, `clippy`, `fmt` and the unit tests of `xtask`; `cargo
+xtask package-macos` far enough to assemble the whole artifact tree
+(the helper sample's payload manifest rewritten to this machine's
+target, `linux-aarch64`, by the same shared code a macOS run rewrites
+to `macos-aarch64`), before it refuses with the message that only a
+macOS checkout builds the program — the same refusal `package-windows`
+makes here; and `cargo xtask package-linux` end-to-end as the shared
+packaging's regression. The install script is bash, so it was linted
+(`bash -n`) and dry-run on this machine with a fake `pane` binary
+through its logic paths: the per-user `Pane.app` install with a clean
+environment, the `--app-dir` override, the missing-file and usage
+errors, and the `--version` check propagating the program's exit code;
+its one macOS-specific claim — that Gatekeeper does not stop the
+script's direct run — is read-reviewed. The acquisition the installed
+Pane does is the same platform-independent code
+`crates/pane-core/tests/installer.rs` checks (rerun here, all passing,
+including the prebuilt helper running from the managed copy). The
+`Info.plist` the package ships was generated and parsed back
+(`plistlib`) with the keys Launch Services reads. The bash smoke phase
+is syntax-checked and reviewed only; the zip package itself, the
+release-profile package and the smoke phase are **pending CI**: they
+need the macOS build and interactive desktop only the `macos-15`
+runner provides.
+
+| Step | Evidence |
+| --- | --- |
+| The clean machine's Pane acquired both default extensions and lists their commands | pending CI (frame 500) |
+| "6*7" answers 42 | pending CI (frame 501) |
+| Enter copies the answer | pending CI (frame 502) |
+| The helper sample's prebuilt helper answers | pending CI (frame 503) |
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms now have a text field. The
