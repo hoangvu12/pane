@@ -1355,9 +1355,42 @@ capture 304-git-command-ran.png
 check 304-git-command-ran.png 9fd8a8   # "Hello from the Git repository"
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{300-git-source-only,301-git-form,302-git-preview,303-git-installed,304-git-command-ran}.png
 stop_pane
-kill "$repository_server_pid"; wait "$repository_server_pid" 2>/dev/null || true; repository_server_pid=
 release=$(python3 "$(dirname "$0")/repository_server.py" commit "$out/git-repositories/greeter" v0.1.0)
 python3 "$(dirname "$0")/check_git_record.py" "$PANE_DATA_DIR/extensions/installed.json" "$release" || { echo "Git package not recorded as installed from v0.1.0"; exit 1; }
+[ -z "$(ls -A "$PANE_DATA_DIR/extensions/downloads" 2>/dev/null)" ] || { echo "a Git download was left"; exit 1; }
+
+# Git packages update themselves (#50): a second repository of the same
+# sample, made in the folder the same server serves (it answers each
+# request from the folder as it is), installed in a data folder of its own
+# from its tracked release branch -- `--install` naming the branch, so the
+# copy is tracked, not pinned -- with its command run; the branch then
+# moves to a 0.2.0 (repository_server.py move-sample) while Pane is
+# stopped, and the check a second after the restart replaces the installed
+# copy by itself, the new code running. Nothing reaches the network.
+export PANE_DATA_DIR=$out/git-update-data
+rm -rf "$PANE_DATA_DIR"
+python3 "$(dirname "$0")/repository_server.py" make-sample target/guests/git/greeter "$out/git-repositories/greeter-tracked"
+tracked=http://127.0.0.1:$(cat "$out/repository-server.port")/greeter-tracked.git
+start_pane --install "git:$tracked@release"
+capture_until 305-git-tracked-preview.png aab4c0 60   # "Revision: branch release, tracked: an update fetches that branch again"
+key 36; sleep 3   # Install; Greeter from Git is selected
+capture 306-git-tracked-installed.png
+check 306-git-tracked-installed.png 9fd8a8   # "Installed Greeter from Git"
+python3 "$(dirname "$0")/repository_server.py" move-sample "$out/git-repositories/greeter-tracked" 0.2.0
+stop_pane
+start_pane
+# The check a second after the start, then the fetch and the apply: capture
+# until the status line says the update landed, whenever that is.
+capture_until 307-git-updated-automatically.png 9fd8a8 60   # "Updated Greeter from Git to 0.2.0"
+key 36; sleep 3   # open Greeter from Git, the new copy
+key 36; sleep 2   # "Say hello"
+capture 308-git-new-copy-ran.png
+check 308-git-new-copy-ran.png 9fd8a8   # "Hello from the Git repository"
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{305-git-tracked-preview,306-git-tracked-installed,307-git-updated-automatically,308-git-new-copy-ran}.png
+stop_pane
+kill "$repository_server_pid"; wait "$repository_server_pid" 2>/dev/null || true; repository_server_pid=
+moved=$(python3 "$(dirname "$0")/repository_server.py" commit "$out/git-repositories/greeter-tracked" release)
+python3 "$(dirname "$0")/check_git_record.py" --ref refs/heads/release --unpinned "$PANE_DATA_DIR/extensions/installed.json" "$moved" || { echo "the tracked Git package was not recorded at its moved branch"; exit 1; }
 [ -z "$(ls -A "$PANE_DATA_DIR/extensions/downloads" 2>/dev/null)" ] || { echo "a Git download was left"; exit 1; }
 
 # File search (#29): Files, a default extension (its data folder is this

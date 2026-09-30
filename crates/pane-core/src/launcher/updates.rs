@@ -1,17 +1,21 @@
-//! Automatic updates of installed packages from npm: Pane replaces the
-//! managed copy of an eligible one with a compatible newer version from
-//! its registry, without the user asking (US72–US75, T15).
+//! Automatic updates of installed packages from npm and Git: Pane
+//! replaces the managed copy of an eligible npm package with a compatible
+//! newer version from its registry, and of an eligible Git package with
+//! the newer commit of the tracked branch it was installed from, without
+//! the user asking (US72–US75, T15).
 //!
 //! The updater is a thread of Pane's own, shaped like the scheduler's and
 //! the services thread's, driven by the launcher's clock: it checks
 //! shortly after Pane starts and then every
 //! [`CHECK_EVERY`](CHECK_EVERY) hours, in the background, so the window
-//! never waits for the registry. A check reads only the registry's
-//! metadata; nothing is downloaded while the latest version is the
-//! installed one. A newer version is fetched and checked exactly as an
-//! install checks a package (its manifest and API, its components, its
-//! platforms and helpers, and its dependencies as a plan), and what was
-//! downloaded stays staged until it is applied.
+//! never waits for the registry or the repository. A check reads only the
+//! metadata — the registry's for an npm package, the repository's
+//! reference listing for a Git one; nothing is downloaded while the
+//! latest version is the version installed, or the tracked branch points
+//! at the commit installed. A newer version or commit is fetched and
+//! checked exactly as an install checks a package (its manifest and API,
+//! its components, its platforms and helpers, and its dependencies as a
+//! plan), and what was downloaded stays staged until it is applied.
 //!
 //! Applying a staged update waits for the safe activation boundary: no
 //! screen of the package is on display (a command, its search, a form or
@@ -28,14 +32,16 @@
 //! and the old code's generation ends, stopping what is still pending
 //! with its late answer discarded.
 //!
-//! Which packages are eligible: installed from npm, not pinned (a pinned
-//! version is kept, whatever the latest is), enabled, not paused after a
-//! failure, and not turned off — the user's controls are a global choice
-//! and a per-package one (rows in the extension list, recorded in
-//! `updates.json` beside `installed.json`). A local folder's or a
-//! development copy's code is never replaced here: only npm packages
-//! update by themselves. A check or an update that fails explains in the
-//! status line, and the installed copy is left as it is.
+//! Which packages are eligible: installed from npm and not pinned (a
+//! pinned version is kept, whatever the latest is), or installed from Git
+//! and tracked (a tag or commit named to install it is pinned and kept,
+//! and an update follows the branch), and in either case enabled, not
+//! paused after a failure, and not turned off — the user's controls are a
+//! global choice and a per-package one (rows in the extension list,
+//! recorded in `updates.json` beside `installed.json`). A local folder's
+//! or a development copy's code is never replaced here: only npm and Git
+//! packages update by themselves. A check or an update that fails explains
+//! in the status line, and the installed copy is left as it is.
 //!
 //! **Provisional, pending the user's decision:** the cadence (a check
 //! shortly after Pane starts, then every 24 hours, by the launcher's
@@ -58,8 +64,9 @@ use super::{
 use crate::atomic::{Readers, write_atomically};
 use crate::clipboard::Clock;
 use crate::dependencies;
+use crate::git;
 use crate::npm;
-use crate::packages::InstalledPackage;
+use crate::packages::{InstalledPackage, SourcePackage};
 
 /// How long Pane waits after it starts before the first check, so that a
 /// development build's registry ([`crate::npm::Registry::local`]) is in
@@ -180,11 +187,12 @@ struct Checking {
 /// package to be quiet so that it can replace the installed copy.
 struct Staged {
     identity: PackageIdentity,
-    /// The version the installed copy had when this was staged: an
-    /// installed copy at another version since means this is not for it.
+    /// What marks the revision the installed copy had when this was
+    /// staged — the version of an npm package, the commit of a Git one —
+    /// so an installed copy at another since means this is not for it.
     installed: String,
-    /// The package to install, at the version it would be.
-    package: crate::packages::SourcePackage,
+    /// The package to install, at the version or commit it would be.
+    package: SourcePackage,
     /// What installing it means for its dependencies, as checked.
     plan: dependencies::Plan,
 }
@@ -303,9 +311,10 @@ impl Updates {
     /// downloaded or does not pass the checks an install makes. The
     /// installed copy is left as it is either way.
     fn check(&self, launcher: &Launcher) {
-        // What to check: the eligible installed npm packages, skipping any
-        // something is already happening to (an install, an update, a
-        // change the user asked for), which the next check catches.
+        // What to check: the eligible installed npm and Git packages,
+        // skipping any something is already happening to (an install, an
+        // update, a change the user asked for), which the next check
+        // catches.
         let candidates: Vec<InstalledPackage> = {
             let state = launcher.lock();
             state
@@ -318,55 +327,21 @@ impl Updates {
                 .collect()
         };
         // A package that is no longer a candidate, or whose installed copy
-        // is not at the version its staged update was staged against,
-        // keeps nothing staged: the next check plans again.
+        // is not at the version or commit its staged update was staged
+        // against, keeps nothing staged: the next check plans again.
         let at: Vec<(PackageIdentity, String)> = candidates
             .iter()
-            .filter_map(|package| {
-                package
-                    .npm
-                    .as_ref()
-                    .map(|npm| (package.identity.clone(), npm.version.clone()))
-            })
+            .filter_map(|package| Some((package.identity.clone(), installed_at(package)?)))
             .collect();
         self.lock().staged.retain(|staged| {
-            at.iter().any(|(identity, version)| {
-                identity == &staged.identity && version == &staged.installed
-            })
+            at.iter()
+                .any(|(identity, at)| identity == &staged.identity && at == &staged.installed)
         });
         for package in candidates {
-            let Some(npm) = package.npm.clone() else {
-                continue;
-            };
-            let registry = self.lock_sources().registry.clone();
-            match npm::latest_version(&registry, &npm.name) {
-                Err(reason) => {
-                    report(
-                        &mut launcher.lock(),
-                        Status::Error(format!(
-                            "{} was not checked for a newer version: {reason}",
-                            package.title()
-                        )),
-                    );
-                }
-                Ok(latest) => {
-                    // Up to date, or staged for that version already:
-                    // nothing is fetched.
-                    let staged_at_latest = self.lock().staged.iter().any(|staged| {
-                        staged.identity == package.identity
-                            && staged
-                                .package
-                                .npm
-                                .as_ref()
-                                .is_some_and(|origin| origin.package.version == latest)
-                    });
-                    if latest == npm.version || staged_at_latest {
-                        continue;
-                    }
-                    if let Some(staged) = self.stage(launcher, &npm.name, &npm.version) {
-                        self.lock().staged.push(staged);
-                    }
-                }
+            if let Some(npm) = package.npm.clone() {
+                self.check_npm(launcher, &package, npm);
+            } else if let Some(git) = package.git.clone() {
+                self.check_git(launcher, &package, git);
             }
         }
         let mut state = self.lock();
@@ -377,68 +352,170 @@ impl Updates {
         self.settled.checked_pass();
     }
 
-    /// Downloads and checks the latest version of `name` as an install
-    /// checks a package, working out what it means for its dependencies,
-    /// against an installed copy at `installed`: the update to stage, or
-    /// `None` with the status line saying why the installed copy stays.
-    /// Blocks on the network and the checks; runs no code of the package.
-    fn stage(&self, launcher: &Launcher, name: &str, installed: &str) -> Option<Staged> {
-        let title = |launcher: &Launcher| {
-            launcher
-                .lock()
-                .package(&PackageIdentity::npm(name))
-                .map(InstalledPackage::title)
-                .unwrap_or_else(|| name.to_owned())
+    /// Checks one installed npm package for a newer version and stages
+    /// what it finds. The registry's metadata alone says what the latest
+    /// version is: nothing is fetched while that is the version installed.
+    fn check_npm(&self, launcher: &Launcher, package: &InstalledPackage, npm: npm::NpmPackage) {
+        let registry = self.lock_sources().registry.clone();
+        match npm::latest_version(&registry, &npm.name) {
+            Err(reason) => {
+                report(
+                    &mut launcher.lock(),
+                    Status::Error(format!(
+                        "{} was not checked for a newer version: {reason}",
+                        package.title()
+                    )),
+                );
+            }
+            Ok(latest) => {
+                // Up to date, or staged for that version already:
+                // nothing is fetched.
+                let staged_at_latest = self.lock().staged.iter().any(|staged| {
+                    staged.identity == package.identity
+                        && staged
+                            .package
+                            .npm
+                            .as_ref()
+                            .is_some_and(|origin| origin.package.version == latest)
+                });
+                if latest == npm.version || staged_at_latest {
+                    return;
+                }
+                let spec = crate::npm::NpmSpec {
+                    name: npm.name.clone(),
+                    // No version: the latest, and not pinned by the update.
+                    version: None,
+                };
+                if let Some(staged) = self.stage(launcher, install::Request::Npm(spec), package) {
+                    self.lock().staged.push(staged);
+                }
+            }
+        }
+    }
+
+    /// Checks one installed Git package for the newer commit of its
+    /// tracked branch and stages what it finds. The repository's reference
+    /// listing alone says what its branch points to now: nothing is
+    /// fetched while that is the commit installed.
+    fn check_git(&self, launcher: &Launcher, package: &InstalledPackage, git: git::InstalledGit) {
+        // The repository as the installed copy's record names it, fetched
+        // from where it was fetched before; a record Pane cannot read
+        // names no repository.
+        let spec = match git::GitSpec::parse(&git.url) {
+            Ok(spec) => spec,
+            Err(reason) => {
+                report(
+                    &mut launcher.lock(),
+                    Status::Error(format!(
+                        "{} was not checked for a newer version: {reason}",
+                        package.title()
+                    )),
+                );
+                return;
+            }
         };
-        let spec = crate::npm::NpmSpec {
-            name: name.to_owned(),
-            // No version: the latest, and not pinned by the update.
-            version: None,
-        };
+        // The tracked reference the copy was installed from (a pinned
+        // revision is never a candidate: `eligible` filters it out).
+        let asked_as = git.revision.asked_as();
+        match git::resolve_reference(&spec.repository, asked_as.as_deref()) {
+            Err(reason) => {
+                report(
+                    &mut launcher.lock(),
+                    Status::Error(format!(
+                        "{} was not checked for a newer version: {reason}",
+                        package.title()
+                    )),
+                );
+            }
+            Ok(revision) => {
+                // The branch has not moved, or that commit is staged
+                // already: nothing is fetched.
+                let already_staged = self.lock().staged.iter().any(|staged| {
+                    staged.identity == package.identity
+                        && staged
+                            .package
+                            .git
+                            .as_ref()
+                            .is_some_and(|origin| origin.revision.commit == revision.commit)
+                });
+                if revision.commit == git.revision.commit || already_staged {
+                    return;
+                }
+                // The tracked branch again, at whatever commit it has
+                // moved to: fetched and checked as an install checks a
+                // package.
+                let spec = git::GitSpec {
+                    reference: asked_as,
+                    ..spec
+                };
+                if let Some(staged) = self.stage(launcher, install::Request::Git(spec), package) {
+                    self.lock().staged.push(staged);
+                }
+            }
+        }
+    }
+
+    /// Downloads and checks what `request` names — the latest version of
+    /// an npm package, or the moved commit of a Git package's tracked
+    /// branch — as an install checks a package, working out what it means
+    /// for its dependencies, against the installed copy `installed`: the
+    /// update to stage, or `None` with the status line saying why the
+    /// installed copy stays. Blocks on the network and the checks; runs no
+    /// code of the package.
+    fn stage(
+        &self,
+        launcher: &Launcher,
+        request: install::Request,
+        installed: &InstalledPackage,
+    ) -> Option<Staged> {
+        let title = installed.title();
         // The updater's own sources: a WeakLauncher keeps the launcher's
         // as they were when it was made, before a development build's
         // registry was given.
         let sources = self.lock_sources().clone();
-        let checked = futures::executor::block_on(
-            launcher.read_and_check_from(sources, install::Request::Npm(spec)),
-        );
+        let checked = futures::executor::block_on(launcher.read_and_check_from(sources, request));
         let package = match checked {
             Ok(package) => package,
             Err(reason) => {
-                // The message is built before the lock is taken: `title`
-                // reads the state itself.
-                let message = format!(
-                    "{} was not updated: {reason}. It keeps running its installed code.",
-                    title(launcher)
+                report(
+                    &mut launcher.lock(),
+                    Status::Error(format!(
+                        "{title} was not updated: {reason}. It keeps running its installed code."
+                    )),
                 );
-                report(&mut launcher.lock(), Status::Error(message));
                 return None;
             }
         };
-        let version = package
+        // What the update stages the copy at: the version of an npm
+        // package, the revision a Git one fetched.
+        let staged_revision = package
             .npm
             .as_ref()
             .map(|origin| origin.package.version.clone())
+            .or_else(|| {
+                package
+                    .git
+                    .as_ref()
+                    .map(|origin| origin.revision.describe())
+            })
             .unwrap_or_default();
         let sources = self.lock_sources().clone();
         let (package, plan) =
             futures::executor::block_on(launcher.plan_dependencies_from(sources, package));
         if !plan.problems.is_empty() {
             // The same checks an install makes, with the same words: what
-            // the newer version needs is not there. The message is built
-            // before the lock is taken: `title` reads the state itself.
+            // the newer version needs is not there.
             let problems: Vec<String> = plan.problems.iter().map(ToString::to_string).collect();
             let message = format!(
-                "{} was not updated to {version}: {}. It keeps running its installed code.",
-                title(launcher),
+                "{title} was not updated to {staged_revision}: {}. It keeps running its installed code.",
                 problems.join("; ")
             );
             report(&mut launcher.lock(), Status::Error(message));
             return None;
         }
         Some(Staged {
-            identity: package.identity.clone(),
-            installed: installed.to_owned(),
+            identity: installed.identity.clone(),
+            installed: installed_at(installed).unwrap_or_default(),
             package,
             plan,
         })
@@ -462,26 +539,22 @@ impl Updates {
     /// the package is in use or busy, so it is tried again, and `Dropped`
     /// when it is not for the package as it is now.
     fn apply_one(&self, launcher: &Launcher, update: Staged) -> Applied {
-        let identity = update.package.identity.clone();
-        // What the update installs, checked as it was staged.
-        let target = update
-            .package
-            .npm
-            .as_ref()
-            .map(|origin| origin.package.version.clone())
-            .unwrap_or_default();
+        let identity = update.identity.clone();
+        // What the update installs, checked as it was staged: the version
+        // of an npm package, the commit of a Git one.
+        let target = staged_at(&update.package).unwrap_or_default();
         let mut claimed;
         {
             let mut state = launcher.lock();
             let Some(installed) = state.package(&identity) else {
                 return Applied::Dropped;
             };
-            let Some(npm) = &installed.npm else {
-                return Applied::Dropped;
-            };
             // Not the copy this was staged for, or already there: the next
             // check plans again.
-            if npm.version != update.installed || npm.version == target {
+            let Some(at) = installed_at(installed) else {
+                return Applied::Dropped;
+            };
+            if at != update.installed || at == target {
                 return Applied::Dropped;
             }
             // The user turned updates off for it, pinned, disabled or
@@ -568,18 +641,49 @@ impl Updates {
     }
 }
 
-/// Whether `package` is one Pane updates by itself: installed from npm,
-/// not pinned, enabled, not paused after a failure, and not turned off
-/// by the user's controls (the global one first).
+/// Whether `package` is one Pane updates by itself: installed from npm
+/// and not pinned (a pinned version is kept, whatever the latest is), or
+/// installed from Git and tracked (a tag or commit named to install it is
+/// pinned and kept; an update follows the branch), and in either case
+/// enabled, not paused after a failure, and not turned off by the user's
+/// controls (the global one first).
 fn eligible(state: &State, package: &InstalledPackage) -> bool {
-    let Some(npm) = &package.npm else {
-        return false;
+    let from_a_source_pane_updates = match (&package.npm, &package.git) {
+        (Some(npm), _) => !npm.pinned,
+        (None, Some(git)) => !git.revision.pinned(),
+        (None, None) => return false,
     };
-    !npm.pinned
+    from_a_source_pane_updates
         && package.enabled
         && !state.paused.is_paused(&package.identity)
         && state.update_controls.automatic
         && !state.update_controls.off.contains(&package.identity.key())
+}
+
+/// What marks the revision `package` is installed at: the version of an
+/// npm package, the commit of a Git one; `None` for a package from a
+/// local folder, which the updater never replaces.
+fn installed_at(package: &InstalledPackage) -> Option<String> {
+    package
+        .npm
+        .as_ref()
+        .map(|npm| npm.version.clone())
+        .or_else(|| package.git.as_ref().map(|git| git.revision.commit.clone()))
+}
+
+/// What marks the revision a staged `package` would install: the version
+/// of an npm package, the commit of a Git one.
+fn staged_at(package: &SourcePackage) -> Option<String> {
+    package
+        .npm
+        .as_ref()
+        .map(|origin| origin.package.version.clone())
+        .or_else(|| {
+            package
+                .git
+                .as_ref()
+                .map(|origin| origin.revision.commit.clone())
+        })
 }
 
 /// Whether `package` is at the safe boundary for replacing its code: no
@@ -868,19 +972,34 @@ impl Launcher {
 }
 
 /// The extension list's rows for the update controls: one per installed
-/// npm package that is not pinned, after the reload rows a local package
-/// has (an npm package has none), saying whether it updates by itself.
+/// npm package that is not pinned and per Git package that is tracked
+/// (after the reload rows a local package has; an npm or Git package has
+/// none), saying whether it updates by itself.
 pub(super) fn package_rows(
     packages: &[InstalledPackage],
     off: &HashSet<String>,
 ) -> Vec<(Row, Entry)> {
     packages
         .iter()
-        .filter(|package| package.npm.as_ref().is_some_and(|npm| !npm.pinned))
+        .filter(|package| {
+            package.npm.as_ref().is_some_and(|npm| !npm.pinned)
+                || package
+                    .git
+                    .as_ref()
+                    .is_some_and(|git| !git.revision.pinned())
+        })
         .map(|package| {
             let identity = package.identity.clone();
             let title = package.title();
             let off = off.contains(&identity.key());
+            // What the row says is replaced: the newer npm version of an
+            // npm package, the newer commit of the tracked branch of a
+            // Git one.
+            let newer = if package.git.is_some() {
+                "a newer commit of its tracked branch"
+            } else {
+                "a compatible newer npm version"
+            };
             let row = Row {
                 id: format!("updates:{}", identity.key()),
                 title: format!("Update {title} automatically"),
@@ -891,8 +1010,7 @@ pub(super) fn package_rows(
                     )
                 } else {
                     format!(
-                        "On · a compatible newer npm version replaces it once no command of it \
-                         runs · {}",
+                        "On · {newer} replaces it once no command of it runs · {}",
                         identity
                     )
                 }),
