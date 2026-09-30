@@ -675,7 +675,11 @@ Send "{DOWN 40}"
 Send "{ENTER}"; Start-Sleep -Seconds 1   # "Delete retained data of Settings sample"
 Capture "63-confirm-delete-retained.png"
 Check "63-confirm-delete-retained.png" "aab4c0"   # what is kept and what is not touched
-Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"   # "Delete retained data"
+# #58's workaround: the smoke's own host stops delivering keys to this
+# confirmation after the flow (see the issue); a fresh PowerShell process
+# sending the same keys does deliver them, so it sends these.
+powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('{DOWN}'); Start-Sleep -Milliseconds 150; [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')"   # "Delete retained data"
+Start-Sleep -Seconds 2
 Wait-For $registry '"retained"' $false; Start-Sleep -Seconds 1
 Capture "64-retained-deleted.png"
 Check "64-retained-deleted.png" "9fd8a8"   # "Deleted the retained data of Settings sample"
