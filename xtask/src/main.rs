@@ -65,13 +65,37 @@ const PREBUILT: &[&str] = &[
 fn main() -> ExitCode {
     let task = std::env::args().nth(1);
     let dev = std::env::args().any(|arg| arg == "--dev");
-    let result = match task.as_deref() {
-        Some("guests") => guests(),
-        Some("js-guests") => js_guests(),
-        Some("ci") => ci(),
-        Some("package-linux") => package::linux(dev),
-        Some("package-windows") => package::windows(dev),
-        _ => Err("usage: cargo xtask <guests|js-guests|ci|package-linux|package-windows>".into()),
+    // The version a package names its program by, when it is not this
+    // workspace's own: dotted numbers, as Pane reads versions.
+    let version = std::env::args()
+        .position(|arg| arg == "--package-version")
+        .and_then(|at| std::env::args().nth(at + 1))
+        .map(|version| {
+            version
+                .split('.')
+                .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+                .then_some(version.clone())
+                .ok_or_else(|| {
+                    format!(
+                        "--package-version must be dotted numbers such as 99.0.0, not \
+                         `{version}`: it is the version the packaged program reports and \
+                         Pane's index names"
+                    )
+                })
+        })
+        .transpose();
+    let result = match (task.as_deref(), version) {
+        (Some("guests"), _) => guests(),
+        (Some("js-guests"), _) => js_guests(),
+        (Some("ci"), _) => ci(),
+        (Some("package-linux"), Ok(version)) => package::linux(dev, version),
+        (Some("package-windows"), Ok(version)) => package::windows(dev, version),
+        (_, Err(why)) => Err(why),
+        _ => Err(
+            "usage: cargo xtask <guests|js-guests|ci|package-linux|package-windows> \\
+             [--dev] [--package-version <version>]"
+                .into(),
+        ),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

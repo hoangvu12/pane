@@ -2475,7 +2475,7 @@ fn copy_package(package: &SourcePackage, location: &Path) -> io::Result<()> {
 /// exactly `rwxr-xr-x`: no set-user-id, set-group-id or sticky bit, and no
 /// one but its owner may change it.
 #[cfg(unix)]
-fn make_executable(path: &Path) -> io::Result<()> {
+pub(crate) fn make_executable(path: &Path) -> io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(path, fs::Permissions::from_mode(0o755))
 }
