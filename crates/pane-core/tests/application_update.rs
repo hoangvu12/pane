@@ -120,7 +120,8 @@ impl Dirs {
             .expect("Pane names this system's target")
             .id()
             .to_owned();
-        self.artifacts.publish_application_tgz(version, &target, &tarball);
+        self.artifacts
+            .publish_application_tgz(version, &target, &tarball);
     }
 
     /// The files in the install folder, sorted.

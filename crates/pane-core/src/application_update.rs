@@ -423,7 +423,10 @@ mod tests {
         let program = Program::at(PathBuf::from("/home/u/.local/bin/pane")).unwrap();
         assert_eq!(program.path(), PathBuf::from("/home/u/.local/bin/pane"));
         assert_eq!(program.old(), PathBuf::from("/home/u/.local/bin/pane.old"));
-        assert_eq!(program.staging(), PathBuf::from("/home/u/.local/bin/update"));
+        assert_eq!(
+            program.staging(),
+            PathBuf::from("/home/u/.local/bin/update")
+        );
         assert!(Program::at(PathBuf::from("pane.exe")).is_ok());
         // The program file's name is where it is; a path with no file name
         // names no program.
