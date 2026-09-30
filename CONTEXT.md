@@ -1,6 +1,6 @@
 # Pane
 
-A general-purpose launcher for Windows, macOS and Linux whose users can install and create extensions around a small core. Pane is the user-selected product name; current prototype testing covers Windows only.
+A general-purpose launcher for Windows, macOS and Linux whose users can install and create extensions around a small core. Pane is the user-selected product name; native evidence so far covers Linux (X11) and Windows, with macOS still to run.
 
 ## Language
 
@@ -19,6 +19,14 @@ _Avoid_: Plugin, add-on
 **Default extension**:
 An extension provided by default to supply an everyday feature; the user can disable it individually. It may be acquired automatically during initial setup rather than shipped inside the installer.
 _Avoid_: Mandatory feature, core feature
+
+**Artifact source**:
+Where Pane reads the index of its default extensions and downloads their payloads from: Pane's own downloads, distinct from npm and the Git hosts. A development build can name one on this computer instead, for tests and smokes; a release build cannot.
+_Avoid_: Registry (npm's), repository (Git's), update server (Pane's application updates)
+
+**Acquired artifact**:
+A default extension's payload Pane downloads itself at first setup: a tarball its index names by version, file, size and sha512 integrity, unpacked and checked as an npm package's tarball is and installed through the same path into a managed copy, whose identity is the default extension's own. Pane keeps what it downloaded in its payload cache only while it still matches that integrity.
+_Avoid_: Installer payload (the installer carries none), bundled feature, runtime download (the extension runtime is part of Pane)
 
 **Disabled extension**:
 An installed extension whose execution and contributed functionality are switched off, while its settings and unexpired saved data are retained.
