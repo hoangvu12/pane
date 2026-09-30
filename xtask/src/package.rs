@@ -271,7 +271,10 @@ fn payload_files(source: &Path, _id: &str) -> Result<Vec<(String, Vec<u8>)>, Str
         }
     }
     let target = target_id()?;
-    if let Some(helpers) = manifest["helpers"].as_array_mut() {
+    // `get_mut`, not indexing: indexing a Value for a missing key inserts
+    // a null for it, and a written-out `"helpers": null` is a manifest
+    // Pane refuses (its helpers are a sequence).
+    if let Some(Value::Array(helpers)) = manifest.get_mut("helpers") {
         // The build assembles the helper for the system it runs on, so the
         // payload names that target alone.
         let file = format!("helpers/{target}/pane-echo{}", exe_suffix());
@@ -606,4 +609,38 @@ fn base64(bytes: &[u8]) -> String {
         }
     }
     text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A package with no helpers keeps a manifest with no helpers: indexing
+    /// a Value for the key would write `"helpers": null` into the payload,
+    /// which Pane refuses to install (CI run 36676779827 found it in the
+    /// smoke, the only consumer of the assembled payloads).
+    #[test]
+    fn a_payload_without_helpers_writes_no_helpers_field() {
+        let folder = std::env::temp_dir().join("pane-xtask-payload-test");
+        let _ = fs::remove_dir_all(&folder);
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(
+            folder.join("pane.json"),
+            br#"{"manifestVersion": 1, "title": "T", "version": "0.1.0", "apiVersion": "0.1",
+                "commands": [{"id": "c", "title": "C", "component": "c.wasm"}]}"#,
+        )
+        .unwrap();
+        fs::write(folder.join("c.wasm"), b"the component").unwrap();
+        let files = payload_files(&folder, "t").expect("the payload assembles");
+        let manifest = files
+            .iter()
+            .find(|(path, _)| path == "pane.json")
+            .map(|(_, contents)| contents.clone())
+            .expect("the payload holds the manifest");
+        let manifest: Value = serde_json::from_slice(&manifest).unwrap();
+        assert!(
+            manifest.get("helpers").is_none(),
+            "the manifest gained a helpers field: {manifest}"
+        );
+    }
 }

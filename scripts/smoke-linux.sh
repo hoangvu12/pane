@@ -1778,8 +1778,11 @@ stop_pane
 cargo xtask package-linux --dev >/dev/null
 package=$(ls target/dist/pane-*-linux-*-dev.tar.gz | head -1)
 [ -n "$package" ] || { echo "the package was not built"; exit 1; }
-home=$out/clean-home
-unpack=$out/package-unpacked
+# The clean home and unpacked package are absolute: Pane's HOME lands in
+# its compile cache's directory, which Wasmtime needs absolute, and the
+# smoke runs from the repository with a relative $out.
+home=$PWD/$out/clean-home
+unpack=$PWD/$out/package-unpacked
 rm -rf "$home" "$unpack"
 mkdir -p "$home" "$unpack"
 rm -f "$out/artifact-server.port"

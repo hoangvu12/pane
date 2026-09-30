@@ -143,11 +143,16 @@ pub fn default_extensions() -> Vec<pane_core::DefaultExtension> {
 /// `%LOCALAPPDATA%\Pane\cache` on Windows, `~/Library/Caches/Pane` on
 /// macOS and `$XDG_CACHE_HOME/pane` (default `~/.cache/pane`) elsewhere.
 pub fn cache_dir() -> Option<PathBuf> {
+    // Wasmtime's compile cache needs an absolute directory: a relative
+    // HOME or XDG_CACHE_HOME (the smokes' clean home is one) would otherwise
+    // stop the runtime from starting, so the path is made absolute against
+    // the folder Pane was started in.
     platform_dir(
         r"Pane\cache",
         "Library/Caches/Pane",
         ("XDG_CACHE_HOME", ".cache"),
     )
+    .and_then(|dir| std::path::absolute(dir).ok())
 }
 
 /// Where Pane keeps installed extension packages: `PANE_DATA_DIR` when set,
