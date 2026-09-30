@@ -181,8 +181,11 @@ impl Dirs {
     /// Publishes the sample at `version` with `component` in place of its
     /// built one, tagged latest.
     fn publish_component(&self, version: &str, component: Vec<u8>) {
-        self.registry
-            .publish(NAME, version, pack(&settings_files_of(version, "0.1", "", component)));
+        self.registry.publish(
+            NAME,
+            version,
+            pack(&settings_files_of(version, "0.1", "", component)),
+        );
     }
 
     /// Installs the sample at `version`, unpinned.
@@ -218,9 +221,7 @@ impl Dirs {
             .as_array()
             .unwrap()
             .iter()
-            .find(|record| {
-                record["local"] == identity.local_folder().unwrap().to_str().unwrap()
-            })
+            .find(|record| record["local"] == identity.local_folder().unwrap().to_str().unwrap())
             .cloned()
             .unwrap_or_else(|| panic!("no local record in {registry:#}"))
     }
@@ -858,9 +859,6 @@ fn a_new_version_that_fails_to_start_is_not_rolled_back() {
     open_greeting(&launcher);
     assert_eq!(launcher.view().title, "Started");
     activate(&launcher, "Started on a later attempt");
-    assert_eq!(
-        launcher.view().status,
-        Status::Result("ran started".into())
-    );
+    assert_eq!(launcher.view().status, Status::Result("ran started".into()));
     assert_eq!(dirs.installed_version(), "0.2.0");
 }
