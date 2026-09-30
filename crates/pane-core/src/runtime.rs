@@ -1316,7 +1316,7 @@ impl Runtime {
     pub fn busy(&self) -> Vec<PathBuf> {
         lock(&self.shared.busy)
             .iter()
-            .filter(|(_, count)| **count > 0)
+            .filter(|(_, busy)| busy.calls > 0)
             .map(|(component, _)| component.clone())
             .collect()
     }
@@ -1360,13 +1360,18 @@ impl Runtime {
     /// which stops it. Nothing coordinates this with a command the user has
     /// open: its instance's state is lost. Their calls the user asked for
     /// are being stopped, so they no longer count as busy
-    /// ([`Runtime::busy`]).
+    /// ([`Runtime::busy`]): the count's generation moves on, so a call of
+    /// the ended generation dropped later cannot touch a newer one's.
     pub fn forget(&self, components: impl IntoIterator<Item = PathBuf>) {
         let components: Vec<PathBuf> = components.into_iter().collect();
         {
             let mut busy = lock(&self.shared.busy);
             for component in &components {
-                busy.remove(component);
+                // Ends the generation the counts so far are of, zeroing
+                // them: a newer generation starts its count afresh.
+                let busy = busy.entry(component.clone()).or_default();
+                busy.calls = 0;
+                busy.generation += 1;
             }
         }
         // A stopped runtime holds nothing to forget.
@@ -1457,12 +1462,19 @@ impl Runtime {
                 counting: None,
             },
             Some(component) => {
-                *lock(&self.shared.busy)
-                    .entry(component.clone())
-                    .or_insert(0) += 1;
+                // The generation the count is of, captured here and checked
+                // again when it ends: `forget` moves the generation on, so
+                // this call cannot take a call of a newer generation's
+                // count with it.
+                let generation = {
+                    let mut busy = lock(&self.shared.busy);
+                    let busy = busy.entry(component.clone()).or_default();
+                    busy.calls += 1;
+                    busy.generation
+                };
                 CountedCall {
                     answer,
-                    counting: Some((self.shared.clone(), component)),
+                    counting: Some((self.shared.clone(), component, generation)),
                 }
             }
         }
@@ -1475,8 +1487,9 @@ impl Runtime {
 struct CountedCall<F> {
     answer: F,
     /// What to tell when this stops counting, with the component to tell
-    /// it for; `None` for a call that is not counted.
-    counting: Option<(Arc<Shared>, PathBuf)>,
+    /// it for and the generation the count was of; `None` for a call that
+    /// is not counted.
+    counting: Option<(Arc<Shared>, PathBuf, u64)>,
 }
 
 impl<F: Future> Future for CountedCall<F> {
@@ -1495,12 +1508,13 @@ impl<F: Future> Future for CountedCall<F> {
 
 impl<F> Drop for CountedCall<F> {
     fn drop(&mut self) {
-        if let Some((shared, component)) = self.counting.take() {
+        if let Some((shared, component, generation)) = self.counting.take() {
             let mut busy = lock(&shared.busy);
             if let Some(count) = busy.get_mut(&component)
-                && *count > 0
+                && count.generation == generation
+                && count.calls > 0
             {
-                *count -= 1;
+                count.calls -= 1;
             }
         }
     }

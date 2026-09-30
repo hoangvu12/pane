@@ -3084,10 +3084,10 @@ impl Launcher {
         self.show_kept_development_status(state);
     }
 
-    /// The extension list's rows: the global automatic-update choice, then
-    /// each package's state, reload and cache rows, then the hotkey of each
-    /// command of the enabled packages, then one row per identity with
-    /// retained data.
+    /// The extension list's rows: each package's state, reload and cache
+    /// rows, then the hotkey of each command of the enabled packages, then
+    /// one row per identity with retained data, then the global
+    /// automatic-update choice, last of all.
     fn extension_rows(&self, state: &State) -> (Vec<Row>, Vec<Entry>) {
         let developed = |identity: &PackageIdentity| self.is_developed(identity);
         let (mut rows, mut entries): (Vec<Row>, Vec<Entry>) =
@@ -3585,6 +3585,17 @@ impl Launcher {
         item_id: String,
         data: Option<PackageData>,
     ) {
+        if let Some(problem) = self.updating(&component) {
+            // As opening a command: its package's code is being replaced (an
+            // update Pane applies by itself), which would stop the action the
+            // user is about to wait on, so it is refused rather than started
+            // and then stopped by the replacement.
+            let mut state = self.lock();
+            if state.screen_epoch == epoch {
+                state.view.status = Status::Error(problem);
+            }
+            return;
+        }
         let result = match self.runtime() {
             Ok(runtime) => {
                 runtime

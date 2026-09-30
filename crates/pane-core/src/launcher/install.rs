@@ -218,15 +218,17 @@ pub(in crate::launcher) fn outcome_message(mode: &Mode, outcome: &Outcome) -> St
 
 /// Claims for an install in `mode` the requested package and every package
 /// the plan with `assumptions` relies on, if they are as it assumed and
-/// nothing else is happening to them. A background update (the updater's
-/// apply window) claims its package as [`Changing::BackgroundUpdating`]
-/// rather than [`Changing::Updating`], which is what tells the two apart to
-/// a call the user makes into the package meanwhile.
+/// nothing else is happening to them. The updated package is claimed as
+/// `updating`: [`Changing::Updating`] for an update the user chose, and
+/// [`Changing::BackgroundUpdating`] for the one the updater applies by
+/// itself — which is what tells the two apart to a call the user makes into
+/// the package in the moment between the boundary check and the
+/// replacement (see [`Launcher::open_command`]).
 pub(in crate::launcher) fn claim(
     state: &mut State,
     mode: &Mode,
     assumptions: &Assumptions,
-    background: bool,
+    updating: Changing,
 ) -> Result<Vec<PackageIdentity>, Refusal> {
     if !assumptions.hold(&state.packages, |identity| state.paused.is_paused(identity)) {
         return Err(Refusal::Changed);
@@ -239,13 +241,7 @@ pub(in crate::launcher) fn claim(
         .iter()
         .map(|identity| {
             let what = match mode {
-                Mode::Update(updated) if updated == identity => {
-                    if background {
-                        Changing::BackgroundUpdating
-                    } else {
-                        Changing::Updating
-                    }
-                }
+                Mode::Update(updated) if updated == identity => updating,
                 _ => Changing::Installing,
             };
             (identity.clone(), what)
@@ -286,7 +282,7 @@ impl Launcher {
             state.view.status = Status::Error(error.to_string());
             return None;
         }
-        let claimed = match claim(state, &mode, &assumptions, false) {
+        let claimed = match claim(state, &mode, &assumptions, Changing::Updating) {
             Ok(claimed) => claimed,
             Err(Refusal::Busy(message)) => {
                 state.view.status = Status::Error(message);
@@ -398,7 +394,7 @@ impl Launcher {
         }
         if claimed.is_empty() {
             let mut state = self.lock();
-            match claim(&mut state, mode, &plan.assumptions, false) {
+            match claim(&mut state, mode, &plan.assumptions, Changing::Updating) {
                 Ok(identities) => *claimed = identities,
                 Err(Refusal::Busy(message)) => return Err(failed(message)),
                 Err(Refusal::Changed) => return Err(failed(changed(&package.manifest.title))),

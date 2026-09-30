@@ -12,13 +12,17 @@
 //! disabled state, ending the old code's generation; a command that is
 //! running finishes first, the update waiting until the screen the user
 //! is on closes; a pinned, disabled, or turned-off package is never
-//! replaced; the global and per-extension controls work through Manage
-//! extensions; an incompatible version, a dependency that cannot be
-//! installed and an unreachable registry explain and leave the installed
-//! copy alone; and the check repeats on its cadence, and at Pane's start.
+//! replaced, and neither is an installed local folder's copy; the global
+//! and per-extension controls work through Manage extensions; an
+//! incompatible version, a dependency that cannot be installed and an
+//! unreachable registry explain and leave the installed copy alone; an
+//! action or an opening asked in the moment the replacement is being
+//! applied is refused rather than started and stopped by it; a new
+//! version that fails to start is not rolled back; and the check repeats
+//! on its cadence, and at Pane's start.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -57,6 +61,19 @@ fn guest(file: &str) -> PathBuf {
 /// `api` and the dependency declarations `dependencies` (JSON, already
 /// quoted) in its `pane.json`.
 fn settings_files(version: &str, api: &str, dependencies: &str) -> Vec<(&'static str, Vec<u8>)> {
+    settings_files_of(version, api, dependencies, sample_component())
+}
+
+/// The tarball of the sample at `version`, with `component` in place of
+/// its built one, so a test can publish a version whose code behaves
+/// differently: one that fails to start, or one padded out so that
+/// replacing its managed copy takes a while.
+fn settings_files_of(
+    version: &str,
+    api: &str,
+    dependencies: &str,
+    component: Vec<u8>,
+) -> Vec<(&'static str, Vec<u8>)> {
     let manifest = format!(
         r#"{{ "manifestVersion": 1, "title": "Settings from npm", "version": "{version}",
              "apiVersion": "{api}",
@@ -67,11 +84,44 @@ fn settings_files(version: &str, api: &str, dependencies: &str) -> Vec<(&'static
     vec![
         ("package.json", package.into_bytes()),
         ("pane.json", manifest.into_bytes()),
-        (
-            "sample_settings_js.wasm",
-            fs::read(guest("packages/sample-settings-js/sample_settings_js.wasm")).unwrap(),
-        ),
+        ("sample_settings_js.wasm", component),
     ]
+}
+
+/// The settings sample's built component.
+fn sample_component() -> Vec<u8> {
+    fs::read(guest("packages/sample-settings-js/sample_settings_js.wasm")).unwrap()
+}
+
+/// The sample's component with a custom section of `pad` zero bytes
+/// appended: still the same code to Pane's checks (a custom section is
+/// ignored), but a file slow enough to copy that a test can ask things of
+/// the package while its replacement is being written.
+fn padded_component(pad: usize) -> Vec<u8> {
+    /// `n` as unsigned LEB128, as a section's lengths are written.
+    fn leb128(mut n: usize) -> Vec<u8> {
+        let mut out = Vec::new();
+        loop {
+            let byte = (n & 0x7f) as u8;
+            n >>= 7;
+            if n == 0 {
+                out.push(byte);
+                return out;
+            }
+            out.push(byte | 0x80);
+        }
+    }
+    // A custom section: id 0, its length, the name's length, the name, then
+    // the payload.
+    let name = b"padding".to_vec();
+    let mut body = leb128(name.len());
+    body.extend_from_slice(&name);
+    body.extend_from_slice(&vec![0u8; pad]);
+    let mut component = sample_component();
+    component.push(0);
+    component.extend_from_slice(&leb128(body.len()));
+    component.extend_from_slice(&body);
+    component
 }
 
 struct Dirs {
@@ -128,6 +178,13 @@ impl Dirs {
         );
     }
 
+    /// Publishes the sample at `version` with `component` in place of its
+    /// built one, tagged latest.
+    fn publish_component(&self, version: &str, component: Vec<u8>) {
+        self.registry
+            .publish(NAME, version, pack(&settings_files_of(version, "0.1", "", component)));
+    }
+
     /// Installs the sample at `version`, unpinned.
     fn install(&self, launcher: &Launcher, version: &str) {
         self.publish(version, "0.1");
@@ -149,6 +206,23 @@ impl Dirs {
             .find(|record| record["npm"] == NAME)
             .cloned()
             .unwrap_or_else(|| panic!("no record of {NAME} in {registry:#}"))
+    }
+
+    /// The record of the local package installed from `folder` in
+    /// `installed.json`, by its resolved folder.
+    fn local_record(&self, folder: &Path) -> serde_json::Value {
+        let identity = PackageIdentity::local(folder).unwrap();
+        let text = fs::read_to_string(self.packages_dir().join("installed.json")).unwrap();
+        let registry: serde_json::Value = serde_json::from_str(&text).unwrap();
+        registry["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|record| {
+                record["local"] == identity.local_folder().unwrap().to_str().unwrap()
+            })
+            .cloned()
+            .unwrap_or_else(|| panic!("no local record in {registry:#}"))
     }
 
     /// The version the sample is installed at, from its record.
@@ -264,6 +338,40 @@ fn component_of(launcher: &Launcher) -> PathBuf {
         .commands()[0]
         .component
         .clone()
+}
+
+/// Writes a local package folder titled "Local settings", whose Greeting
+/// command runs the settings sample's component: an installed local-source
+/// copy of the same code, as a user's own folder is.
+fn local_package(sources: &Path) -> PathBuf {
+    let folder = sources.join("settings");
+    fs::create_dir_all(&folder).unwrap();
+    fs::write(
+        folder.join("pane.json"),
+        r#"{ "manifestVersion": 1, "title": "Local settings", "version": "0.1.0",
+             "apiVersion": "0.1",
+             "commands": [{ "id": "greeting", "title": "Local greeting",
+                             "component": "sample_settings_js.wasm" }] }"#,
+    )
+    .unwrap();
+    fs::copy(
+        guest("packages/sample-settings-js/sample_settings_js.wasm"),
+        folder.join("sample_settings_js.wasm"),
+    )
+    .unwrap();
+    folder
+}
+
+/// The names of the managed folders under `extensions/packages`, each of
+/// which is one installed copy: a new one appears while a replacement is
+/// being written into it.
+fn managed_folders(dirs: &Dirs) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(dirs.packages_dir().join("packages"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
 }
 
 #[test]
@@ -594,4 +702,165 @@ fn after_a_restart_the_first_check_updates_the_package() {
         launcher.view().status,
         Status::Result("Updated Settings from npm to 0.2.0".into())
     );
+}
+
+#[test]
+fn a_local_folder_package_is_never_updated_automatically() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher();
+    // An installed local-source copy of the sample, as a user's own folder
+    // is: it has no registry to check against. An npm package is installed
+    // beside it, so the check demonstrably runs.
+    let sources = tempfile::tempdir().unwrap();
+    let folder = local_package(sources.path());
+    block_on(launcher.install_package(&folder));
+    let identity = PackageIdentity::local(&folder).unwrap();
+    let location = launcher
+        .packages()
+        .into_iter()
+        .find(|package| package.identity == identity)
+        .expect("the local package is installed")
+        .location
+        .clone();
+    dirs.install(&launcher, "0.1.0");
+
+    // What the check must leave alone: the record, the managed copy's
+    // files, and the local package never being asked about (the only
+    // request the check makes is the npm package's metadata).
+    let record = dirs.local_record(&folder);
+    let manifest = fs::read(location.join("pane.json")).unwrap();
+    let component = fs::read(location.join("sample_settings_js.wasm")).unwrap();
+    let asked = dirs.registry.requests().len();
+
+    dirs.check(&launcher);
+
+    // The check ran, asking only about the npm package, and nothing it
+    // found changed the local copy.
+    assert_eq!(dirs.registry.requests().len(), asked + 1);
+    assert_eq!(
+        dirs.registry.requests()[asked],
+        format!("/{}", NAME.replace('/', "%2f"))
+    );
+    assert_eq!(dirs.local_record(&folder), record);
+    assert_eq!(
+        fs::read(location.join("pane.json")).unwrap(),
+        manifest,
+        "the local package's manifest was touched"
+    );
+    assert_eq!(
+        fs::read(location.join("sample_settings_js.wasm")).unwrap(),
+        component,
+        "the local package's code was touched"
+    );
+    // Its command still runs, and its settings are its own.
+    to_root(&launcher);
+    activate(&launcher, "Local greeting");
+    assert_eq!(launcher.view().screen, Screen::Command);
+    activate(&launcher, "Use a casual greeting");
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Saved the casual greeting".into())
+    );
+}
+
+#[test]
+fn an_action_asked_while_the_update_applies_is_refused_not_stopped() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher();
+    dirs.install(&launcher, "0.1.0");
+
+    // A new version whose component is padded out, so writing its managed
+    // copy takes a while: the window between the updater claiming the
+    // package and the replacement landing stays open long enough to ask
+    // something of the package inside it.
+    dirs.publish_component("0.2.0", padded_component(48 * 1024 * 1024));
+
+    // An action of the package's command, asked for but not sent yet: as
+    // the deferral test holds a command running by not resolving it, this
+    // holds its call back by not polling the future that makes it, so the
+    // package is quiet and the update may apply. Leaving the command is
+    // the boundary.
+    open_greeting(&launcher);
+    select_title(&launcher, "Use a casual greeting");
+    let action = launcher.activate_selected();
+    to_root(&launcher);
+    let before = managed_folders(&dirs);
+
+    // The check: the update is staged, and applying it writes a new
+    // managed folder, which is the replacement being written.
+    dirs.clock.advance(Duration::from_secs(2));
+    wait_until(
+        "the update began replacing the copy",
+        Duration::from_secs(30),
+        || managed_folders(&dirs) != before,
+    );
+
+    // The action asked of the updating package now, while the replacement
+    // is being applied, is refused with the update's explanation rather
+    // than started and then stopped by the replacement: its call is never
+    // made. Opening the command is refused the same way, which is what
+    // tells the moment was the apply window.
+    block_on(action);
+    activate(&launcher, "Greeting");
+    assert_eq!(
+        error_of(&launcher),
+        "Settings from npm is updating; open it again once that is done"
+    );
+
+    // The update lands, and the refused action never ran.
+    wait_until("the update applied", Duration::from_secs(30), || {
+        dirs.installed_version() == "0.2.0"
+    });
+    assert!(!dirs.settings().contains("casual"));
+}
+
+#[test]
+fn a_new_version_that_fails_to_start_is_not_rolled_back() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher();
+    dirs.install(&launcher, "0.1.0");
+    // A setting saved through the old code: the replacement keeps it.
+    assert_eq!(
+        run(&launcher, "Use a casual greeting"),
+        Status::Result("Saved the casual greeting".into())
+    );
+    to_root(&launcher);
+
+    // 0.2.0's component is the failing-start fixture, which traps the
+    // first time it is asked for its view and starts on every later one.
+    dirs.publish_component("0.2.0", fs::read(guest("failing_start.wasm")).unwrap());
+    dirs.check(&launcher);
+
+    // The update applied: the record shows the NEW version — the earlier
+    // code is not restored — and the saved setting is kept.
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Updated Settings from npm to 0.2.0".into())
+    );
+    assert_eq!(dirs.installed_version(), "0.2.0");
+    assert!(dirs.settings().contains("casual"));
+
+    // An update starts no code itself, as an install does (a reload, which
+    // does start what it replaced, would pause a failing start with
+    // Retry): the new code runs from the next call, the first of which
+    // fails as the component does, without rolling anything back.
+    activate(&launcher, "Greeting");
+    let error = error_of(&launcher);
+    assert!(error.starts_with("The extension crashed: "), "{error}");
+    assert!(matches!(launcher.view().screen, Screen::Root { .. }));
+    assert_eq!(dirs.installed_version(), "0.2.0");
+    assert!(dirs.settings().contains("casual"));
+    manage(&launcher);
+    assert!(!titles(&launcher).iter().any(|t| t.starts_with("Retry")));
+
+    // The next start is the fixture's later one: the new code runs.
+    to_root(&launcher);
+    open_greeting(&launcher);
+    assert_eq!(launcher.view().title, "Started");
+    activate(&launcher, "Started on a later attempt");
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("ran started".into())
+    );
+    assert_eq!(dirs.installed_version(), "0.2.0");
 }

@@ -1362,9 +1362,10 @@ python3 "$(dirname "$0")/npm_publish.py" target/guests/npm/pane-samples-greeter-
 stop_pane
 start_pane
 "$xdotool" windowfocus --sync "$window"
-sleep 6   # the check a second after the start, then the download and the apply
-capture 267-npm-updated-automatically.png
-check 267-npm-updated-automatically.png 9fd8a8   # "Updated Greeter from npm to 0.2.0"
+# The check a second after the start, then the download and the apply:
+# capture until the status line says the update landed, whenever that is,
+# so a slow runner is waited for rather than slept past.
+capture_until 267-npm-updated-automatically.png 9fd8a8 60   # "Updated Greeter from npm to 0.2.0"
 "$xdotool" key Return; sleep 3   # open Greeter from npm, the new copy
 "$xdotool" key Return; sleep 2   # "Say hello"
 capture 268-npm-new-copy-ran.png

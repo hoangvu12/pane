@@ -52,7 +52,8 @@ use std::time::Duration;
 
 use super::install::{self, Stopped};
 use super::{
-    Entry, Launcher, Mode, PackageIdentity, Row, Screen, State, Status, WeakLauncher, off_thread,
+    Changing, Entry, Launcher, Mode, PackageIdentity, Row, Screen, State, Status, WeakLauncher,
+    off_thread,
 };
 use crate::atomic::{Readers, write_atomically};
 use crate::clipboard::Clock;
@@ -217,8 +218,8 @@ impl Updates {
         }
     }
 
-    /// The registry and downloads folder packages are read from from now
-    /// on ([`Launcher::with_npm_registry`], in development builds), and a
+    /// The registry and downloads folder packages are read from now on
+    /// ([`Launcher::with_npm_registry`], in development builds), and a
     /// look at once.
     pub(super) fn follow_registry(&self, sources: install::Sources) {
         *self.lock_sources() = sources;
@@ -498,7 +499,7 @@ impl Updates {
                 &mut state,
                 &Mode::Update(identity.clone()),
                 &update.plan.assumptions,
-                true,
+                Changing::BackgroundUpdating,
             ) {
                 Ok(claims) => claimed = claims,
                 Err(install::Refusal::Busy(_)) => return Applied::Deferred(Box::new(update)),
@@ -613,16 +614,13 @@ fn quiet(launcher: &Launcher, state: &State, package: &InstalledPackage) -> bool
 
 /// Shows `status` where a background update's outcome belongs: the status
 /// line of root search or the extension list. Another screen keeps its
-/// own status, whatever the user is doing there. Whether it was shown.
-fn report(state: &mut State, status: Status) -> bool {
+/// own status, whatever the user is doing there.
+fn report(state: &mut State, status: Status) {
     if matches!(
         state.view.screen,
         Screen::Root { .. } | Screen::Extensions { .. }
     ) {
         state.view.status = status;
-        true
-    } else {
-        false
     }
 }
 
@@ -905,7 +903,8 @@ pub(super) fn package_rows(
         .collect()
 }
 
-/// The extension list's row for the global choice, first of all.
+/// The extension list's row for the global choice, last of all: after
+/// every package's rows, as `extension_rows` places it.
 pub(super) fn global_row(automatic: bool) -> (Row, Entry) {
     let row = Row {
         id: "updates".into(),

@@ -85,7 +85,7 @@ packages, and every version of one name is one package.
 ## Updating by itself
 
 An eligible npm package updates by itself (what makes one eligible is
-[below](#updating-by-itself)): Pane's updater, a background thread of the
+[below](#which-packages-update)): Pane's updater, a background thread of the
 launcher's, checks the registry and replaces the managed copy with a
 compatible newer version, at a safe moment, without the user asking
 (US72–US75; #49).
@@ -139,7 +139,9 @@ says so in the status line of root search or the extension list ("Updated
 Settings from npm to 0.2.0"); another screen keeps its own status, and
 the list shows the new version.
 
-**Which packages update.** Eligible is an installed npm package that is
+### Which packages update
+
+Eligible is an installed npm package that is
 not pinned (a pinned version stays whatever the latest is), enabled,
 not paused after a failure, and not turned off; the latest version can
 be older than the installed one (an author retagging `latest`), and Pane
@@ -288,7 +290,7 @@ is a local package requiring it.
   limits, their paths checked, a size only a PAX header gives, long links,
   global headers, dangling headers), and downloads (a folder each, removed
   when dropped; only those begun long ago removed at a start).
-- [`crates/pane/tests/npm.rs`](../crates/pane-core/tests/npm.rs), with
+- [`crates/pane-core/tests/npm.rs`](../crates/pane-core/tests/npm.rs), with
   a local registry: preview, install, running its command and after a
   restart without downloading again (a start's check for a newer version
   reads the metadata, and downloads nothing while the latest is the

@@ -1298,9 +1298,10 @@ check 266-npm-command-ran.png 9fd8a8   # "Hello from the npm package"
 python3 "$(dirname "$0")/npm_publish.py" target/guests/npm/pane-samples-greeter-0.1.0.tgz 0.2.0
 stop_pane
 start_pane
-sleep 6   # the check a second after the start, then the download and the apply
-capture 267-npm-updated-automatically.png
-check 267-npm-updated-automatically.png 9fd8a8   # "Updated Greeter from npm to 0.2.0"
+# The check a second after the start, then the download and the apply:
+# capture until the status line says the update landed, whenever that is,
+# so a slow runner is waited for rather than slept past.
+capture_until 267-npm-updated-automatically.png 9fd8a8 60   # "Updated Greeter from npm to 0.2.0"
 key 36; sleep 3   # open Greeter from npm, the new copy
 key 36; sleep 2   # "Say hello"
 capture 268-npm-new-copy-ran.png

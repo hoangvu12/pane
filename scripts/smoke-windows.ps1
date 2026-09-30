@@ -1351,8 +1351,15 @@ try {
     python "$PSScriptRoot/npm_publish.py" "target/guests/npm/pane-samples-greeter-0.1.0.tgz" "0.2.0"
     Stop-Pane $process
     $process = Start-Pane "stderr-npm.log"
-    Start-Sleep -Seconds 6   # the check a second after the start, then the download and the apply
-    Capture "267-npm-updated-automatically.png"
+    # The check a second after the start, then the download and the apply:
+    # poll until the status line says the update landed, whenever that is,
+    # so a slow runner is waited for rather than slept past.
+    for ($i = 0; $i -lt 120; $i++) {
+        Capture "267-npm-updated-automatically.png"
+        python "$PSScriptRoot/check_screenshot.py" (Join-Path $OutDir "267-npm-updated-automatically.png") "9fd8a8"
+        if ($LASTEXITCODE -eq 0) { break }
+        Start-Sleep -Milliseconds 500
+    }
     Check "267-npm-updated-automatically.png" "9fd8a8"   # "Updated Greeter from npm to 0.2.0"
     Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greeter from npm, the new copy
     Send "{ENTER}"; Start-Sleep -Seconds 2   # "Say hello"
