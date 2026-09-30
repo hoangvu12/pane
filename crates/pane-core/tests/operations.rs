@@ -708,10 +708,11 @@ fn a_call_its_caller_gives_up_on_before_it_starts_never_runs() {
     );
     // b never ran: it saved nothing, and no instance of it is left. A
     // loaded machine can start the target's instance between the call's
-    // sending and the caller's giving up landing (the give-up then ends
-    // it, and its operation never runs — the settings file below proves
-    // that), so the list of what is running is waited for until only the
-    // caller's component is left.
+    // dispatch and the give-up landing (the give-up then ends the call
+    // before its operation runs, and drops the instance), so the list of
+    // what is running is waited for until only the caller's component is
+    // left — with a deadline that still fails if a give-up left anything
+    // running.
     let settled = Instant::now() + Duration::from_secs(10);
     while dirs.running() != ["fixture.wasm".to_owned()] {
         assert!(

@@ -2867,18 +2867,18 @@ impl Host {
     }
 
     /// Serves one operation call a guest made, answering it.
-    async fn serve_operation(&mut self, call: OperationCall) {
+    async fn serve_operation(&mut self, mut call: OperationCall) {
         // Its caller gave up on it before it started: it is not started.
         if call.reply.is_closed() {
             return;
         }
-        let result = self.operation(&call).await;
+        let result = self.operation(&mut call).await;
         let _ = call.reply.send(result);
     }
 
     /// Serves `call`: checks it, resolves its target, runs the operation
     /// (starting the target if it is not running) and checks the answer.
-    async fn operation(&mut self, call: &OperationCall) -> Result<String, OperationError> {
+    async fn operation(&mut self, call: &mut OperationCall) -> Result<String, OperationError> {
         self.check_call(call)?;
         let target = self.resolve_target(call)?;
         // Disabled or replaced while it was serving the call, it was
@@ -2932,16 +2932,22 @@ impl Host {
     async fn run_operation(
         &mut self,
         target: &Target,
-        call: &OperationCall,
+        call: &mut OperationCall,
     ) -> Result<String, OperationError> {
         let failed = |error| OperationError::from_call(&target.title, error);
-        let instance = self
+        // Its caller gave up on it: the check the call was sent with can
+        // miss a give-up that lands while the call waits to be served, so
+        // the check is made again just before the operation runs, and the
+        // instance the call started for it is dropped again.
+        if call.reply.is_closed() {
+            return Err(failed(CallError::Cancelled));
+        }
+        let provider = self
             .instance(&target.component, target.data.clone())
             .await
-            .map_err(failed)?;
-        // The install check requires the export, so only a component replaced
-        // behind Pane's back lacks it.
-        let provider = instance
+            .map_err(failed)?
+            // The install check requires the export, so only a component
+            // replaced behind Pane's back lacks it.
             .operations
             .as_ref()
             .map(|provider| provider.pane_extension_published_operations().clone())
@@ -2950,16 +2956,27 @@ impl Host {
                     "it does not export {OPERATIONS_INTERFACE}"
                 )))
             })?;
+        if call.reply.is_closed() {
+            self.drop_instance(&target.component);
+            return Err(failed(CallError::Cancelled));
+        }
         let (name, input) = (call.operation.clone(), call.input.clone());
+        // A call whose caller gives up on it while it runs is stopped, as
+        // a search's call is (the caller is gone; the answer has nowhere
+        // to go).
         let result = self
-            .run_guest(&target.component, async |instance| {
-                instance
-                    .store
-                    .run_concurrent(async |store| {
-                        provider.call_run_operation(store, name, input).await
-                    })
-                    .await
-            })
+            .run_guest_until(
+                &target.component,
+                async |instance| {
+                    instance
+                        .store
+                        .run_concurrent(async |store| {
+                            provider.call_run_operation(store, name, input).await
+                        })
+                        .await
+                },
+                call.reply.closed(),
+            )
             .await
             .map_err(failed)?;
         self.settle(&target.component, result, CallError::Guest)
