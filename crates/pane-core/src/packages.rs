@@ -2481,7 +2481,7 @@ pub(crate) fn make_executable(path: &Path) -> io::Result<()> {
 }
 
 #[cfg(not(unix))]
-fn make_executable(_path: &Path) -> io::Result<()> {
+pub(crate) fn make_executable(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
