@@ -1468,6 +1468,68 @@ if ($fromGit[0].pinned -ne $true) { throw "Git tag not recorded as pinned" }
 $downloads = Join-Path $data "extensions/downloads"
 if ((Test-Path $downloads) -and (Get-ChildItem $downloads)) { throw "a Git download was left" }
 
+# Git packages update themselves (#50): a second repository of the same
+# sample, served by a server of its own, installed in a data folder of its
+# own from its tracked release branch -- `--install` naming the branch, so
+# the copy is tracked, not pinned -- with its command run; the branch then
+# moves to a 0.2.0 (repository_server.py move-sample) while Pane is
+# stopped, and the check a second after the restart replaces the installed
+# copy by itself, the new code running. Nothing reaches the network.
+$updateData = Join-Path $OutDir "git-update-data"
+if (Test-Path $updateData) { Remove-Item -Recurse -Force $updateData }
+$env:PANE_DATA_DIR = $updateData
+python "$PSScriptRoot/repository_server.py" make-sample target/guests/git/greeter (Join-Path $repositories "greeter-tracked")
+if ($LASTEXITCODE -ne 0) { throw "the second Git sample's repository was not made" }
+$updatePortFile = Join-Path $OutDir "repository-update-server.port"
+if (Test-Path $updatePortFile) { Remove-Item -Force $updatePortFile }
+$server2 = Start-Process python -PassThru -NoNewWindow `
+    -ArgumentList @("`"$PSScriptRoot/repository_server.py`"", "serve", "`"$repositories`"", "`"$updatePortFile`"") `
+    -RedirectStandardError (Join-Path $OutDir "repository-update-server.log")
+$process = $null
+try {
+    for ($i = 0; $i -lt 600 -and -not (Test-Path $updatePortFile) -and -not $server2.HasExited; $i++) { Start-Sleep -Milliseconds 100 }
+    if (-not (Test-Path $updatePortFile)) { throw "the second local repository server did not start" }
+    $tracked = "http://127.0.0.1:$((Get-Content $updatePortFile).Trim())/greeter-tracked.git"
+    $process = Start-Pane "stderr-git-update.log" @("--install", "git:$tracked@release")
+    # The fetch runs after the window shows: capture until its preview does.
+    Capture-Until "305-git-tracked-preview.png" "aab4c0" 60   # "Revision: branch release, tracked: an update fetches that branch again"
+    Send "{ENTER}"; Start-Sleep -Seconds 3   # Install; Greeter from Git is selected
+    Capture "306-git-tracked-installed.png"
+    Check "306-git-tracked-installed.png" "9fd8a8"   # "Installed Greeter from Git"
+    python "$PSScriptRoot/repository_server.py" move-sample (Join-Path $repositories "greeter-tracked") 0.2.0
+    if ($LASTEXITCODE -ne 0) { throw "the tracked branch did not move" }
+    Stop-Pane $process
+    $process = Start-Pane "stderr-git-update.log"
+    # The check a second after the start, then the fetch and the apply:
+    # capture until the status line says the update landed.
+    Capture-Until "307-git-updated-automatically.png" "9fd8a8" 60   # "Updated Greeter from Git to 0.2.0"
+    Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greeter from Git, the new copy
+    Send "{ENTER}"; Start-Sleep -Seconds 2   # "Say hello"
+    Capture "308-git-new-copy-ran.png"
+    Check "308-git-new-copy-ran.png" "9fd8a8"   # "Hello from the Git repository"
+    $shots = "305-git-tracked-preview", "306-git-tracked-installed", "307-git-updated-automatically", "308-git-new-copy-ran" | ForEach-Object { Join-Path $OutDir "$_.png" }
+    python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+    if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: updating from Git changed nothing" }
+    Stop-Pane $process
+} finally {
+    # A failure above leaves Pane running: stop it too, before the server.
+    if ($process -and -not $process.HasExited) {
+        Stop-Process -Id $process.Id -ErrorAction SilentlyContinue
+        $process.WaitForExit()
+    }
+    Stop-Process -Id $server2.Id -ErrorAction SilentlyContinue
+}
+$moved = (python "$PSScriptRoot/repository_server.py" commit (Join-Path $repositories "greeter-tracked") release)
+if ($LASTEXITCODE -ne 0) { throw "the moved branch's commit was not found" }
+$record = Join-Path $updateData "extensions/installed.json"
+$fromGit = @((Get-Content -Raw $record | ConvertFrom-Json).packages | Where-Object { $_.git })
+if ($fromGit.Count -ne 1) { throw "not one package from Git recorded: $($fromGit.Count)" }
+if ($fromGit[0].gitRef -ne "refs/heads/release") { throw "Git reference not recorded: $($fromGit[0].gitRef)" }
+if ($fromGit[0].gitCommit -ne $moved.Trim()) { throw "Git commit not recorded: $($fromGit[0].gitCommit)" }
+if ($fromGit[0].pinned) { throw "the tracked branch recorded as pinned" }
+$downloads = Join-Path $updateData "extensions/downloads"
+if ((Test-Path $downloads) -and (Get-ChildItem $downloads)) { throw "a Git download was left" }
+
 # File search (#29): Files, a default extension (its data folder is this
 # phase's own; Files is selected once installed, and Pane's own "Choose
 # folder..." row is the first of its command). Enter on it would show the

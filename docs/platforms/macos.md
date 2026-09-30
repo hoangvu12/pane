@@ -354,6 +354,19 @@ skips the reverse DNS lookup the npm phase's first run stopped on (above)
 and is waited for as long; checked by reading only. **Not run on macOS
 yet.**
 
+#50 extends the phase with a second repository of the same sample
+(`make-sample` again, `greeter-tracked` beside `greeter`, served by the
+same server), installed in a data folder of its own from its tracked
+`release` branch (`--install git:<address>@release`: the preview says
+"Revision: branch release, tracked: an update fetches that branch again",
+305; installed, 306); `repository_server.py move-sample` then commits a
+0.2.0 on the branch while Pane is stopped, and the check a second after
+the restart replaces the installed copy by itself, saying "Updated
+Greeter from Git to 0.2.0" (307), the new copy's command answering as
+before (308); `installed.json` must record the branch's new commit,
+tracked and unpinned. Written and checked by reading only; **not run on
+macOS yet**.
+
 ## Files (#29)
 
 The files phase (screenshots 220 to 223, [files](../files.md)), with a data
