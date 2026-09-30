@@ -433,11 +433,12 @@ fn show(
     }
 }
 
-/// Wakes the scheduler when work may be due, and tells when it settled:
+/// Wakes a background worker of the launcher's (the scheduler, the
+/// services thread) when work may be due, and tells when it settled:
 /// every change so far has been looked at, and every run it started has
 /// reported.
 #[derive(Default)]
-struct Wake {
+pub(super) struct Wake {
     state: Mutex<WakeState>,
     condvar: std::sync::Condvar,
 }
@@ -445,11 +446,11 @@ struct Wake {
 #[derive(Default)]
 struct WakeState {
     stopped: bool,
-    /// Counts pokes: each asks the scheduler to look again.
+    /// Counts pokes: each asks the worker to look again.
     pokes: u64,
-    /// The pokes the scheduler's last look covered.
+    /// The pokes the worker's last look covered.
     looked: u64,
-    /// Runs the scheduler started that have not reported yet.
+    /// Runs the worker started that have not reported yet.
     running: usize,
 }
 
@@ -460,27 +461,27 @@ impl Wake {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Asks the scheduler to look again.
-    fn poke(&self) {
+    /// Asks the worker to look again.
+    pub(super) fn poke(&self) {
         self.lock().pokes += 1;
         self.condvar.notify_all();
     }
 
-    /// Stops the scheduler.
-    fn stop(&self) {
+    /// Stops the worker.
+    pub(super) fn stop(&self) {
         self.lock().stopped = true;
         self.condvar.notify_all();
     }
 
     /// The pokes to look at, or `None` once stopped.
-    fn pokes(&self) -> Option<u64> {
+    pub(super) fn pokes(&self) -> Option<u64> {
         let state = self.lock();
         (!state.stopped).then_some(state.pokes)
     }
 
     /// Notes a look that covered the first `seen` pokes and started `runs`
     /// runs.
-    fn scanned(&self, seen: u64, runs: usize) {
+    pub(super) fn scanned(&self, seen: u64, runs: usize) {
         let mut state = self.lock();
         state.looked = state.looked.max(seen);
         state.running += runs;
@@ -488,8 +489,8 @@ impl Wake {
     }
 
     /// Notes that one run reported (or could not be started), and asks for
-    /// another look: a tick may have come due meanwhile.
-    fn finished(&self) {
+    /// another look: work may have come due meanwhile.
+    pub(super) fn finished(&self) {
         let mut state = self.lock();
         state.running = state.running.saturating_sub(1);
         state.pokes += 1;
@@ -497,8 +498,8 @@ impl Wake {
     }
 
     /// Waits at most `limit` for a poke after the `seen`th; returns whether
-    /// the scheduler still runs.
-    fn wait(&self, seen: u64, limit: Duration) -> bool {
+    /// the worker still runs.
+    pub(super) fn wait(&self, seen: u64, limit: Duration) -> bool {
         let state = self.lock();
         let (state, _) = self
             .condvar
@@ -507,10 +508,10 @@ impl Wake {
         !state.stopped
     }
 
-    /// Waits until the scheduler settled: every poke so far was looked at
-    /// and every run started has reported. `false` if it did not within
+    /// Waits until the worker settled: every poke so far was looked at and
+    /// every run started has reported. `false` if it did not within
     /// `limit`, or it stopped.
-    fn settled(&self, limit: Duration) -> bool {
+    pub(super) fn settled(&self, limit: Duration) -> bool {
         let state = self.lock();
         let (state, _) = self
             .condvar

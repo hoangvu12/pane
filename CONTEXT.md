@@ -224,6 +224,10 @@ _Avoid_: Version (a package's version is its manifest's), session, instance (one
 Work Pane runs for an installed package without the user asking: a command's `pane.json` entry declares a schedule, an interval and the item whose action runs, and Pane runs that action each interval while the package's code may run, taking the generation current when the run is due. A disable, an uninstall, a pause or a code replacement ends it; enabling the package, replacing its code or restarting Pane starts it again, from a full interval, never replaying work that fell due meanwhile.
 _Avoid_: Timer, cron job, trigger, background service (an explicit continuing service is another activation model), watcher
 
+**Continuing service**:
+Work Pane runs for an installed package without the user asking or without an interval: a command's `pane.json` entry declares a service, and Pane calls its component's `run-cycle` in a cycle while the package's code may run, each cycle answering the status to show and how long to wait before the next, so the service paces itself. It begins at once when the code may run (installed or enabled, Pane started, code replaced) and ends when it may not, its pending cycle stopped with the generation and its task's state — the guest instance's — dropped with it; a pause, a disable, an uninstall or a code replacement ends it, and enabling, replacing or restarting Pane starts it again with a fresh task.
+_Avoid_: Background task, daemon, worker, watcher, scheduled work (an interval the manifest declares is another activation model), long-lived call
+
 **Supported platforms**:
 The operating systems a package, a command or an action declares it works on: a plain list, not a rule language. A declaration is not evidence of native support.
 _Avoid_: Compatibility rules, target matrix

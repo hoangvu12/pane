@@ -68,6 +68,9 @@ pub use macos::MacosClipboard;
 pub use macos::testing;
 #[cfg(target_os = "windows")]
 pub use windows::WindowsClipboard;
+#[cfg(target_os = "windows")]
+#[doc(hidden)]
+pub use windows::testing;
 
 /// The most items Pane keeps for a package: copying more drops the oldest.
 pub const MAX_ITEMS: usize = 100;

@@ -1778,8 +1778,11 @@ stop_pane
 cargo xtask package-linux --dev >/dev/null
 package=$(ls target/dist/pane-*-linux-*-dev.tar.gz | head -1)
 [ -n "$package" ] || { echo "the package was not built"; exit 1; }
-home=$out/clean-home
-unpack=$out/package-unpacked
+# The clean home and unpacked package are absolute: Pane's HOME lands in
+# its compile cache's directory, which Wasmtime needs absolute, and the
+# smoke runs from the repository with a relative $out.
+home=$PWD/$out/clean-home
+unpack=$PWD/$out/package-unpacked
 rm -rf "$home" "$unpack"
 mkdir -p "$home" "$unpack"
 rm -f "$out/artifact-server.port"
@@ -1790,8 +1793,10 @@ for _ in $(seq 600); do [ -s "$out/artifact-server.port" ] && break; kill -0 "$a
 tar -xzf "$package" -C "$unpack"
 clean_bin=$out/clean-bin
 rm -rf "$clean_bin"; mkdir -p "$clean_bin"
-# Nothing can be reached at all from the PATH Pane runs with.
-[ -z "$(env -i PATH="$clean_bin" sh -c 'command -v cargo rustc node npm git cc clang make' 2>/dev/null)" ] \
+# Nothing can be reached at all from the PATH Pane runs with. The shell
+# is named absolutely, so the check really runs: env would search for a
+# bare `sh` in the empty PATH and fail before checking anything.
+[ -z "$(env -i PATH="$clean_bin" /bin/sh -c 'command -v cargo rustc node npm git cc clang make' 2>/dev/null)" ] \
   || { echo "the clean machine still reaches a development tool"; exit 1; }
 env -i HOME="$home" PATH="/usr/bin:/bin" bash "$unpack/pane/install.sh" >>"$out/install.log" 2>&1 \
   || { echo "the install script failed (see $out/install.log)"; exit 1; }
@@ -1816,10 +1821,34 @@ start_installed
 "$xdotool" windowfocus --sync "$window"
 installed=$home/.local/share/pane/extensions
 # Generous: a slow runner may take a while to check both payloads'
-# components (120 s each).
+# components (300 s each). A wait that fails records the screen and the
+# clean home's files — the artifact upload skips hidden folders, so the
+# records are copied out where it can see them.
+record_setup_state() {
+  rm -rf "$out/clean-home-records"
+  mkdir -p "$out/clean-home-records"
+  cp -f "$installed/installed.json" "$out/clean-home-records/" 2>/dev/null || true
+  cp -r "$installed/acquired" "$out/clean-home-records/" 2>/dev/null || true
+  cp -r "$installed/downloads" "$out/clean-home-records/" 2>/dev/null || true
+  cp -f "$out/installed-stderr.log" "$out/clean-home-records/" 2>/dev/null || true
+  cp -f "$out/artifact-server.log" "$out/clean-home-records/" 2>/dev/null || true
+}
+record_setup_problem() {
+  capture 499-setup-problem.png
+  record_setup_state
+}
+wait_recorded() {
+  for _ in $(seq 6000); do
+    grep -q "$1" "$installed/installed.json" 2>/dev/null && return
+    sleep 0.1
+  done
+  echo "$installed/installed.json: $1 is not present"
+  record_setup_problem
+  exit 1
+}
 kill -0 "$pane_pid" 2>/dev/null || { echo "the installed Pane exited during setup"; exit 1; }
-wait_for "$installed/installed.json" '"default": "calculator"' present 1200
-wait_for "$installed/installed.json" '"default": "helper-sample"' present 1200
+wait_recorded '"default": "calculator"'
+wait_recorded '"default": "helper-sample"'
 sleep 1
 capture 500-installed-root.png
 check 500-installed-root.png aab4c0   # root search: the calculator and Helper sample commands are listed
@@ -1844,5 +1873,6 @@ stop_pane
 kill "$artifact_server_pid"; wait "$artifact_server_pid" 2>/dev/null || true; artifact_server_pid=
 # The program files go again: the evidence is the screenshots, the
 # installed.json record and the logs.
+record_setup_state
 rm -f "$home/.local/bin/pane" "$unpack/pane/pane"
 echo "screenshots in $out"

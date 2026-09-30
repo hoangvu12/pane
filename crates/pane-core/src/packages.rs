@@ -487,6 +487,11 @@ pub struct ManifestCommand {
     /// Pane runs the action of `schedule.item` every
     /// `schedule.every_seconds` seconds while the package's code may run.
     pub schedule: Option<ManifestSchedule>,
+    /// Whether the command runs a continuing service (`"service": true`):
+    /// while the package's code may run, Pane calls the component's
+    /// `run-cycle` export in a cycle the service itself paces, with no
+    /// interval the manifest declares (see `launcher/services`).
+    pub service: bool,
 }
 
 #[derive(Deserialize)]
@@ -566,6 +571,8 @@ struct CommandJson {
     search: bool,
     #[serde(default)]
     schedule: Option<ScheduleJson>,
+    #[serde(default)]
+    service: bool,
 }
 
 /// A command's `schedule`, as `pane.json` writes it.
@@ -677,6 +684,7 @@ impl Manifest {
             indexed_results: commands().any(|command| command.indexed_results),
             query_command: commands().any(|command| command.takes_query),
             search: commands().any(|command| command.search),
+            service: commands().any(|command| command.service),
             operations: self
                 .operations
                 .iter()
@@ -742,6 +750,10 @@ impl Manifest {
                 .schedule
                 .map(|schedule| parse_schedule(&command.id, schedule))
                 .transpose()?;
+            // A command may both be scheduled and run a continuing service;
+            // they are separate activation models, and neither runs the
+            // other's code.
+            let service = command.service;
             let component = inside_package(&command.component, "component")?;
             let platforms = parse_platforms(
                 command.platforms,
@@ -758,6 +770,7 @@ impl Manifest {
                 takes_query: command.takes_query,
                 search: command.search,
                 schedule,
+                service,
             });
         }
         let mut operations: Vec<ManifestOperation> = Vec::new();
@@ -1606,6 +1619,22 @@ impl InstalledPackage {
                     .clone()
                     .map(|schedule| (registration, schedule))
             })
+            .collect()
+    }
+
+    /// The commands of this package that run a continuing service and can
+    /// run on this system; none if the package cannot be read. A command
+    /// unavailable on this system never runs its service, like an action
+    /// the user cannot invoke.
+    pub(crate) fn service_commands(&self) -> Vec<CommandRegistration> {
+        let Ok(manifest) = &self.manifest else {
+            return Vec::new();
+        };
+        self.available_commands()
+            .into_iter()
+            .zip(&manifest.commands)
+            .filter(|((_, unavailable), command)| command.service && unavailable.is_none())
+            .map(|((registration, _), _)| registration)
             .collect()
     }
 }
