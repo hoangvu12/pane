@@ -476,7 +476,6 @@ PANE_ARTIFACTS=http://127.0.0.1:$(cat /tmp/port)/ cargo run -p pane
   PowerShell on the machine that wrote them, so their runtime evidence is
   CI's Windows leg (recorded in
   [platforms/windows.md](platforms/windows.md#installing-pane-and-acquiring-its-calculator-51)).
-<<<<<<< HEAD
 - **The macOS baseline is one system.** `macos-15` (macOS 15, arm64) is
   the declared baseline, the system CI builds, packages, installs and
   smokes on; no Intel Mac, no other macOS version and no install on a
@@ -486,13 +485,12 @@ PANE_ARTIFACTS=http://127.0.0.1:$(cat /tmp/port)/ cargo run -p pane
   that wrote them (the script was linted and dry-run with a fake program
   instead), so their runtime evidence is CI's macOS leg (recorded in
   [platforms/macos.md](platforms/macos.md#installing-pane-and-acquiring-its-calculator-52)).
-=======
 - **The update's cadence is provisional.** Pane checks when it starts and
   at no interval; how often a running Pane rechecks (and whether a check
   that failed retries quietly) is a choice recorded for the user.
   Extension updates and application updates stay separate, as the
   specification requires: extension updates have their own controls
-  (none automatic has landed yet), and the application update has none —
+  (npm packages update automatically since #49, tracked Git branches since #50), and the application update has none —
   only the user's choice, every time.
 - **Only the Windows wiring exists.** The check, download, verification
   and swap are platform-independent `pane-core` code, but only the
@@ -515,7 +513,6 @@ PANE_ARTIFACTS=http://127.0.0.1:$(cat /tmp/port)/ cargo run -p pane
   happen), and a Pane starting removes a staging folder another Pane may
   be installing from — the same small warts the shared data folder
   already records, left as they are.
->>>>>>> ticket-54-windows-app-update
 - **No default-extension updates.** A default extension is installed once
   and left alone: a Pane whose default is installed acquires nothing, so
   a newer payload version is not fetched (uninstalling and restarting
