@@ -275,11 +275,12 @@ impl Dirs {
         );
     }
 
-    /// The identity key of the Git repository served as `name`, as an
-    /// installed record's `git` field names it.
+    /// The Git repository served as `name`, as an installed record's
+    /// `git` field names it: its host and path, without the `git:` an
+    /// identity key adds.
     fn git_identity(&self, name: &str) -> String {
         format!(
-            "git:{}{}",
+            "{}{}",
             self.server.url().trim_start_matches("http://"),
             name
         )
@@ -296,11 +297,7 @@ impl Dirs {
         let release = repo.commit(&greeter_files(&guests(), true), "Release 0.1.0");
         repo.tag("v0.1.0");
         repo.git(&["switch", "--quiet", "main"]);
-        GitGreeter {
-            repo,
-            url,
-            release,
-        }
+        GitGreeter { repo, url, release }
     }
 
     /// The record of the package installed from the Git repository served
@@ -321,7 +318,10 @@ impl Dirs {
     /// The commit the package installed from the Git repository served as
     /// `name` is at, from its record.
     fn git_commit(&self, name: &str) -> String {
-        self.git_record(name)["gitCommit"].as_str().unwrap().to_owned()
+        self.git_record(name)["gitCommit"]
+            .as_str()
+            .unwrap()
+            .to_owned()
     }
 
     /// Waits until the downloads folder is empty, as an ended install or
@@ -366,7 +366,10 @@ impl GitGreeter {
             if *path == "pane.json" {
                 let manifest = String::from_utf8(std::mem::take(contents)).unwrap();
                 *contents = manifest
-                    .replace("\"version\": \"0.1.0\"", &format!("\"version\": \"{version}\""))
+                    .replace(
+                        "\"version\": \"0.1.0\"",
+                        &format!("\"version\": \"{version}\""),
+                    )
                     .into_bytes();
             }
         }
@@ -1027,7 +1030,11 @@ fn a_moved_tracked_branch_updates_the_package_by_itself() {
     let record = dirs.git_record("greeter");
     assert_eq!(record["gitRef"], "refs/heads/release");
     assert_eq!(record["gitCommit"], greeter.release.as_str());
-    assert_eq!(record["pinned"], serde_json::json!(false));
+    assert_eq!(record.get("pinned"), None);
+
+    // Leave the command, so that no screen of the package is open when
+    // the branch moves.
+    to_root(&launcher);
 
     // The branch moves to a new release while no command runs.
     let moved = greeter.move_release("0.2.0");
@@ -1044,7 +1051,7 @@ fn a_moved_tracked_branch_updates_the_package_by_itself() {
     assert_eq!(record["git"], dirs.git_identity("greeter").as_str());
     assert_eq!(record["gitRef"], "refs/heads/release");
     assert_eq!(record["gitCommit"], moved.as_str());
-    assert_eq!(record["pinned"], serde_json::json!(false));
+    assert_eq!(record.get("pinned"), None);
     dirs.wait_for_no_downloads();
 
     // The new copy runs, and a check that finds the branch at its new
@@ -1103,10 +1110,7 @@ fn an_opted_out_git_package_is_not_updated_until_the_user_turns_updates_back_on(
         launcher.view().status,
         Status::Result("Automatic updates of Greeter from Git are off".into())
     );
-    assert!(
-        titles(&launcher)
-            .contains(&"Update Greeter from Git automatically".to_owned())
-    );
+    assert!(titles(&launcher).contains(&"Update Greeter from Git automatically".to_owned()));
 
     greeter.move_release("0.2.0");
     let asked = dirs.server.requests().len();
@@ -1135,6 +1139,10 @@ fn a_tracked_branch_now_holding_only_the_source_is_refused() {
         run_greeter(&launcher, "Say hello"),
         Status::Result(GIT_HELLO.into())
     );
+
+    // Leave the command, so that the check's explanation shows in root
+    // search's status line, where a background check explains itself.
+    to_root(&launcher);
 
     // The branch moves to a revision without the built component: not a
     // runnable release revision, refused as a preview would refuse it,

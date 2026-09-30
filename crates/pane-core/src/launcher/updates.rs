@@ -331,14 +331,11 @@ impl Updates {
         // against, keeps nothing staged: the next check plans again.
         let at: Vec<(PackageIdentity, String)> = candidates
             .iter()
-            .filter_map(|package| {
-                Some((package.identity.clone(), installed_at(package)?))
-            })
+            .filter_map(|package| Some((package.identity.clone(), installed_at(package)?)))
             .collect();
         self.lock().staged.retain(|staged| {
-            at.iter().any(|(identity, at)| {
-                identity == &staged.identity && at == &staged.installed
-            })
+            at.iter()
+                .any(|(identity, at)| identity == &staged.identity && at == &staged.installed)
         });
         for package in candidates {
             if let Some(npm) = package.npm.clone() {
@@ -389,9 +386,7 @@ impl Updates {
                     // No version: the latest, and not pinned by the update.
                     version: None,
                 };
-                if let Some(staged) =
-                    self.stage(launcher, install::Request::Npm(spec), package)
-                {
+                if let Some(staged) = self.stage(launcher, install::Request::Npm(spec), package) {
                     self.lock().staged.push(staged);
                 }
             }
@@ -402,12 +397,7 @@ impl Updates {
     /// tracked branch and stages what it finds. The repository's reference
     /// listing alone says what its branch points to now: nothing is
     /// fetched while that is the commit installed.
-    fn check_git(
-        &self,
-        launcher: &Launcher,
-        package: &InstalledPackage,
-        git: git::InstalledGit,
-    ) {
+    fn check_git(&self, launcher: &Launcher, package: &InstalledPackage, git: git::InstalledGit) {
         // The repository as the installed copy's record names it, fetched
         // from where it was fetched before; a record Pane cannot read
         // names no repository.
@@ -458,9 +448,7 @@ impl Updates {
                     reference: asked_as,
                     ..spec
                 };
-                if let Some(staged) =
-                    self.stage(launcher, install::Request::Git(spec), package)
-                {
+                if let Some(staged) = self.stage(launcher, install::Request::Git(spec), package) {
                     self.lock().staged.push(staged);
                 }
             }
@@ -485,9 +473,7 @@ impl Updates {
         // as they were when it was made, before a development build's
         // registry was given.
         let sources = self.lock_sources().clone();
-        let checked = futures::executor::block_on(
-            launcher.read_and_check_from(sources, request),
-        );
+        let checked = futures::executor::block_on(launcher.read_and_check_from(sources, request));
         let package = match checked {
             Ok(package) => package,
             Err(reason) => {
@@ -692,7 +678,12 @@ fn staged_at(package: &SourcePackage) -> Option<String> {
         .npm
         .as_ref()
         .map(|origin| origin.package.version.clone())
-        .or_else(|| package.git.as_ref().map(|origin| origin.revision.commit.clone()))
+        .or_else(|| {
+            package
+                .git
+                .as_ref()
+                .map(|origin| origin.revision.commit.clone())
+        })
 }
 
 /// Whether `package` is at the safe boundary for replacing its code: no
@@ -991,10 +982,7 @@ pub(super) fn package_rows(
     packages
         .iter()
         .filter(|package| {
-            package
-                .npm
-                .as_ref()
-                .is_some_and(|npm| !npm.pinned)
+            package.npm.as_ref().is_some_and(|npm| !npm.pinned)
                 || package
                     .git
                     .as_ref()
