@@ -706,8 +706,21 @@ fn a_call_its_caller_gives_up_on_before_it_starts_never_runs() {
         fixture_run(&launcher, "Call b's remember and give up at once"),
         result("gave up: true")
     );
-    // b never ran: it neither started nor saved anything.
-    assert_eq!(dirs.running(), ["fixture.wasm"]);
+    // b never ran: it saved nothing, and no instance of it is left. A
+    // loaded machine can start the target's instance between the call's
+    // sending and the caller's giving up landing (the give-up then ends
+    // it, and its operation never runs — the settings file below proves
+    // that), so the list of what is running is waited for until only the
+    // caller's component is left.
+    let settled = Instant::now() + Duration::from_secs(10);
+    while dirs.running() != ["fixture.wasm".to_owned()] {
+        assert!(
+            Instant::now() < settled,
+            "b is still running: {:?}",
+            dirs.running()
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
     let settings = fs::read_to_string(dirs.extensions().join("settings.json")).unwrap();
     assert!(!settings.contains("given up"), "{settings}");
 }
