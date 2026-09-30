@@ -2,7 +2,7 @@
 
 A small, extensible desktop launcher for Windows, macOS and Linux, inspired by Raycast and Pi.
 
-Pane is in early development. The current slice is a native GPUI CE window running one sample command implemented three times, as Rust, JavaScript and TypeScript extensions, through a WASI 0.3 component interface, installing local, npm and Git extension packages, and, on Linux, one package a clean machine installs whose first setup downloads Pane's default extensions itself ([installer](docs/installer.md)); the artifact source it downloads from is not deployed yet, so no published installer exists. JavaScript and TypeScript run on a pinned, patched componentize-qjs (QuickJS), which remains provisional.
+Pane is in early development. The current slice is a native GPUI CE window running one sample command implemented three times, as Rust, JavaScript and TypeScript extensions, through a WASI 0.3 component interface, installing local, npm and Git extension packages, and, on Linux and Windows, one package a clean machine installs whose first setup downloads Pane's default extensions itself ([installer](docs/installer.md)); the artifact source it downloads from is not deployed yet, so no published installer exists. JavaScript and TypeScript run on a pinned, patched componentize-qjs (QuickJS), which remains provisional.
 
 ## Build, run and test
 
@@ -22,6 +22,7 @@ cargo xtask guests   # build the Rust guests; copy them and the prebuilt JS/TS s
 cargo run -p pane    # open the launcher window
 cargo xtask ci       # build guests, check the prebuilt JS/TS samples, then formatting, lints and tests
 cargo xtask package-linux  # build Pane's Linux package and the default extensions' artifacts into target/dist/
+cargo xtask package-windows  # build the Windows package the same way (on Windows; see docs/installer.md)
 ```
 
 A development build of `pane` acquires the default extensions only where

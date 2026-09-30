@@ -1,44 +1,73 @@
-# Pane's Linux package and first setup
+# Pane's packages and first setup
 
-Added for [#53](https://github.com/hoangvu12/pane/issues/53) (US15, US16,
-US18, US42; T23; contributions to G6, not a claim that it passes): a clean
-Linux machine installs Pane from one package, and Pane acquires its
-default extensions itself over the network — the calculator, the feature
-this proves — with progress, retries and a cache, while the core (the
-window, root search, the install rows, Manage extensions) stays usable.
-This is the internet-first setup the specification chose
+Added for [#53](https://github.com/hoangvu12/pane/issues/53) (Linux; US15,
+US16, US18, US42; T23; contributions to G6, not a claim that it passes)
+and [#51](https://github.com/hoangvu12/pane/issues/51) (Windows): a clean
+machine installs Pane from one package, and Pane acquires its default
+extensions itself over the network — the calculator, the feature this
+proves — with progress, retries and a cache, while the core (the window,
+root search, the install rows, Manage extensions) stays usable. This is
+the internet-first setup the specification chose
 ([decision 20](../launcher-design-interview.md)); the installer carries no
 payloads and installs no runtime, and the user installs no Node, Rust,
 npm, Git or compiler: Pane's extension runtime is part of Pane's own
 process (Wasmtime), so nothing is acquired for it.
 
+The acquisition itself is the same on every system (it is
+platform-independent code, tested by `crates/pane-core/tests/installer.rs`);
+what each system has of its own is the package, the install script and
+the smoke that proves the whole outcome there.
+
 ## The package
 
-`cargo xtask package-linux` builds, under `target/dist/`:
+Each task builds, under `target/dist/`, one package for the system it
+runs on and the artifacts an artifact source serves (below):
 
-- **`pane-<version>-linux-<arch>.tar.gz`** — the package: the `pane`
-  program (release profile), the install script, a `README.txt` and a
-  `pane.desktop` entry, under `pane/`. With `--dev`, the program is the
-  development profile and the name ends `-dev`; the native smokes install
-  that one, because only a development build takes its artifact source
-  from `PANE_ARTIFACTS` (a release build uses Pane's published downloads,
-  which no controlled source may replace).
+- **`pane-<version>-linux-<arch>.tar.gz`** — the Linux package
+  (`cargo xtask package-linux`): the `pane` program (release profile), the
+  install script, a `README.txt` and a `pane.desktop` entry, under `pane/`.
+  With `--dev`, the program is the development profile and the name ends
+  `-dev`; the native smokes install that one, because only a development
+  build takes its artifact source from `PANE_ARTIFACTS` (a release build
+  uses Pane's published downloads, which no controlled source may
+  replace).
+- **`pane-<version>-windows-<arch>.zip`** — the Windows package
+  (`cargo xtask package-windows`): the `pane.exe` program (release
+  profile), the PowerShell install script and a `README.txt`, under
+  `pane/`. A zip, because a Windows user unzips with whatever is at hand
+  and Windows has no tar of its own a user can rely on; `--dev` names the
+  development profile's package the same way. The task assembles the
+  artifacts anywhere, but builds the package only on Windows: `pane.exe`
+  needs a Windows checkout (no cross toolchain is set up), so anywhere
+  else it explains so and stops — the one thing a Windows build alone
+  provides.
 - **`artifacts/`** — what an artifact source serves (below): the index
   `pane-defaults.json` and one tarball per default extension's payload.
   A real deployment serves this folder at Pane's published downloads; the
-  tests and smokes serve it from this computer instead.
-- **`pane-<version>-linux-<arch>.tar.gz.sha256`** — the package's digest.
+  tests and smokes serve it from this computer instead. The payloads are
+  built for the system the task ran on, so each system's run of its own
+  task serves its own (`windows-x86_64`'s helper file, for instance, from
+  the Windows task's artifacts).
+- **`pane-<version>-<os>-<arch>.<zip|tar.gz>.sha256`** — each package's
+  digest.
 
-The package is the same bytes wherever it is built (fixed time, owner and
-mode in the tar), and its program is built for the system the task ran
+Each package is the same bytes wherever it is built (fixed time, owner
+and mode in the Linux tar; the fixed time, entry order and deflate of the
+Windows zip), and its program is built for the system the task ran
 on: this machine builds `linux-aarch64`, CI's `ubuntu-24.04` runner builds
-`linux-x86_64`. A release for several systems builds one package per
-system. **Nothing is signed** — no signing credentials exist — and the
-`.sha256` file says only what was packed; signing the package, and
+`linux-x86_64`, its `windows-2025` runner `windows-x86_64`. A release for
+several systems builds one package per system. **Nothing is signed** — no
+signing credentials exist, on Windows no Authenticode certificate — and
+the `.sha256` file says only what was packed; signing the package, and
 deploying the artifact source, are execution prerequisites recorded
 [below](#limits-and-prerequisites).
 
-### Installing
+The package holds no default extension: first setup downloads them, so
+the installer stays small and every default extension (also the ones
+later slices add) is a normal, individually disableable extension rather
+than something baked into the program.
+
+### Installing on Linux
 
 ```sh
 tar -xzf pane-<version>-linux-<arch>.tar.gz
@@ -58,10 +87,42 @@ libfontconfig1 libfreetype6 libvulkan1` and a Vulkan driver
 (`mesa-vulkan-drivers` works without a GPU) are the prerequisites. Uninstalling
 is removing the two files; Pane's own data stays in `~/.local/share/pane`.
 
-The package holds no default extension: first setup downloads them, so
-the installer stays small and every default extension (also the ones
-later slices add) is a normal, individually disableable extension rather
-than something baked into the program.
+### Installing on Windows
+
+```powershell
+Expand-Archive pane-<version>-windows-<arch>.zip        # or unzip in Explorer
+cd pane
+powershell -ExecutionPolicy Bypass -File install.ps1    # installs to %LOCALAPPDATA%\Pane
+pane --version                                          # what the install script runs to check
+```
+
+The script (`scripts/install-windows.ps1`, mirrored by the Linux one)
+installs for one user: `pane.exe` to `%LOCALAPPDATA%\Pane` — an
+environment variable of the user's own, so no administrator rights are
+needed — and a `Pane` shortcut to the user's Start menu
+(`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Pane.lnk`), which is
+the Start-menu entry the [applications](applications.md) extension finds.
+No desktop entry is made, because an installer that asks no questions
+puts nothing on the desktop. `-InstallDir <folder>` installs somewhere
+else. Pane keeps its own data in `%LOCALAPPDATA%\Pane\data` (and its
+caches in `%LOCALAPPDATA%\Pane\cache`), inside the same per-user folder
+the program is installed to; uninstalling is removing `pane.exe` and the
+shortcut, and that data folder if the user wants it gone too. The
+declared baseline is Windows Server 2025 (x86_64), the system
+[CI runs](platforms/windows.md#tested-combination); the program needs
+nothing beyond Windows itself (no Node, Rust, npm, Git, compiler, and no
+administrator rights), and the install script checks what it installed by
+running `pane --version` (its exit code: Pane is a window-subsystem
+program, so the version text is read from a redirected stream).
+
+Because nothing is signed, PowerShell may refuse `install.ps1` as a
+script that came over the internet (a zip downloaded from the web and
+extracted can carry that mark): the `-ExecutionPolicy Bypass` above
+answers that for the one script, or `Unblock-File install.ps1` once, and
+the package's `.sha256` file says what was packed. Windows itself may
+warn about an unknown publisher when `pane.exe` runs; that is what absent
+Authenticode credentials mean, recorded plainly
+[below](#limits-and-prerequisites).
 
 ## Acquiring the default extensions
 
@@ -161,6 +222,15 @@ PANE_ARTIFACTS=http://127.0.0.1:$(cat /tmp/port)/ cargo run -p pane
 A fresh data folder (`PANE_DATA_DIR=/tmp/fresh`) shows the acquisition
 and the calculator's answer to "6*7".
 
+On Windows, the same with the Windows package (built where it can be):
+
+```powershell
+cargo xtask package-windows --dev
+python scripts/artifact_server.py target/dist/artifacts $env:TEMP\port
+$env:PANE_ARTIFACTS = "http://127.0.0.1:$((Get-Content $env:TEMP\port).Trim())/"
+cargo run -p pane
+```
+
 ## Checks
 
 - `crates/pane-core/tests/installer.rs`: the acquisition through the
@@ -173,16 +243,26 @@ and the calculator's answer to "6*7".
   extension up once the source works; the helper running from the managed
   copy with mode 0755; a payload that does not match its integrity, and
   one for another platform, explained and not installed; a restart
-  fetching nothing; a disabled default extension not re-acquired.
-- The [Linux smoke](platforms/linux.md#installing-pane-and-acquiring-its-calculator-53):
-  the package is built, installed on a clean home with a PATH that holds
-  nothing, and the installed Pane acquires both payloads from the
-  controlled source and answers "6*7" with 42, its helper echoing for
-  this system.
+  fetching nothing; a disabled default extension not re-acquired. These
+  run on every system, so the Windows acquisition needs no test of its
+  own: it is the same code (the one Windows-only piece is the `.exe`
+  helper-name rule, checked by the runner's unit tests).
+- The [Linux smoke](platforms/linux.md#installing-pane-and-acquiring-its-calculator-53)
+  and the [Windows smoke](platforms/windows.md#installing-pane-and-acquiring-its-calculator-51):
+  the package is built, installed on a clean machine (a fresh home on
+  Linux, a fresh user profile on Windows) with a PATH that holds nothing,
+  and the installed Pane acquires both payloads from the controlled
+  source and answers "6*7" with 42, its helper echoing for this system.
 - `xtask`'s packaging is checked by building it: `cargo xtask
   package-linux [--dev]` must produce the tarball, its sha256 and the
-  artifact tree; the release-profile package is built the same way the
-  development-profile one the smoke installs is.
+  artifact tree, and `cargo xtask package-windows [--dev]` the zip, its
+  sha256 and the same tree; the release-profile package is built the same
+  way the development-profile one the smoke installs is. The zip's bytes
+  are pinned by a unit test (`xtask/src/zip.rs`), first decoded with
+  Python's `zipfile`; the Linux machine that writes most of this
+  repository cannot build `pane.exe`, so there the Windows task assembles
+  the artifacts and explains that only a Windows checkout builds the
+  package.
 
 ## Limits and prerequisites
 
@@ -197,16 +277,37 @@ and the calculator's answer to "6*7".
   packed, and a payload is checked only against the sha512 its index
   gives, over HTTPS. (The connection trusts the system's certificates.)
   Signing the package, and serving the index over an authenticated
-  channel a release trusts, are prerequisites for a release.
+  channel a release trusts, are prerequisites for a release. On Windows
+  this means no Authenticode certificate exists either, so `pane.exe`
+  and `install.ps1` are unsigned: Windows may warn about an unknown
+  publisher when the program runs, and PowerShell may refuse the install
+  script as one that came over the internet (the README and the doc above
+  say how a user answers that for this one script). Acquiring a
+  certificate, and signing the program and the script with it, are
+  execution prerequisites like the others here.
 - **The artifact this build serves is built for the system it ran on.**
   The helper sample's payload declares the one helper target its file was
-  built for (`linux-x86_64` on CI, `linux-aarch64` on an arm64 checkout);
+  built for (`linux-x86_64` and `windows-x86_64` on CI, `linux-aarch64`
+  on an arm64 checkout; the sample's manifest names them all, and the
+  packaging rewrites it to the target whose file the build assembled);
   a real deployment must build every supported target and serve one
   payload whose manifest names them all, or serve one payload per system
   at a per-system index.
 - **One package per system**, built where it runs; cross-building and
   packaging for a system this task cannot build on is out of scope (the
-  evidence for each is per-system, as the specification requires).
+  evidence for each is per-system, as the specification requires). On
+  Windows the task says so and stops rather than packing another system's
+  program; on Linux the task builds whatever program the checkout builds
+  (#53's behavior, kept).
+- **The Windows baseline is one system.** `windows-2025` (Windows Server
+  2025, x86_64) is the declared baseline, the system CI builds, packages,
+  installs and smokes on; no Windows 10 or 11 client edition, no ARM64
+  and no per-user install on a real desktop has been tried, and the
+  smoke's clean machine is a fresh profile on that runner, not a fresh
+  machine. The install script and the smoke phase were written without
+  PowerShell on the machine that wrote them, so their runtime evidence is
+  CI's Windows leg (recorded in
+  [platforms/windows.md](platforms/windows.md#installing-pane-and-acquiring-its-calculator-51)).
 - **No default-extension updates.** A default extension is installed once
   and left alone: a Pane whose default is installed acquires nothing, so
   a newer payload version is not fetched (uninstalling and restarting
