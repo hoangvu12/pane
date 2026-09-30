@@ -1128,7 +1128,11 @@ fn retained_history_expires_without_the_extension(fixture: &'static Fixture) {
     drop(launcher);
     pane.clock.advance(7 * DAY);
     let launcher = pane.start();
-    assert!(pane.kept_on_disk().is_empty());
+    // The sweep that expires writes the file off the caller's thread, so
+    // the disk is polled until it agrees (see wait_until).
+    wait_until("the expired retained items are gone from the file", || {
+        pane.kept_on_disk().is_empty()
+    });
     select_title(&launcher, MANAGE_ROW);
     block_on(launcher.activate_selected());
     let retained = subtitle(
