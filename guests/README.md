@@ -791,6 +791,79 @@ samples ([`sample-schedule`](sample-schedule) in Rust,
 [JavaScript](sample-schedule-js) and [TypeScript](sample-schedule-ts))
 for complete examples.
 
+## Continuing services
+
+A command can declare that it runs a continuing service, so it works
+without the user asking and at no interval the manifest declares: set
+`"service": true` on its entry in `pane.json`, and export
+`pane:extension/service` (`run-cycle`) beside `command`. Pane calls
+`run-cycle` in a cycle while the package's code may run — it is enabled
+and not paused — starting the moment it may (installing an enabled
+package, enabling, replacing the code, or Pane starting) and ending when
+it may not (disabled, uninstalled, paused after failures, replaced). The
+service paces itself: each cycle answers the status to show and how long
+to wait before the next.
+
+```rust
+use pane_guest::service::Cycle;
+
+pane_guest::export!(Watching);
+pane_guest::service::export!(Watching);
+
+impl pane_guest::service::Guest for Watching {
+    async fn run_cycle(command: String) -> Result<Cycle, String> {
+        // One slice of the service's work: check what it watches, then
+        // say what to show and when to run it again.
+        let seen = content::get("events")?;
+        Ok(Cycle {
+            status: format!("Watching: {seen:?}"),
+            next_seconds: 2,
+        })
+    }
+}
+```
+
+- Each cycle is an ordinary guest call, stopped when the package's
+  [generation](../docs/generations.md) ends: a disable, reload, update,
+  uninstall or pause while it runs stops it, its late answer is
+  discarded, and the instance — whatever the service keeps in it, its
+  task's state — goes with it, so enabling the package starts a fresh
+  task. Keep each cycle short: waiting inside one holds every other
+  extension's calls for as long as it waits, as any call does.
+- A trap, or a cycle that computes for too long and Pane stops, is a
+  crash of the package like any call's (three within five minutes pause
+  it); an error the cycle answers with never pauses it, however often,
+  and the next cycle runs a second later, so one broken cycle never ends
+  the service.
+- `next_seconds` is at least 1 and at most 2592000 (30 days); anything
+  outside is clamped (provisional bounds, as scheduled work's). Time
+  that passes while a cycle runs is not replayed: the next cycle runs
+  one cadence after its answer lands.
+- The status shows on the command's screen while it is open, as an
+  action's answer does, and the cycle runs whether or not it is.
+
+A JavaScript or TypeScript command sets `"pane": { "service": true }`
+in its `package.json` so that it is built with the interface, and
+exports `runCycle` as `service` (typed `Service` and `Cycle` in
+[`js/pane.d.ts`](js/pane.d.ts)):
+
+```ts
+import type { Cycle, Service } from "@pane/extension";
+
+export const service: Service = {
+  async runCycle(command: string): Promise<Cycle> {
+    return { status: "Watching", nextSeconds: 2 };
+  },
+};
+```
+
+See [continuing services](../docs/services.md) for the full contract,
+and the samples ([`sample-service`](sample-service) in Rust,
+[JavaScript](sample-service-js) and [TypeScript](sample-service-ts)) for
+complete examples, including the ways a cycle can end (wait, fail,
+crash, stop responding) and cadences beyond the bounds that Pane clamps
+(0 seconds, 31 days).
+
 ## Clipboard history
 
 A Rust command can keep clipboard history through Pane
