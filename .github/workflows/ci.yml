@@ -5,6 +5,13 @@ on:
   pull_request:
   workflow_dispatch:
 
+# One run per branch: a superseded run is cancelled instead of finishing
+# (each leg holds a shared runner for the better part of an hour, and
+# parallel runs on one branch only ever answer for the newest commit).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   licenses:
     name: Licenses and sources

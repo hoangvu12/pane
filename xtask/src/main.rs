@@ -389,9 +389,8 @@ fn pane_js(subcommand: &str) -> Command {
 }
 
 fn ci() -> Result<(), String> {
-    guests()?;
-    // The prebuilt JS/TS samples must match their sources and pins.
-    run(&mut pane_js("check"))?;
+    // Formatting first: it is free, so a formatting error is seen at once
+    // instead of after the guests and the checks have been built.
     let root = root();
     run(cargo().current_dir(&root).args(["fmt", "--all", "--check"]))?;
     for dir in [
@@ -404,6 +403,9 @@ fn ci() -> Result<(), String> {
             .current_dir(root.join(dir))
             .args(["fmt", "--all", "--check"]))?;
     }
+    // The prebuilt JS/TS samples must match their sources and pins.
+    run(&mut pane_js("check"))?;
+    guests()?;
     let clippy = [
         "clippy",
         "--locked",
