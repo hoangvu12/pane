@@ -623,10 +623,17 @@ pub(crate) fn base64(bytes: &[u8]) -> String {
 /// and a size a PAX header gives must be the one the entry's own header
 /// gives, so that no two readers can see different files in one tarball.
 pub(crate) fn unpack(tgz: &[u8], dest: &Path) -> Result<(), String> {
+    unpack_within(tgz, dest, MAX_UNPACKED)
+}
+
+/// As [`unpack`], within `max_unpacked` bytes instead of npm's own bound: a
+/// package larger than an npm package's tarball — Pane's own application
+/// package, a whole program — unpacks with the bound its reader gives.
+pub(crate) fn unpack_within(tgz: &[u8], dest: &Path, max_unpacked: u64) -> Result<(), String> {
     fs::create_dir(dest).map_err(|error| error.to_string())?;
     // The decompressed stream is limited too, so a small tarball cannot
     // expand without bound (headers and padding take some of it).
-    let stream = flate2::read::GzDecoder::new(tgz).take(MAX_UNPACKED + (MAX_UNPACKED >> 2));
+    let stream = flate2::read::GzDecoder::new(tgz).take(max_unpacked + (max_unpacked >> 2));
     let mut archive = tar::Archive::new(stream);
     let mut total: u64 = 0;
     let mut count = 0;
@@ -643,10 +650,10 @@ pub(crate) fn unpack(tgz: &[u8], dest: &Path) -> Result<(), String> {
         let size = entry.size();
         let add = |total: &mut u64, size: u64| {
             *total = total.saturating_add(size);
-            if *total > MAX_UNPACKED {
+            if *total > max_unpacked {
                 return Err(format!(
                     "it unpacks to more than the {} MiB Pane allows",
-                    MAX_UNPACKED >> 20
+                    max_unpacked >> 20
                 ));
             }
             Ok(())

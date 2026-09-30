@@ -99,6 +99,31 @@ impl Dirs {
         self.artifacts.publish_application(version, &target, &zip);
     }
 
+    /// Publishes an application package `version` for this system, packed
+    /// as the Linux package is — a gzipped tarball holding `pane/` — with
+    /// `program` as the program an install replaces this Pane's with. The
+    /// suite runs on every system, so the Linux package's format is
+    /// installed everywhere the tests run, as the zip the Windows package
+    /// is.
+    fn publish_update_tgz(&self, version: &str, program: &[u8]) {
+        let name = self
+            .program()
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("the program file is named")
+            .to_owned();
+        let tarball = artifacts::pack_tgz(&[
+            (name.as_str(), program.to_vec()),
+            ("README.txt", b"the readme".to_vec()),
+        ]);
+        let target = Target::current()
+            .expect("Pane names this system's target")
+            .id()
+            .to_owned();
+        self.artifacts
+            .publish_application_tgz(version, &target, &tarball);
+    }
+
     /// The files in the install folder, sorted.
     fn installed(&self) -> Vec<String> {
         read_names(self.install.path(), "")
@@ -218,6 +243,52 @@ fn choosing_to_install_downloads_and_swaps_the_program() {
     assert!(!titles(&launcher).contains(&"Update Pane to 99.0.0".to_owned()));
     // The check at Pane's start stays quiet when there is nothing to
     // tell: no row, no word on the status line.
+    assert_eq!(launcher.view().status, Status::Idle);
+}
+
+#[test]
+fn choosing_to_install_the_linux_packages_tarball_swaps_the_program() {
+    let dirs = Dirs::new();
+    // The Linux package: the index names a `.tar.gz`, as `cargo xtask
+    // package-linux` packs it, and the install unpacks it with the same
+    // strictness as the zip the Windows package is.
+    dirs.publish_update_tgz("99.0.0", b"the 99.0.0 program");
+    dirs.running(b"the 0.1.0 program");
+    let launcher = dirs.launcher("0.1.0");
+    block_on(launcher.check_application_update());
+    select_title(&launcher, "Update Pane to 99.0.0");
+
+    block_on(launcher.activate_selected());
+
+    // The offer is installed from the tarball exactly as from the zip: the
+    // new program in place, the old one renamed out of its way, the
+    // staging folder gone, and the tarball downloaded once.
+    assert_eq!(
+        launcher.view().status,
+        Status::Result(
+            "Installed Pane 99.0.0; the new version is used the next time Pane starts".into()
+        )
+    );
+    assert_eq!(fs::read(dirs.program()).unwrap(), b"the 99.0.0 program");
+    assert_eq!(
+        fs::read(dirs.install.path().join("pane.old")).unwrap(),
+        b"the 0.1.0 program"
+    );
+    assert_eq!(dirs.installed(), ["pane", "pane.old"]);
+    assert_eq!(
+        dirs.artifacts
+            .requests()
+            .iter()
+            .filter(|path| path.ends_with(".tar.gz"))
+            .count(),
+        1
+    );
+
+    // A Pane starting with the new program removes what the update left.
+    drop(launcher);
+    let launcher = dirs.launcher("99.0.0");
+    block_on(launcher.check_application_update());
+    assert_eq!(dirs.installed(), ["pane"]);
     assert_eq!(launcher.view().status, Status::Idle);
 }
 

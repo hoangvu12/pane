@@ -58,7 +58,7 @@ struct Served {
     /// By default extension id: (version, file, published).
     payloads: BTreeMap<String, Published>,
     /// The application package the index's `application` entry names, and
-    /// its zip, served as the entry's `file`.
+    /// its bytes, served as the entry's `file`.
     application: Option<(Value, Vec<u8>)>,
     /// The index document itself, served as written; `None` for the one
     /// the payloads describe.
@@ -147,6 +147,21 @@ impl Artifacts {
             "target": target,
         });
         self.served().application = Some((entry, zip.to_vec()));
+    }
+
+    /// As [`Artifacts::publish_application`], but the package is the
+    /// gzipped tarball the Linux package is (`pane-<version>-<target>
+    /// `.tar.gz`), served as the entry's `file` the same way.
+    pub fn publish_application_tgz(&self, version: &str, target: &str, tarball: &[u8]) {
+        let file = format!("pane-{version}-{target}.tar.gz");
+        let entry = json!({
+            "version": version,
+            "file": file,
+            "integrity": integrity(tarball),
+            "size": tarball.len(),
+            "target": target,
+        });
+        self.served().application = Some((entry, tarball.to_vec()));
     }
 
     /// Serves `index` as the index document itself, whatever it says: the
@@ -427,13 +442,25 @@ fn base64(bytes: &[u8]) -> String {
 /// A gzipped tarball holding `files` (path in the package, contents)
 /// under `package/`, as Pane's own downloads pack a payload.
 pub fn pack(files: &[(&str, Vec<u8>)]) -> Vec<u8> {
+    pack_under("package", files)
+}
+
+/// A gzipped tarball holding `files` (path in the package, contents)
+/// under `pane/`, as Pane's own downloads pack its Linux package: what a
+/// Pane application update on Linux downloads and unpacks.
+pub fn pack_tgz(files: &[(&str, Vec<u8>)]) -> Vec<u8> {
+    pack_under("pane", files)
+}
+
+/// A gzipped tarball holding `files` under the folder `top`.
+fn pack_under(top: &str, files: &[(&str, Vec<u8>)]) -> Vec<u8> {
     let mut tar = tar::Builder::new(Vec::new());
     for (path, contents) in files {
         let mut header = tar::Header::new_ustar();
         header.set_size(contents.len() as u64);
         header.set_mode(0o644);
         header.set_entry_type(tar::EntryType::Regular);
-        tar.append_data(&mut header, format!("package/{path}"), contents.as_slice())
+        tar.append_data(&mut header, format!("{top}/{path}"), contents.as_slice())
             .unwrap();
     }
     let tar = tar.into_inner().unwrap();

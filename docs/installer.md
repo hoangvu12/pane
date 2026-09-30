@@ -287,19 +287,24 @@ with why, which tries again.
    ("Downloading Pane 99.0.0: 34% of 186 MiB") and the same retries an
    interrupted acquisition gets (three attempts; a package that is not
    there, or whose bytes do not match the sha512 its entry gives, is
-   explained and never retried), checks it, unpacks it — a zip, read as
-   strictly as an npm package's tarball: only files and folders inside
-   the package, one plain name per part on every system, every entry
-   checked against the central directory and the file's own header and
-   CRC32 — and stages it in the install folder's `update\` folder. Then
-   the swap: the running `pane.exe` is renamed to `pane.exe.old` (every
-   system allows renaming a running program; only overwriting one is
-   refused), the staged program takes its name and place, and the staging
-   folder goes. **The new version is used the next time Pane starts** —
-   the user's next start, whenever they choose; Pane itself never
-   restarts. A start removes what earlier updates left: `pane.exe.old`
-   (best effort — another Pane may still run it) and a staging folder a
-   Pane stopped mid-install left. Installing while Pane is being used is
+   explained and never retried), checks it, unpacks it — in the format
+   the package's system packs: the zip a Windows or macOS package is,
+   read as strictly as an npm package's tarball (only files and folders
+   inside the package, one plain name per part on every system, every
+   entry checked against the central directory and the file's own header
+   and CRC32), or the gzipped tarball the Linux package is, read with
+   the npm tarball's own strictness (only files and folders, extension
+   headers read raw, an ambiguous size refused) — and stages it in the
+   install folder's `update` folder. Then the swap: the running program
+   is renamed out of its way — `pane.exe` to `pane.exe.old` on Windows,
+   `pane` to `pane.old` on Linux (every system allows renaming a running
+   program; only overwriting one is refused) — the staged program takes
+   its name and place, and the staging folder goes. **The new version is
+   used the next time Pane starts** — the user's next start, whenever
+   they choose; Pane itself never restarts. A start removes what earlier
+   updates left: the renamed old program (best effort — another Pane may
+   still run it) and a staging folder a Pane stopped mid-install left.
+   Installing while Pane is being used is
    fine: the download runs off the thread, so commands and services keep
    answering while it goes, and only the last renames touch the program's
    folder, between two of the user's actions; a command still running
@@ -310,17 +315,25 @@ with why, which tries again.
    the one running, no staging, nothing renamed. The row stays — the
    offer, or the check — and the user can try again. The old version's
    data is never touched: Pane's data and caches live beside the program
-   (`data\`, `cache\` under the same folder on Windows), and the swap
-   changes only the program, so extensions, their settings, pins and
-   enablement are exactly what they were.
+   (`data\`, `cache\` under the same folder on Windows), or, on Linux,
+   in `~/.local/share/pane` — the data folder the install leaves alone —
+   and either way the swap changes only the program, so extensions,
+   their settings, pins and enablement are exactly what they were.
 
 The Windows install of an update is this whole path with the program at
 `%LOCALAPPDATA%\Pane\pane.exe` (the install script's target, and the
-shortcut's, which the swap keeps pointing at the right file); the wiring
-is one call in `pane`'s `main.rs` giving the program's own path. The
-Linux and macOS halves are [#55](https://github.com/hoangvu12/pane/issues/55)
-and [#56](https://github.com/hoangvu12/pane/issues/56): the machinery is
-shared, the wiring is each system's.
+shortcut's, which the swap keeps pointing at the right file) — the zip
+package its entry names unpacked by the zip reader. The Linux install
+([#56](https://github.com/hoangvu12/pane/issues/56)) runs the same path
+with the program at `~/.local/bin/pane` — the install script's target,
+which the desktop entry the script put in `~/.local/share/applications`
+keeps naming (the swap changes only the program, so the entry never
+points anywhere else) — unpacking the tarball the Linux package is with
+the tar reader npm tarballs are read by, and Pane's data staying in
+`~/.local/share/pane`, which the install folder does not even hold. Each
+is one call in `pane`'s `main.rs` giving the program's own path; the
+macOS half is [#55](https://github.com/hoangvu12/pane/issues/55): the
+machinery is shared, the wiring is each system's.
 
 ## The artifact source
 
@@ -369,14 +382,17 @@ PANE_ARTIFACTS=http://127.0.0.1:$(cat /tmp/port)/ cargo run -p pane
 
 ## Checks
 
-- `crates/pane-core/tests/app_update.rs`: the application update through
+- `crates/pane-core/tests/application_update.rs`: the application update through
   the launcher's public interface, against the same loopback artifact
   source — a newer version offered as a row in root search with nothing
   downloaded until the user chooses it and nothing changed when they do
   not; choosing it downloading the package, checking it and swapping the
   running program (the staged outcome observable: the new program in
   place, the old one renamed away, the staging gone, the offer's row
-  gone, and a later start removing what the update left); a damaged
+  gone, and a later start removing what the update left); the Linux
+  package's tarball installing through the same path as the zip the
+  Windows one is (the suite runs on every system, so both formats are
+  installed wherever the tests run); a damaged
   package, an unreachable source, a source that answers an error and a
   replacement that cannot be made each explained with everything
   untouched and the row ready to try again, and the retry that installs
@@ -387,7 +403,8 @@ PANE_ARTIFACTS=http://127.0.0.1:$(cat /tmp/port)/ cargo run -p pane
   usable; and Pane's data — an acquired extension, its record and cache —
   untouched by an install, still installed and answering after the
   update. The zip Pane unpacks is checked by `pane-core`'s own unit
-  tests (both storage methods, and every refusal).
+  tests (both storage methods, and every refusal), and the tarball the
+  Linux package is, by the npm tarball reader's own unit tests.
 - `crates/pane-core/tests/installer.rs`: the acquisition through the
   launcher's public interface — a first setup installing the calculator
   and the helper sample as managed copies with the default identity and
@@ -492,14 +509,14 @@ PANE_ARTIFACTS=http://127.0.0.1:$(cat /tmp/port)/ cargo run -p pane
   specification requires: extension updates have their own controls
   (npm packages update automatically since #49, tracked Git branches since #50), and the application update has none —
   only the user's choice, every time.
-- **Only the Windows wiring exists.** The check, download, verification
-  and swap are platform-independent `pane-core` code, but only the
-  Windows build wires them to its program; a Linux or macOS Pane checks
-  for nothing until [#55](https://github.com/hoangvu12/pane/issues/55)
-  and [#56](https://github.com/hoangvu12/pane/issues/56) wire theirs.
-  The swap is exercised by the tests on this machine's layout; the
-  running-exe rename it depends on is proven on Windows itself by the
-  smoke.
+- **The Windows and Linux wiring exists.** The check, download,
+  verification and swap are platform-independent `pane-core` code, but
+  only the Windows and Linux builds wire them to their programs; a macOS
+  Pane checks for nothing until
+  [#55](https://github.com/hoangvu12/pane/issues/55) wires its. The swap
+  is exercised by the tests on this machine's layout; the
+  running-program rename it depends on is proven on Windows itself by
+  the smoke (the Linux smoke will prove its own).
 - **Nothing about an update is signed either**, and the source it comes
   from is the same not-yet-deployed one: a package is checked only
   against the sha512 its index gives, over HTTPS, as a default

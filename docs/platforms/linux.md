@@ -953,6 +953,67 @@ runner provides.
 | Enter copies the answer | pending CI (frame 502) |
 | The helper sample's prebuilt helper answers | pending CI (frame 503) |
 
+
+### Installing a Pane application update by the user's choice (#56)
+
+A final phase, after the installer one, proves the whole outcome of
+[#56](https://github.com/hoangvu12/pane/issues/56)
+([installer](../installer.md)), the Linux half of what
+[#54](windows.md#installing-a-pane-application-update-by-the-users-choice-54)
+proved on Windows. The same `cargo xtask package-linux --dev` builds a
+**second** package with `--package-version 99.0.0`: a program that
+reports 99.0.0, a package named by it (the gzipped tarball the Linux
+package is, holding `pane/`), and an index whose `application` entry
+names that package for this system — the two runnable builds an update
+goes between. The 0.1.0 package the installer phase built is installed
+on another clean home (its install script, its empty PATH, its own data
+under `~/.local/share/pane`), and the smoke serves the 99.0.0 artifacts
+from 127.0.0.1 with `scripts/artifact_server.py` (nothing reaches the
+network or Pane's published downloads). The installed 0.1.0 Pane,
+started with `PANE_ARTIFACTS`, acquires its default extensions and, in
+the same background, checks the index for a newer version of itself: the
+offer appears as **Update Pane to 99.0.0** in root search (frame 601;
+the status line tells what was found, frame 600). The artifact server's
+log must hold **no request for the package** until the row is chosen —
+nothing is downloaded, installed or restarted automatically. The Helper
+sample is disabled first, so an extension the user disabled before the
+update must stay disabled after it. Choosing the row with a **damaged
+package** is explained (its bytes do not match the sha512 its entry
+gives, frame 602) with the program, the data and the bin folder
+untouched and the row ready to try again; then the real choice
+downloads the tarball, checks it, unpacks it (the same tar reader npm
+tarballs are read by, with the application package's own size bound)
+and swaps the running program — the old `~/.local/bin/pane` renamed
+`pane.old` beside it, the new one in its place, the staging folder gone
+(frame 603, and byte comparisons of both programs against the two
+packages' own files). The next start runs the new version: it reports
+`Pane 99.0.0`, removes `pane.old` at start, the calculator still
+answers "6*7" with 42 from the old version's acquired payload (frames
+604 and 605), and the disabled Helper sample stays disabled — Pane's
+data was never touched. The desktop entry the install script put in
+`~/.local/share/applications` keeps naming the same program file, which
+the swap leaves in place, so it never points anywhere else. Pane itself
+was never restarted by the update: the smoke stops the old process and
+starts the new program itself, exactly as the user would.
+
+**Recorded 2026-09-30, the machines that wrote it (a headless aarch64
+Linux box, then a Windows one):** nothing of this phase has run — no
+Apple-less-aarch64 or Windows machine can run the Linux GUI smoke. What
+ran is the platform-independent half (`crates/pane-core/tests/application_update.rs`,
+including the new tarball-install test, all passing where it ran) and
+`bash -n` on the smoke script; the phase itself is **pending the Linux
+smoke run** (CI's `ubuntu-24.04` leg with Xvfb, or a local Linux box):
+its frames, the tarball swap and the running-program rename it depends
+on (renaming a running program's file is allowed on Linux as on
+Windows; overwriting one is not) are proven only there.
+
+| Step | Evidence |
+| --- | --- |
+| The check at start tells the user; nothing is downloaded until they choose | pending the Linux smoke run (frames 600, 601) |
+| A damaged package is explained, everything untouched, the row retried | pending the Linux smoke run (frame 602) |
+| The user's choice swaps the running program; the new one is used the next start | pending the Linux smoke run (frame 603) |
+| The new version reports itself; the old version's data and enablement are kept | pending the Linux smoke run (frames 604, 605) |
+
 ## Text input and accessibility findings
 
 - **Text input / IME (#20):** extension forms have a text field (GPUI CE's
