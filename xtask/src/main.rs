@@ -19,6 +19,10 @@
 //!   artifacts, under `target/dist/` (`--dev` as for `package-linux`;
 //!   `package.rs` assembles the artifacts everywhere and builds the
 //!   package itself only on Windows).
+//! - `package-macos`: build Pane's macOS package and the same artifacts,
+//!   under `target/dist/` (`--dev` as for `package-linux`; `package.rs`
+//!   assembles the artifacts everywhere and builds the package itself
+//!   only on macOS).
 
 mod package;
 mod zip;
@@ -71,7 +75,11 @@ fn main() -> ExitCode {
         Some("ci") => ci(),
         Some("package-linux") => package::linux(dev),
         Some("package-windows") => package::windows(dev),
-        _ => Err("usage: cargo xtask <guests|js-guests|ci|package-linux|package-windows>".into()),
+        Some("package-macos") => package::macos(dev),
+        _ => Err(
+            "usage: cargo xtask <guests|js-guests|ci|package-linux|package-windows|package-macos>"
+                .into(),
+        ),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

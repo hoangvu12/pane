@@ -1,16 +1,17 @@
 //! Building Pane's packages and the artifacts its default extensions
-//! are acquired from (#53 for Linux, #51 for Windows).
+//! are acquired from (#53 for Linux, #51 for Windows, #52 for macOS).
 //!
-//! `package-linux` and `package-windows` each produce, under
-//! `target/dist/`:
+//! `package-linux`, `package-windows` and `package-macos` each produce,
+//! under `target/dist/`:
 //!
 //! - `pane-<version>-<os>-<arch>[-dev].tar.gz` (Linux) or `.zip`
-//!   (Windows) — the package a clean machine of that system installs
-//!   from: the `pane` program, the install script and a README (and, on
-//!   Linux, a desktop entry), and none of the default extensions'
-//!   payloads (internet-first: Pane downloads them at first setup). A
-//!   `.sha256` file beside it names its digest; nothing is signed, since
-//!   no signing credentials exist yet.
+//!   (Windows and macOS) — the package a clean machine of that system
+//!   installs from: the `pane` program, the install script and a README
+//!   (and, on Linux, a desktop entry, on macOS the `Info.plist` of the
+//!   `Pane.app` bundle the install script makes), and none of the default
+//!   extensions' payloads (internet-first: Pane downloads them at first
+//!   setup). A `.sha256` file beside it names its digest; nothing is
+//!   signed, since no signing credentials exist yet.
 //! - `artifacts/` — what an artifact source serves: the index document
 //!   `pane-defaults.json` and one tarball per default extension's payload,
 //!   built for the system this ran on. A real deployment serves this
@@ -26,11 +27,13 @@
 //!
 //! Each task builds the package for the system it runs on, so a release
 //! for several systems builds one package per system (this machine builds
-//! the Linux one, CI's `windows-2025` and `ubuntu-24.04` runners theirs).
-//! `package-windows` runs everywhere far enough to assemble the
-//! artifacts, then refuses anywhere but Windows: `pane.exe` needs a
-//! Windows build, and packing another system's program under a Windows
-//! package's name would be worse than explaining so.
+//! the Linux one, CI's `windows-2025`, `macos-15` and `ubuntu-24.04`
+//! runners theirs). `package-windows` and `package-macos` run everywhere
+//! far enough to assemble the artifacts, then refuse anywhere but their
+//! own system: `pane.exe` needs a Windows build and the `pane` program a
+//! macOS one (no cross toolchain is set up), and packing another system's
+//! program under that system's package name would be worse than
+//! explaining so.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -62,6 +65,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 enum System {
     Linux,
     Windows,
+    Macos,
 }
 
 impl System {
@@ -70,6 +74,7 @@ impl System {
         match self {
             System::Linux => "linux",
             System::Windows => "windows",
+            System::Macos => "macos",
         }
     }
 
@@ -79,26 +84,31 @@ impl System {
         match self {
             System::Linux => ("scripts/install-linux.sh", "install.sh"),
             System::Windows => ("scripts/install-windows.ps1", "install.ps1"),
+            System::Macos => ("scripts/install-macos.sh", "install.sh"),
         }
     }
 
     /// How the package is packed: the tarball Linux unpacks with `tar`, or
     /// the zip a Windows user unzips with whatever is at hand (Windows has
-    /// no tar a user can rely on).
+    /// no tar a user can rely on) and a macOS user opens with one
+    /// double-click in Finder — both written by the same fixed-bytes zip
+    /// writer, whose bytes a test pins.
     fn archive(self) -> &'static str {
         match self {
             System::Linux => "tar.gz",
-            System::Windows => "zip",
+            System::Windows | System::Macos => "zip",
         }
     }
 
     /// The one file this system's package holds besides the program, the
     /// install script and the README: Linux's desktop entry, which Windows'
-    /// install script replaces with a Start-menu shortcut.
+    /// install script replaces with a Start-menu shortcut and macOS's
+    /// `Info.plist`, which its script builds the `Pane.app` bundle around.
     fn extra_file(self) -> Option<(&'static str, String)> {
         match self {
             System::Linux => Some(("pane.desktop", desktop_entry())),
             System::Windows => None,
+            System::Macos => Some(("Info.plist", app_plist())),
         }
     }
 }
@@ -139,6 +149,34 @@ pub fn windows(dev: bool) -> Result<(), String> {
     }
     build_program(&root, dev)?;
     let package = assemble_package(&root, &out, dev, System::Windows)?;
+    println!("package built into {}", package.display());
+    println!("artifacts built into {}", artifacts.display());
+    Ok(())
+}
+
+/// Builds the macOS package and the default extensions' artifacts.
+pub fn macos(dev: bool) -> Result<(), String> {
+    let root = root();
+    let out = root.join("target/dist");
+    fs::create_dir_all(&out).map_err(|error| error.to_string())?;
+    let artifacts = assemble_artifacts(&root, &out)?;
+    // As on Windows, the program comes last, so everything else the task
+    // builds is built wherever it runs; but the `pane` program for macOS
+    // can only be built by a macOS checkout (no cross toolchain is set up:
+    // a macOS program needs a macOS build), and packing another system's
+    // program under a macOS package's name would be worse than explaining
+    // so. CI's `macos-15` runner builds the package itself.
+    if !cfg!(target_os = "macos") {
+        return Err(format!(
+            "package-macos builds the pane program for macOS, which only a macOS checkout can \
+             build; this one runs on {}. The artifacts under {} are assembled for this system, \
+             and a macOS run re-assembles them for macos-aarch64",
+            std::env::consts::OS,
+            artifacts.display()
+        ));
+    }
+    build_program(&root, dev)?;
+    let package = assemble_package(&root, &out, dev, System::Macos)?;
     println!("package built into {}", package.display());
     println!("artifacts built into {}", artifacts.display());
     Ok(())
@@ -423,7 +461,7 @@ fn assemble_package(root: &Path, out: &Path, dev: bool, system: System) -> Resul
     let files = read_files(&stage, "")?;
     let packed = match system {
         System::Linux => pack_tgz(&files, "pane", Some(&program_name()))?,
-        System::Windows => zip::pack(&files, "pane")?,
+        System::Windows | System::Macos => zip::pack(&files, "pane")?,
     };
     let package = out.join(&name);
     fs::write(&package, &packed)
@@ -456,6 +494,7 @@ fn readme(system: System, dev: bool) -> String {
     match system {
         System::Linux => readme_linux(dev),
         System::Windows => readme_windows(dev),
+        System::Macos => readme_macos(dev),
     }
 }
 
@@ -576,6 +615,74 @@ FIRST RUN
     )
 }
 
+fn readme_macos(dev: bool) -> String {
+    let profile = if dev { "development" } else { "release" };
+    format!(
+        r#"Pane {VERSION} for macOS (this package is the {profile} profile)
+
+WHAT THIS IS
+
+  Pane, a desktop launcher. This package holds the pane program and
+  installs it, as a Pane.app bundle, for one user; it holds none of
+  Pane's default extensions: Pane downloads them itself the first time
+  it runs, from Pane's own downloads (https://downloads.pane.sh/).
+
+PREREQUISITES
+
+  macOS 15 on Apple silicon (arm64): the system this package was built
+  and checked on (CI's macos-15 runner); no other macOS or Mac has been
+  tried. Nothing else is needed: no Node, Rust, npm, Git or compiler,
+  and no administrator rights.
+
+INSTALL
+
+  Unzip this package (Finder opens a zip with a double-click, or unzip
+  in the terminal), then, in the pane folder it unpacked:
+
+    bash install.sh            # installs to ~/Applications
+    bash install.sh --app-dir X # installs Pane.app into X instead
+
+  It builds the Pane.app bundle in ~/Applications — a folder of your
+  own, so no administrator rights are needed — around the pane program
+  and this package's Info.plist, and runs `pane --version` to check
+  what it installed. Open Pane with a double-click in Finder, or:
+
+    open ~/Applications/Pane.app
+
+  Nothing is signed (no Apple Developer credentials exist). macOS only
+  checks Gatekeeper on files that carry its quarantine mark, which the
+  web browser or mail program that downloaded this package set: its
+  first Pane.app will be blocked as an app macOS cannot check, and you
+  allow it in System Settings (Privacy & Security). A package built on
+  your own machine, like a CI runner's, carries no mark and runs at
+  once. Check the package's digest against the
+  pane-<version>-macos-<arch>.zip.sha256 file beside it if it reached
+  you over the internet.
+
+UNINSTALL
+
+  Remove ~/Applications/Pane.app (close Pane first). Pane keeps its own
+  data in ~/Library/Application Support/Pane (its installed extensions
+  and their settings) and its caches in ~/Library/Caches/Pane; remove
+  those folders to remove them too.
+
+FIRST RUN
+
+  The first run downloads Pane's default extensions (the calculator)
+  from https://downloads.pane.sh/ and shows their progress; Pane stays
+  usable if the download fails, and offers to try again. That location
+  is not deployed yet, so today a first run on the real internet
+  explains that it cannot reach it and keeps everything else working.
+
+  NOTHING IS SIGNED
+
+  The package is not signed: no signing credentials exist (no Apple
+  Developer ID certificate, and nothing is notarized). Its sha256 is in
+  the pane-<version>-macos-<arch>.zip.sha256 file beside it, which says
+  only what was packed."#
+    )
+}
+
 /// The desktop entry in the package.
 fn desktop_entry() -> String {
     "[Desktop Entry]\n\
@@ -587,6 +694,29 @@ Exec=pane\n\
 Terminal=false\n\
 Categories=Utility;\n"
         .to_owned()
+}
+
+/// The `Info.plist` of the `Pane.app` bundle the install script builds:
+/// the minimum Launch Services reads — the executable to run, the bundle's
+/// identity and name, and its version. Nothing more is declared, because
+/// nothing more is honestly known: the bundle declares no document types,
+/// no services and no minimum system version this package has been checked
+/// against, and it is not signed.
+fn app_plist() -> String {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+<plist version=\"1.0\">\n\
+<dict>\n\
+\t<key>CFBundleExecutable</key><string>pane</string>\n\
+\t<key>CFBundleIdentifier</key><string>dev.pane.launcher</string>\n\
+\t<key>CFBundleName</key><string>Pane</string>\n\
+\t<key>CFBundlePackageType</key><string>APPL</string>\n\
+\t<key>CFBundleShortVersionString</key><string>{VERSION}</string>\n\
+\t<key>CFBundleVersion</key><string>{VERSION}</string>\n\
+</dict>\n\
+</plist>\n"
+    )
 }
 
 /// Standard base64 with padding.
