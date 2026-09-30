@@ -317,8 +317,13 @@ is a local package requiring it.
   the controls (both rows) checked through Manage extensions; an
   incompatible version, a dependency that cannot be installed and an
   unreachable registry refused with their explanations, the installed
-  copy untouched; the check repeating on its cadence (the clock moved a
-  day on) and at Pane's start after a restart.
+  copy untouched; an installed local folder's copy never asked about or
+  touched; an action or an opening asked in the moment the replacement is
+  being applied refused with the update's explanation rather than stopped
+  by it; a new version that fails to start not rolled back, its settings
+  kept and its failure explained when its command is opened; the check
+  repeating on its cadence (the clock moved a day on) and at Pane's start
+  after a restart.
 - [`crates/pane/tests/npm.rs`](../crates/pane/tests/npm.rs): the form,
   preview, Install and Update in the native window at Pane's size, the
   Update row in view below the longer details, and the command running.

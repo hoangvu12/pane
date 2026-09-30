@@ -416,6 +416,10 @@ fn a_command_that_is_running_finishes_before_the_update_replaces_it() {
     let dirs = Dirs::new();
     let launcher = dirs.launcher();
     dirs.install(&launcher, "0.1.0");
+    // Published before the command starts: packing the tarball is the
+    // test's own work, and the save below runs for a fixed ten seconds,
+    // which the check that finds this must fit inside.
+    dirs.publish("0.2.0", "0.1");
 
     // "Save after waiting", run on another thread: its call is pending,
     // with the command's screen open.
@@ -428,8 +432,6 @@ fn a_command_that_is_running_finishes_before_the_update_replaces_it() {
     wait_until("the slow save started", Duration::from_secs(10), || {
         dirs.slow_save() == Some("started")
     });
-
-    dirs.publish("0.2.0", "0.1");
     dirs.check(&launcher);
 
     // The update is staged and deferred: the installed copy is unchanged,
