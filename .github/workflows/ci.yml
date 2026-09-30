@@ -64,9 +64,14 @@ jobs:
       # The many test binaries each link Pane's whole dependency tree, so
       # the Linux legs link them with mold (Windows and macOS link with
       # their own linkers; the empty value keeps the cache key uniform
-      # per operating system). The matrix is what a job-level env may read:
-      # the runner context exists only inside a step.
-      RUSTFLAGS: ${{ matrix.os == 'ubuntu-24.04' && '-C link-arg=-fuse-ld=mold' || '' }}
+      # per operating system). The flag is scoped to the host triple, never
+      # RUSTFLAGS: a job-wide RUSTFLAGS would also reach the wasm32-wasip2
+      # guest builds, whose wasm-component-ld rejects native linker flags
+      # (run 36789533844 failed on "unexpected argument '-f' found"). The
+      # matrix is what a job-level env may read: the runner context exists
+      # only inside a step; and on the other legs the triple never builds,
+      # so the variable is inert there whatever it holds.
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: ${{ matrix.os == 'ubuntu-24.04' && '-C link-arg=-fuse-ld=mold' || '' }}
     steps:
       - uses: actions/checkout@v4
       - name: Install Linux build dependencies
@@ -115,8 +120,10 @@ jobs:
         os: [windows-2025, macos-15, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
     env:
-      # As in the check job: the matrix is what a job-level env may read.
-      RUSTFLAGS: ${{ matrix.os == 'ubuntu-24.04' && '-C link-arg=-fuse-ld=mold' || '' }}
+      # As in the check job: host-triple-scoped so the wasm guest builds
+      # keep their own linker (and the matrix is what a job-level env may
+      # read).
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: ${{ matrix.os == 'ubuntu-24.04' && '-C link-arg=-fuse-ld=mold' || '' }}
     steps:
       - uses: actions/checkout@v4
       - name: Install Linux build dependencies
@@ -220,7 +227,9 @@ jobs:
     if: needs.changes.outputs.js-guests == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     env:
-      RUSTFLAGS: -C link-arg=-fuse-ld=mold
+      # Host-triple-scoped as in the check job (this job also builds the
+      # wasm guests): a job-wide RUSTFLAGS would break their links.
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -C link-arg=-fuse-ld=mold
     steps:
       - uses: actions/checkout@v4
       - name: Install Linux build dependencies
