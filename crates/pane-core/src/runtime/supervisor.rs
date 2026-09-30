@@ -50,6 +50,7 @@
 //! thread stuck inside it would have stopped the launcher too.
 
 use std::any::Any;
+use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
@@ -225,6 +226,11 @@ pub(super) struct Shared {
     handled: watch::Sender<u64>,
     /// The threads Pane gave up on, until each returns.
     abandoned: Mutex<Vec<Arc<Watch>>>,
+    /// The components whose calls the user asked for and that have not
+    /// answered yet, with how many: sent, queued or running (see
+    /// [`Runtime::busy`]). The replacement of a package's code waits for
+    /// them, so that an update never interrupts a command mid-run.
+    pub(super) busy: Mutex<HashMap<PathBuf, usize>>,
     /// The threads made to hang, for releasing them.
     #[cfg(any(test, debug_assertions))]
     hung: Mutex<Vec<Arc<Faults>>>,
@@ -321,6 +327,7 @@ impl Shared {
             limits: Arc::default(),
             handled: watch::Sender::new(0),
             abandoned: Mutex::default(),
+            busy: Mutex::default(),
             #[cfg(any(test, debug_assertions))]
             hung: Mutex::default(),
             cache_dir,

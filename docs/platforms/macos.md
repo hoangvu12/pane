@@ -291,16 +291,23 @@ macOS; **not run on macOS yet**.
 
 ## npm packages (#45)
 
-A phase of the smoke (screenshots 260 to 266, [npm packages](../npm.md)),
+A phase of the smoke (screenshots 260 to 268, [npm packages](../npm.md)),
 with a data folder of its own, starts `scripts/npm_registry.py` on
 127.0.0.1 serving the npm sample `cargo xtask guests` packed, and points the
 development build at it with `PANE_NPM_REGISTRY`: it installs the local
 Dependencies from npm sample, which downloads and installs the npm package
 it requires, calls its `greet` operation, then names the npm package in
 "Install extension from npm…" (two rows up from the last row), updates it and runs
-its command, which answers "Hello from the npm package"; `installed.json`
+its command, which answers "Hello from the npm package". #49 extends the
+phase: a 0.2.0 of the sample is published into the registry's folder
+(`scripts/npm_publish.py`; the registry reads its folder on request), Pane
+is stopped and started again, and the check a second after its start
+replaces the installed unpinned copy by itself — nothing of it running —
+saying "Updated Greeter from npm to 0.2.0" (267), the new copy's command
+answering as before (268); `installed.json`
 must then record `"npm": "@pane-samples/greeter"` at `"npmVersion":
-"0.1.0"` with both packages. The real registry would be reached through the
+"0.2.0"` with both packages. The automatic-update frames have not been
+captured; the phase is **not run on macOS yet**. The real registry would be reached through the
 HTTP client guests' requests use, trusting the certificates rustls-native-certs
 reads from the system keychains, which no check exercises (the smoke never
 reaches the network; [by hand](../npm.md#trying-the-real-registry-by-hand),

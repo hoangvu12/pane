@@ -1340,7 +1340,25 @@ try {
     Send "{ENTER}"; Start-Sleep -Seconds 2   # "Say hello"
     Capture "266-npm-command-ran.png"
     Check "266-npm-command-ran.png" "9fd8a8"   # "Hello from the npm package"
-    $shots = "260-npm-dependency-preview", "261-npm-dependency-installed", "262-npm-dependency-called", "263-npm-form", "264-npm-preview", "265-npm-updated", "266-npm-command-ran" | ForEach-Object { Join-Path $OutDir "$_.png" }
+
+    # #49: the update Pane applies by itself. A 0.2.0 of the sample is
+    # published into the registry this phase serves (it reads its folder on
+    # request, so publishing is dropping the tarball in), and Pane is
+    # stopped and started again: the first check, a second after the start,
+    # finds the newer version and replaces the installed copy - unpinned,
+    # and nothing of it running, so the safe boundary is at once - saying
+    # so in the status line. The new copy's command runs as the old one did.
+    python "$PSScriptRoot/npm_publish.py" "target/guests/npm/pane-samples-greeter-0.1.0.tgz" "0.2.0"
+    Stop-Pane $process
+    $process = Start-Pane "stderr-npm.log"
+    Start-Sleep -Seconds 6   # the check a second after the start, then the download and the apply
+    Capture "267-npm-updated-automatically.png"
+    Check "267-npm-updated-automatically.png" "9fd8a8"   # "Updated Greeter from npm to 0.2.0"
+    Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greeter from npm, the new copy
+    Send "{ENTER}"; Start-Sleep -Seconds 2   # "Say hello"
+    Capture "268-npm-new-copy-ran.png"
+    Check "268-npm-new-copy-ran.png" "9fd8a8"   # "Hello from the npm package"
+    $shots = "260-npm-dependency-preview", "261-npm-dependency-installed", "262-npm-dependency-called", "263-npm-form", "264-npm-preview", "265-npm-updated", "266-npm-command-ran", "267-npm-updated-automatically", "268-npm-new-copy-ran" | ForEach-Object { Join-Path $OutDir "$_.png" }
     python "$PSScriptRoot/check_screenshot.py" --distinct @shots
     if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: installing from npm changed nothing" }
     Stop-Pane $process
@@ -1350,7 +1368,7 @@ try {
 }
 $record = Join-Path $data "extensions/installed.json"
 if (-not (Select-String -Quiet -SimpleMatch '"npm": "@pane-samples/greeter"' $record)) { throw "npm package not recorded" }
-if (-not (Select-String -Quiet -SimpleMatch '"npmVersion": "0.1.0"' $record)) { throw "npm version not recorded" }
+if (-not (Select-String -Quiet -SimpleMatch '"npmVersion": "0.2.0"' $record)) { throw "the automatic update was not recorded" }
 if ((Select-String -SimpleMatch '"dir"' $record).Count -ne 2) { throw "not both installed" }
 
 # Git packages (#46), from a repository the smoke makes with git from the

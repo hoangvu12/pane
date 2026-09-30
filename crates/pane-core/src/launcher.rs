@@ -76,6 +76,7 @@ mod retained;
 mod schedules;
 mod services;
 mod uninstall;
+mod updates;
 
 use acquire::{Acquisitions, Defaults};
 use aliases::AliasChoices;
@@ -473,6 +474,10 @@ pub struct Launcher {
     /// ([`Launcher::with_clock`]). Only a launcher that installs packages
     /// runs any.
     services: Option<Arc<Services>>,
+    /// Checks for newer versions of the installed npm packages and
+    /// updates the eligible ones at a safe boundary (see `updates`).
+    /// Only a launcher that installs packages checks anything.
+    updates: Option<Arc<updates::Updates>>,
     /// Reads packages from folders and downloads them from npm.
     sources: install::Sources,
     /// The packages being developed: built and reloaded on save.
@@ -503,6 +508,9 @@ struct WeakLauncher {
     /// Held weakly, so that Pane stops running continuing services as soon
     /// as the launcher is dropped.
     services: Option<std::sync::Weak<Services>>,
+    /// Held weakly, so that Pane stops checking for updates as soon as the
+    /// launcher is dropped.
+    updates: Option<std::sync::Weak<updates::Updates>>,
     sources: install::Sources,
     developing: std::sync::Weak<Developing>,
     changes: Option<ChangeSender>,
@@ -530,6 +538,7 @@ impl WeakLauncher {
             clipboard,
             schedules: self.schedules.as_ref().and_then(std::sync::Weak::upgrade),
             services: self.services.as_ref().and_then(std::sync::Weak::upgrade),
+            updates: self.updates.as_ref().and_then(std::sync::Weak::upgrade),
             sources: self.sources.clone(),
             developing: self.developing.upgrade()?,
             changes: self.changes.clone(),
@@ -619,6 +628,10 @@ struct State {
     /// While the runtime thread is not responding yet, the status line it
     /// replaced, put back if the thread carries on (see `recovery`).
     runtime_slow: Option<Status>,
+    /// The user's automatic-update choices (see `updates`): whether every
+    /// eligible package updates in the background, and which packages the
+    /// user turned it off for.
+    update_controls: updates::UpdateControls,
 }
 
 /// What is happening to a package, which stops another change to it
@@ -631,6 +644,12 @@ enum Changing {
     Reloading,
     /// Its managed copy is being replaced from a package folder.
     Updating,
+    /// Its managed copy is being replaced by the update Pane applied by
+    /// itself (the updater's apply window). As an update it is, but new
+    /// calls the user makes into the package are refused until it lands
+    /// (see [`Launcher::open_command`]), so that the boundary the updater
+    /// waited for holds: no command the user starts is stopped by it.
+    BackgroundUpdating,
     /// It is being uninstalled.
     Uninstalling,
     /// It is not installed, and its retained data is being deleted.
@@ -646,7 +665,7 @@ impl Changing {
         match self {
             Changing::Recording => "is being enabled or disabled",
             Changing::Reloading => "is reloading",
-            Changing::Updating => "is updating",
+            Changing::Updating | Changing::BackgroundUpdating => "is updating",
             Changing::Uninstalling => "is being uninstalled",
             Changing::DeletingRetained => "is having its retained data deleted",
             Changing::Installing => "is part of an install in progress",
@@ -885,6 +904,9 @@ enum Entry {
     /// Enable this installed package if it is disabled, else disable it, or
     /// first ask about the enabled packages that require it.
     Toggle(PackageIdentity),
+    /// Turn automatic updates of every eligible package (with `None`), or
+    /// of this installed package, on or off (extension list).
+    ToggleUpdates(Option<PackageIdentity>),
     /// Disable this installed package and the packages that require it,
     /// which the confirmation showed (confirmation).
     DisableAll(PackageIdentity, Vec<PackageIdentity>),
@@ -1039,6 +1061,10 @@ impl Launcher {
                 Record::default(),
             ),
         };
+        let update_controls = installation
+            .as_ref()
+            .and_then(|installation| updates::UpdateControls::open(&installation.dir))
+            .unwrap_or_default();
         let mut state = State {
             // Replaced by root search below.
             view: LauncherView::new(Screen::Command, ""),
@@ -1065,6 +1091,7 @@ impl Launcher {
             acquisitions: Acquisitions::default(),
             sent_from: None,
             runtime_slow: None,
+            update_controls,
         };
         if let (Some(installation), Some(files)) = (&installation, &state.files) {
             files.open_record(&installation.dir);
@@ -1101,6 +1128,7 @@ impl Launcher {
             clipboard: None,
             schedules: None,
             services: None,
+            updates: None,
             sources,
             developing: Arc::new(Developing::new(None, None)),
             changes: None,
@@ -1130,6 +1158,12 @@ impl Launcher {
                 Services::start(Arc::new(crate::clipboard::SystemClock), &installation.data);
             services.run(launcher.downgrade());
             launcher.services = Some(services);
+            // Pane checks for newer versions of the installed npm packages
+            // in the background (see `updates`), starting shortly after
+            // this, once a development build's registry is in place.
+            let updates = updates::Updates::start(launcher.sources.clone());
+            updates.run(launcher.downgrade());
+            launcher.updates = Some(updates);
         }
         launcher.report_failures();
         launcher.show_root(&mut launcher.lock(), None);
@@ -1155,6 +1189,11 @@ impl Launcher {
             registry,
             ..self.sources.clone()
         };
+        // The updater reads from the new registry too, so that its checks
+        // download from where installs do.
+        if let Some(updates) = &self.updates {
+            updates.follow_registry(sources.clone());
+        }
         Launcher { sources, ..self }
     }
 
@@ -1177,7 +1216,10 @@ impl Launcher {
             schedules.follow(clock.clone());
         }
         if let Some(services) = &self.services {
-            services.follow(clock);
+            services.follow(clock.clone());
+        }
+        if let Some(updates) = &self.updates {
+            updates.follow(clock);
         }
         self
     }
@@ -1217,6 +1259,20 @@ impl Launcher {
         self.services
             .as_ref()
             .is_some_and(|services| services.settled(limit))
+    }
+
+    /// Waits until the updater completed a check after this was asked —
+    /// the one shortly after Pane starts, or the next one after the clock
+    /// moved a cadence on or a control changed — and applied or deferred
+    /// every update it staged in it; `false` if it did not within `limit`.
+    /// For tests and development builds, which so wait for updates
+    /// without timing them.
+    #[cfg(any(test, debug_assertions))]
+    #[doc(hidden)]
+    pub fn wait_for_updates(&self, limit: std::time::Duration) -> bool {
+        self.updates
+            .as_ref()
+            .is_some_and(|updates| updates.checked(limit))
     }
 
     /// This launcher registering the global hotkeys the user assigns with
@@ -1286,6 +1342,7 @@ impl Launcher {
             clipboard: self.clipboard.as_ref().map(Arc::downgrade),
             schedules: self.schedules.as_ref().map(Arc::downgrade),
             services: self.services.as_ref().map(Arc::downgrade),
+            updates: self.updates.as_ref().map(Arc::downgrade),
             sources: self.sources.clone(),
             developing: Arc::downgrade(&self.developing),
             changes: self.changes.clone(),
@@ -1751,6 +1808,7 @@ impl Launcher {
         let mut reload = None;
         let mut hotkey_change = None;
         let mut choice_change = None;
+        let mut update_toggle = None;
         let mut uninstall = None;
         let mut develop = None;
         let mut delete_retained = None;
@@ -1904,6 +1962,10 @@ impl Launcher {
                 }
                 None
             }
+            Some(Entry::ToggleUpdates(which)) => {
+                update_toggle = self.begin_update_toggle(&mut state, which);
+                None
+            }
             Some(Entry::DisableAll(identity, shown)) => {
                 change = self.begin_disable_all(&mut state, identity, &shown);
                 None
@@ -1970,6 +2032,9 @@ impl Launcher {
             if let Some(choice_change) = choice_change {
                 launcher.finish_choice_change(choice_change).await;
             }
+            if let Some(update_toggle) = update_toggle {
+                launcher.finish_update_toggle(update_toggle).await;
+            }
             if let Some(uninstall) = uninstall {
                 launcher.finish_uninstall(epoch, uninstall).await;
             }
@@ -2021,6 +2086,7 @@ impl Launcher {
                     | Entry::Install(..)
                     | Entry::Manage
                     | Entry::Toggle(_)
+                    | Entry::ToggleUpdates(_)
                     | Entry::DisableAll(..)
                     | Entry::Reload(_)
                     | Entry::Retry(_)
@@ -2506,7 +2572,20 @@ impl Launcher {
         &self,
         request: install::Request,
     ) -> Result<SourcePackage, PackageError> {
-        let sources = self.sources.clone();
+        self.read_and_check_from(self.sources.clone(), request)
+            .await
+    }
+
+    /// Like [`Launcher::read_and_check`], reading the package from
+    /// `sources` rather than this launcher's own: the updater's thread,
+    /// which holds the registry a development build was given after the
+    /// launcher was built (a [`WeakLauncher`] keeps the sources as they
+    /// were when it was made).
+    pub(in crate::launcher) async fn read_and_check_from(
+        &self,
+        sources: install::Sources,
+        request: install::Request,
+    ) -> Result<SourcePackage, PackageError> {
         let mut package = off_thread(move || sources.read(&request)).await?;
         package.network = self.check_components(&package).await?;
         Ok(package)
@@ -2984,6 +3063,9 @@ impl Launcher {
                 .into(),
             "Clearing an extension's cache keeps its settings, content and credentials.".into(),
             "Uninstalling an extension asks whether to keep its settings and content.".into(),
+            "An automatic update replaces an extension's copy with a compatible newer version \
+             of it, from npm, once no command of it is running; a pinned version never moves."
+                .into(),
             format!(
                 "An extension that cannot start, or crashes or stops responding {}, is paused \
                  until you retry it; it keeps its settings.",
@@ -3002,15 +3084,20 @@ impl Launcher {
         self.show_kept_development_status(state);
     }
 
-    /// The extension list's rows: each package's state, reload and cache
-    /// rows, then the hotkey of each command of the enabled packages, then
-    /// one row per identity with retained data.
+    /// The extension list's rows: the global automatic-update choice, then
+    /// each package's state, reload and cache rows, then the hotkey of each
+    /// command of the enabled packages, then one row per identity with
+    /// retained data.
     fn extension_rows(&self, state: &State) -> (Vec<Row>, Vec<Entry>) {
         let developed = |identity: &PackageIdentity| self.is_developed(identity);
         let (mut rows, mut entries): (Vec<Row>, Vec<Entry>) =
             self.runtime_rows().into_iter().unzip();
-        let (package_rows, package_entries) =
-            extension_rows(&state.packages, &state.paused, developed);
+        let (package_rows, package_entries) = extension_rows(
+            &state.packages,
+            &state.paused,
+            developed,
+            &state.update_controls.off,
+        );
         rows.extend(package_rows);
         entries.extend(package_entries);
         for (row, entry) in self.network_rows(state) {
@@ -3032,6 +3119,12 @@ impl Launcher {
                 retained::rows(&state.retained, &installation.data);
             rows.extend(retained_rows);
             entries.extend(retained_entries);
+            // The global automatic-update choice comes last, after every
+            // package's rows: the packages are the list, and what governs
+            // them all is found beneath them.
+            let (row, entry) = updates::global_row(state.update_controls.automatic);
+            rows.push(row);
+            entries.push(entry);
         }
         (rows, entries)
     }
@@ -3451,6 +3544,14 @@ impl Launcher {
             query,
             ..
         } = sending;
+        if let Some(problem) = self.updating(&component) {
+            // As opening a command: its package's code is being replaced.
+            let mut state = self.lock();
+            if state.screen_epoch == epoch {
+                state.view.status = Status::Error(problem);
+            }
+            return;
+        }
         let result = match self.runtime() {
             Ok(runtime) => {
                 runtime
@@ -3509,6 +3610,16 @@ impl Launcher {
             command,
             search,
         } = opening;
+        if let Some(problem) = self.updating(&component) {
+            // Its package's code is being replaced (an update): opening
+            // the command now would be stopped by the replacement, so it
+            // is refused rather than interrupted.
+            let mut state = self.lock();
+            if state.screen_epoch == epoch {
+                state.view.status = Status::Error(problem);
+            }
+            return;
+        }
         let result = match self.runtime() {
             Ok(runtime) => runtime.get_view_with(&component, data.clone()).await,
             Err(error) => Err(error),
@@ -3696,6 +3807,7 @@ fn extension_rows(
     packages: &[InstalledPackage],
     paused: &Pauses,
     developed: impl Fn(&PackageIdentity) -> bool,
+    off: &std::collections::HashSet<String>,
 ) -> (Vec<Row>, Vec<Entry>) {
     let failure = |package: &InstalledPackage| paused.of(&package.identity).cloned();
     let toggles = packages.iter().map(|package| {
@@ -3770,6 +3882,8 @@ fn extension_rows(
                 .filter(move |_| local)
                 .chain(paused)
         });
+    // Which packages the user turned updates off for, for their rows.
+    let automatic = updates::package_rows(packages, off);
     let clear_cache = packages.iter().map(|package| {
         let row = Row {
             id: format!("clear-cache:{}", package.identity.key()),
@@ -3796,6 +3910,7 @@ fn extension_rows(
     });
     toggles
         .chain(reloads)
+        .chain(automatic)
         .chain(clear_cache)
         .chain(uninstall)
         .unzip()

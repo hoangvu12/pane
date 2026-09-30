@@ -1287,12 +1287,30 @@ key 36; sleep 3   # open Greeter from npm
 key 36; sleep 2   # "Say hello"
 capture 266-npm-command-ran.png
 check 266-npm-command-ran.png 9fd8a8   # "Hello from the npm package"
-python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{260-npm-dependency-preview,261-npm-dependency-installed,262-npm-dependency-called,263-npm-form,264-npm-preview,265-npm-updated,266-npm-command-ran}.png
+
+# #49: the update Pane applies by itself. A 0.2.0 of the sample is
+# published into the registry this phase serves (it reads its folder on
+# request, so publishing is dropping the tarball in), and Pane is stopped
+# and started again: the first check, a second after the start, finds the
+# newer version and replaces the installed copy — unpinned, and nothing
+# of it running, so the safe boundary is at once — saying so in the status
+# line. The new copy's command runs as the old one did.
+python3 "$(dirname "$0")/npm_publish.py" target/guests/npm/pane-samples-greeter-0.1.0.tgz 0.2.0
+stop_pane
+start_pane
+sleep 6   # the check a second after the start, then the download and the apply
+capture 267-npm-updated-automatically.png
+check 267-npm-updated-automatically.png 9fd8a8   # "Updated Greeter from npm to 0.2.0"
+key 36; sleep 3   # open Greeter from npm, the new copy
+key 36; sleep 2   # "Say hello"
+capture 268-npm-new-copy-ran.png
+check 268-npm-new-copy-ran.png 9fd8a8   # "Hello from the npm package"
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{260-npm-dependency-preview,261-npm-dependency-installed,262-npm-dependency-called,263-npm-form,264-npm-preview,265-npm-updated,266-npm-command-ran,267-npm-updated-automatically,268-npm-new-copy-ran}.png
 stop_pane
 kill "$npm_registry_pid"; wait "$npm_registry_pid" 2>/dev/null || true; npm_registry_pid=
 unset PANE_NPM_REGISTRY
 grep -q '"npm": "@pane-samples/greeter"' "$PANE_DATA_DIR/extensions/installed.json" || { echo "npm package not recorded"; exit 1; }
-grep -q '"npmVersion": "0.1.0"' "$PANE_DATA_DIR/extensions/installed.json" || { echo "npm version not recorded"; exit 1; }
+grep -q '"npmVersion": "0.2.0"' "$PANE_DATA_DIR/extensions/installed.json" || { echo "the automatic update was not recorded"; exit 1; }
 [ "$(grep -c '"dir"' "$PANE_DATA_DIR/extensions/installed.json")" = 2 ] || { echo "not both installed"; exit 1; }
 
 # Git packages (#46), from a repository the smoke makes with git from the

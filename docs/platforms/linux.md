@@ -672,8 +672,16 @@ Git…" after it), whose form (263) takes
 `@pane-samples/greeter`; its preview (264) shows the npm lines and, the
 package being installed, **Update**, which Enter chooses ("Updated Greeter
 from npm to 0.1.0", 265); its command's "Say hello" answers "Hello from the
-npm package" (266). `installed.json` must then hold both packages and
-record the npm name and version. Run locally on 2026-09-29 (same Ubuntu
+npm package" (266). #49 extends the phase: a 0.2.0 of the sample is
+published into the registry's folder (`scripts/npm_publish.py`; the
+registry reads its folder on request), Pane is stopped and started again,
+and the check a second after its start replaces the installed unpinned
+copy by itself — nothing of it running — saying "Updated Greeter from npm
+to 0.2.0" (267); the new copy's command answers as before (268), and
+`installed.json` must record `"npmVersion": "0.2.0"`. Those frames have
+not been captured: this box has no display, so they await the next smoke
+run (CI's next green run is their evidence). `installed.json` must then
+hold both packages and record the npm name and version. Run locally on 2026-09-29 (same Ubuntu
 26.04.1 / Xvfb / lavapipe setup): all checks of the whole smoke passed and
 frames 260 to 266 were looked at. A first run showed the Update row pushed
 out of Pane's window by the preview's longer details; a package preview's
