@@ -75,6 +75,13 @@ jobs:
       - name: Native GUI smoke (Linux, Xvfb)
         if: runner.os == 'Linux'
         run: bash scripts/smoke-linux.sh smoke
+      # The #4 resource and latency workload: the same runner, the same
+      # guests and binary, its record checked against the proposed targets
+      # (scripts/resource-targets.json; every ceiling is pending a number,
+      # so the check passes until one is confirmed and then breached).
+      - name: Resource and latency workload (Linux, Xvfb)
+        if: runner.os == 'Linux'
+        run: bash scripts/measure-linux.sh measure
       - name: Build the Linux package (release, x86_64)
         if: runner.os == 'Linux'
         run: cargo xtask package-linux
@@ -118,6 +125,13 @@ jobs:
         with:
           name: gui-smoke-${{ runner.os }}
           path: smoke
+          if-no-files-found: ignore
+      - name: Upload resource and latency measurements
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: resource-measurements
+          path: measure
           if-no-files-found: ignore
 
   # Rebuilds the JS/TS sample components from source with the pinned toolchain
