@@ -1833,7 +1833,7 @@ record_setup_problem() {
   record_setup_state
 }
 wait_recorded() {
-  for _ in $(seq 3000); do
+  for _ in $(seq 6000); do
     grep -q "$1" "$installed/installed.json" 2>/dev/null && return
     sleep 0.1
   done

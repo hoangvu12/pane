@@ -270,6 +270,10 @@ impl Launcher {
         let failed = move |launcher: &Launcher, why: String| {
             let (id, title) = (recording.0.clone(), recording.1.clone());
             let why = format!("Could not set up the {title}: {why}");
+            // The reason also goes to Pane's own standard error, where the
+            // smokes collect it: the status line shows it to the user, but
+            // a screenshot cannot be read back.
+            eprintln!("pane: {why}");
             launcher.show(Status::Error(why.clone()));
             let mut state = launcher.lock();
             state.acquisitions.failed(FailedAcquisition {
