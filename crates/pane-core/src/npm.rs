@@ -343,14 +343,10 @@ struct PackageJson {
     dependencies: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
-/// Downloads the package `spec` from `registry` and unpacks it into a new
-/// folder in `downloads`, or explains why it cannot. Blocks on the network.
-pub(crate) fn fetch(
-    registry: &Registry,
-    spec: &NpmSpec,
-    downloads: &Path,
-) -> Result<Fetched, String> {
-    let name = &spec.name;
+/// Reads the package `name`'s metadata from `registry` — its versions and
+/// `latest` tag — or why it cannot: the package is not there, the registry
+/// cannot be reached, or the answer cannot be read. Blocks on the network.
+fn metadata(registry: &Registry, name: &str) -> Result<MetadataJson, String> {
     let metadata_url = registry.metadata_url(name);
     let unreachable = |why: String| {
         format!(
@@ -389,9 +385,41 @@ pub(crate) fn fetch(
             ));
         }
     }
-    let metadata: MetadataJson = serde_json::from_slice(&response.body).map_err(|error| {
+    serde_json::from_slice(&response.body).map_err(|error| {
         format!("The npm registry's description of {name} cannot be read: {error}")
-    })?;
+    })
+}
+
+/// The version the registry tags `latest` for package `name`, or why it
+/// cannot be read: the package is not there, the registry cannot be
+/// reached, or no version is tagged. Blocks on the network and downloads
+/// nothing: it is the check for a newer version of an installed copy (the
+/// launcher's `updates`) before anything is fetched.
+pub(crate) fn latest_version(registry: &Registry, name: &str) -> Result<String, String> {
+    let metadata = metadata(registry, name)?;
+    metadata.dist_tags.get("latest").cloned().ok_or_else(|| {
+        format!(
+            "npm package {name} has no version tagged latest; name the version to install, \
+             such as {name}@1.0.0"
+        )
+    })
+}
+
+/// Downloads the package `spec` from `registry` and unpacks it into a new
+/// folder in `downloads`, or explains why it cannot. Blocks on the network.
+pub(crate) fn fetch(
+    registry: &Registry,
+    spec: &NpmSpec,
+    downloads: &Path,
+) -> Result<Fetched, String> {
+    let name = &spec.name;
+    let metadata = metadata(registry, name)?;
+    let unreachable = |why: String| {
+        format!(
+            "Could not reach the npm registry {} for {name}: {why}",
+            registry.url()
+        )
+    };
     let latest = metadata.dist_tags.get("latest").cloned();
     let version = match (&spec.version, &latest) {
         (Some(version), _) => version.clone(),

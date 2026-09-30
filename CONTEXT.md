@@ -184,6 +184,10 @@ _Avoid_: Reinstall
 Replacing an installed package's code from its source folder while Pane and other packages keep running: the replacement is checked as an install would check it, then replaces the managed copy, the old instances stop and the new code starts. Settings are kept; live state is not carried over.
 _Avoid_: Restart, hot swap, update (an update does not start the new code)
 
+**Automatic updates**:
+Pane replacing the managed copy of an eligible npm package with a compatible newer version of it from its registry, without the user asking: the package must be unpinned, enabled, not paused and not turned off by the user's controls, and the newer version is downloaded and checked as an install checks a package before anything is replaced. The replacement waits for a safe activation boundary — never during a command the user asked for that has not answered, nor while one of the package's screens is on display — and it ends the old generation as a reload does, keeping the identity, the saved data, the disabled state, the hotkeys and the aliases. The controls are a global choice and a per-package opt-out; a pinned version, a local folder's copy and a development copy are never updated by themselves.
+_Avoid_: App update (the application's own, #54–56), forced update
+
 **Development mode**:
 An installed local package whose source folder Pane watches while its author works on it: each save runs the package's documented build command in that folder, staging the components under Pane's data folder, and a build that succeeds reloads the package from there, while one that fails keeps its working code and shows the build's diagnostics. It lasts until the author stops it, the package is disabled or uninstalled, or Pane quits, each of which kills a running build with the processes it started; another installed copy of the package is never affected.
 _Avoid_: Watch mode, hot reload, dev copy (a copy is an installation)
