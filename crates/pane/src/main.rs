@@ -112,17 +112,18 @@ fn main() {
             }
             None => launcher,
         };
-        // Pane's own update (#54 wired the Windows half, #56 the Linux
-        // one): the program this Pane runs from is the one an update
-        // replaces, and the artifact source the default extensions come
-        // from names the newer package in its index — the package built
-        // for this system (a zip on Windows, a tarball on Linux), unpacked
-        // by the same platform-independent machinery. Pane checks once,
-        // at start, and only the user's choice downloads and installs
-        // anything. Another system's updater wires the same machinery to
-        // its own program; until its slice lands, this Pane checks for
-        // nothing.
-        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        // Pane's own update (#54 wired the Windows half, #55 the macOS
+        // one, #56 the Linux one): the program this Pane runs from is the
+        // one an update replaces - pane.exe in the install folder on
+        // Windows, the Pane.app bundle's own binary (Contents/MacOS/pane)
+        // on macOS, pane in ~/.local/bin on Linux - and the artifact
+        // source the default extensions come from names the newer package
+        // in its index, the package built for this system (a zip on
+        // Windows and macOS, a gzipped tarball on Linux), unpacked by the
+        // same platform-independent machinery. Pane checks once, at
+        // start, and only the user's choice downloads and installs
+        // anything.
+        #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
         let launcher = match (std::env::current_exe(), artifact_source.as_ref()) {
             (Ok(exe), Some(Ok(source))) => {
                 launcher.with_application_update(pane::APP_VERSION, source.clone(), exe)

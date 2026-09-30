@@ -20,9 +20,11 @@ newer version of itself when it starts and tells the user, who alone
 chooses whether to download and install it — Pane never downloads,
 installs or restarts itself unprompted
 ([decision 17](https://github.com/hoangvu12/pane/issues/1), [Q38](current-decisions.md)).
-The Windows install is below; the check, the download, the verification
-and the swap are platform-independent and live in `pane-core`, ready for
-another system's updater to wire to its own program.
+[#55](https://github.com/hoangvu12/pane/issues/55) wires the macOS half:
+the Windows and macOS installs are below; the check, the download, the
+verification and the swap are platform-independent and live in
+`pane-core`, ready for another system's updater to wire to its own
+program.
 
 The acquisition itself is the same on every system (it is
 platform-independent code, tested by `crates/pane-core/tests/installer.rs`);
@@ -257,14 +259,14 @@ installed, so it is never re-acquired or re-enabled.
 An application update ([glossary](../CONTEXT.md)) is the same source's
 other half: the index holds an `application` entry — the Pane package for
 one target, named by its version, file, sha512 integrity, size and
-`target` (`windows-x86_64`, written as a [helper
+`target` (`windows-x86_64`, `macos-aarch64`, written as a [helper
 target](../CONTEXT.md) is) — and the source serves the package the
-entry names. `cargo xtask package-windows` (and `-linux`) put the package
-they built into the artifacts folder beside its index entry, so one
-deployment serves everything from one place; the entry is read but not
-parsed where the default extensions are acquired, so an application entry
-one Pane cannot take never stops a default extension from being
-installed.
+entry names. `cargo xtask package-windows`, `-macos` (and `-linux`) put
+the package they built into the artifacts folder beside its index entry,
+so one deployment serves everything from one place; the entry is read
+but not parsed where the default extensions are acquired, so an
+application entry one Pane cannot take never stops a default extension
+from being installed.
 
 1. **The check.** Once, when Pane starts (a cadence that is provisional:
 no interval is checked meanwhile), Pane reads the index in the background
@@ -297,11 +299,12 @@ with why, which tries again.
    headers read raw, an ambiguous size refused) — and stages it in the
    install folder's `update` folder. Then the swap: the running program
    is renamed out of its way — `pane.exe` to `pane.exe.old` on Windows,
-   `pane` to `pane.old` on Linux (every system allows renaming a running
-   program; only overwriting one is refused) — the staged program takes
-   its name and place, and the staging folder goes. **The new version is
-   used the next time Pane starts** — the user's next start, whenever
-   they choose; Pane itself never restarts. A start removes what earlier
+   the bundle's `pane` to `pane.old` on macOS, `pane` to `pane.old` on
+   Linux (every system allows renaming a running program; only
+   overwriting one is refused) — the staged program takes its name and
+   place, and the staging folder goes. **The new version is used the
+   next time Pane starts** — the user's next start, whenever they
+   choose; Pane itself never restarts. A start removes what earlier
    updates left: the renamed old program (best effort — another Pane may
    still run it) and a staging folder a Pane stopped mid-install left.
    Installing while Pane is being used is
@@ -314,11 +317,13 @@ with why, which tries again.
    on the status line and leaves everything untouched: the program still
    the one running, no staging, nothing renamed. The row stays — the
    offer, or the check — and the user can try again. The old version's
-   data is never touched: Pane's data and caches live beside the program
-   (`data\`, `cache\` under the same folder on Windows), or, on Linux,
-   in `~/.local/share/pane` — the data folder the install leaves alone —
-   and either way the swap changes only the program, so extensions,
-   their settings, pins and enablement are exactly what they were.
+   data is never touched: Pane's data and caches live where each system
+   keeps them (`data\` and `cache\` under the install folder on
+   Windows; `~/Library/Application Support/Pane` and
+   `~/Library/Caches/Pane` on macOS; `~/.local/share/pane` on Linux,
+   which the install folder does not even hold), and the swap changes
+   only the program, so extensions, their settings, pins and enablement
+   are exactly what they were.
 
 The Windows install of an update is this whole path with the program at
 `%LOCALAPPDATA%\Pane\pane.exe` (the install script's target, and the
@@ -330,10 +335,32 @@ which the desktop entry the script put in `~/.local/share/applications`
 keeps naming (the swap changes only the program, so the entry never
 points anywhere else) — unpacking the tarball the Linux package is with
 the tar reader npm tarballs are read by, and Pane's data staying in
-`~/.local/share/pane`, which the install folder does not even hold. Each
-is one call in `pane`'s `main.rs` giving the program's own path; the
-macOS half is [#55](https://github.com/hoangvu12/pane/issues/55): the
-machinery is shared, the wiring is each system's.
+`~/.local/share/pane`, which the install folder does not even hold.
+Each is one call in `pane`'s `main.rs` giving the program's own path.
+
+The macOS install ([#55](https://github.com/hoangvu12/pane/issues/55))
+is the same call with the program at
+`~/Applications/Pane.app/Contents/MacOS/pane`, so the swap replaces
+**the binary inside the bundle** and the bundle itself stays: replacing a
+whole `Pane.app` under a running Pane would break it, and would take the
+`Pane.app` the user sees in Finder and Launch Services knows away from
+them — the binary the bundle's `CFBundleExecutable` already names is the
+one an update replaces, in place. The old binary is renamed `pane.old`
+and the staging folder is `update/`, both beside the binary in
+`Contents/MacOS`, and a later start removes them; Finder and Launch
+Services keep opening the same bundle, whose program answers the new
+version. What the swap does **not** update, as a provisional limit: the
+bundle's `Info.plist` stays the file the install script wrote, so its
+`CFBundleShortVersionString` and `CFBundleVersion` still name the
+installed version while the program itself reports the new one (`pane
+--version`), and Finder's "Get Info" shows the plist's version — the
+two disagree until the bundle is reinstalled from a package. Writing
+the new version's keys into the plist with the swap is an open choice
+recorded for the user. The binary an update installs is one Pane wrote
+itself, so it carries no Gatekeeper quarantine mark and launches as the
+old one did; a signed bundle's signature would not survive a binary
+replaced inside it, which is one more reason signing is a release
+prerequisite (recorded [below](#limits-and-prerequisites)).
 
 ## The artifact source
 
@@ -382,7 +409,8 @@ PANE_ARTIFACTS=http://127.0.0.1:$(cat /tmp/port)/ cargo run -p pane
 
 ## Checks
 
-- `crates/pane-core/tests/application_update.rs`: the application update through
+- `crates/pane-core/tests/application_update.rs`: the application update
+  through
   the launcher's public interface, against the same loopback artifact
   source — a newer version offered as a row in root search with nothing
   downloaded until the user chooses it and nothing changed when they do
@@ -509,14 +537,15 @@ PANE_ARTIFACTS=http://127.0.0.1:$(cat /tmp/port)/ cargo run -p pane
   specification requires: extension updates have their own controls
   (npm packages update automatically since #49, tracked Git branches since #50), and the application update has none —
   only the user's choice, every time.
-- **The Windows and Linux wiring exists.** The check, download,
-  verification and swap are platform-independent `pane-core` code, but
-  only the Windows and Linux builds wire them to their programs; a macOS
-  Pane checks for nothing until
-  [#55](https://github.com/hoangvu12/pane/issues/55) wires its. The swap
-  is exercised by the tests on this machine's layout; the
-  running-program rename it depends on is proven on Windows itself by
-  the smoke (the Linux smoke will prove its own).
+- **Every system's wiring exists.** The check, download, verification
+  and swap are platform-independent `pane-core` code, and the Windows,
+  macOS and Linux builds each wire them to their own program. The swap
+  is exercised by the tests wherever they run; the running-program
+  rename it depends on is proven on Windows itself by the smoke, and
+  the macOS and Linux smokes prove their own when they run (pending
+  their CI, as their
+  [platform pages](platforms/macos.md#installing-a-pane-application-update-by-the-users-choice-55)
+  record).
 - **Nothing about an update is signed either**, and the source it comes
   from is the same not-yet-deployed one: a package is checked only
   against the sha512 its index gives, over HTTPS, as a default
