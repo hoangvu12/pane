@@ -17,6 +17,7 @@ members = [
     "sample-query",
     "sample-search",
     "sample-schedule",
+    "sample-service",
     "sample-helper",
     "fixtures/faulty",
     "fixtures/operations",
