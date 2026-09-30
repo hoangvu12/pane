@@ -14,6 +14,16 @@ payloads and installs no runtime, and the user installs no Node, Rust,
 npm, Git or compiler: Pane's extension runtime is part of Pane's own
 process (Wasmtime), so nothing is acquired for it.
 
+[#54](https://github.com/hoangvu12/pane/issues/54) adds the other half of
+the same source: Pane's own updates. Pane checks the artifact source for a
+newer version of itself when it starts and tells the user, who alone
+chooses whether to download and install it — Pane never downloads,
+installs or restarts itself unprompted
+([decision 17](https://github.com/hoangvu12/pane/issues/1), [Q38](current-decisions.md)).
+The Windows install is below; the check, the download, the verification
+and the swap are platform-independent and live in `pane-core`, ready for
+another system's updater to wire to its own program.
+
 The acquisition itself is the same on every system (it is
 platform-independent code, tested by `crates/pane-core/tests/installer.rs`);
 what each system has of its own is the package, the install script and
@@ -35,7 +45,13 @@ runs on and the artifacts an artifact source serves (below):
 - **`pane-<version>-windows-<arch>.zip`** — the Windows package
   (`cargo xtask package-windows`): the `pane.exe` program (release
   profile), the PowerShell install script and a `README.txt`, under
-  `pane/`. A zip, because a Windows user unzips with whatever is at hand
+  `pane/`. With `--package-version <version>` the program is built
+  reporting that version and the package and its index entry are named by
+  it — a build-tool option for the smokes, which need a newer version
+  than the one installed to offer; a release build simply builds the
+  workspace's own version (nothing gates the option: it names the
+  package, and anyone building one can name it).
+  A zip, because a Windows user unzips with whatever is at hand
   and Windows has no tar of its own a user can rely on; `--dev` names the
   development profile's package the same way. The task assembles the
   artifacts anywhere, but builds the package only on Windows: `pane.exe`
@@ -236,6 +252,76 @@ Pane stopped mid-setup recovers, and disabling a default extension (in
 Manage extensions) is the opt-out: a disabled default extension is
 installed, so it is never re-acquired or re-enabled.
 
+## Updating Pane itself
+
+An application update ([glossary](../CONTEXT.md)) is the same source's
+other half: the index holds an `application` entry — the Pane package for
+one target, named by its version, file, sha512 integrity, size and
+`target` (`windows-x86_64`, written as a [helper
+target](../CONTEXT.md) is) — and the source serves the package the
+entry names. `cargo xtask package-windows` (and `-linux`) put the package
+they built into the artifacts folder beside its index entry, so one
+deployment serves everything from one place; the entry is read but not
+parsed where the default extensions are acquired, so an application entry
+one Pane cannot take never stops a default extension from being
+installed.
+
+1. **The check.** Once, when Pane starts (a cadence that is provisional:
+no interval is checked meanwhile), Pane reads the index in the background
+and compares the entry's version with the version it runs — dotted
+numbers, compared by number; an entry for another target, a version Pane
+cannot read, or an entry missing what it needs is explained, and so is a
+source that cannot be reached (tried three times, like an interrupted
+acquisition). An equal or older version says nothing: no downgrades are
+offered or picked. The check reads only the index: **nothing is
+downloaded until the user chooses**, and Pane does nothing else — no
+download, no install, no restart (US76, [Q38](current-decisions.md)). The
+status line says what was found ("Pane 99.0.0 is available"), and root
+search lists the offer, after the install rows and before Manage
+extensions: **Update Pane to 99.0.0**, its subtitle saying what
+installing does — the user's
+extensions and settings are kept, and the new version is used the next
+time Pane starts. A check that failed lists **Check for a Pane update**
+with why, which tries again.
+2. **The install.** Choosing the row downloads the package with progress
+   ("Downloading Pane 99.0.0: 34% of 186 MiB") and the same retries an
+   interrupted acquisition gets (three attempts; a package that is not
+   there, or whose bytes do not match the sha512 its entry gives, is
+   explained and never retried), checks it, unpacks it — a zip, read as
+   strictly as an npm package's tarball: only files and folders inside
+   the package, one plain name per part on every system, every entry
+   checked against the central directory and the file's own header and
+   CRC32 — and stages it in the install folder's `update\` folder. Then
+   the swap: the running `pane.exe` is renamed to `pane.exe.old` (every
+   system allows renaming a running program; only overwriting one is
+   refused), the staged program takes its name and place, and the staging
+   folder goes. **The new version is used the next time Pane starts** —
+   the user's next start, whenever they choose; Pane itself never
+   restarts. A start removes what earlier updates left: `pane.exe.old`
+   (best effort — another Pane may still run it) and a staging folder a
+   Pane stopped mid-install left. Installing while Pane is being used is
+   fine: the download runs off the thread, so commands and services keep
+   answering while it goes, and only the last renames touch the program's
+   folder, between two of the user's actions; a command still running
+   when the user closes Pane ends as any command does, and the update it
+   left staged is applied (or cleaned up) by the next start.
+3. **What a failure leaves.** A failed check or install explains itself
+   on the status line and leaves everything untouched: the program still
+   the one running, no staging, nothing renamed. The row stays — the
+   offer, or the check — and the user can try again. The old version's
+   data is never touched: Pane's data and caches live beside the program
+   (`data\`, `cache\` under the same folder on Windows), and the swap
+   changes only the program, so extensions, their settings, pins and
+   enablement are exactly what they were.
+
+The Windows install of an update is this whole path with the program at
+`%LOCALAPPDATA%\Pane\pane.exe` (the install script's target, and the
+shortcut's, which the swap keeps pointing at the right file); the wiring
+is one call in `pane`'s `main.rs` giving the program's own path. The
+Linux and macOS halves are [#55](https://github.com/hoangvu12/pane/issues/55)
+and [#56](https://github.com/hoangvu12/pane/issues/56): the machinery is
+shared, the wiring is each system's.
+
 ## The artifact source
 
 Release builds acquire from `https://downloads.pane.sh/` only. Tests and
@@ -283,6 +369,25 @@ PANE_ARTIFACTS=http://127.0.0.1:$(cat /tmp/port)/ cargo run -p pane
 
 ## Checks
 
+- `crates/pane-core/tests/app_update.rs`: the application update through
+  the launcher's public interface, against the same loopback artifact
+  source — a newer version offered as a row in root search with nothing
+  downloaded until the user chooses it and nothing changed when they do
+  not; choosing it downloading the package, checking it and swapping the
+  running program (the staged outcome observable: the new program in
+  place, the old one renamed away, the staging gone, the offer's row
+  gone, and a later start removing what the update left); a damaged
+  package, an unreachable source, a source that answers an error and a
+  replacement that cannot be made each explained with everything
+  untouched and the row ready to try again, and the retry that installs
+  once the source works; an index whose application entry names another
+  system, or an older version, and one whose format version Pane does not
+  read, explained without stopping the default extensions' acquisition
+  from the same index; progress on the status line while the core stays
+  usable; and Pane's data — an acquired extension, its record and cache —
+  untouched by an install, still installed and answering after the
+  update. The zip Pane unpacks is checked by `pane-core`'s own unit
+  tests (both storage methods, and every refusal).
 - `crates/pane-core/tests/installer.rs`: the acquisition through the
   launcher's public interface — a first setup installing the calculator
   and the helper sample as managed copies with the default identity and
@@ -371,6 +476,7 @@ PANE_ARTIFACTS=http://127.0.0.1:$(cat /tmp/port)/ cargo run -p pane
   PowerShell on the machine that wrote them, so their runtime evidence is
   CI's Windows leg (recorded in
   [platforms/windows.md](platforms/windows.md#installing-pane-and-acquiring-its-calculator-51)).
+<<<<<<< HEAD
 - **The macOS baseline is one system.** `macos-15` (macOS 15, arm64) is
   the declared baseline, the system CI builds, packages, installs and
   smokes on; no Intel Mac, no other macOS version and no install on a
@@ -380,6 +486,36 @@ PANE_ARTIFACTS=http://127.0.0.1:$(cat /tmp/port)/ cargo run -p pane
   that wrote them (the script was linted and dry-run with a fake program
   instead), so their runtime evidence is CI's macOS leg (recorded in
   [platforms/macos.md](platforms/macos.md#installing-pane-and-acquiring-its-calculator-52)).
+=======
+- **The update's cadence is provisional.** Pane checks when it starts and
+  at no interval; how often a running Pane rechecks (and whether a check
+  that failed retries quietly) is a choice recorded for the user.
+  Extension updates and application updates stay separate, as the
+  specification requires: extension updates have their own controls
+  (none automatic has landed yet), and the application update has none —
+  only the user's choice, every time.
+- **Only the Windows wiring exists.** The check, download, verification
+  and swap are platform-independent `pane-core` code, but only the
+  Windows build wires them to its program; a Linux or macOS Pane checks
+  for nothing until [#55](https://github.com/hoangvu12/pane/issues/55)
+  and [#56](https://github.com/hoangvu12/pane/issues/56) wire theirs.
+  The swap is exercised by the tests on this machine's layout; the
+  running-exe rename it depends on is proven on Windows itself by the
+  smoke.
+- **Nothing about an update is signed either**, and the source it comes
+  from is the same not-yet-deployed one: a package is checked only
+  against the sha512 its index gives, over HTTPS, as a default
+  extension's payload is. An application package is at most 512 MiB
+  packed and 2 GiB unpacked (the program is large; a development build
+  of it much more), and it is not cached as payloads are: an interrupted
+  download starts over, and only the retries within one install attempt
+  keep it cheap.
+- **Concurrent Panes** on one install folder: both may check and offer;
+  two installs race by failing honestly (the swap's renames cannot both
+  happen), and a Pane starting removes a staging folder another Pane may
+  be installing from — the same small warts the shared data folder
+  already records, left as they are.
+>>>>>>> ticket-54-windows-app-update
 - **No default-extension updates.** A default extension is installed once
   and left alone: a Pane whose default is installed acquires nothing, so
   a newer payload version is not fetched (uninstalling and restarting

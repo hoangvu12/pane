@@ -28,7 +28,7 @@ fn package_to_preview() -> Option<ToPreview> {
     let mut args = std::env::args_os().skip(1);
     while let Some(arg) = args.next() {
         if arg == "--version" {
-            println!("Pane {}", env!("CARGO_PKG_VERSION"));
+            println!("Pane {}", pane::APP_VERSION);
             std::process::exit(0);
         }
         if arg == "--install" {
@@ -103,14 +103,34 @@ fn main() {
         #[cfg(not(debug_assertions))]
         let artifact_source: Option<Result<pane_core::defaults::ArtifactSource, String>> =
             Some(Ok(pane_core::defaults::ArtifactSource::published()));
-        let launcher = match artifact_source {
-            Some(Ok(source)) => launcher.with_defaults(source, pane::default_extensions()),
+        let launcher = match artifact_source.as_ref() {
+            Some(Ok(source)) => launcher.with_defaults(source.clone(), pane::default_extensions()),
             Some(Err(why)) => {
                 eprintln!("PANE_ARTIFACTS: {why}");
                 launcher.show_error(format!("PANE_ARTIFACTS: {why}"));
                 launcher
             }
             None => launcher,
+        };
+        // Pane's own update (#54, the Windows half): the program this Pane
+        // runs from is the one an update replaces, and the artifact source
+        // the default extensions come from names the newer package in its
+        // index. Pane checks once, at start, and only the user's choice
+        // downloads and installs anything. Another system's updater wires
+        // the same machinery to its own program; until its slice lands,
+        // this Pane checks for nothing.
+        #[cfg(target_os = "windows")]
+        let launcher = match (std::env::current_exe(), artifact_source.as_ref()) {
+            (Ok(exe), Some(Ok(source))) => {
+                launcher.with_application_update(pane::APP_VERSION, source.clone(), exe)
+            }
+            (Err(why), _) => {
+                eprintln!(
+                    "Pane's own program could not be found, so it checks for no update: {why}"
+                );
+                launcher
+            }
+            _ => launcher,
         };
         // Global hotkeys: the system's adapter is made on the main thread,
         // whose run loop receives the presses on macOS.
@@ -128,8 +148,10 @@ fn main() {
         let toolchains = Toolchains::from_env(Some(default_js));
         let launcher = launcher.with_development(Arc::new(toolchains), change_sender);
         // The window takes the launcher; acquiring the default extensions
-        // keeps a clone, started below once the window exists.
+        // and checking for Pane's own update keep clones, started below
+        // once the window exists.
         let acquiring = launcher.clone();
+        let checking = launcher.clone();
         let bounds = Bounds::centered(None, size(px(640.), px(420.)), cx);
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -174,6 +196,14 @@ fn main() {
         // the window as it goes, as for development builds).
         cx.spawn(async move |_| {
             acquiring.acquire_defaults().await;
+        })
+        .detach();
+        // Checking for a Pane application update does too: it reads only
+        // the artifact source's index, and what it finds is offered as a
+        // row in root search the user chooses. (A Pane that wires no
+        // updater checks for nothing.)
+        cx.spawn(async move |_| {
+            checking.check_application_update().await;
         })
         .detach();
         cx.activate(true);
