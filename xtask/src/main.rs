@@ -15,8 +15,13 @@
 //!   default extensions are acquired from, under `target/dist/` (with
 //!   `--dev`, the package's program is the development profile; see
 //!   `package.rs`).
+//! - `package-windows`: build Pane's Windows package and the same
+//!   artifacts, under `target/dist/` (`--dev` as for `package-linux`;
+//!   `package.rs` assembles the artifacts everywhere and builds the
+//!   package itself only on Windows).
 
 mod package;
+mod zip;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -63,7 +68,8 @@ fn main() -> ExitCode {
         Some("js-guests") => js_guests(),
         Some("ci") => ci(),
         Some("package-linux") => package::linux(dev),
-        _ => Err("usage: cargo xtask <guests|js-guests|ci|package-linux>".into()),
+        Some("package-windows") => package::windows(dev),
+        _ => Err("usage: cargo xtask <guests|js-guests|ci|package-linux|package-windows>".into()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

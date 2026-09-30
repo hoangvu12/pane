@@ -89,6 +89,16 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/smoke-windows.ps1 -OutDir smoke
+      - name: Build the Windows package (release, x86_64)
+        if: runner.os == 'Windows'
+        run: cargo xtask package-windows
+      - name: Upload the Windows package and its artifacts
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-package
+          path: target/dist/
+          if-no-files-found: error
       - name: Native GUI smoke (macOS)
         if: runner.os == 'macOS'
         run: bash scripts/smoke-macos.sh smoke
