@@ -68,6 +68,13 @@ x11rb = { version = "0.13", features = ["xkb", "xfixes"] }
 # Accessibility permission.
 [target.'cfg(target_os = "macos")'.dependencies]
 global-hotkey = "0.8"
+# The pasteboard of clipboard history on macOS (NSPasteboard's change count,
+# types, string and data, read inside an autorelease pool): pure Rust
+# bindings with no build script, already in the dependency tree through GPUI
+# CE's and global-hotkey's AppKit code.
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSPasteboard"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSData", "NSString", "std"] }
 
 [dev-dependencies]
 tempfile = "3"

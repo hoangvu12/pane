@@ -378,27 +378,61 @@ must log the held search as abandoned; the service's 503, then the service
 stopped, are errors; restarted, a search lists results again.
 **Not run on macOS yet.**
 
-## Clipboard history (#35)
+## Clipboard history (#35, #37)
 
-Pane has no clipboard adapter on macOS yet (#37; Linux has one since
-#38). The smoke's clipboard phase (screenshots 280 and 281), with a data
-folder of its own, installs Clipboard History, whose command is then
-listed in root search as "Not available on macOS: this command supports
-only Windows and Linux" (the unavailable color); Enter shows that as the
-error and does not open it, and no `clipboard-history.json` appears. No
-clipboard is read. **Not run on macOS yet.**
+macOS gets the pasteboard adapter of clipboard history
+([`macos.rs`](../../crates/pane-core/src/clipboard/macos.rs)) behind the
+same `ClipboardSystem` trait as the Windows and Linux ones: a thread of
+Pane's own polls the pasteboard's `changeCount` every 250 ms (macOS'
+`NSPasteboardDidChangeNotification` needs a run loop Pane's own threads do
+not run; the count is the established mechanism without one) and, when the
+count moved, reads the pasteboard's types first, then the text
+(`NSPasteboardTypeString`) only if no type is
+`org.nspasteboard.ConcealedType`, the nspasteboard.org convention that
+password managers such as 1Password and Strongbox set — honored, with the
+text never read when it is present. The pasteboard never names the program
+that copied, so every report's owner is unknown and no program can be
+excluded by name (an excluded name never matches, as the contract says of
+an unknown owner). `write_text` puts the text in the pasteboard server
+(`clearContents` + `setString:forType:`), which holds it for whoever pastes
+beyond the watch; no permission is needed. What is kept is decided by the
+same `clipboard::accept`, unchanged, and the retention/storage contract is
+reused as is (the fake-clipboard tests cover it).
+
+The smoke's clipboard phase (screenshots 280 to 287, on the pattern of the
+Windows and Linux ones), with a data folder of its own, turns history on
+after checking nothing is kept while off, keeps the smoke's own copies
+(put on the pasteboard with AppleScript's `set the clipboard to`), pauses,
+resumes, copies a kept item again and checks the pasteboard with `pbpaste`
+and by pasting into root search, disables, restarts disabled, enables and
+keeps again across a restart, with `clipboard-history.json` checked at each
+step. The expiry and deletion phase (400 to 404) backdates the kept items
+through `scripts/clipboard_history.py`, checks the expired one is gone
+after the restart, deletes one item, the recent ones, all through the
+retention form and all with history turned off, and checks the pasteboard
+still holds what was copied last (`pbpaste`). No marked copy is made in
+the smoke (AppleScript cannot set a custom type); the concealed marker is
+checked by the adapter test instead.
+
+**Not run on macOS yet.** The adapter was written on this headless Linux
+machine, where macOS code cannot build: it was reviewed by reading and
+type-checked against the real `objc2`/`objc2-app-kit` bindings by compiling
+the adapter and its test for `aarch64-apple-darwin` in a scratch crate with
+the bindings from this lock file (checking only, no linking or running).
+CI's macOS leg is the compile and runtime evidence:
+`clipboard_adapter_macos.rs` (opt-in through `PANE_TEST_REAL_CLIPBOARD=1`,
+set for the macOS runner) runs against the runner's pasteboard, and the
+next green macOS run of the smoke is the native-capture evidence. A
+password manager's own copies (1Password, Strongbox) have not been run
+anywhere; the convention's type name is what the test checks.
 
 ## Clipboard history expiry (#36)
 
-The clipboard phase goes on (screenshots 400 to 402) where the command never
-runs: with Pane stopped, the smoke writes the history of the installed
-package as a downtime would leave it (`scripts/clipboard_history.py`):
-history on, one item copied 8 days ago and one a day ago. Once Pane starts,
-the old one is gone from the file, and the uninstall confirmation counts
-"Saved data: 1 clipboard history item"; kept as retained data and made 8
-days old while Pane is stopped, it is gone once Pane starts again, the
-extension list's last row reading "keeps clipboard history settings". No
-clipboard is read. **Not run on macOS yet.**
+Covered by the same smoke phase (screenshots 400 to 404, above) since the
+command now runs on macOS: items expire after their package's retention
+whether or not the extension runs, and the phase backdates and deletes
+items exactly as the Linux one does, with the pasteboard checked directly
+(`pbpaste`). **Not run on macOS yet.**
 
 ## Text input and accessibility findings
 
