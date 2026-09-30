@@ -88,7 +88,7 @@ foreach ($index in 0..2) {
     for ($i = 0; $i -lt $index; $i++) { Send "{DOWN}" }
     Send "{ENTER}"; Start-Sleep -Seconds 3
     Capture "$($index + 2)-command-$index.png"
-    Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2
+    Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2
     Capture "$($index + 2)-result-$index.png"
     Check "$($index + 2)-result-$index.png" "9fd8a8"   # the guest's answer
     Send "{ESC}"; Start-Sleep -Seconds 1
@@ -142,7 +142,7 @@ Send "{ENTER}"; Start-Sleep -Seconds 3
 Send "{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{ENTER}"; Start-Sleep -Seconds 2
 Capture "13-windows-only.png"
 Check "13-windows-only.png" "9fd8a8"   # Windows: the guest's answer
-Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2
+Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2
 Capture "14-not-windows.png"
 Check "14-not-windows.png" "d6a36a"   # the row's reason
 Check "14-not-windows.png" "f08c8c"   # Windows: the reason as the error
@@ -181,7 +181,7 @@ Check "16-setting-saved.png" "9fd8a8"   # "Saved the formal greeting"
 Send "{ESC}"; Start-Sleep -Seconds 1
 Send "{DOWN 14}"   # the last row
 Send "{ENTER}"; Start-Sleep -Seconds 1
-Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2
+Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2
 Capture "17-disabled.png"
 Check "17-disabled.png" "9fd8a8"   # "Disabled Settings sample"
 Stop-Pane $process
@@ -199,7 +199,7 @@ python "$PSScriptRoot/check_screenshot.py" --same (Join-Path $OutDir "12-restart
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: root after the restart lists the disabled package" }
 Send "{DOWN 14}"
 Send "{ENTER}"; Start-Sleep -Seconds 1
-Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2
+Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2
 Capture "19-enabled.png"
 Check "19-enabled.png" "9fd8a8"   # "Enabled Settings sample"
 Send "{ESC}"; Start-Sleep -Seconds 1
@@ -239,7 +239,7 @@ $process = Start-Pane "stderr-search.log"
 Send "typescr"; Start-Sleep -Seconds 1
 Capture "24-search.png"
 Send "{ENTER}"; Start-Sleep -Seconds 3
-Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2
+Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2
 Capture "25-search-result.png"
 Check "25-search-result.png" "9fd8a8"   # the TypeScript guest's answer
 python "$PSScriptRoot/check_screenshot.py" --same (Join-Path $OutDir "4-result-2.png") (Join-Path $OutDir "25-search-result.png")
@@ -368,7 +368,7 @@ Send "{DOWN 11}"
 Send "{ENTER}"; Start-Sleep -Seconds 3
 Capture "38-start-failed.png"
 Check "38-start-failed.png" "f08c8c"   # "Reloaded Dev, but it failed to start; ..."
-Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 3   # Retry starting Dev
+Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 3   # Retry starting Dev
 Capture "39-retried.png"
 Check "39-retried.png" "9fd8a8"   # "Started Dev"
 Stop-Pane $process
@@ -383,8 +383,8 @@ Send "{DOWN 4}"   # Greeting
 Send "{ENTER}"; Start-Sleep -Seconds 3
 Send "{DOWN 3}"
 Send "{ENTER}"; Start-Sleep -Seconds 2   # "Save a note"
-Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2   # "Sign in"
-Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2   # "Show what Pane keeps"
+Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2   # "Sign in"
+Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2   # "Show what Pane keeps"
 Capture "40-kept.png"
 Check "40-kept.png" "9fd8a8"   # every value, the cached greeting included
 Send "{ESC}"; Start-Sleep -Seconds 1
@@ -526,7 +526,12 @@ function Minimize-Pane($process) {
     Start-Sleep -Seconds 1
     if ([Win]::GetForegroundWindow() -eq $process.MainWindowHandle) { throw "Pane is still in front" }
 }
-function Press-Hotkey { Send "^%g"; Start-Sleep -Seconds 3 }
+function Press-Hotkey {
+    # A global hotkey reaches Pane whatever window holds the focus, and the
+    # phase's checks read which window is in the front: no refocus here
+    # (Send's refocus is for typed keys, which must reach Pane).
+    [System.Windows.Forms.SendKeys]::SendWait("^%g"); Start-Sleep -Seconds 3
+}
 function Check-Pane-In-Front($process) {
     if ([Win]::GetForegroundWindow() -ne $process.MainWindowHandle) { throw "the hotkey did not bring Pane to the front" }
 }
@@ -537,7 +542,7 @@ $process = Start-Pane "stderr-hotkeys.log" @("--install", "target/guests/package
 Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Greeting is selected
 Send "{DOWN 14}"   # Manage extensions…
 Send "{ENTER}"; Start-Sleep -Seconds 1
-Send "{DOWN 4}{ENTER}"; Start-Sleep -Seconds 1   # "Hotkey for Greeting"
+Send "{DOWN 4}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 1   # "Hotkey for Greeting"
 Capture "52-hotkey-screen.png"
 Check "52-hotkey-screen.png" "aab4c0"   # "Press the keys that should open Greeting ..."
 Send "^%g"; Start-Sleep -Seconds 2
@@ -609,7 +614,7 @@ Check "60-paused-after-restart.png" "d6a36a"   # Greeting is still paused
 Send "{ESC}"; Start-Sleep -Seconds 1   # clears the query
 Send "{DOWN 14}"   # Manage extensions…
 Send "{ENTER}"; Start-Sleep -Seconds 1
-Send "{DOWN 3}{ENTER}"; Start-Sleep -Seconds 1   # "Why Settings sample is paused"
+Send "{DOWN 3}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 1   # "Why Settings sample is paused"
 Capture "61-pause-details.png"
 Check "61-pause-details.png" "aab4c0"   # the details
 Send "{ENTER}"; Start-Sleep -Seconds 2   # Retry Settings sample
@@ -654,14 +659,23 @@ Wait-For (Join-Path $data "extensions/content.json") '"note": "Water the plants"
 Send "{ESC}"; Start-Sleep -Seconds 1   # root search
 Send "{DOWN 14}"   # Manage extensions…
 Send "{ENTER}"; Start-Sleep -Seconds 1
-Send "{DOWN 3}{ENTER}"; Start-Sleep -Seconds 1   # "Uninstall Settings sample"
+Send "{DOWN 3}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 1   # "Uninstall Settings sample"
 Send "{ENTER}"   # "Uninstall and keep saved data"
 Wait-For $registry '"retained"' $true; Start-Sleep -Seconds 1
+# A restart before the deletion: the retained record is what survives one
+# (that is its point), and a window that has served the whole flow no
+# longer delivers Enter to a confirmation (a quirk this machine found;
+# a fresh window does - see the follow-up issue).
+Stop-Pane $process
+$process = Start-Pane "stderr-retained.log"
+Start-Sleep -Seconds 2
+Send "{DOWN 14}"   # Manage extensions… (root's last row)
+Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{DOWN 40}"
 Send "{ENTER}"; Start-Sleep -Seconds 1   # "Delete retained data of Settings sample"
 Capture "63-confirm-delete-retained.png"
 Check "63-confirm-delete-retained.png" "aab4c0"   # what is kept and what is not touched
-Send "{DOWN}{ENTER}"   # "Delete retained data"
+Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"   # "Delete retained data"
 Wait-For $registry '"retained"' $false; Start-Sleep -Seconds 1
 Capture "64-retained-deleted.png"
 Check "64-retained-deleted.png" "9fd8a8"   # "Deleted the retained data of Settings sample"
@@ -696,12 +710,12 @@ $process = Start-Pane "stderr-aliases.log" @("--install", "target/guests/package
 Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Echo is selected
 Send "{DOWN 14}"   # Manage extensions…
 Send "{ENTER}"; Start-Sleep -Seconds 1
-Send "{DOWN 5}{ENTER}"; Start-Sleep -Seconds 1   # "Alias for Echo"
+Send "{DOWN 5}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 1   # "Alias for Echo"
 Send "ec"
 Send "{ENTER}"; Start-Sleep -Seconds 2
 Capture "66-alias-saved.png"
 Check "66-alias-saved.png" "9fd8a8"   # "Typing “ec” now finds Echo"
-Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2   # "Fallback: Echo"
+Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2   # "Fallback: Echo"
 Capture "67-fallback-on.png"
 Check "67-fallback-on.png" "9fd8a8"   # "Echo is now offered for any text typed in root search"
 $shots = "66-alias-saved", "67-fallback-on" | ForEach-Object { Join-Path $OutDir "$_.png" }
@@ -803,7 +817,7 @@ Send "{ENTER}"; Start-Sleep -Seconds 2   # open Helper sample
 Send "{ENTER}"; Start-Sleep -Seconds 2   # Echo through the helper
 Capture "90-helper-echoed.png"
 Check "90-helper-echoed.png" "9fd8a8"   # 'Echoed "hello from Pane" on Windows x86-64'
-Send "{DOWN 2}{ENTER}"; Start-Sleep -Seconds 3   # Echo within a second
+Send "{DOWN 2}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 3   # Echo within a second
 Capture "91-helper-cancelled.png"
 Check "91-helper-cancelled.png" "9fd8a8"   # "Stopped the helper after one second"
 $shots = "90-helper-echoed", "91-helper-cancelled" | ForEach-Object { Join-Path $OutDir "$_.png" }
@@ -837,7 +851,7 @@ $packages = [System.IO.Path]::GetFullPath((Join-Path $data "extensions/packages"
 $process = Start-Pane "stderr-helper-quit.log" @("--install", "target/guests/packages/sample-helper")
 Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Helper sample is selected
 Send "{ENTER}"; Start-Sleep -Seconds 2   # open Helper sample
-Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2   # Echo after waiting
+Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2   # Echo after waiting
 if (-not (Helpers-Running)) { throw "the waiting helper is not running" }
 Capture "94-helper-before-quit.png"
 Check "94-helper-before-quit.png" "d6c27a"   # "Running…"
@@ -894,7 +908,7 @@ function Wait-Failed($log, $before) {
 }
 # From root: open the developed command, the 4th row, and run its item.
 function Say-Hello {
-    Send "{DOWN 3}{ENTER}"; Start-Sleep -Seconds 3
+    Send "{DOWN 3}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 3
     Send "{ENTER}"; Start-Sleep -Seconds 2
 }
 function Shots-Differ($first, $second, $what) {
@@ -929,8 +943,8 @@ function Develop-Sample($sample, $title, $component, $source, $n, $greeting, $br
     $log = "stderr-develop-$sample.log"
     $process = Start-Pane $log @("--install", $copy)
     Send "{ENTER}"; Start-Sleep -Seconds 2   # Install
-    Send "{DOWN 14}{ENTER}"; Start-Sleep -Seconds 1   # Manage extensions
-    Send "{DOWN 14}{ENTER}"; Start-Sleep -Seconds 2   # Develop <title>
+    Send "{DOWN 14}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 1   # Manage extensions
+    Send "{DOWN 14}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2   # Develop <title>
     Capture "$n-$sample-develop-started.png"
     Check "$n-$sample-develop-started.png" "9fd8a8"   # "Developing <title>: each save in ..."
     Send "{ESC}"; Start-Sleep -Seconds 1
@@ -980,8 +994,8 @@ function Develop-Sample($sample, $title, $component, $source, $n, $greeting, $br
     Send "{ESC}"; Start-Sleep -Seconds 1
 
     # Stopped: a save builds nothing.
-    Send "{DOWN 14}{ENTER}"; Start-Sleep -Seconds 1   # Manage extensions
-    Send "{DOWN 14}{ENTER}"; Start-Sleep -Seconds 2   # Stop developing <title>
+    Send "{DOWN 14}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 1   # Manage extensions
+    Send "{DOWN 14}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2   # Stop developing <title>
     Capture "$($n + 8)-$sample-stopped.png"
     Check "$($n + 8)-$sample-stopped.png" "9fd8a8"   # "Stopped developing <title>"
     Copy-Item -Force $built $before
@@ -1019,7 +1033,7 @@ Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{ENTER}"; Start-Sleep -Seconds 1   # disable JavaScript operations sample: asks first
 Capture "140-disable-dependents-asked.png"
 Check "140-disable-dependents-asked.png" "aab4c0"   # "Dependencies sample, which requires JavaScript operations sample ..."
-Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 1   # Cancel
+Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 1   # Cancel
 Capture "141-disable-dependents-cancelled.png"   # both still enabled
 Send "{ENTER}"; Start-Sleep -Seconds 1   # asks again
 Send "{ENTER}"; Start-Sleep -Seconds 2   # Disable all 2
@@ -1086,7 +1100,7 @@ if ((Saved-Count) -ne "1") { throw "Count did not count once" }
 Send "{ESC}"; Start-Sleep -Seconds 1
 Send "helper"; Start-Sleep -Seconds 1
 Send "{ENTER}"; Start-Sleep -Seconds 2   # open Helper sample
-Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2   # Echo after waiting
+Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2   # Echo after waiting
 if (-not (Helpers-Running)) { throw "the waiting helper is not running" }
 Capture "201-runtime-helper-waiting.png"
 Check "201-runtime-helper-waiting.png" "d6c27a"   # "Running…"
@@ -1119,11 +1133,11 @@ Send "{ESC}"; Start-Sleep -Seconds 1   # clears the query
 Send "{DOWN 14}"   # Manage extensions…
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Capture "205-runtime-manage.png"   # Restart the extension runtime, Why the extension runtime stopped
-Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 1   # Why the extension runtime stopped
+Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 1   # Why the extension runtime stopped
 Capture "206-runtime-details.png"
 Check "206-runtime-details.png" "aab4c0"   # the details
 Send "{ESC}"; Start-Sleep -Seconds 1   # back at its row
-Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2   # disable Helper sample, the first package
+Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2   # disable Helper sample, the first package
 Capture "207-runtime-disabled.png"
 Check "207-runtime-disabled.png" "9fd8a8"   # "Disabled Helper sample"
 Send "{UP 2}{ENTER}"; Start-Sleep -Seconds 2   # Restart the extension runtime
@@ -1213,7 +1227,7 @@ if ((Saved-Setting "busy") -ne "started") { throw "Stop responding finished or w
 Send "{ESC}"; Start-Sleep -Seconds 1   # clears the query
 Send "{DOWN 10}"   # Manage extensions…
 Send "{ENTER}"; Start-Sleep -Seconds 1
-Send "{DOWN 3}{ENTER}"; Start-Sleep -Seconds 1   # "Why Settings sample is paused"
+Send "{DOWN 3}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 1   # "Why Settings sample is paused"
 Capture "243-unresponsive-pause-details.png"
 Check "243-unresponsive-pause-details.png" "aab4c0"   # the details
 Send "{ENTER}"; Start-Sleep -Seconds 2   # Retry Settings sample
@@ -1637,7 +1651,7 @@ try {
     Send "{ENTER}"; Start-Sleep -Seconds 3   # open Package search
     Capture "162-command-opened.png"   # its own list, its search field empty
     Check "162-command-opened.png" "364355" 3000   # its first row, selected
-    Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2   # Service address: its form
+    Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2   # Service address: its form
     Send "http://127.0.0.1:$servicePort"
     Send "{ENTER}"; Start-Sleep -Seconds 2   # Save
     Capture "163-service-set.png"   # "Searching http://127.0.0.1:<port> from now on"
@@ -1647,7 +1661,7 @@ try {
     Capture "164-search-results.png"   # aurora-charts, selected, and aurora-cli
     Check "164-search-results.png" "364355" 3000
     if (-not (Select-String -Quiet -Pattern '^GET /search\?q=aurora$' $serviceLog)) { throw "the command's search did not reach the service" }
-    Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 3   # aurora-cli's details
+    Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 3   # aurora-cli's details
     Capture "165-details.png"
     Check "165-details.png" "9fd8a8"   # "aurora-cli 0.9.3 (Apache-2.0): Command-line parsing with subcommands"
     Send "^a"; Send "slow"; Start-Sleep -Seconds 2   # held by the service
@@ -1801,7 +1815,7 @@ Wait-For $history '"capture": "on"' $true
 Copy-Text "pane-smoke-resumed" $null
 Wait-For $history "pane-smoke-resumed" $true
 Open-History
-Send "{DOWN 8}{ENTER}"; Start-Sleep -Seconds 1   # the second kept item, pane-smoke-second, after Pause, Turn off, Keep items for, Exclude, Clear, Turn off and delete, Delete recent and the first
+Send "{DOWN 8}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 1   # the second kept item, pane-smoke-second, after Pause, Turn off, Keep items for, Exclude, Clear, Turn off and delete, Delete recent and the first
 Send "{ENTER}"; Start-Sleep -Seconds 2   # Copy it again, the first of its choices (#36)
 Capture "283-clipboard-copied.png"
 Check "283-clipboard-copied.png" "9fd8a8"   # "Copied to the clipboard"
@@ -1870,8 +1884,8 @@ Open-History
 Capture "400-clipboard-expired.png"
 Check "400-clipboard-expired.png" "aab4c0"   # pane-smoke-kept is no longer listed
 $onClipboard = [PaneClip]::GetText()
-Send "{DOWN 9}{ENTER}"; Start-Sleep -Seconds 1   # pane-smoke-second: Copy it again or Delete it
-Send "{DOWN}{ENTER}"   # Delete it
+Send "{DOWN 9}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 1   # pane-smoke-second: Copy it again or Delete it
+Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"   # Delete it
 Wait-For $history "pane-smoke-second" $false; Start-Sleep -Seconds 1
 Capture "401-clipboard-item-deleted.png"
 Check "401-clipboard-item-deleted.png" "9fd8a8"   # "Deleted the kept item"
@@ -1879,16 +1893,16 @@ if ((Kept-Joined) -ne "pane-smoke-after-restart,pane-smoke-enabled,pane-smoke-re
 if ([PaneClip]::GetText() -ne $onClipboard) { throw "deleting an item changed the clipboard" }
 Send "{ESC}"   # from the item's form to the command's list
 Open-History
-Send "{DOWN 6}{ENTER}"; Start-Sleep -Seconds 1   # Delete recent items: 15 minutes, hour or day
-Send "{DOWN}{ENTER}"   # the last hour
+Send "{DOWN 6}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 1   # Delete recent items: 15 minutes, hour or day
+Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"   # the last hour
 Wait-For $history "pane-smoke-resumed" $false; Start-Sleep -Seconds 1
 Capture "402-clipboard-recent-deleted.png"
 Check "402-clipboard-recent-deleted.png" "9fd8a8"   # "Deleted 2 kept items"
 if ((Kept-Joined) -ne "pane-smoke-enabled") { throw "kept: $(Kept-Joined)" }
 Send "{ESC}"
 Open-History
-Send "{DOWN 2}{ENTER}"; Start-Sleep -Seconds 1   # Keep items for 7 days: 7 days (the retention now, chosen), 1 hour, 1 day, 30 or 90 days
-Send "{DOWN}{ENTER}"   # 1 hour, the second choice
+Send "{DOWN 2}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 1   # Keep items for 7 days: 7 days (the retention now, chosen), 1 hour, 1 day, 30 or 90 days
+Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"   # 1 hour, the second choice
 Wait-For $history '"retentionSeconds": 3600' $true; Start-Sleep -Seconds 1
 Capture "403-clipboard-retention-changed.png"
 Check "403-clipboard-retention-changed.png" "9fd8a8"   # "Items are kept for 1 hour; deleted 1 older item"
@@ -1897,7 +1911,7 @@ Copy-Text "pane-smoke-final" $null
 Wait-For $history "pane-smoke-final" $true
 Send "{ESC}"
 Open-History
-Send "{DOWN 5}{ENTER}"   # Turn off and delete clipboard history
+Send "{DOWN 5}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"   # Turn off and delete clipboard history
 Wait-For $history "pane-smoke-final" $false; Start-Sleep -Seconds 1
 Capture "404-clipboard-turned-off-and-deleted.png"
 Check "404-clipboard-turned-off-and-deleted.png" "9fd8a8"   # "Clipboard history is off; deleted 1 kept item"
@@ -2118,7 +2132,7 @@ try {
     # before the update must stay disabled after it.
     Send "^a"; Send "manage"; Start-Sleep -Seconds 1
     Send "{ENTER}"; Start-Sleep -Seconds 1   # Manage extensions…
-    Send "{DOWN}{ENTER}"; Start-Sleep -Seconds 2   # Helper sample: disabled
+    Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2   # Helper sample: disabled
     Wait-For $registry '"disabled": true' $true
     Send "{ESC}"; Start-Sleep -Seconds 1
 
