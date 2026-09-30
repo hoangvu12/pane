@@ -115,8 +115,10 @@ impl Acquisitions {
 }
 
 /// "<n>% of <size>", the progress of a payload, from its bytes so far and
-/// the size its index entry gave; "…" when the size is not known.
-fn progress(bytes: u64, total: u64) -> String {
+/// the size its index entry gave; "…" when the size is not known. Used by
+/// acquiring a default extension's payload and downloading a Pane update
+/// alike, so both say progress the same way.
+pub(in crate::launcher) fn progress(bytes: u64, total: u64) -> String {
     if total == 0 {
         return "…".into();
     }
@@ -270,6 +272,10 @@ impl Launcher {
         let failed = move |launcher: &Launcher, why: String| {
             let (id, title) = (recording.0.clone(), recording.1.clone());
             let why = format!("Could not set up the {title}: {why}");
+            // The reason also goes to Pane's own standard error, where the
+            // smokes collect it: the status line shows it to the user, but
+            // a screenshot cannot be read back.
+            eprintln!("pane: {why}");
             launcher.show(Status::Error(why.clone()));
             let mut state = launcher.lock();
             state.acquisitions.failed(FailedAcquisition {
@@ -361,8 +367,9 @@ impl Launcher {
     }
 
     /// Shows `status` and tells the window, if any, that the launcher
-    /// changed in the background.
-    fn show(&self, status: Status) {
+    /// changed in the background, as acquiring a default extension or
+    /// checking for a Pane update did.
+    pub(in crate::launcher) fn show(&self, status: Status) {
         {
             let mut state = self.lock();
             state.view.status = status;

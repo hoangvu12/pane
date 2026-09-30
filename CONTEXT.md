@@ -172,6 +172,10 @@ _Avoid_: Locked version, version range
 Pane's own copy of an installed package's manifest and components, kept in Pane's data folder, separate from the user-owned source.
 _Avoid_: Cache (it is not disposable)
 
+**Application update**:
+A newer version of Pane itself, which Pane finds out about from its artifact source's index when it starts and tells the user of, as a row in root search; Pane downloads and installs it only when the user chooses, replacing the program in the install folder (the running one renamed aside) so the new version is used on the next start — which the user does, since Pane never restarts itself. Pane's data, and the extensions it installed, are untouched by one.
+_Avoid_: Self-update, auto-update (nothing is automatic), app update
+
 **Update**:
 Replacing the managed copy of an installed package from its source while keeping its package identity. A second explicit install of the same identity is rejected instead.
 _Avoid_: Reinstall

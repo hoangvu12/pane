@@ -37,6 +37,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 mod acquire;
 mod aliases;
+mod application_update;
 mod choices;
 mod command_search;
 mod hotkeys;
@@ -80,6 +81,7 @@ mod updates;
 
 use acquire::{Acquisitions, Defaults};
 use aliases::AliasChoices;
+use application_update::{Application, Updates};
 use choices::Record;
 use developing::Developing;
 pub use developing::{BuildFailure, Development};
@@ -457,6 +459,10 @@ pub struct Launcher {
     /// where their payloads come from; `None` when this launcher
     /// installs none.
     defaults: Option<Defaults>,
+    /// This build's own application update: the version of Pane it runs,
+    /// where its updates come from and the program an update replaces;
+    /// `None` when this build wires no updater.
+    application: Option<Application>,
     /// Opens the web links of computed results.
     links: Arc<dyn LinkOpener>,
     /// Registers the global hotkeys the user assigns with the system.
@@ -497,6 +503,7 @@ struct WeakLauncher {
     commands: Arc<[CommandRegistration]>,
     installation: Option<Installation>,
     defaults: Option<Defaults>,
+    application: Option<Application>,
     links: Arc<dyn LinkOpener>,
     hotkeys: Arc<dyn Hotkeys>,
     /// Held weakly, so that Pane stops watching the clipboard as soon as
@@ -533,6 +540,7 @@ impl WeakLauncher {
             commands: self.commands.clone(),
             installation: self.installation.clone(),
             defaults: self.defaults.clone(),
+            application: self.application.clone(),
             links: self.links.clone(),
             hotkeys: self.hotkeys.clone(),
             clipboard,
@@ -618,6 +626,9 @@ struct State {
     /// the one being acquired, and which failed and can be tried again
     /// (see `acquire`).
     acquisitions: Acquisitions,
+    /// Pane's own update: what the last check found, and what is running
+    /// now (see `application_update`).
+    updates: Updates,
     /// The query root search showed when the status line began showing a
     /// command's answer to a query sent from it (or its sending), so that
     /// changing the query clears it.
@@ -889,6 +900,12 @@ enum Entry {
     AskGit,
     /// Acquire this default extension again, after Pane could not (root).
     Acquire(String),
+    /// Install the offered Pane application update, which the user chose
+    /// (root).
+    InstallUpdate,
+    /// Check for a Pane application update again, after the check failed
+    /// (root).
+    CheckUpdate,
     /// Run the open command's item with this id.
     Run(String),
     /// Open this form of the open command's item with this id.
@@ -1089,6 +1106,7 @@ impl Launcher {
             bindings,
             aliases,
             acquisitions: Acquisitions::default(),
+            updates: Updates::default(),
             sent_from: None,
             runtime_slow: None,
             update_controls,
@@ -1123,6 +1141,7 @@ impl Launcher {
             commands: commands.into(),
             installation,
             defaults: None,
+            application: None,
             links: Arc::new(NoOpener),
             hotkeys: system_hotkeys::none(),
             clipboard: None,
@@ -1337,6 +1356,7 @@ impl Launcher {
             commands: self.commands.clone(),
             installation: self.installation.clone(),
             defaults: self.defaults.clone(),
+            application: self.application.clone(),
             links: self.links.clone(),
             hotkeys: self.hotkeys.clone(),
             clipboard: self.clipboard.as_ref().map(Arc::downgrade),
@@ -1814,6 +1834,8 @@ impl Launcher {
         let mut delete_retained = None;
         let mut install = None;
         let mut acquire = None;
+        let mut install_update = false;
+        let mut check_update = false;
         let mut stop_sharing = None;
         // The status line is about this action from now on.
         state.sent_from = None;
@@ -1987,6 +2009,16 @@ impl Launcher {
                 state.view.status = Status::Running;
                 None
             }
+            Some(Entry::InstallUpdate) => {
+                install_update = true;
+                state.view.status = Status::Running;
+                None
+            }
+            Some(Entry::CheckUpdate) => {
+                check_update = true;
+                state.view.status = Status::Running;
+                None
+            }
             Some(Entry::AskNpm) => {
                 self.show_npm_form(&mut state);
                 None
@@ -2047,6 +2079,12 @@ impl Launcher {
             if let Some(id) = acquire {
                 launcher.retry_acquiring(&id).await;
             }
+            if install_update {
+                launcher.install_application_update().await;
+            }
+            if check_update {
+                launcher.retry_checking_update().await;
+            }
             if let Some(identity) = stop_sharing {
                 launcher.stop_sharing_folder(identity).await;
             }
@@ -2081,6 +2119,8 @@ impl Launcher {
                     | Entry::AskNpm
                     | Entry::AskGit
                     | Entry::Acquire(_)
+                    | Entry::InstallUpdate
+                    | Entry::CheckUpdate
                     | Entry::ChooseFolder(_)
                     | Entry::StopSharingFolder(_)
                     | Entry::Install(..)
@@ -2854,6 +2894,13 @@ impl Launcher {
                     unavailable: None,
                 };
                 add(row, Entry::Acquire(id), None, None);
+            }
+        }
+        // Pane's own update, when a check found one the user can choose to
+        // install, or failed in a way that can be tried again.
+        if self.application.is_some() {
+            for (row, entry) in state.updates.rows() {
+                add(row, entry, None, None);
             }
         }
         // Retained data is managed there too, while nothing is installed.

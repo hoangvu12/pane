@@ -820,12 +820,13 @@ impl Described {
     }
 }
 
-/// The path of tarball entry `raw` inside the package, without the
-/// tarball's top folder; `None` for the top folder itself. Refuses, with
+/// The path of archive entry `raw` inside the package, without the
+/// archive's top folder; `None` for the top folder itself. Refuses, with
 /// why, a path that is absolute, climbs out (`..`), has an empty or `.`
 /// part, or has a part that some system reads differently or cannot write
-/// (see [`check_part`]).
-fn inside(raw: &[u8], is_dir: bool) -> Result<Option<PathBuf>, &'static str> {
+/// (see [`check_part`]). Read for npm's tarballs and Pane's application
+/// package's zip alike, so both unpack with the same discipline.
+pub(crate) fn inside(raw: &[u8], is_dir: bool) -> Result<Option<PathBuf>, &'static str> {
     let text = std::str::from_utf8(raw).map_err(|_| "whose name is not valid UTF-8")?;
     if text.starts_with('/') {
         return Err("an absolute path");

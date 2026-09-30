@@ -1,8 +1,9 @@
 # Pane's packages and first setup
 
 Added for [#53](https://github.com/hoangvu12/pane/issues/53) (Linux; US15,
-US16, US18, US42; T23; contributions to G6, not a claim that it passes)
-and [#51](https://github.com/hoangvu12/pane/issues/51) (Windows): a clean
+US16, US18, US42; T23; contributions to G6, not a claim that it passes),
+[#51](https://github.com/hoangvu12/pane/issues/51) (Windows) and
+[#52](https://github.com/hoangvu12/pane/issues/52) (macOS): a clean
 machine installs Pane from one package, and Pane acquires its default
 extensions itself over the network — the calculator, the feature this
 proves — with progress, retries and a cache, while the core (the window,
@@ -12,6 +13,16 @@ the internet-first setup the specification chose
 payloads and installs no runtime, and the user installs no Node, Rust,
 npm, Git or compiler: Pane's extension runtime is part of Pane's own
 process (Wasmtime), so nothing is acquired for it.
+
+[#54](https://github.com/hoangvu12/pane/issues/54) adds the other half of
+the same source: Pane's own updates. Pane checks the artifact source for a
+newer version of itself when it starts and tells the user, who alone
+chooses whether to download and install it — Pane never downloads,
+installs or restarts itself unprompted
+([decision 17](https://github.com/hoangvu12/pane/issues/1), [Q38](current-decisions.md)).
+The Windows install is below; the check, the download, the verification
+and the swap are platform-independent and live in `pane-core`, ready for
+another system's updater to wire to its own program.
 
 The acquisition itself is the same on every system (it is
 platform-independent code, tested by `crates/pane-core/tests/installer.rs`);
@@ -34,7 +45,13 @@ runs on and the artifacts an artifact source serves (below):
 - **`pane-<version>-windows-<arch>.zip`** — the Windows package
   (`cargo xtask package-windows`): the `pane.exe` program (release
   profile), the PowerShell install script and a `README.txt`, under
-  `pane/`. A zip, because a Windows user unzips with whatever is at hand
+  `pane/`. With `--package-version <version>` the program is built
+  reporting that version and the package and its index entry are named by
+  it — a build-tool option for the smokes, which need a newer version
+  than the one installed to offer; a release build simply builds the
+  workspace's own version (nothing gates the option: it names the
+  package, and anyone building one can name it).
+  A zip, because a Windows user unzips with whatever is at hand
   and Windows has no tar of its own a user can rely on; `--dev` names the
   development profile's package the same way. The task assembles the
   artifacts anywhere, but builds the package only on Windows: `pane.exe`
@@ -53,10 +70,11 @@ runs on and the artifacts an artifact source serves (below):
 
 Each package is the same bytes wherever it is built (fixed time, owner
 and mode in the Linux tar; the fixed time, entry order and deflate of the
-Windows zip), and its program is built for the system the task ran
-on: this machine builds `linux-aarch64`, CI's `ubuntu-24.04` runner builds
-`linux-x86_64`, its `windows-2025` runner `windows-x86_64`. A release for
-several systems builds one package per system. **Nothing is signed** — no
+Windows and macOS zips), and its program is built for the system the task
+ran on: this machine builds `linux-aarch64`, CI's `ubuntu-24.04` runner
+builds `linux-x86_64`, its `windows-2025` runner `windows-x86_64` and its
+`macos-15` runner `macos-aarch64`. A release for several systems builds
+one package per system. **Nothing is signed** — no
 signing credentials exist, on Windows no Authenticode certificate — and
 the `.sha256` file says only what was packed; signing the package, and
 deploying the artifact source, are execution prerequisites recorded
@@ -123,6 +141,46 @@ the package's `.sha256` file says what was packed. Windows itself may
 warn about an unknown publisher when `pane.exe` runs; that is what absent
 Authenticode credentials mean, recorded plainly
 [below](#limits-and-prerequisites).
+
+### Installing on macOS
+
+```sh
+unzip pane-<version>-macos-<arch>.zip        # or double-click it in Finder
+cd pane
+bash install.sh                # installs Pane.app to ~/Applications
+bash install.sh --app-dir DIR  # or into another folder
+```
+
+The script (`scripts/install-macos.sh`) installs for one user: it builds
+the `Pane.app` bundle in `$HOME/Applications` — a folder of the user's
+own, so no administrator rights are needed — from the package's `pane`
+program and `Info.plist` (`Contents/MacOS/pane` and
+`Contents/Info.plist`), and checks what it installed by running that
+program's `--version`. Nothing is put on the PATH: the bundle opens with
+a double-click in Finder or `open ~/Applications/Pane.app`, and the
+program for a terminal is `~/Applications/Pane.app/Contents/MacOS/pane`
+(the one `--version` answers, as the install script runs it).
+`~/Applications` is one of the folders the
+[applications](applications.md) extension searches, so installed Pane
+finds itself; no Dock or desktop entry is made beyond the bundle itself.
+Uninstalling is removing the bundle; Pane keeps its own data in
+`~/Library/Application Support/Pane` and its caches in
+`~/Library/Caches/Pane`. The declared baseline is macOS 15 on Apple
+silicon (arm64), the combination [CI runs](platforms/macos.md#tested-combination);
+the program needs nothing beyond macOS itself (no Node, Rust, npm, Git,
+compiler, or administrator rights).
+
+Because nothing is signed (no Apple Developer ID certificate exists,
+nothing notarized), Gatekeeper matters only where a package came over the
+internet: a browser or mail program marks what it downloads, and macOS
+blocks the first launch of an app it cannot check until the user allows
+it in System Settings (Privacy & Security). A zip built on the machine
+itself — a CI runner's, as the smoke's — carries no quarantine mark and
+runs at once. The zip stores no execute permission (the same plain zip
+as the Windows one), so the install script's copy is what sets the
+program's; check the package's `.sha256` file when it reached you over
+the internet. Signing and notarizing the program are execution
+prerequisites recorded [below](#limits-and-prerequisites).
 
 ## Acquiring the default extensions
 
@@ -194,6 +252,76 @@ Pane stopped mid-setup recovers, and disabling a default extension (in
 Manage extensions) is the opt-out: a disabled default extension is
 installed, so it is never re-acquired or re-enabled.
 
+## Updating Pane itself
+
+An application update ([glossary](../CONTEXT.md)) is the same source's
+other half: the index holds an `application` entry — the Pane package for
+one target, named by its version, file, sha512 integrity, size and
+`target` (`windows-x86_64`, written as a [helper
+target](../CONTEXT.md) is) — and the source serves the package the
+entry names. `cargo xtask package-windows` (and `-linux`) put the package
+they built into the artifacts folder beside its index entry, so one
+deployment serves everything from one place; the entry is read but not
+parsed where the default extensions are acquired, so an application entry
+one Pane cannot take never stops a default extension from being
+installed.
+
+1. **The check.** Once, when Pane starts (a cadence that is provisional:
+no interval is checked meanwhile), Pane reads the index in the background
+and compares the entry's version with the version it runs — dotted
+numbers, compared by number; an entry for another target, a version Pane
+cannot read, or an entry missing what it needs is explained, and so is a
+source that cannot be reached (tried three times, like an interrupted
+acquisition). An equal or older version says nothing: no downgrades are
+offered or picked. The check reads only the index: **nothing is
+downloaded until the user chooses**, and Pane does nothing else — no
+download, no install, no restart (US76, [Q38](current-decisions.md)). The
+status line says what was found ("Pane 99.0.0 is available"), and root
+search lists the offer, after the install rows and before Manage
+extensions: **Update Pane to 99.0.0**, its subtitle saying what
+installing does — the user's
+extensions and settings are kept, and the new version is used the next
+time Pane starts. A check that failed lists **Check for a Pane update**
+with why, which tries again.
+2. **The install.** Choosing the row downloads the package with progress
+   ("Downloading Pane 99.0.0: 34% of 186 MiB") and the same retries an
+   interrupted acquisition gets (three attempts; a package that is not
+   there, or whose bytes do not match the sha512 its entry gives, is
+   explained and never retried), checks it, unpacks it — a zip, read as
+   strictly as an npm package's tarball: only files and folders inside
+   the package, one plain name per part on every system, every entry
+   checked against the central directory and the file's own header and
+   CRC32 — and stages it in the install folder's `update\` folder. Then
+   the swap: the running `pane.exe` is renamed to `pane.exe.old` (every
+   system allows renaming a running program; only overwriting one is
+   refused), the staged program takes its name and place, and the staging
+   folder goes. **The new version is used the next time Pane starts** —
+   the user's next start, whenever they choose; Pane itself never
+   restarts. A start removes what earlier updates left: `pane.exe.old`
+   (best effort — another Pane may still run it) and a staging folder a
+   Pane stopped mid-install left. Installing while Pane is being used is
+   fine: the download runs off the thread, so commands and services keep
+   answering while it goes, and only the last renames touch the program's
+   folder, between two of the user's actions; a command still running
+   when the user closes Pane ends as any command does, and the update it
+   left staged is applied (or cleaned up) by the next start.
+3. **What a failure leaves.** A failed check or install explains itself
+   on the status line and leaves everything untouched: the program still
+   the one running, no staging, nothing renamed. The row stays — the
+   offer, or the check — and the user can try again. The old version's
+   data is never touched: Pane's data and caches live beside the program
+   (`data\`, `cache\` under the same folder on Windows), and the swap
+   changes only the program, so extensions, their settings, pins and
+   enablement are exactly what they were.
+
+The Windows install of an update is this whole path with the program at
+`%LOCALAPPDATA%\Pane\pane.exe` (the install script's target, and the
+shortcut's, which the swap keeps pointing at the right file); the wiring
+is one call in `pane`'s `main.rs` giving the program's own path. The
+Linux and macOS halves are [#55](https://github.com/hoangvu12/pane/issues/55)
+and [#56](https://github.com/hoangvu12/pane/issues/56): the machinery is
+shared, the wiring is each system's.
+
 ## The artifact source
 
 Release builds acquire from `https://downloads.pane.sh/` only. Tests and
@@ -231,8 +359,35 @@ $env:PANE_ARTIFACTS = "http://127.0.0.1:$((Get-Content $env:TEMP\port).Trim())/"
 cargo run -p pane
 ```
 
+On macOS, the same with the macOS package (built where it can be):
+
+```sh
+cargo xtask package-macos --dev
+python3 scripts/artifact_server.py target/dist/artifacts /tmp/port &
+PANE_ARTIFACTS=http://127.0.0.1:$(cat /tmp/port)/ cargo run -p pane
+```
+
 ## Checks
 
+- `crates/pane-core/tests/app_update.rs`: the application update through
+  the launcher's public interface, against the same loopback artifact
+  source — a newer version offered as a row in root search with nothing
+  downloaded until the user chooses it and nothing changed when they do
+  not; choosing it downloading the package, checking it and swapping the
+  running program (the staged outcome observable: the new program in
+  place, the old one renamed away, the staging gone, the offer's row
+  gone, and a later start removing what the update left); a damaged
+  package, an unreachable source, a source that answers an error and a
+  replacement that cannot be made each explained with everything
+  untouched and the row ready to try again, and the retry that installs
+  once the source works; an index whose application entry names another
+  system, or an older version, and one whose format version Pane does not
+  read, explained without stopping the default extensions' acquisition
+  from the same index; progress on the status line while the core stays
+  usable; and Pane's data — an acquired extension, its record and cache —
+  untouched by an install, still installed and answering after the
+  update. The zip Pane unpacks is checked by `pane-core`'s own unit
+  tests (both storage methods, and every refusal).
 - `crates/pane-core/tests/installer.rs`: the acquisition through the
   launcher's public interface — a first setup installing the calculator
   and the helper sample as managed copies with the default identity and
@@ -244,25 +399,32 @@ cargo run -p pane
   copy with mode 0755; a payload that does not match its integrity, and
   one for another platform, explained and not installed; a restart
   fetching nothing; a disabled default extension not re-acquired. These
-  run on every system, so the Windows acquisition needs no test of its
-  own: it is the same code (the one Windows-only piece is the `.exe`
-  helper-name rule, checked by the runner's unit tests).
-- The [Linux smoke](platforms/linux.md#installing-pane-and-acquiring-its-calculator-53)
-  and the [Windows smoke](platforms/windows.md#installing-pane-and-acquiring-its-calculator-51):
-  the package is built, installed on a clean machine (a fresh home on
-  Linux, a fresh user profile on Windows) with a PATH that holds nothing,
-  and the installed Pane acquires both payloads from the controlled
-  source and answers "6*7" with 42, its helper echoing for this system.
+  run on every system, so the Windows and macOS acquisitions need no
+  test of their own: it is the same code (the one Windows-only piece is
+  the `.exe` helper-name rule, checked by the runner's unit tests).
+- The [Linux smoke](platforms/linux.md#installing-pane-and-acquiring-its-calculator-53),
+  the [Windows smoke](platforms/windows.md#installing-pane-and-acquiring-its-calculator-51)
+  and the [macOS smoke](platforms/macos.md#installing-pane-and-acquiring-its-calculator-52):
+  the package is built and installed on a clean machine — a fresh home
+  folder on Linux and macOS, a fresh user profile on Windows — and the
+  installed Pane, started with a PATH that holds nothing at all, acquires
+  both payloads from the controlled source and answers "6*7" with 42,
+  its helper echoing for this system. (The install script itself runs
+  with `/usr/bin:/bin` on Linux and macOS, so the fresh home stays clean
+  while the script's tools resolve; on Windows it runs with the empty
+  PATH, its PowerShell script needing nothing from one. What is checked,
+  and how, is each platform page's own record.)
 - `xtask`'s packaging is checked by building it: `cargo xtask
   package-linux [--dev]` must produce the tarball, its sha256 and the
-  artifact tree, and `cargo xtask package-windows [--dev]` the zip, its
-  sha256 and the same tree; the release-profile package is built the same
-  way the development-profile one the smoke installs is. The zip's bytes
-  are pinned by a unit test (`xtask/src/zip.rs`), first decoded with
-  Python's `zipfile`; the Linux machine that writes most of this
-  repository cannot build `pane.exe`, so there the Windows task assembles
-  the artifacts and explains that only a Windows checkout builds the
-  package.
+  artifact tree, `cargo xtask package-windows [--dev]` and
+  `cargo xtask package-macos [--dev]` the zip, its sha256 and the same
+  tree; the release-profile package is built the same way the
+  development-profile one the smoke installs is. The zip's bytes are
+  pinned by a unit test (`xtask/src/zip.rs`), first decoded with Python's
+  `zipfile`; the Linux machine that writes most of this repository cannot
+  build `pane.exe` or the macOS `pane` program, so there the Windows and
+  macOS tasks assemble the artifacts and explain that only a checkout of
+  their own system builds the package.
 
 ## Limits and prerequisites
 
@@ -284,21 +446,27 @@ cargo run -p pane
   script as one that came over the internet (the README and the doc above
   say how a user answers that for this one script). Acquiring a
   certificate, and signing the program and the script with it, are
-  execution prerequisites like the others here.
+  execution prerequisites like the others here. On macOS there is no
+  Apple Developer ID certificate either, so `pane` and `install.sh` are
+  unsigned and nothing is notarized: Gatekeeper blocks the first launch
+  of a Pane.app a browser downloaded (the README and the doc above say
+  how the user answers that), while a package built on the machine runs
+  at once. Acquiring the certificate, signing and notarizing are
+  prerequisites for a release, like the others here.
 - **The artifact this build serves is built for the system it ran on.**
   The helper sample's payload declares the one helper target its file was
-  built for (`linux-x86_64` and `windows-x86_64` on CI, `linux-aarch64`
-  on an arm64 checkout; the sample's manifest names them all, and the
-  packaging rewrites it to the target whose file the build assembled);
-  a real deployment must build every supported target and serve one
-  payload whose manifest names them all, or serve one payload per system
-  at a per-system index.
+  built for (`linux-x86_64`, `windows-x86_64` and `macos-aarch64` on CI,
+  `linux-aarch64` on an arm64 checkout; the sample's manifest names them
+  all, and the packaging rewrites it to the target whose file the build
+  assembled); a real deployment must build every supported target and
+  serve one payload whose manifest names them all, or serve one payload
+  per system at a per-system index.
 - **One package per system**, built where it runs; cross-building and
   packaging for a system this task cannot build on is out of scope (the
   evidence for each is per-system, as the specification requires). On
-  Windows the task says so and stops rather than packing another system's
-  program; on Linux the task builds whatever program the checkout builds
-  (#53's behavior, kept).
+  Windows and macOS the task says so and stops rather than packing
+  another system's program; on Linux the task builds whatever program
+  the checkout builds (#53's behavior, kept).
 - **The Windows baseline is one system.** `windows-2025` (Windows Server
   2025, x86_64) is the declared baseline, the system CI builds, packages,
   installs and smokes on; no Windows 10 or 11 client edition, no ARM64
@@ -308,6 +476,46 @@ cargo run -p pane
   PowerShell on the machine that wrote them, so their runtime evidence is
   CI's Windows leg (recorded in
   [platforms/windows.md](platforms/windows.md#installing-pane-and-acquiring-its-calculator-51)).
+<<<<<<< HEAD
+- **The macOS baseline is one system.** `macos-15` (macOS 15, arm64) is
+  the declared baseline, the system CI builds, packages, installs and
+  smokes on; no Intel Mac, no other macOS version and no install on a
+  Mac of a user's own has been tried, and the smoke's clean machine is a
+  fresh home folder on that runner, not a fresh machine. The install
+  script and the smoke phase were written without a Mac on the machine
+  that wrote them (the script was linted and dry-run with a fake program
+  instead), so their runtime evidence is CI's macOS leg (recorded in
+  [platforms/macos.md](platforms/macos.md#installing-pane-and-acquiring-its-calculator-52)).
+=======
+- **The update's cadence is provisional.** Pane checks when it starts and
+  at no interval; how often a running Pane rechecks (and whether a check
+  that failed retries quietly) is a choice recorded for the user.
+  Extension updates and application updates stay separate, as the
+  specification requires: extension updates have their own controls
+  (none automatic has landed yet), and the application update has none —
+  only the user's choice, every time.
+- **Only the Windows wiring exists.** The check, download, verification
+  and swap are platform-independent `pane-core` code, but only the
+  Windows build wires them to its program; a Linux or macOS Pane checks
+  for nothing until [#55](https://github.com/hoangvu12/pane/issues/55)
+  and [#56](https://github.com/hoangvu12/pane/issues/56) wire theirs.
+  The swap is exercised by the tests on this machine's layout; the
+  running-exe rename it depends on is proven on Windows itself by the
+  smoke.
+- **Nothing about an update is signed either**, and the source it comes
+  from is the same not-yet-deployed one: a package is checked only
+  against the sha512 its index gives, over HTTPS, as a default
+  extension's payload is. An application package is at most 512 MiB
+  packed and 2 GiB unpacked (the program is large; a development build
+  of it much more), and it is not cached as payloads are: an interrupted
+  download starts over, and only the retries within one install attempt
+  keep it cheap.
+- **Concurrent Panes** on one install folder: both may check and offer;
+  two installs race by failing honestly (the swap's renames cannot both
+  happen), and a Pane starting removes a staging folder another Pane may
+  be installing from — the same small warts the shared data folder
+  already records, left as they are.
+>>>>>>> ticket-54-windows-app-update
 - **No default-extension updates.** A default extension is installed once
   and left alone: a Pane whose default is installed acquires nothing, so
   a newer payload version is not fetched (uninstalling and restarting

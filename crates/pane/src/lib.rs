@@ -53,6 +53,17 @@ pub fn bind_keys(cx: &mut App) {
     custom_view::bind_keys(cx);
 }
 
+/// The version of Pane this build is: the workspace's version, or the one
+/// `cargo xtask package-windows --package-version` gave the program when
+/// it packed it (a build whose version the packaging overrode, so an
+/// update's version transition can be checked). This is the version
+/// `pane --version` prints and the one an application update compares
+/// itself with.
+pub const APP_VERSION: &str = match option_env!("PANE_PACKAGE_VERSION") {
+    Some(version) => version,
+    None => env!("CARGO_PKG_VERSION"),
+};
+
 /// The sample commands: (id, title, subtitle, component file name). Each
 /// implements the same command in a different extension language.
 #[cfg(debug_assertions)]
@@ -143,11 +154,16 @@ pub fn default_extensions() -> Vec<pane_core::DefaultExtension> {
 /// `%LOCALAPPDATA%\Pane\cache` on Windows, `~/Library/Caches/Pane` on
 /// macOS and `$XDG_CACHE_HOME/pane` (default `~/.cache/pane`) elsewhere.
 pub fn cache_dir() -> Option<PathBuf> {
+    // Wasmtime's compile cache needs an absolute directory: a relative
+    // HOME or XDG_CACHE_HOME (the smokes' clean home is one) would otherwise
+    // stop the runtime from starting, so the path is made absolute against
+    // the folder Pane was started in.
     platform_dir(
         r"Pane\cache",
         "Library/Caches/Pane",
         ("XDG_CACHE_HOME", ".cache"),
     )
+    .and_then(|dir| std::path::absolute(dir).ok())
 }
 
 /// Where Pane keeps installed extension packages: `PANE_DATA_DIR` when set,

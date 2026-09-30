@@ -612,13 +612,74 @@ README answers is answered.
 | Enter copies the answer | pending CI (frame 502) |
 | The helper sample's prebuilt helper answers | pending CI (frame 503) |
 
+## Installing a Pane application update by the user's choice (#54)
+
+A final phase, after the installer one, proves the whole outcome of
+[#54](https://github.com/hoangvu12/pane/issues/54)
+([installer](../installer.md)). The same `cargo xtask package-windows
+--dev` builds a **second** package with `--package-version 99.0.0`: a
+program that reports 99.0.0, a package named by it, and an index whose
+`application` entry names that package for `windows-x86_64` — the two
+runnable builds an update goes between. The 0.1.0 package the installer
+phase built is installed on another clean profile (its install script,
+its empty PATH, its own data under `%LOCALAPPDATA%\Pane\data`), and the
+smoke serves the 99.0.0 artifacts from 127.0.0.1 with
+`scripts/artifact_server.py` (nothing reaches the network or Pane's
+published downloads). The installed 0.1.0 Pane, started with
+`PANE_ARTIFACTS`, acquires its default extensions and, in the same
+background, checks the index for a newer version of itself: the offer
+appears as **Update Pane to 99.0.0** in root search (frame 601; the
+status line tells what was found, frame 600). The artifact server's log
+must hold **no request for the package** until the row is chosen —
+nothing is downloaded, installed or restarted automatically. The Helper
+sample is disabled first, so an extension the user disabled before the
+update must stay disabled after it. Choosing the row with a **damaged
+package** is explained (its bytes do not match the sha512 its entry
+gives, frame 602) with the program, the data and the folder untouched
+and the row ready to try again; then the real choice downloads the
+package, checks it, unpacks it and swaps the running `pane.exe` — the
+old program renamed `pane.exe.old`, the new one in its place, the
+staging folder gone (frame 603, and hash checks of both programs against
+the two packages' own files). The next start runs the new version: it
+reports `Pane 99.0.0`, removes `pane.exe.old` at start, the calculator
+still answers "6*7" with 42 from the old version's acquired payload
+(frames 604 and 605), and the disabled Helper sample stays disabled —
+Pane's data was never touched. Pane itself was never restarted by the
+update: the smoke stops the old process and starts the new program
+itself, exactly as the user would.
+
+**Recorded 2026-09-30, this branch's machine (headless aarch64 Linux —
+no Windows, and no PowerShell to parse the scripts):** what ran locally
+is everything that machine can run: the platform-independent half
+(`crates/pane-core/tests/app_update.rs`, all passing, including the
+swap, the failures and the data kept), the strict zip reader's unit
+tests, and `cargo xtask package-linux --dev` (with and without
+`--package-version 99.0.0`) end-to-end — two packages named by their
+versions, the index carrying the `application` entry naming the package,
+the program reporting the overridden version, and the package served
+from the artifacts folder. The PowerShell smoke phase, the
+`--package-version` Windows build and the running-exe rename on Windows
+itself are **pending CI**: they need the Windows build and interactive
+desktop only the `windows-2025` runner provides. The running-`pane.exe`
+rename the swap depends on is a documented Windows behavior (renaming a
+running executable is allowed; overwriting one is not) that only the
+runner can prove end to end.
+
+| Step | Evidence |
+| --- | --- |
+| The check at start tells the user; nothing is downloaded until they choose | pending CI (frames 600, 601) |
+| A damaged package is explained, everything untouched, the row retried | pending CI (frame 602) |
+| The user's choice swaps the running program; the new one is used the next start | pending CI (frame 603) |
+| The new version reports itself; the old version's data and enablement are kept | pending CI (frames 604, 605) |
+
 ## Remaining limits
 
 - Only a CI runner (Windows Server) was used, not a Windows 10/11 desktop.
 - The installer (#51, [above](#installing-pane-and-acquiring-its-calculator-51))
-  has run nowhere yet: its PowerShell script and smoke phase were written
-  without PowerShell on hand, and its runtime evidence is CI's Windows
-  leg. Nothing is signed, so an unknown-publisher warning and
+  and the application update (#54, [above](#installing-a-pane-application-update-by-user-choice-54))
+  have run nowhere yet: their PowerShell scripts and smoke phases were
+  written without PowerShell on hand, and their runtime evidence is CI's
+  Windows leg. Nothing is signed, so an unknown-publisher warning and
   PowerShell's policy question are expected, not errors.
 - No screen reader (Narrator/NVDA) was run. The accessibility tree is verified
   only through GPUI in the platform-independent window tests.
