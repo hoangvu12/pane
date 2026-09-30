@@ -1790,8 +1790,10 @@ for _ in $(seq 600); do [ -s "$out/artifact-server.port" ] && break; kill -0 "$a
 tar -xzf "$package" -C "$unpack"
 clean_bin=$out/clean-bin
 rm -rf "$clean_bin"; mkdir -p "$clean_bin"
-# Nothing can be reached at all from the PATH Pane runs with.
-[ -z "$(env -i PATH="$clean_bin" sh -c 'command -v cargo rustc node npm git cc clang make' 2>/dev/null)" ] \
+# Nothing can be reached at all from the PATH Pane runs with. The shell
+# is named absolutely, so the check really runs: env would search for a
+# bare `sh` in the empty PATH and fail before checking anything.
+[ -z "$(env -i PATH="$clean_bin" /bin/sh -c 'command -v cargo rustc node npm git cc clang make' 2>/dev/null)" ] \
   || { echo "the clean machine still reaches a development tool"; exit 1; }
 env -i HOME="$home" PATH="/usr/bin:/bin" bash "$unpack/pane/install.sh" >>"$out/install.log" 2>&1 \
   || { echo "the install script failed (see $out/install.log)"; exit 1; }
