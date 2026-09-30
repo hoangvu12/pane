@@ -190,14 +190,16 @@ def rss_stats(samples):
 
 def cpu_seconds(samples):
     """The tree's CPU time across the phase, restarts included: the tick
-    deltas between consecutive samples of one live root pid, summed."""
+    deltas between consecutive samples of one live root pid, summed. A
+    process that leaves the tree between samples can lose its last ticks
+    (a negative delta), so a delta is never subtracted."""
     total, previous = 0, None
     for entry in samples:
         if entry["nproc"] == 0:
             previous = None
             continue
         if previous and previous[0] == entry["root"]:
-            total += entry["cpu_ticks"] - previous[1]
+            total += max(0, entry["cpu_ticks"] - previous[1])
         previous = (entry["root"], entry["cpu_ticks"])
     return round(total / CLK_TCK, 3)
 

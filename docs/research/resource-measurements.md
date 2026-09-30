@@ -119,10 +119,13 @@ here once a run collects them. The runner is the `ubuntu-24.04` leg the
 
 Ubuntu 24.04.5 LTS, kernel 5.15.0-1081-oracle, aarch64, 3 CPUs, no
 display and no Xvfb: the GUI workload cannot run here, so no aarch64
-numbers exist. What ran here: `proc_tree.py selfcheck` (28 samples of a
-`sleep` process tree, both tree-walk paths), the whole record path with a
-synthetic record (`summary` and `check`, including the per-extension
-derivation and a deliberate breach failing), `bash -n` on both scripts.
+numbers exist. What ran here: `proc_tree.py selfcheck` (a `sleep` process
+with children, both tree-walk paths, the summary and check behaviour), the
+whole record path with a synthetic record (`summary` and `check`, including
+the per-extension derivation and a deliberate breach failing), a full
+stubbed dry run of the workload's mechanics end to end (every phase, the
+sampler wiring, the record and the check; no GUI, so no measurement), and
+`bash -n` on both scripts.
 aarch64 GUI numbers would need the smoke's environment on an aarch64
 machine; only the x86_64 CI leg is claimed.
 
