@@ -64,8 +64,9 @@ jobs:
       # The many test binaries each link Pane's whole dependency tree, so
       # the Linux legs link them with mold (Windows and macOS link with
       # their own linkers; the empty value keeps the cache key uniform
-      # per operating system).
-      RUSTFLAGS: ${{ runner.os == 'Linux' && '-C link-arg=-fuse-ld=mold' || '' }}
+      # per operating system). The matrix is what a job-level env may read:
+      # the runner context exists only inside a step.
+      RUSTFLAGS: ${{ matrix.os == 'ubuntu-24.04' && '-C link-arg=-fuse-ld=mold' || '' }}
     steps:
       - uses: actions/checkout@v4
       - name: Install Linux build dependencies
@@ -114,7 +115,8 @@ jobs:
         os: [windows-2025, macos-15, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
     env:
-      RUSTFLAGS: ${{ runner.os == 'Linux' && '-C link-arg=-fuse-ld=mold' || '' }}
+      # As in the check job: the matrix is what a job-level env may read.
+      RUSTFLAGS: ${{ matrix.os == 'ubuntu-24.04' && '-C link-arg=-fuse-ld=mold' || '' }}
     steps:
       - uses: actions/checkout@v4
       - name: Install Linux build dependencies
