@@ -1,7 +1,8 @@
 //! Pane's own updates: finding out a newer version of Pane exists, and
-//! installing it by the user's choice (#54, the Windows half; the check,
-//! the download and the verification are the same on every system, and
-//! another OS's slice wires the same machinery to its own program).
+//! installing it by the user's choice (#54 wired the Windows half, #56
+//! the Linux one; the check, the download, the verification and the swap
+//! are the same on every system, and another OS's slice wires the same
+//! machinery to its own program).
 //!
 //! Pane never updates itself on its own: it checks the artifact source
 //! ([`crate::defaults`], the same one the default extensions come from)
@@ -24,8 +25,10 @@
 //! else it keeps) lives beside the program, untouched by the swap.
 //!
 //! The package installed is the one the artifact source serves: the
-//! Windows package, a zip holding `pane.exe` under `pane/`, read here as
-//! strictly as an npm package's tarball is ([`crate::zip`]).
+//! package built for this Pane's system — a zip holding `pane.exe` under
+//! `pane/` on Windows, a gzipped tarball holding `pane` under `pane/` on
+//! Linux — each read as strictly as an npm package's tarball is
+//! ([`crate::zip`], [`crate::npm::unpack_within`]).
 
 use std::fs;
 use std::path::PathBuf;
@@ -43,8 +46,8 @@ pub(crate) const MAX_PACKAGE: u64 = 512 << 20;
 const STAGING: &str = "update";
 
 /// The program Pane runs from, and where an update replaces it: the folder
-/// it is installed in (`%LOCALAPPDATA%\Pane` on Windows) and its file
-/// name (`pane.exe`).
+/// it is installed in and its file name (`%LOCALAPPDATA%\Pane` holding
+/// `pane.exe` on Windows, `~/.local/bin` holding `pane` on Linux).
 #[derive(Clone, Debug)]
 pub(crate) struct Program {
     folder: PathBuf,
@@ -262,7 +265,25 @@ pub(crate) fn swap(package: &[u8], offer: &Offer, program: &Program) -> Result<(
     // A staging folder a stopped Pane left, or another Pane holds, goes:
     // what it holds is unpacked again below.
     let _ = fs::remove_dir_all(&staging);
-    let unpacked = crate::zip::unpack(package, &staging).map_err(|why| {
+    // The package comes in the format the system it is for packs: the zip
+    // a Windows or macOS package is, or the gzipped tarball a Linux one
+    // is. Each is read with the same strictness (only files and folders
+    // inside the package, one plain name per part, within the
+    // application package's bounds), and each unpacks without the
+    // package's top folder (`pane/`), so the program the package holds
+    // lands in the staging folder by its own name, which the swap below
+    // takes.
+    let unpacked = if offer.file.ends_with(".zip") {
+        crate::zip::unpack(package, &staging)
+    } else if offer.file.ends_with(".tar.gz") || offer.file.ends_with(".tgz") {
+        crate::npm::unpack_within(package, &staging, crate::zip::MAX_UNPACKED)
+    } else {
+        Err(format!(
+            "Pane unpacks a package named `.zip` or `.tar.gz`, not `{}`",
+            offer.file
+        ))
+    };
+    let unpacked = unpacked.map_err(|why| {
         format!(
             "the package `{}` cannot be unpacked safely: {why}; Pane installs only the files \
              and folders inside the package",
@@ -396,6 +417,13 @@ mod tests {
         assert_eq!(program.path(), PathBuf::from("/opt/pane/pane.exe"));
         assert_eq!(program.old(), PathBuf::from("/opt/pane/pane.exe.old"));
         assert_eq!(program.staging(), PathBuf::from("/opt/pane/update"));
+        // The Linux program, as the install script installs it: `pane` with
+        // no suffix, in the user's own bin folder, whose name the swap
+        // renames aside and whose folder the staging folder goes in.
+        let program = Program::at(PathBuf::from("/home/u/.local/bin/pane")).unwrap();
+        assert_eq!(program.path(), PathBuf::from("/home/u/.local/bin/pane"));
+        assert_eq!(program.old(), PathBuf::from("/home/u/.local/bin/pane.old"));
+        assert_eq!(program.staging(), PathBuf::from("/home/u/.local/bin/update"));
         assert!(Program::at(PathBuf::from("pane.exe")).is_ok());
         // The program file's name is where it is; a path with no file name
         // names no program.

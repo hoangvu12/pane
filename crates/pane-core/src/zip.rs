@@ -27,10 +27,11 @@ use std::path::Path;
 
 use crate::npm::inside;
 
-/// The largest an application package unpacks to: the package holds the
-/// whole program, which a development build of is larger than a release
-/// one by an order of magnitude.
-const MAX_UNPACKED: u64 = 2 << 30;
+/// The largest an application package unpacks to, however it is packed
+/// (a zip, or the gzipped tarball the Linux package is): the package
+/// holds the whole program, which a development build of is larger than
+/// a release one by an order of magnitude.
+pub(crate) const MAX_UNPACKED: u64 = 2 << 30;
 
 /// The largest number of entries an application package holds.
 const MAX_ENTRIES: usize = 10_000;
