@@ -88,7 +88,9 @@ An eligible npm package updates by itself (what makes one eligible is
 [below](#which-packages-update)): Pane's updater, a background thread of the
 launcher's, checks the registry and replaces the managed copy with a
 compatible newer version, at a safe moment, without the user asking
-(US72–US75; #49).
+(US72–US75; #49). The same updater, cadence, controls and safe boundary
+update a tracked Git package from the newer commit of its branch
+([git](git.md#updating-by-itself); #50).
 
 **When it checks.** Once shortly after Pane starts (a second after, so
 that a development build's registry is in place first) and then every 24
@@ -310,7 +312,9 @@ is a local package requiring it.
   Develop rows.
 - [`crates/pane-core/tests/update.rs`](../crates/pane-core/tests/update.rs),
   with the settings sample packed as an npm package and served from a
-  local registry: a newer version updating the package by itself, keeping
+  local registry, and the Git sample's repository from
+  [git](git.md#checks)'s own server (the [Git half](git.md#checks) of the
+  same suite): a newer version updating the package by itself, keeping
   its settings and ending the old code's generation; a command that is
   running finishing first, the update waiting until the screen the answer
   is on closes; a pinned, disabled and opted-out package not replaced, and

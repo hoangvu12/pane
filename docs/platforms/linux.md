@@ -746,6 +746,20 @@ were recorded again: 302 now shows every Git line whole above Install (304
 was unchanged). After the second review the whole smoke passed again and
 300 and 302 were recorded once more: 302 shows the reworded last Git line.
 
+#50 extends the phase with a second repository of the same sample
+(`make-sample` again, `greeter-tracked` beside `greeter`, served by the
+same server, which answers each request from the folder as it is),
+installed in a data folder of its own from its tracked `release` branch
+(`--install git:<address>@release`: the preview says "Revision: branch
+release, tracked: an update fetches that branch again", 305; installed,
+306); `repository_server.py move-sample` then commits a 0.2.0 on the
+branch while Pane is stopped, and the check a second after the restart
+replaces the installed copy by itself — nothing of it running — saying
+"Updated Greeter from Git to 0.2.0" (307, captured until it shows), the
+new copy's command answering as before (308); `installed.json` must
+record the branch's new commit, tracked and unpinned. Those frames await
+their first run (the next smoke run, local or CI's).
+
 | Step | Evidence |
 | --- | --- |
 | The default branch, source only: explained, nothing installed | [300-git-source-only.png](evidence/linux-x11/300-git-source-only.png) |

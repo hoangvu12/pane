@@ -1,21 +1,31 @@
-//! Automatic updates of installed npm packages through the launcher's
-//! public interface, from a local registry on 127.0.0.1 that each test
-//! fills (`support/npm_registry.rs`): nothing here reaches the network or
-//! the real npm registry. The package is the assembled JavaScript
-//! settings sample (`target/guests/packages/sample-settings-js`) packed
-//! as an npm package: its Greeting command saves settings and has "Save
-//! after waiting", which waits ten seconds, so that a command still
-//! running can stand in the update's way.
+//! Automatic updates of installed npm and Git packages through the
+//! launcher's public interface: the npm ones from a local registry on
+//! 127.0.0.1 that each test fills (`support/npm_registry.rs`), the Git
+//! ones from a repository each test makes with the `git` program and
+//! serves over Git's smart HTTP protocol from 127.0.0.1
+//! (`support/repo_server.rs`) — nothing here reaches the network, the
+//! real npm registry or a real Git host. The npm package is the assembled
+//! JavaScript settings sample
+//! (`target/guests/packages/sample-settings-js`) packed as an npm
+//! package: its Greeting command saves settings and has "Save after
+//! waiting", which waits ten seconds, so that a command still running can
+//! stand in the update's way. The Git package is the assembled Git sample
+//! (`target/guests/git/greeter`), whose tracked `release` branch moves to
+//! a newer commit.
 //!
-//! What is checked: a newer version updates the package by itself once
-//! no command of it runs, keeping its identity, its settings and its
-//! disabled state, ending the old code's generation; a command that is
-//! running finishes first, the update waiting until the screen the user
-//! is on closes; a pinned, disabled, or turned-off package is never
-//! replaced, and neither is an installed local folder's copy; the global
-//! and per-extension controls work through Manage extensions; an
-//! incompatible version, a dependency that cannot be installed and an
-//! unreachable registry explain and leave the installed copy alone; an
+//! What is checked: a newer version updates the npm package by itself
+//! once no command of it runs, keeping its identity, its settings and its
+//! disabled state, ending the old code's generation, and a tracked
+//! branch that has moved updates the Git package the same way, keeping
+//! its identity and its tracked reference, while a pinned revision never
+//! moves; a command that is running finishes first, the update waiting
+//! until the screen the user is on closes; a pinned, disabled, or
+//! turned-off package is never replaced, and neither is an installed
+//! local folder's copy; the global and per-extension controls work
+//! through Manage extensions, a Git package's row among them; an
+//! incompatible version, a dependency that cannot be installed, an
+//! unreachable registry and a tracked branch that has moved to a
+//! source-only revision explain and leave the installed copy alone; an
 //! action or an opening asked in the moment the replacement is being
 //! applied is refused rather than started and stopped by it; a new
 //! version that fails to start is not rolled back; and the check repeats
@@ -35,10 +45,13 @@ use tempfile::TempDir;
 
 #[path = "support/npm_registry.rs"]
 mod npm_registry;
+#[path = "support/repo_server.rs"]
+mod repo_server;
 #[path = "support/unreachable.rs"]
 mod unreachable;
 
 use npm_registry::{Registry, pack};
+use repo_server::{Repo, Server, greeter_files};
 
 /// The npm name of the package every test here installs.
 const NAME: &str = "@pane-tests/settings";
@@ -128,6 +141,9 @@ struct Dirs {
     data: TempDir,
     runtime: Runtime,
     registry: Registry,
+    /// Where each test's Git repositories are made, served by `server`.
+    repos: TempDir,
+    server: Server,
     clock: Arc<ManualClock>,
 }
 
@@ -138,6 +154,8 @@ impl Dirs {
             data: tempfile::tempdir().unwrap(),
             runtime: Runtime::start().unwrap(),
             registry: Registry::start(),
+            repos: tempfile::tempdir().unwrap(),
+            server: Server::start(),
             clock: clock.clone(),
         }
     }
@@ -255,6 +273,117 @@ impl Dirs {
             launcher.wait_for_updates(Duration::from_secs(30)),
             "the updater did not settle"
         );
+    }
+
+    /// The identity key of the Git repository served as `name`, as an
+    /// installed record's `git` field names it.
+    fn git_identity(&self, name: &str) -> String {
+        format!(
+            "git:{}{}",
+            self.server.url().trim_start_matches("http://"),
+            name
+        )
+    }
+
+    /// A new Git repository served as `name`, the controlled repository
+    /// of the Git sample: its source alone on `main`, its built component
+    /// on the branch `release`, tagged `v0.1.0`.
+    fn git_repository(&self, name: &str) -> GitGreeter {
+        let repo = Repo::init(&self.repos.path().join(name), self.server.home());
+        let url = self.server.serve(name, &repo);
+        repo.commit(&greeter_files(&guests(), false), "Greeter 0.1.0 source");
+        repo.git(&["switch", "--quiet", "-c", "release"]);
+        let release = repo.commit(&greeter_files(&guests(), true), "Release 0.1.0");
+        repo.tag("v0.1.0");
+        repo.git(&["switch", "--quiet", "main"]);
+        GitGreeter {
+            repo,
+            url,
+            release,
+        }
+    }
+
+    /// The record of the package installed from the Git repository served
+    /// as `name`, in `installed.json`.
+    fn git_record(&self, name: &str) -> serde_json::Value {
+        let git = self.git_identity(name);
+        let text = fs::read_to_string(self.packages_dir().join("installed.json")).unwrap();
+        let registry: serde_json::Value = serde_json::from_str(&text).unwrap();
+        registry["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|record| record["git"] == git.as_str())
+            .cloned()
+            .unwrap_or_else(|| panic!("no record of {git} in {registry:#}"))
+    }
+
+    /// The commit the package installed from the Git repository served as
+    /// `name` is at, from its record.
+    fn git_commit(&self, name: &str) -> String {
+        self.git_record(name)["gitCommit"].as_str().unwrap().to_owned()
+    }
+
+    /// Waits until the downloads folder is empty, as an ended install or
+    /// update leaves it.
+    fn wait_for_no_downloads(&self) {
+        let downloads = self.packages_dir().join("downloads");
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let left: Vec<_> = fs::read_dir(&downloads)
+                .map(|entries| entries.map(|e| e.unwrap().file_name()).collect())
+                .unwrap_or_default();
+            if left.is_empty() {
+                return;
+            }
+            assert!(Instant::now() < deadline, "downloads left: {left:?}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
+
+/// The controlled Git repository of the Git sample, as
+/// [`Dirs::git_repository`] makes it: `main` holding the source only,
+/// `release` its built component (tagged `v0.1.0`), so that a tracked
+/// branch can move while Pane is not looking.
+struct GitGreeter {
+    repo: Repo,
+    /// The address it is served at, `http://127.0.0.1:<port>/<name>.git`.
+    url: String,
+    /// `release`, tagged `v0.1.0`: with the built component.
+    release: String,
+}
+
+impl GitGreeter {
+    /// Moves the release branch to a new release of the sample at
+    /// `version`, a commit that changes only the manifest's version: what
+    /// a tracked branch moving looks like to the updater. `main` and the
+    /// tag stay where they were, pointing at the old release.
+    fn move_release(&self, version: &str) -> String {
+        self.repo.git(&["switch", "--quiet", "release"]);
+        let mut files = greeter_files(&guests(), true);
+        for (path, contents) in &mut files {
+            if *path == "pane.json" {
+                let manifest = String::from_utf8(std::mem::take(contents)).unwrap();
+                *contents = manifest
+                    .replace("\"version\": \"0.1.0\"", &format!("\"version\": \"{version}\""))
+                    .into_bytes();
+            }
+        }
+        let moved = self.repo.commit(&files, &format!("Release {version}"));
+        self.repo.git(&["switch", "--quiet", "main"]);
+        moved
+    }
+
+    /// Moves the release branch to a revision holding the source only,
+    /// without the built component: an unrunnable revision the updater
+    /// must refuse, as a preview would.
+    fn move_release_to_source(&self) -> String {
+        self.repo.git(&["switch", "--quiet", "release"]);
+        self.repo.git(&["rm", "--quiet", "-r", "dist"]);
+        let moved = self.repo.commit(&[], "Source only");
+        self.repo.git(&["switch", "--quiet", "main"]);
+        moved
     }
 }
 
@@ -863,4 +992,170 @@ fn a_new_version_that_fails_to_start_is_not_rolled_back() {
     activate(&launcher, "Started on a later attempt");
     assert_eq!(launcher.view().status, Status::Result("ran started".into()));
     assert_eq!(dirs.installed_version(), "0.2.0");
+}
+
+/// What the Greeter from Git command's "Say hello" answers.
+const GIT_HELLO: &str = "Hello from the Git repository";
+
+/// Opens the Greeter from Git command from root search and runs `item`,
+/// returning the status; the command's screen stays open, as it does for
+/// a user.
+fn run_greeter(launcher: &Launcher, item: &str) -> Status {
+    to_root(launcher);
+    activate(launcher, "Greeter from Git");
+    assert_eq!(launcher.view().screen, Screen::Command);
+    activate(launcher, item);
+    launcher.view().status
+}
+
+#[test]
+fn a_moved_tracked_branch_updates_the_package_by_itself() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher();
+    let greeter = dirs.git_repository("greeter");
+
+    // Installed from its tracked release branch; its command runs.
+    block_on(launcher.install_git(&format!("{}@release", greeter.url)));
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Installed Greeter from Git".into())
+    );
+    assert_eq!(
+        run_greeter(&launcher, "Say hello"),
+        Status::Result(GIT_HELLO.into())
+    );
+    let record = dirs.git_record("greeter");
+    assert_eq!(record["gitRef"], "refs/heads/release");
+    assert_eq!(record["gitCommit"], greeter.release.as_str());
+    assert_eq!(record["pinned"], serde_json::json!(false));
+
+    // The branch moves to a new release while no command runs.
+    let moved = greeter.move_release("0.2.0");
+    dirs.check(&launcher);
+
+    // The update applied by itself: the record keeps the identity, the
+    // tracked branch and the pin, at the branch's new commit, and the
+    // status line says what happened.
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Updated Greeter from Git to 0.2.0".into())
+    );
+    let record = dirs.git_record("greeter");
+    assert_eq!(record["git"], dirs.git_identity("greeter").as_str());
+    assert_eq!(record["gitRef"], "refs/heads/release");
+    assert_eq!(record["gitCommit"], moved.as_str());
+    assert_eq!(record["pinned"], serde_json::json!(false));
+    dirs.wait_for_no_downloads();
+
+    // The new copy runs, and a check that finds the branch at its new
+    // commit fetches nothing: no download appears and the record stays.
+    assert_eq!(
+        run_greeter(&launcher, "Say hello"),
+        Status::Result(GIT_HELLO.into())
+    );
+    dirs.check(&launcher);
+    assert_eq!(dirs.git_commit("greeter"), moved);
+    dirs.wait_for_no_downloads();
+}
+
+#[test]
+fn a_pinned_revision_is_never_updated_automatically() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher();
+    let greeter = dirs.git_repository("greeter");
+
+    // Installed from its release tag: pinned, whatever the branch does.
+    block_on(launcher.install_git(&format!("{}@v0.1.0", greeter.url)));
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Installed Greeter from Git".into())
+    );
+    let record = dirs.git_record("greeter");
+    assert_eq!(record["gitRef"], "refs/tags/v0.1.0");
+    assert_eq!(record["pinned"], serde_json::json!(true));
+    let asked = dirs.server.requests().len();
+
+    // Both the tag and the branch move; a check runs. Not even the
+    // repository's listing is asked for: a pinned revision is not a
+    // candidate.
+    greeter.move_release("0.2.0");
+    dirs.check(&launcher);
+
+    assert_eq!(dirs.git_commit("greeter"), greeter.release);
+    assert_eq!(dirs.server.requests().len(), asked);
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Installed Greeter from Git".into())
+    );
+}
+
+#[test]
+fn an_opted_out_git_package_is_not_updated_until_the_user_turns_updates_back_on() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher();
+    let greeter = dirs.git_repository("greeter");
+    block_on(launcher.install_git(&format!("{}@release", greeter.url)));
+
+    // The row in Manage extensions, and what it says before and after.
+    manage(&launcher);
+    activate(&launcher, "Update Greeter from Git automatically");
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Automatic updates of Greeter from Git are off".into())
+    );
+    assert!(
+        titles(&launcher)
+            .contains(&"Update Greeter from Git automatically".to_owned())
+    );
+
+    greeter.move_release("0.2.0");
+    let asked = dirs.server.requests().len();
+    dirs.check(&launcher);
+    assert_eq!(dirs.git_commit("greeter"), greeter.release);
+    assert_eq!(dirs.server.requests().len(), asked);
+
+    // Turning it back on checks at once, and the update applies.
+    activate(&launcher, "Update Greeter from Git automatically");
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Automatic updates of Greeter from Git are on".into())
+    );
+    wait_until("the update applied", Duration::from_secs(30), || {
+        dirs.git_commit("greeter") != greeter.release
+    });
+}
+
+#[test]
+fn a_tracked_branch_now_holding_only_the_source_is_refused() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher();
+    let greeter = dirs.git_repository("greeter");
+    block_on(launcher.install_git(&format!("{}@release", greeter.url)));
+    assert_eq!(
+        run_greeter(&launcher, "Say hello"),
+        Status::Result(GIT_HELLO.into())
+    );
+
+    // The branch moves to a revision without the built component: not a
+    // runnable release revision, refused as a preview would refuse it,
+    // with the installed copy untouched and still running.
+    greeter.move_release_to_source();
+    dirs.check(&launcher);
+
+    let status = launcher.view().status.clone();
+    let Status::Error(explanation) = &status else {
+        panic!("not an error: {status:?}")
+    };
+    assert!(
+        explanation.starts_with("Greeter from Git was not updated: Branch release (commit ")
+            && explanation.contains("holds only the source of")
+            && explanation.ends_with("It keeps running its installed code."),
+        "{explanation}"
+    );
+    assert_eq!(dirs.git_commit("greeter"), greeter.release);
+    assert_eq!(
+        run_greeter(&launcher, "Say hello"),
+        Status::Result(GIT_HELLO.into())
+    );
+    dirs.wait_for_no_downloads();
 }
