@@ -2040,14 +2040,17 @@ try {
     $process = Start-Pane "stderr-installed.log" @() $installed
     $env:PATH = $realPath
     $extensions = Join-Path $install "data\extensions"
-    # Generous: a slow runner may take a while to check both payloads'
+    # Generous: a slow runner may take a while to check every payload's
     # components (120 s each).
     if ($process.HasExited) { throw "the installed Pane exited during setup" }
-    Wait-For (Join-Path $extensions "installed.json") '"default": "calculator"' $true 1200
-    Wait-For (Join-Path $extensions "installed.json") '"default": "helper-sample"' $true 1200
+    # The release's default extensions (#60): all five, plus the helper
+    # sample a development build acquires with them.
+    foreach ($default in "calculator", "applications", "quicklinks", "files", "clipboard-history", "helper-sample") {
+        Wait-For (Join-Path $extensions "installed.json") ('"default": "' + $default + '"') $true 1200
+    }
     Start-Sleep -Seconds 1
     Capture "500-installed-root.png"
-    Check "500-installed-root.png" "aab4c0"   # root search: the calculator and Helper sample commands are listed
+    Check "500-installed-root.png" "aab4c0"   # root search: the default extensions' commands are listed
     Send "6*7"; Start-Sleep -Seconds 2
     Capture "501-calculator-answer.png"
     Check "501-calculator-answer.png" "364355" 3000   # "42", the calculator's selected answer row
@@ -2146,11 +2149,13 @@ try {
     $env:PANE_ARTIFACTS = "http://127.0.0.1:$((Get-Content $portFile).Trim())/"
     $process = Start-Pane "update-stderr-0.1.0.log" @() $installed
     $env:PATH = $realPath
-    # First setup: the default extensions are acquired (2 index reads),
-    # and Pane's own check reads the index once more.
+    # First setup: the default extensions are acquired (one index read
+    # per payload), and Pane's own check reads the index once more.
     if ($process.HasExited) { throw "the installed Pane exited during setup" }
-    Wait-For $registry '"default": "calculator"' $true 1200
-    Wait-For $registry '"default": "helper-sample"' $true 1200
+    # The release's default set (#60) plus the helper sample.
+    foreach ($default in "calculator", "applications", "quicklinks", "files", "clipboard-history", "helper-sample") {
+        Wait-For $registry ('"default": "' + $default + '"') $true 1200
+    }
     # The check has read the index (its request is the third): the offer
     # is in root search. The status line tells what it found; nothing has
     # been downloaded.
@@ -2173,7 +2178,9 @@ try {
     # before the update must stay disabled after it.
     Send "^a"; Send "manage"; Start-Sleep -Seconds 1
     Send "{ENTER}"; Start-Sleep -Seconds 1   # Manage extensions…
-    Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2   # Helper sample: disabled
+    # The Helper sample is the sixth extension now (#60's set is listed
+    # first), so five Downs reach it.
+    Send "{DOWN 5}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2   # Helper sample: disabled
     Wait-For $registry '"disabled": true' $true
     Send "{ESC}"; Start-Sleep -Seconds 1
 
