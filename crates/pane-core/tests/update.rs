@@ -893,19 +893,20 @@ fn an_action_asked_while_the_update_applies_is_refused_not_stopped() {
     dirs.install(&launcher, "0.1.0");
 
     // A new version whose component is padded out, so applying it — the
-    // download's unpack, the integrity check and the write of the managed
-    // copy — takes a while: the claim the apply holds stays open long
-    // enough to ask something of the package inside it. The pad is
-    // 192 MiB, and the claim is read directly (below) rather than watched
-    // for through the write's effect: a fast disk can write even that
-    // much between two of the test's 20 ms polls (run 36799361640's macOS
-    // leg applied the whole update between two polls, the action was not
-    // refused and the test read an idle status). The waits below are
-    // 120 s because the download, unpack and integrity check of that much
-    // padding are slow on a loaded machine (a local run under a game's
-    // CPU load needed more than 30 s of debug-build work before the copy
-    // began).
-    dirs.publish_component("0.2.0", padded_component(192 * 1024 * 1024));
+    // unpack, the checks and the write of the managed copy — takes a
+    // while: the claim the apply holds stays open long enough to ask
+    // something of the package inside it. The pad is 16 MiB: the claim
+    // is read directly (below), from before the copy is written until
+    // after it lands, so the pad only has to make the apply outlast the
+    // test's 20 ms polling — not, as the write's effect once had to
+    // (runs 36799361640 and 36810472261's macOS legs: 48 MiB was written
+    // whole between two polls, and 192 MiB was so slow to stage — the
+    // download, unpack and integrity check before the claim, on a debug
+    // build on a loaded runner — that the apply never began within the
+    // 120 s wait). A smaller pad keeps the stage quick enough to reach
+    // the apply well within the waits however loaded the runner is. The
+    // waits stay 120 s, generous for a loaded machine.
+    dirs.publish_component("0.2.0", padded_component(16 * 1024 * 1024));
 
     // An action of the package's command, asked for but not sent yet: as
     // the deferral test holds a command running by not resolving it, this
