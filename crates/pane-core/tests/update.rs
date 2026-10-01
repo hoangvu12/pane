@@ -907,8 +907,16 @@ fn an_action_asked_while_the_update_applies_is_refused_not_stopped() {
     // A new version whose component is padded out, so writing its managed
     // copy takes a while: the window between the updater claiming the
     // package and the replacement landing stays open long enough to ask
-    // something of the package inside it.
-    dirs.publish_component("0.2.0", padded_component(48 * 1024 * 1024));
+    // something of the package inside it. The pad is 192 MiB because a
+    // fast disk writes 48 MiB faster than the test's 20 ms polling can
+    // notice the window opened (run 36799361640's macOS leg applied the
+    // whole update between two polls, the action was not refused and the
+    // test read an idle status); 192 MiB keeps the write well past the
+    // polling interval even there. The waits below are 120 s because the
+    // download, unpack and integrity check of that much padding are slow
+    // on a loaded machine (a local run under a game's CPU load needed
+    // more than 30 s of debug-build work before the copy began).
+    dirs.publish_component("0.2.0", padded_component(192 * 1024 * 1024));
 
     // An action of the package's command, asked for but not sent yet: as
     // the deferral test holds a command running by not resolving it, this
@@ -926,7 +934,7 @@ fn an_action_asked_while_the_update_applies_is_refused_not_stopped() {
     dirs.clock.advance(Duration::from_secs(2));
     wait_until(
         "the update began replacing the copy",
-        Duration::from_secs(30),
+        Duration::from_secs(120),
         || managed_folders(&dirs) != before,
     );
 
@@ -943,7 +951,7 @@ fn an_action_asked_while_the_update_applies_is_refused_not_stopped() {
     );
 
     // The update lands, and the refused action never ran.
-    wait_until("the update applied", Duration::from_secs(30), || {
+    wait_until("the update applied", Duration::from_secs(120), || {
         dirs.installed_version() == "0.2.0"
     });
     assert!(!dirs.settings().contains("casual"));

@@ -98,6 +98,23 @@ start_pane() {
   done
   [ -n "$window" ] || { echo "Pane window did not appear"; exit 1; }
   sleep 2
+  # A --install preview arrives once its check finishes; until then the
+  # screen is root search, whose query field's border is #8ab4f8. Wait for
+  # the field to leave, so the phase's first Enter lands on the preview:
+  # run 36796103906's frame 31 lost that race (the check outlasted the
+  # wait and the Enter opened root search's own first row instead).
+  if [ "${1:-}" = "--install" ]; then
+    for _ in $(seq 60); do
+      capture preview-wait.png
+      if python3 "$(dirname "$0")/check_screenshot.py" --absent "$out/preview-wait.png" 8ab4f8; then
+        break
+      fi
+      sleep 0.5
+    done
+    capture preview-wait.png
+    python3 "$(dirname "$0")/check_screenshot.py" --absent "$out/preview-wait.png" 8ab4f8 \
+      || { echo "the --install preview did not appear (still root search)"; exit 1; }
+  fi
 }
 
 stop_pane() {
@@ -670,8 +687,9 @@ if grep -q '"paused"' "$PANE_DATA_DIR/extensions/installed.json"; then echo "pau
 
 # Delete retained data: with a data folder of its own, the settings sample
 # saves a note and is uninstalled keeping it (its Uninstall row follows its
-# state, Reload and Clear cache rows); its retained data, the extension list's
-# last row, is deleted after confirming (Cancel is selected first, so Down
+# state, Reload and Clear cache rows); its retained data, the extension
+# list's first row with nothing else installed, already selected when the
+# list opens, is deleted after confirming (Cancel is selected first, so Down
 # then Return), without the extension. Installing the same folder again finds
 # nothing. Steps that change Pane's files wait for the change instead of a
 # fixed time.
@@ -703,10 +721,15 @@ for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done   # Manage extensions�
 "$xdotool" key Down Down Down Return; sleep 1   # "Uninstall Settings sample"
 "$xdotool" key Return   # "Uninstall and keep saved data"
 wait_for "$registry" '"retained"' present; sleep 1
-for ((i = 0; i < 40; i++)); do "$xdotool" key Down; done
-"$xdotool" key Return; sleep 1   # "Delete retained data of Settings sample"
+"$xdotool" key Return; sleep 1   # "Delete retained data of Settings sample" (the list's first row, already selected)
 capture 63-confirm-delete-retained.png
 check 63-confirm-delete-retained.png aab4c0   # what is kept and what is not touched
+# The confirmation's status line is the idle hint, not a result: the
+# extension list also shows aab4c0 subtitles, so that color alone let the
+# wrong screen pass (#58: Down to the list's end had landed on the
+# automatic-update row, whose Enter toggles it and leaves its result on
+# screen). No result color on screen says the right screen is up.
+python3 "$(dirname "$0")/check_screenshot.py" --absent "$out/63-confirm-delete-retained.png" 9fd8a8
 "$xdotool" key Down Return   # "Delete retained data"
 wait_for "$registry" '"retained"' absent; sleep 1
 capture 64-retained-deleted.png
@@ -883,7 +906,9 @@ beats=$(stat -c %s "$alive"); sleep 0.5
 
 # Development mode (#12, #13): a copy of each development sample
 # (guests/hello-rust, hello-ts, hello-js) is built once, installed and
-# developed from Manage extensions ("Develop <title>", its last row). Saving
+# developed from Manage extensions ("Develop <title>", the row above the
+# list's last: #49's global automatic-update choice is last of all now, and
+# the develop row no longer is). Saving
 # an edit of its greeting builds it with the documented command and reloads
 # it while Pane keeps running; a save that does not build keeps the working
 # code and shows the error; two saves in a row (the second while the first
@@ -951,8 +976,12 @@ PY
   "$xdotool" key Return; sleep 2   # Install
   for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done   # Manage extensions…
   "$xdotool" key Return; sleep 1
-  for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done   # Develop <title>
-  "$xdotool" key Return; sleep 2
+  # "Develop <title>": the row above the list's last, which is the global
+  # automatic-update choice since #49 (the develop row was the last row
+  # before it, and Down to the end now lands on that instead).
+  for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done
+  "$xdotool" key Up; sleep 0.12
+  "$xdotool" key Return; sleep 2   # Develop <title>
   capture "$n-$sample-develop-started.png"
   check "$n-$sample-develop-started.png" 9fd8a8   # "Developing <title>: each save in ..."
   "$xdotool" key Escape; sleep 1
@@ -1003,8 +1032,10 @@ PY
   # Stopped: a save builds nothing.
   for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done   # Manage extensions…
   "$xdotool" key Return; sleep 1
-  for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done   # Stop developing <title>
-  "$xdotool" key Return; sleep 2
+  # As above: the row above the list's last.
+  for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done
+  "$xdotool" key Up; sleep 0.12
+  "$xdotool" key Return; sleep 2   # Stop developing <title>
   capture "$((n + 8))-$sample-stopped.png"
   check "$((n + 8))-$sample-stopped.png" 9fd8a8   # "Stopped developing <title>"
   cp "$built" "$before"
