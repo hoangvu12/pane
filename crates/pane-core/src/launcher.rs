@@ -1385,6 +1385,42 @@ impl Launcher {
         self.updating(component).is_some()
     }
 
+    /// Test support: the identities holding a change claim right now,
+    /// with what each is doing, and the identities and locations of the
+    /// installed packages — the raw claim map and the paths the owner
+    /// lookup uses, so a test can observe a claim without the lookup.
+    #[doc(hidden)]
+    #[allow(clippy::type_complexity)]
+    pub fn claims_now(
+        &self,
+    ) -> (
+        Vec<(String, &'static str)>,
+        Vec<(String, std::path::PathBuf)>,
+    ) {
+        let state = self.lock();
+        let claims = state
+            .changing
+            .iter()
+            .map(|(identity, changing)| {
+                let doing = match changing {
+                    Changing::Recording => "recording",
+                    Changing::Reloading => "reloading",
+                    Changing::Updating | Changing::BackgroundUpdating => "updating",
+                    Changing::Uninstalling => "uninstalling",
+                    Changing::DeletingRetained => "deleting-retained",
+                    Changing::Installing => "installing",
+                };
+                (identity.key(), doing)
+            })
+            .collect();
+        let packages = state
+            .packages
+            .iter()
+            .map(|package| (package.identity.key(), package.location.clone()))
+            .collect();
+        (claims, packages)
+    }
+
     /// Shows `message` as the outcome of the most recent action; for
     /// failures outside the launcher, such as a folder picker that could not
     /// open.

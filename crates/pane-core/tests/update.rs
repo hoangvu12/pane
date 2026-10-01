@@ -940,13 +940,17 @@ fn an_action_asked_while_the_update_applies_is_refused_not_stopped() {
         let deadline = start + Duration::from_secs(120);
         // A trace a second, so a failure's captured output shows the
         // timeline: when the record flipped (mid-claim) against the polls.
+        // Both the looked-up claim and the raw claim map are polled, so a
+        // disagreement between them shows in the trace too.
         let mut told = 0u64;
         while !launcher.package_being_updated(&component) {
             let elapsed = start.elapsed().as_secs();
             if elapsed >= told {
                 told = elapsed + 1;
+                let (claims, packages) = launcher.claims_now();
                 eprintln!(
-                    "{elapsed:>3} s: the claim is not held; the status is {:?}; the record has {}",
+                    "{elapsed:>3} s: the claim is not held ({claims:?}; the packages are \
+                     {packages:?}); the status is {:?}; the record has {}",
                     launcher.view().status,
                     dirs.installed_version()
                 );
