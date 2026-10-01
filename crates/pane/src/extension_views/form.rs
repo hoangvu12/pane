@@ -15,7 +15,7 @@
 
 use gpui::{
     AnyElement, App, Context, Entity, FocusHandle, Focusable, KeyBinding, Role, Subscription,
-    Toggled, Window, actions, div, prelude::*, rgb,
+    Toggled, Window, actions, div, prelude::*, px,
 };
 use gpui_elements::editable_text::actions::{
     DEFAULT_INPUT_CONTEXT, Enter, Escape, Tab, default_bindings,
@@ -23,7 +23,8 @@ use gpui_elements::editable_text::actions::{
 use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged, text_input};
 use pane_core::{FieldKind, FormField, FormView, Screen, Status};
 
-use crate::LauncherWindow;
+use crate::app::LauncherWindow;
+use crate::ui;
 
 actions!(form, [NextChoice, PreviousChoice, Press]);
 
@@ -209,6 +210,9 @@ impl LauncherWindow {
         let Some(controls) = &self.form else {
             return div().into_any_element();
         };
+        // The form keeps its own behavior; only its paint comes from the
+        // shared theme, so it stays legible in either appearance.
+        let theme = &ui::visuals().theme;
         let fields: Vec<AnyElement> = form
             .fields
             .into_iter()
@@ -221,9 +225,16 @@ impl LauncherWindow {
             .role(Role::Form)
             .aria_label(title)
             .flex_1()
+            .min_h(px(0.))
             .flex()
             .flex_col()
             .gap_3()
+            // The form keeps its own edge padding and scrolls when its
+            // fields outgrow the window, so they never meet the panel's
+            // edges.
+            .px(theme.geometry.search_padding_x)
+            .py(px(12.))
+            .overflow_y_scroll()
             .children(fields)
             .child(
                 div()
@@ -243,9 +254,10 @@ impl LauncherWindow {
                     .rounded_md()
                     .cursor_pointer()
                     .border_2()
-                    .border_color(rgb(0x364355))
-                    .bg(rgb(0x364355))
-                    .focus(|button| button.border_color(rgb(0x8ab4f8)))
+                    .border_color(theme.row_selected_border)
+                    .bg(theme.row_selected)
+                    .focus(|button| button.border_color(theme.focus_ring))
+                    .text_color(theme.text_title)
                     .child(form.submit_label),
             )
             .into_any_element()
@@ -259,6 +271,7 @@ impl LauncherWindow {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let error = field.error.clone();
+        let theme = &ui::visuals().theme;
         let control = match (control, &field.kind) {
             (Control::Text(input), FieldKind::Text { placeholder }) => {
                 let placeholder = placeholder.clone().unwrap_or_default();
@@ -278,14 +291,19 @@ impl LauncherWindow {
                     .px_2()
                     .py_1()
                     .rounded_md()
-                    .border_2()
-                    .border_color(rgb(0x364355))
-                    .bg(rgb(0x1a1e24))
-                    .focus(|node| node.border_color(rgb(0x8ab4f8)))
+                    .border_1()
+                    .border_color(theme.hairline)
+                    .bg(theme.tile_background)
+                    .focus(|node| node.border_color(theme.focus_ring))
                     .child(
                         text_input(("input", index))
                             .state(input.downgrade())
                             .placeholder(placeholder)
+                            .placeholder_color(theme.text_placeholder)
+                            .caret_color(theme.accent_text)
+                            .selection_color(theme.row_selected)
+                            .marked_color(theme.accent_text)
+                            .text_color(theme.text_title)
                             .w_full()
                             .whitespace_nowrap()
                             .overflow_x_scroll(),
@@ -318,7 +336,7 @@ impl LauncherWindow {
                             .px_2()
                             .rounded_md()
                             .cursor_pointer()
-                            .when(chosen, |option| option.bg(rgb(0x364355)))
+                            .when(chosen, |option| option.bg(theme.row_selected))
                             .child(if chosen { "◉" } else { "○" })
                             .child(choice.label.clone())
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -348,9 +366,9 @@ impl LauncherWindow {
                     .gap_2()
                     .p_1()
                     .rounded_md()
-                    .border_2()
-                    .border_color(rgb(0x20252d))
-                    .focus(|node| node.border_color(rgb(0x8ab4f8)))
+                    .border_1()
+                    .border_color(theme.hairline)
+                    .focus(|node| node.border_color(theme.focus_ring))
                     .children(options)
                     .into_any_element()
             }
@@ -363,7 +381,7 @@ impl LauncherWindow {
             .child(
                 div()
                     .text_sm()
-                    .text_color(rgb(0xaab4c0))
+                    .text_color(theme.text_muted)
                     .child(field.label.clone()),
             )
             .child(control)
@@ -372,7 +390,7 @@ impl LauncherWindow {
                     div()
                         .debug_selector(|| format!("field-error-{}", field.id))
                         .text_sm()
-                        .text_color(rgb(0xf08c8c))
+                        .text_color(theme.danger)
                         .child(error),
                 )
             })
