@@ -259,10 +259,22 @@ impl Developing {
         !ended.is_empty()
     }
 
-    fn changed(&self) {
+    /// Tells the window that the launcher changed in the background, as
+    /// `Launcher::changed` does, through the shared configuration so that a
+    /// channel wired after the launcher was built reaches the threads that
+    /// were started before it (the updater's checks; #59's family).
+    pub(super) fn changed(&self) {
         if let Some(changes) = &self.config().changes {
             changes.changed();
         }
+    }
+
+    /// The sender that tells the window the launcher changed in the
+    /// background, for the progress a download reports as it goes.
+    /// Read through the shared configuration, so a channel wired after the
+    /// launcher was built is seen here too.
+    pub(super) fn changes(&self) -> Option<ChangeSender> {
+        self.config().changes.clone()
     }
 }
 
@@ -283,16 +295,20 @@ impl Launcher {
         // background threads hold it weakly, and a replacement would make
         // them take the launcher for dropped (the updater's checks would
         // never run again; #59).
+        //
+        // The changes sender is written into the shared configuration, not
+        // into this launcher's fields: the threads the constructor started
+        // hold launchers whose own field snapshots were taken before this
+        // ran, and a field would leave them telling no window anything
+        // while development's changes (read through the configuration)
+        // still arrived — the smoke's #49 phase saw exactly that: the
+        // update applied, and the status line never showed it.
         *self.developing.config() = DevelopmentConfig {
             builder: Some(builder),
-            changes: Some(changes.clone()),
-        };
-        let launcher = Launcher {
             changes: Some(changes),
-            ..self
         };
-        launcher.report_failures();
-        launcher
+        self.report_failures();
+        self
     }
 
     /// Develops the installed package with `identity`: from now on, each

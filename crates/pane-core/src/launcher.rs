@@ -44,7 +44,6 @@ mod hotkeys;
 mod indexed;
 mod network;
 
-use crate::changes::ChangeSender;
 use crate::clipboard::{Capture, ClipboardSystem};
 use crate::dependencies;
 use crate::extension_data::{ExtensionData, PackageData};
@@ -486,12 +485,11 @@ pub struct Launcher {
     updates: Option<Arc<updates::Updates>>,
     /// Reads packages from folders and downloads them from npm.
     sources: install::Sources,
-    /// The packages being developed: built and reloaded on save.
+    /// The packages being developed: built and reloaded on save. The
+    /// sender that tells the window the launcher changed in the background
+    /// lives in its configuration ([`Launcher::with_development`]), shared
+    /// so that the threads the constructor started see it once it is wired.
     developing: Arc<Developing>,
-    /// Tells the window that the launcher changed in the background, such
-    /// as after a runtime crash; given with development
-    /// ([`Launcher::with_development`]).
-    changes: Option<ChangeSender>,
     state: Arc<Mutex<State>>,
 }
 
@@ -520,7 +518,6 @@ struct WeakLauncher {
     updates: Option<std::sync::Weak<updates::Updates>>,
     sources: install::Sources,
     developing: std::sync::Weak<Developing>,
-    changes: Option<ChangeSender>,
     state: std::sync::Weak<Mutex<State>>,
 }
 
@@ -549,7 +546,6 @@ impl WeakLauncher {
             updates: self.updates.as_ref().and_then(std::sync::Weak::upgrade),
             sources: self.sources.clone(),
             developing: self.developing.upgrade()?,
-            changes: self.changes.clone(),
             state: self.state.upgrade()?,
         })
     }
@@ -1150,7 +1146,6 @@ impl Launcher {
             updates: None,
             sources,
             developing: Arc::new(Developing::new(None, None)),
-            changes: None,
             state: Arc::new(Mutex::new(state)),
         };
         if let (Ok(runtime), Some(installation)) = (&launcher.runtime, &launcher.installation) {
@@ -1365,7 +1360,6 @@ impl Launcher {
             updates: self.updates.as_ref().map(Arc::downgrade),
             sources: self.sources.clone(),
             developing: Arc::downgrade(&self.developing),
-            changes: self.changes.clone(),
             state: Arc::downgrade(&self.state),
         }
     }
@@ -3809,10 +3803,12 @@ impl Launcher {
     }
 
     /// Tells the window that the launcher changed in the background.
+    /// Through the shared development configuration, so the threads started
+    /// before `with_development` wired the channel — the updater, the
+    /// scheduler, the services — reach the window as well (#49's smoke: the
+    /// update applied and the status line never showed it).
     fn changed(&self) {
-        if let Some(changes) = &self.changes {
-            changes.changed();
-        }
+        self.developing.changed();
     }
 }
 
