@@ -671,7 +671,9 @@ function Wait-For($file, $text, [bool]$present, $tries = 100) {
 $registry = Join-Path $data "extensions/installed.json"
 $process = Start-Pane "stderr-retained.log" @("--install", "target/guests/packages/sample-settings")
 Send "{ENTER}"   # Install; Greeting is selected
-Wait-For $registry "sample-settings" $true; Start-Sleep -Seconds 1
+# 120 s: the install reads and checks the whole package, which a loaded
+# runner can take past the 10 s default (run 36856550072's leg).
+Wait-For $registry "sample-settings" $true 1200; Start-Sleep -Seconds 1
 Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greeting
 Send "{DOWN 3}"
 Send "{ENTER}"   # "Save a note"
@@ -708,7 +710,7 @@ Stop-Pane $process
 if (Select-String -Quiet -SimpleMatch 'Water the plants' (Join-Path $data "extensions/content.json")) { throw "note not deleted" }
 $process = Start-Pane "stderr-reinstall-empty.log" @("--install", "target/guests/packages/sample-settings")
 Send "{ENTER}"   # Install; Greeting is selected
-Wait-For $registry "sample-settings" $true; Start-Sleep -Seconds 1
+Wait-For $registry "sample-settings" $true 1200; Start-Sleep -Seconds 1
 Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greeting
 Send "{DOWN 5}"
 Send "{ENTER}"; Start-Sleep -Seconds 2   # "Show what Pane keeps"
