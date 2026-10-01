@@ -105,14 +105,14 @@ start_pane() {
   # wait and the Enter opened root search's own first row instead).
   if [ "${1:-}" = "--install" ]; then
     for _ in $(seq 60); do
-      capture .preview-wait.png
-      if python3 "$(dirname "$0")/check_screenshot.py" --absent "$out/.preview-wait.png" 8ab4f8; then
+      capture preview-wait.png
+      if python3 "$(dirname "$0")/check_screenshot.py" --absent "$out/preview-wait.png" 8ab4f8; then
         break
       fi
       sleep 0.5
     done
-    capture .preview-wait.png
-    python3 "$(dirname "$0")/check_screenshot.py" --absent "$out/.preview-wait.png" 8ab4f8 \
+    capture preview-wait.png
+    python3 "$(dirname "$0")/check_screenshot.py" --absent "$out/preview-wait.png" 8ab4f8 \
       || { echo "the --install preview did not appear (still root search)"; exit 1; }
   fi
 }
