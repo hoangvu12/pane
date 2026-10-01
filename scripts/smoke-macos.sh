@@ -785,9 +785,12 @@ helpers_running() { pgrep -f "$PANE_DATA_DIR/extensions/packages/.*/pane-echo" >
 start_pane --install target/guests/packages/sample-helper
 key 36; sleep 2   # Install; Helper sample is selected
 key 36; sleep 2   # open Helper sample
-key 36; sleep 2   # Echo through the helper
-capture 90-helper-echoed.png
-check 90-helper-echoed.png 9fd8a8   # 'Echoed "hello from Pane" on macOS arm64'
+key 36   # Echo through the helper
+# The helper is a process Pane starts and waits for; a cold spawn on a
+# loaded runner can outlast a fixed sleep (run 36850094416's macOS leg
+# captured the answer's absence after two seconds), so the answer is
+# waited for, whenever it lands.
+capture_until 90-helper-echoed.png 9fd8a8 15   # 'Echoed "hello from Pane" on macOS arm64'
 key 125; key 125; key 36; sleep 3   # Echo within a second
 capture 91-helper-cancelled.png
 check 91-helper-cancelled.png 9fd8a8   # "Stopped the helper after one second"
