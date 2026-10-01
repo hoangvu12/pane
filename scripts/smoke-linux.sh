@@ -1934,11 +1934,14 @@ wait_recorded() {
   exit 1
 }
 kill -0 "$pane_pid" 2>/dev/null || { echo "the installed Pane exited during setup"; exit 1; }
-wait_recorded '"default": "calculator"'
-wait_recorded '"default": "helper-sample"'
+# The release's default set (#60): all five, plus the helper sample a
+# development build acquires with them.
+for default_ in calculator applications quicklinks files clipboard-history helper-sample; do
+  wait_recorded "\"default\": \"$default_\""
+done
 sleep 1
 capture 500-installed-root.png
-check 500-installed-root.png aab4c0   # root search: the calculator and Helper sample commands are listed
+check 500-installed-root.png aab4c0   # root search: the default extensions' commands are listed
 "$xdotool" type --delay 50 '6*7'; sleep 2
 capture 501-calculator-answer.png
 check 501-calculator-answer.png 364355 3000   # "42", the calculator's selected answer row
@@ -2054,7 +2057,9 @@ check 601-offered.png 364355 3000   # the row, selected
 # the update must stay disabled after it.
 "$xdotool" key ctrl+a; "$xdotool" type --delay 50 manage; sleep 1
 "$xdotool" key Return; sleep 1   # Manage extensions…
-"$xdotool" key Down Return; sleep 2   # Helper sample: disabled
+# The Helper sample is the sixth extension now (#60's set is listed
+# first), so five Downs reach it.
+"$xdotool" key Down Down Down Down Down Return; sleep 2   # Helper sample: disabled
 wait_for "$update_registry" '"disabled": true' present 600
 "$xdotool" key Escape; sleep 1
 
