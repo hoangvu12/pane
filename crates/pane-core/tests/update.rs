@@ -920,14 +920,23 @@ fn an_action_asked_while_the_update_applies_is_refused_not_stopped() {
     to_root(&launcher);
 
     // The check: the update is staged, and applying it claims the package
-    // while the replacement is written — read directly, from the moment
-    // the claim is taken, so however fast the copy is written the window
-    // cannot open and close between two polls. The wait explains itself
-    // on timeout: which of the three states above the leg is in.
+    // while the replacement is written. The claim is polled directly, from
+    // the moment it is taken — but not at the sleeping cadence: an
+    // M-series writes the whole 192 MiB copy from the page cache in
+    // barely more than one 20 ms sleep, and run 36836762847's macOS leg
+    // missed the window entirely that way (the record already held 0.2.0
+    // when the wait gave up). The claim is due moments after the clock
+    // moves — the stage before it takes a second or so — so the wait
+    // spins with a yield while it is due, polling far faster than any
+    // copy, and falls back to sleeping once ten seconds pass without it:
+    // a claim that late is a slow leg's, and a slow copy is a long window
+    // that sleeping polls cannot miss. The wait explains itself on
+    // timeout: which of the three states above the leg is in.
     dirs.clock.advance(Duration::from_secs(2));
     let component = component_of(&launcher);
     {
-        let deadline = Instant::now() + Duration::from_secs(120);
+        let start = Instant::now();
+        let deadline = start + Duration::from_secs(120);
         while !launcher.package_being_updated(&component) {
             assert!(
                 Instant::now() < deadline,
@@ -935,7 +944,11 @@ fn an_action_asked_while_the_update_applies_is_refused_not_stopped() {
                 launcher.view().status,
                 dirs.installed_version()
             );
-            thread::sleep(Duration::from_millis(20));
+            if start.elapsed() < Duration::from_secs(10) {
+                std::thread::yield_now();
+            } else {
+                thread::sleep(Duration::from_millis(20));
+            }
         }
     }
 
