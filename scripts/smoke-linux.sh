@@ -856,9 +856,10 @@ start_pane --install target/guests/packages/sample-helper
 "$xdotool" windowfocus --sync "$window"
 "$xdotool" key Return; sleep 2   # Install; Helper sample is selected
 "$xdotool" key Return; sleep 2   # open Helper sample
-"$xdotool" key Return; sleep 2   # Echo through the helper
-capture 90-helper-echoed.png
-check 90-helper-echoed.png 9fd8a8   # 'Echoed "hello from Pane" on Linux x86-64'
+"$xdotool" key Return   # Echo through the helper
+# The helper is a process Pane starts and waits for; a cold spawn on a
+# loaded runner can outlast a fixed sleep, so the answer is waited for.
+capture_until 90-helper-echoed.png 9fd8a8 15   # 'Echoed "hello from Pane" on Linux x86-64'
 "$xdotool" key Down Down Return; sleep 3   # Echo within a second
 capture 91-helper-cancelled.png
 check 91-helper-cancelled.png 9fd8a8   # "Stopped the helper after one second"
@@ -1952,7 +1953,11 @@ check 503-helper-echoed.png 9fd8a8   # "Echoed \"hello from Pane\" on Linux x86-
 [ -n "$(ls "$installed"/packages/*/helpers/*/pane-echo)" ] \
   || { echo "the acquired payload's helper was not installed"; exit 1; }
 [ -z "$(pgrep -f pane-echo)" ] || { echo "a helper is still running"; exit 1; }
-[ "$(ls "$installed/acquired/calculator" | wc -l)" = 1 ] || { echo "the calculator's payload is not cached"; exit 1; }
+# The payload the calculator acquired is kept, exactly its one current
+# entry. GNU wc prints a bare count, but the padding is trimmed anyway,
+# as the macOS smoke's does: one wording, and no platform's wc formatting
+# can fail it.
+[ "$(ls "$installed/acquired/calculator" | wc -l | tr -d ' ')" = 1 ] || { echo "the calculator's payload is not cached"; exit 1; }
 [ -z "$(ls -A "$installed/downloads" 2>/dev/null)" ] || { echo "downloads were left behind"; exit 1; }
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{500-installed-root,501-calculator-answer,503-helper-echoed}.png
 stop_pane

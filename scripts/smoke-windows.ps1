@@ -671,7 +671,9 @@ function Wait-For($file, $text, [bool]$present, $tries = 100) {
 $registry = Join-Path $data "extensions/installed.json"
 $process = Start-Pane "stderr-retained.log" @("--install", "target/guests/packages/sample-settings")
 Send "{ENTER}"   # Install; Greeting is selected
-Wait-For $registry "sample-settings" $true; Start-Sleep -Seconds 1
+# 120 s: the install reads and checks the whole package, which a loaded
+# runner can take past the 10 s default (run 36856550072's leg).
+Wait-For $registry "sample-settings" $true 1200; Start-Sleep -Seconds 1
 Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greeting
 Send "{DOWN 3}"
 Send "{ENTER}"   # "Save a note"
@@ -708,7 +710,7 @@ Stop-Pane $process
 if (Select-String -Quiet -SimpleMatch 'Water the plants' (Join-Path $data "extensions/content.json")) { throw "note not deleted" }
 $process = Start-Pane "stderr-reinstall-empty.log" @("--install", "target/guests/packages/sample-settings")
 Send "{ENTER}"   # Install; Greeting is selected
-Wait-For $registry "sample-settings" $true; Start-Sleep -Seconds 1
+Wait-For $registry "sample-settings" $true 1200; Start-Sleep -Seconds 1
 Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greeting
 Send "{DOWN 5}"
 Send "{ENTER}"; Start-Sleep -Seconds 2   # "Show what Pane keeps"
@@ -839,8 +841,16 @@ function Helpers-Running {
 $process = Start-Pane "stderr-helper.log" @("--install", "target/guests/packages/sample-helper")
 Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Helper sample is selected
 Send "{ENTER}"; Start-Sleep -Seconds 2   # open Helper sample
-Send "{ENTER}"; Start-Sleep -Seconds 2   # Echo through the helper
-Capture "90-helper-echoed.png"
+Send "{ENTER}"   # Echo through the helper
+# The helper is a process Pane starts and waits for; a cold spawn on a
+# loaded runner can outlast a fixed sleep, so the answer is waited for,
+# whenever it lands.
+for ($i = 0; $i -lt 30; $i++) {
+    Capture "90-helper-echoed.png"
+    python "$PSScriptRoot/check_screenshot.py" (Join-Path $OutDir "90-helper-echoed.png") "9fd8a8"
+    if ($LASTEXITCODE -eq 0) { break }
+    Start-Sleep -Milliseconds 500
+}
 Check "90-helper-echoed.png" "9fd8a8"   # 'Echoed "hello from Pane" on Windows x86-64'
 Send "{DOWN 2}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 3   # Echo within a second
 Capture "91-helper-cancelled.png"

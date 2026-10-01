@@ -785,9 +785,12 @@ helpers_running() { pgrep -f "$PANE_DATA_DIR/extensions/packages/.*/pane-echo" >
 start_pane --install target/guests/packages/sample-helper
 key 36; sleep 2   # Install; Helper sample is selected
 key 36; sleep 2   # open Helper sample
-key 36; sleep 2   # Echo through the helper
-capture 90-helper-echoed.png
-check 90-helper-echoed.png 9fd8a8   # 'Echoed "hello from Pane" on macOS arm64'
+key 36   # Echo through the helper
+# The helper is a process Pane starts and waits for; a cold spawn on a
+# loaded runner can outlast a fixed sleep (run 36850094416's macOS leg
+# captured the answer's absence after two seconds), so the answer is
+# waited for, whenever it lands.
+capture_until 90-helper-echoed.png 9fd8a8 15   # 'Echoed "hello from Pane" on macOS arm64'
 key 125; key 125; key 36; sleep 3   # Echo within a second
 capture 91-helper-cancelled.png
 check 91-helper-cancelled.png 9fd8a8   # "Stopped the helper after one second"
@@ -1839,7 +1842,10 @@ check 503-helper-echoed.png 9fd8a8   # "Echoed \"hello from Pane\" on macOS arm6
 [ -n "$(ls "$installed"/packages/*/helpers/*/pane-echo)" ] \
   || { echo "the acquired payload's helper was not installed"; exit 1; }
 [ -z "$(pgrep -f pane-echo)" ] || { echo "a helper is still running"; exit 1; }
-[ "$(ls "$installed/acquired/calculator" | wc -l)" = 1 ] || { echo "the calculator's payload is not cached"; exit 1; }
+# The payload the calculator acquired is kept, exactly its one current
+# entry. macOS's wc pads its counts with spaces, which fails a string
+# comparison, so the padding is trimmed.
+[ "$(ls "$installed/acquired/calculator" | wc -l | tr -d ' ')" = 1 ] || { echo "the calculator's payload is not cached"; exit 1; }
 [ -z "$(ls -A "$installed/downloads" 2>/dev/null)" ] || { echo "downloads were left behind"; exit 1; }
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{500-installed-root,501-calculator-answer,503-helper-echoed}.png
 stop_pane
