@@ -889,7 +889,9 @@ beats=$(stat -c %s "$alive"); sleep 0.5
 
 # Development mode (#12, #13): a copy of each development sample
 # (guests/hello-rust, hello-ts, hello-js) is built once, installed and
-# developed from Manage extensions ("Develop <title>", its last row). Saving
+# developed from Manage extensions ("Develop <title>", the row above the
+# list's last: #49's global automatic-update choice is last of all now, and
+# the develop row no longer is). Saving
 # an edit of its greeting builds it with the documented command and reloads
 # it while Pane keeps running; a save that does not build keeps the working
 # code and shows the error; two saves in a row (the second while the first
@@ -957,8 +959,12 @@ PY
   "$xdotool" key Return; sleep 2   # Install
   for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done   # Manage extensions…
   "$xdotool" key Return; sleep 1
-  for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done   # Develop <title>
-  "$xdotool" key Return; sleep 2
+  # "Develop <title>": the row above the list's last, which is the global
+  # automatic-update choice since #49 (the develop row was the last row
+  # before it, and Down to the end now lands on that instead).
+  for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done
+  "$xdotool" key Up; sleep 0.12
+  "$xdotool" key Return; sleep 2   # Develop <title>
   capture "$n-$sample-develop-started.png"
   check "$n-$sample-develop-started.png" 9fd8a8   # "Developing <title>: each save in ..."
   "$xdotool" key Escape; sleep 1
@@ -1009,8 +1015,10 @@ PY
   # Stopped: a save builds nothing.
   for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done   # Manage extensions…
   "$xdotool" key Return; sleep 1
-  for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done   # Stop developing <title>
-  "$xdotool" key Return; sleep 2
+  # As above: the row above the list's last.
+  for ((i = 0; i < 14; i++)); do "$xdotool" key Down; done
+  "$xdotool" key Up; sleep 0.12
+  "$xdotool" key Return; sleep 2   # Stop developing <title>
   capture "$((n + 8))-$sample-stopped.png"
   check "$((n + 8))-$sample-stopped.png" 9fd8a8   # "Stopped developing <title>"
   cp "$built" "$before"
