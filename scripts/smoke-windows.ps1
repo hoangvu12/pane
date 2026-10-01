@@ -871,7 +871,9 @@ if ((Get-Item $alive.FullName).Length -ne $beats) { throw "the helper still beat
 
 # Development mode (#12, #13): a copy of each development sample
 # (guests/hello-rust, hello-ts, hello-js) is built once, installed and
-# developed from Manage extensions ("Develop <title>", its last row). Saving
+# developed from Manage extensions ("Develop <title>", the row above the
+# list's last: #49's global automatic-update choice is last of all now, and
+# the develop row no longer is). Saving
 # an edit of its greeting builds it with the documented command and reloads
 # it while Pane keeps running; a save that does not build keeps the working
 # code and shows the error; two saves in a row (the second while the first
@@ -950,7 +952,10 @@ function Develop-Sample($sample, $title, $component, $source, $n, $greeting, $br
     $process = Start-Pane $log @("--install", $copy)
     Send "{ENTER}"; Start-Sleep -Seconds 2   # Install
     Send "{DOWN 14}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 1   # Manage extensions
-    Send "{DOWN 14}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2   # Develop <title>
+    # "Develop <title>": the row above the list's last, which is the
+    # global automatic-update choice since #49 (the develop row was the
+    # last row before it, and Down to the end now lands on that instead).
+    Send "{DOWN 14}"; Start-Sleep -Milliseconds 120; Send "{UP}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2
     Capture "$n-$sample-develop-started.png"
     Check "$n-$sample-develop-started.png" "9fd8a8"   # "Developing <title>: each save in ..."
     Send "{ESC}"; Start-Sleep -Seconds 1
@@ -1001,7 +1006,8 @@ function Develop-Sample($sample, $title, $component, $source, $n, $greeting, $br
 
     # Stopped: a save builds nothing.
     Send "{DOWN 14}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 1   # Manage extensions
-    Send "{DOWN 14}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2   # Stop developing <title>
+    # "Stop developing <title>": as above, the row above the list's last.
+    Send "{DOWN 14}"; Start-Sleep -Milliseconds 120; Send "{UP}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2
     Capture "$($n + 8)-$sample-stopped.png"
     Check "$($n + 8)-$sample-stopped.png" "9fd8a8"   # "Stopped developing <title>"
     Copy-Item -Force $built $before
