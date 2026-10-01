@@ -81,7 +81,11 @@ function Start-Pane($log, [string[]]$arguments, $program = "target/debug/pane.ex
         $previewShown = $false
         for ($i = 0; $i -lt 60; $i++) {
             Capture "preview-wait.png"
-            python "$PSScriptRoot/check_screenshot.py" --absent (Join-Path $OutDir "preview-wait.png") "8ab4f8"
+            # $null swallows the checker's output: a function's return value
+            # is everything it writes, and the process object Stop-Pane waits
+            # on must not be followed by the checker's lines (run 36802787026
+            # failed its first Stop-Pane on a string's WaitForExit).
+            $null = python "$PSScriptRoot/check_screenshot.py" --absent (Join-Path $OutDir "preview-wait.png") "8ab4f8"
             if ($LASTEXITCODE -eq 0) { $previewShown = $true; break }
             Start-Sleep -Milliseconds 500
         }
