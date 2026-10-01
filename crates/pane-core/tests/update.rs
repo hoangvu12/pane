@@ -893,20 +893,21 @@ fn an_action_asked_while_the_update_applies_is_refused_not_stopped() {
     dirs.install(&launcher, "0.1.0");
 
     // A new version whose component is padded out, so applying it — the
-    // unpack, the checks and the write of the managed copy — takes a
+    // unpack, the checks and the copy of the managed folder — takes a
     // while: the claim the apply holds stays open long enough to ask
-    // something of the package inside it. The pad is 16 MiB: the claim
+    // something of the package inside it. The pad is 192 MiB: the claim
     // is read directly (below), from before the copy is written until
-    // after it lands, so the pad only has to make the apply outlast the
-    // test's 20 ms polling — not, as the write's effect once had to
-    // (runs 36799361640 and 36810472261's macOS legs: 48 MiB was written
-    // whole between two polls, and 192 MiB was so slow to stage — the
-    // download, unpack and integrity check before the claim, on a debug
-    // build on a loaded runner — that the apply never began within the
-    // 120 s wait). A smaller pad keeps the stage quick enough to reach
-    // the apply well within the waits however loaded the runner is. The
-    // waits stay 120 s, generous for a loaded machine.
-    dirs.publish_component("0.2.0", padded_component(16 * 1024 * 1024));
+    // after it lands, and that much padding keeps the claim open for
+    // hundreds of milliseconds on even the fastest disk, well past the
+    // test's 20 ms polling, while the stage before it stays quick (the
+    // padded tarball compresses to almost nothing, so the download and
+    // unpack are fast however large the pad is). The wait's failure
+    // explains the state it found, because the three ways it can fail
+    // look alike from the outside: the window missed because the copy
+    // was written between two polls (the record then holds 0.2.0), a
+    // check or stage failure (the status line then explains it), or the
+    // apply deferred or never begun (both then idle at 0.1.0).
+    dirs.publish_component("0.2.0", padded_component(192 * 1024 * 1024));
 
     // An action of the package's command, asked for but not sent yet: as
     // the deferral test holds a command running by not resolving it, this
@@ -921,14 +922,22 @@ fn an_action_asked_while_the_update_applies_is_refused_not_stopped() {
     // The check: the update is staged, and applying it claims the package
     // while the replacement is written — read directly, from the moment
     // the claim is taken, so however fast the copy is written the window
-    // cannot open and close between two polls.
+    // cannot open and close between two polls. The wait explains itself
+    // on timeout: which of the three states above the leg is in.
     dirs.clock.advance(Duration::from_secs(2));
     let component = component_of(&launcher);
-    wait_until(
-        "the update began replacing the copy",
-        Duration::from_secs(120),
-        || launcher.package_being_updated(&component),
-    );
+    {
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while !launcher.package_being_updated(&component) {
+            assert!(
+                Instant::now() < deadline,
+                "the update never claimed the package: the status is {:?}, the record has {}",
+                launcher.view().status,
+                dirs.installed_version()
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
 
     // The action asked of the updating package now, while the replacement
     // is being applied, is refused with the update's explanation rather
