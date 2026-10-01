@@ -72,6 +72,21 @@ function Start-Pane($log, [string[]]$arguments, $program = "target/debug/pane.ex
     if ($process.MainWindowHandle -eq 0) { throw "Pane window did not appear" }
     Start-Sleep -Seconds 2
     Focus-Pane $process
+    # A --install preview arrives once its check finishes; until then the
+    # screen is root search, whose query field's border is #8ab4f8. Wait for
+    # the field to leave, so the phase's first Enter lands on the preview:
+    # run 36796103906's Linux frame 31 lost that race (the check outlasted
+    # the wait and the Enter opened root search's own first row instead).
+    if ($arguments -and $arguments[0] -eq "--install") {
+        $previewShown = $false
+        for ($i = 0; $i -lt 60; $i++) {
+            Capture ".preview-wait.png"
+            python "$PSScriptRoot/check_screenshot.py" --absent (Join-Path $OutDir ".preview-wait.png") "8ab4f8"
+            if ($LASTEXITCODE -eq 0) { $previewShown = $true; break }
+            Start-Sleep -Milliseconds 500
+        }
+        if (-not $previewShown) { throw "the --install preview did not appear (still root search)" }
+    }
     return $process
 }
 function Stop-Pane($process) {
