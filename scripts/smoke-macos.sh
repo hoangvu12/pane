@@ -77,7 +77,7 @@ start_pane() {
   # the field to leave, so the phase's first Enter lands on the preview:
   # run 36796103906's Linux frame 31 lost that race (the check outlasted
   # the wait and the Enter opened root search's own first row instead).
-  if [ "$1" = "--install" ]; then
+  if [ "${1:-}" = "--install" ]; then
     for _ in $(seq 60); do
       capture .preview-wait.png
       if python3 "$(dirname "$0")/check_screenshot.py" --absent "$out/.preview-wait.png" 8ab4f8; then
