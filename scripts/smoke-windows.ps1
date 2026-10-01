@@ -628,10 +628,11 @@ if (Select-String -Quiet -SimpleMatch '"paused"' (Join-Path $data "extensions/in
 
 # Delete retained data: with a data folder of its own, the settings sample
 # saves a note and is uninstalled keeping it (its Uninstall row follows its
-# state, Reload and Clear cache rows); its retained data, the extension list's
-# last row, is deleted after confirming (Cancel is selected first, so Down
-# then Enter), without the extension. Installing the same folder again finds
-# nothing. Steps that change Pane's files wait for the change instead of a
+# state, Reload and Clear cache rows); its retained data, the extension
+# list's first row with nothing else installed, already selected when the
+# list opens, is deleted after confirming (Cancel is selected first, so
+# Down then Enter), without the extension. Installing the same folder again
+# finds nothing. Steps that change Pane's files wait for the change instead of a
 # fixed time.
 $data = Join-Path $OutDir "retained-data"
 if (Test-Path $data) { Remove-Item -Recurse -Force $data }
@@ -663,22 +664,23 @@ Send "{DOWN 3}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Sec
 Send "{ENTER}"   # "Uninstall and keep saved data"
 Wait-For $registry '"retained"' $true; Start-Sleep -Seconds 1
 # A restart before the deletion: the retained record is what survives one
-# (that is its point), and a window that has served the whole flow no
-# longer delivers Enter to a confirmation (a quirk this machine found;
-# a fresh window does - see the follow-up issue).
+# (that is its point).
 Stop-Pane $process
 $process = Start-Pane "stderr-retained.log"
 Start-Sleep -Seconds 2
 Send "{DOWN 14}"   # Manage extensions… (root's last row)
 Send "{ENTER}"; Start-Sleep -Seconds 1
-Send "{DOWN 40}"
-Send "{ENTER}"; Start-Sleep -Seconds 1   # "Delete retained data of Settings sample"
+Send "{ENTER}"; Start-Sleep -Seconds 1   # "Delete retained data of Settings sample" (the list's first row)
 Capture "63-confirm-delete-retained.png"
 Check "63-confirm-delete-retained.png" "aab4c0"   # what is kept and what is not touched
-# #58's workaround: the smoke's own host stops delivering keys to this
-# confirmation after the flow (see the issue); a fresh PowerShell process
-# sending the same keys does deliver them, so it sends these.
-powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('{DOWN}'); Start-Sleep -Milliseconds 150; [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')"   # "Delete retained data"
+# The confirmation's status line is the idle hint, not a result: the
+# extension list also shows aab4c0 subtitles, so that color alone let the
+# wrong screen pass (what #58 turned out to be: Down to the list's end had
+# landed on the automatic-update row, whose Enter toggles it and leaves its
+# result on screen). No result color on screen says the right screen is up.
+python "$PSScriptRoot/check_screenshot.py" --absent (Join-Path $OutDir "63-confirm-delete-retained.png") "9fd8a8"
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the confirmation shows a result status" }
+Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"   # "Delete retained data"
 Start-Sleep -Seconds 2
 Wait-For $registry '"retained"' $false; Start-Sleep -Seconds 1
 Capture "64-retained-deleted.png"

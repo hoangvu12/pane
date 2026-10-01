@@ -608,8 +608,9 @@ if grep -q '"paused"' "$PANE_DATA_DIR/extensions/installed.json"; then echo "pau
 
 # Delete retained data: with a data folder of its own, the settings sample
 # saves a note and is uninstalled keeping it (its Uninstall row follows its
-# state, Reload and Clear cache rows); its retained data, the extension list's
-# last row, is deleted after confirming (Cancel is selected first, so Down
+# state, Reload and Clear cache rows); its retained data, the extension
+# list's first row with nothing else installed, already selected when the
+# list opens, is deleted after confirming (Cancel is selected first, so Down
 # then Return), without the extension. Installing the same folder again finds
 # nothing. Steps that change Pane's files wait for the change instead of a
 # fixed time.
@@ -638,10 +639,15 @@ for ((i = 0; i < 3; i++)); do key 125; done
 key 36; sleep 1   # "Uninstall Settings sample"
 key 36   # "Uninstall and keep saved data"
 wait_for "$registry" '"retained"' present; sleep 1
-for ((i = 0; i < 40; i++)); do key 125; done
-key 36; sleep 1   # "Delete retained data of Settings sample"
+key 36; sleep 1   # "Delete retained data of Settings sample" (the list's first row, already selected)
 capture 63-confirm-delete-retained.png
 check 63-confirm-delete-retained.png aab4c0   # what is kept and what is not touched
+# The confirmation's status line is the idle hint, not a result: the
+# extension list also shows aab4c0 subtitles, so that color alone let the
+# wrong screen pass (#58: Down to the list's end had landed on the
+# automatic-update row, whose Enter toggles it and leaves its result on
+# screen). No result color on screen says the right screen is up.
+python3 "$(dirname "$0")/check_screenshot.py" --absent "$out/63-confirm-delete-retained.png" 9fd8a8
 key 125; key 36   # "Delete retained data"
 wait_for "$registry" '"retained"' absent; sleep 1
 capture 64-retained-deleted.png
