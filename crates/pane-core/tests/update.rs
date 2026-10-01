@@ -907,8 +907,13 @@ fn an_action_asked_while_the_update_applies_is_refused_not_stopped() {
     // A new version whose component is padded out, so writing its managed
     // copy takes a while: the window between the updater claiming the
     // package and the replacement landing stays open long enough to ask
-    // something of the package inside it.
-    dirs.publish_component("0.2.0", padded_component(48 * 1024 * 1024));
+    // something of the package inside it. The pad is 384 MiB because a
+    // fast disk writes 48 MiB faster than the test's 20 ms polling can
+    // notice the window opened (run 36799361640's macOS leg applied the
+    // whole update between two polls, the action was not refused and the
+    // test read an idle status); this size keeps the write a few hundred
+    // milliseconds even there.
+    dirs.publish_component("0.2.0", padded_component(384 * 1024 * 1024));
 
     // An action of the package's command, asked for but not sent yet: as
     // the deferral test holds a command running by not resolving it, this
