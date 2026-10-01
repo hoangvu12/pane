@@ -2046,7 +2046,7 @@ try {
     # The release's default extensions (#60): all five, plus the helper
     # sample a development build acquires with them.
     foreach ($default in "calculator", "applications", "quicklinks", "files", "clipboard-history", "helper-sample") {
-        Wait-For (Join-Path $extensions "installed.json") "\"default\": \"$default\"" $true 1200
+        Wait-For (Join-Path $extensions "installed.json") ('"default": "' + $default + '"') $true 1200
     }
     Start-Sleep -Seconds 1
     Capture "500-installed-root.png"
@@ -2154,7 +2154,7 @@ try {
     if ($process.HasExited) { throw "the installed Pane exited during setup" }
     # The release's default set (#60) plus the helper sample.
     foreach ($default in "calculator", "applications", "quicklinks", "files", "clipboard-history", "helper-sample") {
-        Wait-For $registry "\"default\": \"$default\"" $true 1200
+        Wait-For $registry ('"default": "' + $default + '"') $true 1200
     }
     # The check has read the index (its request is the third): the offer
     # is in root search. The status line tells what it found; nothing has
