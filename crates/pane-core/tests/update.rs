@@ -934,10 +934,23 @@ fn an_action_asked_while_the_update_applies_is_refused_not_stopped() {
     // timeout: which of the three states above the leg is in.
     dirs.clock.advance(Duration::from_secs(2));
     let component = component_of(&launcher);
+    eprintln!("polling for the claim of {}", component.display());
     {
         let start = Instant::now();
         let deadline = start + Duration::from_secs(120);
+        // A trace a second, so a failure's captured output shows the
+        // timeline: when the record flipped (mid-claim) against the polls.
+        let mut told = 0u64;
         while !launcher.package_being_updated(&component) {
+            let elapsed = start.elapsed().as_secs();
+            if elapsed >= told {
+                told = elapsed + 1;
+                eprintln!(
+                    "{elapsed:>3} s: the claim is not held; the status is {:?}; the record has {}",
+                    launcher.view().status,
+                    dirs.installed_version()
+                );
+            }
             assert!(
                 Instant::now() < deadline,
                 "the update never claimed the package: the status is {:?}, the record has {}",
