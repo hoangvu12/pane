@@ -15,9 +15,10 @@ answer) cannot silently show the same view. With --same, asserts that two
 screenshots show the same Pane window, pixel for pixel: a screen that should
 list the same rows as an earlier one (after a restart, a disabled package's
 command is gone again) cannot silently list another. With --absent, asserts
-that at most a few stray pixels near the given color are in the Pane window:
-a screen whose status must not be a result (a confirmation just opened, whose
-idle hint is not the result color) cannot silently show one.
+that the given color itself is not drawn in the Pane window (at most a few
+stray near pixels, antialiasing excluded): a confirmation just opened whose
+idle hint is not the result color cannot silently show a result, and a query
+field whose solid border is the color cannot still be on screen.
 
 With --locate, prints the center of the largest connected region of pixels drawn
 exactly in the given color inside the Pane window
@@ -165,13 +166,21 @@ def main(path: str, color: str, minimum: int = 20) -> None:
     print(f"{path}: {count} pixels near #{color.lstrip('#')} in the Pane window")
 
 
-def absent(path: str, color: str, allowance: int = 5) -> None:
-    count = count_near(pane_window(path), rgb(color))
+def absent(path: str, color: str, allowance: int = 5) -> int:
+    """Asserts that the color itself is not drawn: at most `allowance` pixels
+    are within a tight tolerance of it, so antialiased blends of other colors
+    (a preview's details pass near the query field's border color) do not
+    count, while the solid pixels of what is looked for always do (a query
+    field's border, a result status's glyphs)."""
+    window = pane_window(path)
+    target = rgb(color)
+    count = sum(1 for pixel in pixels_of(window) if near(pixel, target, 4))
     if count > allowance:
         raise SystemExit(f"{path}: {count} pixels near #{color.lstrip('#')} in the Pane window, "
                          f"expected at most {allowance}")
     print(f"{path}: {count} pixels near #{color.lstrip('#')} in the Pane window, at most "
           f"{allowance} expected")
+    return count
 
 
 if __name__ == "__main__":

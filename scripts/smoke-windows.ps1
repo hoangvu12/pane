@@ -80,8 +80,8 @@ function Start-Pane($log, [string[]]$arguments, $program = "target/debug/pane.ex
     if ($arguments -and $arguments[0] -eq "--install") {
         $previewShown = $false
         for ($i = 0; $i -lt 60; $i++) {
-            Capture ".preview-wait.png"
-            python "$PSScriptRoot/check_screenshot.py" --absent (Join-Path $OutDir ".preview-wait.png") "8ab4f8"
+            Capture "preview-wait.png"
+            python "$PSScriptRoot/check_screenshot.py" --absent (Join-Path $OutDir "preview-wait.png") "8ab4f8"
             if ($LASTEXITCODE -eq 0) { $previewShown = $true; break }
             Start-Sleep -Milliseconds 500
         }
