@@ -1373,6 +1373,18 @@ impl Launcher {
         self.lock().packages.clone()
     }
 
+    /// Test support: whether an update Pane applies by itself is
+    /// replacing the installed package whose command's component is
+    /// `component` right now — the claim held while the replacement is
+    /// written, which makes calls into the package refused. `component` is
+    /// a command's component, as [`InstalledPackage::commands`] gives; the
+    /// claim is readable from the moment it is taken until the replacement
+    /// lands, however fast the copy is written.
+    #[doc(hidden)]
+    pub fn package_being_updated(&self, component: &std::path::Path) -> bool {
+        self.updating(component).is_some()
+    }
+
     /// Shows `message` as the outcome of the most recent action; for
     /// failures outside the launcher, such as a folder picker that could not
     /// open.
