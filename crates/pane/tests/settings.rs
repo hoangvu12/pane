@@ -10,8 +10,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    AnyWindowHandle, Modifiers, MouseButton, TestAppContext, VisualTestContext, WindowHandle,
-    prelude::*, px,
+    AnyWindowHandle, Modifiers, TestAppContext, VisualTestContext, WindowHandle, prelude::*, px,
 };
 use pane::{APP_VERSION, LauncherWindow, SettingsWindow};
 use pane_core::{Launcher, Runtime, Screen, Status};
