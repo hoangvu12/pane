@@ -1200,6 +1200,15 @@ impl Launcher {
         launcher
     }
 
+    /// The link opener this launcher was given (see
+    /// [`Launcher::with_link_opener`]), for the app to open Pane's own
+    /// links with the same handler — the documentation entry of Settings'
+    /// About page — rather than construct a second opener instance. A
+    /// launcher given none returns the opener that says so.
+    pub fn link_opener(&self) -> Arc<dyn LinkOpener> {
+        self.links.clone()
+    }
+
     /// This launcher downloading npm packages from `registry` rather than
     /// from the public npm registry: one on this computer, for tests and
     /// development ([`crate::npm::Registry::local`]). Release builds have
@@ -2089,8 +2098,9 @@ impl Launcher {
                 self.show_git_form(&mut state);
                 None
             }
-            Some(Entry::InstallFromFolder | Entry::ChooseFolder(_) | Entry::Settings)
-            | None => None,
+            Some(Entry::InstallFromFolder | Entry::ChooseFolder(_) | Entry::Settings) | None => {
+                None
+            }
             Some(entry) => {
                 state.view.status = Status::Running;
                 Some(entry)
