@@ -233,33 +233,32 @@ fn titlebar(theme: &ui::theme::Theme) -> Div {
     // them over the transparent titlebar.
     #[cfg(target_os = "macos")]
     let titlebar = titlebar.child(div().flex_none().w(px(78.)));
-    let titlebar = titlebar
-        .child(
-            // The one place to grab the window by, outside the page and
-            // the sidebar.
-            div()
-                .flex_1()
-                .min_w(px(0.))
-                .window_control_area(WindowControlArea::Drag)
-                .px(px(16.))
-                .truncate()
-                .text_size(theme.typography.row_title_size)
-                .font_weight(theme.typography.medium)
-                .text_color(theme.text_title)
-                .child("Settings"),
-        );
-        // Windows: the caption buttons, marked with the platform's window
-        // control areas so the hit test routes them to the system's real
-        // close, minimize and maximize behavior. The click handlers are
-        // the same behavior for platforms that never consult the hit test
-        // (GPUI's test platform among them); on Windows itself the system
-        // takes the click through the hit test and the handlers stay
-        // idle. Added under the same compile-time gate as
-        // [`window_controls`] — `cfg!` would leave the call compiled on
-        // the other platforms, where the function does not exist.
-        #[cfg(target_os = "windows")]
-        let titlebar = titlebar.child(window_controls(theme));
-        titlebar
+    let titlebar = titlebar.child(
+        // The one place to grab the window by, outside the page and
+        // the sidebar.
+        div()
+            .flex_1()
+            .min_w(px(0.))
+            .window_control_area(WindowControlArea::Drag)
+            .px(px(16.))
+            .truncate()
+            .text_size(theme.typography.row_title_size)
+            .font_weight(theme.typography.medium)
+            .text_color(theme.text_title)
+            .child("Settings"),
+    );
+    // Windows: the caption buttons, marked with the platform's window
+    // control areas so the hit test routes them to the system's real
+    // close, minimize and maximize behavior. The click handlers are
+    // the same behavior for platforms that never consult the hit test
+    // (GPUI's test platform among them); on Windows itself the system
+    // takes the click through the hit test and the handlers stay
+    // idle. Added under the same compile-time gate as
+    // [`window_controls`] — `cfg!` would leave the call compiled on
+    // the other platforms, where the function does not exist.
+    #[cfg(target_os = "windows")]
+    let titlebar = titlebar.child(window_controls(theme));
+    titlebar
 }
 
 /// The Windows caption buttons: minimize, maximize, close, right to left
