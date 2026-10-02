@@ -925,7 +925,7 @@ fn the_saved_choice_is_reloaded_by_a_fresh_application(cx: &mut TestAppContext) 
     // A fresh application over the same data folder: a new app, nothing
     // carried over but the executors, the settings read from the record
     // alone.
-    let fresh = cx.cx.new_app();
+    let mut fresh = cx.cx.new_app();
     fresh.update(pane::bind_keys);
     fresh.update(|cx| {
         pane::settings::init_with_overrides(
@@ -1107,7 +1107,7 @@ fn a_development_override_wins_is_indicated_and_is_never_saved(cx: &mut TestAppC
     // A fresh application without the override renders what the record
     // holds — here the dark default, since nothing was ever saved: the
     // override was a preference of this process only.
-    let fresh = cx.cx.new_app();
+    let mut fresh = cx.cx.new_app();
     fresh.update(pane::bind_keys);
     fresh.update(|cx| {
         pane::settings::init_with_overrides(
