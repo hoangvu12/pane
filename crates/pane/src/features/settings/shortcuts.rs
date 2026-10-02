@@ -501,10 +501,9 @@ fn group_element(
     let key = group_key(group);
     let collapsed = blank && this.shortcuts.collapsed.contains(&key);
     // A filter shows the commands that match it, whatever the expanded
-    // state; without one, the expanded state decides.
-    let shown: Vec<&ShortcutCommand> = if blank {
-        group.commands.iter().collect()
-    } else if group_matches(query, group) {
+    // state; without one, the expanded state decides. A group the filter
+    // matches by its own name shows all its commands.
+    let shown: Vec<&ShortcutCommand> = if blank || group_matches(query, group) {
         group.commands.iter().collect()
     } else {
         group
