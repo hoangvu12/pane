@@ -278,21 +278,23 @@ fn accessibility(cx: &mut VisualTestContext) -> (Option<String>, String) {
     (focused, json)
 }
 
-/// Runs `cx` until `done` returns a value, so that work arriving from
-/// other threads (an alias being recorded) has been drawn.
-fn until<T>(
-    cx: &mut VisualTestContext,
-    mut done: impl FnMut(&mut VisualTestContext) -> Option<T>,
-) -> T {
+/// Runs `cx` until the window's accessibility tree contains `text`, so
+/// that work arriving from other threads (an alias being recorded) has
+/// been drawn and captured: the captured tree follows the drawn frame,
+/// which on the Windows test platform can be a frame behind the drawn
+/// one, so the tree is polled rather than read once. Returns the tree's
+/// JSON, which holds the frame the text was found in.
+fn until_text(cx: &mut VisualTestContext, text: &str) -> String {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         cx.run_until_parked();
-        if let Some(value) = done(cx) {
-            return value;
+        let (_, json) = accessibility(cx);
+        if json.contains(text) {
+            return json;
         }
         assert!(
             Instant::now() < deadline,
-            "timed out waiting for the window to draw"
+            "timed out waiting for the window to draw {text}"
         );
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -424,14 +426,7 @@ fn an_alias_edited_inline_is_found_by_root_search_and_survives_a_restart(cx: &mu
     let mut settings_cx = edit_alias(&settings, cx, &command_id(&query));
     settings_cx.simulate_input("ec");
     settings_cx.simulate_keystrokes("enter");
-    until(&mut settings_cx, |cx| {
-        cx.debug_bounds("shortcut-status").map(|_| ())
-    });
-    let (_, json) = accessibility(&mut settings_cx);
-    assert!(
-        json.contains("Typing “ec” now finds Echo"),
-        "the change is reported, {json}"
-    );
+    let json = until_text(&mut settings_cx, "Typing “ec” now finds Echo");
     assert!(
         json.contains("Alias for Echo: ec"),
         "the cell now shows the alias, {json}"
@@ -627,14 +622,7 @@ fn an_empty_commit_clears_the_alias(cx: &mut TestAppContext) {
     let mut settings_cx = edit_alias(&settings, cx, &command_id(&query));
     settings_cx.simulate_keystrokes("backspace backspace");
     settings_cx.simulate_keystrokes("enter");
-    until(&mut settings_cx, |cx| {
-        cx.debug_bounds("shortcut-status").map(|_| ())
-    });
-    let (_, json) = accessibility(&mut settings_cx);
-    assert!(
-        json.contains("Echo has no alias now"),
-        "the clearing is reported, {json}"
-    );
+    let json = until_text(&mut settings_cx, "Echo has no alias now");
     assert!(
         json.contains("Alias for Echo: none"),
         "the cell shows none, {json}"
@@ -670,14 +658,7 @@ fn a_change_that_cannot_be_recorded_explains_and_keeps_the_last_record(cx: &mut 
     let mut settings_cx = edit_alias(&settings, cx, &command_id(&query));
     settings_cx.simulate_input("ec");
     settings_cx.simulate_keystrokes("enter");
-    until(&mut settings_cx, |cx| {
-        cx.debug_bounds("shortcut-status").map(|_| ())
-    });
-    let (_, json) = accessibility(&mut settings_cx);
-    assert!(
-        json.contains("Could not keep the change:"),
-        "the failed recording is explained, {json}"
-    );
+    let json = until_text(&mut settings_cx, "Could not keep the change:");
     assert!(
         json.contains("Alias for Echo: none"),
         "the alias was put back, {json}"
@@ -800,13 +781,14 @@ fn the_page_is_reachable_by_keyboard_and_names_its_controls(cx: &mut TestAppCont
     assert!(settings_cx.debug_bounds("shortcut-editor").is_some());
     settings_cx.simulate_input("ec");
     settings_cx.simulate_keystrokes("enter");
-    until(&mut settings_cx, |cx| {
-        cx.debug_bounds("shortcut-status").map(|_| ())
-    });
-    let (_, json) = accessibility(&mut settings_cx);
-    assert!(
-        json.contains("Typing “ec” now finds Echo"),
-        "the keyboard edit committed, {json}"
+    // The status line says the keyboard edit committed, as the click's
+    // did, and the focus returned to the row's cell.
+    let _ = until_text(&mut settings_cx, "Typing “ec” now finds Echo");
+    let (label, _) = accessibility(&mut settings_cx);
+    assert_eq!(
+        label.as_deref(),
+        Some("Alias for Echo: ec"),
+        "the commit returned the focus to the cell"
     );
 
     // The group header's keys expand and collapse it. The commit returned
@@ -901,11 +883,7 @@ fn the_catalog_follows_disabling_enabling_and_uninstalling(cx: &mut TestAppConte
         settings_cx.debug_bounds(hotkey_inactive).is_some(),
         "the hotkey is marked not active"
     );
-    let (_, json) = accessibility(&mut settings_cx);
-    assert!(
-        json.contains("Not active: Hello is disabled"),
-        "the reason is shown, {json}"
-    );
+    let _ = until_text(&mut settings_cx, "Not active: Hello is disabled");
     assert!(settings_cx.debug_bounds(hello_group).is_some());
     // The alias stays recorded: the record on disk is untouched, and the
     // hotkey is released with the system.
