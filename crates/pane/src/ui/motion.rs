@@ -3,15 +3,21 @@
 //! animation strictly presentation-only.
 //!
 //! Provenance: the timings and the paired forward/back shape are adapted
-//! from Roboco's pinned motion catalog (`docs/research/roboco-motion-settings.md`),
-//! which the approved scope extension of #70 names as the experiential
-//! reference — not as constants to copy into a different solver. The
-//! starting points are the ticket's own: entrances around 120-180ms, a
-//! faster return, a 2-4 logical pixel shift, fast-starting and
-//! gently-settling easing, no exaggerated bounce, no per-row cascade, no
-//! animated typing. The curve itself is GPUI CE's pinned `ease_out_quint`
-//! (quintic ease-out), so the pinned renderer stays the only animation
-//! toolkit: nothing here re-implements springs or timelines.
+//! from Roboco's pinned motion catalog
+//! (`docs/research/roboco-motion-settings.md`), which the approved scope
+//! extension of #70 names as the experiential reference — not as constants
+//! to copy into a different solver. The starting points are the ticket's
+//! own: entrances around 120-180ms, a faster return, a 2-4 logical pixel
+//! shift, fast-starting and gently-settling easing, no exaggerated bounce,
+//! no per-row cascade, no animated typing. The curve itself is GPUI CE's
+//! pinned `ease_out_quint` (quintic ease-out), so the pinned renderer
+//! stays the only animation toolkit: nothing here re-implements springs
+//! or timelines. The one mechanism is the same one Roboco's native
+//! helpers use for interruptible motion at their renderer revision —
+//! progress measured on a clock, frames requested from the render tail —
+//! because GPUI's `with_animation` clock restarts from zero whenever its
+//! element identity changes, which replays an entrance mid-exit (the
+//! pinned Roboco helper documents exactly that limitation).
 //!
 //! What animates and what never does:
 //!
@@ -20,11 +26,12 @@
 //!   opening or closing) — moves the content that changes: the arriving
 //!   content fades in over a tiny directional shift. The shift is a
 //!   relative `top` inset, applied after layout like a CSS transform, so
-//!   the stable shell chrome (the panel, the footer, the query field and
-//!   the heading) never moves. The departing content is unmounted at once:
-//!   it is never drawn fading out, so it can expose no hit targets, no
-//!   active accessibility nodes and cannot pin a departed screen or a
-//!   guest runtime generation.
+//!   the stable shell chrome (the panel, the footer with its action
+//!   strip, the query field, the heading) never moves. The departing
+//!   content is unmounted at once: it is never drawn fading out, so it
+//!   can expose no hit targets, no active accessibility nodes, and cannot
+//!   pin a departed screen or a guest runtime generation — the
+//!   transition holds no screen, no rows and no callbacks at all.
 //! - A **query or result update** — typing, rows changing, selection,
 //!   status, a screen's own contents — never animates. Navigation,
 //!   dispatch, cancellation and focus are applied by the launcher before
@@ -32,24 +39,15 @@
 //!   it can never rerun a command, delay its request, resubmit a form,
 //!   change history or wait for typing. A rapid open/back/open starts the
 //!   next transition from the current presentation (the interrupted
-//!   offset), so reversal retargets smoothly instead of flashing.
+//!   offset), so a reversal retargets smoothly instead of flashing.
 //!
-//! Reduced motion: [`App::reduce_motion`] decides, and the policy connects
-//! that flag to what the operating system actually reports. Windows reads
-//! the user's "Animation effects" preference (`UISettings.AnimationsEnabled`)
-//! and keeps following it, because the setting can change while Pane runs
-//! — including mid-transition, where the next drawn frame settles at once
-//! and schedules no further cosmetic frames. A read that itself fails
-//! fails closed, as the material layer does for its own preferences
-//! (see `crate::ui::material`): reduced motion, so a preference Pane could
-//! not read is never mistaken for a request for motion. macOS and Linux
-//! read no preference in this slice — the pane crate links no AppKit and
-//! no desktop-portal client — so there the documented static fallback is
-//! full motion (GPUI's own default): an unread preference is not a request
-//! for reduced motion, and no cross-platform detection is claimed. Wiring
-//! `NSWorkspace.accessibilityDisplayShouldReduceMotion` (and whatever a
-//! given Linux desktop exposes) is left for the settings work that
-//! introduces Pane's first macOS and portal dependencies.
+//! Reduced motion: [`App::reduce_motion`] decides, and
+//! [`observe_reduced_motion`] connects that flag to what the operating
+//! system actually reports — see that function for what is detected on
+//! each system and what the documented fallback is there. Where the
+//! system reports changes while Pane runs, a change lands on the next
+//! drawn frame: engaged mid-transition, that frame settles at once and
+//! schedules no further cosmetic frames.
 //!
 //! Frame discipline: a view transition runs for its bounded duration and
 //! requests animation frames only while one is in flight. Completing,
@@ -64,12 +62,13 @@
 //!
 //! The clock is the background executor's (`App::background_executor().now()`,
 //! which on native targets *is* `std::time::Instant`), not the wall clock:
-//! the same choice GPUI CE's own spring element makes so animation
-//! progress is deterministic under the test platform's controlled clock.
+//! the same choice GPUI CE's own animation and spring elements make, so
+//! animation progress is deterministic under the test platform's
+//! controlled clock.
 
 use std::time::{Duration, Instant};
 
-use gpui::{App, div, px};
+use gpui::{App, div, prelude::*, px};
 
 /// Which way a view transition goes, set by the navigation that caused it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -99,6 +98,13 @@ pub(crate) const VIEW_RETURN: Duration = Duration::from_millis(120);
 /// pixels: 3px, in the ticket's 2-4px window. Far enough to read as
 /// direction, near enough never to look like scrolling.
 pub(crate) const VIEW_SHIFT: f32 = 3.;
+
+/// Where the arriving content's opacity starts: 0.3, the floor Roboco's
+/// menu entrance fades from, so the first frame of a transition already
+/// shows the arriving content faintly instead of a blank content area
+/// that pops in. The fade reaches full opacity as the content reaches
+/// rest.
+pub(crate) const VIEW_OPACITY_FLOOR: f32 = 0.3;
 
 /// One view transition in flight: the arriving content is `from` pixels
 /// off its resting place and decays to rest over the direction's duration.
@@ -155,7 +161,7 @@ const SETTLED_WITHIN: f32 = 0.05;
 /// down, when the user backs out. A transition still in flight hands its
 /// *current* offset to the arriving content instead, so a rapid reversal
 /// (open, back, open) continues from the presentation on screen — no
-/// restart, no dip to transparency, no queued sequence. The departing
+/// restart, no dip to the opacity floor, no queued sequence. The departing
 /// screen's content is already gone; this never draws it again.
 fn arrive(
     direction: Direction,
@@ -204,10 +210,10 @@ pub(crate) fn advance(
     } else if screen_changed {
         *transition = arrive(navigation, transition.take(), now);
     }
-    let Some(transition) = *transition else {
+    let Some(in_flight) = *transition else {
         return None;
     };
-    let offset = transition.offset(now);
+    let offset = in_flight.offset(now);
     if offset.abs() < SETTLED_WITHIN {
         // The transition has run its course (or was retargeted from
         // nothing): the content has arrived, so the record goes and no
@@ -215,11 +221,12 @@ pub(crate) fn advance(
         *transition = None;
         return None;
     }
-    // The fade follows the offset: full at rest, transparent at the full
-    // shift. Deriving it from the offset is what makes a retarget
-    // continuous — the interrupted presentation's opacity carries over
-    // exactly, because its offset does.
-    let opacity = (1. - offset.abs() / VIEW_SHIFT).clamp(0., 1.);
+    // The fade follows the offset: the floor at the full shift, full
+    // opacity at rest. Deriving it from the offset is what makes a
+    // retarget continuous — the interrupted presentation's opacity
+    // carries over exactly, because its offset does.
+    let settled = 1. - offset.abs() / VIEW_SHIFT;
+    let opacity = VIEW_OPACITY_FLOOR + (1. - VIEW_OPACITY_FLOOR) * settled;
     Some((offset, opacity))
 }
 
@@ -232,16 +239,16 @@ pub(crate) fn advance(
 /// The offset is a relative `top` inset: taffy applies relative insets
 /// after layout, the way a CSS transform paints, so the shell chrome
 /// around the content never moves while the content's own paint, hit
-/// targets and debug bounds follow it together. Opacity is paint-only;
-/// the content below stays interactive and present to assistive
-/// technology from the first frame, because the launcher has already
-/// navigated — only the paint eases in.
+/// targets and debug bounds follow it together. Opacity is paint-only and
+/// is left unset at rest; the content below stays interactive and present
+/// to assistive technology from the first frame, because the launcher has
+/// already navigated — only the paint eases in.
 pub(crate) fn arriving(content: impl gpui::IntoElement, arriving: Option<(f32, f32)>) -> gpui::Div {
     let (offset, opacity) = arriving.unwrap_or((0., 1.));
     div()
         .relative()
         .top(px(offset))
-        .opacity(opacity)
+        .when(opacity < 1., |wrapper| wrapper.opacity(opacity))
         // Stands in for the body it wraps as the flex child that fills the
         // panel between the chrome above and the footer below.
         .flex_1()
@@ -287,8 +294,9 @@ fn measurement_scale() -> f32 {
 ///   (`UISettings.AnimationsEnabled`, the "Animation effects" setting),
 ///   then watched through its change event, which fires on one of the
 ///   system's own threads and is applied on the app's thread — the same
-///   hop the launcher's global hotkey presses take. A read that fails
-///   fails closed to reduced motion.
+///   hop the launcher's global hotkey presses take (an unbounded channel
+///   awaited in a task on the main thread). A read that fails fails
+///   closed to reduced motion.
 /// - **macOS**: nothing yet — the pane crate links no AppKit, so no
 ///   `NSWorkspace` preference is read. Static fallback: full motion.
 /// - **Linux**: nothing — no desktop exposes a standard reduced-motion
@@ -296,8 +304,24 @@ fn measurement_scale() -> f32 {
 ///   Static fallback: full motion.
 ///
 /// The fallbacks are the platform's own default, not a claim about the
-/// user: an unread preference is not a request for reduced motion.
-pub(crate) fn observe(cx: &mut App) {
+/// user: an unread preference is not a request for reduced motion. Wiring
+/// `NSWorkspace.accessibilityDisplayShouldReduceMotion` (and whatever a
+/// given Linux desktop exposes) is left for the settings work that
+/// introduces Pane's first macOS and portal dependencies.
+///
+/// A development build also honors `PANE_TEST_REDUCE_MOTION`: when set,
+/// the app runs with reduced motion regardless of the system's setting,
+/// and the native read and watch are skipped — the native smokes use it
+/// to capture the reduced-motion presentation without touching the
+/// operator's own system settings. Nothing else reads it, and a release
+/// build has no such hook.
+pub(crate) fn observe_reduced_motion(cx: &mut App) {
+    // The smokes' override, before any native read (see the docs above).
+    #[cfg(debug_assertions)]
+    if let Some(forced) = std::env::var_os("PANE_TEST_REDUCE_MOTION") {
+        cx.set_reduce_motion(!forced.is_empty());
+        return;
+    }
     cx.set_reduce_motion(system_reduced_motion());
     // Windows reports changes to the preference as the user moves it; the
     // other systems have nothing to watch (see the module docs). The task
@@ -323,7 +347,7 @@ pub(crate) fn observe(cx: &mut App) {
 /// The system's reduced-motion preference as this platform resolves it at
 /// startup. Windows reads the native setting (failing closed to reduced
 /// motion); the others have no read here and keep the default, full
-/// motion, as documented on [`observe`].
+/// motion, as documented on [`observe_reduced_motion`].
 fn system_reduced_motion() -> bool {
     #[cfg(target_os = "windows")]
     {
@@ -349,11 +373,9 @@ fn system_reduced_motion() -> bool {
 /// freshly read preference is reported to `report` — the event itself
 /// carries no value.
 #[cfg(target_os = "windows")]
-fn watch_reduced_motion(
-    report: tokio::sync::mpsc::UnboundedSender<bool>,
-) -> Option<Watch> {
+fn watch_reduced_motion(report: tokio::sync::mpsc::UnboundedSender<bool>) -> Option<Watch> {
     use windows::UI::ViewManagement::UISettings;
-    use windows::core::TypedEventHandler;
+    use windows::Foundation::TypedEventHandler;
 
     let settings = UISettings::new().ok()?;
     let watched = settings.clone();

@@ -200,6 +200,7 @@ impl LauncherWindow {
         self.sync_screen(window, cx);
         cx.notify();
     }
+
     /// Shows the package in `folder` with its identity and compatibility,
     /// redrawing when the check finishes.
     pub fn preview_package(&mut self, folder: &Path, window: &mut Window, cx: &mut Context<Self>) {
@@ -773,9 +774,11 @@ impl Render for LauncherWindow {
         let body = match view.screen {
             Screen::Form(form) => {
                 motion::arriving(self.render_form(view.title.clone(), form, cx), arriving)
+                    .into_any_element()
             }
             Screen::CustomView(custom_view) => {
                 motion::arriving(self.render_custom_view(custom_view, cx), arriving)
+                    .into_any_element()
             }
             Screen::Root { query } => self.render_search(
                 query,

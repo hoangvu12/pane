@@ -2,6 +2,7 @@
 //! and mouse events dispatch to the window, which runs real guest components.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use gpui::{Entity, Modifiers, MouseButton, TestAppContext, VisualTestContext, prelude::*, px};
 use pane::LauncherWindow;
@@ -1778,4 +1779,374 @@ fn a_long_status_replaces_the_idle_strip_and_stays_readable(cx: &mut TestAppCont
         "the footer grew past its 50px floor: {:?}",
         footer.size.height
     );
+}
+
+/// The last drawn frame's view transition, as the arriving content's
+/// (offset from rest in px — below rest for a view that opens, above for
+/// backing out — and its opacity); `None` when the frame drew the content
+/// settled, which is also all reduced motion ever reports. See
+/// [`LauncherWindow::view_transition`].
+fn arriving(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) -> Option<(f32, f32)> {
+    cx.read_entity(window, |window, _| window.view_transition())
+}
+
+/// Delivers the animation frame the window has asked for, as the native
+/// frame loop would, with `elapsed` passing first on the test platform's
+/// controlled clock. The test platform delivers no frames on its own, so
+/// this is the only thing that advances a running transition; one call
+/// draws at most one frame. Returns how many next-frame callbacks ran —
+/// `0` means the window had asked for no frame, so nothing drew.
+fn frame(cx: &mut VisualTestContext, elapsed: Duration) -> usize {
+    cx.executor().advance_clock(elapsed);
+    let ran = cx.update(|window, cx| window.simulate_next_frame(cx));
+    cx.run_until_parked();
+    ran
+}
+
+/// Delivers frames until the window asks for none, so a transition in
+/// flight completes and the functional scroll relayout after a screen
+/// change finishes, and returns the frames it delivered. `0` means the
+/// window was already idle: no cosmetic and no functional frame was
+/// pending. Bounded, so a window that never stopped asking for frames
+/// fails the test instead of hanging it.
+fn settle_frames(cx: &mut VisualTestContext) -> usize {
+    let mut delivered = 0;
+    for _ in 0..20 {
+        let ran = frame(cx, Duration::from_millis(25));
+        if ran == 0 {
+            return delivered;
+        }
+        delivered += ran;
+    }
+    panic!("the window never stopped asking for animation frames");
+}
+
+/// Opening a command is a view transition: the content that changes —
+/// the results list — arrives over a brief fade and a tiny shift from
+/// below, while the shell chrome (the footer with #71's action strip)
+/// stays exactly where it was. The arrival is driven on the controlled
+/// clock: it progresses as frames are delivered, completes within its
+/// bounded span, and leaves the window asking for no frame at all.
+#[gpui::test]
+fn opening_a_command_transitions_the_content_and_keeps_the_chrome_still(
+    cx: &mut TestAppContext,
+) {
+    let (window, cx) = open(cx, &RUST);
+    let view = settle(&window, cx);
+    assert!(matches!(view.screen, Screen::Root { .. }));
+    // The first frame drew no transition, and none is pending: a settled
+    // window is idle.
+    assert_eq!(frame(cx, Duration::ZERO), 0);
+    assert!(arriving(&window, cx).is_none());
+
+    // The footer — the idle strip with the action button — is chrome.
+    let footer = cx
+        .debug_bounds("status-idle")
+        .expect("the idle strip is rendered");
+
+    // Enter opens the selected command: the frame that draws the new
+    // screen starts the arrival, the full shift below rest.
+    cx.simulate_keystrokes("enter");
+    let view = settle(&window, cx);
+    assert_eq!((view.screen, view.title.as_str()), (Screen::Command, "Rust sample"));
+    let (offset, opacity) = arriving(&window, cx).expect("the command's content is arriving");
+    assert!(
+        offset > 2.5 && offset < 3.5,
+        "the arrival starts the full shift below rest: {offset}"
+    );
+    assert!(opacity < 0.45, "the arrival starts faint: {opacity}");
+    // The chrome did not move with it.
+    let footer_now = cx
+        .debug_bounds("status-idle")
+        .expect("the idle strip is rendered");
+    assert_eq!(footer_now, footer, "the footer (the action strip) stayed still");
+    // The content did: the list is drawn displaced from its rest by the
+    // arrival's shift (where it lies once settled, below).
+    let rows = cx.debug_bounds("rows").expect("the list is rendered");
+
+    // Frames pass, and the arrival progresses without restarting.
+    assert!(frame(cx, Duration::from_millis(40)) >= 1);
+    let (progressed, _) = arriving(&window, cx).expect("the content is still arriving");
+    assert!(
+        progressed > 0.05 && progressed < offset,
+        "the arrival progressed toward rest: {progressed} from {offset}"
+    );
+    // Past the entrance's span, the next delivered frame lands the
+    // content at rest and asks for no further frame: the window is idle.
+    assert!(frame(cx, Duration::from_millis(130)) >= 1);
+    assert!(arriving(&window, cx).is_none());
+    let settled = cx.debug_bounds("rows").expect("the list is rendered");
+    assert_eq!(
+        rows.origin.y - settled.origin.y,
+        px(offset),
+        "the list was shifted exactly the arrival's offset below its rest"
+    );
+    assert_eq!(settle_frames(cx), 0, "a settled window asks for no frame");
+}
+
+/// Backing out is the paired transition: the root content arrives from
+/// above rest instead of below, over the quicker return, and settles
+/// leaving the window idle.
+#[gpui::test]
+fn backing_out_transitions_the_root_content_from_above(cx: &mut TestAppContext) {
+    let (window, cx) = open(cx, &RUST);
+    cx.simulate_keystrokes("enter");
+    settle(&window, cx);
+    // The entrance completed; nothing is pending.
+    settle_frames(cx);
+    assert!(arriving(&window, cx).is_none());
+
+    // Escape backs out to root search.
+    cx.simulate_keystrokes("escape");
+    let view = settle(&window, cx);
+    assert!(matches!(view.screen, Screen::Root { .. }));
+    let (offset, _) = arriving(&window, cx).expect("the root content is arriving");
+    assert!(
+        offset < -2.5 && offset > -3.5,
+        "the return starts the full shift above rest: {offset}"
+    );
+
+    // The return is the quicker of the two spans: 130ms — past its 120ms
+    // — settles it.
+    assert!(frame(cx, Duration::from_millis(130)) >= 1);
+    assert!(arriving(&window, cx).is_none());
+    assert_eq!(settle_frames(cx), 0, "a settled window asks for no frame");
+}
+
+/// A rapid open/back/open retargets each arrival from the presentation on
+/// screen — the interrupted offset carries over, so nothing restarts, no
+/// departed screen flashes back and the navigation itself is unaffected.
+#[gpui::test]
+fn rapid_open_back_open_retargets_the_arrival_from_where_it_is(cx: &mut TestAppContext) {
+    let (window, cx) = open(cx, &RUST);
+    settle(&window, cx);
+
+    // Open, back and open again, with no test-clock time passing between
+    // them: each navigation's frame has already drawn.
+    cx.simulate_keystrokes("enter");
+    settle(&window, cx);
+    let (offset, _) = arriving(&window, cx).expect("the command's content is arriving");
+
+    cx.simulate_keystrokes("escape");
+    let view = settle(&window, cx);
+    assert!(matches!(view.screen, Screen::Root { .. }));
+    let (back, _) = arriving(&window, cx).expect("the root content is arriving");
+    // The back transition continued from the interrupted presentation —
+    // the same offset, not a fresh start from above.
+    assert!((back - offset).abs() < 0.05, "the back continued the presentation: {back} from {offset}");
+
+    cx.simulate_keystrokes("enter");
+    let view = settle(&window, cx);
+    assert_eq!(
+        (view.screen, view.title.as_str()),
+        (Screen::Command, "Rust sample")
+    );
+    let (retargeted, _) = arriving(&window, cx).expect("the command's content is arriving again");
+    assert!((retargeted - offset).abs() < 0.05, "the reopening continued the presentation");
+
+    // The retargeted arrival then progresses and completes like any other.
+    assert!(frame(cx, Duration::from_millis(40)) >= 1);
+    let (progressed, _) = arriving(&window, cx).expect("the content is still arriving");
+    assert!(progressed < retargeted, "the arrival progressed toward rest");
+    settle_frames(cx);
+    assert!(arriving(&window, cx).is_none());
+    // And the screen the user navigated to is what is drawn — the rapid
+    // reversal left no stale view behind (settle drew and checked it).
+    let view = settle(&window, cx);
+    assert_eq!(view.screen, Screen::Command);
+}
+
+/// Navigation, focus and typing take effect immediately: while an arrival
+/// is still in flight, the query field has focus, typing lands on the very
+/// frames that carry the transition, and Enter dispatches without waiting
+/// for it.
+#[gpui::test]
+fn typing_and_dispatch_take_effect_while_an_arrival_is_in_flight(cx: &mut TestAppContext) {
+    let (window, cx) = open(cx, &RUST);
+    settle(&window, cx);
+    cx.simulate_keystrokes("enter");
+    settle(&window, cx);
+
+    // Back out: the root content's arrival is in flight.
+    cx.simulate_keystrokes("escape");
+    let view = settle(&window, cx);
+    assert!(matches!(view.screen, Screen::Root { .. }));
+    assert!(arriving(&window, cx).is_some(), "the return is still arriving");
+    assert!(query_has_focus(&window, cx), "focus moved to the query at once");
+
+    // Typing lands while the arrival is in flight: the frame that draws
+    // the narrowed results is the same frame that draws the transition.
+    cx.simulate_input("Rust");
+    let view = settle(&window, cx);
+    assert_eq!(view.search_field(), Some("Rust"));
+    assert!(
+        arriving(&window, cx).is_some(),
+        "typing did not wait for the arrival to finish"
+    );
+
+    // So does dispatch: Enter opens the best match while the arrival is
+    // still in flight.
+    cx.simulate_keystrokes("enter");
+    let view = settle(&window, cx);
+    assert_eq!(
+        (view.screen, view.title.as_str()),
+        (Screen::Command, "Rust sample")
+    );
+    settle_frames(cx);
+}
+
+/// Escaping mid-arrival cancels the opening: the departing command's
+/// content is unmounted at once — the drawn screen is root's, its rows
+/// are root's — and the in-flight arrival belongs to the root content,
+/// with no overlay of the command fading out. The command's answer,
+/// arriving after the user left, updates the status without navigating
+/// back to the departed screen.
+#[gpui::test]
+fn escaping_mid_arrival_cancels_it_without_a_trace_of_the_departed_screen(
+    cx: &mut TestAppContext,
+) {
+    let (window, cx) = open(cx, &RUST);
+    settle(&window, cx);
+    cx.simulate_keystrokes("enter");
+    settle(&window, cx);
+
+    // The command's selected item starts running (its answer is still to
+    // come) and, with the arrival from opening still in flight, the user
+    // backs out of it.
+    cx.simulate_keystrokes("enter");
+    cx.simulate_keystrokes("escape");
+    let view = settle(&window, cx);
+    assert!(matches!(view.screen, Screen::Root { .. }));
+    // Root's own rows are what is drawn, not a fading-out command.
+    assert!(
+        row_titles(&window, cx).iter().any(|title| title == "Rust sample"),
+        "the root results are drawn, not the command's"
+    );
+    // The arrival in flight is the root content's, continued from the
+    // interrupted forward arrival.
+    let (offset, _) = arriving(&window, cx).expect("the root content is arriving");
+    assert!((offset - 3.).abs() < 0.5, "the arrival continued from below rest: {offset}");
+
+    // The item's answer, landing after the user left, changes nothing
+    // about where the user is: the core drops a departed command's pending
+    // reply, so the screen stays root and the status stays idle — no
+    // stale completion navigates back. (Give the guest's late reply time
+    // to land before asserting that it changed nothing.)
+    std::thread::sleep(Duration::from_millis(150));
+    let view = settle(&window, cx);
+    assert!(
+        matches!(view.screen, Screen::Root { .. }),
+        "the late answer did not navigate back to the departed screen"
+    );
+    assert_eq!(view.status, Status::Idle);
+    // And the cancellation left the window working: opening the command
+    // again arrives again.
+    cx.simulate_keystrokes("enter");
+    let view = settle(&window, cx);
+    assert_eq!((view.screen, view.title.as_str()), (Screen::Command, "Rust sample"));
+    assert!(arriving(&window, cx).is_some(), "the command arrives again");
+    settle_frames(cx);
+}
+
+/// Query and result updates never animate: typing, a changed row set and
+/// a moved selection on the same screen kind draw no transition and ask
+/// for no cosmetic frame — only the functional scroll relayout's one.
+#[gpui::test]
+fn typing_selection_and_row_changes_never_transition(cx: &mut TestAppContext) {
+    let (window, cx) = open(cx, &RUST);
+    settle(&window, cx);
+    assert!(arriving(&window, cx).is_none());
+
+    // Typing narrows the results to one: a query update, not a view
+    // transition.
+    cx.simulate_input("Rus");
+    let view = settle(&window, cx);
+    assert_eq!(view.search_field(), Some("Rus"));
+    assert_eq!(view.selected, Some(0));
+    assert!(
+        arriving(&window, cx).is_none(),
+        "a query update does not animate"
+    );
+    // So does moving the selection on the narrowed results.
+    cx.simulate_keystrokes("down");
+    let view = settle(&window, cx);
+    assert_eq!(view.selected, Some(0));
+    assert!(arriving(&window, cx).is_none(), "a selection update does not animate");
+    // The functional scroll relayout after the rows changed is the only
+    // frame the window asked for; once it is delivered, the window is
+    // idle.
+    settle_frames(cx);
+    assert!(arriving(&window, cx).is_none());
+}
+
+/// Reduced motion settles every view transition at once: a navigation
+/// under it starts no arrival, and reducing motion mid-arrival ends it on
+/// the next drawn frame. Either way the window schedules no frame for
+/// presentation.
+#[gpui::test]
+fn reduced_motion_settles_transitions_at_once_without_frames(cx: &mut TestAppContext) {
+    let (window, cx) = open(cx, &RUST);
+    settle(&window, cx);
+
+    // A navigation under reduced motion starts no transition: the frame
+    // that draws the new screen is already settled.
+    cx.update(|_, cx| cx.set_reduce_motion(true));
+    cx.simulate_keystrokes("enter");
+    let view = settle(&window, cx);
+    assert_eq!((view.screen, view.title.as_str()), (Screen::Command, "Rust sample"));
+    assert!(
+        arriving(&window, cx).is_none(),
+        "reduced motion drew the command's content settled"
+    );
+
+    // Reduced motion engaged mid-arrival ends it on the next frame. Begin
+    // a return under full motion, then flip the preference.
+    cx.update(|_, cx| cx.set_reduce_motion(false));
+    cx.simulate_keystrokes("escape");
+    settle(&window, cx);
+    assert!(arriving(&window, cx).is_some(), "the return began under full motion");
+    cx.update(|_, cx| cx.set_reduce_motion(true));
+    // The frame the arrival had asked for draws settled, and asks for
+    // nothing further.
+    assert!(frame(cx, Duration::ZERO) >= 1);
+    assert!(
+        arriving(&window, cx).is_none(),
+        "the arrival settled the moment reduced motion engaged"
+    );
+    assert_eq!(settle_frames(cx), 0, "the window asked for no further frame");
+}
+
+/// A window that stops drawing mid-arrival — hidden, on the native
+/// platform — settles on the first frame it draws later: progress is
+/// measured on a clock, not counted in frames, so the time that passed
+/// while nothing drew completes the transition and that frame requests
+/// nothing. (The test platform has no window visibility; the same state
+/// is produced by letting the clock run without delivering a frame.)
+#[gpui::test]
+fn a_window_that_stops_drawing_settles_its_arrival_on_the_next_frame_it_draws(
+    cx: &mut TestAppContext,
+) {
+    let (window, cx) = open(cx, &RUST);
+    settle(&window, cx);
+    cx.simulate_keystrokes("enter");
+    settle(&window, cx);
+    assert!(arriving(&window, cx).is_some());
+
+    // Time passes with no frame delivered and no redraw provoked — a
+    // hidden window draws nothing, and the platform delivers none of the
+    // frames it asked for.
+    cx.executor().advance_clock(Duration::from_secs(5));
+
+    // The window is shown again: the frame it had asked for is delivered,
+    // and it is already settled — the time that passed completed the
+    // transition — so that frame asks for no animation frame of its own.
+    assert!(
+        frame(cx, Duration::ZERO) >= 1,
+        "the pending frame was delivered on show"
+    );
+    assert!(
+        arriving(&window, cx).is_none(),
+        "the arrival settled while the window did not draw"
+    );
+    assert_eq!(settle_frames(cx), 0, "the shown frame asked for nothing");
 }

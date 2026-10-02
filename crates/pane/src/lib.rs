@@ -164,6 +164,17 @@ pub fn configure_visuals(cx: &App) -> gpui::Result<()> {
     ui::configure(cx)
 }
 
+/// Follows the operating system's reduced-motion preference for the whole
+/// app, once, before the first window opens: what is actually read on each
+/// system, what falls back where nothing is readable, and how a Windows
+/// change is applied while Pane runs are documented on the policy itself
+/// (`ui::motion`). Call before the first frame draws; the launcher's view
+/// transitions (and anything else that consults
+/// [`gpui::App::reduce_motion`]) then follow the preference.
+pub fn observe_reduced_motion(cx: &mut App) {
+    ui::motion::observe_reduced_motion(cx)
+}
+
 /// The window background appearance the configured material asks for,
 /// for the binary to pass into `WindowOptions::window_background`:
 /// blurred behind a glass panel on the frost-capable platforms, opaque
