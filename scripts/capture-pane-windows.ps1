@@ -673,10 +673,43 @@ try {
         $working = [System.Windows.Forms.Screen]::FromHandle($hwnd).WorkingArea
         $movedX = [Math]::Max($working.Left, [Math]::Min($before.Left + 32, $working.Right - ($before.Right - $before.Left)))
         $movedY = [Math]::Max($working.Top, [Math]::Min($before.Top + 24, $working.Bottom - ($before.Bottom - $before.Top)))
-        if (-not [PaneWin]::SetWindowPos($hwnd, [IntPtr]::Zero, $movedX, $movedY, 0, 0, 0x15)) {
-            throw 'Moving the spawned window failed.'
+        # Exercise the intended header drag region using real pointer input,
+        # rather than proving only that SetWindowPos can reposition a window.
+        $dragX = $before.Left + 28
+        $dragY = $before.Top + 32
+        $hit = Get-PointHit $dragX $dragY
+        if ($hit.RootInt -ne $hwnd.ToInt64() -or $hit.Pid -ne $process.Id -or
+            [PaneWin]::GetForegroundWindow().ToInt64() -ne $hwnd.ToInt64()) {
+            throw 'Spawned header is not exposed and focused; no drag input sent.'
+        }
+        $savedPointer = New-Object PaneWin+POINT
+        [void][PaneWin]::GetCursorPos([ref]$savedPointer)
+        $endX = $dragX + ($movedX - $before.Left)
+        $endY = $dragY + ($movedY - $before.Top)
+        [void][PaneWin]::SetCursorPos($dragX, $dragY)
+        $hit = Get-PointHit $dragX $dragY
+        if ($hit.RootInt -ne $hwnd.ToInt64() -or $hit.Pid -ne $process.Id) {
+            throw 'Spawned header became covered; no drag button press sent.'
+        }
+        [PaneWin]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+        try {
+            Start-Sleep -Milliseconds 150
+            [void][PaneWin]::SetCursorPos($endX, $endY)
+            Start-Sleep -Milliseconds 150
+        } finally {
+            [PaneWin]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+            $pointerNow = New-Object PaneWin+POINT
+            [void][PaneWin]::GetCursorPos([ref]$pointerNow)
+            if ($pointerNow.X -eq $endX -and $pointerNow.Y -eq $endY) {
+                [void][PaneWin]::SetCursorPos($savedPointer.X, $savedPointer.Y)
+            }
         }
         Save-WindowCheck 'window-moved.png' $hwnd
+        $afterDrag = New-Object PaneWin+RECT
+        [void][PaneWin]::GetWindowRect($hwnd, [ref]$afterDrag)
+        if ($afterDrag.Left -eq $before.Left -and $afterDrag.Top -eq $before.Top) {
+            throw 'The header drag did not move Pane.'
+        }
         if (-not [PaneWin]::SetWindowPos($hwnd, [IntPtr]::Zero, 0, 0, 380, 420, 0x16)) {
             throw 'Resizing the spawned window failed.'
         }
