@@ -72,6 +72,21 @@ pub(crate) struct Theme {
     /// The footer strip's translucent wash (reference: rgba(0,0,0,.14)).
     pub(crate) footer_tint: Hsla,
 
+    // -- Popover roles -------------------------------------------------
+    /// The L2 popover's translucent tint over what is behind it inside
+    /// the window (reference `.pop`: rgba(38,39,43,.82) dark). Used for
+    /// floating layers over the panel, such as the footer's menu.
+    pub(crate) popover_tint: Hsla,
+    /// The opaque popover used when the window is not frosted (Material's
+    /// fallback): the same base color at full alpha.
+    pub(crate) popover_solid: Hsla,
+    /// The popover's sheen, fading out over its top 40%.
+    pub(crate) popover_sheen: Hsla,
+    /// The popover's 1px inset edge.
+    pub(crate) popover_edge: Hsla,
+    /// The popover's top inset highlight.
+    pub(crate) popover_top_highlight: Hsla,
+
     // -- Border roles -------------------------------------------------------
     /// The panel's inner edge (reference: rgba(255,255,255,.075)).
     pub(crate) hairline: Hsla,
@@ -181,6 +196,10 @@ pub(crate) struct Geometry {
     pub(crate) tile_glyph_size: Pixels,
     /// The footer's height.
     pub(crate) footer_height: Pixels,
+    /// A popover's corner radius (the reference's L2 `.pop`: 14px, shown
+    /// on every platform, since a popover floats inside the window rather
+    /// than at its edge).
+    pub(crate) popover_radius: Pixels,
 }
 
 impl Theme {
@@ -206,6 +225,12 @@ impl Theme {
             panel_sheen: color(0xFFFFFF0D),
             panel_top_highlight: color(0xFFFFFF1A),
             footer_tint: color(0x00000024),
+
+            popover_tint: color(0x26272BD1),
+            popover_solid: color(0x26272BFF),
+            popover_sheen: color(0xFFFFFF0F),
+            popover_edge: color(0xFFFFFF17),
+            popover_top_highlight: color(0xFFFFFF1A),
 
             hairline: color(0xFFFFFF13),
             hairline_soft: color(0xFFFFFF0F),
@@ -254,6 +279,15 @@ impl Theme {
             panel_sheen: color(0xFFFFFF4D),
             panel_top_highlight: color(0xFFFFFF66),
             footer_tint: color(0x0000000D),
+
+            // The light popover is derived, like the light panel: the
+            // same base as the panel at a slightly higher tint, so a
+            // popover over the panel reads as a raised layer.
+            popover_tint: color(0xFBFBFDE6),
+            popover_solid: color(0xFBFBFDFF),
+            popover_sheen: color(0xFFFFFF66),
+            popover_edge: color(0x0000001A),
+            popover_top_highlight: color(0x00000012),
 
             hairline: color(0x00000017),
             hairline_soft: color(0x00000012),
@@ -330,6 +364,7 @@ impl Geometry {
             tile_radius: px(7.),
             tile_glyph_size: px(16.),
             footer_height: px(50.),
+            popover_radius: px(14.),
         }
     }
 }
