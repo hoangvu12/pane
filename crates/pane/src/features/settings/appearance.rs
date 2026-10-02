@@ -302,8 +302,15 @@ fn choice(
         Toggled::False
     })
     .when(!offered, |row| row.aria_disabled(true).opacity(0.5))
+    .on_mouse_down(gpui::MouseButton::Left, move |_, _, _| {
+        eprintln!("APPEARANCE MOUSEDOWN {name}");
+    })
+    .on_mouse_up(gpui::MouseButton::Left, move |_, _, _| {
+        eprintln!("APPEARANCE MOUSEUP {name}");
+    })
     .on_click(move |event: &gpui::ClickEvent, window, cx| {
         if offered {
+            eprintln!("APPEARANCE CLICK2 {name}");
             on_click(event, window, cx);
         }
     })
