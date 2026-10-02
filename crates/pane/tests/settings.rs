@@ -758,9 +758,20 @@ fn choosing_a_theme_re_renders_both_windows_and_the_preview(cx: &mut TestAppCont
     // The Light choice, taken through the page's own control: no
     // restart, no second window — both windows re-render with it at
     // once.
+    eprintln!(
+        "DIAG row={:?} group={:?} page={:?}",
+        settings_cx.debug_bounds("appearance-theme-Light"),
+        settings_cx.debug_bounds("appearance-theme-group"),
+        settings_cx.debug_bounds("settings-page")
+    );
     choose(&mut settings_cx, "appearance-theme-Light");
     cx.run_until_parked();
     settings_cx.run_until_parked();
+    eprintln!(
+        "DIAG after click: Light chosen={} quads={:?}",
+        chosen(&mut settings_cx, "Light"),
+        panels_painting(&mut settings_cx, &light_panel())
+    );
     assert!(
         paints_panel(cx, &light_panel()),
         "the launcher paints the light palette"
