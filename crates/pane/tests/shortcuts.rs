@@ -865,7 +865,7 @@ fn the_catalog_follows_disabling_enabling_and_uninstalling(cx: &mut TestAppConte
     // watcher sees the catalog change (the test's clock is what waits for
     // its tick, since nothing else advances time on the test platform).
     let tick = |settings_cx: &mut VisualTestContext| {
-        settings_cx.cx.advance_clock(Duration::from_millis(600));
+        settings_cx.cx.executor().advance_clock(Duration::from_millis(600));
         settings_cx.run_until_parked();
     };
 
