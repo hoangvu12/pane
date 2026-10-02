@@ -782,6 +782,17 @@ fn choosing_a_theme_re_renders_both_windows_and_the_preview(cx: &mut TestAppCont
         chosen(&mut settings_cx, "Light"),
         panels_painting(&mut settings_cx, &light_panel())
     );
+    // The control: a sidebar row click in the same window and frame —
+    // known-good construction, known to switch pages.
+    let about = settings_cx
+        .debug_bounds("section-About")
+        .expect("the About section is drawn");
+    settings_cx.simulate_click(about.center(), Modifiers::none());
+    settings_cx.run_until_parked();
+    eprintln!(
+        "DIAG control click: about-version drawn={}",
+        settings_cx.debug_bounds("about-version").is_some()
+    );
     assert!(
         paints_panel(cx, &light_panel()),
         "the launcher paints the light palette"
