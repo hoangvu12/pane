@@ -388,7 +388,7 @@ fn the_page_lists_installed_commands_with_their_alias_and_hotkey(cx: &mut TestAp
     assert!(json.contains("local folder"), "the source is displayed");
 
     // The record of the package that is not installed: a group of its
-    // own, saying the choice is not active.
+    // own, its choice's inactive reason drawn under it.
     assert!(
         settings_cx
             .debug_bounds("shortcut-group-not-installed")
@@ -396,8 +396,10 @@ fn the_page_lists_installed_commands_with_their_alias_and_hotkey(cx: &mut TestAp
         "the not-installed group"
     );
     assert!(
-        json.contains("its extension is not installed"),
-        "the record is explained, {json}"
+        settings_cx
+            .debug_bounds("shortcut-alias-inactive-local:/nowhere#gone")
+            .is_some(),
+        "the record is explained"
     );
 
     // Nothing was activated to draw any of this: the launcher sits at
@@ -642,12 +644,13 @@ fn an_empty_commit_clears_the_alias(cx: &mut TestAppContext) {
         "the record was rewritten, {}",
         aliases_record(&data)
     );
-    // And root search no longer finds the command by it.
-    cx.simulate_input("ec");
+    // And root search no longer finds the command by it: the alias, a
+    // space and more text lists nothing without the alias.
+    cx.simulate_input("ec hello");
     let view = settle(&window, cx);
     assert!(
         view.rows.iter().all(|row| row.title != "Echo"),
-        "the alias row is gone, {:?}",
+        "no alias row is offered, {:?}",
         titles(&view)
     );
 }
@@ -679,8 +682,9 @@ fn a_change_that_cannot_be_recorded_explains_and_keeps_the_last_record(cx: &mut 
         "the alias was put back, {json}"
     );
 
-    // Root search follows the restored record: the alias finds nothing.
-    cx.simulate_input("ec");
+    // Root search follows the restored record: the alias, a space and
+    // more text lists nothing.
+    cx.simulate_input("ec hello");
     let view = settle(&window, cx);
     assert!(
         view.rows.iter().all(|row| row.title != "Echo"),

@@ -724,6 +724,11 @@ fn alias_cell(
             .track_focus(&handle)
             .role(Role::Button)
             .aria_label(label.clone())
+            // The reason the alias is not active, if it is not, announced
+            // after the cell's name.
+            .when_some(command.alias_inactive.as_ref(), |cell, why| {
+                cell.aria_description(format!("Not active: {why}"))
+            })
             .on_action(cx.listener(move |this, _: &EditAlias, window, cx| {
                 this.shortcuts_edit_alias(for_keys.0.clone(), for_keys.1.clone(), window, cx);
             }))
@@ -760,6 +765,9 @@ fn alias_cell(
             .debug_selector(|| format!("shortcut-alias-{id}"))
             .role(Role::Label)
             .aria_label(label)
+            .when_some(command.alias_inactive.as_ref(), |cell, why| {
+                cell.aria_description(format!("Not active: {why}"))
+            })
             .flex()
             .items_center()
             .min_h(px(30.))
@@ -899,6 +907,10 @@ fn hotkey_cell(command: &ShortcutCommand, theme: &Theme) -> Div {
         command.title,
         shown.as_deref().unwrap_or("none")
     );
+    let inactive = command
+        .hotkey_inactive
+        .as_ref()
+        .map(|why| format!("Not active: {why}"));
     div()
         .w(HOTKEY_WIDTH)
         .flex_none()
@@ -912,6 +924,7 @@ fn hotkey_cell(command: &ShortcutCommand, theme: &Theme) -> Div {
                 .debug_selector(|| format!("shortcut-hotkey-{}", command.id))
                 .role(Role::Label)
                 .aria_label(label)
+                .when_some(inactive, |cell, why| cell.aria_description(why))
                 .flex()
                 .items_center()
                 .min_h(px(30.))
