@@ -63,3 +63,39 @@ evidence `43aec59`. See [presentation ownership](launcher-presentation.md) and
   log's final newline; the application code and binary are the same.
 - This check used the original appearance before styling. Its theme/material
   environment values were ignored by that build and are not material evidence.
+
+### Shared appearance (#64)
+
+Integrated as `5ca1f06`, implementation `70fd205`. The Windows application suites
+pass 50 window tests plus one command-search test. The additional footer test
+covers 380x420 and 640x200 layouts, wrapping, bounded height and both scroll
+directions. Formatting and checking test targets pass.
+
+Native Windows 11 25H2 build 26200.8737 at 96 DPI, opaque mode, binary SHA256
+`B4EEABBA65B91E29CB7F9D86783306787977280E9D4C0E2448EF51405639E053`:
+
+- [Dark root](evidence/ui-windows/opaque-dark/00-initial-window.png), query,
+  command invocation and Escape pass. Guarded native header dragging moves
+  the window; narrow resize, restore, deactivation and reactivation pass.
+  [Run metadata](evidence/ui-windows/opaque-dark/pane-run.json).
+- [Light root](evidence/ui-windows/opaque-light-form/00-initial-window.png),
+  form editing, [validation](evidence/ui-windows/opaque-light-form/04-after-TAB-ENTER-window.png)
+  and [successful submission](evidence/ui-windows/opaque-light-form/06-after-TAB-ENTER-window.png)
+  pass. Choice glyphs, focus caret and error/success text remain readable.
+  [Run metadata](evidence/ui-windows/opaque-light-form/pane-run.json).
+- At 380x420 outer physical pixels, the
+  [error wraps](evidence/ui-windows/opaque-narrow/03-after-DOWN-2-ENTER-window.png)
+  and the [selected unavailable row](evidence/ui-windows/opaque-narrow/04-after-DOWN-5-window.png)
+  retains its full explanation inside the viewport.
+  [Run metadata](evidence/ui-windows/opaque-narrow/pane-run.json).
+
+These captures were visually reviewed and their exact binary hash, target
+foreground, un-aborted key input and process cleanup checked. Two earlier
+attempts were covered by an existing prototype window; the helper sent no keys,
+and neither their images nor their input attempts count as evidence. Positioning
+only the spawned window near the display's upper-left corner enabled a guarded
+focus click. No original prototype window was closed or moved.
+
+These #64 captures use the old renderer pin in opaque mode. Final glass evidence
+must use the combined fork and application revision. Native IME, screen-reader
+operation, scaled displays and OS transparency-disabled operation remain not run.
