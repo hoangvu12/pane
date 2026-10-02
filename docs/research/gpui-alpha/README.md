@@ -48,3 +48,9 @@ never modified. No test inspects blend constants.
 See [dependency maintenance](../../gpui-fork.md) for the application pin and
 update/retirement procedure. This result does not establish desktop blur, IME,
 screen-reader behavior, or macOS/Linux runtime behavior.
+
+The [normal application build and native launch record](native/README.md) is
+separate from these renderer readbacks. [Application test output](application-tests.txt)
+records 49 launcher-window tests and one command-search test passing against the
+published fork. Existing assembled guest fixtures were copied as test inputs;
+the original prototype and its copied renderer dependency remain untouched.
