@@ -44,6 +44,7 @@ use theme::Theme;
 /// The visuals a window renders with: the theme and the material the
 /// host settings resolve to. Owned by the caller (the settings entity
 /// recomputes it on every change); this layer only consumes it.
+#[derive(Clone)]
 pub(crate) struct Visuals {
     /// The palette every frame paints with.
     pub(crate) theme: Theme,

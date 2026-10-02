@@ -203,6 +203,7 @@ fn render(
         .when_some(status, |page, status| {
             page.child(
                 div()
+                    .id("appearance-status")
                     .debug_selector(|| "appearance-status".into())
                     .pt(px(10.))
                     .role(Role::Status)

@@ -46,7 +46,10 @@
 
 use std::path::PathBuf;
 
-use gpui::{App, Context, Entity, Global, Window, WindowAppearance, WindowBackgroundAppearance};
+use gpui::{
+    App, AppContext as _, Context, Entity, Global, Window, WindowAppearance,
+    WindowBackgroundAppearance,
+};
 use pane_core::{HostSettings, MaterialPreference, ThemePreference};
 
 use crate::ui::Visuals;
@@ -71,6 +74,12 @@ pub struct Overrides {
 }
 
 impl Overrides {
+    /// Whether no override is in force: the record's preferences are
+    /// what the windows render, and the page offers its choices.
+    pub fn is_empty(&self) -> bool {
+        self.theme.is_none() && self.material.is_none()
+    }
+
     /// The overrides the environment names in `PANE_THEME` and
     /// `PANE_MATERIAL`. Unknown or missing values override nothing: the
     /// record's preference stands, as it does with no override at all.
