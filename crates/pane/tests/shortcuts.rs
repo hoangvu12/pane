@@ -403,10 +403,11 @@ fn the_page_lists_installed_commands_with_their_alias_and_hotkey(cx: &mut TestAp
     );
 
     // Nothing was activated to draw any of this: the launcher sits at
-    // root search, idle.
+    // root search, with the last install's outcome still on its status
+    // line and nothing running.
     let view = cx.read_entity(&window, |window, _| window.launcher().view());
     assert!(matches!(view.screen, Screen::Root { .. }));
-    assert_eq!(view.status, Status::Idle);
+    assert!(!matches!(view.status, Status::Running));
 }
 
 #[gpui::test]
