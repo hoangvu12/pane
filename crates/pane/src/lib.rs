@@ -1,11 +1,17 @@
 //! Pane's native launcher, rendered with GPUI CE: this module exposes the
 //! crate's entry points — the key bindings, the build's sample commands and
 //! default extensions, and the folders Pane keeps — and re-exports the
-//! launcher window ([`app`]) and the system's link opener ([`links`]).
+//! launcher window ([`app`]), the Settings window ([`features::settings`])
+//! and the system's link opener ([`links`]).
 
 use std::path::PathBuf;
 
-use gpui::{App, KeyBinding, Window, WindowBackgroundAppearance, actions};
+use gpui::{App, KeyBinding, WindowBackgroundAppearance, actions};
+// `Window` names the rounded-corner preference's parameter, which only
+// Windows has; the import follows the same gate so it is not unused on the
+// other platforms.
+#[cfg(target_os = "windows")]
+use gpui::Window;
 use pane_core::CommandRegistration;
 
 mod app;
@@ -15,6 +21,7 @@ mod links;
 mod ui;
 
 pub use app::LauncherWindow;
+pub use features::settings::SettingsWindow;
 pub use links::SystemLinks;
 
 actions!(
@@ -25,7 +32,8 @@ actions!(
         Confirm,
         Back,
         FocusNext,
-        FocusPrevious
+        FocusPrevious,
+        OpenSettings
     ]
 );
 
@@ -38,10 +46,24 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("escape", Back, Some(app::KEY_CONTEXT)),
         KeyBinding::new("tab", FocusNext, Some(app::KEY_CONTEXT)),
         KeyBinding::new("shift-tab", FocusPrevious, Some(app::KEY_CONTEXT)),
+        // The local shortcut that opens Settings: Cmd+, on macOS, Ctrl+, on
+        // Windows and Linux, in the launcher's window only. Rebinding it is
+        // the Keyboard page's later work.
+        KeyBinding::new(
+            if cfg!(target_os = "macos") {
+                "cmd-,"
+            } else {
+                "ctrl-,"
+            },
+            OpenSettings,
+            Some(app::KEY_CONTEXT),
+        ),
     ]);
     let text_editing = ui::input::bind_text_editing(cx);
     extension_views::form::bind_keys(cx, &text_editing);
     features::root_search::bind_keys(cx, &text_editing);
+    features::footer_menu::bind_keys(cx);
+    features::settings::bind_keys(cx);
     extension_views::custom_view::bind_keys(cx);
 }
 
