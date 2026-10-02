@@ -478,6 +478,7 @@ try {
     [void][PaneWin]::SetWindowPos($hwnd, [IntPtr]::Zero, 0, 0, 0, 0, 0x13)
     if ($Backdrop) {
         $backdropBitmap = New-BackdropBitmap $BackdropPattern
+        $backdropBitmap.Save((Join-Path $runDir 'external-pattern.png'), [System.Drawing.Imaging.ImageFormat]::Png)
         $backdropForm = New-Object System.Windows.Forms.Form
         $backdropForm.FormBorderStyle = 'None'
         $backdropForm.ShowInTaskbar = $false
