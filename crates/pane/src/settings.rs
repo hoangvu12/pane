@@ -276,7 +276,9 @@ impl Settings {
     /// Takes `chosen`, repaints, and saves. The single path every choice
     /// goes through; see the setters for what refuses it.
     fn choose(&mut self, chosen: HostSettings, cx: &mut Context<Self>) {
+        eprintln!("SETTINGS CHOOSE {chosen:?}");
         if chosen == self.chosen || !self.overrides.is_empty() {
+            eprintln!("SETTINGS CHOOSE refused");
             return;
         }
         if let Some(problem) = self.unreadable.clone() {
@@ -303,6 +305,7 @@ impl Settings {
     /// follow the theme (macOS's edges and titlebar; a no-op elsewhere),
     /// and notifies the windows observing these settings.
     fn changed(&mut self, cx: &mut Context<Self>) {
+        eprintln!("SETTINGS CHANGED recompute");
         let theme = self.theme_preference();
         let material = self.material_preference();
         self.effective = visuals_of(theme, material, self.system);
@@ -477,6 +480,7 @@ pub(crate) fn follow<T: 'static>(
 ) {
     window.set_background_appearance(settings.read(cx).material().window_appearance());
     cx.observe_in(settings, window, |_, settings, window, cx| {
+        eprintln!("SETTINGS OBSERVER notified");
         window.set_background_appearance(settings.read(cx).material().window_appearance());
         cx.notify();
     })

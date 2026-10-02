@@ -143,8 +143,10 @@ fn render(
                         overridden,
                         theme,
                         cx.listener(move |_, _, _, cx| {
+                            eprintln!("APPEARANCE CLICK theme {preference:?}");
                             crate::settings::shared(cx)
                                 .update(cx, |settings, cx| settings.set_theme(preference, cx));
+                            eprintln!("APPEARANCE CLICK theme done");
                         }),
                     )
                 })
@@ -165,8 +167,10 @@ fn render(
                         overridden,
                         theme,
                         cx.listener(move |_, _, _, cx| {
+                            eprintln!("APPEARANCE CLICK material {preference:?}");
                             crate::settings::shared(cx)
                                 .update(cx, |settings, cx| settings.set_material(preference, cx));
+                            eprintln!("APPEARANCE CLICK material done");
                         }),
                     )
                 })
