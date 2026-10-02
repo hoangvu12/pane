@@ -181,6 +181,10 @@ fn main() {
         };
         let window = cx
             .open_window(options, |window, cx| {
+                // The window's own corners are rounded by the Desktop Window
+                // Manager, so nothing shows behind the panel that fills it.
+                #[cfg(target_os = "windows")]
+                pane::prefer_rounded_window_corners(window);
                 cx.new(|cx| {
                     let mut launcher = LauncherWindow::new(launcher, window, cx);
                     launcher.follow_changes(changes, window, cx);

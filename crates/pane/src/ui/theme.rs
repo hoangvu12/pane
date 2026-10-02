@@ -147,10 +147,14 @@ pub(crate) struct Typography {
 }
 
 /// The reference's geometry: the launcher panel is 760px wide, the search
-/// field 64px tall, rows 44px, the panel radius 18px.
+/// field 64px tall, rows 44px, the panel radius 18px where the platform
+/// shows it (none on Windows, whose window the Desktop Window Manager
+/// rounds; see [`panel_radius`]).
 #[derive(Clone, Debug)]
 pub(crate) struct Geometry {
-    /// The panel's corner radius.
+    /// The panel's corner radius: [`panel_radius`] — 18px where the
+    /// desktop shows through the window's corners, none on Windows, where
+    /// the window itself is rounded instead.
     pub(crate) panel_radius: Pixels,
     /// The search header's height.
     pub(crate) search_height: Pixels,
@@ -293,10 +297,27 @@ impl Typography {
     }
 }
 
+/// The panel's corner radius the platforms actually show: the reference's
+/// 18px where the window's corners are transparent (Linux, whose desktop
+/// shows through the curve) or platform-rounded (macOS, whose authored
+/// curve stands until #66's native material validation), and none on
+/// Windows, where the panel fills the window to its edges and the Desktop
+/// Window Manager rounds the window itself
+/// ([`crate::prefer_rounded_window_corners`]). A painted radius on Windows
+/// left the window's acrylic frost — or the opaque white clear — visible
+/// as a rectangular plate behind the rounded corners.
+fn panel_radius() -> Pixels {
+    if cfg!(target_os = "windows") {
+        px(0.)
+    } else {
+        px(18.)
+    }
+}
+
 impl Geometry {
     fn shared() -> Geometry {
         Geometry {
-            panel_radius: px(18.),
+            panel_radius: panel_radius(),
             search_height: px(64.),
             search_padding_x: px(20.),
             search_gap: px(14.),

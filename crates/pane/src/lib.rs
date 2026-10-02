@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use gpui::{App, KeyBinding, WindowBackgroundAppearance, actions};
+use gpui::{App, KeyBinding, Window, WindowBackgroundAppearance, actions};
 use pane_core::CommandRegistration;
 
 mod app;
@@ -170,6 +170,47 @@ pub fn configure_visuals(cx: &App) -> gpui::Result<()> {
 /// otherwise and for the explicit opaque material.
 pub fn window_background() -> WindowBackgroundAppearance {
     ui::visuals().material.window_appearance()
+}
+
+/// Asks Windows's Desktop Window Manager to round the window's own corners
+/// — the platform's equivalent of the window-server rounding a macOS window
+/// gets — so the panel that fills the window ends in a rounded silhouette
+/// with nothing showing behind it: the compositor clips the acrylic frost
+/// and the opaque surface to the same curve it gives other applications.
+/// Before the corner-preference attribute existed the call fails without
+/// effect and the window stays square. The panel paints no radius of its
+/// own on Windows (see `ui::theme::Geometry`); a painted curve there left
+/// the frost — or the opaque white clear — visible as a plate behind the
+/// rounded corners.
+#[cfg(target_os = "windows")]
+pub fn prefer_rounded_window_corners(window: &Window) {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Dwm::{
+        DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute,
+    };
+    // `Window` also has an inherent `window_handle` (GPUI's own identifier),
+    // so the raw-window-handle trait is named rather than called through
+    // the receiver.
+    let handle = match HasWindowHandle::window_handle(window) {
+        Ok(handle) => handle,
+        Err(_) => return,
+    };
+    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+        return;
+    };
+    let hwnd = HWND(handle.hwnd.get() as *mut _);
+    // SAFETY: `hwnd` is this window, which GPUI created before the handle
+    // was read, and `DWMWCP_ROUND` is passed by reference with its size, as
+    // the attribute's contract requires.
+    let _ = unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            &DWMWCP_ROUND as *const _ as *const _,
+            std::mem::size_of_val(&DWMWCP_ROUND) as u32,
+        )
+    };
 }
 
 /// Where Pane keeps disposable cached data, such as compiled extension code:

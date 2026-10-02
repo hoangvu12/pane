@@ -121,6 +121,15 @@ at 1x/2x and unchanged custom swatches:
 python -m unittest discover -s scripts -p test_check_screenshot.py
 ```
 
+Since the Desktop Window Manager now rounds the Windows window's own
+corners (`pane::prefer_rounded_window_corners`) and the panel fills the
+window without a painted radius, Windows smoke captures show the system's
+~8px compositor curve at the window edge instead of the panel's former
+18px arc; the corner plate of raw acrylic (glass) or white clear (opaque)
+that the painted arc left behind it is gone. Checks are unaffected: the
+panel-surface region the checker finds only grows, and every color,
+wash, same-frame and distinct-frame assertion is interior.
+
 This script adaptation has not been validated by running the integrated
 launcher. Per the Windows-first integration order, native desktop smokes and
 the final all-OS CI run are deferred until the presentation and dependency

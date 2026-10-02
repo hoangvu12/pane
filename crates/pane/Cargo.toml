@@ -21,8 +21,12 @@ gpui_platform = { package = "gpui_ce_platform", git = "https://github.com/hoangv
 open = "~5.4.4"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-# Read system transparency/high-contrast preferences once at startup.
-windows = { version = "0.62", features = ["UI_ViewManagement", "Wdk_System_SystemServices", "Win32_System_SystemInformation"] }
+# Read system transparency/high-contrast preferences once at startup, and
+# round the window's own corners through the Desktop Window Manager.
+windows = { version = "0.62", features = ["UI_ViewManagement", "Wdk_System_SystemServices", "Win32_System_SystemInformation", "Win32_Graphics_Dwm"] }
+# The launcher window's own handle, for the DWM call above; GPUI exports
+# no raw-window-handle types of its own.
+raw-window-handle = "0.6"
 
 [dev-dependencies]
 futures = { version = "0.3", default-features = false, features = ["executor"] }
