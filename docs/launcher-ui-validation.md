@@ -42,5 +42,24 @@ a prerequisite for completing this Windows-focused implementation pass.
 
 ## Current result
 
-Implementation and validation are in progress. No new native or automated pass
-is claimed by this initial tracking record.
+Implementation and validation are in progress.
+
+### Presentation prefactor (#62)
+
+Integrated as `038a7a8`, with implementation `1254dc6` and preserved prototype
+evidence `43aec59`. See [presentation ownership](launcher-presentation.md) and
+[prototype recovery and provenance](evidence/ui-prototype/README.md).
+
+- Windows: 49 launcher-window tests and one command-search test pass; checking
+  test targets and formatting also pass. The first parallel full test build
+  exhausted host memory; scoped serial builds succeeded.
+- Native Windows at 96 DPI: startup, typing `rust`, Enter to open its command,
+  Enter to invoke Say hello, and Escape passed. The capture shows
+  [the Rust guest's answer](evidence/ui-windows/refactor/action.png).
+  [Capture metadata](evidence/ui-windows/refactor/pane-run.json) records OS,
+  binary SHA256, confirmed foreground input and cleanup of the spawned process.
+- The metadata names `b0793c2`, the pre-amend implementation commit whose binary
+  was captured. The final `1254dc6` amendment only normalized a saved evidence
+  log's final newline; the application code and binary are the same.
+- This check used the original appearance before styling. Its theme/material
+  environment values were ignored by that build and are not material evidence.
