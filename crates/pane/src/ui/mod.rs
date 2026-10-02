@@ -9,7 +9,7 @@
 //!
 //! [`configure`] is called once by the binary at startup, before the first
 //! window opens. It reads `PANE_THEME` (`dark`, the default, or `light`)
-//! and `PANE_MATERIAL` (`opaque`, the default, or `glass`) exactly once,
+//! and `PANE_MATERIAL` (`glass`, the default, or `opaque`) exactly once,
 //! loads the embedded fonts, and fixes the [`Visuals`] every later frame
 //! reuses. Nothing re-reads the environment.
 //!
@@ -60,7 +60,7 @@ pub(crate) fn visuals() -> &'static Visuals {
 /// Reads `PANE_THEME` and `PANE_MATERIAL` once, loads the embedded fonts,
 /// and fixes the visuals every later frame reuses. Call once, before the
 /// first window opens. Unknown or missing values keep the defaults
-/// (`dark`, `opaque`). The chosen theme and material are stored whether or
+/// (`dark`, `glass`). The chosen theme and material are stored whether or
 /// not the fonts load; a font error is returned afterwards, and a caller
 /// that continues past it renders the chosen appearance with the system's
 /// default font wherever the theme names `Geist`.
@@ -70,8 +70,8 @@ pub(crate) fn configure(cx: &App) -> gpui::Result<()> {
         _ => Appearance::Dark,
     };
     let mode = match std::env::var("PANE_MATERIAL").as_deref() {
-        Ok("glass") => MaterialMode::Glass,
-        _ => MaterialMode::Opaque,
+        Ok("opaque") => MaterialMode::Opaque,
+        _ => MaterialMode::Glass,
     };
     // The visuals are fixed first, so a font failure cannot silently
     // revert the chosen appearance to the default.

@@ -17,12 +17,22 @@ cargo run -p pane --locked
 ```
 
 Use `PANE_THEME=light` for the derived light palette. This slice defaults to
-dark/opaque; absent or unknown values use those defaults. Configuration is
+dark/glass; absent or unknown values use those defaults. Configuration is
 read once before window creation, with no persistent preference or settings
 screen. The retained `PANE_MATERIAL=glass` path requests desktop composition
-on Windows/macOS and normalizes to opaque on Linux; native suppression policy,
-renderer integration and glass validation belong to #63/#65. Opaque validation
-does not require OS transparency settings to be enabled.
+on Windows/macOS and normalizes to opaque on Linux. On Windows, startup reads
+the OS build, [transparency setting](https://learn.microsoft.com/en-us/uwp/api/windows.ui.viewmanagement.uisettings.advancedeffectsenabled)
+and [high-contrast setting](https://learn.microsoft.com/en-us/uwp/api/windows.ui.viewmanagement.accessibilitysettings.highcontrast).
+Builds below 17763, disabled transparency, enabled high contrast, or a failed
+settings/version query select an opaque window and solid panel. Nothing changes
+system settings. Restart Pane after changing a setting; appearance is fixed for
+the process. Opaque validation does not require transparency to be enabled.
+
+These checks reveal suppression preferences, not successful compositor output.
+GPUI exposes no reliable visible-blur query. A driver/compositor failure after
+the startup checks may leave the tint without blur; choose `opaque` for a
+deterministic solid surface. Native glass evidence and remaining Windows
+conditions are recorded in [the validation report](launcher-ui-validation.md).
 
 ## Visual behavior
 

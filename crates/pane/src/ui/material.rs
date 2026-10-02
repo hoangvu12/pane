@@ -15,8 +15,9 @@
 //!
 //! Failure honesty: whether the compositor actually applied the blur is not
 //! observable from the application — GPUI exposes no query for it. On
-//! Windows the acrylic attribute is silently skipped below build 17763, and
-//! composition can be unavailable. The glass panel always paints its tint
+//! Windows startup checks the supported build, transparency preference and
+//! high-contrast setting; a suppressed or unknown state selects opaque.
+//! These checks cannot establish that composition succeeded. Glass paints its tint
 //! (the dark panel at the reference's .7 alpha, the light panel at its own
 //! higher tint), which puts the panel's own content on a consistent plate
 //! even where the blur silently failed — but `Glass` does not promise
@@ -39,8 +40,8 @@ use gpui::{
 use crate::ui::theme::Theme;
 
 /// Which surface treatment the launcher uses. The integration reads
-/// `PANE_MATERIAL` once and constructs this; it is not probed at runtime
-/// (see the module docs for why that cannot be honest). Constructing
+/// `PANE_MATERIAL` once and constructs this; settings are sampled at startup,
+/// with no claim that the compositor delivered blur. Constructing
 /// normalizes: `Glass` where the platform has no compositor frost becomes
 /// `Opaque` (see [`Material::new`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,6 +61,28 @@ pub(crate) enum MaterialMode {
 /// guaranteed blur, so glass normalizes to opaque.
 fn compositor_frost_supported() -> bool {
     cfg!(any(target_os = "windows", target_os = "macos"))
+}
+
+/// Read preferences, not compositor success. Fail closed to a solid surface
+/// when the OS cannot answer. No system settings are changed or monitored.
+#[cfg(target_os = "windows")]
+fn windows_glass_allowed() -> bool {
+    use windows::UI::ViewManagement::{AccessibilitySettings, UISettings};
+    use windows::Wdk::System::SystemServices::RtlGetVersion;
+    use windows::Win32::System::SystemInformation::OSVERSIONINFOW;
+
+    let mut version = OSVERSIONINFOW {
+        dwOSVersionInfoSize: std::mem::size_of::<OSVERSIONINFOW>() as u32,
+        ..Default::default()
+    };
+    // This is the same minimum build as CE's acrylic implementation.
+    // SAFETY: version is a correctly sized, writable OSVERSIONINFOW.
+    if !unsafe { RtlGetVersion(&mut version) }.is_ok() || version.dwBuildNumber < 17763 {
+        return false;
+    }
+    let effects = UISettings::new().and_then(|settings| settings.AdvancedEffectsEnabled());
+    let contrast = AccessibilitySettings::new().and_then(|settings| settings.HighContrast());
+    effects.unwrap_or(false) && !contrast.unwrap_or(true)
 }
 
 impl MaterialMode {
@@ -91,6 +114,8 @@ impl Material {
     pub(crate) fn new(mode: MaterialMode) -> Material {
         let mode = match mode {
             MaterialMode::Glass if !compositor_frost_supported() => MaterialMode::Opaque,
+            #[cfg(target_os = "windows")]
+            MaterialMode::Glass if !windows_glass_allowed() => MaterialMode::Opaque,
             mode => mode,
         };
         Material { mode }
