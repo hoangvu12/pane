@@ -36,6 +36,10 @@ CI includes Windows, macOS and Linux jobs, but CI build/test results do not repl
 the required native material and interaction evidence. Unavailable cases remain
 not run and keep final validation open.
 
+The user subsequently scoped execution to Windows first, with a final CI run on
+every OS after integration. Native macOS/Linux validation is deferred; it is not
+a prerequisite for completing this Windows-focused implementation pass.
+
 ## Current result
 
 Implementation and validation are in progress. No new native or automated pass
