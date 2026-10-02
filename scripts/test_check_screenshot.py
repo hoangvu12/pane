@@ -81,6 +81,13 @@ class ScreenshotChecks(unittest.TestCase):
         with self.assertRaises(SystemExit):
             check.same(first, self.save(image, "two-pixels.png"))
 
+    def test_same_rejects_changed_row_hover(self):
+        image, draw = self.panel()
+        first = self.save(image, "no-hover.png")
+        draw.rectangle((42, 143, 777, 186), fill="#1e1f22")
+        with self.assertRaises(SystemExit):
+            check.same(first, self.save(image, "hover.png"))
+
     def test_preview_requires_metadata_in_header_band_at_each_scale(self):
         image, draw = self.panel()
         draw.rectangle((90, 52, 250, 65), fill="#86878c")  # root placeholder

@@ -18,6 +18,8 @@ Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 Add-Type @"
 using System; using System.Runtime.InteropServices;
 public static class Win {
+    [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out Rect rect);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint x, uint y, uint data, UIntPtr extra);
@@ -31,6 +33,17 @@ public static class Win {
 # display scaling.
 [Win]::SetProcessDPIAware() | Out-Null
 function Capture($name) {
+    # Keep hover deterministic without changing focus or selection. The color
+    # picker click leaves the pointer over a later result row; restoring the
+    # window refreshes that hover even if keyboard navigation had cleared it.
+    # Park inside our foreground window's header, never over a result. Leave
+    # unfocused/minimized evidence captures alone (notably the hotkey checks).
+    if ($process -and [Win]::GetForegroundWindow() -eq $process.MainWindowHandle) {
+        $rect = New-Object Win+Rect
+        if (-not [Win]::GetWindowRect($process.MainWindowHandle, [ref]$rect)) { throw "cannot locate Pane for capture" }
+        if (-not [Win]::SetCursorPos($rect.Left + 32, $rect.Top + 32)) { throw "cannot park pointer for capture" }
+        Start-Sleep -Milliseconds 150   # let the pointer-leave repaint complete
+    }
     $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
     $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
     $graphics = [System.Drawing.Graphics]::FromImage($bitmap)

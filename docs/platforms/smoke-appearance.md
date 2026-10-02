@@ -38,6 +38,25 @@ or percentage allowance. Comparing the captured Rust or JavaScript answers
 against the TypeScript answer still fails on both platforms. Offline tests
 also reject a two-level change in one pixel and one-level changes in two pixels.
 
+Windows captures park the pointer in the foreground Pane window's header
+before capturing, then wait briefly for its hover repaint. This does not click,
+restore, refocus or change selection; captures while Pane is not foreground
+leave the pointer alone. The hotkey foreground assertions remain unchanged.
+In [CI run 36952982441](https://github.com/hoangvu12/pane/actions/runs/36952982441),
+Windows artifact `11204779190` showed why this is necessary: the color-picker
+click left the pointer at `(263, 292)`, over the JavaScript row in root search.
+Restoring the window after the released-hotkey check repainted that row's
+hover wash. Frames `57-disabled.png` and `58-disabled-pressed.png` differed in
+31,438 interior pixels, all within the unselected row's 44-pixel height; its
+background changed from `(22, 23, 26)` to `(30, 31, 34)`, matching the theme's
+white hover wash at alpha 9/255. The title, selected Rust row, query and footer
+were unchanged. All four earlier same-frame pairs in that artifact were exact
+matches except the already-documented one-pixel TypeScript rounding difference.
+The checker still rejects this hover difference: deterministic input conditions
+are restored in the Windows capture helper instead of masking row backgrounds
+or expanding image tolerance. Native verification of pointer normalization is
+left to the integrated smoke run.
+
 The install-preview wait now requires positive metadata evidence below the
 package heading. The old root-search blue border no longer exists. This check
 is only for the initial `--install` window: it assumes the prototype's default
