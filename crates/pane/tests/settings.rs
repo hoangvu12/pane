@@ -359,8 +359,10 @@ fn keys_in_settings_and_the_launcher_stay_in_their_windows(cx: &mut TestAppConte
     assert_eq!(view.query(), Some("rust"));
     settings_cx.run_until_parked();
     assert!(
-        settings_cx.debug_bounds("about-version").is_some(),
-        "the About page is unchanged"
+        settings_cx
+            .debug_bounds("appearance-theme-System")
+            .is_some(),
+        "the Appearance page is unchanged"
     );
 
     // Keys in Settings — the sidebar's navigation, over the two sections

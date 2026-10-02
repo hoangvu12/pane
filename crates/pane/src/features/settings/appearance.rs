@@ -371,8 +371,11 @@ fn material_note(preference: MaterialPreference, theme: &Theme) -> Option<Div> {
     };
     Some(
         div()
+            .id("appearance-material-note")
             .debug_selector(|| "appearance-material-note".into())
             .pt(px(6.))
+            .role(Role::Status)
+            .aria_label(text.clone())
             .text_size(theme.typography.row_kind_size)
             .text_color(color)
             .child(text),
