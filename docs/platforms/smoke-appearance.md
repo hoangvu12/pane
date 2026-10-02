@@ -23,6 +23,21 @@ hints now share the muted color. Extension drawing checks still use their
 authored hex colors, with the original pixel thresholds and pointer lookup.
 Result/error, absent-color, distinct-frame and same-frame checks remain active.
 
+The same-frame comparison permits at most one interior pixel whose channels
+each differ by at most one 8-bit level. This bound comes from
+[CI run 36951745142](https://github.com/hoangvu12/pane/actions/runs/36951745142):
+`4-result-2.png` and `25-search-result.png` both show the same TypeScript
+command and answer, but exact equality failed on each platform. In Windows
+artifact `11204826276`, the only difference within the existing 12-pixel edge
+crop is `(178, 92, 46)` versus `(178, 92, 47)` at panel coordinate `(310, 406)`.
+In macOS artifact `11204369046`, it is `(54, 55, 58)` versus `(53, 54, 58)` at
+`(160, 116)`; other changes are confined to the already-excluded outer edge.
+This is consistent with final color rounding. All other interior pixels must
+still match exactly, and image dimensions must match. There is no text mask
+or percentage allowance. Comparing the captured Rust or JavaScript answers
+against the TypeScript answer still fails on both platforms. Offline tests
+also reject a two-level change in one pixel and one-level changes in two pixels.
+
 The install-preview wait now requires positive metadata evidence below the
 package heading. The old root-search blue border no longer exists. This check
 is only for the initial `--install` window: it assumes the prototype's default

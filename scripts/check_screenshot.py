@@ -13,7 +13,8 @@ to it than to any other color Pane draws. Requires Pillow.
 With --distinct, asserts instead that the Pane window looks different in every
 given screenshot, so steps that should show different content (each guest's
 answer) cannot silently show the same view. With --same, asserts that two
-screenshots show the same Pane window, pixel for pixel: a screen that should
+screenshots show the same Pane window, allowing only one pixel with a
+one-level channel rounding difference: a screen that should
 list the same rows as an earlier one (after a restart, a disabled package's
 command is gone again) cannot silently list another. With --absent, asserts
 that the given color itself is not drawn in the Pane window (at most a few
@@ -162,8 +163,19 @@ def largest_region(matching: set, width: int) -> list[int]:
 
 def same(first: str, second: str) -> None:
     a, b = inner(pane_window(first)), inner(pane_window(second))
-    if a.size != b.size or a.tobytes() != b.tobytes():
+    if a.size != b.size:
         raise SystemExit(f"{first} and {second} show different Pane windows")
+    # CI 36951745142: the same TypeScript result on Windows and macOS
+    # differed at exactly one interior pixel by one channel level (on
+    # macOS, two channels at that one pixel). Preserve exact comparison
+    # everywhere else: no percentage budget, text mask or broad tolerance
+    # that could hide a different command title, answer or selection.
+    changed = 0
+    for left, right in zip(pixels_of(a), pixels_of(b)):
+        if left != right:
+            changed += 1
+            if changed > 1 or any(abs(x - y) > 1 for x, y in zip(left, right)):
+                raise SystemExit(f"{first} and {second} show different Pane windows")
     print(f"{first} and {second} show the same Pane window")
 
 
