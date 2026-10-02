@@ -768,12 +768,40 @@ fn choosing_a_theme_re_renders_both_windows_and_the_preview(cx: &mut TestAppCont
         "DIAG row={row:?} page={:?}",
         settings_cx.debug_bounds("settings-page")
     );
-    settings_cx.simulate_mouse_move(row.center(), MouseButton::Left, Modifiers::none());
+    settings_cx.simulate_mouse_move(row.center(), None, Modifiers::none());
     settings_cx.run_until_parked();
     settings_cx.update(|window, _| {
         eprintln!(
-            "DIAG hovered hitboxes after move: {}",
+            "DIAG hovered hitboxes at row center: {}",
             window.mouse_hit_test().iter_hovered().count()
+        );
+    });
+    // A point inside the page but in its left padding, over no row.
+    settings_cx.simulate_mouse_move(
+        gpui::Point::new(px(210.), row.center().y),
+        None,
+        Modifiers::none(),
+    );
+    settings_cx.run_until_parked();
+    settings_cx.update(|window, _| {
+        eprintln!(
+            "DIAG hovered hitboxes in the page padding: {}",
+            window.mouse_hit_test().iter_hovered().count()
+        );
+    });
+    settings_cx.simulate_mouse_move(row.center(), None, Modifiers::none());
+    settings_cx.run_until_parked();
+    // The hover wash: the row's hover style paints the wash quad when its
+    // hitbox is hovered.
+    let wash = panel(0xFFFFFF09);
+    settings_cx.update(|window, _| {
+        eprintln!(
+            "DIAG hover wash quads: {}",
+            window
+                .painted_quads()
+                .iter()
+                .filter(|quad| quad.background == wash)
+                .count()
         );
     });
     settings_cx.simulate_click(row.center(), Modifiers::none());
