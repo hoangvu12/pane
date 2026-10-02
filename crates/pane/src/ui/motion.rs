@@ -296,15 +296,20 @@ fn measurement_scale() -> f32 {
 ///   system's own threads and is applied on the app's thread — the same
 ///   hop the launcher's global hotkey presses take (an unbounded channel
 ///   awaited in a task on the main thread). A read that fails fails
-///   closed to reduced motion.
+///   closed to reduced motion, the safer side when a preference that
+///   exists cannot be known (the discipline the material layer applies to
+///   its own preference reads).
 /// - **macOS**: nothing yet — the pane crate links no AppKit, so no
 ///   `NSWorkspace` preference is read. Static fallback: full motion.
 /// - **Linux**: nothing — no desktop exposes a standard reduced-motion
 ///   preference to a non-toolkit client, and Pane links no portal client.
 ///   Static fallback: full motion.
 ///
-/// The fallbacks are the platform's own default, not a claim about the
-/// user: an unread preference is not a request for reduced motion. Wiring
+/// The two fallbacks differ on purpose. A failed read of a preference
+/// that exists is an unknown, so Pane reduces; a platform with no read
+/// wired at all falls back to its own default — full motion — which is a
+/// statement about Pane, not about the user: no detection is claimed
+/// where none runs. Wiring
 /// `NSWorkspace.accessibilityDisplayShouldReduceMotion` (and whatever a
 /// given Linux desktop exposes) is left for the settings work that
 /// introduces Pane's first macOS and portal dependencies.
@@ -324,9 +329,12 @@ pub(crate) fn observe_reduced_motion(cx: &mut App) {
     }
     cx.set_reduce_motion(system_reduced_motion());
     // Windows reports changes to the preference as the user moves it; the
-    // other systems have nothing to watch (see the module docs). The task
-    // applies each change on the app's thread and holds the watch for as
-    // long as the app runs: when the task ends, dropping the watch
+    // other systems have nothing to watch (see the module docs). The hop
+    // is the one pane-core's changes and hotkey presses already take: an
+    // unbounded channel awaited in a task on the app's thread. The event
+    // says only that the setting moved, so the fresh value is read there,
+    // on the app's own thread, and applied; the task holds the watch for
+    // as long as Pane runs — when the task ends, dropping the watch
     // unsubscribes.
     #[cfg(target_os = "windows")]
     {
@@ -352,9 +360,10 @@ fn system_reduced_motion() -> bool {
     #[cfg(target_os = "windows")]
     {
         // "Animation effects" in Settings: false when the user turned
-        // animations off, which is the request to reduce motion. A failed
-        // read is not a preference: reduced, as the material layer fails
-        // closed when it cannot read its own preferences.
+        // animations off, which is the request to reduce motion. A read
+        // that fails is an unknown, and the safer side of an unknown is
+        // reduced motion: failing closed, as the material layer does for
+        // its own preference reads.
         use windows::UI::ViewManagement::UISettings;
         match UISettings::new().and_then(|settings| settings.AnimationsEnabled()) {
             Ok(animations) => !animations,
@@ -370,21 +379,16 @@ fn system_reduced_motion() -> bool {
 /// Starts watching the system's reduced-motion preference where the system
 /// reports changes, returning the running watch (whose drop stops it), or
 /// `None` where no changes are reported. Each time the setting moves, the
-/// freshly read preference is reported to `report` — the event itself
-/// carries no value.
+/// watch reports the bare event — the event itself carries no value, so the
+/// fresh preference is re-read on the app's own thread when it is applied.
 #[cfg(target_os = "windows")]
-fn watch_reduced_motion(report: tokio::sync::mpsc::UnboundedSender<bool>) -> Option<Watch> {
+fn watch_reduced_motion(report: tokio::sync::mpsc::UnboundedSender<()>) -> Option<Watch> {
     use windows::UI::ViewManagement::UISettings;
     use windows::Foundation::TypedEventHandler;
 
     let settings = UISettings::new().ok()?;
-    let watched = settings.clone();
     let handler = TypedEventHandler::new(move |_, _| {
-        // Re-read, because the event says only that the setting moved; a
-        // failed re-read reports nothing, leaving the last value in force.
-        if let Ok(animations) = watched.AnimationsEnabled() {
-            let _ = report.send(!animations);
-        }
+        let _ = report.send(());
         Ok(())
     });
     let token = settings.AnimationsEnabledChanged(&handler).ok()?;

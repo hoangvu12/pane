@@ -1953,7 +1953,10 @@ fn rapid_open_back_open_retargets_the_arrival_from_where_it_is(cx: &mut TestAppC
     let (back, _) = arriving(&window, cx).expect("the root content is arriving");
     // The back transition continued from the interrupted presentation —
     // the same offset, not a fresh start from above.
-    assert!((back - offset).abs() < 0.05, "the back continued the presentation: {back} from {offset}");
+    assert!(
+        (back - offset).abs() < 0.05,
+        "the back continued the presentation: {back} from {offset}"
+    );
 
     cx.simulate_keystrokes("enter");
     let view = settle(&window, cx);
