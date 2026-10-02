@@ -721,7 +721,13 @@ fn the_titlebars_window_controls_close_only_the_settings_window(cx: &mut TestApp
 #[gpui::test]
 fn a_missing_record_starts_from_the_reference_defaults(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
-    cx.update(|cx| pane::settings::init(Some(data.path().to_owned()), cx));
+    cx.update(|cx| {
+        pane::settings::init_with_overrides(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            cx,
+        )
+    });
     let (_launcher, _links, cx) = open_launcher(cx);
 
     // No record exists: the reference's dark palette and the glass
@@ -737,7 +743,13 @@ fn a_missing_record_starts_from_the_reference_defaults(cx: &mut TestAppContext) 
 #[gpui::test]
 fn choosing_a_theme_re_renders_both_windows_and_the_preview(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
-    cx.update(|cx| pane::settings::init(Some(data.path().to_owned()), cx));
+    cx.update(|cx| {
+        pane::settings::init_with_overrides(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            cx,
+        )
+    });
     let (_launcher, _links, cx) = open_launcher(cx);
     let mut settings_cx = open_settings(cx);
 
@@ -786,7 +798,13 @@ fn choosing_a_theme_re_renders_both_windows_and_the_preview(cx: &mut TestAppCont
 #[gpui::test]
 fn the_system_choice_renders_the_appearance_the_system_reports(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
-    cx.update(|cx| pane::settings::init(Some(data.path().to_owned()), cx));
+    cx.update(|cx| {
+        pane::settings::init_with_overrides(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            cx,
+        )
+    });
     let (_launcher, _links, cx) = open_launcher(cx);
     let mut settings_cx = open_settings(cx);
 
@@ -814,7 +832,13 @@ fn the_system_choice_renders_the_appearance_the_system_reports(cx: &mut TestAppC
 #[gpui::test]
 fn the_material_choice_switches_the_panel_surface(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
-    cx.update(|cx| pane::settings::init(Some(data.path().to_owned()), cx));
+    cx.update(|cx| {
+        pane::settings::init_with_overrides(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            cx,
+        )
+    });
     let (_launcher, _links, cx) = open_launcher(cx);
     let mut settings_cx = open_settings(cx);
 
@@ -882,7 +906,13 @@ fn the_material_choice_switches_the_panel_surface(cx: &mut TestAppContext) {
 #[gpui::test]
 fn the_saved_choice_is_reloaded_by_a_fresh_application(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
-    cx.update(|cx| pane::settings::init(Some(data.path().to_owned()), cx));
+    cx.update(|cx| {
+        pane::settings::init_with_overrides(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            cx,
+        )
+    });
     let (_launcher, _links, cx) = open_launcher(cx);
     let mut settings_cx = open_settings(cx);
 
@@ -897,7 +927,13 @@ fn the_saved_choice_is_reloaded_by_a_fresh_application(cx: &mut TestAppContext) 
     // alone.
     let fresh = cx.cx.new_app();
     fresh.update(pane::bind_keys);
-    fresh.update(|cx| pane::settings::init(Some(data.path().to_owned()), cx));
+    fresh.update(|cx| {
+        pane::settings::init_with_overrides(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            cx,
+        )
+    });
     let launcher = Launcher::new(Runtime::start(), Vec::new());
     let (_window, fresh_cx) =
         fresh.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
@@ -921,7 +957,13 @@ fn the_saved_choice_is_reloaded_by_a_fresh_application(cx: &mut TestAppContext) 
 #[gpui::test]
 fn a_failed_save_is_reported_and_the_shown_choice_stays_what_was_saved(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
-    cx.update(|cx| pane::settings::init(Some(data.path().to_owned()), cx));
+    cx.update(|cx| {
+        pane::settings::init_with_overrides(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            cx,
+        )
+    });
     let (_launcher, _links, cx) = open_launcher(cx);
     let mut settings_cx = open_settings(cx);
 
@@ -969,7 +1011,13 @@ fn an_unreadable_record_is_reported_and_never_replaced(cx: &mut TestAppContext) 
     let data = tempfile::tempdir().unwrap();
     let garbage = "{ not the settings record";
     std::fs::write(data.path().join("settings.json"), garbage).unwrap();
-    cx.update(|cx| pane::settings::init(Some(data.path().to_owned()), cx));
+    cx.update(|cx| {
+        pane::settings::init_with_overrides(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            cx,
+        )
+    });
     let (_launcher, _links, cx) = open_launcher(cx);
 
     // Startup is not prevented: the defaults stand in.
@@ -1061,7 +1109,13 @@ fn a_development_override_wins_is_indicated_and_is_never_saved(cx: &mut TestAppC
     // override was a preference of this process only.
     let fresh = cx.cx.new_app();
     fresh.update(pane::bind_keys);
-    fresh.update(|cx| pane::settings::init(Some(data.path().to_owned()), cx));
+    fresh.update(|cx| {
+        pane::settings::init_with_overrides(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            cx,
+        )
+    });
     let launcher = Launcher::new(Runtime::start(), Vec::new());
     let (_window, fresh_cx) =
         fresh.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));

@@ -520,7 +520,9 @@ mod tests {
             r#"{ "version": 1, "theme": "system" }"#,
         )
         .unwrap();
-        cx.update(|cx| init(Some(data.path().to_owned()), cx));
+        // The environment's overrides are named outright, so nothing a
+        // shell carries can change what this test initializes.
+        cx.update(|cx| init_with_overrides(Some(data.path().to_owned()), Overrides::default(), cx));
         let settings = cx.update(|cx| shared(cx));
 
         // The system the test platform reports is light, so that is what
@@ -559,7 +561,9 @@ mod tests {
         let data = tempfile::tempdir().unwrap();
         let garbage = "{ not the settings record";
         std::fs::write(data.path().join("settings.json"), garbage).unwrap();
-        cx.update(|cx| init(Some(data.path().to_owned()), cx));
+        // The environment's overrides are named outright, so nothing a
+        // shell carries can change what this test initializes.
+        cx.update(|cx| init_with_overrides(Some(data.path().to_owned()), Overrides::default(), cx));
         let settings = cx.update(|cx| shared(cx));
 
         // A choice is refused: nothing changes, and the record keeps its
