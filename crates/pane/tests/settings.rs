@@ -280,8 +280,8 @@ fn keys_in_settings_and_the_launcher_stay_in_their_windows(cx: &mut TestAppConte
         view.screen
     );
 
-    // And what Settings shows is still its own page: the About page, the
-    // one section the window offers.
+    // And what Settings shows is still its own page: the About page,
+    // the section the keys stayed on.
     assert!(settings_cx.debug_bounds("about").is_some());
     assert_eq!(
         settings_cx.debug_bounds("section-About").map(|_| "About"),
