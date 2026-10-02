@@ -27,8 +27,8 @@ use crate::features::root_search;
 use crate::features::settings;
 use crate::ui::icon::{Glyph, IconTone};
 use crate::ui::keycap::{self, Key as ActionKey};
+use crate::ui::material::Material;
 use crate::ui::result_row::{RowContent, result_row};
-use crate::ui::{self, material::Material};
 use crate::{Back, Confirm, FocusNext, FocusPrevious, OpenSettings, SelectNext, SelectPrevious};
 
 pub(crate) const KEY_CONTEXT: &str = "Launcher";
@@ -87,6 +87,12 @@ impl LauncherWindow {
         query.focus(window, cx);
         // The footer menu's button, first of the strip's controls.
         let menu_button = cx.focus_handle().tab_stop(true);
+        // The host settings this window renders through: what the
+        // Appearance page chooses repaints this window (and the Settings
+        // window) without a restart, its background follows the material
+        // in effect, and the platform's appearance notification feeds the
+        // system's appearance back into them (see `crate::settings`).
+        crate::settings::follow(&crate::settings::ensure(cx), window, cx);
         // Quitting ends development: its watchers go and a running build
         // is stopped with the processes it started.
         cx.on_app_quit(|this: &mut Self, _| {
@@ -438,7 +444,8 @@ impl LauncherWindow {
         selected: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let theme = &ui::visuals().theme;
+        let visuals = crate::settings::visuals(cx);
+        let theme = &visuals.theme;
         let reason = row.unavailable.as_ref().map(|u| u.reason().to_owned());
         // The row's accessible description: its subtitle and, when it
         // cannot run, the reason, together.
@@ -517,7 +524,7 @@ impl LauncherWindow {
         action: &SelectedAction,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let theme = ui::visuals().theme.clone();
+        let theme = crate::settings::visuals(cx).theme;
         let geometry = &theme.geometry;
         div()
             .id("primary-action")
@@ -595,8 +602,9 @@ impl Render for LauncherWindow {
             self.drawn = Some(view.clone());
         }
         self.keep_selected_visible(&view, window);
-        let theme = ui::visuals().theme.clone();
-        let material = ui::visuals().material;
+        let visuals = crate::settings::visuals(cx);
+        let theme = visuals.theme;
+        let material = visuals.material;
         let empty = match &view.screen {
             Screen::Root { .. } => "No commands are installed.",
             Screen::Command | Screen::CommandSearch { .. } => "This command has no items.",

@@ -1,8 +1,8 @@
 //! Pane's native launcher, rendered with GPUI CE: this module exposes the
 //! crate's entry points — the key bindings, the build's sample commands and
-//! default extensions, and the folders Pane keeps — and re-exports the
-//! launcher window ([`app`]), the Settings window ([`features::settings`])
-//! and the system's link opener ([`links`]).
+//! default extensions, the folders Pane keeps, and the host settings — and
+//! re-exports the launcher window ([`app`]), the Settings window
+//! ([`features::settings`]) and the system's link opener ([`links`]).
 
 use std::path::PathBuf;
 
@@ -14,6 +14,8 @@ mod extension_views;
 mod features;
 mod links;
 mod ui;
+
+pub mod settings;
 
 pub use app::LauncherWindow;
 pub use features::settings::SettingsWindow;
@@ -171,22 +173,26 @@ pub fn default_extensions() -> Vec<pane_core::DefaultExtension> {
     extensions
 }
 
-/// Reads `PANE_THEME` (`dark`, the default, or `light`) and `PANE_MATERIAL`
-/// (`opaque`, the default, or `glass`) once, embeds the Geist fonts, and
-/// fixes the visuals the launcher window renders with. The binary calls
-/// this once at startup, before opening the first window; a font error is
-/// returned but the caller may continue with the system's default font.
-/// Tests never call it: the window falls back to the default dark theme.
-pub fn configure_visuals(cx: &App) -> gpui::Result<()> {
-    ui::configure(cx)
+/// Initializes Pane's host settings — the appearance preferences recorded
+/// in `settings.json` in Pane's data folder, which both windows follow as
+/// they change, with the development overrides `PANE_THEME` and
+/// `PANE_MATERIAL` winning for this process — and embeds the Geist fonts.
+/// The binary calls this once at startup, before opening the first window;
+/// a font error is returned but the caller may continue with the system's
+/// default font. Tests never call it: a window built without initialized
+/// settings falls back to the in-memory defaults (see [`settings::ensure`]).
+pub fn configure_visuals(cx: &mut App) -> gpui::Result<()> {
+    settings::init(data_dir(), cx);
+    ui::load_fonts(cx)
 }
 
-/// The window background appearance the configured material asks for,
-/// for the binary to pass into `WindowOptions::window_background`:
-/// blurred behind a glass panel on the frost-capable platforms, opaque
-/// otherwise and for the explicit opaque material.
-pub fn window_background() -> WindowBackgroundAppearance {
-    ui::visuals().material.window_appearance()
+/// The window background appearance the host settings' material asks for,
+/// for the binary to pass into `WindowOptions::window_background`: blurred
+/// behind a glass panel on the frost-capable platforms, opaque otherwise
+/// and for the solid material. The windows keep following it as the
+/// material changes (see [`settings`]).
+pub fn window_background(cx: &mut App) -> WindowBackgroundAppearance {
+    settings::window_background(cx)
 }
 
 /// Asks Windows's Desktop Window Manager to round the window's own corners

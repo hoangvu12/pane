@@ -5,11 +5,13 @@
 //!
 //! The window shares the launcher's own handle — the same
 //! [`pane_core::Launcher`] the launcher window holds — so Settings runs
-//! no second extension runtime and duplicates no launcher state. Its
-//! shell is the reference's Settings composition: the frost panel with
-//! the custom titlebar where the platform hides its own (macOS's traffic
-//! lights, Windows's caption buttons; Linux keeps the window manager's
-//! frame), a sidebar of sections, and the selected page's content.
+//! no second extension runtime and duplicates no launcher state. The two
+//! windows also share the host settings (`crate::settings`): what the
+//! Appearance page chooses repaints both, without a restart. Its shell is
+//! the reference's Settings composition: the frost panel with the custom
+//! titlebar where the platform hides its own (macOS's traffic lights,
+//! Windows's caption buttons; Linux keeps the window manager's frame), a
+//! sidebar of sections, and the selected page's content.
 //!
 //! ## Page registration
 //!
@@ -18,8 +20,10 @@
 //! [`SettingsWindow::new`]. Later pages add their module under
 //! `settings/` and one line there — no empty feature folder, no new
 //! framework — and the sidebar lists only registered pages, so no
-//! section ships as a placeholder. A page's state lives in its module,
-//! held by the window as a field.
+//! section ships as a placeholder. The Appearance page's choices live in
+//! the shared host settings rather than the window, since the launcher
+//! window renders by them too; a page whose state is the window's own
+//! lives in its module, held by the window as a field.
 
 use gpui::{
     AnyElement, App, Bounds, Context, Div, FocusHandle, KeyBinding, Role, Stateful,
@@ -38,6 +42,7 @@ use crate::ui::icon::{Glyph, IconTone, glyph};
 use crate::ui::result_row::{RowContent, result_row};
 
 mod about;
+mod appearance;
 
 actions!(settings, [NextSection, PreviousSection]);
 
@@ -80,9 +85,17 @@ impl SettingsWindow {
     fn new(launcher: &Launcher, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle().tab_stop(true);
         window.focus(&focus, cx);
+        // The host settings this window renders through — the Appearance
+        // page is one of its windows' shared consumers: what it chooses
+        // repaints this window and the launcher without a restart, and
+        // the platform's appearance notification feeds the system's
+        // appearance back into them (see `crate::settings`).
+        crate::settings::follow(&crate::settings::ensure(cx), window, cx);
         SettingsWindow {
             launcher: launcher.clone(),
-            pages: vec![about::page()],
+            // The sidebar's order: the sections the reference lists, About
+            // last. The Appearance page is the one the window first shows.
+            pages: vec![appearance::page(), about::page()],
             selected: 0,
             focus,
             about: about::State::default(),
@@ -181,8 +194,9 @@ impl SettingsWindow {
 
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = ui::visuals().theme.clone();
-        let material = ui::visuals().material;
+        let visuals = crate::settings::visuals(cx);
+        let theme = visuals.theme;
+        let material = visuals.material;
         // The content: the shared Geist family and base text color on
         // everything, the custom titlebar where the platform's is hidden,
         // then the sidebar and the selected page.
@@ -233,33 +247,32 @@ fn titlebar(theme: &ui::theme::Theme) -> Div {
     // them over the transparent titlebar.
     #[cfg(target_os = "macos")]
     let titlebar = titlebar.child(div().flex_none().w(px(78.)));
-    let titlebar = titlebar
-        .child(
-            // The one place to grab the window by, outside the page and
-            // the sidebar.
-            div()
-                .flex_1()
-                .min_w(px(0.))
-                .window_control_area(WindowControlArea::Drag)
-                .px(px(16.))
-                .truncate()
-                .text_size(theme.typography.row_title_size)
-                .font_weight(theme.typography.medium)
-                .text_color(theme.text_title)
-                .child("Settings"),
-        );
-        // Windows: the caption buttons, marked with the platform's window
-        // control areas so the hit test routes them to the system's real
-        // close, minimize and maximize behavior. The click handlers are
-        // the same behavior for platforms that never consult the hit test
-        // (GPUI's test platform among them); on Windows itself the system
-        // takes the click through the hit test and the handlers stay
-        // idle. Added under the same compile-time gate as
-        // [`window_controls`] — `cfg!` would leave the call compiled on
-        // the other platforms, where the function does not exist.
-        #[cfg(target_os = "windows")]
-        let titlebar = titlebar.child(window_controls(theme));
-        titlebar
+    let titlebar = titlebar.child(
+        // The one place to grab the window by, outside the page and
+        // the sidebar.
+        div()
+            .flex_1()
+            .min_w(px(0.))
+            .window_control_area(WindowControlArea::Drag)
+            .px(px(16.))
+            .truncate()
+            .text_size(theme.typography.row_title_size)
+            .font_weight(theme.typography.medium)
+            .text_color(theme.text_title)
+            .child("Settings"),
+    );
+    // Windows: the caption buttons, marked with the platform's window
+    // control areas so the hit test routes them to the system's real
+    // close, minimize and maximize behavior. The click handlers are
+    // the same behavior for platforms that never consult the hit test
+    // (GPUI's test platform among them); on Windows itself the system
+    // takes the click through the hit test and the handlers stay
+    // idle. Added under the same compile-time gate as
+    // [`window_controls`] — `cfg!` would leave the call compiled on
+    // the other platforms, where the function does not exist.
+    #[cfg(target_os = "windows")]
+    let titlebar = titlebar.child(window_controls(theme));
+    titlebar
 }
 
 /// The Windows caption buttons: minimize, maximize, close, right to left
@@ -360,7 +373,7 @@ pub(crate) fn open(launcher: &Launcher, cx: &mut App) -> WindowHandle<SettingsWi
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         window_min_size: Some(size(px(560.), px(400.))),
-        window_background: crate::window_background(),
+        window_background: crate::settings::window_background(cx),
         titlebar: Some(TitlebarOptions {
             title: Some("Settings".into()),
             appears_transparent: true,

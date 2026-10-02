@@ -9,11 +9,12 @@
 //! GPUI renders an SVG as an alpha mask and tints it with the element's
 //! text color, so the glyph's color always comes from the caller's token.
 //!
-//! The reference's set has no settings, menu or window-control glyph, so
-//! those are Pane's own authoring in the same stroke style: the ellipsis
-//! and gear (the Settings rows), the globe (the documentation entry) and
-//! the Windows titlebar's close, minimize and maximize marks (see the
-//! Settings window's custom titlebar).
+//! The reference's set has no settings, menu, window-control or
+//! appearance glyph, so those are Pane's own authoring in the same stroke
+//! style: the ellipsis and gear (the Settings rows), the globe (the
+//! documentation entry), the Windows titlebar's close, minimize and
+//! maximize marks (see the Settings window's custom titlebar), and the
+//! half-and-half circle (the Appearance page).
 //!
 //! Tones are the reference's `appTone` map, exactly: nine vertical
 //! gradients with their glyph colors, plus the neutral command tile.
@@ -45,6 +46,9 @@ pub(crate) enum Glyph {
     Gear,
     /// A globe: Settings' documentation entry.
     Globe,
+    /// A circle split down the middle: the Appearance page's sidebar entry
+    /// (the two palettes its theme choice stands between).
+    Theme,
     /// The Windows titlebar's close mark.
     #[cfg(target_os = "windows")]
     WindowClose,
@@ -69,6 +73,7 @@ impl Glyph {
             Glyph::Ellipsis => include_bytes!("../../assets/icons/ellipsis.svg"),
             Glyph::Gear => include_bytes!("../../assets/icons/gear.svg"),
             Glyph::Globe => include_bytes!("../../assets/icons/globe.svg"),
+            Glyph::Theme => include_bytes!("../../assets/icons/theme.svg"),
             #[cfg(target_os = "windows")]
             Glyph::WindowClose => include_bytes!("../../assets/icons/window-close.svg"),
             #[cfg(target_os = "windows")]

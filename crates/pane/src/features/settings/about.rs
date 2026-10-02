@@ -12,7 +12,6 @@
 use gpui::{AnyElement, Context, Hsla, Role, SharedString, Window, div, prelude::*, px};
 
 use super::{Page, SettingsWindow};
-use crate::ui;
 use crate::ui::icon::{Glyph, IconTone};
 use crate::ui::result_row::{RowContent, result_row};
 
@@ -50,7 +49,7 @@ fn render(
     _window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
-    let theme = ui::visuals().theme.clone();
+    let theme = crate::settings::visuals(cx).theme;
     let typography = &theme.typography;
     let opened = this.about.opened.clone();
     div()
