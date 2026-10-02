@@ -424,7 +424,7 @@ impl LauncherWindow {
         };
         // Presentation only: the shared row paints the chrome, and the
         // identity, accessibility and click behavior are attached here.
-        let rendered = result_row(
+        result_row(
             RowContent {
                 title: row.title.clone().into(),
                 subtitle: row.subtitle.clone().map(SharedString::from),
@@ -450,8 +450,7 @@ impl LauncherWindow {
         .on_click(cx.listener(move |this, _, window, cx| {
             this.launcher.select(index);
             this.activate_selected(window, cx);
-        }));
-        rendered
+        }))
     }
 }
 

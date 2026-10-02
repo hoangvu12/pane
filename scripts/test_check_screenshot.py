@@ -44,13 +44,16 @@ class ScreenshotChecks(unittest.TestCase):
         draw.rectangle((40, 460, 100, 463), fill="#9fd8a8")
         first = self.save(image)
         self.assertEqual(check.window_box(first)[1], (30, 30, 790, 490))
-        check.main(first, "9fd8a8")
+        check.main(first, "success")
+        with self.assertRaises(SystemExit):
+            check.absent(first, "success")
         draw.rectangle((0, 0, 20, 20), fill="red")
         check.same(first, self.save(image, "desktop-changed.png"))
         draw.rectangle((40, 460, 100, 463), fill="#131416")
         missing = self.save(image, "missing-result.png")
+        check.absent(missing, "success")
         with self.assertRaises(SystemExit):
-            check.main(missing, "9fd8a8")
+            check.main(missing, "success")
         with self.assertRaises(SystemExit):
             check.same(first, missing)
         check.distinct([first, missing])

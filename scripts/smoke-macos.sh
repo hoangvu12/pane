@@ -104,7 +104,7 @@ stop_pane() {
 
 start_pane
 capture 1-root.png
-check 1-root.png 8e8f94   # the hint line: text renders
+check 1-root.png hint   # the hint line: text renders
 
 # Open each sample command (Rust, JavaScript, TypeScript) and run an item.
 for index in 0 1 2; do
@@ -113,7 +113,7 @@ for index in 0 1 2; do
   capture "$((index + 2))-command-$index.png"
   key 125; key 36; sleep 2
   capture "$((index + 2))-result-$index.png"
-  check "$((index + 2))-result-$index.png" 9fd8a8   # the guest's answer
+  check "$((index + 2))-result-$index.png" success   # the guest's answer
   key 53; sleep 1
 done
 capture 5-back-to-root.png
@@ -129,11 +129,11 @@ key 36; sleep 1
 capture 6-form.png
 key 36; sleep 2
 capture 7-form-error.png
-check 7-form-error.png ff9a92   # the rejected field's message
+check 7-form-error.png error   # the rejected field's message
 type_text Ada
 key 48; key 125; key 36; sleep 2
 capture 8-form-result.png
-check 8-form-result.png 9fd8a8   # the guest's answer
+check 8-form-result.png success   # the guest's answer
 key 53; key 53; sleep 1
 stop_pane
 
@@ -142,20 +142,20 @@ stop_pane
 # command, then the install and Manage extensions… rows.
 start_pane --install target/guests/packages/sample-rust
 capture 9-package.png
-check 9-package.png a3a4a9   # the package's identity and compatibility lines
+check 9-package.png details   # the package's identity and compatibility lines
 key 36; sleep 2
 capture 10-installed.png
-check 10-installed.png 9fd8a8   # "Installed Rust sample"
+check 10-installed.png success   # "Installed Rust sample"
 key 36; sleep 3
 key 36; sleep 2
 capture 11-installed-result.png
-check 11-installed-result.png 9fd8a8   # the installed guest's answer
+check 11-installed-result.png success   # the installed guest's answer
 stop_pane
 
 # The installed command is still listed after a restart.
 start_pane
 capture 12-restarted.png
-check 12-restarted.png 8e8f94
+check 12-restarted.png hint
 [ -f "$out/data/extensions/installed.json" ] || { echo "no install record"; exit 1; }
 focus_pane
 
@@ -166,11 +166,11 @@ key 36; sleep 3
 for _ in 1 2 3 4 5 6; do key 125; done
 key 36; sleep 2
 capture 13-windows-only.png
-check 13-windows-only.png d6a36a   # the row's reason
-check 13-windows-only.png ff9a92   # macOS: the reason as the error
+check 13-windows-only.png warning   # the row's reason
+check 13-windows-only.png error   # macOS: the reason as the error
 key 125; key 36; sleep 2
 capture 14-not-windows.png
-check 14-not-windows.png 9fd8a8    # macOS: the guest's answer
+check 14-not-windows.png success    # macOS: the guest's answer
 key 53; sleep 1
 stop_pane
 
@@ -189,7 +189,7 @@ cat >"$out/elsewhere/pane.json" <<'JSON'
 JSON
 start_pane --install "$out/elsewhere"
 capture 15-no-compatible-package.png
-check 15-no-compatible-package.png ff9a92   # "Not available on macOS: ..."
+check 15-no-compatible-package.png error   # "Not available on macOS: ..."
 stop_pane
 
 # Install the settings sample, save a choice with it, then disable it in
@@ -201,13 +201,13 @@ key 36; sleep 2   # Install; Greeting is selected
 key 36; sleep 3   # open Greeting
 key 36; sleep 2   # "Use a formal greeting"
 capture 16-setting-saved.png
-check 16-setting-saved.png 9fd8a8   # "Saved the formal greeting"
+check 16-setting-saved.png success   # "Saved the formal greeting"
 key 53; sleep 1
 for ((i = 0; i < 14; i++)); do key 125; done   # the last row
 key 36; sleep 1
 key 125; key 36; sleep 2
 capture 17-disabled.png
-check 17-disabled.png 9fd8a8   # "Disabled Settings sample"
+check 17-disabled.png success   # "Disabled Settings sample"
 stop_pane
 grep -q '"disabled": true' "$out/data/extensions/installed.json" || { echo "disabled state not recorded"; exit 1; }
 grep -q '"greeting-style": "formal"' "$out/data/extensions/settings.json" || { echo "setting not saved"; exit 1; }
@@ -218,19 +218,19 @@ grep -q '"greeting-style": "formal"' "$out/data/extensions/settings.json" || { e
 # style, where without a saved style it reports an error.
 start_pane
 capture 18-restarted-disabled.png
-check 18-restarted-disabled.png 8e8f94
+check 18-restarted-disabled.png hint
 python3 "$(dirname "$0")/check_screenshot.py" --same "$out/12-restarted.png" "$out/18-restarted-disabled.png"
 for ((i = 0; i < 14; i++)); do key 125; done
 key 36; sleep 1
 key 125; key 36; sleep 2
 capture 19-enabled.png
-check 19-enabled.png 9fd8a8   # "Enabled Settings sample"
+check 19-enabled.png success   # "Enabled Settings sample"
 key 53; sleep 1
 for ((i = 0; i < 4; i++)); do key 125; done   # Greeting
 key 36; sleep 3
 key 125; key 125; key 36; sleep 2   # "Greet me"
 capture 20-greeted.png
-check 20-greeted.png 9fd8a8   # "Good day to you"
+check 20-greeted.png success   # "Good day to you"
 stop_pane
 
 # Restarted, root lists Greeting again, after Rust sample.
@@ -266,7 +266,7 @@ capture 24-search.png
 key 36; sleep 3
 key 125; key 36; sleep 2
 capture 25-search-result.png
-check 25-search-result.png 9fd8a8   # the TypeScript guest's answer
+check 25-search-result.png success   # the TypeScript guest's answer
 python3 "$(dirname "$0")/check_screenshot.py" --same "$out/4-result-2.png" "$out/25-search-result.png"
 key 53; sleep 1
 type_text zzz; sleep 1
@@ -302,7 +302,7 @@ stop_pane
 start_pane --install target/guests/packages/sample-operations-js
 key 36; sleep 2   # Install
 capture 31-operations-target.png
-check 31-operations-target.png 9fd8a8   # "Installed JavaScript operations sample"
+check 31-operations-target.png success   # "Installed JavaScript operations sample"
 stop_pane
 start_pane --install target/guests/packages/sample-operations
 key 36; sleep 2   # Install; Call from Rust is selected
@@ -312,7 +312,7 @@ type_text "local:$(cd target/guests/packages/sample-operations-js && pwd -P)"
 key 48; type_text Rust
 key 36; sleep 5   # Greet
 capture 32-operation-answer.png
-check 32-operation-answer.png 9fd8a8   # the JavaScript guest's answer
+check 32-operation-answer.png success   # the JavaScript guest's answer
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{31-operations-target,32-operation-answer}.png
 stop_pane
 
@@ -337,7 +337,7 @@ key 36; sleep 2   # Install; Dev sample is selected
 key 36; sleep 3
 key 36; sleep 2   # "Say hello"
 capture 33-dev-before.png
-check 33-dev-before.png 9fd8a8   # "Hello from the Rust guest"
+check 33-dev-before.png success   # "Hello from the Rust guest"
 key 53; sleep 1
 cp target/guests/sample_js.wasm "$out/dev/command.wasm"
 for ((i = 0; i < 12; i++)); do key 125; done   # the last row
@@ -345,13 +345,13 @@ key 36; sleep 1
 for ((i = 0; i < 11; i++)); do key 125; done   # Reload Dev
 key 36; sleep 3
 capture 34-reloaded.png
-check 34-reloaded.png 9fd8a8   # "Reloaded Dev"
+check 34-reloaded.png success   # "Reloaded Dev"
 key 53; sleep 1
 for ((i = 0; i < 8; i++)); do key 125; done   # Dev sample
 key 36; sleep 3
 key 36; sleep 2   # "Say hello"
 capture 35-dev-after.png
-check 35-dev-after.png 9fd8a8   # "Hello from the JavaScript guest"
+check 35-dev-after.png success   # "Hello from the JavaScript guest"
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/33-dev-before.png" "$out/35-dev-after.png"
 key 53; sleep 1
 
@@ -363,7 +363,7 @@ key 36; sleep 1
 for ((i = 0; i < 11; i++)); do key 125; done
 key 36; sleep 2
 capture 36-not-reloaded.png
-check 36-not-reloaded.png ff9a92   # "Dev was not reloaded: ..."
+check 36-not-reloaded.png error   # "Dev was not reloaded: ..."
 key 53; sleep 1
 for ((i = 0; i < 8; i++)); do key 125; done
 key 36; sleep 3
@@ -380,10 +380,10 @@ key 36; sleep 1
 for ((i = 0; i < 11; i++)); do key 125; done
 key 36; sleep 3
 capture 38-start-failed.png
-check 38-start-failed.png ff9a92   # "Reloaded Dev, but it failed to start; ..."
+check 38-start-failed.png error   # "Reloaded Dev, but it failed to start; ..."
 key 125; key 36; sleep 3   # Retry starting Dev
 capture 39-retried.png
-check 39-retried.png 9fd8a8   # "Started Dev"
+check 39-retried.png success   # "Started Dev"
 stop_pane
 grep -q '"start-attempted": "yes"' "$out/data/extensions/settings.json" || { echo "the failed start's setting was not kept"; exit 1; }
 
@@ -399,7 +399,7 @@ key 36; sleep 2   # "Save a note"
 key 125; key 36; sleep 2   # "Sign in"
 key 125; key 36; sleep 2   # "Show what Pane keeps"
 capture 40-kept.png
-check 40-kept.png 9fd8a8   # every value, the cached greeting included
+check 40-kept.png success   # every value, the cached greeting included
 key 53; sleep 1
 stop_pane
 grep -q '"note": "Water the plants"' "$out/data/extensions/content.json" || { echo "note not saved"; exit 1; }
@@ -415,17 +415,17 @@ key 36; sleep 1
 for ((i = 0; i < 13; i++)); do key 125; done
 key 36; sleep 1   # "Clear cache of Settings sample"
 capture 41-confirm-clear-cache.png
-check 41-confirm-clear-cache.png a3a4a9   # what is deleted and what is kept
+check 41-confirm-clear-cache.png details   # what is deleted and what is kept
 key 36; sleep 2   # "Clear cache"
 capture 42-cache-cleared.png
-check 42-cache-cleared.png 9fd8a8   # "Cleared the cache of Settings sample"
+check 42-cache-cleared.png success   # "Cleared the cache of Settings sample"
 key 53; sleep 1
 for ((i = 0; i < 4; i++)); do key 125; done   # Greeting
 key 36; sleep 3
 for ((i = 0; i < 5; i++)); do key 125; done
 key 36; sleep 2   # "Show what Pane keeps"
 capture 43-kept-after-clear.png
-check 43-kept-after-clear.png 9fd8a8   # "... Cached greeting: none"
+check 43-kept-after-clear.png success   # "... Cached greeting: none"
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/40-kept.png" "$out/43-kept-after-clear.png"
 key 53; sleep 1
 stop_pane
@@ -466,7 +466,7 @@ check 44-application.png selected 3000   # the selected application row
 key 36; sleep 3
 focus_pane
 capture 45-opened.png
-check 45-opened.png 9fd8a8   # "Opened Pane Smoke App"
+check 45-opened.png success   # "Opened Pane Smoke App"
 for _ in $(seq 50); do [ -f "$apps/launched" ] && break; sleep 0.2; done
 [ -f "$apps/launched" ] || { echo "the application did not run"; exit 1; }
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{44-application,45-opened}.png
@@ -486,7 +486,7 @@ key 48
 type_text 'https://example.com/pane-issues'
 key 36; sleep 2
 capture 46-quicklink-saved.png
-check 46-quicklink-saved.png 9fd8a8   # "Saved quicklink “Pane issues”"
+check 46-quicklink-saved.png success   # "Saved quicklink “Pane issues”"
 key 53; key 53; sleep 1
 stop_pane
 start_pane
@@ -506,10 +506,10 @@ key 36; sleep 1
 for ((i = 0; i < 25; i++)); do key 125; done
 key 36; sleep 1   # "Uninstall Settings sample"
 capture 49-confirm-uninstall.png
-check 49-confirm-uninstall.png a3a4a9   # what is removed and the saved data
+check 49-confirm-uninstall.png details   # what is removed and the saved data
 key 36; sleep 2   # "Uninstall and keep saved data"
 capture 50-uninstalled.png
-check 50-uninstalled.png 9fd8a8   # "Uninstalled Settings sample; its settings and content are kept"
+check 50-uninstalled.png success   # "Uninstalled Settings sample; its settings and content are kept"
 stop_pane
 grep -q '"retained"' "$out/data/extensions/installed.json" || { echo "kept data not recorded"; exit 1; }
 if grep -q 'sample-token' "$out/data/extensions/credentials.json"; then echo "credential not removed"; exit 1; fi
@@ -521,7 +521,7 @@ key 36; sleep 3   # open Greeting
 for ((i = 0; i < 5; i++)); do key 125; done
 key 36; sleep 2   # "Show what Pane keeps"
 capture 51-reinstalled.png
-check 51-reinstalled.png 9fd8a8   # "Style: formal · Note: Water the plants · Signed in: no ..."
+check 51-reinstalled.png success   # "Style: formal · Note: Water the plants · Signed in: no ..."
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/43-kept-after-clear.png" "$out/51-reinstalled.png"
 key 53; sleep 1
 stop_pane
@@ -555,10 +555,10 @@ for ((i = 0; i < 14; i++)); do key 125; done   # Manage extensions…
 key 36; sleep 1
 key 125; key 125; key 125; key 125; key 36; sleep 1   # "Hotkey for Greeting"
 capture 52-hotkey-screen.png
-check 52-hotkey-screen.png a3a4a9   # "Press the keys that should open Greeting ..."
+check 52-hotkey-screen.png details   # "Press the keys that should open Greeting ..."
 press_hotkey   # Pane is in front: this assigns it
 capture 53-hotkey-assigned.png
-check 53-hotkey-assigned.png 9fd8a8   # "Control+Option+G now opens Greeting"
+check 53-hotkey-assigned.png success   # "Control+Option+G now opens Greeting"
 key 53; sleep 1   # root search
 unfocus_pane
 capture 54-unfocused.png
@@ -606,23 +606,23 @@ for ((i = 0; i < 7; i++)); do key 125; done   # Crash
 for ((i = 0; i < 3; i++)); do key 36; sleep 2; done
 type_text greet; sleep 1   # Greeting and its reason at the top on any window height
 capture 59-paused.png
-check 59-paused.png ff9a92   # "Settings sample crashed 3 times within 5 minutes and is paused ..."
-check 59-paused.png d6a36a   # Greeting: "Settings sample is paused after an error; ..."
+check 59-paused.png error   # "Settings sample crashed 3 times within 5 minutes and is paused ..."
+check 59-paused.png warning   # Greeting: "Settings sample is paused after an error; ..."
 stop_pane
 grep -q '"paused"' "$PANE_DATA_DIR/extensions/installed.json" || { echo "pause not recorded"; exit 1; }
 start_pane
 type_text greet; sleep 1
 capture 60-paused-after-restart.png
-check 60-paused-after-restart.png d6a36a   # Greeting is still paused
+check 60-paused-after-restart.png warning   # Greeting is still paused
 key 53; sleep 1   # Escape clears the query
 for ((i = 0; i < 14; i++)); do key 125; done   # Manage extensions…
 key 36; sleep 1
 key 125; key 125; key 125; key 36; sleep 1   # "Why Settings sample is paused"
 capture 61-pause-details.png
-check 61-pause-details.png a3a4a9   # the details
+check 61-pause-details.png details   # the details
 key 36; sleep 2   # Retry Settings sample
 capture 62-pause-retried.png
-check 62-pause-retried.png 9fd8a8   # "Started Settings sample"
+check 62-pause-retried.png success   # "Started Settings sample"
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{61-pause-details,62-pause-retried}.png
 stop_pane
 if grep -q '"paused"' "$PANE_DATA_DIR/extensions/installed.json"; then echo "pause not cleared"; exit 1; fi
@@ -662,17 +662,17 @@ key 36   # "Uninstall and keep saved data"
 wait_for "$registry" '"retained"' present; sleep 1
 key 36; sleep 1   # "Delete retained data of Settings sample" (the list's first row, already selected)
 capture 63-confirm-delete-retained.png
-check 63-confirm-delete-retained.png a3a4a9   # what is kept and what is not touched
+check 63-confirm-delete-retained.png details   # what is kept and what is not touched
 # The confirmation's status line is the idle hint, not a result: the
-# extension list also shows 8e8f94 subtitles, so that color alone let the
+# extension list also shows hint subtitles, so that color alone let the
 # wrong screen pass (#58: Down to the list's end had landed on the
 # automatic-update row, whose Enter toggles it and leaves its result on
 # screen). No result color on screen says the right screen is up.
-python3 "$(dirname "$0")/check_screenshot.py" --absent "$out/63-confirm-delete-retained.png" 9fd8a8
+python3 "$(dirname "$0")/check_screenshot.py" --absent "$out/63-confirm-delete-retained.png" success
 key 125; key 36   # "Delete retained data"
 wait_for "$registry" '"retained"' absent; sleep 1
 capture 64-retained-deleted.png
-check 64-retained-deleted.png 9fd8a8   # "Deleted the retained data of Settings sample"
+check 64-retained-deleted.png success   # "Deleted the retained data of Settings sample"
 stop_pane
 if grep -q 'Water the plants' "$PANE_DATA_DIR/extensions/content.json"; then echo "note not deleted"; exit 1; fi
 start_pane --install target/guests/packages/sample-settings
@@ -682,7 +682,7 @@ key 36; sleep 3   # open Greeting
 for ((i = 0; i < 5; i++)); do key 125; done
 key 36; sleep 2   # "Show what Pane keeps"
 capture 65-reinstalled-empty.png
-check 65-reinstalled-empty.png 9fd8a8   # "Style: none · Note: none · Signed in: no ..."
+check 65-reinstalled-empty.png success   # "Style: none · Note: none · Signed in: no ..."
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/51-reinstalled.png" "$out/65-reinstalled-empty.png"
 key 53; sleep 1
 stop_pane
@@ -707,10 +707,10 @@ key 36; sleep 1
 type_text ec
 key 36; sleep 2
 capture 66-alias-saved.png
-check 66-alias-saved.png 9fd8a8   # "Typing “ec” now finds Echo"
+check 66-alias-saved.png success   # "Typing “ec” now finds Echo"
 key 125; key 36; sleep 2   # "Fallback: Echo"
 capture 67-fallback-on.png
-check 67-fallback-on.png 9fd8a8   # "Echo is now offered for any text typed in root search"
+check 67-fallback-on.png success   # "Echo is now offered for any text typed in root search"
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{66-alias-saved,67-fallback-on}.png
 key 53; sleep 1   # root search
 type_text 'ec hello'; sleep 1
@@ -718,7 +718,7 @@ capture 68-alias-row.png
 check 68-alias-row.png selected 3000   # Echo, sending “hello”, selected
 key 36; sleep 3
 capture 69-alias-answer.png
-check 69-alias-answer.png 9fd8a8   # "Echo heard “hello”"
+check 69-alias-answer.png success   # "Echo heard “hello”"
 key 53; sleep 1   # clears the query
 type_text zqx; sleep 1
 capture 70-fallback-listed.png   # "No results for “zqx”", then Echo, not selected
@@ -728,7 +728,7 @@ check 71-fallback-chosen.png selected 3000   # Echo, now selected
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{70-fallback-listed,71-fallback-chosen}.png
 key 36; sleep 3
 capture 72-fallback-answer.png
-check 72-fallback-answer.png 9fd8a8   # "Echo heard “zqx”"
+check 72-fallback-answer.png success   # "Echo heard “zqx”"
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{69-alias-answer,72-fallback-answer}.png
 stop_pane
 grep -q '"ec"' "$PANE_DATA_DIR/extensions/aliases.json" || { echo "alias not recorded"; exit 1; }
@@ -761,14 +761,14 @@ export PANE_DATA_DIR=$out/dependencies-data
 rm -rf "$PANE_DATA_DIR"
 start_pane --install target/guests/packages/sample-dependencies
 capture 75-dependencies-preview.png
-check 75-dependencies-preview.png a3a4a9   # "Requires: JavaScript operations sample, installed with it ..."
+check 75-dependencies-preview.png details   # "Requires: JavaScript operations sample, installed with it ..."
 key 36; sleep 3   # Install; Greet through dependencies is selected
 capture 76-dependencies-installed.png
-check 76-dependencies-installed.png 9fd8a8   # "Installed Dependencies sample with JavaScript operations sample, which it requires"
+check 76-dependencies-installed.png success   # "Installed Dependencies sample with JavaScript operations sample, which it requires"
 key 36; sleep 3   # open Greet through dependencies
 key 36; sleep 5   # Greet through the required greeter
 capture 77-dependency-answer.png
-check 77-dependency-answer.png 9fd8a8   # the JavaScript guest's answer
+check 77-dependency-answer.png success   # the JavaScript guest's answer
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{75-dependencies-preview,76-dependencies-installed,77-dependency-answer}.png
 stop_pane
 grep -q '"id": "greeter"' "$PANE_DATA_DIR/extensions/installed.json" || { echo "dependency not recorded"; exit 1; }
@@ -794,10 +794,10 @@ key 36   # Echo through the helper
 # loaded runner can outlast a fixed sleep (run 36850094416's macOS leg
 # captured the answer's absence after two seconds), so the answer is
 # waited for, whenever it lands.
-capture_until 90-helper-echoed.png 9fd8a8 15   # 'Echoed "hello from Pane" on macOS arm64'
+capture_until 90-helper-echoed.png success 15   # 'Echoed "hello from Pane" on macOS arm64'
 key 125; key 125; key 36; sleep 3   # Echo within a second
 capture 91-helper-cancelled.png
-check 91-helper-cancelled.png 9fd8a8   # "Stopped the helper after one second"
+check 91-helper-cancelled.png success   # "Stopped the helper after one second"
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{90-helper-echoed,91-helper-cancelled}.png
 if helpers_running; then echo "a cancelled helper is still running"; exit 1; fi
 key 126; key 36; sleep 2   # Up: Echo after waiting
@@ -808,7 +808,7 @@ for ((i = 0; i < 14; i++)); do key 125; done   # Manage extensions…
 key 36; sleep 1
 key 36; sleep 2   # disable Helper sample
 capture 93-helper-disabled.png
-check 93-helper-disabled.png 9fd8a8   # "Disabled Helper sample"
+check 93-helper-disabled.png success   # "Disabled Helper sample"
 if helpers_running; then echo "the helper outlived its disabled package"; exit 1; fi
 grep -q '"helper-wait": "started"' "$PANE_DATA_DIR/extensions/settings.json" || { echo "saved note lost"; exit 1; }
 if grep -q '"helper-wait": "finished"' "$PANE_DATA_DIR/extensions/settings.json"; then echo "the stopped call finished"; exit 1; fi
@@ -934,11 +934,11 @@ PY
   key 126; sleep 0.12   # Up
   key 36; sleep 2   # Develop <title>
   capture "$n-$sample-develop-started.png"
-  check "$n-$sample-develop-started.png" 9fd8a8   # "Developing <title>: each save in ..."
+  check "$n-$sample-develop-started.png" success   # "Developing <title>: each save in ..."
   key 53; sleep 1
   say_hello
   capture "$((n + 1))-$sample-greeting-before.png"
-  check "$((n + 1))-$sample-greeting-before.png" 9fd8a8   # "Hello from ..."
+  check "$((n + 1))-$sample-greeting-before.png" success   # "Hello from ..."
   key 53; sleep 1
 
   # An edit, saved: built and reloaded.
@@ -946,10 +946,10 @@ PY
   set_greeting "$copy/$source" "$(printf "$greeting" "Hello again")"
   wait_reloaded "$built" "$before"
   capture "$((n + 2))-$sample-rebuilt.png"
-  check "$((n + 2))-$sample-rebuilt.png" 9fd8a8   # "Reloaded <title>"
+  check "$((n + 2))-$sample-rebuilt.png" success   # "Reloaded <title>"
   say_hello
   capture "$((n + 3))-$sample-greeting-after.png"
-  check "$((n + 3))-$sample-greeting-after.png" 9fd8a8   # "Hello again"
+  check "$((n + 3))-$sample-greeting-after.png" success   # "Hello again"
   python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/$((n + 1))-$sample-greeting-before.png" "$out/$((n + 3))-$sample-greeting-after.png"
   key 53; sleep 1
 
@@ -959,10 +959,10 @@ PY
   set_greeting "$copy/$source" "$broken"
   wait_failed "$failures"
   capture "$((n + 4))-$sample-build-failed.png"
-  check "$((n + 4))-$sample-build-failed.png" ff9a92   # "<title> did not build: ..."
+  check "$((n + 4))-$sample-build-failed.png" error   # "<title> did not build: ..."
   say_hello
   capture "$((n + 5))-$sample-kept.png"
-  check "$((n + 5))-$sample-kept.png" 9fd8a8   # still "Hello again"
+  check "$((n + 5))-$sample-kept.png" success   # still "Hello again"
   python3 "$(dirname "$0")/check_screenshot.py" --same "$out/$((n + 3))-$sample-greeting-after.png" "$out/$((n + 5))-$sample-kept.png"
   key 53; sleep 1
 
@@ -973,10 +973,10 @@ PY
   set_greeting "$copy/$source" "$(printf "$greeting" "Hello at last")"
   wait_reloaded "$built" "$before"
   capture "$((n + 6))-$sample-rebuilt-again.png"
-  check "$((n + 6))-$sample-rebuilt-again.png" 9fd8a8   # "Reloaded <title>"
+  check "$((n + 6))-$sample-rebuilt-again.png" success   # "Reloaded <title>"
   say_hello
   capture "$((n + 7))-$sample-greeting-fixed.png"
-  check "$((n + 7))-$sample-greeting-fixed.png" 9fd8a8   # "Hello at last"
+  check "$((n + 7))-$sample-greeting-fixed.png" success   # "Hello at last"
   python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out/$((n + 3))-$sample-greeting-after.png" "$out/$((n + 7))-$sample-greeting-fixed.png"
   key 53; sleep 1
 
@@ -988,7 +988,7 @@ PY
   key 126; sleep 0.12   # Up
   key 36; sleep 2   # Stop developing <title>
   capture "$((n + 8))-$sample-stopped.png"
-  check "$((n + 8))-$sample-stopped.png" 9fd8a8   # "Stopped developing <title>"
+  check "$((n + 8))-$sample-stopped.png" success   # "Stopped developing <title>"
   cp "$built" "$before"
   set_greeting "$copy/$source" "$(printf "$greeting" "Hello unseen")"
   sleep 8
@@ -1022,16 +1022,16 @@ for ((i = 0; i < 14; i++)); do key 125; done   # Manage extensions…
 key 36; sleep 1
 key 36; sleep 1   # disable JavaScript operations sample: asks first
 capture 140-disable-dependents-asked.png
-check 140-disable-dependents-asked.png a3a4a9   # "Dependencies sample, which requires JavaScript operations sample · …"
+check 140-disable-dependents-asked.png details   # "Dependencies sample, which requires JavaScript operations sample · …"
 key 125; key 36; sleep 1   # Cancel
 capture 141-disable-dependents-cancelled.png   # both still enabled
 key 36; sleep 1   # asks again
 key 36; sleep 2   # Disable all 2
 capture 142-disable-dependents-disabled.png
-check 142-disable-dependents-disabled.png 9fd8a8   # "Disabled JavaScript operations sample and Dependencies sample, which requires it"
+check 142-disable-dependents-disabled.png success   # "Disabled JavaScript operations sample and Dependencies sample, which requires it"
 key 36; sleep 2   # enable JavaScript operations sample
 capture 143-disable-dependents-enabled-alone.png
-check 143-disable-dependents-enabled-alone.png 9fd8a8   # "Enabled JavaScript operations sample"; Dependencies sample stays disabled
+check 143-disable-dependents-enabled-alone.png success   # "Enabled JavaScript operations sample"; Dependencies sample stays disabled
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{140-disable-dependents-asked,141-disable-dependents-cancelled,142-disable-dependents-disabled,143-disable-dependents-enabled-alone}.png
 stop_pane
 [ "$(grep -c '"disabled": true' "$PANE_DATA_DIR/extensions/installed.json")" = 1 ] || { echo "not exactly the dependent left disabled"; exit 1; }
@@ -1077,7 +1077,7 @@ key 36; sleep 2   # open Greeting
 for ((i = 0; i < 8; i++)); do key 125; done   # Count
 key 36; sleep 2
 capture 200-runtime-counted.png
-check 200-runtime-counted.png 9fd8a8   # "Counted 1"
+check 200-runtime-counted.png success   # "Counted 1"
 [ "$(count)" = 1 ] || { echo "Count did not count once"; exit 1; }
 key 53; sleep 1
 type_text helper; sleep 1
@@ -1090,7 +1090,7 @@ alive=$(find "$PANE_DATA_DIR/extensions/packages" -name pane-echo.alive | head -
 [ -n "$alive" ] || { echo "the waiting helper does not beat"; exit 1; }
 inject crash
 capture 202-runtime-crashed.png
-check 202-runtime-crashed.png ff9a92   # "Pane's extension runtime stopped unexpectedly and was started again; ..."
+check 202-runtime-crashed.png error   # "Pane's extension runtime stopped unexpectedly and was started again; ..."
 if helpers_running; then echo "the helper outlived the crashed runtime"; exit 1; fi
 beats=$(stat -f %z "$alive"); sleep 0.5
 [ "$(stat -f %z "$alive")" = "$beats" ] || { echo "the helper still beats after the crash"; exit 1; }
@@ -1103,27 +1103,27 @@ for ((i = 0; i < 8; i++)); do key 125; done   # Count
 inject crash-before-answer:count
 key 36; sleep 3   # counts, then the runtime crashes before answering
 capture 203-runtime-stopped.png
-check 203-runtime-stopped.png ff9a92   # the runtime stopped; its answer is lost
+check 203-runtime-stopped.png error   # the runtime stopped; its answer is lost
 [ "$(count)" = 2 ] || { echo "Count did not run once before the crash"; exit 1; }
 key 53; sleep 1
 type_text greet; sleep 1
 key 36; sleep 2   # Greeting: nothing runs
 capture 204-runtime-refused.png
-check 204-runtime-refused.png ff9a92   # "Extension runtime unavailable: it stopped after crashing ..."
+check 204-runtime-refused.png error   # "Extension runtime unavailable: it stopped after crashing ..."
 key 53; sleep 1   # clears the query
 for ((i = 0; i < 14; i++)); do key 125; done   # Manage extensions…
 key 36; sleep 1
 capture 205-runtime-manage.png   # Restart the extension runtime, Why the extension runtime stopped
 key 125; key 36; sleep 1   # Why the extension runtime stopped
 capture 206-runtime-details.png
-check 206-runtime-details.png a3a4a9   # the details
+check 206-runtime-details.png details   # the details
 key 53; sleep 1   # back at its row
 key 125; key 36; sleep 2   # disable Helper sample, the first package
 capture 207-runtime-disabled.png
-check 207-runtime-disabled.png 9fd8a8   # "Disabled Helper sample"
+check 207-runtime-disabled.png success   # "Disabled Helper sample"
 key 126; key 126; key 36; sleep 2   # Restart the extension runtime
 capture 208-runtime-restarted.png
-check 208-runtime-restarted.png 9fd8a8   # "Restarted the extension runtime"
+check 208-runtime-restarted.png success   # "Restarted the extension runtime"
 [ "$(count)" = 2 ] || { echo "Count was run again without asking"; exit 1; }
 key 53; sleep 1
 type_text greet; sleep 1
@@ -1131,7 +1131,7 @@ key 36; sleep 2   # open Greeting
 for ((i = 0; i < 8; i++)); do key 125; done   # Count
 key 36; sleep 2
 capture 209-runtime-counted-again.png
-check 209-runtime-counted-again.png 9fd8a8   # "Counted 3"
+check 209-runtime-counted-again.png success   # "Counted 3"
 [ "$(count)" = 3 ] || { echo "Count did not count once more"; exit 1; }
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{200-runtime-counted,202-runtime-crashed,203-runtime-stopped,204-runtime-refused,205-runtime-manage,206-runtime-details,207-runtime-disabled,208-runtime-restarted,209-runtime-counted-again}.png
 stop_pane
@@ -1194,22 +1194,22 @@ key 36; sleep 2   # open Greeting
 for ((i = 0; i < 9; i++)); do key 125; done   # Stop responding
 key 36; sleep 8
 capture 241-unresponsive-stopped.png
-check 241-unresponsive-stopped.png ff9a92   # "The extension stopped responding: it computed for 2 seconds ..."
+check 241-unresponsive-stopped.png error   # "The extension stopped responding: it computed for 2 seconds ..."
 key 36; sleep 8   # the third time
 type_text greet; sleep 1   # Greeting and its reason at the top
 capture 242-unresponsive-paused.png
-check 242-unresponsive-paused.png ff9a92   # "Settings sample stopped responding 3 times within 5 minutes and is paused ..."
-check 242-unresponsive-paused.png d6a36a   # Greeting: "Settings sample is paused after an error; ..."
+check 242-unresponsive-paused.png error   # "Settings sample stopped responding 3 times within 5 minutes and is paused ..."
+check 242-unresponsive-paused.png warning   # Greeting: "Settings sample is paused after an error; ..."
 [ "$(saved busy)" = started ] || { echo "Stop responding finished or was lost"; exit 1; }
 key 53; sleep 1   # clears the query
 for ((i = 0; i < 10; i++)); do key 125; done   # Manage extensions…
 key 36; sleep 1
 key 125; key 125; key 125; key 36; sleep 1   # "Why Settings sample is paused"
 capture 243-unresponsive-pause-details.png
-check 243-unresponsive-pause-details.png a3a4a9   # the details
+check 243-unresponsive-pause-details.png details   # the details
 key 36; sleep 2   # Retry Settings sample
 capture 244-unresponsive-retried.png
-check 244-unresponsive-retried.png 9fd8a8   # "Started Settings sample"
+check 244-unresponsive-retried.png success   # "Started Settings sample"
 key 53; sleep 1
 inject hang
 type_text greet; sleep 1
@@ -1218,20 +1218,20 @@ capture 245-unresponsive-not-yet.png
 check 245-unresponsive-not-yet.png progress   # "Pane's extension runtime is not responding yet. ..."
 sleep 14   # Pane gives up on it
 capture 246-unresponsive-runtime.png
-check 246-unresponsive-runtime.png ff9a92   # the runtime stopped responding and was started again
+check 246-unresponsive-runtime.png error   # the runtime stopped responding and was started again
 key 53; sleep 1   # clears the query
 for ((i = 0; i < 10; i++)); do key 125; done   # Manage extensions…
 key 36; sleep 1
 key 36; sleep 1   # Why the extension runtime stopped, its first row
 capture 247-unresponsive-runtime-details.png
-check 247-unresponsive-runtime-details.png a3a4a9   # the details
+check 247-unresponsive-runtime-details.png details   # the details
 inject release
 key 53; key 53; sleep 1
 type_text greet; sleep 1
 key 36; sleep 2   # open Greeting on a fresh runtime thread
 key 36; sleep 2   # Use a formal greeting
 capture 248-unresponsive-runs-again.png
-check 248-unresponsive-runs-again.png 9fd8a8   # "Saved the formal greeting"
+check 248-unresponsive-runs-again.png success   # "Saved the formal greeting"
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{240-unresponsive-window-answers,241-unresponsive-stopped,242-unresponsive-paused,243-unresponsive-pause-details,244-unresponsive-retried,245-unresponsive-not-yet,246-unresponsive-runtime,247-unresponsive-runtime-details,248-unresponsive-runs-again}.png
 stop_pane
 unset PANE_TEST_RUNTIME_FAULTS
@@ -1263,13 +1263,13 @@ key 36; sleep 1
 for ((i = 0; i < 6; i++)); do key 125; done   # Uninstall JavaScript operations sample
 key 36; sleep 1   # asks first
 capture 180-uninstall-dependents-asked.png
-check 180-uninstall-dependents-asked.png a3a4a9   # "Dependencies sample, which requires JavaScript operations sample · …"
+check 180-uninstall-dependents-asked.png details   # "Dependencies sample, which requires JavaScript operations sample · …"
 key 125; key 125; key 36; sleep 1   # Cancel
 capture 181-uninstall-dependents-cancelled.png   # both still installed
 key 36; sleep 1   # asks again
 key 36; sleep 3   # Uninstall all 2 and keep saved data
 capture 182-uninstall-dependents-uninstalled.png
-check 182-uninstall-dependents-uninstalled.png 9fd8a8   # "Uninstalled JavaScript operations sample and Dependencies sample, which requires it; …"
+check 182-uninstall-dependents-uninstalled.png success   # "Uninstalled JavaScript operations sample and Dependencies sample, which requires it; …"
 stop_pane
 [ "$(grep -c '"dir"' "$PANE_DATA_DIR/extensions/installed.json")" = 0 ] || { echo "not both uninstalled"; exit 1; }
 start_pane --install target/guests/packages/sample-operations-js
@@ -1301,30 +1301,30 @@ for _ in $(seq 600); do [ -s "$out/npm-registry.port" ] && break; kill -0 "$npm_
 export PANE_NPM_REGISTRY=http://127.0.0.1:$(cat "$out/npm-registry.port")/
 start_pane --install target/guests/packages/sample-dependencies-npm
 capture 260-npm-dependency-preview.png
-check 260-npm-dependency-preview.png a3a4a9   # "Requires: Greeter from npm, installed with it from npm:@pane-samples/greeter"
+check 260-npm-dependency-preview.png details   # "Requires: Greeter from npm, installed with it from npm:@pane-samples/greeter"
 key 36; sleep 3   # Install; Greet through an npm dependency is selected
 capture 261-npm-dependency-installed.png
-check 261-npm-dependency-installed.png 9fd8a8   # "Installed Dependencies from npm sample with Greeter from npm, which it requires"
+check 261-npm-dependency-installed.png success   # "Installed Dependencies from npm sample with Greeter from npm, which it requires"
 key 36; sleep 3   # open it
 key 36; sleep 3   # "Greet through the required greeter"
 capture 262-npm-dependency-called.png
-check 262-npm-dependency-called.png 9fd8a8   # "Hello, Pane, from the npm package"
+check 262-npm-dependency-called.png success   # "Hello, Pane, from the npm package"
 key 53; sleep 1
 for ((i = 0; i < 14; i++)); do key 125; done   # Manage extensions…, the last row
 key 126; key 126; key 36; sleep 1   # Install extension from npm…
 capture 263-npm-form.png
-check 263-npm-form.png 8e8f94   # the form's hint line
+check 263-npm-form.png hint   # the form's hint line
 type_text @pane-samples/greeter
 key 36; sleep 3
 capture 264-npm-preview.png
-check 264-npm-preview.png a3a4a9   # "Source: npm package @pane-samples/greeter", "npm version: 0.1.0, the latest", …
+check 264-npm-preview.png details   # "Source: npm package @pane-samples/greeter", "npm version: 0.1.0, the latest", …
 key 36; sleep 3   # Update; Greeter from npm is selected
 capture 265-npm-updated.png
-check 265-npm-updated.png 9fd8a8   # "Updated Greeter from npm to 0.1.0"
+check 265-npm-updated.png success   # "Updated Greeter from npm to 0.1.0"
 key 36; sleep 3   # open Greeter from npm
 key 36; sleep 2   # "Say hello"
 capture 266-npm-command-ran.png
-check 266-npm-command-ran.png 9fd8a8   # "Hello from the npm package"
+check 266-npm-command-ran.png success   # "Hello from the npm package"
 
 # #49: the update Pane applies by itself. A 0.2.0 of the sample is
 # published into the registry this phase serves (it reads its folder on
@@ -1339,11 +1339,11 @@ start_pane
 # The check a second after the start, then the download and the apply:
 # capture until the status line says the update landed, whenever that is,
 # so a slow runner is waited for rather than slept past.
-capture_until 267-npm-updated-automatically.png 9fd8a8 60   # "Updated Greeter from npm to 0.2.0"
+capture_until 267-npm-updated-automatically.png success 60   # "Updated Greeter from npm to 0.2.0"
 key 36; sleep 3   # open Greeter from npm, the new copy
 key 36; sleep 2   # "Say hello"
 capture 268-npm-new-copy-ran.png
-check 268-npm-new-copy-ran.png 9fd8a8   # "Hello from the npm package"
+check 268-npm-new-copy-ran.png success   # "Hello from the npm package"
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{260-npm-dependency-preview,261-npm-dependency-installed,262-npm-dependency-called,263-npm-form,264-npm-preview,265-npm-updated,266-npm-command-ran,267-npm-updated-automatically,268-npm-new-copy-ran}.png
 stop_pane
 kill "$npm_registry_pid"; wait "$npm_registry_pid" 2>/dev/null || true; npm_registry_pid=
@@ -1374,23 +1374,23 @@ for _ in $(seq 600); do [ -s "$out/repository-server.port" ] && break; kill -0 "
 repository=http://127.0.0.1:$(cat "$out/repository-server.port")/greeter.git
 start_pane --install "git:$repository"
 # The fetch runs after the window shows: capture until its explanation does.
-capture_until 300-git-source-only.png ff9a92 60   # "The default branch, main (commit …) of the Git repository … holds only the source of …"
+capture_until 300-git-source-only.png error 60   # "The default branch, main (commit …) of the Git repository … holds only the source of …"
 key 53; sleep 1
 for ((i = 0; i < 14; i++)); do key 125; done   # the last row
 key 36; sleep 1   # Install extension from Git…
 capture 301-git-form.png
-check 301-git-form.png 8e8f94   # the form's hint line
+check 301-git-form.png hint   # the form's hint line
 type_text "$repository@v0.1.0"
 key 36; sleep 3
 capture 302-git-preview.png
-check 302-git-preview.png a3a4a9   # "Source: Git repository 127.0.0.1:<port>/greeter", "Revision: tag v0.1.0, which you named: …"
+check 302-git-preview.png details   # "Source: Git repository 127.0.0.1:<port>/greeter", "Revision: tag v0.1.0, which you named: …"
 key 36; sleep 3   # Install; Greeter from Git is selected
 capture 303-git-installed.png
-check 303-git-installed.png 9fd8a8   # "Installed Greeter from Git"
+check 303-git-installed.png success   # "Installed Greeter from Git"
 key 36; sleep 3   # open Greeter from Git
 key 36; sleep 2   # "Say hello"
 capture 304-git-command-ran.png
-check 304-git-command-ran.png 9fd8a8   # "Hello from the Git repository"
+check 304-git-command-ran.png success   # "Hello from the Git repository"
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{300-git-source-only,301-git-form,302-git-preview,303-git-installed,304-git-command-ran}.png
 stop_pane
 release=$(python3 "$(dirname "$0")/repository_server.py" commit "$out/git-repositories/greeter" v0.1.0)
@@ -1410,20 +1410,20 @@ rm -rf "$PANE_DATA_DIR"
 python3 "$(dirname "$0")/repository_server.py" make-sample target/guests/git/greeter "$out/git-repositories/greeter-tracked"
 tracked=http://127.0.0.1:$(cat "$out/repository-server.port")/greeter-tracked.git
 start_pane --install "git:$tracked@release"
-capture_until 305-git-tracked-preview.png a3a4a9 60   # "Revision: branch release, tracked: an update fetches that branch again"
+capture_until 305-git-tracked-preview.png details 60   # "Revision: branch release, tracked: an update fetches that branch again"
 key 36; sleep 3   # Install; Greeter from Git is selected
 capture 306-git-tracked-installed.png
-check 306-git-tracked-installed.png 9fd8a8   # "Installed Greeter from Git"
+check 306-git-tracked-installed.png success   # "Installed Greeter from Git"
 python3 "$(dirname "$0")/repository_server.py" move-sample "$out/git-repositories/greeter-tracked" 0.2.0
 stop_pane
 start_pane
 # The check a second after the start, then the fetch and the apply: capture
 # until the status line says the update landed, whenever that is.
-capture_until 307-git-updated-automatically.png 9fd8a8 60   # "Updated Greeter from Git to 0.2.0"
+capture_until 307-git-updated-automatically.png success 60   # "Updated Greeter from Git to 0.2.0"
 key 36; sleep 3   # open Greeter from Git, the new copy
 key 36; sleep 2   # "Say hello"
 capture 308-git-new-copy-ran.png
-check 308-git-new-copy-ran.png 9fd8a8   # "Hello from the Git repository"
+check 308-git-new-copy-ran.png success   # "Hello from the Git repository"
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{305-git-tracked-preview,306-git-tracked-installed,307-git-updated-automatically,308-git-new-copy-ran}.png
 stop_pane
 kill "$repository_server_pid"; wait "$repository_server_pid" 2>/dev/null || true; repository_server_pid=
@@ -1459,14 +1459,14 @@ key 36; sleep 2   # Install; Files is selected
 key 36; sleep 3   # open Files; "Choose folder…" is selected
 key 36; sleep 2   # the folder PANE_TEST_CHOOSE_FOLDER names
 capture 220-files-folder-granted.png
-check 220-files-folder-granted.png 9fd8a8   # "Files may now list “Pane smoke files”"
+check 220-files-folder-granted.png success   # "Files may now list “Pane smoke files”"
 key 53; sleep 1
 type_text 'plan'; sleep 3
 capture 221-files-found.png
 check 221-files-found.png selected 3000   # the selected file row, "Résumé plan ü.txt"
 key 36; sleep 3
 capture 222-files-opened.png
-check 222-files-opened.png 9fd8a8   # "Opened Résumé plan ü.txt"
+check 222-files-opened.png success   # "Opened Résumé plan ü.txt"
 [ -f "$out/opened-file.txt" ] || { echo "the handler for files was not asked to open anything"; exit 1; }
 [ "$(cd "$(dirname "$(head -1 "$out/opened-file.txt")")" && pwd -P)/$(basename "$(head -1 "$out/opened-file.txt")")" = "$(cd "$files_folder" && pwd -P)/Résumé plan ü.txt" ] || { echo "the handler for files was not asked to open the found file"; exit 1; }
 rm -f "$out/opened-file.txt"
@@ -1474,7 +1474,7 @@ key 53; sleep 1
 type_text 'runner'; sleep 3
 key 36; sleep 2
 capture 223-files-program-refused.png
-check 223-files-program-refused.png ff9a92   # "Could not open runner.sh: it is a program or script, ..."
+check 223-files-program-refused.png error   # "Could not open runner.sh: it is a program or script, ..."
 [ ! -e "$out/opened-file.txt" ] || { echo "the script was handed to the handler"; exit 1; }
 [ ! -e "$files_fixture/runner-ran" ] || { echo "the script ran"; exit 1; }
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{220-files-folder-granted,221-files-found,222-files-opened,223-files-program-refused}.png
@@ -1521,7 +1521,7 @@ start_service 1
 start_pane --install target/guests/packages/sample-search
 key 36; sleep 2   # Install; Package search is selected
 capture 160-search-installed.png
-check 160-search-installed.png 9fd8a8   # "Installed Search sample"
+check 160-search-installed.png success   # "Installed Search sample"
 type_text aurora; sleep 2
 capture 161-root-typed.png   # root search: "No results for “aurora”"
 if grep -q '^GET' "$service_log"; then echo "root search reached the service"; exit 1; fi
@@ -1534,7 +1534,7 @@ key 125; key 36; sleep 2   # Service address: its form
 type_text "http://127.0.0.1:$service_port"
 key 36; sleep 2   # Save
 capture 163-service-set.png   # "Searching http://127.0.0.1:<port> from now on"
-check 163-service-set.png 9fd8a8
+check 163-service-set.png success
 key 53; sleep 1   # back to the command, its search field empty
 type_text aurora; sleep 3
 capture 164-search-results.png   # aurora-charts, selected, and aurora-cli
@@ -1542,7 +1542,7 @@ check 164-search-results.png selected 3000
 grep -q '^GET /search?q=aurora$' "$service_log" || { echo "the command's search did not reach the service"; exit 1; }
 key 125; key 36; sleep 3   # aurora-cli's details
 capture 165-details.png
-check 165-details.png 9fd8a8   # "aurora-cli 0.9.3 (Apache-2.0): Command-line parsing with subcommands"
+check 165-details.png success   # "aurora-cli 0.9.3 (Apache-2.0): Command-line parsing with subcommands"
 command_key a; type_text slow; sleep 2   # held by the service
 command_key a; type_text ember; sleep 3
 capture 166-newer-search.png   # ember-tz, not what "slow" would list
@@ -1550,11 +1550,11 @@ check 166-newer-search.png selected 3000
 grep -q '^ABANDONED /search?q=slow$' "$service_log" || { echo "the replaced search was not stopped"; exit 1; }
 command_key a; type_text down; sleep 3
 capture 167-service-error.png
-check 167-service-error.png ff9a92   # "... The service answered 503: the registry is down for maintenance"
+check 167-service-error.png error   # "... The service answered 503: the registry is down for maintenance"
 stop_service
 command_key a; type_text basalt; sleep 3
 capture 168-offline.png
-check 168-offline.png ff9a92   # "... Could not reach the service at http://127.0.0.1:<port>: connection refused"
+check 168-offline.png error   # "... Could not reach the service at http://127.0.0.1:<port>: connection refused"
 start_service 2
 command_key a; type_text cobalt; sleep 3
 capture 169-back-online.png   # cobalt-http, selected: not paused
@@ -1610,7 +1610,7 @@ check 280-clipboard-off.png subtitle   # "Off · Pane keeps nothing you copy unt
 key 36   # Turn on clipboard history
 wait_for "$history" '"capture": "on"' present; sleep 1
 capture 281-clipboard-on.png
-check 281-clipboard-on.png 9fd8a8   # "Clipboard history is on"
+check 281-clipboard-on.png success   # "Clipboard history is on"
 copy pane-smoke-kept
 copy pane-smoke-second
 wait_for "$history" pane-smoke-second present
@@ -1631,7 +1631,7 @@ open_history
 key 125; key 125; key 125; key 125; key 125; key 125; key 125; key 125; key 36; sleep 1   # the second kept item, pane-smoke-second, after Pause, Turn off, Keep items for, Exclude, Clear, Turn off and delete, Delete recent and the first
 key 36; sleep 2   # Copy it again, the first of its choices (#36)
 capture 283-clipboard-copied.png
-check 283-clipboard-copied.png 9fd8a8   # "Copied to the clipboard"
+check 283-clipboard-copied.png success   # "Copied to the clipboard"
 [ "$(first_kept)" = pane-smoke-second ] || { echo "the copied item did not move to the front: $(kept_texts)"; exit 1; }
 # The pasteboard really holds the item again: pbpaste prints it, and
 # pasting it over root search shows exactly what typing it shows.
@@ -1649,7 +1649,7 @@ key 36; sleep 1
 key 36; sleep 2   # disable Clipboard History, the first row
 wait_for "$extensions/installed.json" '"disabled": true' present; sleep 1
 capture 286-clipboard-disabled.png
-check 286-clipboard-disabled.png 9fd8a8   # "Disabled Clipboard History"
+check 286-clipboard-disabled.png success   # "Disabled Clipboard History"
 copy pane-smoke-disabled
 not_kept pane-smoke-disabled
 stop_pane
@@ -1705,7 +1705,7 @@ key 125; key 125; key 125; key 125; key 125; key 125; key 125; key 125; key 125;
 key 125; key 36; sleep 1   # Delete it
 wait_for "$history" pane-smoke-second absent; sleep 1
 capture 401-clipboard-item-deleted.png
-check 401-clipboard-item-deleted.png 9fd8a8   # "Deleted the kept item"
+check 401-clipboard-item-deleted.png success   # "Deleted the kept item"
 [ "$(kept_texts)" = pane-smoke-after-restart,pane-smoke-enabled,pane-smoke-resumed ] || { echo "kept: $(kept_texts)"; exit 1; }
 key 53; sleep 1   # from the item's form to the command's list
 open_history
@@ -1713,7 +1713,7 @@ key 125; key 125; key 125; key 125; key 125; key 125; key 36; sleep 1   # Delete
 key 125; key 36; sleep 1   # the last hour
 wait_for "$history" pane-smoke-resumed absent; sleep 1
 capture 402-clipboard-recent-deleted.png
-check 402-clipboard-recent-deleted.png 9fd8a8   # "Deleted 2 kept items"
+check 402-clipboard-recent-deleted.png success   # "Deleted 2 kept items"
 [ "$(kept_texts)" = pane-smoke-enabled ] || { echo "kept: $(kept_texts)"; exit 1; }
 key 53; sleep 1
 open_history
@@ -1721,7 +1721,7 @@ key 125; key 125; key 36; sleep 1   # Keep items for 7 days: 7 days (the retenti
 key 125; key 36; sleep 1   # 1 hour, the second choice
 wait_for "$history" '"retentionSeconds": 3600' present; sleep 1
 capture 403-clipboard-retention-changed.png
-check 403-clipboard-retention-changed.png 9fd8a8   # "Items are kept for 1 hour; deleted 1 older item"
+check 403-clipboard-retention-changed.png success   # "Items are kept for 1 hour; deleted 1 older item"
 [ -z "$(kept_texts)" ] || { echo "kept: $(kept_texts)"; exit 1; }
 key 53; sleep 1   # from the retention form to the command's list (it stays open after its answer)
 copy pane-smoke-final
@@ -1730,7 +1730,7 @@ open_history
 key 125; key 125; key 125; key 125; key 125; key 36; sleep 1   # Turn off and delete clipboard history
 wait_for "$history" pane-smoke-final absent; sleep 1
 capture 404-clipboard-turned-off-and-deleted.png
-check 404-clipboard-turned-off-and-deleted.png 9fd8a8   # "Clipboard history is off; deleted 1 kept item"
+check 404-clipboard-turned-off-and-deleted.png success   # "Clipboard history is off; deleted 1 kept item"
 [ -z "$(field capture)" ] || { echo "history is still $(field capture)"; exit 1; }
 # Deleting history never changes the pasteboard: it still holds what was
 # copied last (pbpaste prints pane-smoke-final).
@@ -1840,12 +1840,12 @@ capture 501-calculator-answer.png
 check 501-calculator-answer.png selected 3000   # "42", the calculator's selected answer row
 key 36; sleep 1
 capture 502-calculator-copied.png
-check 502-calculator-copied.png 9fd8a8   # "Copied 42 to the clipboard"
+check 502-calculator-copied.png success   # "Copied 42 to the clipboard"
 command_key a; type_text helper; sleep 1
 key 36; sleep 2   # Helper sample
 key 36; sleep 3   # "Echo through the helper"
 capture 503-helper-echoed.png
-check 503-helper-echoed.png 9fd8a8   # "Echoed \"hello from Pane\" on macOS arm64"
+check 503-helper-echoed.png success   # "Echoed \"hello from Pane\" on macOS arm64"
 [ -n "$(ls "$installed"/packages/*/helpers/*/pane-echo)" ] \
   || { echo "the acquired payload's helper was not installed"; exit 1; }
 [ -z "$(pgrep -f pane-echo)" ] || { echo "a helper is still running"; exit 1; }
@@ -1958,7 +1958,7 @@ done
   || { echo "Pane never checked for its own update"; exit 1; }
 sleep 2
 capture 600-notification.png
-check 600-notification.png 9fd8a8   # "Pane 99.0.0 is available" (or the setup's own outcome)
+check 600-notification.png success   # "Pane 99.0.0 is available" (or the setup's own outcome)
 command_key a; type_text update; sleep 1
 capture 601-offered.png
 check 601-offered.png subtitle   # the offer row: "Your extensions and settings are kept; ..."
@@ -1992,7 +1992,7 @@ with open(sys.argv[1], "wb") as f:
 PY
 command_key a; type_text update; sleep 1
 key 36   # the offer, tried: the damaged package is explained
-capture_until 602-corrupt-package.png ff9a92 60   # "Could not update Pane to 99.0.0: ... does not match the sha512 integrity"
+capture_until 602-corrupt-package.png error 60   # "Could not update Pane to 99.0.0: ... does not match the sha512 integrity"
 [ -e "$binary.old" ] && { echo "a failed install replaced the program"; exit 1; }
 cmp -s "$binary" "$unpack_old/pane/pane" || { echo "a failed install changed the program"; exit 1; }
 [ -e "$binary/../update" ] && { echo "a failed install left its staging behind"; exit 1; }
@@ -2011,7 +2011,7 @@ done
 [ -e "$binary.old" ] || { echo "the update was not installed"; exit 1; }
 sleep 2
 capture 603-installed.png
-check 603-installed.png 9fd8a8   # "Installed Pane 99.0.0; the new version is used the next time Pane starts"
+check 603-installed.png success   # "Installed Pane 99.0.0; the new version is used the next time Pane starts"
 cmp -s "$binary" "$unpack_new/pane/pane" || { echo "the new program was not installed"; exit 1; }
 cmp -s "$binary.old" "$unpack_old/pane/pane" || { echo "the old program was not kept out of the new one's way"; exit 1; }
 [ -e "$binary/../update" ] && { echo "the install left its staging behind"; exit 1; }
@@ -2036,7 +2036,7 @@ capture 604-answer-after-update.png
 check 604-answer-after-update.png selected 3000   # "42", the calculator's answer
 key 36; sleep 1
 capture 605-copied-after-update.png
-check 605-copied-after-update.png 9fd8a8   # "Copied 42 to the clipboard"
+check 605-copied-after-update.png success   # "Copied 42 to the clipboard"
 [ "$(pbpaste)" = "42" ] || { echo "the pasteboard holds: $(pbpaste)"; exit 1; }
 grep -q '"disabled": true' "$update_registry" || { echo "the disabled extension did not stay disabled"; exit 1; }
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{600-notification,601-offered,602-corrupt-package,603-installed,604-answer-after-update}.png

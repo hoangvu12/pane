@@ -25,17 +25,20 @@ exactly in the given color inside the Pane window
 (such as one swatch of a custom view), as "x y" screenshot pixels, so a
 smoke can click there.
 
-Usage: python3 scripts/check_screenshot.py <png> <hex color> [min pixels]
+Usage: python3 scripts/check_screenshot.py <png> <role or hex color> [min pixels]
        python3 scripts/check_screenshot.py --distinct <png> <png>...
        python3 scripts/check_screenshot.py --same <png> <png>
-       python3 scripts/check_screenshot.py --absent <png> <hex color> [max pixels]
+       python3 scripts/check_screenshot.py --absent <png> <role or hex color> [max pixels]
        python3 scripts/check_screenshot.py --locate <png> <hex color>
        python3 scripts/check_screenshot.py <png> selected [min pixels]
        python3 scripts/check_screenshot.py <png> progress|subtitle [min pixels]
        python3 scripts/check_screenshot.py --preview <png>
 
 Selected rows must contain a broad connected wash, not just similarly colored
-text or icons. --preview waits for visible metadata below the package heading
+text or icons. Host color roles are hint, details, success, error and warning;
+progress and subtitle additionally restrict the region being checked.
+Literal hex colors remain available for extension-authored drawings.
+--preview waits for visible metadata below the package heading
 at the default startup size, where root search's header is empty. These are
 behavior checks, not dark/light or native material acceptance evidence.
 """
@@ -46,9 +49,16 @@ from PIL import Image
 # Opaque dark semantic colors, including composited neutral surfaces. Guest
 # drawing colors are intentionally not remapped: hex checks/locate still test
 # exactly the authored colors (blue, purple and green in the sample picker).
+HOST_COLORS = {
+    "hint": "8e8f94",
+    "details": "a3a4a9",
+    "success": "9fd8a8",
+    "error": "ff9a92",
+    "warning": "d6a36a",
+}
 PALETTE = ["16171a", "131416", "222326", "2a2b2e", "353639", "ededef",
-           "a3a4a9", "8e8f94", "f3f3f5", "86878c", "e9e9ec",
-           "c9ee6a", "9fd8a8", "ff9a92", "d6a36a"]
+           HOST_COLORS["details"], HOST_COLORS["hint"], "f3f3f5", "86878c", "e9e9ec",
+           "c9ee6a", HOST_COLORS["success"], HOST_COLORS["error"], HOST_COLORS["warning"]]
 
 
 def panel_surface(pixel) -> bool:
@@ -204,10 +214,11 @@ def main(path: str, color: str, minimum: int = 20) -> None:
         scale = window.width / 760
         if color == "progress":
             window = window.crop((0, footer_top, window.width, window.height))
-            color = "d6a36a"
+            color = "warning"
         else:
             window = window.crop((0, round(44 * scale), window.width, footer_top))
-            color = "8e8f94"
+            color = "hint"
+    color = HOST_COLORS.get(color, color)
     count = count_near(window, rgb(color))
     if count < minimum:
         raise SystemExit(f"{path}: {count} pixels near #{color.lstrip('#')} in the Pane window, "
@@ -241,7 +252,7 @@ def preview(path: str) -> None:
     scale = window.width / 760
     band = window.crop((round(20 * scale), round(48 * scale),
                         window.width - round(20 * scale), round(61 * scale)))
-    count = sum(near(pixel, rgb("a3a4a9"), 4) for pixel in pixels_of(band))
+    count = sum(near(pixel, rgb(HOST_COLORS["details"]), 4) for pixel in pixels_of(band))
     if count < 20:
         raise SystemExit(f"{path}: package preview metadata not yet visible ({count} pixels)")
     print(f"{path}: package preview metadata visible ({count} pixels)")
@@ -253,6 +264,7 @@ def absent(path: str, color: str, allowance: int = 5) -> int:
     (a preview's details pass near the query field's border color) do not
     count, while the solid pixels of what is looked for always do (a query
     field's border, a result status's glyphs)."""
+    color = HOST_COLORS.get(color, color)
     window = pane_window(path)
     target = rgb(color)
     count = sum(1 for pixel in pixels_of(window) if near(pixel, target, 4))
