@@ -1,9 +1,10 @@
 """Asserts that a smoke screenshot shows Pane text drawn in a given color.
 
-Pane's window background is #20252d; its hint line is #8a96a3, action
-results are #9fd8a8, errors #f08c8c and an unavailable action's reason
-#d6a36a. Within the window's bounds (the largest connected region of the
-background color, so a live desktop's own near-background pixels beside the
+The behavior smokes explicitly select PANE_THEME=dark and PANE_MATERIAL=opaque.
+The panel is #16171a with a sheen and footer wash; hints are #8e8f94,
+results #9fd8a8, errors #ff9a92 and warnings #d6a36a. Within the window's
+bounds (the largest connected region of the panel's neutral surfaces, so
+a live desktop's own near-background pixels beside the
 window stay out), pixels near the text color prove text actually rendered:
 a window without a text system shows only its backgrounds. Antialiasing
 blends glyph edges, so a pixel counts when it is near the target and closer
@@ -17,8 +18,7 @@ list the same rows as an earlier one (after a restart, a disabled package's
 command is gone again) cannot silently list another. With --absent, asserts
 that the given color itself is not drawn in the Pane window (at most a few
 stray near pixels, antialiasing excluded): a confirmation just opened whose
-idle hint is not the result color cannot silently show a result, and a query
-field whose solid border is the color cannot still be on screen.
+idle hint is not the result color cannot silently show a result.
 
 With --locate, prints the center of the largest connected region of pixels drawn
 exactly in the given color inside the Pane window
@@ -30,15 +30,36 @@ Usage: python3 scripts/check_screenshot.py <png> <hex color> [min pixels]
        python3 scripts/check_screenshot.py --same <png> <png>
        python3 scripts/check_screenshot.py --absent <png> <hex color> [max pixels]
        python3 scripts/check_screenshot.py --locate <png> <hex color>
+       python3 scripts/check_screenshot.py <png> selected [min pixels]
+       python3 scripts/check_screenshot.py <png> progress|subtitle [min pixels]
+       python3 scripts/check_screenshot.py --preview <png>
+
+Selected rows must contain a broad connected wash, not just similarly colored
+text or icons. --preview waits for visible metadata below the package heading
+at the default startup size, where root search's header is empty. These are
+behavior checks, not dark/light or native material acceptance evidence.
 """
 import sys
 
 from PIL import Image
 
-BACKGROUND = (0x20, 0x25, 0x2D)
-# Every color Pane draws, so a pixel counts only if the target is the closest.
-PALETTE = ["20252d", "364355", "2e3a48", "f1f3f5", "aab4c0", "8a96a3", "d6c27a",
-           "9fd8a8", "f08c8c", "1a1e24", "8ab4f8", "d6a36a"]
+# Opaque dark semantic colors, including composited neutral surfaces. Guest
+# drawing colors are intentionally not remapped: hex checks/locate still test
+# exactly the authored colors (blue, purple and green in the sample picker).
+PALETTE = ["16171a", "131416", "222326", "2a2b2e", "353639", "ededef",
+           "a3a4a9", "8e8f94", "f3f3f5", "86878c", "e9e9ec",
+           "c9ee6a", "9fd8a8", "ff9a92", "d6a36a"]
+
+
+def panel_surface(pixel) -> bool:
+    """Solid panel, sheen, footer, dividers and selected wash (source-over).
+
+    Include the connecting inset edge: cropping to only the flat center would
+    lose the search header and footer, and could make a missing result pass.
+    The hue constraint excludes colored desktop pixels and guest swatches.
+    """
+    r, g, b = pixel
+    return 18 <= r <= 59 and 0 <= g - r <= 2 and 1 <= b - r <= 5
 
 
 def rgb(color: str) -> tuple[int, int, int]:
@@ -67,13 +88,16 @@ def window_box(path: str) -> tuple[Image.Image, tuple[int, int, int, int]]:
     """
     image = Image.open(path).convert("RGB")
     width = image.width
-    matching = {i for i, pixel in enumerate(pixels_of(image)) if near(pixel, BACKGROUND, 4)}
+    matching = {i for i, pixel in enumerate(pixels_of(image)) if panel_surface(pixel)}
     if not matching:
         raise SystemExit(f"{path}: the Pane window is not visible")
     window = largest_region(matching, width)
     rows = [i // width for i in window]
     columns = [i % width for i in window]
-    return image, (min(columns), min(rows), max(columns) + 1, max(rows) + 1)
+    box = (min(columns), min(rows), max(columns) + 1, max(rows) + 1)
+    if box[2] - box[0] < 200 or box[3] - box[1] < 150:
+        raise SystemExit(f"{path}: no complete dark opaque Pane panel found")
+    return image, box
 
 
 def pane_window(path: str) -> Image.Image:
@@ -83,7 +107,10 @@ def pane_window(path: str) -> Image.Image:
 
 
 def distinct(paths: list[str]) -> None:
-    windows = [(path, pane_window(path).tobytes()) for path in paths]
+    windows = []
+    for path in paths:
+        window = pane_window(path)
+        windows.append((path, (window.size, window.tobytes())))
     for i, (first, pixels) in enumerate(windows):
         for second, other in windows[i + 1:]:
             if pixels == other:
@@ -124,7 +151,8 @@ def largest_region(matching: set, width: int) -> list[int]:
 
 
 def same(first: str, second: str) -> None:
-    if inner(pane_window(first)).tobytes() != inner(pane_window(second)).tobytes():
+    a, b = inner(pane_window(first)), inner(pane_window(second))
+    if a.size != b.size or a.tobytes() != b.tobytes():
         raise SystemExit(f"{first} and {second} show different Pane windows")
     print(f"{first} and {second} show the same Pane window")
 
@@ -159,11 +187,64 @@ def count_near(window: Image.Image, target: tuple[int, int, int]) -> int:
 
 
 def main(path: str, color: str, minimum: int = 20) -> None:
-    count = count_near(pane_window(path), rgb(color))
+    if color == "selected":
+        selected(path, minimum)
+        return
+    window = pane_window(path)
+    if color in ("progress", "subtitle"):
+        # Progress now shares the unavailable-reason color; subtitles share
+        # the idle hint color. Require the intended region, not any matching
+        # text elsewhere. Find the darker footer wash rather than assuming
+        # its height (long statuses can grow it).
+        region = largest_region({i for i, pixel in enumerate(pixels_of(window))
+                                 if panel_surface(pixel) and pixel[0] <= 20}, window.width)
+        if not region:
+            raise SystemExit(f"{path}: footer wash not visible")
+        footer_top = min(i // window.width for i in region)
+        scale = window.width / 760
+        if color == "progress":
+            window = window.crop((0, footer_top, window.width, window.height))
+            color = "d6a36a"
+        else:
+            window = window.crop((0, round(44 * scale), window.width, footer_top))
+            color = "8e8f94"
+    count = count_near(window, rgb(color))
     if count < minimum:
         raise SystemExit(f"{path}: {count} pixels near #{color.lstrip('#')} in the Pane window, "
                          f"expected at least {minimum}")
     print(f"{path}: {count} pixels near #{color.lstrip('#')} in the Pane window")
+
+
+def selected(path: str, minimum: int = 3000) -> None:
+    """A selection wash spans the row; a hover, sheen or tile cannot pass."""
+    window = pane_window(path)
+    matching = {i for i, pixel in enumerate(pixels_of(window))
+                if panel_surface(pixel) and 41 <= pixel[0] <= 54}
+    region = largest_region(matching, window.width)
+    xs = [i % window.width for i in region]
+    ys = [i // window.width for i in region]
+    if (len(region) < minimum or max(xs, default=0) - min(xs, default=0) < window.width / 2
+            or max(ys, default=0) - min(ys, default=0) < 12):
+        raise SystemExit(f"{path}: no broad selected row wash (at least {minimum} pixels)")
+    print(f"{path}: selected row wash contains {len(region)} pixels")
+
+
+def preview(path: str) -> None:
+    """Positive metadata evidence before Enter, replacing the removed blue border.
+
+    Only used immediately after --install at the 760-logical-pixel startup
+    width. Scale from the screenshot for Retina/Windows DPI. The band below
+    the package heading contains its first metadata line; on root search it
+    is blank, below the placeholder and above the 64px header divider.
+    """
+    window = pane_window(path)
+    scale = window.width / 760
+    band = window.crop((round(20 * scale), round(48 * scale),
+                        window.width - round(20 * scale), round(61 * scale)))
+    count = sum(near(pixel, rgb("a3a4a9"), 4) for pixel in pixels_of(band))
+    if count < 20:
+        raise SystemExit(f"{path}: package preview metadata not yet visible ({count} pixels)")
+    print(f"{path}: package preview metadata visible ({count} pixels)")
 
 
 def absent(path: str, color: str, allowance: int = 5) -> int:
@@ -192,5 +273,7 @@ if __name__ == "__main__":
         absent(sys.argv[2], sys.argv[3], *(int(n) for n in sys.argv[4:5]))
     elif sys.argv[1] == "--locate":
         locate(sys.argv[2], sys.argv[3])
+    elif sys.argv[1] == "--preview":
+        preview(sys.argv[2])
     else:
         main(sys.argv[1], sys.argv[2], *(int(n) for n in sys.argv[3:4]))

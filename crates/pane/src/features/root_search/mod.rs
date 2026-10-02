@@ -10,7 +10,7 @@
 //! and Escape clears the query.
 //!
 //! The field's editing keys are the ones the form's text fields use, bound
-//! once by [`crate::form::bind_text_editing`] without Tab, Enter and
+//! once by [`crate::ui::input::bind_text_editing`] without Tab, Enter and
 //! Escape: those bubble from the field to the launcher's Confirm and Back
 //! actions. [`bind_keys`] takes that binding's result, so root search cannot
 //! be registered without it.
@@ -27,7 +27,7 @@ use gpui::{
 use gpui_elements::editable_text::actions::DEFAULT_INPUT_CONTEXT;
 use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged, text_input};
 
-use crate::form::TextEditingKeys;
+use crate::ui::input::TextEditingKeys;
 use crate::{LauncherWindow, SelectNext, SelectPrevious};
 
 const CONTEXT: &str = "RootSearch";

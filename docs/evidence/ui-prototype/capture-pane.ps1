@@ -1,4 +1,4 @@
-# capture-pane-windows.ps1 - isolated native launcher visual checks.
+# capture-pane.ps1 - Pane native launch/capture helper (review support).
 #
 # Launches an interactive Pane build, waits for its real window, focuses it,
 # captures real desktop pixels (window crop by default), optionally sends a
@@ -30,20 +30,25 @@
 # then confirms Pane's exact HWND. Normal native UI testing with the real
 # pointer: opt in only for testing your own window.
 #
-# Adapted from the retained prototype's .scratch/native-review helper.
-# This bounded capture is separate from the full installation/update smoke.
+# Ownership: pane-ui-prototype/.scratch/native-review/ (review helper, not
+# app source). Reference for Win32/SendKeys/DPI patterns: the main
+# checkout's scripts/smoke-windows.ps1 (which is a destructive fixture
+# workflow - do NOT run it wholesale; this helper is the safe subset).
 #
 # Examples:
-#   ./scripts/capture-pane-windows.ps1 -Binary ./target/debug/pane.exe `
-#     -OutputDir ./.scratch/ui-captures -ApplicationRevision (git rev-parse HEAD)
+#   powershell -NoProfile -ExecutionPolicy Bypass -File capture-pane.ps1 `
+#     -Binary C:\Users\ADMIN\Desktop\nguyenvu\pane\target\debug\pane.exe `
+#     -OutputDir C:\captures
 #
-#   ... -Theme dark -Material glass -Keys 'rust','{ESC}'
+#   ... -Theme dark -Material glass -Keys 'rust','{ESC}'   (prototype selectors)
 #   ... -Backdrop -BackdropPattern light                      (blur evidence)
 #   ... -FullScreen                                           (explicit opt-in)
 #   ... -WindowWidthPixels 380 -WindowHeightPixels 420        (explicit size)
 #
-# PANE_THEME / PANE_MATERIAL select startup appearance. Metadata records the
-# request, not a claim that the compositor delivered visible blur.
+# PANE_THEME / PANE_MATERIAL are prototype selectors (implementation in
+# progress): the helper only passes them through and records them in the run
+# metadata. Verify the build under test supports them before trusting mode
+# differences; if it does not, captures with different values look identical.
 
 [CmdletBinding()]
 param(
@@ -57,18 +62,10 @@ param(
     [string]$OutputDir,
 
     # Where Pane reads sample/default extension components from.
-    [string]$ExtensionsDir = (Join-Path $PSScriptRoot '../target/guests'),
+    [string]$ExtensionsDir = 'C:\Users\ADMIN\Desktop\nguyenvu\pane\target\guests',
 
-    # Revision of the application binary, recorded explicitly because a
-    # shared target directory may contain another worktree's build.
-    [Parameter(Mandatory = $true)]
-    [string]$ApplicationRevision,
-
-    # Optional local package preview, using the real startup route. It is
-    # never installed unless an explicit key sequence confirms it.
-    [string]$InstallFolder,
-
-    # Startup selectors, passed through as PANE_THEME / PANE_MATERIAL.
+    # Planned prototype selectors, passed through as PANE_THEME / PANE_MATERIAL
+    # (implementation in progress: verify the build supports them).
     [ValidateSet('dark', 'light')]
     [string]$Theme,
 
@@ -118,10 +115,6 @@ param(
     [ValidateSet('light', 'dark')]
     [string]$BackdropPattern = 'light',
 
-    # Move/resize only the spawned window, and use the helper's backdrop
-    # for an activation/deactivation check. Requires -Backdrop.
-    [switch]$ExerciseWindow,
-
     # Leave Pane running for manual inspection; the PID is printed and
     # recorded so the operator can close it. The backdrop always closes
     # when the helper ends (it would not reliably outlive this process).
@@ -145,9 +138,6 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-if ($ExerciseWindow -and -not $Backdrop) {
-    throw 'ExerciseWindow requires Backdrop so focus never targets an unrelated window.'
-}
 
 # ---------------------------------------------------------------- run dirs
 # Per-run scratch under the explicit OutputDir: unique names, never reused,
@@ -208,13 +198,7 @@ public static class PaneWin {
 
 # ---------------------------------------------------------------- state
 $meta = [ordered]@{
-    script          = 'capture-pane-windows.ps1'
-    applicationRevision = $ApplicationRevision
-    installFolder   = $InstallFolder
-    binarySha256    = (Get-FileHash -LiteralPath $Binary -Algorithm SHA256).Hash
-    osVersion       = [Environment]::OSVersion.VersionString
-    windowsBuild    = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction SilentlyContinue | Select-Object DisplayVersion, CurrentBuild, UBR)
-    transparencySetting = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name EnableTransparency -ErrorAction SilentlyContinue).EnableTransparency
+    script          = 'capture-pane.ps1'
     startedUtc      = (Get-Date).ToUniversalTime().ToString('o')
     binary          = $Binary
     runDir          = $runDir
@@ -247,7 +231,6 @@ $meta = [ordered]@{
     cursorSaved        = $null   # cursor position before the guarded click
     cursorRestored     = $null   # restored only if the cursor never moved
     screenshots     = @()
-    windowChecks    = @()
     backdropClosed  = $null
     processClosed   = $null
     processExited   = $null
@@ -312,19 +295,6 @@ function Save-Capture([string]$Name, [pscustomobject]$Rect) {
         $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
     } finally { $bmp.Dispose() }
     return $path
-}
-
-function Save-WindowCheck([string]$Name, [IntPtr]$Target) {
-    [System.Windows.Forms.Application]::DoEvents()
-    Start-Sleep -Milliseconds 600
-    $currentGeometry = Get-WindowGeometry $Target
-    $file = Save-Capture $Name $currentGeometry.Crop
-    $script:meta.windowChecks += [ordered]@{
-        file = (Split-Path $file -Leaf)
-        windowRect = $currentGeometry.WindowRect
-        foregroundIsPane = ([PaneWin]::GetForegroundWindow().ToInt64() -eq $Target.ToInt64())
-        dpi = [PaneWin]::GetDpiForWindow($Target)
-    }
 }
 
 function Save-Metadata {
@@ -409,14 +379,7 @@ try {
         if ($Theme)    { Set-Item 'Env:PANE_THEME' $Theme }
         if ($Material) { Set-Item 'Env:PANE_MATERIAL' $Material }
         Remove-Item 'Env:PANE_ARTIFACTS' -ErrorAction SilentlyContinue
-        $startOptions = @{ FilePath = $Binary; PassThru = $true; RedirectStandardError = $stderrLog }
-        if ($InstallFolder) {
-            $packagePath = (Resolve-Path -LiteralPath $InstallFolder).Path
-            # Windows file names cannot contain quotes, so this is a single
-            # quoted argv path even when the checkout folder contains spaces.
-            $startOptions.ArgumentList = @('--install', ('"{0}"' -f $packagePath))
-        }
-        $process = Start-Process @startOptions
+        $process = Start-Process -FilePath $Binary -PassThru -RedirectStandardError $stderrLog
         $spawned = $true
     }
     finally {
@@ -662,41 +625,6 @@ try {
             $file = Save-Capture $name $captureRect
             $meta.screenshots += [ordered]@{ file = (Split-Path $file -Leaf); label = "after '$token'"; utc = (Get-Date).ToUniversalTime().ToString('o') }
             Write-Host "Saved $file (after '$token')"
-        }
-    }
-    if ($ExerciseWindow -and -not $failed) {
-        $before = New-Object PaneWin+RECT
-        if (-not [PaneWin]::GetWindowRect($hwnd, [ref]$before)) {
-            throw 'Could not measure the spawned window for movement checks.'
-        }
-        # Keep the test on the same display, without moving any existing window.
-        $working = [System.Windows.Forms.Screen]::FromHandle($hwnd).WorkingArea
-        $movedX = [Math]::Max($working.Left, [Math]::Min($before.Left + 32, $working.Right - ($before.Right - $before.Left)))
-        $movedY = [Math]::Max($working.Top, [Math]::Min($before.Top + 24, $working.Bottom - ($before.Bottom - $before.Top)))
-        if (-not [PaneWin]::SetWindowPos($hwnd, [IntPtr]::Zero, $movedX, $movedY, 0, 0, 0x15)) {
-            throw 'Moving the spawned window failed.'
-        }
-        Save-WindowCheck 'window-moved.png' $hwnd
-        if (-not [PaneWin]::SetWindowPos($hwnd, [IntPtr]::Zero, 0, 0, 380, 420, 0x16)) {
-            throw 'Resizing the spawned window failed.'
-        }
-        Save-WindowCheck 'window-narrow.png' $hwnd
-        [void][PaneWin]::SetWindowPos($hwnd, [IntPtr]::Zero, $before.Left, $before.Top, ($before.Right - $before.Left), ($before.Bottom - $before.Top), 0x14)
-        Save-WindowCheck 'window-restored.png' $hwnd
-
-        # Activate only the diagnostic window this helper created. Immediately
-        # restore its Z order behind Pane, retaining the foreground ownership,
-        # so the inactive capture shows Pane instead of covering it up.
-        [void][PaneWin]::SetForegroundWindow($backdropForm.Handle)
-        [void][PaneWin]::SetWindowPos($backdropForm.Handle, $hwnd, 0, 0, 0, 0, 0x13)
-        Save-WindowCheck 'window-inactive.png' $hwnd
-        if ([PaneWin]::GetForegroundWindow().ToInt64() -ne $backdropForm.Handle.ToInt64()) {
-            throw 'Could not confirm diagnostic backdrop activation; inactive check not established.'
-        }
-        [void][PaneWin]::SetForegroundWindow($hwnd)
-        Save-WindowCheck 'window-active.png' $hwnd
-        if ([PaneWin]::GetForegroundWindow().ToInt64() -ne $hwnd.ToInt64()) {
-            throw 'Could not confirm Pane reactivation.'
         }
     }
 }
