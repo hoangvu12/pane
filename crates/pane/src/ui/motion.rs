@@ -210,9 +210,7 @@ pub(crate) fn advance(
     } else if screen_changed {
         *transition = arrive(navigation, transition.take(), now);
     }
-    let Some(in_flight) = *transition else {
-        return None;
-    };
+    let in_flight = (*transition)?;
     let offset = in_flight.offset(now);
     if offset.abs() < SETTLED_WITHIN {
         // The transition has run its course (or was retargeted from

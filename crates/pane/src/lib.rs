@@ -6,7 +6,11 @@
 
 use std::path::PathBuf;
 
-use gpui::{App, KeyBinding, Window, WindowBackgroundAppearance, actions};
+use gpui::{App, KeyBinding, WindowBackgroundAppearance, actions};
+// The window the Windows-only corner preference below takes; the import
+// follows the same gate so it is not unused on the other platforms.
+#[cfg(target_os = "windows")]
+use gpui::Window;
 use pane_core::CommandRegistration;
 
 mod app;
