@@ -36,8 +36,10 @@ use pane_core::Launcher;
 use crate::ui;
 use crate::ui::icon::{Glyph, IconTone, glyph};
 use crate::ui::result_row::{RowContent, result_row};
+use crate::{FocusNext, FocusPrevious};
 
 mod about;
+mod shortcuts;
 
 actions!(settings, [NextSection, PreviousSection]);
 
@@ -46,15 +48,22 @@ actions!(settings, [NextSection, PreviousSection]);
 const CONTEXT: &str = "Settings";
 
 /// Registers the Settings window's key bindings: the sidebar's navigation
-/// keys, which apply only while the Settings window is focused. Enter is
-/// left unbound: the sidebar's selection already shows the page Enter
-/// would choose, so the key does nothing, and later pages' controls bind
-/// it for their own submitting.
+/// keys and the window's focus traversal, which apply only while the
+/// Settings window is focused. Enter is left unbound: the sidebar's
+/// selection already shows the page Enter would choose, so the key does
+/// nothing, and later pages' controls bind it for their own submitting.
 pub(crate) fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("down", NextSection, Some(CONTEXT)),
         KeyBinding::new("up", PreviousSection, Some(CONTEXT)),
+        // Tab and Shift-Tab move through the pages' controls, as the
+        // launcher window's do through its: the pages' fields and buttons
+        // are tab stops (the Shortcuts page's filter, group headers and
+        // alias cells among them).
+        KeyBinding::new("tab", FocusNext, Some(CONTEXT)),
+        KeyBinding::new("shift-tab", FocusPrevious, Some(CONTEXT)),
     ]);
+    shortcuts::bind_keys(cx);
 }
 
 /// The Settings window's root view. One instance exists at most — see
@@ -72,6 +81,8 @@ pub struct SettingsWindow {
     focus: FocusHandle,
     /// The About page's state, owned by its module.
     about: about::State,
+    /// The Shortcuts page's state, owned by its module.
+    shortcuts: shortcuts::State,
 }
 
 impl SettingsWindow {
@@ -80,12 +91,32 @@ impl SettingsWindow {
     fn new(launcher: &Launcher, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle().tab_stop(true);
         window.focus(&focus, cx);
+        // The Shortcuts page lists the launcher's commands, and the
+        // launcher's packages can change while this window sits idle:
+        // installed, disabled, enabled, updated or removed in the
+        // launcher window, or in the background. Nothing tells this
+        // window, so while it is open a small watcher wakes at
+        // `shortcuts::WATCH`, compares the catalog the page last drew with
+        // a fresh one and asks for a redraw when they differ — the next
+        // frame draws the launcher as it is now. It ends with the window.
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor().timer(shortcuts::WATCH).await;
+            if this.update(cx, |window, cx| window.shortcuts_watched(cx)).is_err() {
+                break;
+            }
+        })
+        .detach();
         SettingsWindow {
             launcher: launcher.clone(),
-            pages: vec![about::page()],
+            // About stays first, as the window's default page; the pages
+            // the later tickets add (General, Launcher, Appearance, the
+            // Keyboard and Extensions sections) take their places in the
+            // sidebar's order as they land.
+            pages: vec![about::page(), shortcuts::page()],
             selected: 0,
             focus,
             about: about::State::default(),
+            shortcuts: shortcuts::State::new(launcher, cx),
         }
     }
 
@@ -101,6 +132,14 @@ impl SettingsWindow {
             self.selected -= 1;
             cx.notify();
         }
+    }
+
+    fn focus_next(&mut self, _: &FocusNext, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus_next(cx);
+    }
+
+    fn focus_previous(&mut self, _: &FocusPrevious, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus_prev(cx);
     }
 
     /// The sidebar: the sections list, one row per registered page. It is
@@ -188,6 +227,8 @@ impl Render for SettingsWindow {
         // then the sidebar and the selected page.
         let content = div()
             .key_context(CONTEXT)
+            .on_action(cx.listener(Self::focus_next))
+            .on_action(cx.listener(Self::focus_previous))
             .size_full()
             .flex()
             .flex_col()
