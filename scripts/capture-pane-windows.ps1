@@ -98,6 +98,10 @@ param(
     [int]$WindowWidthPixels = 0,
     [int]$WindowHeightPixels = 0,
 
+    # Place only this run's window near its display's upper-left corner,
+    # allowing a guarded focus click clear of an older centered proof.
+    [switch]$PositionTopLeft,
+
     # Capture the whole virtual screen instead of the window crop. Only use
     # when the window crop is not sufficient (e.g. compositor blur evidence
     # needs the surroundings); default is the window crop alone.
@@ -235,6 +239,7 @@ $meta = [ordered]@{
     windowRect      = $null      # GetWindowRect (includes DWM invisible borders)
     frameBounds     = $null      # DWMWA_EXTENDED_FRAME_BOUNDS (visible window)
     requestedWindowSize = $null  # explicit outer size requested, if any
+    positionedTopLeft = [bool]$PositionTopLeft
     dpi             = $null
     focusAchieved   = $false
     activationMethod = $null    # 'SetForegroundWindow' | 'AppActivate' | $null
@@ -456,6 +461,10 @@ try {
         Start-Sleep -Milliseconds 500   # let the window and its layout settle
     }
 
+    if ($PositionTopLeft) {
+        $workingArea = [System.Windows.Forms.Screen]::FromHandle($hwnd).WorkingArea
+        [void][PaneWin]::SetWindowPos($hwnd, [IntPtr]::Zero, ($workingArea.Left + 32), ($workingArea.Top + 32), 0, 0, 0x11)
+    }
     $geometry = Get-WindowGeometry $hwnd
     $meta.windowRect = $geometry.WindowRect
     $meta.frameBounds = $geometry.FrameBounds
@@ -464,6 +473,9 @@ try {
 
     # Optional external backdrop. It is created hidden, sized over the window
     # area plus a margin, and shown WITHOUT activation (SW_SHOWNOACTIVATE).
+    # Expose only the newly spawned window before backdrop placement and
+    # guarded focus. An older Pane proof may otherwise cover the same bounds.
+    [void][PaneWin]::SetWindowPos($hwnd, [IntPtr]::Zero, 0, 0, 0, 0, 0x13)
     if ($Backdrop) {
         $backdropBitmap = New-BackdropBitmap $BackdropPattern
         $backdropForm = New-Object System.Windows.Forms.Form
@@ -673,10 +685,43 @@ try {
         $working = [System.Windows.Forms.Screen]::FromHandle($hwnd).WorkingArea
         $movedX = [Math]::Max($working.Left, [Math]::Min($before.Left + 32, $working.Right - ($before.Right - $before.Left)))
         $movedY = [Math]::Max($working.Top, [Math]::Min($before.Top + 24, $working.Bottom - ($before.Bottom - $before.Top)))
-        if (-not [PaneWin]::SetWindowPos($hwnd, [IntPtr]::Zero, $movedX, $movedY, 0, 0, 0x15)) {
-            throw 'Moving the spawned window failed.'
+        # Exercise the intended header drag region using real pointer input,
+        # rather than proving only that SetWindowPos can reposition a window.
+        $dragX = $before.Left + 28
+        $dragY = $before.Top + 32
+        $hit = Get-PointHit $dragX $dragY
+        if ($hit.RootInt -ne $hwnd.ToInt64() -or $hit.Pid -ne $process.Id -or
+            [PaneWin]::GetForegroundWindow().ToInt64() -ne $hwnd.ToInt64()) {
+            throw 'Spawned header is not exposed and focused; no drag input sent.'
+        }
+        $savedPointer = New-Object PaneWin+POINT
+        [void][PaneWin]::GetCursorPos([ref]$savedPointer)
+        $endX = $dragX + ($movedX - $before.Left)
+        $endY = $dragY + ($movedY - $before.Top)
+        [void][PaneWin]::SetCursorPos($dragX, $dragY)
+        $hit = Get-PointHit $dragX $dragY
+        if ($hit.RootInt -ne $hwnd.ToInt64() -or $hit.Pid -ne $process.Id) {
+            throw 'Spawned header became covered; no drag button press sent.'
+        }
+        [PaneWin]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+        try {
+            Start-Sleep -Milliseconds 150
+            [void][PaneWin]::SetCursorPos($endX, $endY)
+            Start-Sleep -Milliseconds 150
+        } finally {
+            [PaneWin]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+            $pointerNow = New-Object PaneWin+POINT
+            [void][PaneWin]::GetCursorPos([ref]$pointerNow)
+            if ($pointerNow.X -eq $endX -and $pointerNow.Y -eq $endY) {
+                [void][PaneWin]::SetCursorPos($savedPointer.X, $savedPointer.Y)
+            }
         }
         Save-WindowCheck 'window-moved.png' $hwnd
+        $afterDrag = New-Object PaneWin+RECT
+        [void][PaneWin]::GetWindowRect($hwnd, [ref]$afterDrag)
+        if ($afterDrag.Left -eq $before.Left -and $afterDrag.Top -eq $before.Top) {
+            throw 'The header drag did not move Pane.'
+        }
         if (-not [PaneWin]::SetWindowPos($hwnd, [IntPtr]::Zero, 0, 0, 380, 420, 0x16)) {
             throw 'Resizing the spawned window failed.'
         }
