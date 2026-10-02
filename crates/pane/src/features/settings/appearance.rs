@@ -228,18 +228,22 @@ fn override_notice(overrides: &[String], theme: &Theme) -> Stateful<Div> {
     } else {
         "override"
     };
+    let text = format!(
+        "{} {} the saved choice for this process: choosing here changes nothing, and Pane \
+         does not save it.",
+        overrides.join(" and "),
+        verbs,
+    );
     div()
+        .id("appearance-override")
         .debug_selector(|| "appearance-override".into())
         .pt(px(2.))
         .pb(px(8.))
+        .role(Role::Status)
+        .aria_label(text.clone())
         .text_size(theme.typography.row_subtitle_size)
         .text_color(theme.warning)
-        .child(format!(
-            "{} {} the saved choice for this process: choosing here changes nothing, and Pane \
-             does not save it.",
-            overrides.join(" and "),
-            verbs,
-        ))
+        .child(text)
 }
 
 /// One choice group: its label (the section label style) and its rows,
