@@ -34,9 +34,14 @@ use gpui::WindowControlArea;
 use pane_core::Launcher;
 
 use crate::ui;
-use crate::ui::icon::{Glyph, IconTone, glyph};
+use crate::ui::icon::{Glyph, IconTone};
 use crate::ui::result_row::{RowContent, result_row};
 use crate::{FocusNext, FocusPrevious};
+// The caption buttons' glyphs exist only on Windows, where the custom
+// titlebar's controls are Pane's; the import follows the same gate so it
+// is not unused on the other platforms.
+#[cfg(target_os = "windows")]
+use crate::ui::icon::glyph;
 
 mod about;
 mod shortcuts;

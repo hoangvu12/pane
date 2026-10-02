@@ -410,6 +410,7 @@ fn filter_field(this: &SettingsWindow, query: &str, theme: &Theme, cx: &App) -> 
             div()
                 .flex_1()
                 .min_w(px(0.))
+                .id("shortcut-field")
                 .track_focus(&input.focus_handle(cx))
                 .role(Role::TextInput)
                 .aria_label("Filter commands and extensions")
@@ -595,7 +596,7 @@ fn group_element(
     } else {
         shown
             .into_iter()
-            .map(|command| row_element(this, command, group, editing, theme, cx))
+            .map(|command| row_element(this, command, editing, theme, cx))
             .collect()
     };
     // The commands the group shows, in one container of their own: the
@@ -630,7 +631,7 @@ fn group_key(group: &ShortcutGroup) -> String {
 /// The group header's accessible name: its title and its source.
 fn group_label(group: &ShortcutGroup) -> String {
     match group.identity.as_ref() {
-        Some(identity) => format!("{}, {identity}"),
+        Some(identity) => format!("{}, {identity}", group.title),
         None => group.title.clone(),
     }
 }
@@ -641,7 +642,6 @@ fn group_label(group: &ShortcutGroup) -> String {
 fn row_element(
     this: &mut SettingsWindow,
     command: &ShortcutCommand,
-    group: &ShortcutGroup,
     editing: &Option<String>,
     theme: &Theme,
     cx: &mut Context<SettingsWindow>,

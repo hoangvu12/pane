@@ -164,8 +164,9 @@ fn aliases_record(data: &TempDir) -> String {
 
 /// Opens the launcher window over `data` and installs the packages whose
 /// source folders `packages` holds, then opens the Settings window on the
-/// Shortcuts page. Returns the launcher window, the Settings window and
-/// the launcher's test context.
+/// Shortcuts page. Returns the launcher window, the Settings window, the
+/// fake hotkey system the launcher registers through, and the launcher's
+/// test context.
 fn open<'a>(
     cx: &'a mut TestAppContext,
     data: &TempDir,
@@ -173,14 +174,16 @@ fn open<'a>(
 ) -> (
     Entity<LauncherWindow>,
     WindowHandle<SettingsWindow>,
+    Arc<FakeHotkeys>,
     &'a mut VisualTestContext,
 ) {
+    let hotkeys = Arc::new(FakeHotkeys::default());
     let launcher = Launcher::with_packages(
         Ok(Runtime::start().unwrap()),
         vec![],
         data.path().join("extensions"),
     )
-    .with_hotkeys(Arc::new(FakeHotkeys::default()));
+    .with_hotkeys(hotkeys.clone());
     cx.executor().allow_parking();
     cx.update(pane::bind_keys);
     let (window, cx) = cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
@@ -205,7 +208,7 @@ fn open<'a>(
         settings_cx.debug_bounds("shortcuts-title").is_some(),
         "the Shortcuts page is showing"
     );
-    (window, settings, cx)
+    (window, settings, hotkeys, cx)
 }
 
 /// Presses Enter on the install row and answers the folder picker with
@@ -337,7 +340,7 @@ fn the_page_lists_installed_commands_with_their_alias_and_hotkey(cx: &mut TestAp
         ],
         &[(command_id(&query), "ctrl+alt+g")],
     );
-    let (window, settings, cx) = open(cx, &data, &[&query, &hello]);
+    let (window, settings, _hotkeys, cx) = open(cx, &data, &[&query, &hello]);
     let mut settings_cx = settings_context(&settings, cx);
 
     // The filter, the column labels and both groups, with the commands'
@@ -411,7 +414,7 @@ fn an_alias_edited_inline_is_found_by_root_search_and_survives_a_restart(cx: &mu
     let hello = hello_package(&sources.path().join("hello"));
     // A record left before: Say hello has the alias "hi".
     seed(&data, &[(command_id(&hello), "hi")], &[]);
-    let (window, settings, cx) = open(cx, &data, &[&query, &hello]);
+    let (window, settings, _hotkeys, cx) = open(cx, &data, &[&query, &hello]);
 
     // The editor opens by click, commits with Enter, and the change is
     // recorded: the status line says what typing it now finds.
@@ -499,7 +502,7 @@ fn a_refused_alias_shows_the_reason_and_keeps_editing(cx: &mut TestAppContext) {
     // Say hello already has the alias "hi", so giving it to Echo is
     // refused.
     seed(&data, &[(command_id(&hello), "hi")], &[]);
-    let (window, settings, cx) = open(cx, &data, &[&query, &hello]);
+    let (window, settings, _hotkeys, cx) = open(cx, &data, &[&query, &hello]);
 
     // Another command's alias, a space, and over the limit: each refusal
     // shows next to the field and keeps the editor open for another try.
@@ -563,7 +566,7 @@ fn escape_cancels_the_edit_without_changing_anything(cx: &mut TestAppContext) {
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let query = query_package(&sources.path().join("query"));
     seed(&data, &[(command_id(&query), "ec")], &[]);
-    let (window, settings, cx) = open(cx, &data, &[&query]);
+    let (window, settings, _hotkeys, cx) = open(cx, &data, &[&query]);
 
     // The editor opens filled with the current alias; changing it and
     // escaping leaves the alias as it was.
@@ -615,7 +618,7 @@ fn an_empty_commit_clears_the_alias(cx: &mut TestAppContext) {
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let query = query_package(&sources.path().join("query"));
     seed(&data, &[(command_id(&query), "ec")], &[]);
-    let (window, settings, cx) = open(cx, &data, &[&query]);
+    let (window, settings, _hotkeys, cx) = open(cx, &data, &[&query]);
 
     // An empty field, saved, removes the alias — as the alias form's does.
     let mut settings_cx = edit_alias(&settings, cx, &command_id(&query));
@@ -655,7 +658,7 @@ fn a_change_that_cannot_be_recorded_explains_and_keeps_the_last_record(cx: &mut 
     let query = query_package(&sources.path().join("query"));
     // A record Pane cannot read is never replaced, so every write fails.
     fs::create_dir_all(data.path().join("extensions").join("aliases.json")).unwrap();
-    let (window, settings, cx) = open(cx, &data, &[&query]);
+    let (window, settings, _hotkeys, cx) = open(cx, &data, &[&query]);
 
     // The alias applies at once — the page shows it — but cannot be
     // recorded, which puts back what was last recorded: none. The status
@@ -691,7 +694,7 @@ fn filtering_narrows_the_groups_and_their_commands(cx: &mut TestAppContext) {
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let query = query_package(&sources.path().join("query"));
     let hello = hello_package(&sources.path().join("hello"));
-    let (window, settings, cx) = open(cx, &data, &[&query, &hello]);
+    let (window, settings, _hotkeys, cx) = open(cx, &data, &[&query, &hello]);
     let mut settings_cx = settings_context(&settings, cx);
 
     let query_group = selector(format!("shortcut-group-{}", key_of(&query)));
@@ -759,7 +762,7 @@ fn the_page_is_reachable_by_keyboard_and_names_its_controls(cx: &mut TestAppCont
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let query = query_package(&sources.path().join("query"));
     let hello = hello_package(&sources.path().join("hello"));
-    let (window, settings, cx) = open(cx, &data, &[&query, &hello]);
+    let (window, settings, _hotkeys, cx) = open(cx, &data, &[&query, &hello]);
     let mut settings_cx = settings_context(&settings, cx);
 
     // The filter field is named and takes the focus; Tab reaches the group
@@ -843,7 +846,7 @@ fn the_catalog_follows_disabling_enabling_and_uninstalling(cx: &mut TestAppConte
         &[(command_id(&hello), "hi")],
         &[(command_id(&hello), "ctrl+alt+h")],
     );
-    let (window, settings, cx) = open(cx, &data, &[&query, &hello]);
+    let (window, settings, hotkeys, cx) = open(cx, &data, &[&query, &hello]);
     let mut settings_cx = settings_context(&settings, cx);
     let launcher = cx.read_entity(&window, |window, _| window.launcher().clone());
     let identity = launcher
@@ -866,6 +869,18 @@ fn the_catalog_follows_disabling_enabling_and_uninstalling(cx: &mut TestAppConte
         settings_cx.run_until_parked();
     };
 
+    // The hotkey record follows the package with the system too: it is
+    // registered while Hello is installed and enabled, released while it
+    // is disabled, and gone with it when it is uninstalled.
+    let registered = |hotkeys: &FakeHotkeys, shortcut: &Shortcut| {
+        hotkeys.registered.lock().unwrap().contains(shortcut)
+    };
+    let hello_hotkey = Shortcut::parse("ctrl+alt+h").unwrap();
+    assert!(
+        registered(&hotkeys, &hello_hotkey),
+        "the seeded hotkey is registered"
+    );
+
     // Disabling the package in the launcher marks its choices not active
     // and says why, without removing anything.
     block_on(launcher.set_enabled(&identity, false));
@@ -884,14 +899,17 @@ fn the_catalog_follows_disabling_enabling_and_uninstalling(cx: &mut TestAppConte
         "the reason is shown, {json}"
     );
     assert!(settings_cx.debug_bounds(hello_group).is_some());
-    // The alias stays recorded: the record on disk is untouched.
+    // The alias stays recorded: the record on disk is untouched, and the
+    // hotkey is released with the system.
     assert!(aliases_record(&data).contains("\"hi\""));
+    assert!(!registered(&hotkeys, &hello_hotkey));
 
     // Enabling the package brings the choices back to active.
     block_on(launcher.set_enabled(&identity, true));
     tick(&mut settings_cx);
     assert!(settings_cx.debug_bounds(alias_inactive).is_none());
     assert!(settings_cx.debug_bounds(hotkey_inactive).is_none());
+    assert!(registered(&hotkeys, &hello_hotkey));
 
     // Uninstalling the package removes its group — and forgets its
     // choices, which no group of their own brings back.
@@ -912,6 +930,7 @@ fn the_catalog_follows_disabling_enabling_and_uninstalling(cx: &mut TestAppConte
         "the record was rewritten without them, {}",
         aliases_record(&data)
     );
+    assert!(!registered(&hotkeys, &hello_hotkey));
     // The other package's group is still there.
     assert!(
         settings_cx
