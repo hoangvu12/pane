@@ -512,6 +512,7 @@ fn an_unreachable_source_is_explained_and_the_row_tries_again() {
             "Install extension from npm…",
             "Install extension from Git…",
             "Check for a Pane update",
+            "Settings…",
         ]
     );
     // The row tries again, and the failure is explained again: the source

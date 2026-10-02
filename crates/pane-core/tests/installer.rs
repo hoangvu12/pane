@@ -511,6 +511,7 @@ fn an_unreachable_source_leaves_the_core_usable_and_a_row_tries_again() {
             "Install extension from Git…",
             "Set up Calculator",
             "Set up Helper sample",
+            "Settings…",
         ]
     );
     // The row tries again, and the failure is explained again: the
