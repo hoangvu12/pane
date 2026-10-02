@@ -106,6 +106,15 @@ Application source `9c6bfa3` (production code from `e3a3d8a`), fork
 `2b9e644e3f89a38eacebc713fb0d1807c618c76c`, binary SHA256
 `9E2FABAEBBB9DABAD1A87E898C358AAAD8EF4154FB7D2E30091CEE71F731DBD1`:
 
+The revision identifiers in capture metadata precede the required commit
+sign-off normalization. The durable tag `evidence/launcher-ui-windows-20261002`
+points to `9df21872b7bcf1e85421bb05ea3e9088a7a5e019`, whose source tree is exactly
+the captured revision's `07341bfee05b8549488664cfcbcd9029fd177cc3`. Only commit
+messages/parent identifiers changed. The later review fix centralizes smoke
+color names and removes a redundant local binding when returning a result row;
+it changes no rendered behavior. Final Clippy (`--all-targets -- -D warnings`)
+passes. The all-OS CI result is attached to [PR #69](https://github.com/hoangvu12/pane/pull/69).
+
 - `cargo build --locked -j1 -p pane` passes. The combined application passes
   50 window tests and one command-search test, including the footer regression.
 - Windows 11 25H2, build 26200.8737, 96 DPI, transparency enabled. Every retained
