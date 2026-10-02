@@ -13,6 +13,38 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Renderer tests live in the maintained fork, outside Pane's workspace.
+  # Keep this revision aligned with Pane's GPUI dependency pin. The harness
+  # uses a hidden DirectX target; it does not focus or capture the desktop.
+  windows-renderer:
+    name: Windows renderer output
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: hoangvu12/gpui-ce
+          ref: 2b9e644e3f89a38eacebc713fb0d1807c618c76c
+          path: renderer
+          persist-credentials: false
+      - name: Install renderer test toolchain
+        run: rustup toolchain install 1.98.1 --profile minimal
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: renderer
+          key: windows-renderer-1.98.1
+      - name: Check source-over quad and path output
+        working-directory: renderer
+        run: cargo +1.98.1 test --locked -j1 -p gpui_ce_windows --features test-support --lib
+        env:
+          GPUI_ALPHA_OUTPUT_DIR: ${{ github.workspace }}/renderer-output
+      - name: Upload renderer output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-renderer-output
+          path: renderer-output
+          if-no-files-found: warn
+
   licenses:
     name: Licenses and sources
     runs-on: ubuntu-24.04
