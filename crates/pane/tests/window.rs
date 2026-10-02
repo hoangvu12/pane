@@ -1848,9 +1848,7 @@ fn settle_frames(cx: &mut VisualTestContext) -> usize {
 /// clock: it progresses as frames are delivered, completes within its
 /// bounded span, and leaves the window asking for no frame at all.
 #[gpui::test]
-fn opening_a_command_transitions_the_content_and_keeps_the_chrome_still(
-    cx: &mut TestAppContext,
-) {
+fn opening_a_command_transitions_the_content_and_keeps_the_chrome_still(cx: &mut TestAppContext) {
     let (window, cx) = open(cx, &RUST);
     let view = settle(&window, cx);
     assert!(matches!(view.screen, Screen::Root { .. }));
@@ -1868,7 +1866,10 @@ fn opening_a_command_transitions_the_content_and_keeps_the_chrome_still(
     // screen starts the arrival, the full shift below rest.
     cx.simulate_keystrokes("enter");
     let view = settle(&window, cx);
-    assert_eq!((view.screen, view.title.as_str()), (Screen::Command, "Rust sample"));
+    assert_eq!(
+        (view.screen, view.title.as_str()),
+        (Screen::Command, "Rust sample")
+    );
     let (offset, opacity) = arriving(&window, cx).expect("the command's content is arriving");
     assert!(
         offset > 2.5 && offset < 3.5,
@@ -1879,7 +1880,10 @@ fn opening_a_command_transitions_the_content_and_keeps_the_chrome_still(
     let footer_now = cx
         .debug_bounds("status-idle")
         .expect("the idle strip is rendered");
-    assert_eq!(footer_now, footer, "the footer (the action strip) stayed still");
+    assert_eq!(
+        footer_now, footer,
+        "the footer (the action strip) stayed still"
+    );
     // The content did: the list is drawn displaced from its rest by the
     // arrival's shift (where it lies once settled, below).
     let rows = cx.debug_bounds("rows").expect("the list is rendered");
@@ -1965,12 +1969,18 @@ fn rapid_open_back_open_retargets_the_arrival_from_where_it_is(cx: &mut TestAppC
         (Screen::Command, "Rust sample")
     );
     let (retargeted, _) = arriving(&window, cx).expect("the command's content is arriving again");
-    assert!((retargeted - offset).abs() < 0.05, "the reopening continued the presentation");
+    assert!(
+        (retargeted - offset).abs() < 0.05,
+        "the reopening continued the presentation"
+    );
 
     // The retargeted arrival then progresses and completes like any other.
     assert!(frame(cx, Duration::from_millis(40)) >= 1);
     let (progressed, _) = arriving(&window, cx).expect("the content is still arriving");
-    assert!(progressed < retargeted, "the arrival progressed toward rest");
+    assert!(
+        progressed < retargeted,
+        "the arrival progressed toward rest"
+    );
     settle_frames(cx);
     assert!(arriving(&window, cx).is_none());
     // And the screen the user navigated to is what is drawn — the rapid
@@ -1994,8 +2004,14 @@ fn typing_and_dispatch_take_effect_while_an_arrival_is_in_flight(cx: &mut TestAp
     cx.simulate_keystrokes("escape");
     let view = settle(&window, cx);
     assert!(matches!(view.screen, Screen::Root { .. }));
-    assert!(arriving(&window, cx).is_some(), "the return is still arriving");
-    assert!(query_has_focus(&window, cx), "focus moved to the query at once");
+    assert!(
+        arriving(&window, cx).is_some(),
+        "the return is still arriving"
+    );
+    assert!(
+        query_has_focus(&window, cx),
+        "focus moved to the query at once"
+    );
 
     // Typing lands while the arrival is in flight: the frame that draws
     // the narrowed results is the same frame that draws the transition.
@@ -2025,9 +2041,7 @@ fn typing_and_dispatch_take_effect_while_an_arrival_is_in_flight(cx: &mut TestAp
 /// arriving after the user left, updates the status without navigating
 /// back to the departed screen.
 #[gpui::test]
-fn escaping_mid_arrival_cancels_it_without_a_trace_of_the_departed_screen(
-    cx: &mut TestAppContext,
-) {
+fn escaping_mid_arrival_cancels_it_without_a_trace_of_the_departed_screen(cx: &mut TestAppContext) {
     let (window, cx) = open(cx, &RUST);
     settle(&window, cx);
     cx.simulate_keystrokes("enter");
@@ -2042,13 +2056,18 @@ fn escaping_mid_arrival_cancels_it_without_a_trace_of_the_departed_screen(
     assert!(matches!(view.screen, Screen::Root { .. }));
     // Root's own rows are what is drawn, not a fading-out command.
     assert!(
-        row_titles(&window, cx).iter().any(|title| title == "Rust sample"),
+        row_titles(&window, cx)
+            .iter()
+            .any(|title| title == "Rust sample"),
         "the root results are drawn, not the command's"
     );
     // The arrival in flight is the root content's, continued from the
     // interrupted forward arrival.
     let (offset, _) = arriving(&window, cx).expect("the root content is arriving");
-    assert!((offset - 3.).abs() < 0.5, "the arrival continued from below rest: {offset}");
+    assert!(
+        (offset - 3.).abs() < 0.5,
+        "the arrival continued from below rest: {offset}"
+    );
 
     // The item's answer, landing after the user left, changes nothing
     // about where the user is: the core drops a departed command's pending
@@ -2066,7 +2085,10 @@ fn escaping_mid_arrival_cancels_it_without_a_trace_of_the_departed_screen(
     // again arrives again.
     cx.simulate_keystrokes("enter");
     let view = settle(&window, cx);
-    assert_eq!((view.screen, view.title.as_str()), (Screen::Command, "Rust sample"));
+    assert_eq!(
+        (view.screen, view.title.as_str()),
+        (Screen::Command, "Rust sample")
+    );
     assert!(arriving(&window, cx).is_some(), "the command arrives again");
     settle_frames(cx);
 }
@@ -2094,7 +2116,10 @@ fn typing_selection_and_row_changes_never_transition(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("down");
     let view = settle(&window, cx);
     assert_eq!(view.selected, Some(0));
-    assert!(arriving(&window, cx).is_none(), "a selection update does not animate");
+    assert!(
+        arriving(&window, cx).is_none(),
+        "a selection update does not animate"
+    );
     // The functional scroll relayout after the rows changed is the only
     // frame the window asked for; once it is delivered, the window is
     // idle.
@@ -2116,7 +2141,10 @@ fn reduced_motion_settles_transitions_at_once_without_frames(cx: &mut TestAppCon
     cx.update(|_, cx| cx.set_reduce_motion(true));
     cx.simulate_keystrokes("enter");
     let view = settle(&window, cx);
-    assert_eq!((view.screen, view.title.as_str()), (Screen::Command, "Rust sample"));
+    assert_eq!(
+        (view.screen, view.title.as_str()),
+        (Screen::Command, "Rust sample")
+    );
     assert!(
         arriving(&window, cx).is_none(),
         "reduced motion drew the command's content settled"
@@ -2127,7 +2155,10 @@ fn reduced_motion_settles_transitions_at_once_without_frames(cx: &mut TestAppCon
     cx.update(|_, cx| cx.set_reduce_motion(false));
     cx.simulate_keystrokes("escape");
     settle(&window, cx);
-    assert!(arriving(&window, cx).is_some(), "the return began under full motion");
+    assert!(
+        arriving(&window, cx).is_some(),
+        "the return began under full motion"
+    );
     cx.update(|_, cx| cx.set_reduce_motion(true));
     // The frame the arrival had asked for draws settled, and asks for
     // nothing further.
@@ -2136,7 +2167,11 @@ fn reduced_motion_settles_transitions_at_once_without_frames(cx: &mut TestAppCon
         arriving(&window, cx).is_none(),
         "the arrival settled the moment reduced motion engaged"
     );
-    assert_eq!(settle_frames(cx), 0, "the window asked for no further frame");
+    assert_eq!(
+        settle_frames(cx),
+        0,
+        "the window asked for no further frame"
+    );
 }
 
 /// A window that stops drawing mid-arrival — hidden, on the native

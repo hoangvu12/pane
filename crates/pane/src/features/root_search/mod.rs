@@ -21,8 +21,8 @@
 //! is reported as focused, and with no result the combo box itself is.
 
 use gpui::{
-    AnyElement, App, Context, Entity, Focusable, KeyBinding, Role, Subscription,
-    Window, WindowControlArea, div, prelude::*, px,
+    AnyElement, App, Context, Entity, Focusable, KeyBinding, Role, Subscription, Window,
+    WindowControlArea, div, prelude::*, px,
 };
 use gpui_elements::editable_text::actions::DEFAULT_INPUT_CONTEXT;
 use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged, text_input};

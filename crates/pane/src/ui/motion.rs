@@ -383,8 +383,8 @@ fn system_reduced_motion() -> bool {
 /// fresh preference is re-read on the app's own thread when it is applied.
 #[cfg(target_os = "windows")]
 fn watch_reduced_motion(report: tokio::sync::mpsc::UnboundedSender<()>) -> Option<Watch> {
-    use windows::UI::ViewManagement::UISettings;
     use windows::Foundation::TypedEventHandler;
+    use windows::UI::ViewManagement::UISettings;
 
     let settings = UISettings::new().ok()?;
     let handler = TypedEventHandler::new(move |_, _| {
