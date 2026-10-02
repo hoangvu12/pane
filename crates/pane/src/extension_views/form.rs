@@ -294,7 +294,7 @@ impl LauncherWindow {
                             .rounded_md()
                             .cursor_pointer()
                             .when(chosen, |option| option.bg(rgb(0x364355)))
-                            .child(if chosen { "â—‰" } else { "â—‹" })
+                            .child(if chosen { "◉" } else { "○" })
                             .child(choice.label.clone())
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.launcher.set_field_value(&field_id, &choice_id);
