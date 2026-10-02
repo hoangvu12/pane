@@ -34,8 +34,12 @@ use gpui::WindowControlArea;
 use pane_core::Launcher;
 
 use crate::ui;
-use crate::ui::icon::{Glyph, IconTone, glyph};
+use crate::ui::icon::{Glyph, IconTone};
 use crate::ui::result_row::{RowContent, result_row};
+// `glyph` draws the caption buttons, which exist only on Windows; the
+// import follows the same gate so it is not unused on the other platforms.
+#[cfg(target_os = "windows")]
+use crate::ui::icon::glyph;
 
 mod about;
 

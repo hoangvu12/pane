@@ -6,7 +6,12 @@
 
 use std::path::PathBuf;
 
-use gpui::{App, KeyBinding, Window, WindowBackgroundAppearance, actions};
+use gpui::{App, KeyBinding, WindowBackgroundAppearance, actions};
+// `Window` names the rounded-corner preference's parameter, which only
+// Windows has; the import follows the same gate so it is not unused on the
+// other platforms.
+#[cfg(target_os = "windows")]
+use gpui::Window;
 use pane_core::CommandRegistration;
 
 mod app;
