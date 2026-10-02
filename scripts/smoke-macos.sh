@@ -827,8 +827,11 @@ key 36; sleep 2   # Install; Helper sample is selected
 key 36; sleep 2   # open Helper sample
 key 125; key 36; sleep 2   # Echo after waiting
 helpers_running || { echo "the waiting helper is not running"; exit 1; }
-capture 94-helper-before-quit.png
-check 94-helper-before-quit.png progress   # "Running…"
+# The helper can already be running while the compositor still shows the
+# prior idle footer (CI 36957014594). Require a frame showing Running before
+# quitting, within the helper's ten-second wait; never accept the idle frame.
+capture_until 94-helper-before-quit.png progress 5
+helpers_running || { echo "the helper ended before the quit check"; exit 1; }
 alive=$(find "$PANE_DATA_DIR/extensions/packages" -name pane-echo.alive | head -1)
 [ -n "$alive" ] || { echo "the waiting helper does not beat"; exit 1; }
 python3 - "$pid" <<'PY'

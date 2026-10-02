@@ -84,6 +84,21 @@ is only for the initial `--install` window: it assumes the prototype's default
 760-logical-pixel width and scales the sampling band with the captured width
 for display scaling. It is not a general resized-window screen classifier.
 
+The macOS quit-with-helper phase also waits for positive progress evidence
+instead of assuming its two-second delay produced a fresh frame. In
+[CI run 36957014594](https://github.com/hoangvu12/pane/actions/runs/36957014594),
+artifact `11207102192` frame `94-helper-before-quit.png` shows the correct
+selected wait action but the idle footer, with zero warning pixels anywhere.
+The preceding process check passed and the isolated helper-quit settings
+record contains `helper-wait: started`, with a heartbeat file present. There
+is no associated error in stderr. This is consistent with a stale frame;
+it does not establish which native scheduling stage delayed the update.
+The existing bounded capture helper now requires the unchanged progress
+assertion within five more seconds and rechecks that the helper is still
+running before requesting quit. If the UI never shows progress, or the helper
+finishes first, the smoke still fails. The ten-second guest wait, heartbeat
+and shutdown checks remain unchanged; final native CI must verify the fix.
+
 Offline checker regression tests use synthetic frames to exercise missing
 results, desktop changes, missing selection, wrong-region text, preview waiting
 at 1x/2x and unchanged custom swatches:
