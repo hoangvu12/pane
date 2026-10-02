@@ -114,6 +114,10 @@ param(
     [ValidateSet('light', 'dark')]
     [string]$BackdropPattern = 'light',
 
+    # Move/resize only the spawned window, and use the helper's backdrop
+    # for an activation/deactivation check. Requires -Backdrop.
+    [switch]$ExerciseWindow,
+
     # Leave Pane running for manual inspection; the PID is printed and
     # recorded so the operator can close it. The backdrop always closes
     # when the helper ends (it would not reliably outlive this process).
@@ -137,6 +141,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ($ExerciseWindow -and -not $Backdrop) {
+    throw 'ExerciseWindow requires Backdrop so focus never targets an unrelated window.'
+}
 
 # ---------------------------------------------------------------- run dirs
 # Per-run scratch under the explicit OutputDir: unique names, never reused,
@@ -235,6 +242,7 @@ $meta = [ordered]@{
     cursorSaved        = $null   # cursor position before the guarded click
     cursorRestored     = $null   # restored only if the cursor never moved
     screenshots     = @()
+    windowChecks    = @()
     backdropClosed  = $null
     processClosed   = $null
     processExited   = $null
@@ -299,6 +307,19 @@ function Save-Capture([string]$Name, [pscustomobject]$Rect) {
         $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
     } finally { $bmp.Dispose() }
     return $path
+}
+
+function Save-WindowCheck([string]$Name, [IntPtr]$Target) {
+    [System.Windows.Forms.Application]::DoEvents()
+    Start-Sleep -Milliseconds 600
+    $currentGeometry = Get-WindowGeometry $Target
+    $file = Save-Capture $Name $currentGeometry.Crop
+    $script:meta.windowChecks += [ordered]@{
+        file = (Split-Path $file -Leaf)
+        windowRect = $currentGeometry.WindowRect
+        foregroundIsPane = ([PaneWin]::GetForegroundWindow().ToInt64() -eq $Target.ToInt64())
+        dpi = [PaneWin]::GetDpiForWindow($Target)
+    }
 }
 
 function Save-Metadata {
@@ -629,6 +650,41 @@ try {
             $file = Save-Capture $name $captureRect
             $meta.screenshots += [ordered]@{ file = (Split-Path $file -Leaf); label = "after '$token'"; utc = (Get-Date).ToUniversalTime().ToString('o') }
             Write-Host "Saved $file (after '$token')"
+        }
+    }
+    if ($ExerciseWindow -and -not $failed) {
+        $before = New-Object PaneWin+RECT
+        if (-not [PaneWin]::GetWindowRect($hwnd, [ref]$before)) {
+            throw 'Could not measure the spawned window for movement checks.'
+        }
+        # Keep the test on the same display, without moving any existing window.
+        $working = [System.Windows.Forms.Screen]::FromHandle($hwnd).WorkingArea
+        $movedX = [Math]::Max($working.Left, [Math]::Min($before.Left + 32, $working.Right - ($before.Right - $before.Left)))
+        $movedY = [Math]::Max($working.Top, [Math]::Min($before.Top + 24, $working.Bottom - ($before.Bottom - $before.Top)))
+        if (-not [PaneWin]::SetWindowPos($hwnd, [IntPtr]::Zero, $movedX, $movedY, 0, 0, 0x15)) {
+            throw 'Moving the spawned window failed.'
+        }
+        Save-WindowCheck 'window-moved.png' $hwnd
+        if (-not [PaneWin]::SetWindowPos($hwnd, [IntPtr]::Zero, 0, 0, 380, 420, 0x16)) {
+            throw 'Resizing the spawned window failed.'
+        }
+        Save-WindowCheck 'window-narrow.png' $hwnd
+        [void][PaneWin]::SetWindowPos($hwnd, [IntPtr]::Zero, $before.Left, $before.Top, ($before.Right - $before.Left), ($before.Bottom - $before.Top), 0x14)
+        Save-WindowCheck 'window-restored.png' $hwnd
+
+        # Activate only the diagnostic window this helper created. Immediately
+        # restore its Z order behind Pane, retaining the foreground ownership,
+        # so the inactive capture shows Pane instead of covering it up.
+        [void][PaneWin]::SetForegroundWindow($backdropForm.Handle)
+        [void][PaneWin]::SetWindowPos($backdropForm.Handle, $hwnd, 0, 0, 0, 0, 0x13)
+        Save-WindowCheck 'window-inactive.png' $hwnd
+        if ([PaneWin]::GetForegroundWindow().ToInt64() -ne $backdropForm.Handle.ToInt64()) {
+            throw 'Could not confirm diagnostic backdrop activation; inactive check not established.'
+        }
+        [void][PaneWin]::SetForegroundWindow($hwnd)
+        Save-WindowCheck 'window-active.png' $hwnd
+        if ([PaneWin]::GetForegroundWindow().ToInt64() -ne $hwnd.ToInt64()) {
+            throw 'Could not confirm Pane reactivation.'
         }
     }
 }
