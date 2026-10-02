@@ -131,7 +131,6 @@ fn render(
         )
         .child(group(
             "Theme",
-            "appearance-theme-group",
             THEMES
                 .iter()
                 .map(|&(preference, name, subtitle, selector)| {
@@ -155,7 +154,6 @@ fn render(
         ))
         .child(group(
             "Material",
-            "appearance-material-group",
             MATERIALS
                 .iter()
                 .map(|&(preference, name, subtitle, selector)| {
@@ -248,19 +246,11 @@ fn override_notice(overrides: &[String], theme: &Theme) -> Stateful<Div> {
 
 /// One choice group: its label (the section label style) and its rows,
 /// with the radio group's semantics.
-fn group(
-    label: &'static str,
-    id: &'static str,
-    rows: Vec<Stateful<Div>>,
-    theme: &Theme,
-) -> Stateful<Div> {
+fn group(label: &'static str, rows: Vec<Stateful<Div>>, theme: &Theme) -> Div {
     div()
-        .id(id)
         .flex()
         .flex_col()
         .gap(px(2.))
-        .role(Role::RadioGroup)
-        .aria_label(label)
         .child(
             div()
                 .pb(px(4.))
