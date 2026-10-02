@@ -164,16 +164,17 @@ fn catalog(launcher: &Launcher, state: &State) -> ShortcutCatalog {
         }
         let command = split(&id).1.to_owned();
         let why = "its extension is not installed".to_owned();
+        let hotkey_inactive = hotkey.is_some().then_some(why.clone());
         unlisted.push(ShortcutCommand {
             id,
             title: format!("`{command}`"),
             subtitle: None,
             takes_query: false,
             alias,
-            alias_inactive: Some(why.clone()),
+            alias_inactive: Some(why),
             editable: false,
             hotkey,
-            hotkey_inactive: hotkey.map(|_| why),
+            hotkey_inactive,
         });
     }
     if !unlisted.is_empty() {
@@ -220,7 +221,7 @@ fn command(
     // The hotkey row's wording: registered while the command is offered,
     // so an unavailable command's or a disabled package's hotkey is not
     // active, and one the system refused says why.
-    let hotkey_inactive = hotkey.map(|_| {
+    let hotkey_inactive = hotkey.as_ref().and_then(|_| {
         unavailable
             .map(str::to_owned)
             .or_else(|| state.bindings.problem_of(&id))
@@ -264,16 +265,17 @@ fn missing(
             Err(error) => format!("{title} cannot load: {error}"),
             Ok(_) => format!("{title} has no command `{command}` now"),
         };
+        let hotkey_inactive = hotkey.is_some().then_some(why.clone());
         rows.push(ShortcutCommand {
             id: id.clone(),
             title: format!("`{command}`"),
             subtitle: None,
             takes_query: false,
             alias,
-            alias_inactive: Some(why.clone()),
+            alias_inactive: Some(why),
             editable: false,
             hotkey,
-            hotkey_inactive: hotkey.map(|_| why),
+            hotkey_inactive,
         });
         listed.insert(id);
     }

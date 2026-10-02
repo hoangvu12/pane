@@ -14,8 +14,7 @@ use std::time::{Duration, Instant};
 
 use futures::executor::block_on;
 use gpui::{
-    AnyWindowHandle, Entity, Modifiers, TestAppContext, VisualTestContext, WindowHandle,
-    prelude::*,
+    AnyWindowHandle, Entity, Modifiers, TestAppContext, VisualTestContext, WindowHandle, prelude::*,
 };
 use pane::{LauncherWindow, SettingsWindow};
 use pane_core::hotkeys::{HotkeyError, Hotkeys, Shortcut};
@@ -65,8 +64,8 @@ impl Hotkeys for FakeHotkeys {
 /// Copies the assembled query sample (Echo, a command that takes a query)
 /// to `folder`.
 fn query_package(folder: &Path) -> PathBuf {
-    let assembled = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/guests/packages/sample-query");
+    let assembled =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/guests/packages/sample-query");
     assert!(
         assembled.exists(),
         "{} is missing; run `cargo xtask guests`",
@@ -171,7 +170,11 @@ fn open<'a>(
     cx: &'a mut TestAppContext,
     data: &TempDir,
     packages: &[&Path],
-) -> (Entity<LauncherWindow>, WindowHandle<SettingsWindow>, &'a mut VisualTestContext) {
+) -> (
+    Entity<LauncherWindow>,
+    WindowHandle<SettingsWindow>,
+    &'a mut VisualTestContext,
+) {
     let launcher = Launcher::with_packages(
         Ok(Runtime::start().unwrap()),
         vec![],
@@ -457,8 +460,7 @@ fn an_alias_edited_inline_is_found_by_root_search_and_survives_a_restart(cx: &mu
         data.path().join("extensions"),
     )
     .with_hotkeys(Arc::new(FakeHotkeys::default()));
-    let (window, cx) =
-        cx.add_window_view(|window, cx| LauncherWindow::new(restarted, window, cx));
+    let (window, cx) = cx.add_window_view(|window, cx| LauncherWindow::new(restarted, window, cx));
     cx.simulate_input("ec hello");
     let view = settle(&window, cx);
     assert_eq!(view.rows[0].title, "Echo");
@@ -648,9 +650,7 @@ fn an_empty_commit_clears_the_alias(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn a_change_that_cannot_be_recorded_explains_and_keeps_the_last_record(
-    cx: &mut TestAppContext,
-) {
+fn a_change_that_cannot_be_recorded_explains_and_keeps_the_last_record(cx: &mut TestAppContext) {
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let query = query_package(&sources.path().join("query"));
     // A record Pane cannot read is never replaced, so every write fails.
@@ -731,7 +731,10 @@ fn filtering_narrows_the_groups_and_their_commands(cx: &mut TestAppContext) {
     settings_cx.simulate_keystrokes("backspace backspace backspace backspace backspace");
     settings_cx.simulate_input("hello");
     settings_cx.run_until_parked();
-    assert!(settings_cx.debug_bounds(hello_row).is_some(), "Say hello matches");
+    assert!(
+        settings_cx.debug_bounds(hello_row).is_some(),
+        "Say hello matches"
+    );
     assert!(settings_cx.debug_bounds(query_group).is_none());
 
     // Nothing matching says so; clearing the filter brings everything
@@ -899,7 +902,9 @@ fn the_catalog_follows_disabling_enabling_and_uninstalling(cx: &mut TestAppConte
         "the Hello group is gone"
     );
     assert!(
-        settings_cx.debug_bounds("shortcut-group-not-installed").is_none(),
+        settings_cx
+            .debug_bounds("shortcut-group-not-installed")
+            .is_none(),
         "its choices were forgotten, not left as records"
     );
     assert!(

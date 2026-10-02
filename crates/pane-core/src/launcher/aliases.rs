@@ -652,24 +652,23 @@ pub enum AliasOutcome {
 /// caselessly). An empty alias is never refused — it clears the command's
 /// alias — so the callers decide what an empty one means. This is the one
 /// rule the alias form and the Settings window's inline field both apply.
-fn alias_refusal(
-    launcher: &Launcher,
-    state: &State,
-    command: &str,
-    alias: &str,
-) -> Option<String> {
+fn alias_refusal(launcher: &Launcher, state: &State, command: &str, alias: &str) -> Option<String> {
     if alias.chars().any(char::is_whitespace) {
         Some("An alias is one word, without spaces".to_string())
     } else if alias.chars().count() > MAX_ALIAS_CHARS {
         Some(format!("An alias has at most {MAX_ALIAS_CHARS} characters"))
     } else {
-        state.aliases.chosen.shared_with(command, alias).map(|other| {
-            let other = launcher.command_title(state, other);
-            format!(
-                "“{alias}” is already the alias of {other}: change it there first, or \
-                 choose another"
-            )
-        })
+        state
+            .aliases
+            .chosen
+            .shared_with(command, alias)
+            .map(|other| {
+                let other = launcher.command_title(state, other);
+                format!(
+                    "“{alias}” is already the alias of {other}: change it there first, or \
+                     choose another"
+                )
+            })
     }
 }
 

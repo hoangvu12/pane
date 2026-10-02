@@ -65,7 +65,10 @@ const ALIAS_WIDTH: Pixels = px(240.);
 /// The Hotkey column's width.
 const HOTKEY_WIDTH: Pixels = px(190.);
 
-actions!(shortcuts, [EditAlias, CommitAlias, CancelAlias, ToggleGroup]);
+actions!(
+    shortcuts,
+    [EditAlias, CommitAlias, CancelAlias, ToggleGroup]
+);
 
 /// Registers the page's key bindings: the group headers' and alias cells'
 /// activation keys in their own contexts, and the inline editor's commit
@@ -723,20 +726,10 @@ fn alias_cell(
             .role(Role::Button)
             .aria_label(label.clone())
             .on_action(cx.listener(move |this, _: &EditAlias, window, cx| {
-                this.shortcuts_edit_alias(
-                    for_keys.0.clone(),
-                    for_keys.1.clone(),
-                    window,
-                    cx,
-                );
+                this.shortcuts_edit_alias(for_keys.0.clone(), for_keys.1.clone(), window, cx);
             }))
             .on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
-                this.shortcuts_edit_alias(
-                    for_click.0.clone(),
-                    for_click.1.clone(),
-                    window,
-                    cx,
-                );
+                this.shortcuts_edit_alias(for_click.0.clone(), for_click.1.clone(), window, cx);
             }))
             .flex()
             .items_center()
@@ -901,10 +894,7 @@ fn editor_element(
 /// chrome (display-only until #76 lands recording), or none, with why the
 /// hotkey is not active below it.
 fn hotkey_cell(command: &ShortcutCommand, theme: &Theme) -> Div {
-    let shown = command
-        .hotkey
-        .as_ref()
-        .map(|shortcut| shortcut.to_string());
+    let shown = command.hotkey.as_ref().map(|shortcut| shortcut.to_string());
     let label = format!(
         "Hotkey for {}: {}",
         command.title,
@@ -976,9 +966,10 @@ fn status_line(status: &StatusLine, theme: &Theme) -> Stateful<Div> {
     let (text, color): (String, Hsla) = match status {
         StatusLine::Saving => ("Saving the alias…".into(), theme.warning),
         StatusLine::Saved(done) => (done.clone(), theme.success),
-        StatusLine::NotKept(problem) => {
-            (format!("Could not keep the change: {problem}"), theme.danger)
-        }
+        StatusLine::NotKept(problem) => (
+            format!("Could not keep the change: {problem}"),
+            theme.danger,
+        ),
     };
     div()
         .id("shortcut-status")
@@ -994,7 +985,9 @@ fn status_line(status: &StatusLine, theme: &Theme) -> Stateful<Div> {
 /// The keyboard focus ring, as the sidebar rows' and the menu button's.
 fn focus_ring(style: StyleRefinement, color: Hsla) -> StyleRefinement {
     style.shadow(vec![
-        BoxShadow::new(px(0.), px(0.), color).spread_radius(px(1.)).inset(),
+        BoxShadow::new(px(0.), px(0.), color)
+            .spread_radius(px(1.))
+            .inset(),
     ])
 }
 
