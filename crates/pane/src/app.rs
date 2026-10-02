@@ -13,17 +13,18 @@ use std::mem::{Discriminant, discriminant};
 use std::path::Path;
 
 use gpui::{
-    ClipboardItem, Context, Div, FocusHandle, Hsla, KeyDownEvent, PathPromptOptions, Pixels, Role,
-    ScrollHandle, SharedString, Size, Stateful, Window, WindowControlArea, div, prelude::*, px,
-    relative,
+    BoxShadow, ClipboardItem, Context, Div, FocusHandle, Hsla, KeyDownEvent, PathPromptOptions,
+    Pixels, Role, ScrollHandle, SharedString, Size, Stateful, Window, WindowControlArea, div,
+    prelude::*, px, relative,
 };
 use pane_core::changes::Changes;
 use pane_core::hotkeys::Shortcut;
-use pane_core::{Launcher, LauncherView, Row, Screen, Status};
+use pane_core::{Launcher, LauncherView, Row, Screen, SelectedAction, Status};
 
 use crate::extension_views::{custom_view, form};
 use crate::features::root_search;
 use crate::ui::icon::{Glyph, IconTone};
+use crate::ui::keycap::{self, Key as ActionKey};
 use crate::ui::result_row::{RowContent, result_row};
 use crate::ui::{self, material::Material};
 use crate::{Back, Confirm, FocusNext, FocusPrevious, SelectNext, SelectPrevious};
@@ -452,6 +453,115 @@ impl LauncherWindow {
             this.activate_selected(window, cx);
         }))
     }
+
+    /// The idle footer's action strip: the selected action's button,
+    /// right-aligned in the strip, with the strip's far left kept free for
+    /// the app menu a later slice delivers there. `action` is the
+    /// launcher's one selected-action definition
+    /// ([`Launcher::selected_action`]); the screens with no primary action
+    /// (a custom view, the network details screen) show no button, only
+    /// the reserved space.
+    fn render_action_strip(&self, action: &SelectedAction, cx: &mut Context<Self>) -> Div {
+        div()
+            // The strip fills the footer's height (its 50px floor), so the
+            // button sits centered in it rather than at its top edge —
+            // the idle line is always one row tall, unlike a wrapped
+            // message, which keeps the footer's no-centering rule for its
+            // first line.
+            .flex()
+            .flex_1()
+            .min_h(px(0.))
+            .w_full()
+            .min_w(px(0.))
+            .items_center()
+            // Far left: the app menu's ellipsis goes here (spec #70's
+            // Settings slice, #72). Nothing occupies it yet; this spacer
+            // is the room it needs, and it keeps the button at the right.
+            .child(div().flex_1().min_w(px(0.)))
+            .when(!action.label.is_empty(), |strip| {
+                strip.child(self.render_action_button(action, cx))
+            })
+    }
+
+    /// The idle footer's button: the selected action's label with the
+    /// Enter keycap beside it. Its click takes the same Confirm path Enter
+    /// takes (see [`LauncherWindow::press_primary_action`]); its label and
+    /// availability come from the definition, so what the button says,
+    /// whether it can run and what it does cannot diverge. The selected
+    /// row's chrome marks it as the strip's primary control.
+    fn render_action_button(
+        &self,
+        action: &SelectedAction,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let theme = ui::visuals().theme.clone();
+        let geometry = &theme.geometry;
+        div()
+            .id("primary-action")
+            .debug_selector(|| "primary-action".into())
+            .role(Role::Button)
+            .aria_label(action.label.clone())
+            // The key that presses this button from the keyboard: the
+            // keycap beside the label shows the same key.
+            .aria_keyshortcuts(ActionKey::Enter.name())
+            // A click never dispatches what the definition says cannot
+            // run now; assistive technology is told the same thing.
+            .when(!action.available, |button| button.aria_disabled(true))
+            // The button shrinks under pressure (the label ellipsizes; the
+            // keycap does not) so a narrow window keeps it inside the
+            // strip instead of clipping at the window's right edge.
+            .flex_initial()
+            .min_w(px(0.))
+            .h(geometry.action_height)
+            .flex()
+            .items_center()
+            .gap(geometry.action_gap)
+            .px(geometry.action_padding_x)
+            .rounded(geometry.action_radius)
+            .bg(theme.row_selected)
+            // The selected row's 1px inset edge.
+            .shadow(vec![
+                BoxShadow::new(px(0.), px(0.), theme.row_selected_border)
+                    .spread_radius(px(1.))
+                    .inset(),
+            ])
+            .text_size(theme.typography.footer_size)
+            .font_weight(theme.typography.medium)
+            .text_color(theme.text_title)
+            .when(action.available, |button| button.cursor_pointer())
+            // Unavailable: dimmed, and the pointer says nothing to click.
+            // What explains it stays where it was — the row's reason, the
+            // empty state — not the button.
+            .when(!action.available, |button| {
+                button.opacity(0.5).cursor_default()
+            })
+            .child(
+                div()
+                    .flex_initial()
+                    .min_w(px(0.))
+                    .truncate()
+                    .child(action.label.clone()),
+            )
+            .child(keycap::keycap(ActionKey::Enter, &theme))
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.press_primary_action(window, cx);
+            }))
+    }
+
+    /// Dispatches the footer button's click: the same
+    /// [`LauncherWindow::confirm`] path Enter takes, but only when the
+    /// selected-action definition says the action can run now. The frame
+    /// that drew the button can be stale — an action may have started
+    /// since it was laid out — so the check is made again here, at click
+    /// time, against the launcher's current state. Enter is unchanged: it
+    /// keeps the behavior it has always had; this keeps the button from
+    /// dispatching what cannot run (no selection, an unavailable result, an
+    /// action already running).
+    fn press_primary_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.launcher.selected_action().available {
+            self.confirm(&Confirm, window, cx);
+        }
+    }
 }
 
 impl Render for LauncherWindow {
@@ -464,32 +574,18 @@ impl Render for LauncherWindow {
         self.keep_selected_visible(&view, window);
         let theme = ui::visuals().theme.clone();
         let material = ui::visuals().material;
-        let (empty, hint) = match &view.screen {
-            Screen::Root { .. } => (
-                "No commands are installed.",
-                "Type to search · ↑↓ select · Enter open · Esc clear",
-            ),
-            Screen::Command => (
-                "This command has no items.",
-                "↑↓ select · Enter run · Esc back",
-            ),
-            Screen::CommandSearch { .. } => (
-                "This command has no items.",
-                "Type to search · ↑↓ select · Enter run · Esc clear, then back",
-            ),
-            Screen::Package { .. } => ("Nothing to install.", "Enter confirm · Esc back"),
-            Screen::Form(_) => ("", "Tab next field · Enter submit · Esc back"),
-            Screen::Extensions { .. } => (
-                "No extensions are installed.",
-                "↑↓ select · Enter choose · Esc back",
-            ),
-            Screen::CustomView(_) => ("", "Keys and pointer go to the view · Esc back"),
-            Screen::Confirm { .. } => ("", "↑↓ select · Enter choose · Esc cancel"),
-            Screen::Hotkey { .. } => ("", "Press the new hotkey · Enter choose · Esc back"),
-            Screen::PauseDetails { .. } => ("", "Enter retry · Esc back"),
-            Screen::NetworkDetails { .. } => ("", "Esc back"),
-            Screen::RuntimeDetails { .. } => ("", "Enter restart · Esc back"),
-            Screen::BuildDetails { .. } => ("", "Enter build again · Esc back"),
+        let empty = match &view.screen {
+            Screen::Root { .. } => "No commands are installed.",
+            Screen::Command | Screen::CommandSearch { .. } => "This command has no items.",
+            Screen::Package { .. } => "Nothing to install.",
+            Screen::Form(_) => "",
+            Screen::Extensions { .. } => "No extensions are installed.",
+            Screen::CustomView(_) | Screen::NetworkDetails { .. } => "",
+            Screen::Confirm { .. }
+            | Screen::Hotkey { .. }
+            | Screen::PauseDetails { .. }
+            | Screen::RuntimeDetails { .. }
+            | Screen::BuildDetails { .. } => "",
         };
         // A confirmation, and a package preview offering Install or Update
         // (an npm or Git package's has several more lines), keep their choices in
@@ -518,14 +614,21 @@ impl Render for LauncherWindow {
             (&view.screen, &view.status),
             (Screen::CommandSearch { .. }, Status::Error(_))
         );
-        let (status_selector, status_text, status_color): (&str, SharedString, Hsla) =
+        // The footer's status: while the launcher runs, works, answers or
+        // fails, the strip is that message; `None` while it is idle, when
+        // the strip becomes the selected action (below).
+        let (status_selector, status, status_color): (&str, Option<SharedString>, Hsla) =
             match view.status {
-                Status::Idle => ("status-idle", hint.into(), theme.text_muted),
-                Status::Running => ("status-running", "Running…".into(), theme.warning),
-                Status::Progress(work) => ("status-progress", work.into(), theme.warning),
-                Status::Result(answer) => ("status-result", answer.into(), theme.success),
-                Status::Error(message) => ("status-error", message.into(), theme.danger),
+                Status::Idle => ("status-idle", None, theme.text_muted),
+                Status::Running => ("status-running", Some("Running…".into()), theme.warning),
+                Status::Progress(work) => ("status-progress", Some(work.into()), theme.warning),
+                Status::Result(answer) => ("status-result", Some(answer.into()), theme.success),
+                Status::Error(message) => ("status-error", Some(message.into()), theme.danger),
             };
+        // The selected action: the one definition ([`SelectedAction`])
+        // that drives the idle strip's button — its label, its
+        // availability — and the dispatch both the button and Enter take.
+        let action = self.launcher.selected_action();
         let rows: Vec<_> = view
             .rows
             .into_iter()
@@ -652,6 +755,16 @@ impl Render for LauncherWindow {
             })
             .child(body)
             .child(
+                // The footer: the launcher's status strip. While a status
+                // shows — running, progress, a result or an error — the
+                // strip is the message, wrapping, growing and scrolling
+                // exactly as before. While the launcher is idle, the strip
+                // is the selected action instead (see
+                // [`LauncherWindow::render_action_strip`]): the idle
+                // instruction text is gone, and the same strip keeps its
+                // identity (id, role, status-* debug selectors) in both
+                // shapes, so a test or a smoke can always find the
+                // launcher's footer where it was.
                 Material::footer(&theme)
                     .id("status")
                     // Scrolling needs a stateful element, so the strip
@@ -660,25 +773,34 @@ impl Render for LauncherWindow {
                     // strip instead of being cut.
                     .overflow_y_scroll()
                     .role(Role::Status)
-                    .aria_label(status_text.clone())
+                    .when_some(status.clone(), |footer, text| {
+                        // The live region carries the message as its name,
+                        // so assistive technology announces it. While idle
+                        // the strip carries no message — the button is the
+                        // announcement's content — and stays silent.
+                        footer.aria_label(text)
+                    })
                     .debug_selector(|| status_selector.into())
                     .text_size(theme.typography.footer_size)
                     .text_color(status_color)
-                    .child(
-                        // The message fills the strip's width and wraps
-                        // there — a long error is several readable lines,
-                        // never one clipped at the window's right edge —
-                        // and the strip grows with it (its own bounds carry
-                        // the status-* debug selectors; this one, the
-                        // message's, lets tests see wrapping and scroll).
-                        div()
+                    .child(match status.clone() {
+                        Some(text) => div()
+                            // The message fills the strip's width and wraps
+                            // there — a long error is several readable
+                            // lines, never one clipped at the window's right
+                            // edge — and the strip grows with it (its own
+                            // bounds carry the status-* debug selectors;
+                            // this one, the message's, lets tests see
+                            // wrapping and scroll).
                             .w_full()
                             .min_w(px(0.))
                             .flex_none()
                             .py(px(12.))
                             .debug_selector(|| "status-message".into())
-                            .child(status_text),
-                    ),
+                            .child(text)
+                            .into_any_element(),
+                        None => self.render_action_strip(&action, cx).into_any_element(),
+                    }),
             );
         // The panel surface: the frost material's L1 glass around the
         // content, with the sheen beneath it.
