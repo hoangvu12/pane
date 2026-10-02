@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: hoangvu12/gpui-ce
-          ref: 2b9e644e3f89a38eacebc713fb0d1807c618c76c
+          ref: bcf3a0acd047c1873293069d0ed42085a38f699b
           path: renderer
           persist-credentials: false
       - name: Install renderer test toolchain
