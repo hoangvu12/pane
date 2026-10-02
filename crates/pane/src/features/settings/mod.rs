@@ -23,9 +23,14 @@
 
 use gpui::{
     AnyElement, App, Bounds, Context, Div, FocusHandle, KeyBinding, Role, Stateful,
-    TitlebarOptions, Window, WindowBounds, WindowControlArea, WindowHandle, WindowOptions, actions,
-    div, prelude::*, px, size,
+    TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, actions, div, prelude::*,
+    px, size,
 };
+// The window-control areas mark the custom titlebar's controls, which
+// exist only on the platforms whose own titlebar is hidden; the import
+// follows the same gate so it is not unused on Linux.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use gpui::WindowControlArea;
 use pane_core::Launcher;
 
 use crate::ui;
@@ -187,20 +192,22 @@ impl Render for SettingsWindow {
             .flex()
             .flex_col()
             .font_family(theme.typography.family.clone())
-            .text_color(theme.text_title)
-            .when(
-                cfg!(any(target_os = "macos", target_os = "windows")),
-                |content| content.child(titlebar(&theme)),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_h(px(0.))
-                    .flex()
-                    .flex_row()
-                    .child(self.render_sidebar(&theme, cx))
-                    .child(self.render_page(&theme, window, cx)),
-            );
+            .text_color(theme.text_title);
+        // The titlebar exists only on the platforms whose own is hidden
+        // (see [`titlebar`]), so the child is added under the same
+        // compile-time gate — `cfg!` would leave the call compiled on
+        // Linux, where the function does not exist.
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        let content = content.child(titlebar(&theme));
+        let content = content.child(
+            div()
+                .flex_1()
+                .min_h(px(0.))
+                .flex()
+                .flex_row()
+                .child(self.render_sidebar(&theme, cx))
+                .child(self.render_page(&theme, window, cx)),
+        );
         material.panel(&theme, content)
     }
 }
@@ -226,7 +233,7 @@ fn titlebar(theme: &ui::theme::Theme) -> Div {
     // them over the transparent titlebar.
     #[cfg(target_os = "macos")]
     let titlebar = titlebar.child(div().flex_none().w(px(78.)));
-    titlebar
+    let titlebar = titlebar
         .child(
             // The one place to grab the window by, outside the page and
             // the sidebar.
@@ -240,17 +247,19 @@ fn titlebar(theme: &ui::theme::Theme) -> Div {
                 .font_weight(theme.typography.medium)
                 .text_color(theme.text_title)
                 .child("Settings"),
-        )
+        );
         // Windows: the caption buttons, marked with the platform's window
         // control areas so the hit test routes them to the system's real
         // close, minimize and maximize behavior. The click handlers are
         // the same behavior for platforms that never consult the hit test
         // (GPUI's test platform among them); on Windows itself the system
         // takes the click through the hit test and the handlers stay
-        // idle.
-        .when(cfg!(target_os = "windows"), |titlebar| {
-            titlebar.child(window_controls(theme))
-        })
+        // idle. Added under the same compile-time gate as
+        // [`window_controls`] — `cfg!` would leave the call compiled on
+        // the other platforms, where the function does not exist.
+        #[cfg(target_os = "windows")]
+        let titlebar = titlebar.child(window_controls(theme));
+        titlebar
 }
 
 /// The Windows caption buttons: minimize, maximize, close, right to left
