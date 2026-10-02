@@ -4,12 +4,16 @@
 # Usage: scripts/smoke-windows.ps1 -OutDir <output-dir>
 param([string]$OutDir = "smoke")
 $ErrorActionPreference = "Stop"
+# Behavior captures use a fixed palette without desktop-dependent glass.
+$env:PANE_THEME = "dark"
+$env:PANE_MATERIAL = "opaque"
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $data = Join-Path $OutDir "data"
 if (Test-Path $data) { Remove-Item -Recurse -Force $data }
 $env:PANE_DATA_DIR = $data
 # The tested OS version and architecture
 "$([System.Environment]::OSVersion.VersionString) $env:PROCESSOR_ARCHITECTURE" | Set-Content (Join-Path $OutDir "system.txt")
+'theme=dark material=opaque (behavior smoke; not blur evidence)' | Add-Content (Join-Path $OutDir "system.txt")
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 Add-Type @"
 using System; using System.Runtime.InteropServices;
@@ -73,8 +77,8 @@ function Start-Pane($log, [string[]]$arguments, $program = "target/debug/pane.ex
     Start-Sleep -Seconds 2
     Focus-Pane $process
     # A --install preview arrives once its check finishes; until then the
-    # screen is root search, whose query field's border is #8ab4f8. Wait for
-    # the field to leave, so the phase's first Enter lands on the preview:
+    # screen is root search. Wait for preview metadata below its heading, then
+    # send the phase's first Enter to the preview:
     # run 36796103906's Linux frame 31 lost that race (the check outlasted
     # the wait and the Enter opened root search's own first row instead).
     if ($arguments -and $arguments[0] -eq "--install") {
@@ -85,7 +89,7 @@ function Start-Pane($log, [string[]]$arguments, $program = "target/debug/pane.ex
             # is everything it writes, and the process object Stop-Pane waits
             # on must not be followed by the checker's lines (run 36802787026
             # failed its first Stop-Pane on a string's WaitForExit).
-            $null = python "$PSScriptRoot/check_screenshot.py" --absent (Join-Path $OutDir "preview-wait.png") "8ab4f8"
+            $null = python "$PSScriptRoot/check_screenshot.py" --preview (Join-Path $OutDir "preview-wait.png")
             if ($LASTEXITCODE -eq 0) { $previewShown = $true; break }
             Start-Sleep -Milliseconds 500
         }
@@ -101,7 +105,7 @@ function Stop-Pane($process) {
 
 $process = Start-Pane "stderr.log"
 Capture "1-root.png"
-Check "1-root.png" "8a96a3"   # the hint line: text renders
+Check "1-root.png" "8e8f94"   # the hint line: text renders
 # Open each sample command (Rust, JavaScript, TypeScript) and run an item.
 foreach ($index in 0..2) {
     for ($i = 0; $i -lt $index; $i++) { Send "{DOWN}" }
@@ -125,7 +129,7 @@ Send "{DOWN}{DOWN}{DOWN}{DOWN}{ENTER}"; Start-Sleep -Seconds 1
 Capture "6-form.png"
 Send "{ENTER}"; Start-Sleep -Seconds 2
 Capture "7-form-error.png"
-Check "7-form-error.png" "f08c8c"   # the rejected field's message
+Check "7-form-error.png" "ff9a92"   # the rejected field's message
 Send "Ada{TAB}{DOWN}{ENTER}"; Start-Sleep -Seconds 2
 Capture "8-form-result.png"
 Check "8-form-result.png" "9fd8a8"   # the guest's answer
@@ -137,7 +141,7 @@ Stop-Pane $process
 # command, then the install and Manage extensions rows.
 $process = Start-Pane "stderr-install.log" @("--install", "target/guests/packages/sample-rust")
 Capture "9-package.png"
-Check "9-package.png" "aab4c0"   # the package's identity and compatibility lines
+Check "9-package.png" "a3a4a9"   # the package's identity and compatibility lines
 Send "{ENTER}"; Start-Sleep -Seconds 2
 Capture "10-installed.png"
 Check "10-installed.png" "9fd8a8"   # "Installed Rust sample"
@@ -150,7 +154,7 @@ Stop-Pane $process
 # The installed command is still listed after a restart.
 $process = Start-Pane "stderr-restart.log"
 Capture "12-restarted.png"
-Check "12-restarted.png" "8a96a3"
+Check "12-restarted.png" "8e8f94"
 if (-not (Test-Path (Join-Path $data "extensions/installed.json"))) { throw "no install record" }
 Focus-Pane $process
 
@@ -164,7 +168,7 @@ Check "13-windows-only.png" "9fd8a8"   # Windows: the guest's answer
 Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2
 Capture "14-not-windows.png"
 Check "14-not-windows.png" "d6a36a"   # the row's reason
-Check "14-not-windows.png" "f08c8c"   # Windows: the reason as the error
+Check "14-not-windows.png" "ff9a92"   # Windows: the reason as the error
 Send "{ESC}"; Start-Sleep -Seconds 1
 Stop-Pane $process
 
@@ -184,7 +188,7 @@ Copy-Item "target/guests/sample_rust.wasm" $elsewhere
 '@ | Set-Content -Encoding ascii (Join-Path $elsewhere "pane.json")
 $process = Start-Pane "stderr-elsewhere.log" @("--install", $elsewhere)
 Capture "15-no-compatible-package.png"
-Check "15-no-compatible-package.png" "f08c8c"   # "Not available on Windows: ..."
+Check "15-no-compatible-package.png" "ff9a92"   # "Not available on Windows: ..."
 Stop-Pane $process
 
 # Install the settings sample, save a choice with it, then disable it in
@@ -213,7 +217,7 @@ if (-not (Select-String -Quiet -SimpleMatch '"greeting-style": "formal"' (Join-P
 # style, where without a saved style it reports an error.
 $process = Start-Pane "stderr-reenable.log"
 Capture "18-restarted-disabled.png"
-Check "18-restarted-disabled.png" "8a96a3"
+Check "18-restarted-disabled.png" "8e8f94"
 python "$PSScriptRoot/check_screenshot.py" --same (Join-Path $OutDir "12-restarted.png") (Join-Path $OutDir "18-restarted-disabled.png")
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: root after the restart lists the disabled package" }
 Send "{DOWN 14}"
@@ -281,7 +285,7 @@ $process = Start-Pane "stderr-calculator.log" @("--install", "target/guests/pack
 Send "{ENTER}"; Start-Sleep -Seconds 2   # Install
 Send "6*7"; Start-Sleep -Seconds 2
 Capture "27-answer.png"
-Check "27-answer.png" "364355" 3000   # the selected answer row
+Check "27-answer.png" "selected" 3000   # the selected answer row
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Capture "28-copied.png"   # "Copied 42 to the clipboard"
 Send "^a"; Send "42{+}1"; Start-Sleep -Seconds 2
@@ -368,7 +372,7 @@ Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{DOWN 11}"
 Send "{ENTER}"; Start-Sleep -Seconds 2
 Capture "36-not-reloaded.png"
-Check "36-not-reloaded.png" "f08c8c"   # "Dev was not reloaded: ..."
+Check "36-not-reloaded.png" "ff9a92"   # "Dev was not reloaded: ..."
 Send "{ESC}"; Start-Sleep -Seconds 1
 Send "{DOWN 8}"
 Send "{ENTER}"; Start-Sleep -Seconds 3
@@ -386,7 +390,7 @@ Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{DOWN 11}"
 Send "{ENTER}"; Start-Sleep -Seconds 3
 Capture "38-start-failed.png"
-Check "38-start-failed.png" "f08c8c"   # "Reloaded Dev, but it failed to start; ..."
+Check "38-start-failed.png" "ff9a92"   # "Reloaded Dev, but it failed to start; ..."
 Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 3   # Retry starting Dev
 Capture "39-retried.png"
 Check "39-retried.png" "9fd8a8"   # "Started Dev"
@@ -421,7 +425,7 @@ Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{DOWN 13}"
 Send "{ENTER}"; Start-Sleep -Seconds 1   # "Clear cache of Settings sample"
 Capture "41-confirm-clear-cache.png"
-Check "41-confirm-clear-cache.png" "aab4c0"   # what is deleted and what is kept
+Check "41-confirm-clear-cache.png" "a3a4a9"   # what is deleted and what is kept
 Send "{ENTER}"; Start-Sleep -Seconds 2   # "Clear cache"
 Capture "42-cache-cleared.png"
 Check "42-cache-cleared.png" "9fd8a8"   # "Cleared the cache of Settings sample"
@@ -463,7 +467,7 @@ $env:APPDATA = $appData
 Send "{ENTER}"; Start-Sleep -Seconds 2   # Install
 Send "pane smoke"; Start-Sleep -Seconds 3
 Capture "44-application.png"
-Check "44-application.png" "364355" 3000   # the selected application row
+Check "44-application.png" "selected" 3000   # the selected application row
 Send "{ENTER}"; Start-Sleep -Seconds 3
 Focus-Pane $process
 Capture "45-opened.png"
@@ -495,7 +499,7 @@ Stop-Pane $process
 $process = Start-Pane "stderr-quicklinks-restart.log"
 Send "pane iss"; Start-Sleep -Seconds 2
 Capture "47-quicklink-found.png"
-Check "47-quicklink-found.png" "364355" 3000   # the selected quicklink row
+Check "47-quicklink-found.png" "selected" 3000   # the selected quicklink row
 $shots = "46-quicklink-saved", "47-quicklink-found" | ForEach-Object { Join-Path $OutDir "$_.png" }
 python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the quicklink was not found" }
@@ -511,7 +515,7 @@ Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{DOWN 25}"
 Send "{ENTER}"; Start-Sleep -Seconds 1   # "Uninstall Settings sample"
 Capture "49-confirm-uninstall.png"
-Check "49-confirm-uninstall.png" "aab4c0"   # what is removed and the saved data
+Check "49-confirm-uninstall.png" "a3a4a9"   # what is removed and the saved data
 Send "{ENTER}"; Start-Sleep -Seconds 2   # "Uninstall and keep saved data"
 Capture "50-uninstalled.png"
 Check "50-uninstalled.png" "9fd8a8"   # "Uninstalled Settings sample; its settings and content are kept"
@@ -563,7 +567,7 @@ Send "{DOWN 14}"   # Manage extensions…
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{DOWN 4}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 1   # "Hotkey for Greeting"
 Capture "52-hotkey-screen.png"
-Check "52-hotkey-screen.png" "aab4c0"   # "Press the keys that should open Greeting ..."
+Check "52-hotkey-screen.png" "a3a4a9"   # "Press the keys that should open Greeting ..."
 Send "^%g"; Start-Sleep -Seconds 2
 Capture "53-hotkey-assigned.png"
 Check "53-hotkey-assigned.png" "9fd8a8"   # "Ctrl+Alt+G now opens Greeting"
@@ -573,7 +577,7 @@ Capture "54-unfocused.png"   # evidence only: Pane is not on screen
 Press-Hotkey
 Check-Pane-In-Front $process
 Capture "55-hotkey-opened.png"
-Check "55-hotkey-opened.png" "364355" 3000   # Greeting's first item, selected
+Check "55-hotkey-opened.png" "selected" 3000   # Greeting's first item, selected
 $shots = "53-hotkey-assigned", "55-hotkey-opened" | ForEach-Object { Join-Path $OutDir "$_.png" }
 python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the hotkey opened nothing" }
@@ -584,7 +588,7 @@ Minimize-Pane $process
 Press-Hotkey
 Check-Pane-In-Front $process
 Capture "56-hotkey-after-restart.png"
-Check "56-hotkey-after-restart.png" "364355" 3000   # Greeting's first item, selected
+Check "56-hotkey-after-restart.png" "selected" 3000   # Greeting's first item, selected
 $shots = "53-hotkey-assigned", "56-hotkey-after-restart" | ForEach-Object { Join-Path $OutDir "$_.png" }
 python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the hotkey did not open Greeting after a restart" }
@@ -622,7 +626,7 @@ Send "{DOWN 7}"   # Crash
 for ($i = 0; $i -lt 3; $i++) { Send "{ENTER}"; Start-Sleep -Seconds 2 }
 Send "greet"; Start-Sleep -Seconds 1   # Greeting and its reason at the top on any window height
 Capture "59-paused.png"
-Check "59-paused.png" "f08c8c"   # "Settings sample crashed 3 times within 5 minutes and is paused ..."
+Check "59-paused.png" "ff9a92"   # "Settings sample crashed 3 times within 5 minutes and is paused ..."
 Check "59-paused.png" "d6a36a"   # Greeting: "Settings sample is paused after an error; ..."
 Stop-Pane $process
 if (-not (Select-String -Quiet -SimpleMatch '"paused"' (Join-Path $data "extensions/installed.json"))) { throw "pause not recorded" }
@@ -635,7 +639,7 @@ Send "{DOWN 14}"   # Manage extensions…
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{DOWN 3}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 1   # "Why Settings sample is paused"
 Capture "61-pause-details.png"
-Check "61-pause-details.png" "aab4c0"   # the details
+Check "61-pause-details.png" "a3a4a9"   # the details
 Send "{ENTER}"; Start-Sleep -Seconds 2   # Retry Settings sample
 Capture "62-pause-retried.png"
 Check "62-pause-retried.png" "9fd8a8"   # "Started Settings sample"
@@ -693,9 +697,9 @@ Send "{DOWN 14}"   # Manage extensions… (root's last row)
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{ENTER}"; Start-Sleep -Seconds 1   # "Delete retained data of Settings sample" (the list's first row)
 Capture "63-confirm-delete-retained.png"
-Check "63-confirm-delete-retained.png" "aab4c0"   # what is kept and what is not touched
+Check "63-confirm-delete-retained.png" "a3a4a9"   # what is kept and what is not touched
 # The confirmation's status line is the idle hint, not a result: the
-# extension list also shows aab4c0 subtitles, so that color alone let the
+# extension list also shows 8e8f94 subtitles, so that color alone let the
 # wrong screen pass (what #58 turned out to be: Down to the list's end had
 # landed on the automatic-update row, whose Enter toggles it and leaves its
 # result on screen). No result color on screen says the right screen is up.
@@ -751,7 +755,7 @@ if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the fallback row chan
 Send "{ESC}"; Start-Sleep -Seconds 1   # root search
 Send "ec hello"; Start-Sleep -Seconds 1
 Capture "68-alias-row.png"
-Check "68-alias-row.png" "364355" 3000   # Echo, sending “hello”, selected
+Check "68-alias-row.png" "selected" 3000   # Echo, sending “hello”, selected
 Send "{ENTER}"; Start-Sleep -Seconds 3
 Capture "69-alias-answer.png"
 Check "69-alias-answer.png" "9fd8a8"   # "Echo heard “hello”"
@@ -760,7 +764,7 @@ Send "zqx"; Start-Sleep -Seconds 1
 Capture "70-fallback-listed.png"   # "No results for “zqx”", then Echo, not selected
 Send "{DOWN}"; Start-Sleep -Seconds 1
 Capture "71-fallback-chosen.png"
-Check "71-fallback-chosen.png" "364355" 3000   # Echo, now selected
+Check "71-fallback-chosen.png" "selected" 3000   # Echo, now selected
 $shots = "70-fallback-listed", "71-fallback-chosen" | ForEach-Object { Join-Path $OutDir "$_.png" }
 python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: Down did not select the fallback" }
@@ -805,7 +809,7 @@ if (Test-Path $data) { Remove-Item -Recurse -Force $data }
 $env:PANE_DATA_DIR = $data
 $process = Start-Pane "stderr-dependencies.log" @("--install", "target/guests/packages/sample-dependencies")
 Capture "75-dependencies-preview.png"
-Check "75-dependencies-preview.png" "aab4c0"   # "Requires: JavaScript operations sample, installed with it ..."
+Check "75-dependencies-preview.png" "a3a4a9"   # "Requires: JavaScript operations sample, installed with it ..."
 Send "{ENTER}"; Start-Sleep -Seconds 3   # Install; Greet through dependencies is selected
 Capture "76-dependencies-installed.png"
 Check "76-dependencies-installed.png" "9fd8a8"   # "Installed Dependencies sample with JavaScript operations sample, which it requires"
@@ -889,7 +893,7 @@ Send "{ENTER}"; Start-Sleep -Seconds 2   # open Helper sample
 Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2   # Echo after waiting
 if (-not (Helpers-Running)) { throw "the waiting helper is not running" }
 Capture "94-helper-before-quit.png"
-Check "94-helper-before-quit.png" "d6c27a"   # "Running…"
+Check "94-helper-before-quit.png" "progress"   # "Running…"
 $alive = Get-ChildItem -Recurse -Filter "pane-echo.alive" $packages | Select-Object -First 1
 if (-not $alive) { throw "the waiting helper does not beat" }
 if (-not $process.CloseMainWindow()) { throw "Pane's window did not take the close request" }
@@ -1010,7 +1014,7 @@ function Develop-Sample($sample, $title, $component, $source, $n, $greeting, $br
     Set-Greeting (Join-Path $copy $source) $broken
     Wait-Failed $log $failures
     Capture "$($n + 4)-$sample-build-failed.png"
-    Check "$($n + 4)-$sample-build-failed.png" "f08c8c"   # "<title> did not build: ..."
+    Check "$($n + 4)-$sample-build-failed.png" "ff9a92"   # "<title> did not build: ..."
     Say-Hello
     Capture "$($n + 5)-$sample-kept.png"
     Check "$($n + 5)-$sample-kept.png" "9fd8a8"   # still "Hello again"
@@ -1073,7 +1077,7 @@ for ($i = 0; $i -lt 14; $i++) { Send "{DOWN}" }   # Manage extensions...
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{ENTER}"; Start-Sleep -Seconds 1   # disable JavaScript operations sample: asks first
 Capture "140-disable-dependents-asked.png"
-Check "140-disable-dependents-asked.png" "aab4c0"   # "Dependencies sample, which requires JavaScript operations sample ..."
+Check "140-disable-dependents-asked.png" "a3a4a9"   # "Dependencies sample, which requires JavaScript operations sample ..."
 Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 1   # Cancel
 Capture "141-disable-dependents-cancelled.png"   # both still enabled
 Send "{ENTER}"; Start-Sleep -Seconds 1   # asks again
@@ -1144,12 +1148,12 @@ Send "{ENTER}"; Start-Sleep -Seconds 2   # open Helper sample
 Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2   # Echo after waiting
 if (-not (Helpers-Running)) { throw "the waiting helper is not running" }
 Capture "201-runtime-helper-waiting.png"
-Check "201-runtime-helper-waiting.png" "d6c27a"   # "Running…"
+Check "201-runtime-helper-waiting.png" "progress"   # "Running…"
 $alive = Get-ChildItem -Recurse -Filter "pane-echo.alive" $packages | Select-Object -First 1
 if (-not $alive) { throw "the waiting helper does not beat" }
 Inject-Fault "crash"
 Capture "202-runtime-crashed.png"
-Check "202-runtime-crashed.png" "f08c8c"   # "Pane's extension runtime stopped unexpectedly and was started again; ..."
+Check "202-runtime-crashed.png" "ff9a92"   # "Pane's extension runtime stopped unexpectedly and was started again; ..."
 if (Helpers-Running) { throw "the helper outlived the crashed runtime" }
 $beats = (Get-Item $alive.FullName).Length; Start-Sleep -Milliseconds 500
 if ((Get-Item $alive.FullName).Length -ne $beats) { throw "the helper still beats after the crash" }
@@ -1163,20 +1167,20 @@ Send "{DOWN 8}"   # Count
 Inject-Fault "crash-before-answer:count"
 Send "{ENTER}"; Start-Sleep -Seconds 3   # counts, then the runtime crashes before answering
 Capture "203-runtime-stopped.png"
-Check "203-runtime-stopped.png" "f08c8c"   # the runtime stopped; its answer is lost
+Check "203-runtime-stopped.png" "ff9a92"   # the runtime stopped; its answer is lost
 if ((Saved-Count) -ne "2") { throw "Count did not run once before the crash" }
 Send "{ESC}"; Start-Sleep -Seconds 1
 Send "greet"; Start-Sleep -Seconds 1
 Send "{ENTER}"; Start-Sleep -Seconds 2   # Greeting: nothing runs
 Capture "204-runtime-refused.png"
-Check "204-runtime-refused.png" "f08c8c"   # "Extension runtime unavailable: it stopped after crashing ..."
+Check "204-runtime-refused.png" "ff9a92"   # "Extension runtime unavailable: it stopped after crashing ..."
 Send "{ESC}"; Start-Sleep -Seconds 1   # clears the query
 Send "{DOWN 14}"   # Manage extensions…
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Capture "205-runtime-manage.png"   # Restart the extension runtime, Why the extension runtime stopped
 Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 1   # Why the extension runtime stopped
 Capture "206-runtime-details.png"
-Check "206-runtime-details.png" "aab4c0"   # the details
+Check "206-runtime-details.png" "a3a4a9"   # the details
 Send "{ESC}"; Start-Sleep -Seconds 1   # back at its row
 Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2   # disable Helper sample, the first package
 Capture "207-runtime-disabled.png"
@@ -1247,7 +1251,7 @@ Send "{ESC}"; Start-Sleep -Seconds 1   # root search answers meanwhile
 Send "{DOWN 10}"   # Manage extensions…
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Capture "240-unresponsive-window-answers.png"   # the extension list, while the guest computes
-Check "240-unresponsive-window-answers.png" "aab4c0"   # its rows' subtitles
+Check "240-unresponsive-window-answers.png" "subtitle"   # its rows' subtitles
 if ((Stopped-Calls) -ne 0) { throw "Stop responding was stopped before frame 240" }
 Inject-Fault "limits:2,4,15"   # it has computed longer: Pane stops it at its next tick
 for ($i = 0; $i -lt 300 -and (Stopped-Calls) -lt 1; $i++) { Start-Sleep -Milliseconds 100 }
@@ -1258,11 +1262,11 @@ Send "{ENTER}"; Start-Sleep -Seconds 2   # open Greeting
 Send "{DOWN 9}"   # Stop responding
 Send "{ENTER}"; Start-Sleep -Seconds 8
 Capture "241-unresponsive-stopped.png"
-Check "241-unresponsive-stopped.png" "f08c8c"   # "The extension stopped responding: it computed for 2 seconds ..."
+Check "241-unresponsive-stopped.png" "ff9a92"   # "The extension stopped responding: it computed for 2 seconds ..."
 Send "{ENTER}"; Start-Sleep -Seconds 8   # the third time
 Send "greet"; Start-Sleep -Seconds 1   # Greeting and its reason at the top
 Capture "242-unresponsive-paused.png"
-Check "242-unresponsive-paused.png" "f08c8c"   # "Settings sample stopped responding 3 times within 5 minutes and is paused ..."
+Check "242-unresponsive-paused.png" "ff9a92"   # "Settings sample stopped responding 3 times within 5 minutes and is paused ..."
 Check "242-unresponsive-paused.png" "d6a36a"   # Greeting: "Settings sample is paused after an error; ..."
 if ((Saved-Setting "busy") -ne "started") { throw "Stop responding finished or was lost" }
 Send "{ESC}"; Start-Sleep -Seconds 1   # clears the query
@@ -1270,7 +1274,7 @@ Send "{DOWN 10}"   # Manage extensions…
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{DOWN 3}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 1   # "Why Settings sample is paused"
 Capture "243-unresponsive-pause-details.png"
-Check "243-unresponsive-pause-details.png" "aab4c0"   # the details
+Check "243-unresponsive-pause-details.png" "a3a4a9"   # the details
 Send "{ENTER}"; Start-Sleep -Seconds 2   # Retry Settings sample
 Capture "244-unresponsive-retried.png"
 Check "244-unresponsive-retried.png" "9fd8a8"   # "Started Settings sample"
@@ -1279,16 +1283,16 @@ Inject-Fault "hang"
 Send "greet"; Start-Sleep -Seconds 1
 Send "{ENTER}"; Start-Sleep -Seconds 4   # open Greeting: the stuck runtime is not responding yet
 Capture "245-unresponsive-not-yet.png"
-Check "245-unresponsive-not-yet.png" "d6c27a"   # "Pane's extension runtime is not responding yet. ..."
+Check "245-unresponsive-not-yet.png" "progress"   # "Pane's extension runtime is not responding yet. ..."
 Start-Sleep -Seconds 14   # Pane gives up on it
 Capture "246-unresponsive-runtime.png"
-Check "246-unresponsive-runtime.png" "f08c8c"   # the runtime stopped responding and was started again
+Check "246-unresponsive-runtime.png" "ff9a92"   # the runtime stopped responding and was started again
 Send "{ESC}"; Start-Sleep -Seconds 1   # clears the query
 Send "{DOWN 10}"   # Manage extensions…
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Send "{ENTER}"; Start-Sleep -Seconds 1   # Why the extension runtime stopped, its first row
 Capture "247-unresponsive-runtime-details.png"
-Check "247-unresponsive-runtime-details.png" "aab4c0"   # the details
+Check "247-unresponsive-runtime-details.png" "a3a4a9"   # the details
 Inject-Fault "release"
 Send "{ESC}{ESC}"; Start-Sleep -Seconds 1
 Send "greet"; Start-Sleep -Seconds 1
@@ -1326,7 +1330,7 @@ Send "{ENTER}"; Start-Sleep -Seconds 1
 for ($i = 0; $i -lt 6; $i++) { Send "{DOWN}" }   # Uninstall JavaScript operations sample
 Send "{ENTER}"; Start-Sleep -Seconds 1   # asks first
 Capture "180-uninstall-dependents-asked.png"
-Check "180-uninstall-dependents-asked.png" "aab4c0"   # "Dependencies sample, which requires JavaScript operations sample ..."
+Check "180-uninstall-dependents-asked.png" "a3a4a9"   # "Dependencies sample, which requires JavaScript operations sample ..."
 Send "{DOWN}{DOWN}{ENTER}"; Start-Sleep -Seconds 1   # Cancel
 Capture "181-uninstall-dependents-cancelled.png"   # both still installed
 Send "{ENTER}"; Start-Sleep -Seconds 1   # asks again
@@ -1341,7 +1345,7 @@ Send "{ENTER}"; Start-Sleep -Seconds 3   # Install the dependency alone
 for ($i = 0; $i -lt 14; $i++) { Send "{DOWN}" }   # Manage extensions...
 Send "{ENTER}"; Start-Sleep -Seconds 1
 Capture "183-uninstall-dependents-reinstalled-alone.png"   # only the JavaScript operations sample is listed
-Check "183-uninstall-dependents-reinstalled-alone.png" "aab4c0"
+Check "183-uninstall-dependents-reinstalled-alone.png" "subtitle"
 $shots = "180-uninstall-dependents-asked", "181-uninstall-dependents-cancelled", "182-uninstall-dependents-uninstalled", "183-uninstall-dependents-reinstalled-alone" | ForEach-Object { Join-Path $OutDir "$_.png" }
 python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: uninstalling with dependents changed nothing" }
@@ -1371,7 +1375,7 @@ try {
     $env:PANE_NPM_REGISTRY = "http://127.0.0.1:$((Get-Content $portFile).Trim())/"
     $process = Start-Pane "stderr-npm.log" @("--install", "target/guests/packages/sample-dependencies-npm")
     Capture "260-npm-dependency-preview.png"
-    Check "260-npm-dependency-preview.png" "aab4c0"   # "Requires: Greeter from npm, installed with it from npm:@pane-samples/greeter"
+    Check "260-npm-dependency-preview.png" "a3a4a9"   # "Requires: Greeter from npm, installed with it from npm:@pane-samples/greeter"
     Send "{ENTER}"; Start-Sleep -Seconds 3   # Install; Greet through an npm dependency is selected
     Capture "261-npm-dependency-installed.png"
     Check "261-npm-dependency-installed.png" "9fd8a8"   # "Installed Dependencies from npm sample with Greeter from npm, which it requires"
@@ -1383,11 +1387,11 @@ try {
     for ($i = 0; $i -lt 14; $i++) { Send "{DOWN}" }   # Manage extensions..., the last row
     Send "{UP 2}{ENTER}"; Start-Sleep -Seconds 1   # Install extension from npm...
     Capture "263-npm-form.png"
-    Check "263-npm-form.png" "8a96a3"   # the form's hint line
+    Check "263-npm-form.png" "8e8f94"   # the form's hint line
     Send "@pane-samples/greeter"
     Send "{ENTER}"; Start-Sleep -Seconds 3
     Capture "264-npm-preview.png"
-    Check "264-npm-preview.png" "aab4c0"   # "Source: npm package @pane-samples/greeter", "npm version: 0.1.0, the latest", ...
+    Check "264-npm-preview.png" "a3a4a9"   # "Source: npm package @pane-samples/greeter", "npm version: 0.1.0, the latest", ...
     Send "{ENTER}"; Start-Sleep -Seconds 3   # Update; Greeter from npm is selected
     Capture "265-npm-updated.png"
     Check "265-npm-updated.png" "9fd8a8"   # "Updated Greeter from npm to 0.1.0"
@@ -1483,16 +1487,16 @@ try {
     $repository = "http://127.0.0.1:$((Get-Content $portFile).Trim())/greeter.git"
     $process = Start-Pane "stderr-git.log" @("--install", "git:$repository")
     # The fetch runs after the window shows: capture until its explanation does.
-    Capture-Until "300-git-source-only.png" "f08c8c" 60   # "The default branch, main (commit ...) of the Git repository ... holds only the source of ..."
+    Capture-Until "300-git-source-only.png" "ff9a92" 60   # "The default branch, main (commit ...) of the Git repository ... holds only the source of ..."
     Send "{ESC}"; Start-Sleep -Seconds 1
     for ($i = 0; $i -lt 14; $i++) { Send "{DOWN}" }   # the last row
     Send "{ENTER}"; Start-Sleep -Seconds 1   # Install extension from Git...
     Capture "301-git-form.png"
-    Check "301-git-form.png" "8a96a3"   # the form's hint line
+    Check "301-git-form.png" "8e8f94"   # the form's hint line
     Send "$repository@v0.1.0"
     Send "{ENTER}"; Start-Sleep -Seconds 3
     Capture "302-git-preview.png"
-    Check "302-git-preview.png" "aab4c0"   # "Source: Git repository 127.0.0.1:<port>/greeter", "Revision: tag v0.1.0, which you named: ..."
+    Check "302-git-preview.png" "a3a4a9"   # "Source: Git repository 127.0.0.1:<port>/greeter", "Revision: tag v0.1.0, which you named: ..."
     Send "{ENTER}"; Start-Sleep -Seconds 3   # Install; Greeter from Git is selected
     Capture "303-git-installed.png"
     Check "303-git-installed.png" "9fd8a8"   # "Installed Greeter from Git"
@@ -1547,7 +1551,7 @@ try {
     $tracked = "http://127.0.0.1:$((Get-Content $updatePortFile).Trim())/greeter-tracked.git"
     $process = Start-Pane "stderr-git-update.log" @("--install", "git:$tracked@release")
     # The fetch runs after the window shows: capture until its preview does.
-    Capture-Until "305-git-tracked-preview.png" "aab4c0" 60   # "Revision: branch release, tracked: an update fetches that branch again"
+    Capture-Until "305-git-tracked-preview.png" "a3a4a9" 60   # "Revision: branch release, tracked: an update fetches that branch again"
     Send "{ENTER}"; Start-Sleep -Seconds 3   # Install; Greeter from Git is selected
     Capture "306-git-tracked-installed.png"
     Check "306-git-tracked-installed.png" "9fd8a8"   # "Installed Greeter from Git"
@@ -1620,7 +1624,7 @@ Check "220-files-folder-granted.png" "9fd8a8"   # "Files may now list "Pane smok
 Send "{ESC}"; Start-Sleep -Seconds 1
 Send "plan"; Start-Sleep -Seconds 3
 Capture "221-files-found.png"
-Check "221-files-found.png" "364355" 3000   # the selected file row
+Check "221-files-found.png" "selected" 3000   # the selected file row
 Send "{ENTER}"; Start-Sleep -Seconds 3
 Capture "222-files-opened.png"
 Check "222-files-opened.png" "9fd8a8"   # "Opened Resume plan u.txt"
@@ -1633,7 +1637,7 @@ Send "{ESC}"; Start-Sleep -Seconds 1
 Send "runner"; Start-Sleep -Seconds 3
 Send "{ENTER}"; Start-Sleep -Seconds 2
 Capture "223-files-program-refused.png"
-Check "223-files-program-refused.png" "f08c8c"   # "Could not open runner.bat: it is a program or script, ..."
+Check "223-files-program-refused.png" "ff9a92"   # "Could not open runner.bat: it is a program or script, ..."
 if (Test-Path $openLog) { throw "the batch file was handed to the handler" }
 if (Test-Path (Join-Path $filesFixture "runner-ran")) { throw "the batch file ran" }
 $shots = "220-files-folder-granted", "221-files-found", "222-files-opened", "223-files-program-refused" | ForEach-Object { Join-Path $OutDir "$_.png" }
@@ -1691,7 +1695,7 @@ try {
     Send "package search"; Start-Sleep -Seconds 1
     Send "{ENTER}"; Start-Sleep -Seconds 3   # open Package search
     Capture "162-command-opened.png"   # its own list, its search field empty
-    Check "162-command-opened.png" "364355" 3000   # its first row, selected
+    Check "162-command-opened.png" "selected" 3000   # its first row, selected
     Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2   # Service address: its form
     Send "http://127.0.0.1:$servicePort"
     Send "{ENTER}"; Start-Sleep -Seconds 2   # Save
@@ -1700,7 +1704,7 @@ try {
     Send "{ESC}"; Start-Sleep -Seconds 1   # back to the command, its search field empty
     Send "aurora"; Start-Sleep -Seconds 3
     Capture "164-search-results.png"   # aurora-charts, selected, and aurora-cli
-    Check "164-search-results.png" "364355" 3000
+    Check "164-search-results.png" "selected" 3000
     if (-not (Select-String -Quiet -Pattern '^GET /search\?q=aurora$' $serviceLog)) { throw "the command's search did not reach the service" }
     Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 3   # aurora-cli's details
     Capture "165-details.png"
@@ -1708,19 +1712,19 @@ try {
     Send "^a"; Send "slow"; Start-Sleep -Seconds 2   # held by the service
     Send "^a"; Send "ember"; Start-Sleep -Seconds 3
     Capture "166-newer-search.png"   # ember-tz, not what "slow" would list
-    Check "166-newer-search.png" "364355" 3000
+    Check "166-newer-search.png" "selected" 3000
     if (-not (Select-String -Quiet -Pattern '^ABANDONED /search\?q=slow$' $serviceLog)) { throw "the replaced search was not stopped" }
     Send "^a"; Send "down"; Start-Sleep -Seconds 3
     Capture "167-service-error.png"
-    Check "167-service-error.png" "f08c8c"   # "... The service answered 503: the registry is down for maintenance"
+    Check "167-service-error.png" "ff9a92"   # "... The service answered 503: the registry is down for maintenance"
     Stop-Process -Id $service.Id; $service.WaitForExit()
     Send "^a"; Send "basalt"; Start-Sleep -Seconds 6   # Windows retries a refused connection for about two seconds
     Capture "168-offline.png"
-    Check "168-offline.png" "f08c8c"   # "... Could not reach the service at http://127.0.0.1:<port>: connection refused"
+    Check "168-offline.png" "ff9a92"   # "... Could not reach the service at http://127.0.0.1:<port>: connection refused"
     $service = Start-FixtureService "fixture-service-again.log" $servicePort
     Send "^a"; Send "cobalt"; Start-Sleep -Seconds 3
     Capture "169-back-online.png"   # cobalt-http, selected: not paused
-    Check "169-back-online.png" "364355" 3000
+    Check "169-back-online.png" "selected" 3000
     $shots = "161-root-typed", "162-command-opened", "163-service-set", "164-search-results", "165-details", "166-newer-search", "167-service-error", "168-offline", "169-back-online" | ForEach-Object { Join-Path $OutDir "$_.png" }
     python "$PSScriptRoot/check_screenshot.py" --distinct @shots
     if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: searching inside the command changed nothing" }
@@ -1831,7 +1835,7 @@ Wait-For $registry "clipboard-history" $true; Start-Sleep -Seconds 1
 Copy-Text "pane-smoke-before" $null   # while history is off
 Send "{ENTER}"; Start-Sleep -Seconds 3   # open Clipboard History
 Capture "280-clipboard-off.png"
-Check "280-clipboard-off.png" "aab4c0"   # "Off · Pane keeps nothing you copy until you turn it on ..."
+Check "280-clipboard-off.png" "subtitle"   # "Off · Pane keeps nothing you copy until you turn it on ..."
 Send "{ENTER}"   # Turn on clipboard history
 Wait-For $history '"capture": "on"' $true; Start-Sleep -Seconds 1
 Capture "281-clipboard-on.png"
@@ -1845,7 +1849,7 @@ Wait-For $history "pane-smoke-second" $true
 if (((Kept-Texts) -join ",") -ne "pane-smoke-second,pane-smoke-kept") { throw "kept: $(Kept-Texts)" }
 Open-History
 Capture "282-clipboard-kept.png"
-Check "282-clipboard-kept.png" "aab4c0"   # the two kept items, newest first
+Check "282-clipboard-kept.png" "subtitle"   # the two kept items, newest first
 Send "{ENTER}"   # Pause clipboard history
 Wait-For $history '"capture": "paused"' $true
 Copy-Text "pane-smoke-paused" $null
@@ -1886,7 +1890,7 @@ Copy-Text "pane-smoke-after-restart" $null
 Wait-For $history "pane-smoke-after-restart" $true
 Open-History
 Capture "285-clipboard-after-restart.png"
-Check "285-clipboard-after-restart.png" "aab4c0"   # kept again after the restart
+Check "285-clipboard-after-restart.png" "subtitle"   # kept again after the restart
 $shots = "280-clipboard-off", "281-clipboard-on", "282-clipboard-kept", "283-clipboard-copied", "284-clipboard-disabled", "285-clipboard-after-restart" | ForEach-Object { Join-Path $OutDir "$_.png" }
 python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: clipboard history changed nothing" }
@@ -1923,7 +1927,7 @@ Start-Sleep -Seconds 1
 if ((Kept-Joined) -ne "pane-smoke-after-restart,pane-smoke-enabled,pane-smoke-second,pane-smoke-resumed") { throw "kept after starting: $(Kept-Joined)" }
 Open-History
 Capture "400-clipboard-expired.png"
-Check "400-clipboard-expired.png" "aab4c0"   # pane-smoke-kept is no longer listed
+Check "400-clipboard-expired.png" "subtitle"   # pane-smoke-kept is no longer listed
 $onClipboard = [PaneClip]::GetText()
 Send "{DOWN 9}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 1   # pane-smoke-second: Copy it again or Delete it
 Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"   # Delete it
@@ -2050,10 +2054,10 @@ try {
     }
     Start-Sleep -Seconds 1
     Capture "500-installed-root.png"
-    Check "500-installed-root.png" "aab4c0"   # root search: the default extensions' commands are listed
+    Check "500-installed-root.png" "subtitle"   # root search: the default extensions' commands are listed
     Send "6*7"; Start-Sleep -Seconds 2
     Capture "501-calculator-answer.png"
-    Check "501-calculator-answer.png" "364355" 3000   # "42", the calculator's selected answer row
+    Check "501-calculator-answer.png" "selected" 3000   # "42", the calculator's selected answer row
     Send "{ENTER}"; Start-Sleep -Seconds 1
     Capture "502-calculator-copied.png"
     Check "502-calculator-copied.png" "9fd8a8"   # "Copied 42 to the clipboard"
@@ -2169,8 +2173,8 @@ try {
     Check "600-notification.png" "9fd8a8"   # "Pane 99.0.0 is available" (or the setup's own outcome)
     Send "^a"; Send "update"; Start-Sleep -Seconds 1
     Capture "601-offered.png"
-    Check "601-offered.png" "aab4c0"   # the offer row: "Your extensions and settings are kept; ..."
-    Check "601-offered.png" "364355" 3000   # the row, selected
+    Check "601-offered.png" "subtitle"   # the offer row: "Your extensions and settings are kept; ..."
+    Check "601-offered.png" "selected" 3000   # the row, selected
     # Taking no action downloads nothing: no package was asked for.
     if (Select-String -SimpleMatch ".zip" $serverLog) { throw "a package was downloaded without the user choosing it" }
 
@@ -2195,7 +2199,7 @@ try {
     Send "^a"; Send "update"; Start-Sleep -Seconds 1
     Send "{ENTER}"; Start-Sleep -Seconds 10
     Capture "602-corrupt-package.png"
-    Check "602-corrupt-package.png" "f08c8c"   # "Could not update Pane to 99.0.0: ... does not match the sha512 integrity"
+    Check "602-corrupt-package.png" "ff9a92"   # "Could not update Pane to 99.0.0: ... does not match the sha512 integrity"
     if (Test-Path (Join-Path $install "pane.exe.old")) { throw "a failed install replaced the program" }
     if ((Get-FileHash $installed).Hash -ne (Get-FileHash (Join-Path $unpackOld "pane\pane.exe")).Hash) {
         throw "a failed install changed the program"
@@ -2242,7 +2246,7 @@ try {
     if (Test-Path (Join-Path $install "pane.exe.old")) { throw "the old program's file was not removed on the new start" }
     Send "^a"; Send "6*7"; Start-Sleep -Seconds 2
     Capture "604-answer-after-update.png"
-    Check "604-answer-after-update.png" "364355" 3000   # "42", the calculator's answer
+    Check "604-answer-after-update.png" "selected" 3000   # "42", the calculator's answer
     Send "{ENTER}"; Start-Sleep -Seconds 1
     Capture "605-copied-after-update.png"
     Check "605-copied-after-update.png" "9fd8a8"   # "Copied 42 to the clipboard"
