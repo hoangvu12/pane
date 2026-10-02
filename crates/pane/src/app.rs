@@ -1,12 +1,21 @@
-//! Window orchestration, navigation, dispatch and the shared frame.
+//! The launcher window: orchestration of the launcher's screens, navigation
+//! and action dispatch.
+//!
+//! [`LauncherWindow`] is a thin renderer over [`pane_core::Launcher`]: key
+//! and mouse input call launcher actions, and each frame draws the
+//! launcher's snapshot. The query field, forms and custom views bind their
+//! data in their own modules — [`crate::features`] and
+//! [`crate::extension_views`] — whose `impl LauncherWindow` blocks supply
+//! the per-screen sync and render methods this orchestration calls.
 
 use std::future::Future;
 use std::mem::{Discriminant, discriminant};
 use std::path::Path;
 
 use gpui::{
-    ClipboardItem, Context, Div, FocusHandle, KeyDownEvent, PathPromptOptions, Pixels, Role,
-    ScrollHandle, SharedString, Size, Stateful, Window, div, prelude::*, relative, rgb,
+    ClipboardItem, Context, Div, FocusHandle, Hsla, KeyDownEvent, PathPromptOptions, Pixels, Role,
+    ScrollHandle, SharedString, Size, Stateful, Window, WindowControlArea, div, prelude::*, px,
+    relative,
 };
 use pane_core::changes::Changes;
 use pane_core::hotkeys::Shortcut;
@@ -14,7 +23,9 @@ use pane_core::{Launcher, LauncherView, Row, Screen, Status};
 
 use crate::extension_views::{custom_view, form};
 use crate::features::root_search;
-use crate::ui::result_row::{ResultRow, result_row};
+use crate::ui::icon::{Glyph, IconTone};
+use crate::ui::result_row::{RowContent, result_row};
+use crate::ui::{self, material::Material};
 use crate::{Back, Confirm, FocusNext, FocusPrevious, SelectNext, SelectPrevious};
 
 pub(crate) const KEY_CONTEXT: &str = "Launcher";
@@ -403,19 +414,44 @@ impl LauncherWindow {
         selected: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        result_row(
-            index,
-            ResultRow {
-                title: row.title,
-                subtitle: row.subtitle,
-                unavailable_reason: row.unavailable.map(|u| u.reason().to_owned()),
+        let theme = &ui::visuals().theme;
+        let reason = row.unavailable.as_ref().map(|u| u.reason().to_owned());
+        // The row's accessible description: its subtitle and, when it
+        // cannot run, the reason, together.
+        let description = match (&row.subtitle, &reason) {
+            (Some(subtitle), Some(reason)) => Some(format!("{subtitle}. {reason}")),
+            (subtitle, reason) => subtitle.clone().or(reason.clone()),
+        };
+        // Presentation only: the shared row paints the chrome, and the
+        // identity, accessibility and click behavior are attached here.
+        let rendered = result_row(
+            RowContent {
+                title: row.title.clone().into(),
+                subtitle: row.subtitle.clone().map(SharedString::from),
+                unavailable_reason: reason.map(SharedString::from),
+                selected,
+                unavailable_id: ("unavailable", index).into(),
+                icon: row_icon(&row.id),
             },
-            selected,
+            theme,
         )
+        .id(("row", index))
+        .debug_selector(|| format!("row-{}", row.title))
+        .role(Role::ListBoxOption)
+        .aria_label(row.title.clone())
+        .aria_selected(selected)
+        .when(selected, |row| row.aria_active_descendant())
+        // An unavailable row stays listed and selectable; it says why it
+        // cannot run here, on screen and to assistive technology.
+        .when(row.unavailable.is_some(), |row| row.aria_disabled(true))
+        .when_some(description, |row, description| {
+            row.aria_description(description)
+        })
         .on_click(cx.listener(move |this, _, window, cx| {
             this.launcher.select(index);
             this.activate_selected(window, cx);
-        }))
+        }));
+        rendered
     }
 }
 
@@ -427,6 +463,8 @@ impl Render for LauncherWindow {
             self.drawn = Some(view.clone());
         }
         self.keep_selected_visible(&view, window);
+        let theme = ui::visuals().theme.clone();
+        let material = ui::visuals().material;
         let (empty, hint) = match &view.screen {
             Screen::Root { .. } => (
                 "No commands are installed.",
@@ -470,8 +508,8 @@ impl Render for LauncherWindow {
                 div()
                     .id(("detail", index))
                     .debug_selector(|| format!("detail-{line}"))
-                    .text_sm()
-                    .text_color(rgb(0xaab4c0))
+                    .text_size(theme.typography.row_subtitle_size)
+                    .text_color(theme.text_body)
                     .child(line.clone())
             })
             .collect();
@@ -481,13 +519,13 @@ impl Render for LauncherWindow {
             (&view.screen, &view.status),
             (Screen::CommandSearch { .. }, Status::Error(_))
         );
-        let (status_selector, status_text, status_color): (&str, SharedString, u32) =
+        let (status_selector, status_text, status_color): (&str, SharedString, Hsla) =
             match view.status {
-                Status::Idle => ("status-idle", hint.into(), 0x8a96a3),
-                Status::Running => ("status-running", "Running…".into(), 0xd6c27a),
-                Status::Progress(work) => ("status-progress", work.into(), 0xd6c27a),
-                Status::Result(answer) => ("status-result", answer.into(), 0x9fd8a8),
-                Status::Error(message) => ("status-error", message.into(), 0xf08c8c),
+                Status::Idle => ("status-idle", hint.into(), theme.text_muted),
+                Status::Running => ("status-running", "Running…".into(), theme.warning),
+                Status::Progress(work) => ("status-progress", work.into(), theme.warning),
+                Status::Result(answer) => ("status-result", answer.into(), theme.success),
+                Status::Error(message) => ("status-error", message.into(), theme.danger),
             };
         let rows: Vec<_> = view
             .rows
@@ -522,16 +560,43 @@ impl Render for LauncherWindow {
             .flex_1()
             .flex()
             .flex_col()
-            .gap_1()
+            .gap(theme.geometry.row_list_gap)
+            .px(theme.geometry.row_padding_x)
+            .pt(px(4.))
+            .pb(px(10.))
             .overflow_y_scroll()
             .track_scroll(&self.scroll)
             // Above the rows: with none selected, the only rows are root
             // search's fallbacks, listed below "No results".
             .when(view.selected.is_none(), |rows| {
-                rows.child(empty.text_color(rgb(0x8a96a3)))
+                rows.child(empty.text_color(theme.text_muted))
             })
             .children(rows);
         // The launcher decides what an item opens; its screen says which.
+        // The search screens carry their own header (the query field);
+        // every other screen keeps its heading. Root search has no extra
+        // title — the reference's launcher has none. The heading is
+        // computed before the body dispatch, which moves the screen.
+        // It is also the non-search screens' drag region: with the native
+        // title bar hidden, the heading is the one place outside the
+        // editable field to grab the window by, and a long heading
+        // truncates instead of eating the list.
+        let heading = match &view.screen {
+            Screen::Root { .. } => None,
+            _ => Some(
+                div()
+                    .flex_none()
+                    .px(theme.geometry.search_padding_x)
+                    .py(px(12.))
+                    .truncate()
+                    .text_size(theme.typography.row_title_size)
+                    .font_weight(theme.typography.medium)
+                    .text_color(theme.text_title)
+                    .window_control_area(WindowControlArea::Drag)
+                    .child(view.title.clone()),
+            ),
+        };
+
         let body = match view.screen {
             Screen::Form(form) => self.render_form(view.title.clone(), form, cx),
             Screen::CustomView(custom_view) => self.render_custom_view(custom_view, cx),
@@ -547,7 +612,10 @@ impl Render for LauncherWindow {
             _ => list.track_focus(&self.focus_handle).into_any_element(),
         };
 
-        div()
+        // The launcher's content: the shared Geist family and base text
+        // color on everything, the heading (or the search header, in
+        // `body`), the details, the body and the status footer.
+        let content = div()
             .key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
@@ -556,24 +624,24 @@ impl Render for LauncherWindow {
             .on_action(cx.listener(Self::focus_next))
             .on_action(cx.listener(Self::focus_previous))
             .on_key_down(cx.listener(Self::key_down))
-            .size_full()
+            .flex_1()
+            .min_h(px(0.))
             .flex()
             .flex_col()
-            .gap_2()
-            .p_4()
-            .bg(rgb(0x20252d))
-            .text_color(rgb(0xf1f3f5))
-            .child(div().text_xl().child(view.title.clone()))
+            .font_family(theme.typography.family.clone())
+            .text_color(theme.text_title)
+            .when_some(heading, |content, heading| content.child(heading))
             // A confirmation's or preview's long details scroll within 40%
             // (a preview's 62%) of the window, leaving the rest to its
             // choices, which stay visible.
-            .when(!details.is_empty(), |root| {
-                root.child(
+            .when(!details.is_empty(), |content| {
+                content.child(
                     div()
                         .id("details")
                         .flex()
                         .flex_col()
                         .gap_2()
+                        .px(theme.geometry.search_padding_x)
                         .when(confirm, |details| {
                             details
                                 .flex_shrink(1.)
@@ -585,14 +653,52 @@ impl Render for LauncherWindow {
             })
             .child(body)
             .child(
-                div()
+                Material::footer(&theme)
                     .id("status")
+                    // Scrolling needs a stateful element, so the strip
+                    // becomes its own scroll viewport here, once it has its
+                    // id: past the 35% cap the message scrolls inside the
+                    // strip instead of being cut.
+                    .overflow_y_scroll()
                     .role(Role::Status)
                     .aria_label(status_text.clone())
                     .debug_selector(|| status_selector.into())
-                    .text_sm()
-                    .text_color(rgb(status_color))
-                    .child(status_text),
-            )
+                    .text_size(theme.typography.footer_size)
+                    .text_color(status_color)
+                    .child(
+                        // The message fills the strip's width and wraps
+                        // there — a long error is several readable lines,
+                        // never one clipped at the window's right edge —
+                        // and the strip grows with it (its own bounds carry
+                        // the status-* debug selectors; this one, the
+                        // message's, lets tests see wrapping and scroll).
+                        div()
+                            .w_full()
+                            .min_w(px(0.))
+                            .flex_none()
+                            .py(px(12.))
+                            .debug_selector(|| "status-message".into())
+                            .child(status_text),
+                    ),
+            );
+        // The panel surface: the frost material's L1 glass around the
+        // content, with the sheen beneath it.
+        material.panel(&theme, content)
+    }
+}
+
+/// The icon presentation for a row, chosen by the row's stable id: the
+/// built-in rows and this build's sample commands are known identities,
+/// each with a reference tone and glyph; everything else is a plain
+/// command. No presentation is inferred from a title's text.
+fn row_icon(id: &str) -> Option<(IconTone, Glyph)> {
+    match id {
+        "rust-sample" => Some((IconTone::Term, Glyph::Prompt)),
+        "javascript-sample" | "typescript-sample" => Some((IconTone::Code, Glyph::Code)),
+        "pane.install-from-folder" => Some((IconTone::Folder, Glyph::Folder)),
+        "pane.install-from-npm" => Some((IconTone::Web, Glyph::Blocks)),
+        "pane.install-from-git" => Some((IconTone::Term, Glyph::Terminal)),
+        "pane.manage-extensions" => Some((IconTone::Command, Glyph::Blocks)),
+        _ => Some((IconTone::Command, Glyph::Prompt)),
     }
 }

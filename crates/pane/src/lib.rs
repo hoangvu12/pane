@@ -1,11 +1,11 @@
-//! Pane's native launcher window, rendered with GPUI CE.
-//!
-//! The window is a thin renderer over [`pane_core::Launcher`]: key and mouse
-//! input call launcher actions, and each frame draws the launcher's snapshot.
+//! Pane's native launcher, rendered with GPUI CE: this module exposes the
+//! crate's entry points — the key bindings, the build's sample commands and
+//! default extensions, and the folders Pane keeps — and re-exports the
+//! launcher window ([`app`]) and the system's link opener ([`links`]).
 
 use std::path::PathBuf;
 
-use gpui::{App, KeyBinding, actions};
+use gpui::{App, KeyBinding, WindowBackgroundAppearance, actions};
 use pane_core::CommandRegistration;
 
 mod app;
@@ -152,6 +152,24 @@ pub fn default_extensions() -> Vec<pane_core::DefaultExtension> {
         title: "Helper sample".into(),
     });
     extensions
+}
+
+/// Reads `PANE_THEME` (`dark`, the default, or `light`) and `PANE_MATERIAL`
+/// (`opaque`, the default, or `glass`) once, embeds the Geist fonts, and
+/// fixes the visuals the launcher window renders with. The binary calls
+/// this once at startup, before opening the first window; a font error is
+/// returned but the caller may continue with the system's default font.
+/// Tests never call it: the window falls back to the default dark theme.
+pub fn configure_visuals(cx: &App) -> gpui::Result<()> {
+    ui::configure(cx)
+}
+
+/// The window background appearance the configured material asks for,
+/// for the binary to pass into `WindowOptions::window_background`:
+/// blurred behind a glass panel on the frost-capable platforms, opaque
+/// otherwise and for the explicit opaque material.
+pub fn window_background() -> WindowBackgroundAppearance {
+    ui::visuals().material.window_appearance()
 }
 
 /// Where Pane keeps disposable cached data, such as compiled extension code:
