@@ -290,16 +290,6 @@ fn choice(
     let typography = &theme.typography;
     let geometry = &theme.geometry;
     let row = div()
-        .id(name)
-        .debug_selector(move || selector.into())
-        .role(Role::RadioButton)
-        .aria_label(name)
-        .aria_toggled(if chosen {
-            Toggled::True
-        } else {
-            Toggled::False
-        })
-        .when(!offered, |row| row.aria_disabled(true))
         .flex()
         .items_center()
         .gap(geometry.row_gap)
@@ -348,7 +338,21 @@ fn choice(
                         .child(subtitle),
                 ),
         );
-    if offered { row.on_click(on_click) } else { row }
+    row.id(name)
+        .debug_selector(move || selector.into())
+        .role(Role::RadioButton)
+        .aria_label(name)
+        .aria_toggled(if chosen {
+            Toggled::True
+        } else {
+            Toggled::False
+        })
+        .when(!offered, |row| row.aria_disabled(true))
+        .on_click(move |event: &gpui::ClickEvent, window, cx| {
+            if offered {
+                on_click(event, window, cx);
+            }
+        })
 }
 
 /// The material's note, if the chosen material needs one: the platform's
