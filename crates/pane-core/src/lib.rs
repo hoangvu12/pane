@@ -15,6 +15,7 @@ pub mod files;
 mod generation;
 pub mod git;
 mod helpers;
+mod host_settings;
 pub mod hotkeys;
 mod http;
 mod launcher;
@@ -32,6 +33,7 @@ mod zip;
 
 pub use defaults::{ArtifactSource, DefaultExtension};
 pub use helpers::runner::{HELPER_TIME_LIMIT, MAX_HELPER_INPUT, MAX_HELPER_OUTPUT};
+pub use host_settings::{HostSettings, MaterialPreference, ThemePreference};
 #[doc(hidden)]
 pub use http::HttpLimits;
 pub use launcher::{
