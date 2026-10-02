@@ -222,7 +222,7 @@ fn render(
 /// The notice that an override is in force: which environment variables
 /// override what, and that nothing chosen here applies or is saved. The
 /// rows below show the overridden choices, disabled.
-fn override_notice(overrides: &[String], theme: &Theme) -> Div {
+fn override_notice(overrides: &[String], theme: &Theme) -> Stateful<Div> {
     let verbs = if overrides.len() == 1 {
         "overrides"
     } else {
@@ -350,7 +350,7 @@ fn choice(
 /// The material's note, if the chosen material needs one: the platform's
 /// reason where glass normalizes to the solid surface, or the standing
 /// caveat where a glass request stands. `None` for the solid surface.
-fn material_note(preference: MaterialPreference, theme: &Theme) -> Option<Div> {
+fn material_note(preference: MaterialPreference, theme: &Theme) -> Option<Stateful<Div>> {
     if preference != MaterialPreference::Glass {
         return None;
     }
