@@ -1429,3 +1429,353 @@ fn a_long_error_wraps_grows_and_scrolls_inside_the_footer(cx: &mut TestAppContex
         "the first line scrolls back into view"
     );
 }
+
+/// The idle footer's selected action: its button, right-aligned in the
+/// strip, with the Enter keycap beside the label; the button and Enter run
+/// the same action; and a status — running, a result, an error — owns the
+/// strip while it shows, in place of the action.
+#[gpui::test]
+fn the_footer_button_runs_the_selected_action_like_enter(cx: &mut TestAppContext) {
+    let (window, cx) = open(cx, &RUST);
+    // A narrow window: the strip, the button and its label all have to fit.
+    cx.simulate_resize(gpui::size(px(380.), px(420.)));
+    settle(&window, cx);
+
+    // The button sits in the strip's right half — the far left stays free
+    // for the app menu a later slice delivers there — and the keycap sits
+    // inside the button, at its right end.
+    let footer = cx
+        .debug_bounds("status-idle")
+        .expect("the idle strip is rendered");
+    let button = cx
+        .debug_bounds("primary-action")
+        .expect("the action button is rendered");
+    assert!(
+        button.left() > footer.left() + footer.size.width / 2.,
+        "the button is right-aligned: {button:?} in {footer:?}"
+    );
+    assert!(button.right() <= footer.right(), "inside the strip");
+    assert!(
+        button.top() >= footer.top() && button.bottom() <= footer.bottom(),
+        "the button is centered in the strip: {button:?} in {footer:?}"
+    );
+    let (above, below) = (
+        button.top() - footer.top(),
+        footer.bottom() - button.bottom(),
+    );
+    assert!(
+        (above - below).abs() <= px(1.),
+        "the button is centered in the strip: {above:?} above, {below:?} below"
+    );
+    let keycap = cx.debug_bounds("keycap").expect("the keycap is rendered");
+    assert!(
+        keycap.left() > button.left() && keycap.right() <= button.right(),
+        "the keycap sits inside the button: {keycap:?} in {button:?}"
+    );
+
+    // The definition supplies the label from the action's identity — a
+    // selected extension command in root search opens it — and the keycap
+    // names its key, on the button and to assistive technology.
+    let nodes = accessible_nodes(cx);
+    let action = node(&nodes, "Button", "Open command");
+    assert_eq!(action["keyboard_shortcut"].as_str(), Some("Enter"));
+    node(&nodes, "Image", "Enter");
+
+    // Clicking the button opens the selected command, as Enter does.
+    cx.simulate_click(button.center(), Modifiers::none());
+    let view = settle(&window, cx);
+    assert_eq!(
+        (view.screen, view.title.as_str()),
+        (Screen::Command, "Rust sample")
+    );
+
+    // The command's own screen names what activating its selected item
+    // does, and clicking the button there runs it, as Enter does.
+    let nodes = accessible_nodes(cx);
+    node(&nodes, "Button", "Run item");
+    let button = cx
+        .debug_bounds("primary-action")
+        .expect("the action button is rendered");
+    cx.simulate_click(button.center(), Modifiers::none());
+    let view = settle(&window, cx);
+    assert_eq!(
+        view.status,
+        Status::Result("Hello from the Rust guest".into())
+    );
+    assert!(
+        cx.debug_bounds("status-result").is_some(),
+        "the answer is rendered"
+    );
+    assert!(
+        cx.debug_bounds("primary-action").is_none(),
+        "a status owns the strip while it shows, not the idle action"
+    );
+
+    // Back at root search the launcher is idle again, and the strip is the
+    // action again.
+    cx.simulate_keystrokes("escape");
+    settle(&window, cx);
+    let nodes = accessible_nodes(cx);
+    node(&nodes, "Button", "Open command");
+}
+
+/// The footer's Submit button submits the form, as Enter does, beside the
+/// form's own submit control.
+#[gpui::test]
+fn the_footer_button_submits_the_form_like_enter(cx: &mut TestAppContext) {
+    let (window, cx) = open(cx, &RUST);
+    open_form(&window, cx);
+    cx.simulate_input("Ada");
+
+    let nodes = accessible_nodes(cx);
+    node(&nodes, "Button", "Submit");
+    node(&nodes, "Button", "Greet");
+    let button = cx
+        .debug_bounds("primary-action")
+        .expect("the action button is rendered");
+    cx.simulate_click(button.center(), Modifiers::none());
+
+    assert_eq!(
+        settle(&window, cx).status,
+        Status::Result("Hello, Ada, from the Rust guest".into())
+    );
+}
+
+/// With nothing selected, the button stays — named for the action there
+/// would be — but a click dispatches nothing.
+#[gpui::test]
+fn the_footer_button_cannot_run_an_action_with_nothing_selected(cx: &mut TestAppContext) {
+    let (window, cx) = open_with(cx, pane::sample_commands());
+    cx.simulate_input("zzz");
+    let view = settle(&window, cx);
+    assert_eq!(view.selected, None);
+
+    let nodes = accessible_nodes(cx);
+    node(&nodes, "Button", "Open command");
+    let button = cx
+        .debug_bounds("primary-action")
+        .expect("the action button is rendered");
+    cx.simulate_click(button.center(), Modifiers::none());
+
+    let view = settle(&window, cx);
+    assert_eq!(view.status, Status::Idle, "nothing was dispatched");
+    assert_eq!(view.query(), Some("zzz"));
+    assert!(
+        cx.debug_bounds("status-idle").is_some(),
+        "the idle strip is unchanged"
+    );
+}
+
+/// An unavailable result keeps its button — disabled, named for what it
+/// cannot do — and its explanation where it always was, on its row: a
+/// click dispatches nothing, while Enter still explains, as it always has.
+#[gpui::test]
+fn the_footer_button_does_not_dispatch_an_unavailable_action(cx: &mut TestAppContext) {
+    let ((_, available), (_, unavailable), reason) = platforms::sample_items();
+    let (window, cx) = open(cx, &RUST);
+    cx.simulate_resize(gpui::size(gpui::px(640.), gpui::px(420.)));
+    cx.simulate_keystrokes("enter");
+    let view = settle(&window, cx);
+    let index = |title: &str| view.rows.iter().position(|row| row.title == title).unwrap();
+    for _ in 0..index(unavailable) {
+        cx.simulate_keystrokes("down");
+    }
+    cx.run_until_parked();
+
+    let nodes = accessible_nodes(cx);
+    node(&nodes, "Button", "Unavailable");
+    let button = cx
+        .debug_bounds("primary-action")
+        .expect("the action button is rendered");
+    cx.simulate_click(button.center(), Modifiers::none());
+
+    let view = settle(&window, cx);
+    assert_eq!(view.status, Status::Idle, "the button dispatched nothing");
+    assert!(
+        row_is_visible(cx, &format!("unavailable-reason-{unavailable}")),
+        "the row's explanation stays visible"
+    );
+
+    // Enter keeps its behavior: it shows the reason.
+    cx.simulate_keystrokes("enter");
+    let view = settle(&window, cx);
+    assert_eq!(view.status, Status::Error(reason));
+
+    // What selected the unavailable row is undone, and the others still
+    // run — the row, not the button, was the dispatch.
+    let delta = index(available) as isize - index(unavailable) as isize;
+    let key = if delta > 0 { "down" } else { "up" };
+    for _ in 0..delta.abs() {
+        cx.simulate_keystrokes(key);
+    }
+    cx.simulate_keystrokes("enter");
+    assert_eq!(
+        settle(&window, cx).status,
+        Status::Result(format!("Ran the {available} in the Rust guest"))
+    );
+}
+
+/// A double click on the button dispatches the action exactly once: the
+/// second press lands on the stale frame that still shows the button while
+/// the first press's action is already running, and the definition — which
+/// the click checks again at click time — refuses it. The host records the
+/// opens, so a second dispatch would be visible.
+#[gpui::test]
+fn a_running_action_cannot_be_dispatched_again_through_the_footer_button(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let system = std::sync::Arc::new(TwoApplications::default());
+    let runtime = Runtime::start().unwrap();
+    runtime.set_applications(system.clone());
+    let folder =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/guests/packages/applications");
+    let launcher = Launcher::with_packages(Ok(runtime), vec![], data.path().join("extensions"));
+    cx.executor().allow_parking();
+    cx.foreground_executor()
+        .block_on(launcher.install_package(&folder));
+    launcher.back();
+    let (window, cx) = open_launcher(cx, launcher);
+
+    // The install's result owns the strip; open the command and come back
+    // so the launcher is idle again and the strip is the action.
+    cx.simulate_keystrokes("enter");
+    settle(&window, cx);
+    cx.simulate_keystrokes("escape");
+    settle(&window, cx);
+
+    cx.simulate_input("fire");
+    wait_for_rows(&window, cx, &["Firefox"]);
+    let nodes = accessible_nodes(cx);
+    node(&nodes, "Button", "Open application");
+    let button = cx
+        .debug_bounds("primary-action")
+        .expect("the action button is rendered");
+    cx.simulate_click(button.center(), Modifiers::none());
+    cx.simulate_click(button.center(), Modifiers::none());
+
+    let view = settle(&window, cx);
+    assert_eq!(view.status, Status::Result("Opened Firefox".into()));
+    assert_eq!(
+        *system.opened.lock().unwrap(),
+        ["/apps/Firefox.desktop"],
+        "the action dispatched exactly once"
+    );
+}
+
+/// A launcher with the Hello package from `cargo xtask guests` installed in
+/// `data` and `source`, as the wheel test installs it.
+fn installed_hello(
+    cx: &mut TestAppContext,
+    data: &std::path::Path,
+    source: &std::path::Path,
+) -> Launcher {
+    let folder = source.join("hello");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join("pane.json"),
+        r#"{ "manifestVersion": 1, "title": "Hello", "apiVersion": "0.1",
+  "commands": [{ "id": "hello", "title": "Say hello", "component": "hello.wasm" }] }"#,
+    )
+    .unwrap();
+    std::fs::copy(
+        command("hello", "sample_rust").component,
+        folder.join("hello.wasm"),
+    )
+    .unwrap();
+    let launcher =
+        Launcher::with_packages(Runtime::start(), twelve_rows(), data.join("extensions"));
+    // The install's guest check answers from the runtime thread.
+    cx.executor().allow_parking();
+    cx.foreground_executor()
+        .block_on(launcher.install_package(&folder));
+    launcher.back();
+    launcher
+}
+
+/// The button's label comes from the action's identity — what activating
+/// the selected row does — never from the row's title: the extension
+/// list's first row is the package itself, titled "Hello", and the button
+/// says what activating it does there, following the package's state as it
+/// changes.
+#[gpui::test]
+fn the_footer_button_labels_the_action_from_identity_not_the_row_title(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    let launcher = installed_hello(cx, data.path(), source.path());
+    let (window, cx) = open_launcher(cx, launcher);
+
+    let manage = cx
+        .debug_bounds("row-Manage extensions…")
+        .expect("the row is rendered");
+    cx.simulate_click(manage.center(), Modifiers::none());
+    settle(&window, cx);
+
+    let nodes = accessible_nodes(cx);
+    node(&nodes, "ListBoxOption", "Hello");
+    node(&nodes, "Button", "Disable");
+    let button = cx
+        .debug_bounds("primary-action")
+        .expect("the action button is rendered");
+    cx.simulate_click(button.center(), Modifiers::none());
+    assert_eq!(
+        settle(&window, cx).status,
+        Status::Result("Disabled Hello".into())
+    );
+
+    // The row is still titled "Hello"; the action's identity turned with
+    // the package's state, so re-entering the list (the change's result
+    // owned the strip until then) offers to enable it now.
+    cx.simulate_keystrokes("escape");
+    settle(&window, cx);
+    let manage = cx
+        .debug_bounds("row-Manage extensions…")
+        .expect("the row is rendered");
+    cx.simulate_click(manage.center(), Modifiers::none());
+    settle(&window, cx);
+
+    let nodes = accessible_nodes(cx);
+    node(&nodes, "ListBoxOption", "Hello");
+    node(&nodes, "Button", "Enable");
+}
+
+/// A long status owns the strip in place of the idle action, and stays
+/// readable: it wraps within the strip's width and the strip grows with
+/// it, as it did before the idle hint became the action.
+#[gpui::test]
+fn a_long_status_replaces_the_idle_strip_and_stays_readable(cx: &mut TestAppContext) {
+    let detail = "the operation could not be completed because the target \
+                  system refused the connection and every retry failed, so \
+                  nothing was installed and the previous state was kept";
+    let message =
+        format!("Could not open a folder picker: {detail}. {detail}. {detail}. {detail}.");
+    let launcher = Launcher::new(Runtime::start(), Vec::new());
+    launcher.show_error(message.clone());
+    let (window, cx) = open_launcher(cx, launcher);
+    cx.simulate_resize(gpui::size(px(380.), px(420.)));
+    let view = settle(&window, cx);
+    assert_eq!(view.status, Status::Error(message));
+
+    assert!(
+        cx.debug_bounds("primary-action").is_none(),
+        "no idle action button while a status shows"
+    );
+    let footer = cx
+        .debug_bounds("status-error")
+        .expect("the footer is rendered");
+    let text = cx
+        .debug_bounds("status-message")
+        .expect("the message is rendered");
+    assert!(
+        text.right() <= footer.right(),
+        "the message wraps within the footer, not past its right edge"
+    );
+    assert!(
+        text.size.height > px(50.),
+        "the message wrapped to several lines: {:?}",
+        text.size.height
+    );
+    assert!(
+        footer.size.height > px(50.),
+        "the footer grew past its 50px floor: {:?}",
+        footer.size.height
+    );
+}
