@@ -22,11 +22,13 @@ use pane_core::hotkeys::Shortcut;
 use pane_core::{Launcher, LauncherView, Row, Screen, Status};
 
 use crate::extension_views::{custom_view, form};
+use crate::features::footer_menu;
 use crate::features::root_search;
+use crate::features::settings;
 use crate::ui::icon::{Glyph, IconTone};
 use crate::ui::result_row::{RowContent, result_row};
 use crate::ui::{self, material::Material};
-use crate::{Back, Confirm, FocusNext, FocusPrevious, SelectNext, SelectPrevious};
+use crate::{Back, Confirm, FocusNext, FocusPrevious, OpenSettings, SelectNext, SelectPrevious};
 
 pub(crate) const KEY_CONTEXT: &str = "Launcher";
 
@@ -42,6 +44,11 @@ pub struct LauncherWindow {
     /// The open custom view's focus and layout; `Some` exactly on the
     /// custom view screen.
     pub(crate) custom_view: Option<custom_view::CustomViewControls>,
+    /// The footer menu's button: the leftmost control of the bottom strip
+    /// (the open menu's own focus is held by the menu, while it is open).
+    pub(crate) menu_button: FocusHandle,
+    /// The open footer menu, if any; see [`features::footer_menu`].
+    pub(crate) menu: Option<footer_menu::FooterMenu>,
     /// The list's scroll position.
     scroll: ScrollHandle,
     /// What the list was last scrolled for.
@@ -77,6 +84,8 @@ impl LauncherWindow {
         let query = root_search::QueryField::new(cx);
         // The launcher starts at root search.
         query.focus(window, cx);
+        // The footer menu's button, first of the strip's controls.
+        let menu_button = cx.focus_handle().tab_stop(true);
         // Quitting ends development: its watchers go and a running build
         // is stopped with the processes it started.
         cx.on_app_quit(|this: &mut Self, _| {
@@ -93,6 +102,8 @@ impl LauncherWindow {
             scrolled_for: None,
             scroll_again: false,
             custom_view: None,
+            menu_button,
+            menu: None,
             #[cfg(any(test, debug_assertions))]
             drawn: None,
         }
@@ -318,9 +329,21 @@ impl LauncherWindow {
         window.focus_prev(cx);
     }
 
+    /// The local `Cmd+,`/`Ctrl+,` shortcut: opens or focuses the Settings
+    /// window, the same one the footer menu and the root result open.
+    fn open_settings(&mut self, _: &OpenSettings, _: &mut Window, cx: &mut Context<Self>) {
+        settings::open(&self.launcher, cx);
+    }
+
     /// Starts the selected row's action and redraws when the guest answers,
     /// without blocking the window meanwhile.
     fn activate_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // The Settings root result opens the Settings window; the launcher
+        // itself does nothing (see [`Launcher::selected_opens_settings`]).
+        if self.launcher.selected_opens_settings() {
+            settings::open(&self.launcher, cx);
+            return;
+        }
         if self.launcher.selected_asks_for_folder() {
             self.choose_package_folder(window, cx);
             return;
@@ -620,6 +643,7 @@ impl Render for LauncherWindow {
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::back))
+            .on_action(cx.listener(Self::open_settings))
             .on_action(cx.listener(Self::focus_next))
             .on_action(cx.listener(Self::focus_previous))
             .on_key_down(cx.listener(Self::key_down))
@@ -652,32 +676,65 @@ impl Render for LauncherWindow {
             })
             .child(body)
             .child(
+                // The status strip. The menu button is its leftmost
+                // control (the right end is the primary action's, a later
+                // milestone), the status message fills the rest, and the
+                // open menu's popup is the strip's first child: its
+                // capture-phase dismissal runs before the button's click
+                // tracking, while its own bounds stay above the strip
+                // (see `footer_menu`).
                 Material::footer(&theme)
                     .id("status")
-                    // Scrolling needs a stateful element, so the strip
-                    // becomes its own scroll viewport here, once it has its
-                    // id: past the 35% cap the message scrolls inside the
-                    // strip instead of being cut.
-                    .overflow_y_scroll()
-                    .role(Role::Status)
-                    .aria_label(status_text.clone())
+                    .relative()
+                    .when_some(
+                        self.menu
+                            .as_ref()
+                            .map(|menu| self.render_menu_popup(menu, cx)),
+                        |strip, popup| strip.child(popup),
+                    )
                     .debug_selector(|| status_selector.into())
                     .text_size(theme.typography.footer_size)
                     .text_color(status_color)
                     .child(
-                        // The message fills the strip's width and wraps
-                        // there — a long error is several readable lines,
-                        // never one clipped at the window's right edge —
-                        // and the strip grows with it (its own bounds carry
-                        // the status-* debug selectors; this one, the
-                        // message's, lets tests see wrapping and scroll).
                         div()
+                            .flex()
                             .w_full()
                             .min_w(px(0.))
-                            .flex_none()
-                            .py(px(12.))
-                            .debug_selector(|| "status-message".into())
-                            .child(status_text),
+                            .flex_1()
+                            .min_h(px(0.))
+                            .gap(px(8.))
+                            .child(self.render_menu_button(&theme, cx))
+                            .child(
+                                // The message's own scroll viewport: past
+                                // the 35% cap the message scrolls here —
+                                // inside the strip — instead of being cut,
+                                // and the strip never scrolls, so the
+                                // button and any popup above it stay put.
+                                // The strip's bounds carry the status-*
+                                // debug selectors; this one, the message's,
+                                // lets tests see wrapping and scroll. The
+                                // message fills the viewport's width and
+                                // wraps there — a long error is several
+                                // readable lines, never one clipped at the
+                                // window's right edge — and the strip grows
+                                // with it.
+                                div()
+                                    .id("status-scroll")
+                                    .flex_1()
+                                    .min_w(px(0.))
+                                    .overflow_y_scroll()
+                                    .role(Role::Status)
+                                    .aria_label(status_text.clone())
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .min_w(px(0.))
+                                            .flex_none()
+                                            .py(px(12.))
+                                            .debug_selector(|| "status-message".into())
+                                            .child(status_text),
+                                    ),
+                            ),
                     ),
             );
         // The panel surface: the frost material's L1 glass around the
@@ -698,6 +755,7 @@ fn row_icon(id: &str) -> Option<(IconTone, Glyph)> {
         "pane.install-from-npm" => Some((IconTone::Web, Glyph::Blocks)),
         "pane.install-from-git" => Some((IconTone::Term, Glyph::Terminal)),
         "pane.manage-extensions" => Some((IconTone::Command, Glyph::Blocks)),
+        "pane.settings" => Some((IconTone::Command, Glyph::Gear)),
         _ => Some((IconTone::Command, Glyph::Prompt)),
     }
 }

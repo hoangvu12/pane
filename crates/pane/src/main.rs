@@ -57,7 +57,6 @@ fn main() {
         if let Err(error) = pane::configure_visuals(cx) {
             eprintln!("Pane's fonts could not be loaded: {error:#}");
         }
-        cx.on_window_closed(|cx, _| cx.quit()).detach();
         let runtime = match pane::cache_dir() {
             Some(dir) => Runtime::start_with_cache(dir),
             None => Runtime::start(),
@@ -200,6 +199,17 @@ fn main() {
                 })
             })
             .expect("failed to open the Pane window");
+        // Closing the launcher's own window quits Pane, as closing the one
+        // window always did: closing the Settings window, which shares
+        // nothing of the launcher's lifecycle, closes only that window,
+        // and quitting ends Pane as before.
+        let launcher_window = window.window_id();
+        cx.on_window_closed(move |cx, closed| {
+            if closed == launcher_window {
+                cx.quit();
+            }
+        })
+        .detach();
         // A hotkey pressed in any application opens its command here.
         cx.spawn(async move |cx| {
             while let Some(shortcut) = presses.next().await {
