@@ -336,26 +336,45 @@ fn tab_and_shift_tab_visit_each_control_once_in_order(cx: &mut TestAppContext) {
     // Two full rounds each way: a control with two tab stops (such as the
     // text field and a wrapper tracking its focus) would appear twice in a
     // row. The greeting group reports its chosen option as focused, like a
-    // list reports its selected row.
+    // list reports its selected row. The footer's menu button joins the
+    // order after the form's controls.
     let mut forward = Vec::new();
-    for _ in 0..6 {
+    for _ in 0..8 {
         cx.simulate_keystrokes("tab");
         forward.push(focused_label(cx));
     }
     let mut backward = Vec::new();
-    for _ in 0..6 {
+    for _ in 0..8 {
         cx.simulate_keystrokes("shift-tab");
         backward.push(focused_label(cx));
     }
 
-    let labels = |order: [&str; 6]| order.map(|label| Some(label.to_owned()));
+    let labels = |order: [&str; 8]| order.map(|label| Some(label.to_owned()));
     assert_eq!(
         forward,
-        labels(["Hello", "Greet", "Name", "Hello", "Greet", "Name"])
+        labels([
+            "Hello",
+            "Greet",
+            "More actions",
+            "Name",
+            "Hello",
+            "Greet",
+            "More actions",
+            "Name"
+        ])
     );
     assert_eq!(
         backward,
-        labels(["Greet", "Hello", "Name", "Greet", "Hello", "Name"])
+        labels([
+            "More actions",
+            "Greet",
+            "Hello",
+            "Name",
+            "More actions",
+            "Greet",
+            "Hello",
+            "Name"
+        ])
     );
 }
 
@@ -500,12 +519,12 @@ fn the_launcher_offers_the_rust_javascript_and_typescript_samples(cx: &mut TestA
     let (window, cx) = open_with(cx, pane::sample_commands());
     let root = settle(&window, cx);
     let titles: Vec<&str> = root.rows.iter().map(|row| row.title.as_str()).collect();
-    assert_eq!(
-        titles,
-        ["Rust sample", "JavaScript sample", "TypeScript sample"]
-    );
+    // Pane's own Settings row is listed last, whatever is installed (its
+    // window is the Settings milestone's work, covered in tests/settings).
+    let samples = ["Rust sample", "JavaScript sample", "TypeScript sample"];
+    assert_eq!(titles, [samples.as_slice(), &["Settings…"]].concat());
 
-    for (index, title) in titles.iter().enumerate() {
+    for (index, title) in samples.iter().enumerate() {
         cx.simulate_keystrokes("enter");
         let view = settle(&window, cx);
         assert_eq!(
@@ -822,8 +841,8 @@ fn keys_change_the_color_the_view_shows(cx: &mut TestAppContext, sample: &Sample
     );
     assert_eq!(
         roles.len(),
-        3,
-        "the view, the status line and the window: {roles:?}"
+        4,
+        "the view, the footer's menu button, the status line and the window: {roles:?}"
     );
     assert!(
         cx.debug_bounds("custom-view").is_some(),
@@ -838,9 +857,10 @@ fn keys_change_the_color_the_view_shows(cx: &mut TestAppContext, sample: &Sample
     wait_for_color(&window, cx, "Dark red, #B71C1C");
     assert_eq!(color_node(cx)["value"], "Dark red, #B71C1C");
 
-    // The view is the screen's only tab stop, and Escape closes it.
+    // The view and the footer's menu button are the screen's tab stops,
+    // and Tab visits the button and comes back; Escape closes the view.
     cx.simulate_keystrokes("tab");
-    assert_eq!(focused_label(cx).as_deref(), Some("Color"));
+    assert_eq!(focused_label(cx).as_deref(), Some("More actions"));
     cx.simulate_keystrokes("shift-tab");
     assert_eq!(focused_label(cx).as_deref(), Some("Color"));
     cx.simulate_keystrokes("escape");
@@ -1026,7 +1046,7 @@ fn a_query_that_matches_nothing_says_so_and_escape_clears_it(cx: &mut TestAppCon
     cx.simulate_keystrokes("escape");
     let view = settle(&window, cx);
     assert_eq!(view.query(), Some(""));
-    assert_eq!(row_titles(&window, cx).len(), 3);
+    assert_eq!(row_titles(&window, cx).len(), 4, "the samples and Settings");
     let text = cx.read_entity(&window, |window, cx| {
         window.query_field().read(cx).as_str().to_owned()
     });
