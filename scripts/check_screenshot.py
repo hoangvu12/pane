@@ -252,7 +252,10 @@ def preview(path: str) -> None:
     scale = window.width / 760
     band = window.crop((round(20 * scale), round(48 * scale),
                         window.width - round(20 * scale), round(61 * scale)))
-    count = sum(near(pixel, rgb(HOST_COLORS["details"]), 4) for pixel in pixels_of(band))
+    # Metadata is text, not a solid swatch: Linux glyph rasterization can
+    # leave few pixels within the exact-color tolerance. Use the same
+    # antialias-aware, nearest-palette test as the other text assertions.
+    count = count_near(band, rgb(HOST_COLORS["details"]))
     if count < 20:
         raise SystemExit(f"{path}: package preview metadata not yet visible ({count} pixels)")
     print(f"{path}: package preview metadata visible ({count} pixels)")

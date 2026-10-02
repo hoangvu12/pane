@@ -105,6 +105,12 @@ class ScreenshotChecks(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 check.absent(path, color)
 
+    def test_linux_native_preview_with_antialiased_metadata(self):
+        fixtures = Path(__file__).parent / "fixtures" / "linux-preview"
+        check.preview(str(fixtures / "package.png"))
+        with self.assertRaises(SystemExit):
+            check.preview(str(fixtures / "root.png"))
+
 
 if __name__ == "__main__":
     unittest.main()
