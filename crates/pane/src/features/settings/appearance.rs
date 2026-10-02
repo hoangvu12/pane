@@ -104,7 +104,6 @@ fn render(
     let visuals = crate::settings::visuals(cx);
     let theme = &visuals.theme;
     let typography = &theme.typography;
-    let geometry = &theme.geometry;
     // A choice is offered — clickable, and saved — only where nothing
     // overrides it for this process; an override is in force otherwise,
     // and the notice below says so.
