@@ -98,6 +98,10 @@ param(
     [int]$WindowWidthPixels = 0,
     [int]$WindowHeightPixels = 0,
 
+    # Place only this run's window near its display's upper-left corner,
+    # allowing a guarded focus click clear of an older centered proof.
+    [switch]$PositionTopLeft,
+
     # Capture the whole virtual screen instead of the window crop. Only use
     # when the window crop is not sufficient (e.g. compositor blur evidence
     # needs the surroundings); default is the window crop alone.
@@ -235,6 +239,7 @@ $meta = [ordered]@{
     windowRect      = $null      # GetWindowRect (includes DWM invisible borders)
     frameBounds     = $null      # DWMWA_EXTENDED_FRAME_BOUNDS (visible window)
     requestedWindowSize = $null  # explicit outer size requested, if any
+    positionedTopLeft = [bool]$PositionTopLeft
     dpi             = $null
     focusAchieved   = $false
     activationMethod = $null    # 'SetForegroundWindow' | 'AppActivate' | $null
@@ -456,6 +461,10 @@ try {
         Start-Sleep -Milliseconds 500   # let the window and its layout settle
     }
 
+    if ($PositionTopLeft) {
+        $workingArea = [System.Windows.Forms.Screen]::FromHandle($hwnd).WorkingArea
+        [void][PaneWin]::SetWindowPos($hwnd, [IntPtr]::Zero, ($workingArea.Left + 32), ($workingArea.Top + 32), 0, 0, 0x11)
+    }
     $geometry = Get-WindowGeometry $hwnd
     $meta.windowRect = $geometry.WindowRect
     $meta.frameBounds = $geometry.FrameBounds
@@ -464,6 +473,9 @@ try {
 
     # Optional external backdrop. It is created hidden, sized over the window
     # area plus a margin, and shown WITHOUT activation (SW_SHOWNOACTIVATE).
+    # Expose only the newly spawned window before backdrop placement and
+    # guarded focus. An older Pane proof may otherwise cover the same bounds.
+    [void][PaneWin]::SetWindowPos($hwnd, [IntPtr]::Zero, 0, 0, 0, 0, 0x13)
     if ($Backdrop) {
         $backdropBitmap = New-BackdropBitmap $BackdropPattern
         $backdropForm = New-Object System.Windows.Forms.Form
