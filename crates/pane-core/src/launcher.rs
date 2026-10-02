@@ -344,9 +344,11 @@ pub enum Status {
 /// [`Launcher::activate_selected`], or [`Launcher::submit_form`] on a form.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SelectedAction {
-    /// The action's label, from its identity. Empty on the screens with no
-    /// primary action at all: a custom view takes the keys itself, and the
-    /// network details screen has only Back.
+    /// The action's label, from its identity. Empty where there is no
+    /// primary action to show at all: a custom view takes the keys itself,
+    /// the network details screen has only Back, and the hotkey screen
+    /// with no row to remove has only the keys it records — the window
+    /// shows no button there.
     pub label: String,
     /// Whether the action can run now: `false` with no row selected, for a
     /// row whose action is unavailable on this system or paused (its reason
@@ -4418,7 +4420,9 @@ fn selected_action(state: &State) -> SelectedAction {
         // A confirmation's rows are its answers; the direction a toggle
         // turns in comes from the state it acts on, not from a title.
         (_, Some(Entry::Toggle(identity))) => {
-            let enable = state.package(identity).is_some_and(|package| !package.enabled);
+            let enable = state
+                .package(identity)
+                .is_some_and(|package| !package.enabled);
             acting(if enable { "Enable" } else { "Disable" })
         }
         (_, Some(Entry::ToggleUpdates(None))) => acting(if state.update_controls.automatic {
@@ -4428,7 +4432,11 @@ fn selected_action(state: &State) -> SelectedAction {
         }),
         (_, Some(Entry::ToggleUpdates(Some(identity)))) => {
             let off = state.update_controls.off.contains(&identity.key());
-            acting(if off { "Turn updates on" } else { "Turn updates off" })
+            acting(if off {
+                "Turn updates on"
+            } else {
+                "Turn updates off"
+            })
         }
         (_, Some(Entry::Reload(_))) => acting("Reload"),
         (_, Some(Entry::Retry(_))) => acting("Retry"),
@@ -4471,7 +4479,10 @@ fn selected_action(state: &State) -> SelectedAction {
         (Screen::Command | Screen::CommandSearch { .. }, None) => unusable("Run item"),
         (Screen::Package { .. }, None) => unusable("Install"),
         (Screen::Extensions { .. }, None) => unusable("Choose"),
-        (Screen::Confirm { .. } | Screen::Hotkey { .. }, None) => unusable("Choose"),
+        (Screen::Confirm { .. }, None) => unusable("Choose"),
+        // The hotkey screen without a row to remove has no primary action:
+        // Enter does nothing there; the keys it records are the point.
+        (Screen::Hotkey { .. }, None) => unusable(""),
         (Screen::PauseDetails { .. }, None) => unusable("Retry"),
         (Screen::RuntimeDetails { .. }, None) => unusable("Restart"),
         (Screen::BuildDetails { .. }, None) => unusable("Build again"),
