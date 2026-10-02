@@ -44,6 +44,20 @@ hints now share the muted color. Extension drawing checks still use their
 authored hex colors, with the original pixel thresholds and pointer lookup.
 Result/error, absent-color, distinct-frame and same-frame checks remain active.
 
+The Linux resource and latency workload's two screenshot checks follow the
+same roles. `scripts/measure-linux.sh` was missed when the smoke scripts'
+hex colors were translated: its cold-root check still named the retired hint
+color and its calculator check still named the retired selected-row wash
+`364355`. In
+[CI run 36960914528](https://github.com/hoangvu12/pane/actions/runs/36960914528),
+artifact `resource-measurements` frame `4-calculator-answer.png` held only
+429 pixels near the old wash, under the 3,000 minimum, while the frame itself
+shows the new selected answer row; the cold-root check had passed only
+incidentally, 94 stray pixels near the old hint color against the default
+minimum of 20. Both checks now use the `hint` and `selected` roles with the
+same thresholds, and rechecking that artifact's frames passes (463 hint
+pixels, a 29,702-pixel selected wash).
+
 The same-frame comparison permits at most one interior pixel whose channels
 each differ by at most one 8-bit level. This bound comes from
 [CI run 36951745142](https://github.com/hoangvu12/pane/actions/runs/36951745142):
