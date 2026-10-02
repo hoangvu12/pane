@@ -7,6 +7,27 @@ independent of the desktop background and the caller's appearance environment.
 These runs do not establish light-theme readability or native blur; those remain
 separate native acceptance work for [#61](https://github.com/hoangvu12/pane/issues/61).
 
+The macOS/Linux installed and updated GUI launches explicitly supply both
+appearance variables after `env -i`; exporting them at script startup does not
+survive that environment reset. The clean HOME, empty tool PATH and local
+artifact source remain isolated. In
+[CI run 36952982441](https://github.com/hoangvu12/pane/actions/runs/36952982441),
+the missing variables caused macOS's installed launch to use default glass.
+Artifact `11206345698`, `installed-stderr.log`, records an abort from
+`gpui_macos/src/window.rs:3794` at fork `2b9e644`: the blurred-view callback
+sent `setBackgroundColor:` an Objective-C object (`@`) where the method expects
+a CoreGraphics color pointer (`^{CGColor=}`). The resulting panic crossed a
+non-unwinding callback boundary. System Events' missing PID was a consequence,
+not the original failure. Restoring the smoke's explicit opaque mode fixes
+its configuration error; it does **not** fix or certify production macOS glass.
+The renderer owner must address that independently before glass acceptance.
+The separate `smoke-macos-default-startup.sh` CI step launches with appearance
+variables absent, requires a native window and checks the process survives
+ten more seconds of native layer updates. It records stderr and startup evidence
+under `smoke/default-startup`, uses a fresh HOME/data/cache and stops only its
+own child. It sends no input and does not establish blur quality or broader
+native material acceptance. Its native execution remains a final-CI check.
+
 `scripts/check_screenshot.py` recognizes the shared dark panel's connected
 neutral surfaces, including its sheen, inset edges and darker footer. A flat
 background crop would omit parts of the new header and footer. Like the previous

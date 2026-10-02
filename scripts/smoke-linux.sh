@@ -1894,6 +1894,7 @@ env -i HOME="$home" PATH="/usr/bin:/bin" bash "$unpack/pane/install.sh" >>"$out/
 [ -x "$home/.local/bin/pane" ] || { echo "the install script installed no pane"; exit 1; }
 start_installed() {
   env -i HOME="$home" PATH="$clean_bin" DISPLAY="$display" \
+    PANE_THEME=dark PANE_MATERIAL=opaque \
     PANE_ARTIFACTS="http://127.0.0.1:$(cat "$out/artifact-server.port")/" \
     "$home/.local/bin/pane" "$@" 2>>"$out/installed-stderr.log" &
   pane_pid=$!
@@ -2025,6 +2026,7 @@ update_log=$out/update-artifact-server.log
 # start_installed does for its own home.
 start_update_pane() {
   env -i HOME="$update_home" PATH="$clean_bin" DISPLAY="$display" \
+    PANE_THEME=dark PANE_MATERIAL=opaque \
     PANE_ARTIFACTS="http://127.0.0.1:$(cat "$out/update-artifact-server.port")/" \
     "$update_program" "$@" 2>>"$out/update-stderr.log" &
   pane_pid=$!

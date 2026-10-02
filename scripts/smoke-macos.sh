@@ -1791,6 +1791,7 @@ env -i HOME="$home" PATH="/usr/bin:/bin" bash "$unpack/pane/install.sh" >>"$out/
 [ -x "$home/Applications/Pane.app/Contents/MacOS/pane" ] || { echo "the install script installed no pane"; exit 1; }
 start_installed() {
   env -i HOME="$home" PATH="$clean_bin" \
+    PANE_THEME=dark PANE_MATERIAL=opaque \
     PANE_ARTIFACTS="http://127.0.0.1:$(cat "$out/artifact-server.port")/" \
     "$home/Applications/Pane.app/Contents/MacOS/pane" "$@" 2>>"$out/installed-stderr.log" &
   pid=$!
@@ -1918,6 +1919,7 @@ update_installed="$update_home/Library/Application Support/Pane/extensions"
 update_registry=$update_installed/installed.json
 start_updated() {
   env -i HOME="$update_home" PATH="$update_clean_bin" \
+    PANE_THEME=dark PANE_MATERIAL=opaque \
     PANE_ARTIFACTS="http://127.0.0.1:$(cat "$out/update-artifact-server.port")/" \
     "$binary" "$@" 2>>"$out/update-stderr.log" &
   pid=$!

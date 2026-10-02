@@ -202,6 +202,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/smoke-windows.ps1 -OutDir smoke
+      - name: Native default startup regression (macOS)
+        if: runner.os == 'macOS'
+        run: bash scripts/smoke-macos-default-startup.sh smoke/default-startup
       - name: Native GUI smoke (macOS)
         if: runner.os == 'macOS'
         run: bash scripts/smoke-macos.sh smoke
