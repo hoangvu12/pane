@@ -8,11 +8,11 @@ rust-version.workspace = true
 
 [dependencies]
 pane-core = { path = "../pane-core" }
-gpui = { package = "gpui-ce", git = "https://github.com/hoangvu12/gpui-ce", rev = "2b9e644e3f89a38eacebc713fb0d1807c618c76c", default-features = false }
+gpui = { package = "gpui-ce", git = "https://github.com/hoangvu12/gpui-ce", rev = "bcf3a0acd047c1873293069d0ed42085a38f699b", default-features = false }
 # Editable text with input-method support, for form text fields.
-gpui_elements = { package = "gpui_ce_elements", git = "https://github.com/hoangvu12/gpui-ce", rev = "2b9e644e3f89a38eacebc713fb0d1807c618c76c" }
+gpui_elements = { package = "gpui_ce_elements", git = "https://github.com/hoangvu12/gpui-ce", rev = "bcf3a0acd047c1873293069d0ed42085a38f699b" }
 # font-kit is the macOS text system; without it no text renders on macOS.
-gpui_platform = { package = "gpui_ce_platform", git = "https://github.com/hoangvu12/gpui-ce", rev = "2b9e644e3f89a38eacebc713fb0d1807c618c76c", features = ["font-kit"] }
+gpui_platform = { package = "gpui_ce_platform", git = "https://github.com/hoangvu12/gpui-ce", rev = "bcf3a0acd047c1873293069d0ed42085a38f699b", features = ["font-kit"] }
 # Opens web links (quicklinks) and files (file search) with the system's
 # handler. On Windows 5.4.4 passes the target to its PowerShell opener through
 # an environment variable, not the command line, and opens an existing path
@@ -32,4 +32,4 @@ tempfile = "3"
 sha2 = "0.10"
 tar = { version = "0.4.44", default-features = false }
 flate2 = "1"
-gpui ={ package = "gpui-ce", git = "https://github.com/hoangvu12/gpui-ce", rev = "2b9e644e3f89a38eacebc713fb0d1807c618c76c", default-features = false, features = ["test-support"] }
+gpui ={ package = "gpui-ce", git = "https://github.com/hoangvu12/gpui-ce", rev = "bcf3a0acd047c1873293069d0ed42085a38f699b", default-features = false, features = ["test-support"] }

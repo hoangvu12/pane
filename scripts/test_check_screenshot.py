@@ -44,13 +44,16 @@ class ScreenshotChecks(unittest.TestCase):
         draw.rectangle((40, 460, 100, 463), fill="#9fd8a8")
         first = self.save(image)
         self.assertEqual(check.window_box(first)[1], (30, 30, 790, 490))
-        check.main(first, "9fd8a8")
+        check.main(first, "success")
+        with self.assertRaises(SystemExit):
+            check.absent(first, "success")
         draw.rectangle((0, 0, 20, 20), fill="red")
         check.same(first, self.save(image, "desktop-changed.png"))
         draw.rectangle((40, 460, 100, 463), fill="#131416")
         missing = self.save(image, "missing-result.png")
+        check.absent(missing, "success")
         with self.assertRaises(SystemExit):
-            check.main(missing, "9fd8a8")
+            check.main(missing, "success")
         with self.assertRaises(SystemExit):
             check.same(first, missing)
         check.distinct([first, missing])
@@ -63,6 +66,27 @@ class ScreenshotChecks(unittest.TestCase):
             check.selected(self.save(image))
         draw.rectangle((42, 100, 777, 143), fill="#2a2b2e")
         check.selected(self.save(image))
+
+    def test_same_allows_only_one_pixel_of_rounding_noise(self):
+        image, _ = self.panel()
+        image.putpixel((330, 300), (178, 92, 46))
+        first = self.save(image, "original.png")
+        image.putpixel((330, 300), (178, 92, 47))
+        check.same(first, self.save(image, "one-level.png"))
+        image.putpixel((330, 300), (178, 92, 48))
+        with self.assertRaises(SystemExit):
+            check.same(first, self.save(image, "two-levels.png"))
+        image.putpixel((330, 300), (178, 92, 47))
+        image.putpixel((331, 300), (23, 23, 26))
+        with self.assertRaises(SystemExit):
+            check.same(first, self.save(image, "two-pixels.png"))
+
+    def test_same_rejects_changed_row_hover(self):
+        image, draw = self.panel()
+        first = self.save(image, "no-hover.png")
+        draw.rectangle((42, 143, 777, 186), fill="#1e1f22")
+        with self.assertRaises(SystemExit):
+            check.same(first, self.save(image, "hover.png"))
 
     def test_preview_requires_metadata_in_header_band_at_each_scale(self):
         image, draw = self.panel()
@@ -101,6 +125,12 @@ class ScreenshotChecks(unittest.TestCase):
             self.assertEqual(output.getvalue().strip(), "179 174")
             with self.assertRaises(SystemExit):
                 check.absent(path, color)
+
+    def test_linux_native_preview_with_antialiased_metadata(self):
+        fixtures = Path(__file__).parent / "fixtures" / "linux-preview"
+        check.preview(str(fixtures / "package.png"))
+        with self.assertRaises(SystemExit):
+            check.preview(str(fixtures / "root.png"))
 
 
 if __name__ == "__main__":

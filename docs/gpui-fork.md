@@ -1,10 +1,10 @@
 # Maintained GPUI CE dependency
 
 Pane uses [hoangvu12/gpui-ce](https://github.com/hoangvu12/gpui-ce), branch
-`pane/source-over-alpha`, to carry the Windows alpha correction required by
+`pane/source-over-alpha`, to carry the Windows alpha correction and macOS startup ABI repair required by
 [#63](https://github.com/hoangvu12/pane/issues/63), under
 [#61](https://github.com/hoangvu12/pane/issues/61). Cargo uses an immutable commit,
-not the branch tip: `2b9e644e3f89a38eacebc713fb0d1807c618c76c`. All four declarations in `crates/pane/Cargo.toml` (including
+not the branch tip: `bcf3a0acd047c1873293069d0ed42085a38f699b`. All four declarations in `crates/pane/Cargo.toml` (including
 the test dependency) move together. The fork's internal path dependencies resolve
 to that same Git source, preserving one GPUI type identity across renderer,
 platforms and editable controls. `Cargo.lock` records the full closure, and
@@ -20,7 +20,7 @@ Zui is a separate Zed GPUI lineage, not the dependency used by Pane. Both Window
 renderer packages are Apache-2.0; their license and attribution files are retained.
 The fork adds its patch rationale and maintenance instructions in `PANE-FORK.md`.
 
-Only ordinary scene blending and path-sprite destination alpha change from
+The Windows correction changes ordinary scene blending and path-sprite destination alpha from
 additive to source-over (`As + Ad * (1 - As)`). RGB behavior is unchanged.
 Path rasterization already uses source-over and subpixel text intentionally does
 not write alpha; neither needs a patch. CE already has in-window blur support;
@@ -112,3 +112,41 @@ filters the real sample results, and Escape restores root search. The capture
 records the source revision, binary hash, OS, 96 DPI, verified focus and isolated
 process cleanup. This is the existing launcher appearance, before presentation
 integration; no native-glass claim is made.
+
+## macOS default-startup ABI repair
+
+Final CI run [36952982441](https://github.com/hoangvu12/pane/actions/runs/36952982441)
+(artifact 11206345698) exposed a default-glass startup abort in the previous pin
+`2b9e644e3f89a38eacebc713fb0d1807c618c76c`. The retained installed-stderr log reports:
+
+```text
+invalid message send to -[NSViewBackingLayer setBackgroundColor:]: expected argument at index 0 to have type code '^{CGColor=}', but found '@'
+panic in a function that cannot unwind
+```
+
+Fork `bcf3a0acd047c1873293069d0ed42085a38f699b` changes that argument in
+`remove_layer_background` to `ptr::null::<objc2_core_graphics::CGColor>()`.
+The old Objective-C `NIL` encoded an object; CALayer requires a CGColor pointer.
+objc2 debug signature verification consequently panicked inside the non-unwinding
+`blurred_view_update_layer` callback. The direct macOS CGColor dependency uses an
+already-locked package/version. The sibling NSWindow background setter takes an
+NSColor object and correctly retains its object argument. The audit found no
+other raw background/border/shadow-color layer setters in gpui_macos/gpui_apple.
+
+The focused macOS test calls actual recursive clearing on colored parent/child
+CALayers, asserting both backgrounds clear and child opacity is preserved:
+
+```sh
+cargo +1.98.1 test --locked -j1 -p gpui_ce_macos --features font-kit --lib remove_layer_background_clears_cgcolor_recursively
+```
+
+For a negative control on macOS, retain the test and restore only the production
+argument to `NIL`; the signature mismatch should fail the test before clearing.
+This test and the application's separate default-startup CI smoke must validate
+the repair natively. The Windows development host ran formatting/manifest checks,
+not macOS compilation or runtime; no native positive result is claimed yet.
+The Windows renderer checkout in CI moves with all four Pane pins and retains
+its full 15-test command. Windows source-over code and historical alpha evidence
+are unchanged; deny.toml already permits the same maintained repository.
+This bounded ABI repair changes no material selection or blur policy and does
+not complete #66 or establish native desktop-blur quality.
