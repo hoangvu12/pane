@@ -64,6 +64,10 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ApplicationRevision,
 
+    # Optional local package preview, using the real startup route. It is
+    # never installed unless an explicit key sequence confirms it.
+    [string]$InstallFolder,
+
     # Startup selectors, passed through as PANE_THEME / PANE_MATERIAL.
     [ValidateSet('dark', 'light')]
     [string]$Theme,
@@ -206,6 +210,7 @@ public static class PaneWin {
 $meta = [ordered]@{
     script          = 'capture-pane-windows.ps1'
     applicationRevision = $ApplicationRevision
+    installFolder   = $InstallFolder
     binarySha256    = (Get-FileHash -LiteralPath $Binary -Algorithm SHA256).Hash
     osVersion       = [Environment]::OSVersion.VersionString
     windowsBuild    = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction SilentlyContinue | Select-Object DisplayVersion, CurrentBuild, UBR)
@@ -404,7 +409,14 @@ try {
         if ($Theme)    { Set-Item 'Env:PANE_THEME' $Theme }
         if ($Material) { Set-Item 'Env:PANE_MATERIAL' $Material }
         Remove-Item 'Env:PANE_ARTIFACTS' -ErrorAction SilentlyContinue
-        $process = Start-Process -FilePath $Binary -PassThru -RedirectStandardError $stderrLog
+        $startOptions = @{ FilePath = $Binary; PassThru = $true; RedirectStandardError = $stderrLog }
+        if ($InstallFolder) {
+            $packagePath = (Resolve-Path -LiteralPath $InstallFolder).Path
+            # Windows file names cannot contain quotes, so this is a single
+            # quoted argv path even when the checkout folder contains spaces.
+            $startOptions.ArgumentList = @('--install', ('"{0}"' -f $packagePath))
+        }
+        $process = Start-Process @startOptions
         $spawned = $true
     }
     finally {
