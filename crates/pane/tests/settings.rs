@@ -10,7 +10,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    AnyWindowHandle, Modifiers, TestAppContext, VisualTestContext, WindowHandle, prelude::*, px,
+    AnyWindowHandle, Modifiers, MouseButton, TestAppContext, VisualTestContext, WindowHandle,
+    prelude::*, px,
 };
 use pane::{APP_VERSION, LauncherWindow, SettingsWindow};
 use pane_core::{Launcher, Runtime, Screen, Status};
@@ -765,7 +766,7 @@ fn choosing_a_theme_re_renders_both_windows_and_the_preview(cx: &mut TestAppCont
         "DIAG row={row:?} page={:?}",
         settings_cx.debug_bounds("settings-page")
     );
-    settings_cx.simulate_mouse_move(row.center(), Modifiers::none());
+    settings_cx.simulate_mouse_move(row.center(), MouseButton::Left, Modifiers::none());
     settings_cx.run_until_parked();
     settings_cx.update(|window, _| {
         eprintln!(
