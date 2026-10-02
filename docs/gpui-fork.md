@@ -88,3 +88,27 @@ readbacks, positive/negative test output and SHA-256 artifact hashes. Cargo fetc
 the published fork; metadata resolves 19 CE packages to that single source and one
 `gpui-ce` identity. Lockfile review confirms that only those 19 source entries
 changed, with no package version or dependency-list changes.
+
+On 2026-10-02, Windows 11 build 26200 / RTX 5050 / Rust 1.98.1:
+
+- `cargo test --locked -j1 -p pane --test window --test command_search`: 49
+  launcher-window tests and one command-search test passed (exit 0). Tests used
+  copies of the existing assembled Rust/JavaScript/TypeScript guest fixtures;
+  guest toolchains were not rebuilt by this renderer-only slice.
+- `cargo build --locked -j1 -p pane`: normal non-test build passed (exit 0).
+  It compiled the remote fork into this worktree's own target directory, with
+  no copied platform crate, local dependency override or manual Cargo-cache edit.
+- `cargo fmt --all -- --check`, fork package formatting and `git diff --check`
+  passed. `cargo-deny` was not installed locally; final integrated CI owns its
+  license/source-policy execution and the macOS/Linux builds and tests.
+
+[Application test output](research/gpui-alpha/application-tests.txt) is retained.
+The test-platform IME/accessibility checks are not native IME or screen-reader
+certification. Native compositor checks and the styled launcher remain separate.
+
+The [native fork integration capture](research/gpui-alpha/native/README.md)
+confirms that the normal binary opens on this Windows host, typing `rust`
+filters the real sample results, and Escape restores root search. The capture
+records the source revision, binary hash, OS, 96 DPI, verified focus and isolated
+process cleanup. This is the existing launcher appearance, before presentation
+integration; no native-glass claim is made.
