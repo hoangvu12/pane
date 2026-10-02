@@ -37,8 +37,15 @@ conditions are recorded in [the validation report](launcher-ui-validation.md).
 ## Visual behavior
 
 The initial window is 760 by 460 logical pixels. Shared geometry provides
-an 18-pixel panel radius, a 64-pixel query region, minimum 44-pixel rows,
-28-pixel tiles and a minimum 50-pixel footer. The actual query, command rows,
+the panel radius, a 64-pixel query region, minimum 44-pixel rows,
+28-pixel tiles and a minimum 50-pixel footer. The reference's 18-pixel
+panel radius shows where the window's corners are transparent (Linux's
+desktop shows through the curve) or platform-rounded (macOS's authored
+curve stands until #66 validates native materials); on Windows the panel
+fills the window to its edges and the Desktop Window Manager rounds the
+window's own corners (`pane::prefer_rounded_window_corners`), so neither
+the acrylic frost nor the opaque surface shows as a plate behind the
+corners. The actual query, command rows,
 selection, invocation and extension views still run through the existing
 launcher. No pinned content, invented application kinds or extra controls
 are fabricated to fill the reference layout.

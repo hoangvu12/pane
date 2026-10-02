@@ -4383,6 +4383,7 @@ dependencies = [
  "gpui_ce_platform",
  "open",
  "pane-core",
+ "raw-window-handle",
  "serde_json",
  "sha2",
  "tar",
