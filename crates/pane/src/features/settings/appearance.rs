@@ -19,7 +19,8 @@
 //! provides frost, the solid surface (with the reason) where it does not.
 
 use gpui::{
-    AnyElement, App, BoxShadow, Context, Div, Role, Stateful, Toggled, Window, div, prelude::*, px,
+    AnyElement, App, Context, Div, Role, SharedString, Stateful, Toggled, Window, div, prelude::*,
+    px,
 };
 use pane_core::{MaterialPreference, ThemePreference};
 
@@ -277,72 +278,35 @@ fn choice(
     theme: &Theme,
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
-    let typography = &theme.typography;
-    let geometry = &theme.geometry;
-    let row = div()
-        .flex()
-        .items_center()
-        .gap(geometry.row_gap)
-        .min_h(geometry.row_min_height)
-        .px(geometry.row_padding_x)
-        .rounded(geometry.row_radius)
-        .when(offered, |row| {
-            row.cursor_pointer()
-                .when(!chosen, |row| row.hover(|row| row.bg(theme.row_hover)))
-        })
-        .when(!offered, |row| row.opacity(0.5).cursor_default())
-        .when(chosen, |row| {
-            row.bg(theme.row_selected).shadow(vec![
-                BoxShadow::new(px(0.), px(0.), theme.row_selected_border)
-                    .spread_radius(px(1.))
-                    .inset(),
-            ])
-        })
-        .child(
-            // The radio's mark, as the extension form's choices render it.
-            div()
-                .flex_none()
-                .w(px(18.))
-                .text_size(typography.row_title_size)
-                .text_color(theme.text_title)
-                .child(if chosen { "◉" } else { "○" }),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w(px(0.))
-                .flex()
-                .flex_col()
-                .child(
-                    div()
-                        .truncate()
-                        .text_size(typography.row_title_size)
-                        .font_weight(typography.medium)
-                        .text_color(theme.text_title)
-                        .child(name),
-                )
-                .child(
-                    div()
-                        .text_size(typography.row_subtitle_size)
-                        .text_color(theme.text_muted)
-                        .child(subtitle),
-                ),
-        );
-    row.id(name)
-        .debug_selector(move || selector.into())
-        .role(Role::RadioButton)
-        .aria_label(name)
-        .aria_toggled(if chosen {
-            Toggled::True
-        } else {
-            Toggled::False
-        })
-        .when(!offered, |row| row.aria_disabled(true))
-        .on_click(move |event: &gpui::ClickEvent, window, cx| {
-            if offered {
-                on_click(event, window, cx);
-            }
-        })
+    let mark = if chosen { "◉ " } else { "○ " };
+    let title: SharedString = format!("{mark}{name}").into();
+    let subtitle: SharedString = subtitle.into();
+    result_row(
+        RowContent {
+            title,
+            subtitle: Some(subtitle),
+            unavailable_reason: None,
+            unavailable_id: "preview-unavailable".into(),
+            selected: chosen,
+            icon: None,
+        },
+        theme,
+    )
+    .id(name)
+    .debug_selector(move || selector.into())
+    .role(Role::RadioButton)
+    .aria_label(name)
+    .aria_toggled(if chosen {
+        Toggled::True
+    } else {
+        Toggled::False
+    })
+    .when(!offered, |row| row.aria_disabled(true).opacity(0.5))
+    .on_click(move |event: &gpui::ClickEvent, window, cx| {
+        if offered {
+            on_click(event, window, cx);
+        }
+    })
 }
 
 /// The material's note, if the chosen material needs one: the platform's
