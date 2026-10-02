@@ -120,6 +120,9 @@ const GIT_REPOSITORY_FIELD: &str = "repository";
 /// disable them.
 const MANAGE_EXTENSIONS: &str = "pane.manage-extensions";
 
+/// The id of the root row that opens Pane's Settings window.
+const SETTINGS: &str = "pane.settings";
+
 /// A command offered in root search, backed by one extension component.
 #[derive(Clone, Debug)]
 pub struct CommandRegistration {
@@ -943,6 +946,10 @@ enum Entry {
     Install(install::Request, Mode, dependencies::Assumptions),
     /// Show the installed packages (root).
     Manage,
+    /// Nothing in the launcher: the window opens or focuses its Settings
+    /// window (root). Which pages Settings offers is the app's, not the
+    /// launcher's.
+    Settings,
     /// Enable this installed package if it is disabled, else disable it, or
     /// first ask about the enabled packages that require it.
     Toggle(PackageIdentity),
@@ -1220,6 +1227,15 @@ impl Launcher {
         let launcher = Launcher { links, ..self };
         launcher.report_failures();
         launcher
+    }
+
+    /// The link opener this launcher was given (see
+    /// [`Launcher::with_link_opener`]), for the app to open Pane's own
+    /// links with the same handler — the documentation entry of Settings'
+    /// About page — rather than construct a second opener instance. A
+    /// launcher given none returns the opener that says so.
+    pub fn link_opener(&self) -> Arc<dyn LinkOpener> {
+        self.links.clone()
     }
 
     /// This launcher downloading npm packages from `registry` rather than
@@ -1821,6 +1837,19 @@ impl Launcher {
         matches!(entry, Some(Entry::InstallFromFolder))
     }
 
+    /// Whether the selected row opens Pane's Settings window. Activating
+    /// it does nothing in the launcher: the window opens or focuses its
+    /// one Settings window, whatever opened it (the row, the ellipsis menu
+    /// or the shortcut).
+    pub fn selected_opens_settings(&self) -> bool {
+        let state = self.lock();
+        let entry = state
+            .view
+            .selected
+            .and_then(|index| state.entries.get(index));
+        matches!(entry, Some(Entry::Settings))
+    }
+
     /// Leaves an open form or custom view for its command's list, or an open
     /// command, package preview or the extension list for root search. A
     /// custom view is closed. On root search it clears the query.
@@ -2108,7 +2137,9 @@ impl Launcher {
                 self.show_git_form(&mut state);
                 None
             }
-            Some(Entry::InstallFromFolder | Entry::ChooseFolder(_)) | None => None,
+            Some(Entry::InstallFromFolder | Entry::ChooseFolder(_) | Entry::Settings) | None => {
+                None
+            }
             Some(entry) => {
                 state.view.status = Status::Running;
                 Some(entry)
@@ -2231,6 +2262,7 @@ impl Launcher {
                     | Entry::AskDeleteRetained(_)
                     | Entry::DeleteRetained(_)
                     | Entry::Cancel
+                    | Entry::Settings
                     | Entry::Form(..),
                 )
                 | None => {}
@@ -2994,6 +3026,19 @@ impl Launcher {
                 unavailable: None,
             };
             add(row, Entry::Manage, None, None);
+        }
+        // Pane's Settings window is the app's to open; the row is listed
+        // whatever is installed, since Settings is reachable without any
+        // extension (the ellipsis menu and the local shortcut open it
+        // too).
+        {
+            let row = Row {
+                id: SETTINGS.into(),
+                title: "Settings…".into(),
+                subtitle: Some("Open Pane's settings window".into()),
+                unavailable: None,
+            };
+            add(row, Entry::Settings, None, None);
         }
         results
     }
@@ -4410,6 +4455,10 @@ fn selected_action(state: &State) -> SelectedAction {
         (_, Some(Entry::InstallUpdate)) => acting("Install update"),
         (_, Some(Entry::CheckUpdate)) => acting("Check for update"),
         (_, Some(Entry::Manage)) => acting("Manage extensions"),
+        // Pane's Settings row opens the Settings window, exactly as its
+        // ellipsis menu entry and the local shortcut do (the window, not
+        // the launcher, acts; see [`Launcher::selected_opens_settings`]).
+        (_, Some(Entry::Settings)) => acting("Open settings"),
         (_, Some(Entry::Run(_))) => acting("Run item"),
         (_, Some(Entry::Form(..))) => acting("Open form"),
         (_, Some(Entry::CustomView(..))) => acting("Open view"),
