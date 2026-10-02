@@ -667,9 +667,11 @@ fn the_settings_window_keeps_its_layout_at_small_sizes(cx: &mut TestAppContext) 
         choice.right() <= page.right(),
         "the choices stay within the page"
     );
+    // The page scrolls when the window is short, so vertical position is
+    // not containment; the preview must stay within the page's width.
     assert!(
-        preview.right() <= page.right() && preview.bottom() <= page.bottom(),
-        "the preview stays within the page"
+        preview.right() <= page.right(),
+        "the preview stays within the page's width"
     );
 }
 
