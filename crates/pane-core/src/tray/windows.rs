@@ -195,8 +195,9 @@ fn open_menu(entry: &mut Entry) -> usize {
     // owning window takes the foreground so the menu dismisses when the
     // user clicks elsewhere, and a no-op message follows the menu so the
     // taskbar gives the foreground back.
-    // SAFETY: this thread's own window.
-    unsafe { SetForegroundWindow(entry.window.handle()) };
+    // SAFETY: this thread's own window. The platform's answer is not
+    // ours to act on: a refusal leaves the menu to dismiss on its own.
+    let _ = unsafe { SetForegroundWindow(entry.window.handle()) };
     let flags = TPM_RETURNCMD.0 | TPM_RIGHTBUTTON.0 | TPM_BOTTOMALIGN.0;
     // SAFETY: this thread's own menu and window; with `TPM_RETURNCMD`
     // the return value is the command chosen, not only whether it ran.
@@ -363,16 +364,16 @@ fn change(shown: bool) -> Result<(), TrayError> {
 /// Runs on the tray thread, as it ends.
 fn finish() {
     ENTRY.with(|entry| {
-        if let Ok(mut held) = entry.try_borrow_mut() {
-            if let Some(mut entry) = held.take() {
-                // The icon goes first, while the window it belongs to is
-                // still there for the shell to find.
-                let _ = shell_notify(&mut entry, false);
-                // SAFETY: this thread's own menu.
-                unsafe { DestroyMenu(entry.menu) }.ok();
-                // The window goes with the entry: its own drop destroys
-                // it, on this thread.
-            }
+        if let Ok(mut held) = entry.try_borrow_mut()
+            && let Some(mut entry) = held.take()
+        {
+            // The icon goes first, while the window it belongs to is
+            // still there for the shell to find.
+            let _ = shell_notify(&mut entry, false);
+            // SAFETY: this thread's own menu.
+            unsafe { DestroyMenu(entry.menu) }.ok();
+            // The window goes with the entry: its own drop destroys it,
+            // on this thread.
         }
     });
 }
