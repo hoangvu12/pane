@@ -80,12 +80,6 @@ impl FakeLogin {
     fn registration(&self) -> Registration {
         *self.registration.lock().unwrap()
     }
-
-    /// What the fake platform's answer to the next enable is: None when
-    /// it takes the change.
-    fn refusing_enable(&self) -> Option<String> {
-        self.refusals.lock().unwrap().0.clone()
-    }
 }
 
 impl Autostart for FakeLogin {
