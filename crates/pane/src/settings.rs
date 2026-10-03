@@ -1,5 +1,6 @@
-//! Pane's host settings: the appearance preferences the application owns,
-//! held as one observable entity every window renders through.
+//! Pane's host settings: the appearance preferences and the Open Pane
+//! hotkey the application owns, held as one observable entity every window
+//! renders through.
 //!
 //! [`init`] reads the record — `settings.json` in Pane's data folder, kept
 //! by [`pane_core::HostSettings`] under the house record rules — applies
@@ -26,9 +27,12 @@
 //! displayed choice goes back to what the record last held, so what the
 //! page shows is what Pane actually saved — the saved preference and the
 //! effective state stay distinguishable, and a fresh start reloads the
-//! last successfully saved choice. A record that cannot be read is never
-//! replaced: the choice is refused, the reason is reported, and the
-//! source data stays on disk for diagnosis.
+//! last successfully saved choice. The Open Pane hotkey follows the same
+//! rule with one more step: it is registered with the system *before* it
+//! is kept, and a write that fails also releases the registration the
+//! record does not hold, so what the record names is what works. A record
+//! that cannot be read is never replaced: the choice is refused, the
+//! reason is reported, and the source data stays on disk for diagnosis.
 //!
 //! The development overrides are a separate matter: they win for this
 //! process — the record is not consulted for what the windows render —
@@ -50,7 +54,8 @@ use gpui::{
     App, AppContext as _, Context, Entity, Global, Window, WindowAppearance,
     WindowBackgroundAppearance,
 };
-use pane_core::{HostSettings, MaterialPreference, ThemePreference};
+use pane_core::hotkeys::Shortcut;
+use pane_core::{HostSettings, Launcher, MaterialPreference, ThemePreference};
 
 use crate::ui::Visuals;
 use crate::ui::material::{Material, MaterialMode};
@@ -175,6 +180,10 @@ pub(crate) struct Settings {
     /// What every window renders with, recomputed whenever any input to it
     /// changes.
     effective: Visuals,
+    /// The launcher that applies the Open Pane hotkey to the system, once a
+    /// launcher window has attached it (see [`attach_launcher`]); `None`
+    /// until then, so the choice still persists without one to apply it.
+    launcher: Option<Launcher>,
 }
 
 impl Settings {
@@ -191,7 +200,7 @@ impl Settings {
             None => (HostSettings::default(), None),
         };
         let system = appearance_of(cx.window_appearance());
-        let chosen = saved;
+        let chosen = saved.clone();
         Settings {
             dir,
             effective: visuals_of(
@@ -207,6 +216,7 @@ impl Settings {
             save_error: None,
             saving: false,
             pending: false,
+            launcher: None,
         }
     }
 
@@ -260,7 +270,7 @@ impl Settings {
     /// nothing visible would change, and the record's rule is not to
     /// replace what cannot be read.
     pub(crate) fn set_theme(&mut self, preference: ThemePreference, cx: &mut Context<Self>) {
-        let mut chosen = self.chosen;
+        let mut chosen = self.chosen.clone();
         chosen.theme = preference;
         self.choose(chosen, cx);
     }
@@ -268,9 +278,52 @@ impl Settings {
     /// Chooses `preference` for the material, as [`Settings::set_theme`]
     /// does.
     pub(crate) fn set_material(&mut self, preference: MaterialPreference, cx: &mut Context<Self>) {
-        let mut chosen = self.chosen;
+        let mut chosen = self.chosen.clone();
         chosen.material = preference;
         self.choose(chosen, cx);
+    }
+
+    /// The Open Pane hotkey the host settings hold: what the General page
+    /// shows and what a fresh start registers.
+    pub(crate) fn open_pane(&self) -> Shortcut {
+        self.chosen.open_pane.clone()
+    }
+
+    /// Records `shortcut` as the Open Pane hotkey, the application-owned
+    /// binding that summons the launcher from any application. It is
+    /// applied through the attached launcher *first* — checked against the
+    /// combinations the system keeps for itself and the command hotkeys,
+    /// and registered before the binding it replaces is released, so a
+    /// refusal leaves the previous binding working — and only then kept
+    /// as the choice and written to the record off the window's thread. A
+    /// write that fails rolls the registration back to what the record
+    /// holds (see [`Settings::written`]). `Err` names why the change was
+    /// refused; nothing is kept or saved then.
+    pub(crate) fn set_open_pane(
+        &mut self,
+        shortcut: Shortcut,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let Some(launcher) = self.launcher.clone() else {
+            return Err("Pane has no launcher to register the hotkey with".into());
+        };
+        // The record's rule: never replace what cannot be read.
+        if let Some(problem) = &self.unreadable {
+            return Err(format!(
+                "Pane could not read the settings record, so the hotkey is not changed: {problem}"
+            ));
+        }
+        launcher.set_open_pane(shortcut.clone())?;
+        if self.chosen.open_pane != shortcut {
+            self.chosen.open_pane = shortcut;
+            cx.notify();
+            self.save(cx);
+        } else {
+            // The record already holds it: a retry that made it register
+            // needs no new record.
+            cx.notify();
+        }
+        Ok(())
     }
 
     /// Takes `chosen`, repaints, and saves. The single path every choice
@@ -330,11 +383,12 @@ impl Settings {
         };
         self.saving = true;
         self.save_error = None;
-        let snapshot = self.chosen;
+        let snapshot = self.chosen.clone();
+        let writing = snapshot.clone();
         cx.spawn(async move |this, cx| {
             let written = cx
                 .background_executor()
-                .spawn(async move { snapshot.save(&dir) })
+                .spawn(async move { writing.save(&dir) })
                 .await;
             this.update(cx, |settings, cx| settings.written(written, snapshot, cx))
                 .ok();
@@ -361,7 +415,19 @@ impl Settings {
             Err(why) => {
                 self.save_error = Some(format!("Pane could not save your choice: {why}"));
                 if self.chosen == snapshot {
-                    self.chosen = self.saved;
+                    // The Open Pane registration follows the record back, so
+                    // a choice that could not be saved does not leave the
+                    // launcher bound to what the record does not hold; what
+                    // was last recorded keeps working.
+                    if snapshot.open_pane != self.saved.open_pane
+                        && let Some(launcher) = &self.launcher
+                    {
+                        // The outcome is the binding's own state (the
+                        // problem the page explains), not a value to
+                        // surface here.
+                        let _ = launcher.sync_open_pane(self.saved.open_pane.clone());
+                    }
+                    self.chosen = self.saved.clone();
                     self.changed(cx);
                 }
             }
@@ -461,6 +527,28 @@ pub(crate) fn ensure(cx: &mut App) -> Entity<Settings> {
 /// [`ensure`] to have run.
 pub(crate) fn shared(cx: &App) -> Entity<Settings> {
     cx.global::<Shared>().0.clone()
+}
+
+/// Attaches the launcher that owns the window's global-shortcut
+/// registration, and applies the recorded Open Pane hotkey through it:
+/// the binding Pane starts with, whatever the record holds. Called by the
+/// launcher window's constructor — the first window to exist — and
+/// harmlessly again by any later one, over the same launcher whose
+/// binding is already applied. A choice that cannot be registered (the
+/// system refuses it, or another command's recorded hotkey has it) is
+/// kept as the record's choice with the reason as its problem, for the
+/// General page to explain.
+pub(crate) fn attach_launcher(launcher: &Launcher, cx: &mut App) {
+    let settings = ensure(cx);
+    let recorded = settings.read(cx).open_pane();
+    settings.update(cx, |settings, _| {
+        settings.launcher = Some(launcher.clone());
+    });
+    // The application-owned binding, registered exactly as the command
+    // hotkeys are — through the platform adapter the launcher holds, on
+    // the window's thread. The outcome is the binding's own state (the
+    // problem), not a status the launcher surfaces.
+    let _ = launcher.sync_open_pane(recorded);
 }
 
 /// The wiring every Pane window takes around the host settings: its

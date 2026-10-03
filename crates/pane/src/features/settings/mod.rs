@@ -49,6 +49,7 @@ use crate::{FocusNext, FocusPrevious};
 mod about;
 mod appearance;
 mod extensions;
+mod general;
 mod shortcuts;
 
 actions!(settings, [NextSection, PreviousSection]);
@@ -73,6 +74,7 @@ pub(crate) fn bind_keys(cx: &mut App) {
         KeyBinding::new("tab", FocusNext, Some(CONTEXT)),
         KeyBinding::new("shift-tab", FocusPrevious, Some(CONTEXT)),
     ]);
+    general::bind_keys(cx);
     shortcuts::bind_keys(cx);
 }
 
@@ -91,6 +93,8 @@ pub struct SettingsWindow {
     focus: FocusHandle,
     /// The About page's state, owned by its module.
     about: about::State,
+    /// The General page's state, owned by its module.
+    general: general::State,
     /// The Shortcuts page's state, owned by its module.
     shortcuts: shortcuts::State,
 }
@@ -132,10 +136,12 @@ impl SettingsWindow {
             // The sidebar's order: the sections the reference lists
             // (General, Launcher, Appearance, Shortcuts, Keyboard,
             // Extensions), About last. Of those, this milestone ships
-            // Appearance, Shortcuts and Extensions; the Appearance page
-            // is the one the window first shows, and the later tickets'
-            // pages take their places in this order as they land.
+            // General, Appearance, Shortcuts and Extensions; General —
+            // the Open Pane hotkey — is the page the window first shows,
+            // and the later tickets' pages take their places in this
+            // order as they land.
             pages: vec![
+                general::page(),
                 appearance::page(),
                 shortcuts::page(),
                 extensions::page(),
@@ -144,6 +150,7 @@ impl SettingsWindow {
             selected: 0,
             focus,
             about: about::State::default(),
+            general: general::State::new(cx),
             shortcuts: shortcuts::State::new(launcher, cx),
         }
     }
