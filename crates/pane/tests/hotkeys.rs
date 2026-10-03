@@ -126,9 +126,13 @@ fn pressing_keys_on_the_hotkey_screen_assigns_them_and_the_hotkey_opens_the_comm
         Status::Result(format!("{shortcut} now opens Say hello"))
     );
     assert!(matches!(view.screen, Screen::Extensions { .. }));
+    // The Open Pane hotkey's default binding is registered with the
+    // system beside the command's (#74): the window attached the launcher
+    // to the host settings, which applied the record's choice — the
+    // provisional default — at startup.
     assert_eq!(
         *system.registered.lock().unwrap(),
-        std::slice::from_ref(&shortcut)
+        vec![Shortcut::open_pane_default(), shortcut]
     );
 
     // Pressed while Pane shows root search with a query typed.

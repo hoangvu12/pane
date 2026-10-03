@@ -28,6 +28,7 @@ use std::path::Path;
 use serde_json::{Map, Value};
 
 use crate::atomic::{Readers, write_atomically};
+use crate::hotkeys::Shortcut;
 
 /// The file the settings are recorded in, in Pane's data folder.
 const FILE: &str = "settings.json";
@@ -72,16 +73,33 @@ pub enum MaterialPreference {
     Solid,
 }
 
-/// The host settings as the user chose them: one theme preference and one
-/// material preference, the whole of what the appearance page offers
-/// today. Later pages add fields beside these, with the same rules:
-/// missing fields default, and unknown values fail the record.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// The host settings as the user chose them: one theme preference, one
+/// material preference and the Open Pane hotkey, the whole of what the
+/// pages built so far offer. Later pages add fields beside these, with
+/// the same rules: missing fields default, and unknown values fail the
+/// record.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostSettings {
     /// The theme the user chose for Pane's windows.
     pub theme: ThemePreference,
     /// The surface the user chose for Pane's windows.
     pub material: MaterialPreference,
+    /// The global shortcut that opens Pane itself from any application —
+    /// the application-owned binding the General page records. It is a
+    /// host setting, not a command's hotkey: it belongs to no package,
+    /// stays while extensions are disabled, and is applied through the
+    /// same platform registration path the command hotkeys use.
+    pub open_pane: Shortcut,
+}
+
+impl Default for HostSettings {
+    fn default() -> HostSettings {
+        HostSettings {
+            theme: ThemePreference::default(),
+            material: MaterialPreference::default(),
+            open_pane: Shortcut::open_pane_default(),
+        }
+    }
 }
 
 impl HostSettings {
@@ -117,9 +135,19 @@ impl HostSettings {
         }
         let recorded: Recorded = serde_json::from_value(Value::Object(fields))
             .map_err(|error| format!("{} is invalid: {error}", file.display()))?;
+        let open_pane = match recorded.open_pane {
+            None => Shortcut::open_pane_default(),
+            Some(text) => Shortcut::parse(&text).map_err(|problem| {
+                format!(
+                    "{} is invalid: its open pane hotkey is not one: {problem}",
+                    file.display()
+                )
+            })?,
+        };
         Ok(HostSettings {
             theme: recorded.theme,
             material: recorded.material,
+            open_pane,
         })
     }
 
@@ -133,6 +161,7 @@ impl HostSettings {
             version: VERSION,
             theme: self.theme,
             material: self.material,
+            open_pane: Some(self.open_pane.id()),
         };
         let text = serde_json::to_string_pretty(&recorded).map_err(|error| error.to_string())?;
         let file = dir.join(FILE);
@@ -141,8 +170,8 @@ impl HostSettings {
     }
 }
 
-/// The settings as the record holds them. Both fields are written every
-/// time, and missing fields read as the defaults.
+/// The settings as the record holds them. Every field is written every
+/// time; missing fields read as the defaults.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Recorded {
     version: u64,
@@ -150,11 +179,16 @@ struct Recorded {
     theme: ThemePreference,
     #[serde(default)]
     material: MaterialPreference,
+    /// The Open Pane hotkey as its id, such as `ctrl+alt+space`; missing
+    /// means this system's provisional default. A value that is not a
+    /// shortcut fails the whole record.
+    #[serde(default)]
+    open_pane: Option<String>,
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{FILE, HostSettings, MaterialPreference, ThemePreference};
+    use super::{FILE, HostSettings, MaterialPreference, Shortcut, ThemePreference};
 
     /// Reads what `text` records in a fresh folder.
     fn reading(text: &str) -> Result<HostSettings, String> {
@@ -170,7 +204,8 @@ mod tests {
             HostSettings::open(dir.path()).unwrap(),
             HostSettings {
                 theme: ThemePreference::Dark,
-                material: MaterialPreference::Glass
+                material: MaterialPreference::Glass,
+                open_pane: Shortcut::open_pane_default(),
             }
         );
     }
@@ -193,9 +228,36 @@ mod tests {
         let settings = HostSettings {
             theme: ThemePreference::System,
             material: MaterialPreference::Solid,
+            open_pane: Shortcut::parse("ctrl+alt+b").unwrap(),
         };
         settings.save(dir.path()).unwrap();
         assert_eq!(HostSettings::open(dir.path()).unwrap(), settings);
+    }
+
+    #[test]
+    fn the_open_pane_field_defaults_and_a_value_that_is_not_a_shortcut_fails_the_record() {
+        // Missing: this system's provisional default.
+        assert_eq!(
+            reading(r#"{ "version": 1, "open pane": "missing" }"#).unwrap(),
+            HostSettings::default()
+        );
+        // Recorded as the shortcut's id, on any system.
+        assert_eq!(
+            reading(r#"{ "version": 1, "open_pane": "alt+space" }"#).unwrap(),
+            HostSettings {
+                open_pane: Shortcut::parse("alt+space").unwrap(),
+                ..HostSettings::default()
+            }
+        );
+        // A value that is not a shortcut fails the whole record.
+        let problem = reading(r#"{ "version": 1, "open_pane": "not a shortcut" }"#);
+        assert!(problem.is_err(), "{problem:?}");
+        assert!(
+            problem
+                .unwrap_err()
+                .contains("its open pane hotkey is not one"),
+            "the field is named"
+        );
     }
 
     #[test]
@@ -246,6 +308,7 @@ mod tests {
         let failed = HostSettings {
             theme: ThemePreference::Light,
             material: MaterialPreference::Solid,
+            open_pane: Shortcut::parse("ctrl+alt+b").unwrap(),
         }
         .save(dir.path());
         assert!(failed.is_err(), "{failed:?}");

@@ -365,13 +365,22 @@ fn choose(cx: &mut VisualTestContext, selector: &'static str) {
     cx.simulate_click(choice.center(), Modifiers::none());
 }
 
-/// Opens the Settings window over the launcher `cx` drives, on the page
-/// the window first shows (Appearance), as its own window context.
+/// Opens the Settings window over the launcher `cx` drives, on the
+/// Appearance page — one sidebar section from the General page the
+/// window opens on — as its own window context. Every caller of this
+/// helper drives the Appearance page; the General page's own tests live
+/// in `open_pane.rs`.
 fn open_settings(cx: &mut VisualTestContext) -> VisualTestContext {
     cx.simulate_keystrokes(settings_shortcut());
     cx.run_until_parked();
     let settings = settings_windows(cx).pop().expect("Settings opened");
-    settings_context(&settings, cx)
+    let mut settings_cx = settings_context(&settings, cx);
+    let appearance = settings_cx
+        .debug_bounds("section-Appearance")
+        .expect("the Appearance section");
+    settings_cx.simulate_click(appearance.center(), Modifiers::none());
+    settings_cx.run_until_parked();
+    settings_cx
 }
 
 /// Runs the window until the settings record exists in `data`: the save
@@ -482,9 +491,14 @@ fn hiding_the_launcher_leaves_settings_open_and_usable(cx: &mut TestAppContext) 
     cx.run_until_parked();
     assert_eq!(settings_windows(cx), vec![settings], "Settings stayed");
 
-    // And it still answers: the page the window first shows — Appearance,
-    // the first registered section — is drawn.
+    // And it still answers: the Appearance page — one sidebar section
+    // from the General page the window opens on — is drawn.
     let mut settings_cx = settings_context(&settings, cx);
+    settings_cx.run_until_parked();
+    let appearance = settings_cx
+        .debug_bounds("section-Appearance")
+        .expect("the Appearance section");
+    settings_cx.simulate_click(appearance.center(), Modifiers::none());
     settings_cx.run_until_parked();
     assert!(
         settings_cx
@@ -517,10 +531,17 @@ fn keys_in_settings_and_the_launcher_stay_in_their_windows(cx: &mut TestAppConte
     cx.run_until_parked();
     let settings = settings_windows(cx).pop().expect("Settings opened");
     let mut settings_cx = settings_context(&settings, cx);
+    // The Appearance page — one sidebar section from the General page
+    // the window opens on.
+    let appearance = settings_cx
+        .debug_bounds("section-Appearance")
+        .expect("the Appearance section");
+    settings_cx.simulate_click(appearance.center(), Modifiers::none());
+    settings_cx.run_until_parked();
 
     // Typing in the launcher narrows its results and touches nothing in
-    // Settings, which shows its own page (the Appearance page it opened
-    // on here).
+    // Settings, which shows its own page (the Appearance page it is on
+    // here).
     cx.simulate_input("rust");
     settle(&launcher, cx);
     let view = cx.read_entity(&launcher, |window, _| window.launcher().view());
@@ -550,7 +571,7 @@ fn keys_in_settings_and_the_launcher_stay_in_their_windows(cx: &mut TestAppConte
     );
 
     // And what Settings shows is still its own page: the Appearance page
-    // it opened on (the two keys end where they began), whose content is
+    // it is on (the two keys end where they began), whose content is
     // drawn — not the launcher's.
     assert!(
         settings_cx.debug_bounds("appearance").is_some(),
@@ -1239,11 +1260,17 @@ fn the_settings_window_keeps_its_layout_at_small_sizes(cx: &mut TestAppContext) 
     let settings = settings_windows(cx).pop().expect("Settings opened");
     let mut settings_cx = settings_context(&settings, cx);
     settings_cx.run_until_parked();
+    // The Appearance page — one sidebar section from the General page the
+    // window opens on — is the demanding one: its choices and its live
+    // preview.
+    let appearance = settings_cx
+        .debug_bounds("section-Appearance")
+        .expect("the Appearance section");
+    settings_cx.simulate_click(appearance.center(), Modifiers::none());
+    settings_cx.run_until_parked();
 
     // The window's floor: at its smallest usable size the sidebar and the
     // page both stay laid out — nothing reaches past the panel's edge.
-    // The Appearance page the window opens on is the demanding one: its
-    // choices and its live preview.
     settings_cx.simulate_resize(gpui::size(px(560.), px(400.)));
     settings_cx.run_until_parked();
     let sidebar = settings_cx

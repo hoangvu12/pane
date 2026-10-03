@@ -86,7 +86,7 @@ use application_update::{Application, Updates};
 use choices::Record;
 use developing::Developing;
 pub use developing::{BuildFailure, Development};
-use hotkeys::Bindings;
+use hotkeys::{Bindings, OpenPane};
 use pausing::{Pauses, Recorder};
 use schedules::Schedules;
 use services::Services;
@@ -651,6 +651,10 @@ struct State {
     paused: Pauses,
     /// The global hotkeys the user assigned to commands.
     bindings: Bindings,
+    /// The Open Pane hotkey: the application-owned binding the host
+    /// settings record and the window applies through the same
+    /// registration path (see [`crate::hotkeys`]).
+    open_pane: OpenPane,
     /// The aliases and fallbacks the user gave commands.
     aliases: Record<AliasChoices>,
     /// Acquiring Pane's default extensions: what the status line says of
@@ -1139,6 +1143,7 @@ impl Launcher {
             store_problem,
             paused: Pauses::default(),
             bindings,
+            open_pane: OpenPane::default(),
             aliases,
             acquisitions: Acquisitions::default(),
             updates: Updates::default(),
@@ -2856,6 +2861,15 @@ impl Launcher {
             )
         };
         self.show_kept_development_status(state);
+    }
+
+    /// Shows root search with an empty query, leaving whatever screen is
+    /// open — the state a summoned launcher starts from, with its search
+    /// to focus. The Open Pane hotkey's show path uses this when the
+    /// launcher was left on a screen with no search of its own.
+    pub fn show_root_search(&self) {
+        let mut state = self.lock();
+        self.show_root(&mut state, None);
     }
 
     /// Updates root search or the extension list on screen after a package
