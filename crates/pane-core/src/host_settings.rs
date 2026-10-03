@@ -23,12 +23,14 @@
 //! the window layer resolves them into a theme and a material, including
 //! the platform's own normalization of glass to solid.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde_json::{Map, Value};
 
 use crate::atomic::{Readers, write_atomically};
 use crate::hotkeys::Shortcut;
+use crate::keyboard::Keyboard;
 
 /// The file the settings are recorded in, in Pane's data folder.
 const FILE: &str = "settings.json";
@@ -122,10 +124,11 @@ pub enum Reopening {
 
 /// The host settings as the user chose them: one theme preference, one
 /// material preference, the Open Pane hotkey, the launch-at-login choice,
-/// the launcher's opening display and what reopening shows, the whole of
-/// what the Settings pages built so far offer. Later pages add fields
-/// beside these, with the same rules: missing fields default, and
-/// unknown values fail the record.
+/// the launcher's opening display and what reopening shows, and the
+/// in-app navigation bindings, the whole of what the Settings pages
+/// built so far offer. Later pages add fields beside these, with the
+/// same rules: missing fields default, and unknown values fail the
+/// record.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostSettings {
     /// The theme the user chose for Pane's windows.
@@ -154,6 +157,11 @@ pub struct HostSettings {
     /// records; dismissal behavior itself follows the specification's
     /// Escape contract and is not a choice here.
     pub reopening: Reopening,
+    /// The in-app navigation bindings the Keyboard page rebinds: one
+    /// binding per action of the bounded set, from the same defaults when
+    /// the record holds none. These keys belong to Pane's own windows, not
+    /// to any focused field's text editing.
+    pub keyboard: Keyboard,
 }
 
 impl Default for HostSettings {
@@ -165,6 +173,7 @@ impl Default for HostSettings {
             launch_at_login: false,
             opening_monitor: OpeningMonitor::default(),
             reopening: Reopening::default(),
+            keyboard: Keyboard::default_for_this_system(),
         }
     }
 }
@@ -211,6 +220,11 @@ impl HostSettings {
                 )
             })?,
         };
+        let keyboard = match recorded.keyboard {
+            None => Keyboard::default_for_this_system(),
+            Some(fields) => Keyboard::parse(&fields)
+                .map_err(|problem| format!("{} is invalid: {problem}", file.display()))?,
+        };
         Ok(HostSettings {
             theme: recorded.theme,
             material: recorded.material,
@@ -218,6 +232,7 @@ impl HostSettings {
             launch_at_login: recorded.launch_at_login,
             opening_monitor: recorded.opening_monitor,
             reopening: recorded.reopening,
+            keyboard,
         })
     }
 
@@ -235,6 +250,7 @@ impl HostSettings {
             launch_at_login: self.launch_at_login,
             opening_monitor: self.opening_monitor,
             reopening: self.reopening,
+            keyboard: Some(self.keyboard.recorded()),
         };
         let text = serde_json::to_string_pretty(&recorded).map_err(|error| error.to_string())?;
         let file = dir.join(FILE);
@@ -272,11 +288,19 @@ struct Recorded {
     /// still-valid view, the provisional default.
     #[serde(default)]
     reopening: Reopening,
+    /// The in-app navigation bindings, each action's id mapped to its
+    /// binding's id, as [`Keyboard::recorded`] writes them; missing means
+    /// this system's provisional defaults. An unknown action, a binding
+    /// that is not one or two actions on one binding fails the whole
+    /// record.
+    #[serde(default)]
+    keyboard: Option<BTreeMap<String, String>>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::{FILE, HostSettings, MaterialPreference, Shortcut, ThemePreference};
+    use crate::keyboard::{Keyboard, KeyboardAction};
 
     /// Reads what `text` records in a fresh folder.
     fn reading(text: &str) -> Result<HostSettings, String> {
@@ -314,6 +338,13 @@ mod tests {
     #[test]
     fn a_record_round_trips() {
         let dir = tempfile::tempdir().unwrap();
+        let mut keyboard = Keyboard::default_for_this_system();
+        keyboard
+            .checked_set(
+                KeyboardAction::Back,
+                crate::keyboard::Binding::parse("ctrl-b").unwrap(),
+            )
+            .unwrap();
         let settings = HostSettings {
             theme: ThemePreference::System,
             material: MaterialPreference::Solid,
@@ -321,6 +352,7 @@ mod tests {
             launch_at_login: true,
             opening_monitor: super::OpeningMonitor::Pointer,
             reopening: super::Reopening::RootSearch,
+            keyboard,
         };
         settings.save(dir.path()).unwrap();
         assert_eq!(HostSettings::open(dir.path()).unwrap(), settings);
@@ -358,6 +390,36 @@ mod tests {
             reading(r#"{ "version": 1 }"#).unwrap().reopening,
             super::Reopening::RestoreView
         );
+    }
+
+    #[test]
+    fn the_keyboard_field_defaults_and_an_invalid_one_fails_the_record() {
+        // Missing: this system's provisional defaults, and a partial set
+        // keeps the rest.
+        assert_eq!(
+            reading(r#"{ "version": 1, "keys": "missing" }"#).unwrap(),
+            HostSettings::default()
+        );
+        let settings = reading(r#"{ "version": 1, "keyboard": { "back": "ctrl-b" } }"#).unwrap();
+        assert_eq!(
+            settings.keyboard.binding(KeyboardAction::Back).id(),
+            "ctrl-b"
+        );
+        assert_eq!(
+            settings.keyboard.binding(KeyboardAction::NextResult).id(),
+            "down"
+        );
+        // Two actions on one binding fails the whole record, as a binding
+        // that is not one and an action that is not one do.
+        for text in [
+            r#"{ "version": 1, "keyboard": { "back": "up" } }"#,
+            r#"{ "version": 1, "keyboard": { "back": "not one" } }"#,
+            r#"{ "version": 1, "keyboard": { "launch": "ctrl-l" } }"#,
+            r#"{ "version": 1, "keyboard": { "back": "b" } }"#,
+        ] {
+            let problem = reading(text);
+            assert!(problem.is_err(), "{text} half-loads");
+        }
     }
 
     #[test]
@@ -462,6 +524,7 @@ mod tests {
             launch_at_login: true,
             opening_monitor: super::OpeningMonitor::Pointer,
             reopening: super::Reopening::RootSearch,
+            keyboard: Keyboard::default_for_this_system(),
         }
         .save(dir.path());
         assert!(failed.is_err(), "{failed:?}");

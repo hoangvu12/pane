@@ -49,21 +49,22 @@ fn package_to_preview() -> Option<ToPreview> {
 fn main() {
     let preview = package_to_preview();
     gpui_platform::application().run(move |cx: &mut App| {
-        pane::bind_keys(cx);
         // Pane's own settings — the appearance preferences recorded in
         // settings.json, with the PANE_THEME/PANE_MATERIAL development
         // overrides winning for this process — and the embedded Geist
-        // fonts. A font failure only falls back to the system's default
-        // font.
+        // fonts, before the key bindings: the bindings the Keyboard page
+        // recorded are registered from the record the settings hold, so
+        // a saved rebind is in force from the first window. A font
+        // failure only falls back to the system's default font.
         if let Err(error) = pane::configure_visuals(cx) {
             eprintln!("Pane's fonts could not be loaded: {error:#}");
         }
+        pane::bind_keys(cx);
         // The operating system's reduced-motion preference, followed for as
         // long as Pane runs: the launcher's view transitions settle at once
         // while it is set, including mid-transition when the system reports
         // the change.
         pane::observe_reduced_motion(cx);
-        cx.on_window_closed(|cx, _| cx.quit()).detach();
         let runtime = match pane::cache_dir() {
             Some(dir) => Runtime::start_with_cache(dir),
             None => Runtime::start(),

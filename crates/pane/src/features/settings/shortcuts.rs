@@ -107,7 +107,10 @@ pub(crate) fn page() -> Page {
     Page {
         title: TITLE,
         about: "Aliases and global hotkeys for installed commands",
-        icon: (IconTone::Command, Glyph::Keyboard),
+        // The magnifier: the page is the searchable catalog of the
+        // commands' aliases and hotkeys. (The Keyboard page takes the
+        // keyboard glyph — the sidebar keeps its entries distinct.)
+        icon: (IconTone::Command, Glyph::Search),
         render,
         search: entries,
         focus,

@@ -14,9 +14,9 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, BoxShadow, ClipboardItem, Context, Div, FocusHandle, Hsla, KeyDownEvent,
-    PathPromptOptions, Pixels, Role, ScrollHandle, SharedString, Size, Stateful, Window,
-    WindowControlArea, div, prelude::*, px, relative,
+    App, BoxShadow, ClipboardItem, Context, Div, EntityInputHandler, FocusHandle, Hsla,
+    KeyDownEvent, PathPromptOptions, Pixels, Role, ScrollHandle, SharedString, Size, Stateful,
+    Window, WindowControlArea, div, prelude::*, px, relative,
 };
 use pane_core::changes::Changes;
 use pane_core::hotkeys::Shortcut;
@@ -27,11 +27,14 @@ use crate::features::footer_menu;
 use crate::features::root_search;
 use crate::features::settings;
 use crate::ui::icon::{Glyph, IconTone};
-use crate::ui::keycap::{self, Key as ActionKey};
+use crate::ui::keycap;
 use crate::ui::material::Material;
 use crate::ui::motion::{self, Direction};
 use crate::ui::result_row::{RowContent, result_row};
-use crate::{Back, Confirm, FocusNext, FocusPrevious, OpenSettings, SelectNext, SelectPrevious};
+use crate::{
+    Back, Confirm, DismissLauncher, FocusNext, FocusPrevious, OpenSettings, ReturnToRoot,
+    SelectNext, SelectPrevious,
+};
 
 pub(crate) const KEY_CONTEXT: &str = "Launcher";
 
@@ -252,22 +255,86 @@ impl LauncherWindow {
     }
 
     fn back(&mut self, _: &Back, window: &mut Window, cx: &mut Context<Self>) {
-        if self.launcher.back() {
-            // Backing out is the one navigation that leaves a view; the next
-            // frame's view transition (if the screen kind changed) settles the
-            // arriving content down into place.
-            self.navigation = Direction::Back;
-            self.sync_screen(window, cx);
-            cx.notify();
+        // The back key's order, as the specification states it: an active
+        // IME composition in the focused field is cancelled first, then an
+        // open footer menu is dismissed, and only then does the key leave
+        // the screen — one level at a time, clearing a command search's
+        // text before leaving it and root search's before hiding the
+        // launcher when it is already empty. (The menu's own Escape is
+        // bound deeper still, in the menu's context, so it never reaches
+        // here; this arm is for whatever key back is rebound to.)
+        if self.cancel_composition(window, cx) || self.close_open_menu(window, cx) {
             return;
         }
-        // Escape at root search with an empty query: the end of the
-        // Escape chain the specification orders — composition and menus
-        // were handled before the key reached here, the query is already
-        // empty — so it dismisses the launcher. Hidden, not closed: Pane
-        // keeps running, the Settings window stays open, and the next
-        // opening of the launcher reuses the same live window.
+        if let Screen::Root { query } = &self.launcher.view().screen
+            && query.is_empty()
+        {
+            self.hide(window, cx);
+            return;
+        }
+        self.launcher.back();
+        // Backing out is the one navigation that leaves a view; the next
+        // frame's view transition (if the screen kind changed) settles the
+        // arriving content down into place.
+        self.navigation = Direction::Back;
+        self.sync_screen(window, cx);
+        cx.notify();
+    }
+
+    /// Returns to root search from wherever the launcher is — the state a
+    /// summoned launcher starts from — leaving every open screen at once,
+    /// as the back key leaves them one at a time.
+    fn return_to_root(&mut self, _: &ReturnToRoot, window: &mut Window, cx: &mut Context<Self>) {
+        if self.close_open_menu(window, cx) {
+            return;
+        }
+        self.launcher.show_root_search();
+        // Leaving however many screens were open: the next frame's view
+        // transition settles the arriving content down into place.
+        self.navigation = Direction::Back;
+        self.sync_screen(window, cx);
+        cx.notify();
+    }
+
+    /// Hides the launcher — hidden, not closed: Pane keeps running in the
+    /// background, the Settings window stays open, the global hotkeys stay
+    /// registered, and the Open Pane hotkey shows the same window and the
+    /// same launcher again. In the Settings window the platform's close
+    /// shortcut closes only that window.
+    fn dismiss(&mut self, _: &DismissLauncher, window: &mut Window, cx: &mut Context<Self>) {
         self.hide(window, cx);
+    }
+
+    /// Cancels the IME composition active in one of this window's fields
+    /// — the query field, or the open form's text fields — discarding its
+    /// marked text, if one is active: the next key is free to act, as it
+    /// is on a platform whose input method takes the key itself. Whether
+    /// one was cancelled.
+    fn cancel_composition(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let mut fields = vec![self.query_field()];
+        if let Some(form) = &self.form {
+            fields.extend(form.text_fields());
+        }
+        for input in fields {
+            let marked = input.update(cx, |input, cx| input.marked_text_range(window, cx));
+            if let Some(marked) = marked {
+                input.update(cx, |input, cx| {
+                    input.replace_text_in_range(Some(marked), "", window, cx)
+                });
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Closes the footer menu if it is open, restoring the focus it took.
+    /// Whether it was open.
+    fn close_open_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.menu.is_some() {
+            self.close_menu(window, cx);
+            return true;
+        }
+        false
     }
 
     /// Shows the package in `folder` with its identity and compatibility,
@@ -418,8 +485,9 @@ impl LauncherWindow {
         }
     }
 
-    /// Hides the launcher window: the Open Pane hotkey's hide path and
-    /// Escape's end at root search both come here. Hidden, not closed —
+    /// Hides the launcher window: the Open Pane hotkey's hide path,
+    /// Escape's end at root search, and the dismiss binding and back key
+    /// the Keyboard page can rebind all come here. Hidden, not closed —
     /// Pane keeps running, the Settings window stays open, and the next
     /// opening reuses the same live window and launcher.
     fn hide(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -542,8 +610,10 @@ impl LauncherWindow {
         window.focus_prev(cx);
     }
 
-    /// The local `Cmd+,`/`Ctrl+,` shortcut: opens or focuses the Settings
-    /// window, the same one the footer menu and the root result open.
+    /// The open-Settings binding (Cmd+, on macOS / Ctrl+, elsewhere by
+    /// default, rebindable on the Keyboard page): opens or focuses the
+    /// Settings window, the same one the footer menu and the root result
+    /// open.
     fn open_settings(&mut self, _: &OpenSettings, _: &mut Window, cx: &mut Context<Self>) {
         settings::open(&self.launcher, cx);
     }
@@ -775,12 +845,15 @@ impl LauncherWindow {
             })
     }
 
-    /// The idle footer's button: the selected action's label with the
-    /// Enter keycap beside it. Its click takes the same Confirm path Enter
-    /// takes (see [`LauncherWindow::press_primary_action`]); its label and
-    /// availability come from the definition, so what the button says,
-    /// whether it can run and what it does cannot diverge. The selected
-    /// row's chrome marks it as the strip's primary control.
+    /// The idle footer's button: the selected action's label with the key
+    /// of its binding beside it — the Enter keycap for the Enter key, the
+    /// binding's name in the same chrome for any other key the Keyboard
+    /// page put there. Its click takes the same path the binding's key
+    /// takes (see [`LauncherWindow::press_primary_action`]); its label,
+    /// availability and key come from the definition and the effective
+    /// binding, so what the button says, whether it can run, what it does
+    /// and what its keycap teaches cannot diverge. The selected row's
+    /// chrome marks it as the strip's primary control.
     fn render_action_button(
         &self,
         action: &SelectedAction,
@@ -788,14 +861,19 @@ impl LauncherWindow {
     ) -> Stateful<Div> {
         let theme = crate::settings::visuals(cx).theme;
         let geometry = &theme.geometry;
+        let invoke = crate::settings::shared(cx)
+            .read(cx)
+            .keyboard()
+            .binding(pane_core::KeyboardAction::InvokeSelectedAction)
+            .clone();
         div()
             .id("primary-action")
             .debug_selector(|| "primary-action".into())
             .role(Role::Button)
             .aria_label(action.label.clone())
             // The key that presses this button from the keyboard: the
-            // keycap beside the label shows the same key.
-            .aria_keyshortcuts(ActionKey::Enter.name())
+            // keycap beside the label shows the same binding.
+            .aria_keyshortcuts(invoke.to_string())
             // A click never dispatches what the definition says cannot
             // run now; assistive technology is told the same thing.
             .when(!action.available, |button| button.aria_disabled(true))
@@ -834,21 +912,22 @@ impl LauncherWindow {
                     .truncate()
                     .child(action.label.clone()),
             )
-            .child(keycap::keycap(ActionKey::Enter, &theme))
+            .child(keycap::binding_keycap(&invoke, &theme))
             .on_click(cx.listener(|this, _, window, cx| {
                 this.press_primary_action(window, cx);
             }))
     }
 
     /// Dispatches the footer button's click: the same
-    /// [`LauncherWindow::confirm`] path Enter takes, but only when the
-    /// selected-action definition says the action can run now. The frame
-    /// that drew the button can be stale — an action may have started
-    /// since it was laid out — so the check is made again here, at click
-    /// time, against the launcher's current state. Enter is unchanged: it
-    /// keeps the behavior it has always had; this keeps the button from
-    /// dispatching what cannot run (no selection, an unavailable result, an
-    /// action already running).
+    /// [`LauncherWindow::confirm`] path the invoke binding's key takes,
+    /// but only when the selected-action definition says the action can
+    /// run now. The frame that drew the button can be stale — an action
+    /// may have started since it was laid out — so the check is made
+    /// again here, at click time, against the launcher's current state.
+    /// The binding's key is unchanged: it keeps the behavior it has
+    /// always had; this keeps the button from dispatching what cannot
+    /// run (no selection, an unavailable result, an action already
+    /// running).
     fn press_primary_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.launcher.selected_action().available {
             self.confirm(&Confirm, window, cx);
@@ -1057,6 +1136,8 @@ impl Render for LauncherWindow {
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::back))
+            .on_action(cx.listener(Self::return_to_root))
+            .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::open_settings))
             .on_action(cx.listener(Self::focus_next))
             .on_action(cx.listener(Self::focus_previous))

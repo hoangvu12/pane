@@ -53,7 +53,7 @@ pub(crate) enum Glyph {
     /// Two overlapping squares: the Settings About page's copy of the
     /// diagnostics it already holds.
     Copy,
-    /// A keyboard: the Settings window's Shortcuts section.
+    /// A keyboard: the Settings window's Keyboard section.
     Keyboard,
     /// A chevron pointing right: a group of rows — rotated to point
     /// down by [`glyph_rotated`] while the group it belongs to is
