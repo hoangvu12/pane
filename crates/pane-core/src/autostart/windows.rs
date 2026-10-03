@@ -131,7 +131,9 @@ fn open(
     }
     let answered = ask(key);
     // SAFETY: `key` is the handle the open returned, asked for once here.
-    unsafe { RegCloseKey(key) };
+    // The close's own answer is advisory: the key is already going away,
+    // and there is nothing Pane can do with a failure here.
+    let _ = unsafe { RegCloseKey(key) };
     Ok(answered)
 }
 

@@ -179,7 +179,8 @@ mod tests {
     fn no_record_means_the_defaults() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(
-            HostSettings::open(dir.path()).unwrap(),n            HostSettings::default()
+            HostSettings::open(dir.path()).unwrap(),
+            HostSettings::default()
         );
     }
 
