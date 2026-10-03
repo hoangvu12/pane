@@ -21,7 +21,7 @@ use gpui::{
 };
 use pane::{LauncherWindow, SettingsWindow};
 use pane_core::hotkeys::{HotkeyError, Hotkeys, Shortcut};
-use pane_core::{CommandRegistration, Launcher, Runtime, Screen, Status};
+use pane_core::{Launcher, Runtime, Screen, Status};
 use tempfile::TempDir;
 
 #[path = "support/settle.rs"]
@@ -70,26 +70,6 @@ fn init_settings(data: Option<&Path>, cx: &mut TestAppContext) {
     });
 }
 
-/// The Rust sample command, as `window.rs`' fixture: its command list
-/// offers a form and a custom view.
-fn sample() -> CommandRegistration {
-    let component =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/guests/sample_rust.wasm");
-    assert!(
-        component.exists(),
-        "{} is missing; run `cargo xtask guests`",
-        component.display()
-    );
-    CommandRegistration {
-        id: "rust-sample".into(),
-        title: "Rust sample".into(),
-        subtitle: None,
-        component,
-        takes_query: false,
-        search: false,
-    }
-}
-
 /// The launcher window over `launcher`, with the record of `data` in
 /// force: the settings are initialized before the keys are bound, as the
 /// binary does, so the bindings the record holds are the ones the window
@@ -110,7 +90,11 @@ fn open_sample<'a>(
     cx: &'a mut TestAppContext,
     data: Option<&Path>,
 ) -> (gpui::Entity<LauncherWindow>, &'a mut VisualTestContext) {
-    open_launcher(cx, Launcher::new(Runtime::start(), vec![sample()]), data)
+    open_launcher(
+        cx,
+        Launcher::new(Runtime::start(), pane::sample_commands()),
+        data,
+    )
 }
 
 /// The launcher window's handle, for liveness checks.
@@ -354,7 +338,11 @@ fn a_rebind_takes_effect_at_once_is_saved_and_survives_a_restart(cx: &mut TestAp
     init_settings(Some(data.path()), &mut fresh);
     fresh.update(pane::bind_keys);
     let (window, fresh_cx) = fresh.add_window_view(|window, cx| {
-        LauncherWindow::new(Launcher::new(Runtime::start(), vec![sample()]), window, cx)
+        LauncherWindow::new(
+            Launcher::new(Runtime::start(), pane::sample_commands()),
+            window,
+            cx,
+        )
     });
     fresh_cx.simulate_input("script");
     settle(&window, fresh_cx);
@@ -703,7 +691,8 @@ fn a_save_that_fails_rolls_the_binding_back(cx: &mut TestAppContext) {
 fn escape_clears_the_query_then_hides_the_launcher_which_keeps_running(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
     let system = Arc::new(FakeSystem::default());
-    let launcher = Launcher::new(Runtime::start(), vec![sample()]).with_hotkeys(system.clone());
+    let launcher =
+        Launcher::new(Runtime::start(), pane::sample_commands()).with_hotkeys(system.clone());
     let (window, cx) = open_launcher(cx, launcher, Some(data.path()));
     let handle = handle_of(cx);
 
@@ -827,7 +816,8 @@ fn return_to_root_leaves_whatever_screen_is_open(cx: &mut TestAppContext) {
 fn window_local_actions_stay_in_their_windows(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
     let system = Arc::new(FakeSystem::default());
-    let launcher = Launcher::new(Runtime::start(), vec![sample()]).with_hotkeys(system.clone());
+    let launcher =
+        Launcher::new(Runtime::start(), pane::sample_commands()).with_hotkeys(system.clone());
     let (window, cx) = open_launcher(cx, launcher, Some(data.path()));
     let handle = handle_of(cx);
 
@@ -893,18 +883,27 @@ fn a_form_still_submits_with_the_rebound_key_and_the_footer_button(cx: &mut Test
         "ctrl-j",
     );
 
-    // The rebound key submits the form, as Enter did; the footer's
-    // button, the pointer's path to the same action, still does.
+    // The rebound key submits the form, as Enter did.
     cx.simulate_input("Ada");
     cx.simulate_keystrokes("ctrl-j");
     assert_eq!(
         settle(&window, cx).status,
         Status::Result("Hello, Ada, from the Rust guest".into())
     );
+
+    // The footer's button, the pointer's path to the same action, still
+    // does: back out, reopen the form with the rebound key, and submit
+    // with the button — while the launcher is idle, so the action strip
+    // is the button.
+    cx.simulate_keystrokes("escape");
+    settle(&window, cx);
+    cx.simulate_keystrokes("ctrl-j");
+    settle(&window, cx);
+    cx.simulate_input("Grace");
     click(cx, "primary-action");
     assert_eq!(
         settle(&window, cx).status,
-        Status::Result("Hello, Ada, from the Rust guest".into()),
+        Status::Result("Hello, Grace, from the Rust guest".into()),
         "the button still submits"
     );
 }
