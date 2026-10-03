@@ -144,6 +144,7 @@ impl Bindings {
 /// host settings hold the choice (see `crate::host_settings`); the window
 /// hands each recorded choice to the launcher, which applies it through
 /// the same registration path the command hotkeys take.
+#[derive(Default)]
 pub(super) struct OpenPane {
     /// What is registered with the system, if anything.
     registered: Option<Shortcut>,
@@ -151,15 +152,6 @@ pub(super) struct OpenPane {
     /// a registration the system refused, a choice it would refuse, or a
     /// collision with a command's hotkey.
     problem: Option<String>,
-}
-
-impl Default for OpenPane {
-    fn default() -> OpenPane {
-        OpenPane {
-            registered: None,
-            problem: None,
-        }
-    }
 }
 
 impl OpenPane {
@@ -570,7 +562,7 @@ impl Launcher {
     /// validate, register the new one, then release the one it replaces.
     /// `Err` leaves the state exactly as it was.
     fn assign_open_pane(&self, state: &mut State, shortcut: Shortcut) -> Result<(), String> {
-        if state.open_pane.registered == Some(shortcut) {
+        if state.open_pane.registered.as_ref() == Some(&shortcut) {
             // Already the working binding: nothing to register or release.
             state.open_pane.problem = None;
             return Ok(());
