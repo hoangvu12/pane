@@ -14,7 +14,9 @@ use pane_core::placement::{Display, DisplayId, DisplayLayout, Point, Rect, Size}
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use x11rb::connection::Connection;
 use x11rb::protocol::randr::{ConnectionExt as _, MonitorInfo};
-use x11rb::protocol::xproto::{AtomEnum, ConfigureWindowAux, ConnectionExt as _, Window};
+use x11rb::protocol::xproto::{
+    AtomEnum, ConfigureWindowAux, ConnectionExt as _, Window as XWindow,
+};
 use x11rb::rust_connection::RustConnection;
 
 use super::Placement;
@@ -24,7 +26,7 @@ pub(super) struct X11Displays {
     connection: RustConnection,
     /// The root window of the default screen, whose monitors are the
     /// displays and whose properties name the active window.
-    root: Window,
+    root: XWindow,
 }
 
 impl X11Displays {
@@ -50,7 +52,7 @@ impl Placement for X11Displays {
         // the active window, one read, in one coordinate space.
         let monitors = self
             .connection
-            .get_monitors(self.root, true)
+            .randr_get_monitors(self.root, true)
             .ok()
             .and_then(|cookie| cookie.reply().ok())
             .map(|reply| reply.monitors)

@@ -106,7 +106,7 @@ fn render(
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let settings = crate::settings::shared(cx);
-    let (choice, reopening, status) = {
+    let (chosen, reopening, status) = {
         let state = settings.read(cx);
         (state.opening_monitor(), state.reopening(), state.status())
     };
@@ -160,7 +160,7 @@ fn render(
                             selector,
                             name,
                             subtitle,
-                            monitor == choice,
+                            monitor == chosen,
                             reason.is_none(),
                             reason,
                             theme,
@@ -176,7 +176,7 @@ fn render(
             ))
             // The choice's own honesty: what the launcher would open on
             // now, when that is not the display the choice names.
-            .when_some(fallback_note(&layout, choice, theme), |page, note| {
+            .when_some(fallback_note(&layout, chosen, theme), |page, note| {
                 page.child(note)
             })
         })

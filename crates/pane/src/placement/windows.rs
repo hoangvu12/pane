@@ -12,7 +12,7 @@
 use gpui::Window;
 use pane_core::placement::{Display, DisplayId, DisplayLayout, Point, Rect, Size};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use windows::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT};
+use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT};
 use windows::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITORINFO,
     MonitorFromWindow,
@@ -21,6 +21,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetCursorPos, GetForegroundWindow, MONITORINFOF_PRIMARY, SWP_NOACTIVATE, SWP_NOSIZE,
     SWP_NOZORDER, SetWindowPos,
 };
+use windows::core::BOOL;
 
 use super::Placement;
 
@@ -49,7 +50,7 @@ impl Placement for WindowsDisplays {
                 continue;
             }
             let id = DisplayId(handle.0 as u64);
-            if info.dwFlags & MONITORINFOF_PRIMARY.0 != 0 {
+            if info.dwFlags & MONITORINFOF_PRIMARY != 0 {
                 primary = Some(id);
             }
             displays.push(Display {

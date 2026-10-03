@@ -106,7 +106,7 @@ pub fn init(placement: Rc<dyn Placement>, cx: &mut App) {
 /// The placement every window places the launcher and explains the choices
 /// through. The first call makes it the platform's own
 /// ([`native`]); the window layer has no startup step of its own for this.
-pub(crate) fn shared(cx: &App) -> Rc<dyn Placement> {
+pub(crate) fn shared(cx: &mut App) -> Rc<dyn Placement> {
     if let Some(shared) = cx.try_global::<Shared>() {
         return shared.0.clone();
     }

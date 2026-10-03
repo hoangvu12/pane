@@ -391,7 +391,7 @@ impl LauncherWindow {
         let Some(pending) = self.launcher.press_hotkey(shortcut) else {
             return;
         };
-        self.unhide(window);
+        self.unhide(window, cx);
         window.activate_window();
         cx.activate(true);
         self.navigation = Direction::Forward;
@@ -478,7 +478,7 @@ impl LauncherWindow {
             self.hide(window, cx);
             return;
         }
-        self.unhide(window);
+        self.unhide(window, cx);
         window.activate_window();
         cx.activate(true);
         // What the summoned launcher starts from is the Launcher page's
@@ -597,7 +597,7 @@ impl LauncherWindow {
         while !matches!(self.launcher.view().screen, Screen::Root { .. }) {
             self.launcher.back();
         }
-        self.unhide(window);
+        self.unhide(window, cx);
         window.activate_window();
         cx.activate(true);
         let Some(index) = self
