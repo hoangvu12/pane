@@ -78,7 +78,7 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, BoxShadow, ClickEvent, Context, Entity, FocusHandle, KeyBinding,
+    AnyElement, App, BoxShadow, ClickEvent, Context, Entity, FocusHandle, Focusable, KeyBinding,
     MouseDownEvent, Pixels, Role, ScrollHandle, SharedString, Subscription, Window, actions,
     anchored, deferred, div, prelude::*, px,
 };
@@ -302,17 +302,18 @@ impl Select {
     /// the Settings search's matcher: that one ranks a whole catalog of
     /// settings; this one filters one control's rows.)
     fn matches(choice: &Choice, query: &str) -> bool {
-        let words = query.to_lowercase().split_whitespace().collect::<Vec<_>>();
+        let lower = query.to_lowercase();
+        let words: Vec<&str> = lower.split_whitespace().collect();
         if words.is_empty() {
             return true;
         }
         let label = choice.label.to_lowercase();
         words.iter().all(|word| {
-            label.contains(word.as_str())
+            label.contains(*word)
                 || choice
                     .keywords
                     .iter()
-                    .any(|keyword| keyword.to_lowercase().contains(word.as_str()))
+                    .any(|keyword| keyword.to_lowercase().contains(*word))
         })
     }
 

@@ -33,8 +33,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, Context, Div, Entity, Hsla, Role, ScrollAnchor, Stateful, Toggled, Window,
-    div, prelude::*, px,
+    AnyElement, App, Context, Div, Entity, Hsla, Role, ScrollAnchor, SharedString, Stateful,
+    Toggled, Window, div, prelude::*, px,
 };
 use pane_core::placement::{DisplayLayout, resolve};
 use pane_core::{Launcher, OpeningMonitor, Reopening};
@@ -180,7 +180,7 @@ fn monitor_model(cx: &App) -> Model {
                 // A choice whose answer the system does not give is
                 // listed with its reason, not offered: choosing it
                 // would pretend a placement that cannot be made.
-                unavailable_reason: unsupported(&layout, monitor),
+                unavailable_reason: unsupported(&layout, monitor).map(SharedString::from),
             })
             .collect(),
         committed: Some(monitor_name(committed).into()),
@@ -214,7 +214,7 @@ impl SettingsWindow {
         &self,
         cx: &App,
     ) -> Entity<gpui_elements::editable_text::EditableTextState> {
-        self.launcher.field(cx)
+        self.launcher_page.field(cx)
     }
 }
 
@@ -268,7 +268,7 @@ fn focus(
     if target != "launcher-monitor" {
         return false;
     }
-    let trigger = this.launcher.monitor.read(cx).trigger_focus();
+    let trigger = this.launcher_page.monitor.read(cx).trigger_focus();
     window.focus(&trigger, cx);
     true
 }
@@ -447,7 +447,7 @@ fn monitor_select(this: &mut SettingsWindow, anchor: ScrollAnchor) -> Stateful<D
         .id("launcher-monitor")
         .w_full()
         .anchor_scroll(Some(anchor))
-        .child(this.launcher.monitor.clone())
+        .child(this.launcher_page.monitor.clone())
 }
 
 /// One choice row: the reference's row chrome carrying a radio's marks
