@@ -488,7 +488,7 @@ fn the_windows_close_shortcut_is_captured_while_a_recorder_listens(cx: &mut Test
     // while a recorder listens, so the Settings window stays open and
     // the keys reach the binding being recorded (here: refused, for
     // colliding with the dismiss binding that has them).
-    let (settings, mut settings_cx) = keyboard_page(cx);
+    let (_settings, mut settings_cx) = keyboard_page(cx);
     click(&mut settings_cx, "keyboard-back");
     settings_cx.run_until_parked();
     settings_cx.simulate_keystrokes(dismiss_shortcut());
@@ -512,7 +512,6 @@ fn the_windows_close_shortcut_is_captured_while_a_recorder_listens(cx: &mut Test
     settings_cx.run_until_parked();
     settings_cx.update(|window, _| window.remove_window());
     cx.run_until_parked();
-    let _ = settings;
     assert_eq!(settings_windows(cx), 0, "the window closed");
 }
 
@@ -730,6 +729,8 @@ fn escape_clears_the_query_then_hides_the_launcher_which_keeps_running(cx: &mut 
 
 #[gpui::test]
 fn escape_cancels_an_active_composition_before_it_acts(cx: &mut TestAppContext) {
+    use gpui::EntityInputHandler;
+
     let data = tempfile::tempdir().unwrap();
     let (window, cx) = open_sample(cx, Some(data.path()));
     cx.simulate_input("a");
@@ -811,7 +812,7 @@ fn return_to_root_leaves_whatever_screen_is_open(cx: &mut TestAppContext) {
     cx.simulate_keystrokes(root_shortcut());
     let view = settle(&window, cx);
     assert!(
-        matches!(view.screen, Screen::Root { query } if query.is_empty()),
+        matches!(view.screen, Screen::Root { ref query } if query.is_empty()),
         "{:?}",
         view.screen
     );
