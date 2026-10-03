@@ -73,16 +73,18 @@ fn hello_package(folder: &Path) -> PathBuf {
     folder.to_path_buf()
 }
 
+/// What `open` hands back: the launcher window, the Settings window, and
+/// the launcher's own test context to drive it with.
+type Opened<'a> = (
+    Entity<LauncherWindow>,
+    WindowHandle<SettingsWindow>,
+    &'a mut VisualTestContext,
+);
+
 /// Opens the launcher window and the Settings window over it, with the
 /// window's keyboard focus on the sidebar's sections, as a user opening
 /// Settings from the shortcut has.
-fn open(
-    cx: &mut TestAppContext,
-) -> (
-    Entity<LauncherWindow>,
-    WindowHandle<SettingsWindow>,
-    &mut VisualTestContext,
-) {
+fn open(cx: &mut TestAppContext) -> Opened<'_> {
     let launcher = Launcher::new(Runtime::start(), pane::sample_commands());
     cx.executor().allow_parking();
     cx.update(pane::bind_keys);
@@ -181,8 +183,10 @@ fn find_focuses_the_search_and_typing_matches_registered_settings(cx: &mut TestA
     let (launcher, settings, cx) = open(cx);
     let mut sc = settings_context(&settings, cx);
 
-    // The window's keyboard focus is the sidebar's sections.
-    assert_eq!(focused_label(&mut sc).as_deref(), Some("Settings sections"));
+    // The window's keyboard focus is the sidebar's sections: assistive
+    // technology reads the list's active descendant — the selected
+    // section, the Appearance page the window opened on.
+    assert_eq!(focused_label(&mut sc).as_deref(), Some("Appearance"));
 
     // Cmd+F / Ctrl+F focuses the one search input, from anywhere in the
     // Settings window.
@@ -229,8 +233,8 @@ fn find_focuses_the_search_and_typing_matches_registered_settings(cx: &mut TestA
     );
     assert_eq!(
         focused_label(&mut sc).as_deref(),
-        Some("Settings sections"),
-        "the sidebar has the keyboard focus"
+        Some("Appearance"),
+        "the sidebar has the keyboard focus, its selected section read"
     );
 
     // Nothing reached the launcher window behind Settings.
@@ -272,7 +276,7 @@ fn arrows_move_the_selection_and_the_pointer_opens_what_is_clicked(cx: &mut Test
     sc.simulate_keystrokes("enter");
     sc.run_until_parked();
     assert!(sc.debug_bounds("appearance").is_some());
-    assert_eq!(focused_label(&mut sc).as_deref(), Some("Settings sections"));
+    assert_eq!(focused_label(&mut sc).as_deref(), Some("Appearance"));
 
     // The pointer does the same: a click on a result opens it — here the
     // About page's documentation entry.
@@ -285,7 +289,11 @@ fn arrows_move_the_selection_and_the_pointer_opens_what_is_clicked(cx: &mut Test
     sc.simulate_click(row.center(), Modifiers::none());
     sc.run_until_parked();
     assert!(sc.debug_bounds("about").is_some(), "the About page opened");
-    assert_eq!(focused_label(&mut sc).as_deref(), Some("Settings sections"));
+    assert_eq!(
+        focused_label(&mut sc).as_deref(),
+        Some("About"),
+        "the sidebar has the keyboard focus, its selected section read"
+    );
 
     // A query that matches nothing says so, and Enter on no result does
     // nothing: the page stays, the field keeps its text and its focus.
@@ -348,8 +356,8 @@ fn escape_clears_the_query_then_returns_to_page_navigation(cx: &mut TestAppConte
     sc.run_until_parked();
     assert_eq!(
         focused_label(&mut sc).as_deref(),
-        Some("Settings sections"),
-        "page navigation has the keyboard focus"
+        Some("Appearance"),
+        "page navigation has the keyboard focus, its selected section read"
     );
 
     // Page navigation also leaves the search: a query showing clears when
@@ -377,10 +385,12 @@ fn a_jump_reveals_the_control_on_its_page(cx: &mut TestAppContext) {
     let (_launcher, settings, cx) = open(cx);
     let mut sc = settings_context(&settings, cx);
 
-    // A short window, at its floor, so the Appearance page has to scroll
-    // to show its lower choices.
+    // A short window — shorter than the floor the app asks the system
+    // for, which the layout still handles — so the Appearance page
+    // overflows its viewport far enough that revealing a lower choice
+    // has to scroll, not just land in view.
     sc.cx
-        .simulate_window_resize(AnyWindowHandle::from(*&settings), size(px(560.), px(400.)));
+        .simulate_window_resize(AnyWindowHandle::from(settings), size(px(560.), px(300.)));
     sc.run_until_parked();
     let page = sc.debug_bounds("settings-page").expect("the page area");
     let solid = sc
@@ -539,8 +549,8 @@ fn registrations_that_appear_and_go_are_found_and_lost(cx: &mut TestAppContext) 
     );
     assert_eq!(
         focused_label(&mut sc).as_deref(),
-        Some("Settings sections"),
-        "the sidebar has the keyboard focus"
+        Some("Appearance"),
+        "the sidebar has the keyboard focus, its selected section read"
     );
 
     // The package is uninstalled: the entry goes, and the same query now

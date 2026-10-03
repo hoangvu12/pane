@@ -319,6 +319,7 @@ fn group(label: &'static str, rows: Vec<Stateful<Div>>, theme: &Theme) -> Div {
 /// state); `anchor` is the scroll anchor the search's reveal scrolls to;
 /// `on_click` reports the choice to the host settings, which repaints
 /// both windows and saves.
+#[allow(clippy::too_many_arguments)]
 fn choice(
     selector: &'static str,
     name: &'static str,
