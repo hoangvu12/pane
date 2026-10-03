@@ -727,9 +727,13 @@ impl Select {
 
     /// The popup: the L2 popover surface with the search field above
     /// the choice rows, on the anchored, deferred overlay that paints
-    /// above the window and is constrained inside it. See the module
-    /// docs for the placement. `active` is the highlighted choice's
-    /// id, if one is highlighted.
+    /// above the window and is constrained inside it. The popup is as
+    /// wide as its contents ask — the field, the rows — bounded by the
+    /// space the trigger leaves (content-width dropdowns, as Raycast's
+    /// are); the finer coordination with the trigger's geometry is the
+    /// popup polish ticket's (#88). See the module docs for the
+    /// placement. `active` is the highlighted choice's id, if one is
+    /// highlighted.
     fn popup(
         &self,
         model: &Model,
