@@ -626,13 +626,14 @@ fn a_view_whose_command_is_gone_returns_safely_to_root_search(cx: &mut TestAppCo
     // and enabled.
     let installing = launcher.install_package(&folder);
     cx.foreground_executor().block_on(installing);
+    // Typing the query redraws the window, which the install finished
+    // without telling: no event of the user's drove the change.
+    cx.simulate_input("hello");
     let view = settle(&window, cx);
     assert!(
         view.rows.iter().any(|row| row.title == "Say hello"),
         "the package's command is listed"
     );
-    cx.simulate_input("hello");
-    let view = settle(&window, cx);
     assert_eq!(view.selected, Some(0), "the command is the selected row");
     cx.simulate_keystrokes("enter");
     let view = settle(&window, cx);

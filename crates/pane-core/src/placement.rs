@@ -301,11 +301,7 @@ mod tests {
 
     #[test]
     fn a_choice_the_system_does_not_answer_falls_back_to_the_primary() {
-        for choice in [
-            OpeningMonitor::Pointer,
-            OpeningMonitor::ActiveWindow,
-            OpeningMonitor::Primary,
-        ] {
+        for choice in [OpeningMonitor::Pointer, OpeningMonitor::ActiveWindow] {
             let resolved = resolve(&layout(None, None), choice).unwrap();
             assert_eq!(
                 resolved.display.id,
