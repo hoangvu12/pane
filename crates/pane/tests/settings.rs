@@ -2138,8 +2138,21 @@ fn reduced_motion_settles_section_switches_at_once_at_the_window_boundary(cx: &m
     let (_launcher, _links, cx) = open_launcher(cx);
     let (settings, mut settings_cx) = opened_settings(cx);
     // The window's floor: the boundary the reduced presentation must
-    // still work at.
+    // still work at. The Keyboard page has joined the sections since
+    // this floor was written, so the sidebar's list now scrolls at this
+    // size: turn its wheel to bring the About section's row into view
+    // before it is clicked.
     settings_cx.simulate_resize(gpui::size(px(560.), px(400.)));
+    settings_cx.run_until_parked();
+    let sections = settings_cx
+        .debug_bounds("sections")
+        .expect("the sections list");
+    settings_cx.simulate_event(gpui::ScrollWheelEvent {
+        position: sections.center(),
+        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(-120.))),
+        modifiers: Modifiers::none(),
+        touch_phase: gpui::TouchPhase::Moved,
+    });
     settings_cx.run_until_parked();
 
     // A switch under reduced motion starts no arrival: the frame that
@@ -2161,8 +2174,17 @@ fn reduced_motion_settles_section_switches_at_once_at_the_window_boundary(cx: &m
     );
 
     // Reduced motion engaged mid-arrival ends it on the next frame. Begin
-    // a return under full motion, then flip the preference.
+    // a return under full motion, then flip the preference. The wheel
+    // goes back up first: the Appearance section's row was above the
+    // scrolled view.
     settings_cx.update(|_, cx| cx.set_reduce_motion(false));
+    settings_cx.simulate_event(gpui::ScrollWheelEvent {
+        position: sections.center(),
+        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(120.))),
+        modifiers: Modifiers::none(),
+        touch_phase: gpui::TouchPhase::Moved,
+    });
+    settings_cx.run_until_parked();
     click_section(&mut settings_cx, "section-Appearance");
     assert!(
         section_arrival(&settings, &mut settings_cx).is_some(),

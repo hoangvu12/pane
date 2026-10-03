@@ -67,13 +67,13 @@
 //! ## Accessibility
 //!
 //! The trigger is a combo box: named, carrying the committed choice as
-//! its value and its expanded state. The popup's field is a text input
-//! (the search), the choices a list box's options — the committed one
-//! selected, the highlighted one the focused field's active descendant,
-//! a choice the system cannot answer disabled with its reason as the
-//! description. Keyboard focus sits in the field while the popup is
-//! open, so the arrows move the highlight without stealing text focus
-//! from the query.
+//! its value and its expanded state. The popup's content is the field's
+//! node, as root search's wrapper is — an editable combo box whose list
+//! is the choices — the committed one selected, the highlighted one the
+//! focused field's active descendant, a choice the system cannot answer
+//! disabled with its reason as the description. Keyboard focus sits in
+//! the field while the popup is open, so the arrows move the highlight
+//! without stealing text focus from the query.
 
 use std::rc::Rc;
 
