@@ -23,12 +23,14 @@
 //! the window layer resolves them into a theme and a material, including
 //! the platform's own normalization of glass to solid.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde_json::{Map, Value};
 
 use crate::atomic::{Readers, write_atomically};
 use crate::hotkeys::Shortcut;
+use crate::keyboard::Keyboard;
 
 /// The file the settings are recorded in, in Pane's data folder.
 const FILE: &str = "settings.json";
@@ -74,10 +76,10 @@ pub enum MaterialPreference {
 }
 
 /// The host settings as the user chose them: one theme preference, one
-/// material preference and the Open Pane hotkey, the whole of what the
-/// pages built so far offer. Later pages add fields beside these, with
-/// the same rules: missing fields default, and unknown values fail the
-/// record.
+/// material preference, the Open Pane hotkey and the in-app navigation
+/// bindings, the whole of what the pages built so far offer. Later pages
+/// add fields beside these, with the same rules: missing fields default,
+/// and unknown values fail the record.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostSettings {
     /// The theme the user chose for Pane's windows.
@@ -90,6 +92,11 @@ pub struct HostSettings {
     /// stays while extensions are disabled, and is applied through the
     /// same platform registration path the command hotkeys use.
     pub open_pane: Shortcut,
+    /// The in-app navigation bindings the Keyboard page rebinds: one
+    /// binding per action of the bounded set, from the same defaults when
+    /// the record holds none. These keys belong to Pane's own windows, not
+    /// to any focused field's text editing.
+    pub keyboard: Keyboard,
 }
 
 impl Default for HostSettings {
@@ -98,6 +105,7 @@ impl Default for HostSettings {
             theme: ThemePreference::default(),
             material: MaterialPreference::default(),
             open_pane: Shortcut::open_pane_default(),
+            keyboard: Keyboard::default_for_this_system(),
         }
     }
 }
@@ -144,10 +152,17 @@ impl HostSettings {
                 )
             })?,
         };
+        let keyboard = match recorded.keyboard {
+            None => Keyboard::default_for_this_system(),
+            Some(fields) => Keyboard::parse(&fields).map_err(|problem| {
+                format!("{} is invalid: {problem}", file.display())
+            })?,
+        };
         Ok(HostSettings {
             theme: recorded.theme,
             material: recorded.material,
             open_pane,
+            keyboard,
         })
     }
 
@@ -162,6 +177,7 @@ impl HostSettings {
             theme: self.theme,
             material: self.material,
             open_pane: Some(self.open_pane.id()),
+            keyboard: Some(self.keyboard.recorded()),
         };
         let text = serde_json::to_string_pretty(&recorded).map_err(|error| error.to_string())?;
         let file = dir.join(FILE);
@@ -184,11 +200,19 @@ struct Recorded {
     /// shortcut fails the whole record.
     #[serde(default)]
     open_pane: Option<String>,
+    /// The in-app navigation bindings, each action's id mapped to its
+    /// binding's id, as [`Keyboard::recorded`] writes them; missing means
+    /// this system's provisional defaults. An unknown action, a binding
+    /// that is not one or two actions on one binding fails the whole
+    /// record.
+    #[serde(default)]
+    keyboard: Option<BTreeMap<String, String>>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::{FILE, HostSettings, MaterialPreference, Shortcut, ThemePreference};
+    use crate::keyboard::{Keyboard, KeyboardAction};
 
     /// Reads what `text` records in a fresh folder.
     fn reading(text: &str) -> Result<HostSettings, String> {
@@ -202,11 +226,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(
             HostSettings::open(dir.path()).unwrap(),
-            HostSettings {
-                theme: ThemePreference::Dark,
-                material: MaterialPreference::Glass,
-                open_pane: Shortcut::open_pane_default(),
-            }
+            HostSettings::default()
         );
     }
 
@@ -225,13 +245,54 @@ mod tests {
     #[test]
     fn a_record_round_trips() {
         let dir = tempfile::tempdir().unwrap();
+        let mut keyboard = Keyboard::default_for_this_system();
+        keyboard
+            .checked_set(
+                KeyboardAction::Back,
+                crate::keyboard::Binding::parse("ctrl-b").unwrap(),
+            )
+            .unwrap();
         let settings = HostSettings {
             theme: ThemePreference::System,
             material: MaterialPreference::Solid,
             open_pane: Shortcut::parse("ctrl+alt+b").unwrap(),
+            keyboard,
         };
         settings.save(dir.path()).unwrap();
         assert_eq!(HostSettings::open(dir.path()).unwrap(), settings);
+    }
+
+    #[test]
+    fn the_keyboard_field_defaults_and_an_invalid_one_fails_the_record() {
+        // Missing: this system's provisional defaults, and a partial set
+        // keeps the rest.
+        assert_eq!(
+            reading(r#"{ "version": 1, "keys": "missing" }"#).unwrap(),
+            HostSettings::default()
+        );
+        let settings = reading(
+            r#"{ "version": 1, "keyboard": { "back": "ctrl-b" } }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            settings.keyboard.binding(KeyboardAction::Back).id(),
+            "ctrl-b"
+        );
+        assert_eq!(
+            settings.keyboard.binding(KeyboardAction::NextResult).id(),
+            "down"
+        );
+        // Two actions on one binding fails the whole record, as a binding
+        // that is not one and an action that is not one do.
+        for text in [
+            r#"{ "version": 1, "keyboard": { "back": "up" } }"#,
+            r#"{ "version": 1, "keyboard": { "back": "not one" } }"#,
+            r#"{ "version": 1, "keyboard": { "launch": "ctrl-l" } }"#,
+            r#"{ "version": 1, "keyboard": { "back": "b" } }"#,
+        ] {
+            let problem = reading(text);
+            assert!(problem.is_err(), "{text} half-loads");
+        }
     }
 
     #[test]
@@ -309,6 +370,7 @@ mod tests {
             theme: ThemePreference::Light,
             material: MaterialPreference::Solid,
             open_pane: Shortcut::parse("ctrl+alt+b").unwrap(),
+            keyboard: Keyboard::default_for_this_system(),
         }
         .save(dir.path());
         assert!(failed.is_err(), "{failed:?}");

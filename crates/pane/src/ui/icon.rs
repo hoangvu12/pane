@@ -46,7 +46,7 @@ pub(crate) enum Glyph {
     Gear,
     /// A globe: Settings' documentation entry.
     Globe,
-    /// A keyboard: the Settings window's Shortcuts section.
+    /// A keyboard: the Settings window's Keyboard section.
     Keyboard,
     /// A chevron pointing down: a group of rows expanded.
     ChevronDown,

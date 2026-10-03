@@ -50,19 +50,21 @@ mod about;
 mod appearance;
 mod extensions;
 mod general;
+mod keyboard;
 mod shortcuts;
 
-actions!(settings, [NextSection, PreviousSection]);
+actions!(settings, [NextSection, PreviousSection, CloseSettings]);
 
 /// The id of the window's key context, which the sidebar's keys are bound
 /// to.
 const CONTEXT: &str = "Settings";
 
 /// Registers the Settings window's key bindings: the sidebar's navigation
-/// keys and the window's focus traversal, which apply only while the
-/// Settings window is focused. Enter is left unbound: the sidebar's
-/// selection already shows the page Enter would choose, so the key does
-/// nothing, and later pages' controls bind it for their own submitting.
+/// keys, the window's focus traversal and the platform's close-window
+/// shortcut, which apply only while the Settings window is focused. Enter
+/// is left unbound: the sidebar's selection already shows the page Enter
+/// would choose, so the key does nothing, and later pages' controls bind
+/// it for their own submitting.
 pub(crate) fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("down", NextSection, Some(CONTEXT)),
@@ -73,9 +75,23 @@ pub(crate) fn bind_keys(cx: &mut App) {
         // alias cells among them).
         KeyBinding::new("tab", FocusNext, Some(CONTEXT)),
         KeyBinding::new("shift-tab", FocusPrevious, Some(CONTEXT)),
+        // The platform's close-window shortcut, in this window's context:
+        // Cmd+W on macOS, Ctrl+W elsewhere. Window-local — it closes only
+        // Settings, and the launcher's own dismiss binding stays in the
+        // launcher's window, where the Keyboard page rebinds it.
+        KeyBinding::new(
+            if cfg!(target_os = "macos") {
+                "cmd-w"
+            } else {
+                "ctrl-w"
+            },
+            CloseSettings,
+            Some(CONTEXT),
+        ),
     ]);
     general::bind_keys(cx);
     shortcuts::bind_keys(cx);
+    keyboard::bind_keys(cx);
 }
 
 /// The Settings window's root view. One instance exists at most — see
@@ -97,6 +113,8 @@ pub struct SettingsWindow {
     general: general::State,
     /// The Shortcuts page's state, owned by its module.
     shortcuts: shortcuts::State,
+    /// The Keyboard page's state, owned by its module.
+    keyboard: keyboard::State,
 }
 
 impl SettingsWindow {
@@ -136,14 +154,15 @@ impl SettingsWindow {
             // The sidebar's order: the sections the reference lists
             // (General, Launcher, Appearance, Shortcuts, Keyboard,
             // Extensions), About last. Of those, this milestone ships
-            // General, Appearance, Shortcuts and Extensions; General —
-            // the Open Pane hotkey — is the page the window first shows,
-            // and the later tickets' pages take their places in this
-            // order as they land.
+            // General, Appearance, Shortcuts, Keyboard and Extensions;
+            // General — the Open Pane hotkey — is the page the window
+            // first shows, and the later tickets' pages take their places
+            // in this order as they land.
             pages: vec![
                 general::page(),
                 appearance::page(),
                 shortcuts::page(),
+                keyboard::page(),
                 extensions::page(),
                 about::page(),
             ],
@@ -152,6 +171,7 @@ impl SettingsWindow {
             about: about::State::default(),
             general: general::State::new(cx),
             shortcuts: shortcuts::State::new(launcher, cx),
+            keyboard: keyboard::State::new(cx),
         }
     }
 
@@ -175,6 +195,13 @@ impl SettingsWindow {
 
     fn focus_previous(&mut self, _: &FocusPrevious, window: &mut Window, cx: &mut Context<Self>) {
         window.focus_prev(cx);
+    }
+
+    /// The platform's close-window shortcut: closes this window only —
+    /// the launcher keeps running, and with it the global hotkeys and
+    /// whatever the launcher was showing.
+    fn close_settings(&mut self, _: &CloseSettings, window: &mut Window, _: &mut Context<Self>) {
+        window.remove_window();
     }
 
     /// The sidebar: the sections list, one row per registered page. It is
@@ -265,6 +292,7 @@ impl Render for SettingsWindow {
             .key_context(CONTEXT)
             .on_action(cx.listener(Self::focus_next))
             .on_action(cx.listener(Self::focus_previous))
+            .on_action(cx.listener(Self::close_settings))
             .size_full()
             .flex()
             .flex_col()
