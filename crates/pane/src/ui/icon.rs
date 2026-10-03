@@ -46,6 +46,12 @@ pub(crate) enum Glyph {
     Gear,
     /// A globe: Settings' documentation entry.
     Globe,
+    /// A down arrow over a line: the Settings About page's update rows,
+    /// whose choice downloads a package.
+    Download,
+    /// Two overlapping squares: the Settings About page's copy of the
+    /// diagnostics it already holds.
+    Copy,
     /// A keyboard: the Settings window's Shortcuts section.
     Keyboard,
     /// A chevron pointing down: a group of rows expanded.
@@ -79,6 +85,8 @@ impl Glyph {
             Glyph::Ellipsis => include_bytes!("../../assets/icons/ellipsis.svg"),
             Glyph::Gear => include_bytes!("../../assets/icons/gear.svg"),
             Glyph::Globe => include_bytes!("../../assets/icons/globe.svg"),
+            Glyph::Download => include_bytes!("../../assets/icons/download.svg"),
+            Glyph::Copy => include_bytes!("../../assets/icons/copy.svg"),
             Glyph::Keyboard => include_bytes!("../../assets/icons/keyboard.svg"),
             Glyph::ChevronDown => include_bytes!("../../assets/icons/chevron-down.svg"),
             Glyph::ChevronRight => include_bytes!("../../assets/icons/chevron-right.svg"),
