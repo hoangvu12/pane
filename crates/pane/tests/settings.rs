@@ -90,8 +90,8 @@ fn open_refusing(
 /// The assembled Rust settings sample, copied into `folder` as a package
 /// with its own identity, as the management-flow tests' fixture.
 fn settings_package(folder: &Path) -> PathBuf {
-    let assembled =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/guests/packages/sample-settings");
+    let assembled = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/guests/packages/sample-settings");
     assert!(
         assembled.exists(),
         "{} is missing; run `cargo xtask guests`",
@@ -137,8 +137,9 @@ fn hello_package(folder: &Path) -> PathBuf {
 /// Replaces the package's component with the built guest `name`, as a new
 /// build of the package would.
 fn rebuild(folder: &Path, name: &str) {
-    let guest =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/guests").join(format!("{name}.wasm"));
+    let guest = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/guests")
+        .join(format!("{name}.wasm"));
     fs::copy(guest, folder.join("hello.wasm")).unwrap();
 }
 
@@ -146,8 +147,8 @@ fn rebuild(folder: &Path, name: &str) {
 /// publishing `echo` 1 and declaring `dependencies` (JSON array contents),
 /// for the required-dependent confirmation paths.
 fn operations_package(folder: &Path, title: &str, dependencies: &str) -> PathBuf {
-    let guest =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/guests/operations_fixture.wasm");
+    let guest = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/guests/operations_fixture.wasm");
     assert!(
         guest.exists(),
         "{} is missing; run `cargo xtask guests`",
@@ -192,7 +193,10 @@ fn install(launcher: &Launcher, folder: &Path) {
     futures::executor::block_on(launcher.install_package(folder));
     let identity = PackageIdentity::local(folder).expect("a local package");
     assert!(
-        launcher.packages().iter().any(|package| package.identity == identity),
+        launcher
+            .packages()
+            .iter()
+            .any(|package| package.identity == identity),
         "the package was installed"
     );
 }
@@ -405,7 +409,9 @@ fn hiding_the_launcher_leaves_settings_open_and_usable(cx: &mut TestAppContext) 
     assert!(settings_cx.debug_bounds("extensions-title").is_some());
     assert!(settings_cx.debug_bounds("extension-empty").is_some());
     assert!(
-        settings_cx.debug_bounds("extension-install-Install extension from npm…").is_none(),
+        settings_cx
+            .debug_bounds("extension-install-Install extension from npm…")
+            .is_none(),
         "a launcher that installs no packages offers no install rows"
     );
 }
@@ -451,7 +457,9 @@ fn keys_in_settings_and_the_launcher_stay_in_their_windows(cx: &mut TestAppConte
     // which the sidebar returned to.
     assert!(settings_cx.debug_bounds("extensions-title").is_some());
     assert_eq!(
-        settings_cx.debug_bounds("section-Extensions").map(|_| "Extensions"),
+        settings_cx
+            .debug_bounds("section-Extensions")
+            .map(|_| "Extensions"),
         Some("Extensions"),
         "the sidebar stayed on Extensions"
     );
@@ -787,14 +795,16 @@ fn the_extensions_page_lists_the_installed_extensions_and_their_reach(cx: &mut T
 
     // Reading the page moved nothing: the launcher stayed where it was.
     let view = cx.read_entity(&launcher, |window, _| window.launcher().view());
-    assert!(matches!(view.screen, Screen::Root { .. }), "{:?}", view.screen);
+    assert!(
+        matches!(view.screen, Screen::Root { .. }),
+        "{:?}",
+        view.screen
+    );
     assert_eq!(view.status, Status::Idle);
 }
 
 #[gpui::test]
-fn disabling_a_required_extension_from_the_page_confirms_and_disables_all(
-    cx: &mut TestAppContext,
-) {
+fn disabling_a_required_extension_from_the_page_confirms_and_disables_all(cx: &mut TestAppContext) {
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     operations_package(&sources.path().join("greeter"), "Greeter", "");
     let caller = operations_package(
@@ -849,13 +859,20 @@ fn disabling_a_required_extension_from_the_page_confirms_and_disables_all(
     // launcher's confirmation makes.
     click_row(&mut settings_cx, "extension-row-Greeter");
     click_row(&mut settings_cx, "extension-row-Disable all 2");
-    until_text(&mut settings_cx, "Disabled Greeter and Caller, which requires it");
+    until_text(
+        &mut settings_cx,
+        "Disabled Greeter and Caller, which requires it",
+    );
     assert_eq!(enabled(cx), [false, false]);
 
     // The launcher window shares the flow: it shows the extension list
     // too, and the page's status is the launcher's own outcome.
     let view = cx.read_entity(&launcher, |window, _| window.launcher().view());
-    assert!(matches!(view.screen, Screen::Extensions { .. }), "{:?}", view.screen);
+    assert!(
+        matches!(view.screen, Screen::Extensions { .. }),
+        "{:?}",
+        view.screen
+    );
     // Root search offers the commands of neither disabled package.
     cx.read_entity(&launcher, |window, _| window.launcher().back());
     assert_eq!(
@@ -879,9 +896,7 @@ fn keeps_settings(settings: &Path, key: &str) -> bool {
 }
 
 #[gpui::test]
-fn uninstalling_from_the_page_offers_the_saved_data_choice_and_keeps_it(
-    cx: &mut TestAppContext,
-) {
+fn uninstalling_from_the_page_offers_the_saved_data_choice_and_keeps_it(cx: &mut TestAppContext) {
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let folder = settings_package(&sources.path().join("settings"));
     // A setting the package saved earlier, as its commands would.
@@ -913,7 +928,10 @@ fn uninstalling_from_the_page_offers_the_saved_data_choice_and_keeps_it(
 
     // Keeping the saved data uninstalls without running the extension and
     // keeps the settings, as the same choice in the launcher does.
-    click_row(&mut settings_cx, "extension-row-Uninstall and keep saved data");
+    click_row(
+        &mut settings_cx,
+        "extension-row-Uninstall and keep saved data",
+    );
     until_text(
         &mut settings_cx,
         "Uninstalled Settings sample; its settings and content are kept",
@@ -937,9 +955,7 @@ fn uninstalling_from_the_page_offers_the_saved_data_choice_and_keeps_it(
 }
 
 #[gpui::test]
-fn a_reload_that_fails_to_start_is_explained_on_the_page_and_offers_retry(
-    cx: &mut TestAppContext,
-) {
+fn a_reload_that_fails_to_start_is_explained_on_the_page_and_offers_retry(cx: &mut TestAppContext) {
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let folder = hello_package(&sources.path().join("hello"));
     let (launcher, cx) = open_installed(cx, &data, &folder);
@@ -952,7 +968,9 @@ fn a_reload_that_fails_to_start_is_explained_on_the_page_and_offers_retry(
     click_row(&mut settings_cx, "extension-row-Reload Hello");
     until_text(&mut settings_cx, "Reloaded Hello, but it failed to start");
     assert!(
-        settings_cx.debug_bounds("extension-row-Retry starting Hello").is_some(),
+        settings_cx
+            .debug_bounds("extension-row-Retry starting Hello")
+            .is_some(),
         "the recovery row is offered"
     );
 
@@ -961,15 +979,15 @@ fn a_reload_that_fails_to_start_is_explained_on_the_page_and_offers_retry(
     click_row(&mut settings_cx, "extension-row-Retry starting Hello");
     until_text(&mut settings_cx, "Started Hello");
     assert!(
-        settings_cx.debug_bounds("extension-row-Retry starting Hello").is_none(),
+        settings_cx
+            .debug_bounds("extension-row-Retry starting Hello")
+            .is_none(),
         "the package is no longer paused"
     );
 }
 
 #[gpui::test]
-fn opening_an_extensions_command_from_the_page_summons_the_launcher(
-    cx: &mut TestAppContext,
-) {
+fn opening_an_extensions_command_from_the_page_summons_the_launcher(cx: &mut TestAppContext) {
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let folder = settings_package(&sources.path().join("settings"));
     let (launcher, cx) = open_installed(cx, &data, &folder);
@@ -984,22 +1002,24 @@ fn opening_an_extensions_command_from_the_page_summons_the_launcher(
     assert_eq!(view.screen, Screen::Command);
     assert_eq!(view.title, "Greeting");
     assert!(
-        cx.cx.update(|cx| launcher_window.is_active(cx)).unwrap_or(false),
+        cx.cx
+            .update(|cx| launcher_window.is_active(cx))
+            .unwrap_or(false),
         "the launcher window took focus"
     );
 
     // The Settings window stayed open, its page back to a reading: the
     // launcher left the extension flow when the command opened.
     assert!(
-        settings_cx.debug_bounds("extension-row-Settings sample").is_some(),
+        settings_cx
+            .debug_bounds("extension-row-Settings sample")
+            .is_some(),
         "the page is still drawn"
     );
 }
 
 #[gpui::test]
-fn the_install_rows_from_the_page_open_the_launcher_windows_flows(
-    cx: &mut TestAppContext,
-) {
+fn the_install_rows_from_the_page_open_the_launcher_windows_flows(cx: &mut TestAppContext) {
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let folder = settings_package(&sources.path().join("settings"));
     let (launcher, cx) = open_installed(cx, &data, &folder);
@@ -1009,12 +1029,17 @@ fn the_install_rows_from_the_page_open_the_launcher_windows_flows(
     // The install rows are the launcher's own root rows: clicking one opens
     // the flow in the launcher window, where its form (or folder picker)
     // lives, focused there.
-    click_row(&mut settings_cx, "extension-install-Install extension from npm…");
+    click_row(
+        &mut settings_cx,
+        "extension-install-Install extension from npm…",
+    );
     let view = settle(&launcher, cx);
     assert!(matches!(view.screen, Screen::Form(_)), "{:?}", view.screen);
     assert!(cx.debug_bounds("form").is_some(), "the form is drawn");
     assert!(
-        cx.cx.update(|cx| launcher_window.is_active(cx)).unwrap_or(false),
+        cx.cx
+            .update(|cx| launcher_window.is_active(cx))
+            .unwrap_or(false),
         "the launcher window took focus"
     );
     // The Settings window stayed open.
@@ -1038,10 +1063,15 @@ fn the_page_follows_a_change_the_launcher_window_made(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("enter");
     settle(&launcher, cx);
     let (_, json) = accessibility(&mut settings_cx);
-    assert!(json.contains("Disabled · "), "the page shows the new state, {json}");
+    assert!(
+        json.contains("Disabled · "),
+        "the page shows the new state, {json}"
+    );
     // A disabled package's command rows are gone from the page too.
     assert!(
-        settings_cx.debug_bounds("extension-command-Greeting").is_none(),
+        settings_cx
+            .debug_bounds("extension-command-Greeting")
+            .is_none(),
         "the command is no longer offered"
     );
 }
