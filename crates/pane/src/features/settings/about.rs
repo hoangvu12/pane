@@ -1,5 +1,5 @@
-//! The About page: the one Settings page this milestone ships, holding
-//! the real version of the running Pane and the documentation entry.
+//! The About page: the version of the running Pane and the documentation
+//! entry.
 //!
 //! Both are honest by construction: the version is
 //! [`crate::APP_VERSION`], the same value `pane --version` prints and an
@@ -20,7 +20,8 @@ use crate::ui::result_row::{RowContent, result_row};
 /// the documentation of this build.
 const DOCUMENTATION: &str = "https://github.com/hoangvu12/pane";
 
-/// The About page, registered first in the window's page list.
+/// The About page, registered last in the window's page list: the spec's
+/// section order names it the last of the seven.
 pub(crate) fn page() -> Page {
     Page {
         title: "About",

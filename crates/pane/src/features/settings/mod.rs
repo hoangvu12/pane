@@ -42,6 +42,7 @@ use crate::ui::icon::glyph;
 use crate::ui::result_row::{RowContent, result_row};
 
 mod about;
+mod extensions;
 
 actions!(settings, [NextSection, PreviousSection]);
 
@@ -86,7 +87,9 @@ impl SettingsWindow {
         window.focus(&focus, cx);
         SettingsWindow {
             launcher: launcher.clone(),
-            pages: vec![about::page()],
+            // The sections the spec's order names that this milestone
+            // ships: Extensions before About, the last of the seven.
+            pages: vec![extensions::page(), about::page()],
             selected: 0,
             focus,
             about: about::State::default(),
