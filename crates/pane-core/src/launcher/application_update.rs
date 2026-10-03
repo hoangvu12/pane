@@ -401,7 +401,7 @@ impl Launcher {
             Ok(()) => {
                 let mut state = self.lock();
                 state.updates.installing = false;
-                state.updates.found = Notice::Installed(version);
+                state.updates.found = Notice::Installed(version.clone());
                 self.refresh(&mut state);
                 drop(state);
                 self.show(Status::Result(format!(
