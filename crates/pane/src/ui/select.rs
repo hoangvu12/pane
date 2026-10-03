@@ -187,6 +187,12 @@ pub(crate) struct Model {
     pub(crate) committed: Option<SharedString>,
 }
 
+/// The consumer's commit path, as the control holds it: the id of the
+/// choice the user accepted, reported once per commit. Persistence,
+/// validation and failure reporting are the consumer's; the control
+/// only closes and hands the choice over.
+pub(crate) type Commit = Rc<dyn Fn(&str, &mut Window, &mut App)>;
+
 /// The searchable select control. One entity, embedded by its consumer
 /// as a child (see the module docs); construct with [`Select::new`],
 /// and let the consumer's render simply include it.
@@ -203,11 +209,8 @@ pub(crate) struct Select {
     debug: SharedString,
     /// The consumer's live model, read each render.
     model: Rc<dyn Fn(&App) -> Model>,
-    /// The consumer's commit path: the id of the choice the user
-    /// accepted, reported once per commit. Persistence, validation and
-    /// failure reporting are the consumer's; the control only closes
-    /// and hands the choice over.
-    on_commit: Rc<dyn Fn(&str, &mut Window, &mut App)>,
+    /// The consumer's commit path (see [`Commit`]).
+    on_commit: Commit,
     /// Whether the popup is open.
     open: bool,
     /// The popup's search field.
@@ -241,7 +244,7 @@ impl Select {
         description: impl Into<SharedString>,
         debug: impl Into<SharedString>,
         model: Rc<dyn Fn(&App) -> Model>,
-        on_commit: Rc<dyn Fn(&str, &mut Window, &mut App)>,
+        on_commit: Commit,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Select {
