@@ -21,7 +21,6 @@ use gpui::{
 };
 use pane::{LauncherWindow, SettingsWindow};
 use pane_core::{Launcher, Runtime, SavedData};
-use tempfile::TempDir;
 
 #[path = "support/settle.rs"]
 mod settle;
