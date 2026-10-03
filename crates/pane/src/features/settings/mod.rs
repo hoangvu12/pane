@@ -148,6 +148,8 @@ pub struct SettingsWindow {
     about: about::State,
     /// The General page's state, owned by its module.
     general: general::State,
+    /// The Launcher page's state, owned by its module.
+    launcher_page: launcher::State,
     /// The Shortcuts page's state, owned by its module.
     shortcuts: shortcuts::State,
     /// The Keyboard page's state, owned by its module.
@@ -221,6 +223,7 @@ impl SettingsWindow {
             focus,
             about: about::State::default(),
             general: general::State::new(cx),
+            launcher_page: launcher::State::new(window, cx),
             shortcuts: shortcuts::State::new(launcher, cx),
             keyboard: keyboard::State::new(cx),
             search: search::State::new(cx),
