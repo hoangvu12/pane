@@ -56,8 +56,9 @@ impl Tray for FakeTray {
     }
 
     fn set_visible(&self, visible: bool) -> Result<(), TrayError> {
-        if let Some(error) = self.fail.lock().unwrap().clone() {
-            *self.fail.lock().unwrap() = None;
+        // The failure to inject is taken out under one lock, so the
+        // refused path never locks again while holding it.
+        if let Some(error) = self.fail.lock().unwrap().take() {
             return Err(error);
         }
         self.calls.lock().unwrap().push(visible);
@@ -544,9 +545,14 @@ fn quit_from_the_tray_releases_the_entry_and_the_hotkey_registrations(cx: &mut T
     let command = format!("{}#hello", PackageIdentity::local(&folder).unwrap().key());
     let dir = data.path().join("extensions");
     fs::create_dir_all(&dir).unwrap();
+    // The record is built with the JSON macros, whose escaping carries
+    // whatever the identity's key holds — a local folder's key is a path,
+    // with backslashes on Windows that a format string would leave raw.
+    let mut hotkeys = serde_json::Map::new();
+    hotkeys.insert(command, serde_json::json!("ctrl+alt+g"));
     fs::write(
         dir.join("hotkeys.json"),
-        format!(r#"{{ "version": 1, "hotkeys": {{ "{command}": "ctrl+alt+g" }} }}"#),
+        serde_json::json!({ "version": 1, "hotkeys": hotkeys }).to_string(),
     )
     .unwrap();
 
