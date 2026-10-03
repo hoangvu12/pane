@@ -284,6 +284,7 @@ impl Settings {
             cx.notify();
             return;
         }
+        eprintln!("CHOOSE taken {chosen:?}");
         self.chosen = chosen;
         self.changed(cx);
         self.save(cx);

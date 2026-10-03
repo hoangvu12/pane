@@ -301,8 +301,10 @@ fn choice(
     .on_mouse_down(
         gpui::MouseButton::Left,
         move |event: &gpui::MouseDownEvent, window, cx| {
+            eprintln!("PRESS {name} offered={offered}");
             if offered {
                 on_press(event, window, cx);
+                eprintln!("PRESS {name} done");
             }
         },
     )
