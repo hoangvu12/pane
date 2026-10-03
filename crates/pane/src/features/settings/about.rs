@@ -34,7 +34,8 @@
 use std::future::Future;
 
 use gpui::{
-    AnyElement, ClipboardItem, Context, Div, Hsla, Role, SharedString, Window, div, prelude::*, px,
+    AnyElement, ClipboardItem, Context, Div, Hsla, Role, SharedString, Stateful, Window, div,
+    prelude::*, px,
 };
 use pane_core::{ApplicationUpdate, Status};
 
@@ -501,7 +502,7 @@ fn update_line(update: &ApplicationUpdate) -> String {
 
 /// A small muted label above one of the page's groups of rows, as the
 /// other Settings pages label theirs.
-fn label(text: &'static str, theme: &crate::ui::theme::Theme) -> Div {
+fn label(text: &'static str, theme: &crate::ui::theme::Theme) -> Stateful<Div> {
     div()
         .id(text)
         .debug_selector(move || format!("about-label-{text}"))
