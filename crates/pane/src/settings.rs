@@ -1,6 +1,7 @@
-//! Pane's host settings: the appearance preferences, the Open Pane
-//! hotkey and the launch-at-login choice the application owns, held as
-//! one observable entity every window renders through.
+//! Pane's host settings: the appearance preferences, the Open Pane hotkey,
+//! the launch-at-login choice and the Launcher page's choices — the display
+//! the launcher opens on and what reopening shows — held as one observable
+//! entity every window renders through.
 //!
 //! [`init`] reads the record — `settings.json` in Pane's data folder, kept
 //! by [`pane_core::HostSettings`] under the house record rules — applies
@@ -329,6 +330,66 @@ impl Settings {
         let mut chosen = self.chosen.clone();
         chosen.material = preference;
         self.choose(chosen, cx);
+    }
+
+    /// The display the launcher opens on: what the Launcher page shows and
+    /// what a fresh start places the window by.
+    pub(crate) fn opening_monitor(&self) -> pane_core::OpeningMonitor {
+        self.chosen.opening_monitor
+    }
+
+    /// Chooses the display the launcher opens on: a preference the window
+    /// layer resolves against the display layout each time the launcher
+    /// opens, so nothing is applied here — the record is written as the
+    /// appearance choices are, and a write that fails is reported with the
+    /// shown choice rolled back. An unreadable record refuses the choice,
+    /// as it refuses the appearance's.
+    pub(crate) fn set_opening_monitor(
+        &mut self,
+        monitor: pane_core::OpeningMonitor,
+        cx: &mut Context<Self>,
+    ) {
+        let mut chosen = self.chosen.clone();
+        chosen.opening_monitor = monitor;
+        self.record_choice(chosen, cx);
+    }
+
+    /// What reopening the launcher shows: the view it was left on, when
+    /// still valid, or root search.
+    pub(crate) fn reopening(&self) -> pane_core::Reopening {
+        self.chosen.reopening
+    }
+
+    /// Chooses what reopening the launcher shows, as
+    /// [`Settings::set_opening_monitor`] records the opening display.
+    pub(crate) fn set_reopening(
+        &mut self,
+        reopening: pane_core::Reopening,
+        cx: &mut Context<Self>,
+    ) {
+        let mut chosen = self.chosen.clone();
+        chosen.reopening = reopening;
+        self.record_choice(chosen, cx);
+    }
+
+    /// Records one of the Launcher page's choices — the opening display or
+    /// what reopening shows. Neither changes what the windows render, so
+    /// nothing repaints; the record is written off the window's thread, and
+    /// a write that fails is reported with the shown choice rolled back, as
+    /// the appearance choices are. An override in force does not refuse
+    /// these: the development overrides speak for the appearance only.
+    fn record_choice(&mut self, chosen: HostSettings, cx: &mut Context<Self>) {
+        if chosen == self.chosen {
+            return;
+        }
+        if let Some(problem) = self.unreadable.clone() {
+            self.save_error = Some(format!("Pane does not replace it: {problem}"));
+            cx.notify();
+            return;
+        }
+        self.chosen = chosen;
+        cx.notify();
+        self.save(cx);
     }
 
     /// The Open Pane hotkey the host settings hold: what the General page

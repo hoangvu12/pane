@@ -26,6 +26,7 @@ mod operations;
 mod packages;
 #[cfg(test)]
 mod peak_memory;
+pub mod placement;
 mod platform;
 mod runtime;
 mod search;
@@ -34,7 +35,9 @@ mod zip;
 
 pub use defaults::{ArtifactSource, DefaultExtension};
 pub use helpers::runner::{HELPER_TIME_LIMIT, MAX_HELPER_INPUT, MAX_HELPER_OUTPUT};
-pub use host_settings::{HostSettings, MaterialPreference, ThemePreference};
+pub use host_settings::{
+    HostSettings, MaterialPreference, OpeningMonitor, Reopening, ThemePreference,
+};
 #[doc(hidden)]
 pub use http::HttpLimits;
 pub use launcher::{

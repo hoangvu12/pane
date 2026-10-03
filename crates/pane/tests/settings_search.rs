@@ -371,13 +371,14 @@ fn escape_clears_the_query_then_returns_to_page_navigation(cx: &mut TestAppConte
 
     // Page navigation also leaves the search: a query showing clears when
     // the sections' keys move the page. Tab reaches the sections from the
-    // field; Down walks the sections — the Shortcuts page is two Down
-    // presses from the General page the window opens on.
+    // field; Down walks the sections — the Shortcuts page is three Down
+    // presses from the General page the window opens on (General, the
+    // Launcher page, Appearance, then Shortcuts).
     sc.simulate_keystrokes(find_shortcut());
     sc.simulate_input("dark");
     sc.run_until_parked();
     sc.simulate_keystrokes("tab");
-    sc.simulate_keystrokes("down down");
+    sc.simulate_keystrokes("down down down");
     sc.run_until_parked();
     assert!(
         sc.debug_bounds("section-Shortcuts").is_some(),

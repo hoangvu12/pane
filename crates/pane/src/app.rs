@@ -136,6 +136,9 @@ impl LauncherWindow {
         // system here, at startup, and the settings keep this launcher for
         // every later change (see `crate::settings::attach_launcher`).
         crate::settings::attach_launcher(&launcher, cx);
+        // The placement the launcher window opens through, ensuring it
+        // exists before the window below is placed by it.
+        crate::placement::ensure(cx);
         // Quitting ends development: its watchers go and a running build
         // is stopped with the processes it started.
         cx.on_app_quit(|this: &mut Self, _| {
@@ -143,7 +146,7 @@ impl LauncherWindow {
             async {}
         })
         .detach();
-        LauncherWindow {
+        let mut this = LauncherWindow {
             launcher,
             focus_handle,
             query,
@@ -163,7 +166,11 @@ impl LauncherWindow {
             hidden: false,
             #[cfg(any(test, debug_assertions))]
             drawn: None,
-        }
+        };
+        // The launcher opens placed on the display the Launcher page's
+        // choice resolves to, before the first frame is drawn.
+        this.place(window, cx);
+        this
     }
 
     pub fn launcher(&self) -> &Launcher {
@@ -245,13 +252,22 @@ impl LauncherWindow {
     }
 
     fn back(&mut self, _: &Back, window: &mut Window, cx: &mut Context<Self>) {
-        self.launcher.back();
-        // Backing out is the one navigation that leaves a view; the next
-        // frame's view transition (if the screen kind changed) settles the
-        // arriving content down into place.
-        self.navigation = Direction::Back;
-        self.sync_screen(window, cx);
-        cx.notify();
+        if self.launcher.back() {
+            // Backing out is the one navigation that leaves a view; the next
+            // frame's view transition (if the screen kind changed) settles the
+            // arriving content down into place.
+            self.navigation = Direction::Back;
+            self.sync_screen(window, cx);
+            cx.notify();
+            return;
+        }
+        // Escape at root search with an empty query: the end of the
+        // Escape chain the specification orders — composition and menus
+        // were handled before the key reached here, the query is already
+        // empty — so it dismisses the launcher. Hidden, not closed: Pane
+        // keeps running, the Settings window stays open, and the next
+        // opening of the launcher reuses the same live window.
+        self.hide(window, cx);
     }
 
     /// Shows the package in `folder` with its identity and compatibility,
@@ -378,7 +394,7 @@ impl LauncherWindow {
         let Some(pending) = self.launcher.press_hotkey(shortcut) else {
             return;
         };
-        self.unhide(window);
+        self.unhide(window, cx);
         window.activate_window();
         cx.activate(true);
         self.navigation = Direction::Forward;
@@ -388,11 +404,60 @@ impl LauncherWindow {
     /// Shows the window if the Open Pane hotkey hid it: every activation
     /// of the launcher — the hotkey's show path, a command's hotkey, an
     /// entry point that reaches the launcher from Settings — must find a
-    /// visible window.
-    fn unhide(&mut self, window: &mut Window) {
+    /// visible window, opened on the display the placement resolves.
+    fn unhide(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.hidden {
             window.set_visible(true);
             self.hidden = false;
+            // The launcher is opening: it is placed on the display the
+            // Launcher page's choice resolves to, wherever the window was
+            // left. Only this window is moved — the Settings window, which
+            // shares nothing of the launcher's lifecycle, stays where the
+            // user put it.
+            self.place(window, cx);
+        }
+    }
+
+    /// Hides the launcher window: the Open Pane hotkey's hide path and
+    /// Escape's end at root search both come here. Hidden, not closed —
+    /// Pane keeps running, the Settings window stays open, and the next
+    /// opening reuses the same live window and launcher.
+    fn hide(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        window.set_visible(false);
+        self.hidden = true;
+        cx.notify();
+    }
+
+    /// Places the launcher window on the display the Launcher page's
+    /// opening-monitor choice resolves to, centered in that display's
+    /// usable area. A choice whose display is gone — disconnected, or one
+    /// this system does not tell Pane about — falls back to the primary
+    /// display, or the first one there is, so the launcher opens with its
+    /// controls reachable; a platform that cannot move a window at all
+    /// leaves it where it is, and the page explains that rather than
+    /// pretending the choice applied.
+    fn place(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let choice = crate::settings::shared(cx).read(cx).opening_monitor();
+        let placement = crate::placement::shared(cx);
+        let layout = placement.layout();
+        let Some(resolved) = pane_core::placement::resolve(&layout, choice) else {
+            return;
+        };
+        // The window's size in the layout's own units, so the placement is
+        // computed in the space its displays are measured in; a window
+        // keeps that size as it moves.
+        let size = window.bounds().size;
+        let units = crate::placement::units_per_pixel(window);
+        let bounds = resolved.display.window_bounds(pane_core::placement::Size {
+            width: size.width.as_f32() * units,
+            height: size.height.as_f32() * units,
+        });
+        // A move that failed is said, not hidden: the launcher's own status
+        // line carries it, so an opening that did not go where the choice
+        // says is never mistaken for one that did.
+        if let Err(why) = placement.place(window, bounds) {
+            self.launcher.show_error(why);
+            cx.notify();
         }
     }
 
@@ -413,21 +478,28 @@ impl LauncherWindow {
         }
         self.open_pane_press = Some(now);
         if !self.hidden && window.is_window_active() {
-            window.set_visible(false);
-            self.hidden = true;
+            self.hide(window, cx);
             return;
         }
-        self.unhide(window);
+        self.unhide(window, cx);
         window.activate_window();
         cx.activate(true);
-        // The summoned launcher's search has focus: the query of the search
-        // on screen, or root search's when the launcher was left on a
-        // screen with no search of its own.
-        if self.launcher.view().search_field().is_some() {
-            self.query.focus(window, cx);
-        } else {
+        // What the summoned launcher starts from is the Launcher page's
+        // reopening choice. Restoring the view keeps whatever the launcher
+        // was left showing — a search, a command's list, a form — when it
+        // is still a view there is something to return to, with the
+        // search focused where the view holds one and its own focus kept
+        // where it does not (the window never lost it); the root-search
+        // choice, or a view whose command is gone, starts from root
+        // search. Nothing of the window that had focus before reaches in
+        // here (the Settings window's focus is not the launcher's), and
+        // nothing is run.
+        let reopening = crate::settings::shared(cx).read(cx).reopening();
+        if reopening == pane_core::Reopening::RootSearch || !self.launcher.restorable_view() {
             self.launcher.show_root_search();
             self.sync_screen(window, cx);
+        } else if self.launcher.view().search_field().is_some() {
+            self.query.focus(window, cx);
         }
         cx.notify();
     }
@@ -524,7 +596,7 @@ impl LauncherWindow {
         while !matches!(self.launcher.view().screen, Screen::Root { .. }) {
             self.launcher.back();
         }
-        self.unhide(window);
+        self.unhide(window, cx);
         window.activate_window();
         cx.activate(true);
         let Some(index) = self
