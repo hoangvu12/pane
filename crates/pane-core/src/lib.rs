@@ -61,3 +61,4 @@ pub use runtime::{
     Rgb, Runtime, RuntimeFailure, RuntimeStatus, Shape, UNRESPONSIVE_LIMIT, View, ViewEvent,
     ViewId, WARN_AFTER,
 };
+pub use search::{SettingsEntry, settings_matches};

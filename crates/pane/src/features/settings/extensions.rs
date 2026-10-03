@@ -29,10 +29,12 @@
 //! [`crate::app::LauncherWindow::sync_screen`]). After any operation,
 //! including a failed one, the page shows what the launcher holds.
 
-use gpui::{AnyElement, Context, Div, Role, SharedString, Stateful, Window, div, prelude::*, px};
+use gpui::{
+    AnyElement, App, Context, Div, Role, SharedString, Stateful, Window, div, prelude::*, px,
+};
 use pane_core::{Screen, Status};
 
-use super::{Page, SettingsWindow};
+use super::{Page, SettingsWindow, search};
 use crate::app::{LauncherWindow, launcher_changed_outside, row_icon};
 use crate::ui::icon::{Glyph, IconTone};
 use crate::ui::result_row::{RowContent, result_row};
@@ -44,10 +46,55 @@ use crate::ui::theme::Theme;
 pub(crate) fn page() -> Page {
     Page {
         title: "Extensions",
+        about: "Install, enable, disable, update and remove extensions",
         // The blocks tile, as the launcher's own Manage extensions row.
         icon: (IconTone::Command, Glyph::Blocks),
         render,
+        search: entries,
+        focus,
     }
+}
+
+/// The settings the page offers the sidebar's search: the extension list
+/// — the same rows "Manage extensions…" shows, read live, so a package
+/// installed, disabled or removed is in or out of the search with it —
+/// and the launcher's install rows, where the page offers them. These
+/// are Pane's own management rows, not extension data: the search indexes
+/// what the page actually shows, with each row's own honesty about why
+/// it cannot be used here.
+fn entries(launcher: &Launcher, _cx: &App) -> Vec<search::Entry> {
+    let mut entries: Vec<search::Entry> = launcher
+        .extension_list()
+        .rows
+        .into_iter()
+        .map(|row| search::Entry {
+            control: Some(row.id),
+            title: row.title,
+            group: None,
+            unavailable: row.unavailable.as_ref().map(|why| why.reason().to_owned()),
+        })
+        .collect();
+    if launcher.installs_packages() {
+        entries.extend(
+            INSTALL_ROWS
+                .into_iter()
+                .map(|(id, title, _)| search::Entry {
+                    control: Some(id.into()),
+                    title: title.into(),
+                    // The page's own section label, which the rows sit under.
+                    group: Some("Install".into()),
+                    unavailable: None,
+                }),
+        );
+    }
+    entries
+}
+
+/// The page's rows take no keyboard focus (they are chosen with the
+/// pointer, as the launcher's own lists are), so a jump reveals the row
+/// and the sidebar keeps the focus: `false`.
+fn focus(_: &mut SettingsWindow, _: &str, _: &mut Window, _: &mut Context<SettingsWindow>) -> bool {
+    false
 }
 
 /// The launcher's install rows, as root search lists them: their ids,
@@ -169,7 +216,9 @@ fn render(
     let empty_list = rows.is_empty() && !has_commands;
 
     // The page's rows of the launcher's list. The page has no keyboard
-    // selection of its rows, so none is drawn as selected.
+    // selection of its rows, so none is drawn as selected. Each row
+    // carries the scroll anchor the search's reveal scrolls to, keyed by
+    // the launcher's own row id.
     let list_rows: Vec<_> = rows
         .iter()
         .enumerate()
@@ -182,6 +231,7 @@ fn render(
                 (subtitle, reason) => subtitle.clone().or_else(|| reason.clone()),
             };
             let id = row.id.clone();
+            let anchor = this.search_anchor(&row.id);
             result_row(
                 RowContent {
                     title: row.title.clone().into(),
@@ -195,6 +245,7 @@ fn render(
             )
             .id(("extension-row", index))
             .debug_selector(|| format!("extension-row-{}", row.title))
+            .anchor_scroll(Some(anchor))
             .role(Role::Button)
             .aria_label(row.title.clone())
             // An unavailable row stays listed and clickable; activating it
@@ -235,11 +286,13 @@ fn render(
         })
         .collect();
     // The install rows, as root search lists them, opening in the launcher
-    // window where their folder picker and forms live.
+    // window where their folder picker and forms live. Each carries the
+    // scroll anchor the search's reveal scrolls to.
     let install_rows: Vec<_> = INSTALL_ROWS
         .into_iter()
         .enumerate()
         .map(|(index, (id, title, subtitle))| {
+            let anchor = this.search_anchor(id);
             result_row(
                 RowContent {
                     title: title.into(),
@@ -253,6 +306,7 @@ fn render(
             )
             .id(("extension-install", index))
             .debug_selector(move || format!("extension-install-{title}"))
+            .anchor_scroll(Some(anchor))
             .role(Role::Button)
             .aria_label(title)
             .on_click(cx.listener(move |_, _: &gpui::ClickEvent, _, cx| {
