@@ -1077,7 +1077,7 @@ fn the_select_opens_below_the_trigger_and_commits_the_highlighted_choice(cx: &mu
         .into_iter()
         .find(|aria| aria["role"] == "ComboBox" && aria["label"] == "Display")
         .expect("the trigger is a named combo box");
-    assert_eq!(trigger_aria["value"].as_deref(), Some("Primary display"));
+    assert_eq!(trigger_aria["value"].as_str(), Some("Primary display"));
     assert!(trigger_aria["expanded"].as_bool().unwrap());
     // The choices are a list box's options — among the window's other
     // options, the sidebar's sections — so they are found by their
@@ -1091,7 +1091,7 @@ fn the_select_opens_below_the_trigger_and_commits_the_highlighted_choice(cx: &mu
                 "Active window's display",
             ]
             .iter()
-            .any(|label| aria["label"].as_deref() == Some(*label))
+            .any(|label| aria["label"].as_str() == Some(*label))
         })
         .collect::<Vec<_>>();
     assert_eq!(options.len(), 3, "the three choices are listed");
@@ -1137,7 +1137,7 @@ fn the_select_opens_below_the_trigger_and_commits_the_highlighted_choice(cx: &mu
         .find(|aria| aria["role"] == "ComboBox" && aria["label"] == "Display")
         .expect("the trigger");
     assert_eq!(
-        trigger_aria["value"].as_deref(),
+        trigger_aria["value"].as_str(),
         Some("Pointer's display"),
         "the trigger shows the committed choice"
     );
