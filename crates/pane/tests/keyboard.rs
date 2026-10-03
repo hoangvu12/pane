@@ -599,8 +599,11 @@ fn a_reset_returns_to_the_default_through_the_same_checks(cx: &mut TestAppContex
     let data = tempfile::tempdir().unwrap();
     let (window, cx) = open_sample(cx, Some(data.path()));
 
-    // Back is Ctrl+B; the reset row appears for it.
+    // Back is Ctrl+B; the reset row appears for it. A tall window, so
+    // every row stays in view as the resets add theirs.
     let (_settings, mut settings_cx) = keyboard_page(cx);
+    settings_cx.simulate_resize(gpui::size(gpui::px(740.), gpui::px(900.)));
+    settings_cx.run_until_parked();
     record(&mut settings_cx, "keyboard-back", "ctrl-b");
     until_record(&mut settings_cx, data.path(), "back", "ctrl-b");
     assert!(
