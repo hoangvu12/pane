@@ -10,8 +10,10 @@ name: CI (fast)
 # (guests, clippy -D warnings, the workspace tests), which the agent
 # asks for once it believes the branch is done; plain iterations never
 # pay for it. The full ci.yml matrix (smokes, renderers, packaging,
-# guests-from-source) ignores these branches and runs on the PR branch
-# when the merger lands them there.
+# guests-from-source) ignores these branches; the merger lands them on
+# the milestone's PR branch, whose pushes take the branch tier in
+# ci-branch.yml, and that matrix runs when the pull request is marked
+# ready for review (or on demand).
 on:
   push:
     branches:
