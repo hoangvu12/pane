@@ -173,6 +173,11 @@ fn open_launcher_page(
         })
         .expect("Settings opened");
     let mut settings_cx = VisualTestContext::from_window(AnyWindowHandle::from(settings), &cx.cx);
+    // The page is reached by leaving the page the window opens on and
+    // coming back, so a call on a window already showing the page still
+    // redraws it — the placement's layout may have changed since.
+    click(&mut settings_cx, "section-General");
+    settings_cx.run_until_parked();
     click(&mut settings_cx, "section-Launcher");
     settings_cx.run_until_parked();
     assert!(
@@ -921,7 +926,11 @@ fn the_page_registers_its_settings_in_the_settings_search(cx: &mut TestAppContex
         tree.contains("Launcher \u{b7} Opening monitor"),
         "the result names the page and the group, {tree}"
     );
-    search_cx.simulate_input(" reopening");
+    // Escape clears the query, and the reopening choices are found by
+    // their own words.
+    search_cx.simulate_keystrokes("escape");
+    search_cx.run_until_parked();
+    search_cx.simulate_input("reopening");
     search_cx.run_until_parked();
     assert!(
         search_cx
@@ -929,7 +938,9 @@ fn the_page_registers_its_settings_in_the_settings_search(cx: &mut TestAppContex
             .is_some(),
         "the reopening choices are found"
     );
-    // Clearing the query brings the sections back.
+    // Escape again leaves the search, and the sections are back.
+    search_cx.simulate_keystrokes("escape");
+    search_cx.run_until_parked();
     search_cx.simulate_keystrokes("escape");
     search_cx.run_until_parked();
     assert!(
