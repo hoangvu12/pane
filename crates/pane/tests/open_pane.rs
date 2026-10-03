@@ -126,8 +126,15 @@ fn is_active<T: Render + 'static>(handle: &WindowHandle<T>, cx: &mut VisualTestC
 }
 
 /// Presses the Open Pane hotkey `shortcut`, as the system's adapter would
-/// report it while any application has focus.
+/// report it while any application has focus. The test platform's clock
+/// does not move between events, so the press is first moved past the
+/// window's repeat guard: two of these are two genuine presses, the
+/// guard's window apart. The repeats of a key still held — presses that
+/// arrive inside the guard, with the clock standing still as a repeat
+/// does — are driven with the window directly in
+/// `a_held_key_does_not_toggle_the_launcher_repeatedly`.
 fn press(window: &gpui::Entity<LauncherWindow>, shortcut: &Shortcut, cx: &mut VisualTestContext) {
+    cx.executor().advance_clock(Duration::from_millis(700));
     window.update_in(cx, |window, w, cx| window.hotkey_pressed(shortcut, w, cx));
 }
 
@@ -295,17 +302,18 @@ fn a_held_key_does_not_toggle_the_launcher_repeatedly(cx: &mut TestAppContext) {
     assert!(hidden(&window, cx));
 
     // The repeats of a key still held arrive as presses of the same
-    // shortcut, soon after the one that was accepted: they are ignored,
-    // so holding the hotkey does not toggle again and again.
+    // shortcut, soon after the one that was accepted — with the clock
+    // standing still, as a repeat does: they are ignored, so holding the
+    // hotkey does not toggle again and again.
     for _ in 0..3 {
-        press(&window, &default, cx);
+        window.update_in(cx, |window, w, cx| window.hotkey_pressed(&default, w, cx));
         cx.run_until_parked();
     }
     assert!(hidden(&window, cx), "the held key's repeats did nothing");
 
     // A genuine press, after the guard's window, toggles again.
     cx.executor().advance_clock(Duration::from_millis(700));
-    press(&window, &default, cx);
+    window.update_in(cx, |window, w, cx| window.hotkey_pressed(&default, w, cx));
     cx.run_until_parked();
     assert!(!hidden(&window, cx), "a later press is a new press");
 }
@@ -581,7 +589,12 @@ fn a_save_that_fails_rolls_the_registration_back(cx: &mut TestAppContext) {
         "the page shows what the record holds, {tree}"
     );
 
-    // The next press still uses the kept binding.
+    // The next press still uses the kept binding: it summons the
+    // launcher, and the press after it hides it — the choice that could
+    // not be saved never took the binding's place.
+    press(&window, &kept, cx);
+    cx.run_until_parked();
+    assert!(!hidden(&window, cx), "the kept binding still summons Pane");
     press(&window, &kept, cx);
     cx.run_until_parked();
     assert!(hidden(&window, cx), "the kept binding still toggles Pane");
