@@ -300,10 +300,8 @@ impl SettingsWindow {
                         .get(id)
                         .is_some_and(|cell| cell.is_focused(window))
                 });
-            if inside {
-                if let Some(header) = self.shortcuts.group_cells.get(key) {
-                    window.focus(header, cx);
-                }
+            if inside && let Some(header) = self.shortcuts.group_cells.get(key) {
+                window.focus(header, cx);
             }
         }
         cx.notify();
