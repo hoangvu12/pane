@@ -52,6 +52,7 @@ use crate::{FocusNext, FocusPrevious};
 
 mod about;
 mod appearance;
+mod extensions;
 mod general;
 mod shortcuts;
 
@@ -133,14 +134,17 @@ impl SettingsWindow {
         .detach();
         SettingsWindow {
             launcher: launcher.clone(),
-            // The sidebar's order: the sections the reference lists, About
-            // last. The pages not yet landed (Launcher, Keyboard,
-            // Extensions) take their places in this order as they land.
-            // The General page is the one the window first shows.
+            // The sidebar's order: the sections the reference lists
+            // (General, Launcher, Appearance, Shortcuts, Keyboard,
+            // Extensions), About last. Of those, this milestone ships
+            // General, Appearance, Shortcuts and Extensions; the General
+            // page is the one the window first shows, and the later
+            // tickets' pages take their places in this order as they land.
             pages: vec![
                 general::page(),
                 appearance::page(),
                 shortcuts::page(),
+                extensions::page(),
                 about::page(),
             ],
             selected: 0,
