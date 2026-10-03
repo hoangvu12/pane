@@ -790,14 +790,18 @@ fn the_extensions_page_lists_the_installed_extensions_and_their_reach(cx: &mut T
     let (_, json) = accessibility(&mut settings_cx);
     assert!(json.contains("Enabled · "), "the state shows, {json}");
 
-    // Reading the page moved nothing: the launcher stayed where it was.
+    // Reading the page moved nothing: the launcher stayed where it was,
+    // with the install's own outcome still on it.
     let view = cx.read_entity(&launcher, |window, _| window.launcher().view());
     assert!(
         matches!(view.screen, Screen::Root { .. }),
         "{:?}",
         view.screen
     );
-    assert_eq!(view.status, Status::Idle);
+    assert_eq!(
+        view.status,
+        Status::Result("Installed Settings sample".into())
+    );
 }
 
 #[gpui::test]
@@ -1038,7 +1042,10 @@ fn the_install_rows_from_the_page_open_the_launcher_windows_flows(cx: &mut TestA
     );
     let view = settle(&launcher, cx);
     assert!(matches!(view.screen, Screen::Form(_)), "{:?}", view.screen);
-    assert!(cx.debug_bounds("form").is_some(), "the form is drawn");
+    assert!(
+        cx.debug_bounds("field-package").is_some(),
+        "the form is drawn"
+    );
     assert!(
         cx.cx
             .update(|cx| launcher_window.is_active(cx))
@@ -1106,7 +1113,7 @@ fn the_page_follows_a_background_build_failure_by_itself(cx: &mut TestAppContext
     // changes channel wakes the launcher window, and the page redraws with
     // what the launcher holds — by itself, with no action on it.
     fs::write(folder.join("source.txt"), "error: expected `;`").unwrap();
-    until_text(&mut settings_cx, "fake build failed");
+    until_text(&mut settings_cx, "Hello did not build: error: expected `;`");
     assert!(
         settings_cx
             .debug_bounds("extension-row-Why Hello did not build")
