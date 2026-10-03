@@ -556,6 +556,8 @@ fn render(
     _window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
+    // The theme the host settings resolve to now: the page redraws with
+    // them whenever the Appearance page changes the palette.
     let theme = crate::settings::visuals(cx).theme;
     // Read the catalog fresh: any redraw shows the launcher's packages as
     // they are now, whatever made the window redraw.
