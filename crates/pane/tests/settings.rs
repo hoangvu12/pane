@@ -760,12 +760,6 @@ fn choosing_a_theme_re_renders_both_windows_and_the_preview(cx: &mut TestAppCont
     // The Light choice, taken through the page's own control: no
     // restart, no second window — both windows re-render with it at
     // once.
-    let row = settings_cx
-        .debug_bounds("appearance-theme-Light")
-        .expect("the Light choice is drawn");
-    // The Light choice, taken through the page's own control: no
-    // restart, no second window — both windows re-render with it at
-    // once.
     choose(&mut settings_cx, "appearance-theme-Light");
     cx.run_until_parked();
     settings_cx.run_until_parked();
