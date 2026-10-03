@@ -14,25 +14,38 @@
 //! [`Launcher::set_alias`], so the alias form's rules and records are the
 //! ones in force: a refusal shows next to the field and keeps the editor
 //! open, and the change reaches root search at once and is recorded by
-//! the same write the form's submission makes. The Hotkey column is
-//! display-only — recording is #76's slice — and shows each command's
-//! hotkey as recorded, with why it is not active when it is not.
+//! the same write the form's submission makes. The Hotkey column records
+//! through [`Launcher::set_hotkey`] — the same checks and the same
+//! `hotkeys.json` the hotkey screen in Manage extensions writes: the
+//! cell's click, Enter or Space starts the recorder, which takes the keys
+//! pressed next as the binding being recorded (captured: they do not
+//! navigate or act; Escape cancels, changing nothing), and a Clear button
+//! beside the cell forgets a recorded hotkey. A refusal shows under the
+//! cell and keeps the recorder listening; a change that lands is
+//! registered with the system before the binding it replaces is released,
+//! and a record that cannot be written puts back what was last recorded,
+//! with its registration, as the status line says.
 //!
 //! Keyboard: the filter field, each group's header (Enter or Space
-//! expands or collapses it) and each editable alias cell are tab stops.
-//! The editor's Enter and Escape are bound in its own key context, so
-//! they reach the editor and nothing else.
+//! expands or collapses it), each editable alias cell, each recordable
+//! hotkey cell and its Clear button are tab stops. The editor's Enter and
+//! Escape are bound in its own key context, and the recorder's keys in
+//! its own, so they reach those controls and nothing else.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use gpui::{
     AnyElement, App, BoxShadow, Context, Div, Entity, FocusHandle, Focusable, Hsla, KeyBinding,
-    Pixels, Role, Stateful, StyleRefinement, Subscription, Window, actions, div, prelude::*, px,
+    KeyDownEvent, MouseDownEvent, Pixels, Role, Stateful, StyleRefinement, Subscription, Window,
+    actions, div, prelude::*, px,
 };
 use gpui_elements::editable_text::actions::DEFAULT_INPUT_CONTEXT;
 use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged, text_input};
-use pane_core::{AliasOutcome, Launcher, ShortcutCatalog, ShortcutCommand, ShortcutGroup};
+use pane_core::hotkeys::Shortcut;
+use pane_core::{
+    AliasOutcome, HotkeyOutcome, Launcher, ShortcutCatalog, ShortcutCommand, ShortcutGroup,
+};
 
 use super::{Page, SettingsWindow};
 use crate::ui::icon::{Glyph, IconTone, glyph};
@@ -51,6 +64,15 @@ const CELL: &str = "ShortcutAliasCell";
 /// The inline alias editor's key context, in which Enter commits and
 /// Escape cancels.
 const EDITOR: &str = "ShortcutAliasEditor";
+/// A hotkey cell's key context, in which Enter and Space start the
+/// recorder.
+const HOTKEY_CELL: &str = "ShortcutHotkeyCell";
+/// A hotkey cell's key context while its recorder listens, in which the
+/// keys pressed are the binding being recorded and Escape cancels.
+const HOTKEY_RECORDER: &str = "ShortcutHotkeyRecorder";
+/// A hotkey cell's Clear button's key context, in which Enter and Space
+/// clear the hotkey.
+const HOTKEY_CLEAR: &str = "ShortcutHotkeyClear";
 
 /// The filter's placeholder.
 const PLACEHOLDER: &str = "Filter commands and extensions";
@@ -66,14 +88,23 @@ const HOTKEY_WIDTH: Pixels = px(190.);
 
 actions!(
     shortcuts,
-    [EditAlias, CommitAlias, CancelAlias, ToggleGroup]
+    [
+        EditAlias,
+        CommitAlias,
+        CancelAlias,
+        ToggleGroup,
+        RecordHotkey,
+        CancelHotkeyRecording,
+        ClearHotkey
+    ]
 );
 
 /// Registers the page's key bindings: the group headers' and alias cells'
-/// activation keys in their own contexts, and the inline editor's commit
-/// and cancel keys in the editor's context above the editable text
-/// element, so they are deeper in the focus stack than anything broader
-/// and never fall through to the sidebar's keys.
+/// activation keys in their own contexts, the inline editor's commit and
+/// cancel keys in the editor's context above the editable text element,
+/// and the hotkey cells' keys in theirs — all deeper in the focus stack
+/// than anything broader, so they never fall through to the sidebar's
+/// keys.
 pub(crate) fn bind_keys(cx: &mut App) {
     let editor = format!("{EDITOR} > {DEFAULT_INPUT_CONTEXT}");
     cx.bind_keys([
@@ -83,6 +114,27 @@ pub(crate) fn bind_keys(cx: &mut App) {
         KeyBinding::new("space", ToggleGroup, Some(GROUP)),
         KeyBinding::new("enter", CommitAlias, Some(&editor)),
         KeyBinding::new("escape", CancelAlias, Some(&editor)),
+        // The hotkey cell is a button: Enter and Space start its recorder.
+        // While the recorder listens, the cell's context is the recorder's
+        // instead (see [`hotkey_cell`]), where those keys stay with the
+        // recorder's activation — a no-op while it listens, since neither
+        // can be part of a binding — Escape cancels, and the keys the
+        // window would otherwise act on (the sidebar's navigation, Tab's
+        // traversal) are bound to [`gpui::NoAction`] so they do nothing
+        // instead; everything else reaches the cell's own key handler as
+        // the combination being recorded.
+        KeyBinding::new("enter", RecordHotkey, Some(HOTKEY_CELL)),
+        KeyBinding::new("space", RecordHotkey, Some(HOTKEY_CELL)),
+        KeyBinding::new("enter", RecordHotkey, Some(HOTKEY_RECORDER)),
+        KeyBinding::new("space", RecordHotkey, Some(HOTKEY_RECORDER)),
+        KeyBinding::new("escape", CancelHotkeyRecording, Some(HOTKEY_RECORDER)),
+        KeyBinding::new("down", gpui::NoAction, Some(HOTKEY_RECORDER)),
+        KeyBinding::new("up", gpui::NoAction, Some(HOTKEY_RECORDER)),
+        KeyBinding::new("tab", gpui::NoAction, Some(HOTKEY_RECORDER)),
+        KeyBinding::new("shift-tab", gpui::NoAction, Some(HOTKEY_RECORDER)),
+        // The Clear button beside a recorded hotkey.
+        KeyBinding::new("enter", ClearHotkey, Some(HOTKEY_CLEAR)),
+        KeyBinding::new("space", ClearHotkey, Some(HOTKEY_CLEAR)),
     ]);
 }
 
@@ -107,18 +159,29 @@ pub(crate) struct State {
     collapsed: HashSet<String>,
     /// The command whose alias is being edited inline, if any.
     editing: Option<Editing>,
+    /// The command whose hotkey is being recorded, if any: the keys
+    /// pressed next are its new binding, captured — they do not act.
+    recording: Option<Recording>,
     /// Each editable command's alias cell focus, created when the command
     /// first draws and kept so the focus survives redraws — and returns
     /// there when the editor it opened closes. The handles of commands a
     /// package change removed are kept too: they cost nothing, and the
     /// window holds them for as long as it is open.
     alias_cells: HashMap<String, FocusHandle>,
+    /// Each recordable command's hotkey cell focus, kept as the alias
+    /// cells' are: the recorder takes it while it listens, and the focus
+    /// returns there when it closes or the change it recorded lands.
+    hotkey_cells: HashMap<String, FocusHandle>,
+    /// Each recorded hotkey's Clear button focus, kept as the hotkey
+    /// cells' are.
+    hotkey_clears: HashMap<String, FocusHandle>,
     /// Each group header's focus, kept as the alias cells' are.
     group_cells: HashMap<String, FocusHandle>,
     /// The last catalog this page drew, which the window's watcher
     /// compares a fresh one against.
     drawn: Option<ShortcutCatalog>,
-    /// What the last alias change came to, as the page's status line.
+    /// What the last alias or hotkey change came to, as the page's status
+    /// line.
     status: Option<StatusLine>,
 }
 
@@ -134,13 +197,25 @@ struct Editing {
     _changes: Subscription,
 }
 
-/// The page's status line: what the last alias change came to.
+/// The hotkey recorder for one command, in its cell: while it listens,
+/// the keys pressed next are the binding being recorded.
+struct Recording {
+    /// The command whose hotkey is being recorded.
+    command: String,
+    /// Why the last capture was refused, shown under the cell; the
+    /// recorder keeps listening for another try, as the General page's
+    /// recorder does.
+    rejection: Option<String>,
+}
+
+/// The page's status line: what the last change the page started came to.
 enum StatusLine {
-    /// The alias took effect and is being recorded.
-    Saving,
-    /// The alias was recorded, saying what typing it now finds.
+    /// The change took effect and is being recorded.
+    Saving(String),
+    /// The change was recorded, saying what typing an alias now finds or
+    /// what a hotkey now opens.
     Saved(String),
-    /// The alias could not be recorded; what was last recorded is back,
+    /// The change could not be recorded; what was last recorded is back,
     /// saying why.
     NotKept(String),
 }
@@ -159,7 +234,10 @@ impl State {
             _query_changes,
             collapsed: HashSet::new(),
             editing: None,
+            recording: None,
             alias_cells: HashMap::new(),
+            hotkey_cells: HashMap::new(),
+            hotkey_clears: HashMap::new(),
             group_cells: HashMap::new(),
             drawn: Some(launcher.shortcut_catalog()),
             status: None,
@@ -268,7 +346,7 @@ impl SettingsWindow {
                 window.focus(&field, cx);
             }
             Ok(pending) => {
-                self.shortcuts.status = Some(StatusLine::Saving);
+                self.shortcuts.status = Some(StatusLine::Saving("Saving the alias…".into()));
                 if let Some(cell) = self.shortcuts.alias_cells.get(&command) {
                     window.focus(cell, cx);
                 }
@@ -312,6 +390,152 @@ impl SettingsWindow {
         }
     }
 
+    /// Starts recording the hotkey of `command`: its cell takes focus and
+    /// listens, and the keys pressed next are the binding being recorded,
+    /// captured — they do not navigate or act. Called by the cell's keys
+    /// and click; the cell only exists for a command a hotkey can be
+    /// recorded for.
+    fn shortcuts_record_hotkey(
+        &mut self,
+        command: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.stop_propagation();
+        if self
+            .shortcuts
+            .recording
+            .as_ref()
+            .is_some_and(|recording| recording.command == command)
+        {
+            // The keys pressed while it listens are the binding, and
+            // Enter and Space cannot be part of one: the recorder keeps
+            // listening.
+            return;
+        }
+        self.shortcuts.recording = Some(Recording {
+            command: command.to_owned(),
+            rejection: None,
+        });
+        if let Some(cell) = self.shortcuts.hotkey_cells.get(command) {
+            window.focus(cell, cx);
+        }
+        cx.notify();
+    }
+
+    /// Escape on a hotkey cell while its recorder listens: cancels it,
+    /// changing nothing, and focus stays on the cell, a tab stop again.
+    fn shortcuts_cancel_hotkey(
+        &mut self,
+        _: &CancelHotkeyRecording,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.stop_propagation();
+        self.shortcuts_cancel_recording(cx);
+    }
+
+    /// Cancels the hotkey recorder, if one is listening, changing nothing:
+    /// Escape on its cell, or a mouse-down outside it while it listens
+    /// (see the cell's `on_mouse_down_out`).
+    fn shortcuts_cancel_recording(&mut self, cx: &mut Context<Self>) {
+        if self.shortcuts.recording.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// A key pressed while a hotkey recorder listens: the combination it
+    /// names is the binding to record, as the General page's recorder
+    /// takes the Open Pane keys. Keys the window binds (Enter, Space,
+    /// Escape, the navigation and traversal keys) never reach here — they
+    /// are bound in the recorder's context and handled above.
+    fn shortcuts_hotkey_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(recording) = self.shortcuts.recording.as_ref() else {
+            return;
+        };
+        let command = recording.command.clone();
+        let keystroke = &event.keystroke;
+        let modifiers = keystroke.modifiers;
+        cx.stop_propagation();
+        match Shortcut::new(
+            modifiers.control,
+            modifiers.alt,
+            modifiers.shift,
+            modifiers.platform,
+            &keystroke.key,
+        ) {
+            Ok(shortcut) => self.shortcuts_apply_hotkey(&command, Some(shortcut), window, cx),
+            Err(problem) => {
+                if let Some(recording) = self.shortcuts.recording.as_mut() {
+                    recording.rejection = Some(format!("{problem}."));
+                }
+                cx.notify();
+            }
+        }
+    }
+
+    /// Applies `shortcut` — or `None`, clearing — as the hotkey of
+    /// `command`, as the recorder or the Clear button asked: through the
+    /// launcher, which registers the new binding with the system before
+    /// the one it replaces is released and only then keeps and records the
+    /// choice, so a refusal, a cancellation or a save that fails never
+    /// discards the previous working binding. A refusal is shown under
+    /// the cell and keeps the recorder listening for another try; a
+    /// change that lands is recorded by the returned future, its outcome
+    /// the page's status line, and focus returns to the row's hotkey cell.
+    fn shortcuts_apply_hotkey(
+        &mut self,
+        command: &str,
+        shortcut: Option<Shortcut>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match self.launcher.set_hotkey(command, shortcut) {
+            Err(reason) => {
+                // Refused: the cell keeps listening and shows the reason
+                // under itself, for another try.
+                if let Some(recording) = self.shortcuts.recording.as_mut() {
+                    recording.rejection = Some(reason);
+                }
+                cx.notify();
+            }
+            Ok(pending) => {
+                self.shortcuts.recording = None;
+                self.shortcuts.status = Some(StatusLine::Saving("Saving the hotkey…".into()));
+                if let Some(cell) = self.shortcuts.hotkey_cells.get(command) {
+                    window.focus(cell, cx);
+                }
+                let command = command.to_owned();
+                cx.spawn(async move |this, cx| {
+                    let outcome = pending.await;
+                    this.update(cx, |window, cx| {
+                        window.shortcuts_hotkey_recorded(outcome, cx);
+                    })
+                    .ok();
+                })
+                .detach();
+                cx.notify();
+            }
+        }
+    }
+
+    /// Records what the hotkey change the page started came to, as its
+    /// status line; a change that could not be kept also put back what was
+    /// last recorded — and the registration that follows it — which the
+    /// next frame's catalog shows.
+    fn shortcuts_hotkey_recorded(&mut self, outcome: HotkeyOutcome, cx: &mut Context<Self>) {
+        self.shortcuts.status = Some(match outcome {
+            HotkeyOutcome::Saved(done) => StatusLine::Saved(done),
+            HotkeyOutcome::NotKept(problem) => StatusLine::NotKept(problem),
+        });
+        cx.notify();
+    }
+
     /// What the window's watcher does on each of its ticks: nothing unless
     /// this page is showing, in which case a catalog that differs from the
     /// last one drawn asks for a redraw — the next frame reads the catalog
@@ -338,6 +562,21 @@ fn render(
     // they are now, whatever made the window redraw.
     let catalog = this.launcher.shortcut_catalog();
     this.shortcuts.drawn = Some(catalog.clone());
+    // A recorder whose command the packages no longer offer ends: its
+    // cell is drawn as the plain label of a command that cannot record,
+    // so the keys would fall through to the page. The catalog changed
+    // under the page between the watcher's ticks.
+    if let Some(recording) = &this.shortcuts.recording {
+        let offered = catalog.groups.iter().any(|group| {
+            group
+                .commands
+                .iter()
+                .any(|command| command.id == recording.command && command.hotkey_editable)
+        });
+        if !offered {
+            this.shortcuts.recording = None;
+        }
+    }
     let query = this.shortcuts.query.read(cx).as_str().to_owned();
     let editing = this
         .shortcuts
@@ -673,7 +912,7 @@ fn row_element(
     } else {
         alias_cell(this, command, theme, cx)
     };
-    let hotkey = hotkey_cell(command, theme);
+    let hotkey = hotkey_cell(this, command, theme, cx);
     div()
         .id(format!("row-{id}"))
         .debug_selector(|| format!("shortcut-row-{id}"))
@@ -896,13 +1135,38 @@ fn editor_element(
         })
 }
 
-/// The Hotkey column's cell: the command's hotkey as text in the keycap
-/// chrome (display-only until #76 lands recording), or none, with why the
-/// hotkey is not active below it.
-fn hotkey_cell(command: &ShortcutCommand, theme: &Theme) -> Div {
+/// The Hotkey column's cell: the command's hotkey in the keycap chrome —
+/// or "None" — as a button that starts the recorder, with a Clear button
+/// beside it while a hotkey is recorded. While the recorder listens, the
+/// button shows it — the keys pressed next are the binding being recorded,
+/// captured, Escape cancels — with why the last capture was refused below,
+/// and the hint of what is being recorded; the Clear button hides, since
+/// a click while it listens only cancels. A command a hotkey cannot be
+/// recorded for (its package is disabled, or it is unavailable on this
+/// system) shows its recorded hotkey as a plain label instead. Whatever
+/// the cell shows, why the hotkey is not active is below it.
+fn hotkey_cell(
+    this: &mut SettingsWindow,
+    command: &ShortcutCommand,
+    theme: &Theme,
+    cx: &mut Context<SettingsWindow>,
+) -> Div {
+    let id = command.id.clone();
     let shown = command.hotkey.as_ref().map(|shortcut| shortcut.to_string());
+    let listening = this
+        .shortcuts
+        .recording
+        .as_ref()
+        .is_some_and(|recording| recording.command == id);
+    let rejection = this
+        .shortcuts
+        .recording
+        .as_ref()
+        .filter(|recording| recording.command == id)
+        .and_then(|recording| recording.rejection.clone());
     let label = format!(
-        "Hotkey for {}: {}",
+        "{}Hotkey for {}: {}",
+        if listening { "Recording; " } else { "" },
         command.title,
         shown.as_deref().unwrap_or("none")
     );
@@ -910,6 +1174,145 @@ fn hotkey_cell(command: &ShortcutCommand, theme: &Theme) -> Div {
         .hotkey_inactive
         .as_ref()
         .map(|why| format!("Not active: {why}"));
+
+    // The recorder button, or the plain label of a command that cannot
+    // record here.
+    let value = if listening {
+        // The listening mark, as the General page's recorder shows it.
+        hotkey_chip("…", theme.warning, theme).into_any_element()
+    } else {
+        match shown.as_deref() {
+            Some(shortcut) => {
+                hotkey_chip(shortcut, theme.tile_foreground, theme).into_any_element()
+            }
+            None => div()
+                .text_size(theme.typography.row_subtitle_size)
+                .text_color(theme.text_muted)
+                .child("None")
+                .into_any_element(),
+        }
+    };
+    let cell = if command.hotkey_editable {
+        let handle = this
+            .shortcuts
+            .hotkey_cells
+            .entry(id.clone())
+            .or_insert_with(|| cx.focus_handle().tab_stop(true))
+            .clone();
+        let for_keys = id.clone();
+        let for_click = id.clone();
+        let for_out = id.clone();
+        // While the recorder listens, the cell's context is the recorder's
+        // (see [`bind_keys`]): its keys are the binding being recorded.
+        div()
+            .id(format!("hotkey-{id}"))
+            .debug_selector(|| format!("shortcut-hotkey-{id}"))
+            .key_context(if listening {
+                HOTKEY_RECORDER
+            } else {
+                HOTKEY_CELL
+            })
+            .track_focus(&handle)
+            .role(Role::Button)
+            .aria_label(label)
+            .when_some(inactive.clone(), |cell, why| cell.aria_description(why))
+            .on_action(cx.listener(move |this, _: &RecordHotkey, window, cx| {
+                this.shortcuts_record_hotkey(&for_keys, window, cx);
+            }))
+            .on_action(cx.listener(SettingsWindow::shortcuts_cancel_hotkey))
+            .on_key_down(cx.listener(SettingsWindow::shortcuts_hotkey_key_down))
+            // A mouse-down anywhere outside the cell while it listens
+            // cancels the recording and is consumed, as the General page's
+            // recorder and the footer menu's popup do: the click
+            // underneath does not act, and the recorder gives up the keys.
+            .on_mouse_down_out(cx.listener(move |this, _: &MouseDownEvent, _window, cx| {
+                if this
+                    .shortcuts
+                    .recording
+                    .as_ref()
+                    .is_some_and(|recording| recording.command == for_out)
+                {
+                    this.shortcuts_cancel_recording(cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+                this.shortcuts_record_hotkey(&for_click, window, cx);
+            }))
+            .flex()
+            .items_center()
+            .min_h(px(30.))
+            .px(px(4.))
+            .rounded_md()
+            .cursor_pointer()
+            .hover(|cell| cell.bg(theme.row_hover))
+            .focus(|cell| focus_ring(cell, theme.focus_ring))
+            .child(value)
+            .into_any_element()
+    } else {
+        div()
+            .id(format!("hotkey-{id}"))
+            .debug_selector(|| format!("shortcut-hotkey-{id}"))
+            .role(Role::Label)
+            .aria_label(label)
+            .when_some(inactive, |cell, why| cell.aria_description(why))
+            .flex()
+            .items_center()
+            .min_h(px(30.))
+            .px(px(4.))
+            .opacity(0.6)
+            .child(value)
+            .into_any_element()
+    };
+
+    // The Clear button, beside a recorded hotkey of a command that can
+    // record: it forgets the hotkey through the same checks and record
+    // the recorder writes. It hides while the recorder listens, since a
+    // click there only cancels it.
+    let clear = (!listening && command.hotkey.is_some() && command.hotkey_editable).then(|| {
+        let handle = this
+            .shortcuts
+            .hotkey_clears
+            .entry(id.clone())
+            .or_insert_with(|| cx.focus_handle().tab_stop(true))
+            .clone();
+        let for_keys = id.clone();
+        let for_click = id.clone();
+        div()
+            .id(format!("hotkey-clear-{id}"))
+            .debug_selector(|| format!("shortcut-hotkey-clear-{id}"))
+            .key_context(HOTKEY_CLEAR)
+            .track_focus(&handle)
+            .role(Role::Button)
+            .aria_label(format!("Clear the hotkey for {}", command.title))
+            .on_action(cx.listener(move |this, _: &ClearHotkey, window, cx| {
+                this.shortcuts_apply_hotkey(&for_keys, None, window, cx);
+            }))
+            .on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+                this.shortcuts_apply_hotkey(&for_click, None, window, cx);
+            }))
+            .flex()
+            .items_center()
+            .min_h(px(30.))
+            .px(px(6.))
+            .rounded_md()
+            .cursor_pointer()
+            .hover(|button| button.bg(theme.row_hover))
+            .focus(|button| focus_ring(button, theme.focus_ring))
+            .text_size(theme.typography.row_kind_size)
+            .text_color(theme.text_muted)
+            .child("Clear")
+    });
+
+    // The hint of what is being recorded, and why the last capture was
+    // refused — both only while the recorder listens.
+    let hint = listening.then(|| {
+        format!(
+            "Press the keys that should open {}; they are captured here and do not act. Esc \
+             cancels",
+            command.title
+        )
+    });
     div()
         .w(HOTKEY_WIDTH)
         .flex_none()
@@ -919,23 +1322,33 @@ fn hotkey_cell(command: &ShortcutCommand, theme: &Theme) -> Div {
         .py(px(6.))
         .child(
             div()
-                .id(format!("hotkey-{}", command.id))
-                .debug_selector(|| format!("shortcut-hotkey-{}", command.id))
-                .role(Role::Label)
-                .aria_label(label)
-                .when_some(inactive, |cell, why| cell.aria_description(why))
                 .flex()
+                .flex_row()
                 .items_center()
-                .min_h(px(30.))
-                .child(match shown {
-                    Some(shortcut) => hotkey_chip(&shortcut, theme).into_any_element(),
-                    None => div()
-                        .text_size(theme.typography.row_subtitle_size)
-                        .text_color(theme.text_muted)
-                        .child("None")
-                        .into_any_element(),
-                }),
+                .gap(px(6.))
+                .child(cell)
+                .when_some(clear, |row, clear| row.child(clear)),
         )
+        .when_some(hint, |column, hint| {
+            column.child(
+                div()
+                    .id("shortcut-hotkey-hint")
+                    .debug_selector(|| "shortcut-hotkey-hint".into())
+                    .text_size(theme.typography.row_kind_size)
+                    .text_color(theme.text_muted)
+                    .child(hint),
+            )
+        })
+        .when_some(rejection, |column, why| {
+            column.child(
+                div()
+                    .id("shortcut-hotkey-error")
+                    .debug_selector(|| "shortcut-hotkey-error".into())
+                    .text_size(theme.typography.row_kind_size)
+                    .text_color(theme.danger)
+                    .child(why),
+            )
+        })
         .when_some(command.hotkey_inactive.as_ref(), |cell, why| {
             cell.child(
                 div()
@@ -950,8 +1363,8 @@ fn hotkey_cell(command: &ShortcutCommand, theme: &Theme) -> Div {
 
 /// The hotkey as text in the neutral control chrome — the keycap's tile
 /// colors at text scale, since a hotkey is more than one key and the
-/// keycap shows one glyph.
-fn hotkey_chip(text: &str, theme: &Theme) -> Div {
+/// keycap shows one glyph. The listening mark passes the warning tone.
+fn hotkey_chip(text: &str, color: Hsla, theme: &Theme) -> Div {
     div()
         .flex_none()
         .flex()
@@ -967,15 +1380,15 @@ fn hotkey_chip(text: &str, theme: &Theme) -> Div {
             BoxShadow::new(px(0.), px(1.), theme.tile_highlight).inset(),
         ])
         .text_size(theme.typography.footer_size)
-        .text_color(theme.tile_foreground)
+        .text_color(color)
         .child(text.to_owned())
 }
 
-/// The page's status line: what the last alias change came to, a live
-/// region so assistive technology announces it.
+/// The page's status line: what the last change the page started came
+/// to, a live region so assistive technology announces it.
 fn status_line(status: &StatusLine, theme: &Theme) -> Stateful<Div> {
     let (text, color): (String, Hsla) = match status {
-        StatusLine::Saving => ("Saving the alias…".into(), theme.warning),
+        StatusLine::Saving(saving) => (saving.clone(), theme.warning),
         StatusLine::Saved(done) => (done.clone(), theme.success),
         StatusLine::NotKept(problem) => (
             format!("Could not keep the change: {problem}"),
