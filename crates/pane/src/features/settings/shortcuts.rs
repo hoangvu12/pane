@@ -34,13 +34,17 @@ use gpui_elements::editable_text::actions::DEFAULT_INPUT_CONTEXT;
 use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged, text_input};
 use pane_core::{AliasOutcome, Launcher, ShortcutCatalog, ShortcutCommand, ShortcutGroup};
 
-use super::{Page, SettingsWindow};
+use super::{Page, SettingsWindow, search};
 use crate::ui::icon::{Glyph, IconTone, glyph};
 use crate::ui::theme::Theme;
 
 /// The page's sidebar title, its identity in the sidebar and the tests'
 /// selectors.
 pub(crate) const TITLE: &str = "Shortcuts";
+
+/// The target id of the page's filter field, the control the sidebar's
+/// search jumps to (see [`entries`]).
+const FILTER: &str = "filter";
 
 /// The page's key context: the filter field and everything below it.
 const PAGE: &str = "ShortcutPage";
@@ -90,9 +94,43 @@ pub(crate) fn bind_keys(cx: &mut App) {
 pub(crate) fn page() -> Page {
     Page {
         title: TITLE,
+        about: "Aliases and global hotkeys for installed commands",
         icon: (IconTone::Command, Glyph::Keyboard),
         render,
+        search: entries,
+        focus,
     }
+}
+
+/// The control the page offers the sidebar's search: its filter field,
+/// which a jump focuses. The commands themselves stay the page's own
+/// filter's to find — the Settings search indexes host settings, not
+/// the installed commands — and the page's own entry, which the window
+/// registers from its title and description, is what a query naming
+/// aliases or hotkeys finds.
+fn entries(_launcher: &Launcher, _cx: &App) -> Vec<search::Entry> {
+    vec![search::Entry {
+        control: Some(FILTER.into()),
+        title: "Filter commands".into(),
+        group: None,
+        unavailable: None,
+    }]
+}
+
+/// The page's filter field takes keyboard focus, so a jump to it focuses
+/// the field, ready to filter the commands. No other target is the
+/// page's: `false` falls back to the sidebar.
+fn focus(
+    this: &mut SettingsWindow,
+    target: &str,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> bool {
+    if target != FILTER {
+        return false;
+    }
+    window.focus(&this.shortcuts.query.focus_handle(cx), cx);
+    true
 }
 
 /// The Shortcuts page's state, held by the window as a field.
@@ -396,8 +434,10 @@ fn render(
 
 /// The page's filter field: the shared editable text element in a boxed
 /// field, with the magnifier the reference's search inputs carry. The
-/// wrapper is the field's accessibility node, as a form field's is.
-fn filter_field(this: &SettingsWindow, query: &str, theme: &Theme, cx: &App) -> Stateful<Div> {
+/// wrapper is the field's accessibility node, as a form field's is, and
+/// carries the scroll anchor the search's reveal scrolls to.
+fn filter_field(this: &mut SettingsWindow, query: &str, theme: &Theme, cx: &App) -> Stateful<Div> {
+    let anchor = this.search_anchor(FILTER);
     let input = &this.shortcuts.query;
     div()
         .id("shortcut-filter")
@@ -412,6 +452,7 @@ fn filter_field(this: &SettingsWindow, query: &str, theme: &Theme, cx: &App) -> 
                 .flex_1()
                 .min_w(px(0.))
                 .id("shortcut-field")
+                .anchor_scroll(Some(anchor))
                 .track_focus(&input.focus_handle(cx))
                 .role(Role::TextInput)
                 .aria_label("Filter commands and extensions")

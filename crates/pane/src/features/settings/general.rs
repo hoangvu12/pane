@@ -50,12 +50,13 @@
 
 use gpui::{
     AnyElement, App, Context, Div, FocusHandle, Hsla, KeyBinding, KeyDownEvent, MouseDownEvent,
-    Role, Stateful, Toggled, Window, actions, div, prelude::*, px,
+    Role, ScrollAnchor, Stateful, Toggled, Window, actions, div, prelude::*, px,
 };
+use pane_core::Launcher;
 use pane_core::autostart::Registration;
 use pane_core::hotkeys::Shortcut;
 
-use super::{Page, SettingsWindow};
+use super::{Page, SettingsWindow, search};
 use crate::ui::icon::{Glyph, IconTone};
 use crate::ui::theme::Theme;
 
@@ -94,8 +95,11 @@ pub(crate) fn bind_keys(cx: &mut App) {
 pub(crate) fn page() -> Page {
     Page {
         title: "General",
+        about: "The Open Pane hotkey and the launch-at-login choice",
         icon: (IconTone::Command, Glyph::Sliders),
         render,
+        search: entries,
+        focus,
     }
 }
 
@@ -121,6 +125,56 @@ impl State {
             focus: cx.focus_handle().tab_stop(true),
         }
     }
+}
+
+/// The settings the page offers the sidebar's search: the Open Pane
+/// hotkey — its recorder and its reset — and the launch-at-login switch,
+/// named as the page names them, in the groups they sit in. The hotkey
+/// carries the binding's own problem as its reason when one stands (the
+/// system refused the binding, or it cannot be used at all here); the
+/// login choice carries the integration's reason where it cannot manage
+/// a registration. Read live, so a binding that changes or an
+/// integration that answers differently is in the next catalog.
+fn entries(launcher: &Launcher, cx: &App) -> Vec<search::Entry> {
+    let login_unavailable = crate::settings::shared(cx).read(cx).login_unavailable();
+    vec![
+        search::Entry {
+            control: Some("open-pane-recorder".into()),
+            title: "Open Pane hotkey".into(),
+            group: Some("Open Pane".into()),
+            unavailable: launcher.open_pane_problem(),
+        },
+        search::Entry {
+            control: Some("open-pane-reset".into()),
+            title: "Reset the Open Pane hotkey".into(),
+            group: Some("Open Pane".into()),
+            unavailable: None,
+        },
+        search::Entry {
+            control: Some("launch-at-login".into()),
+            title: "Launch Pane at login".into(),
+            group: Some("Startup".into()),
+            unavailable: login_unavailable,
+        },
+    ]
+}
+
+/// The recorder row takes keyboard focus — it is a tab stop, and Enter
+/// or a click on it starts recording — so a jump to it focuses the row,
+/// ready to record. The reset row and the login switch take none (they
+/// are chosen with the pointer, as the Appearance choices are), so a
+/// jump reveals them and the sidebar keeps the focus: `false`.
+fn focus(
+    this: &mut SettingsWindow,
+    target: &str,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> bool {
+    if target != "open-pane-recorder" {
+        return false;
+    }
+    window.focus(&this.general.focus, cx);
+    true
 }
 
 /// Draws the General page: the Open Pane hotkey — its recorder and reset —
@@ -153,6 +207,12 @@ fn render(
     let problem = this.launcher.open_pane_problem();
     let rejection = this.general.rejection.clone();
     let resettable = choice != Shortcut::open_pane_default();
+    // The rows' scroll anchors, which the search's reveal scrolls to
+    // (see the window's render): the reset row and the login switch take
+    // no focus of their own, so a jump to them reveals them.
+    let recorder_anchor = this.search_anchor("open-pane-recorder");
+    let reset_anchor = this.search_anchor("open-pane-reset");
+    let login_anchor = this.search_anchor("launch-at-login");
 
     let page = div()
         .id("general")
@@ -172,7 +232,10 @@ fn render(
         )
         .child(group(
             "Open Pane",
-            vec![recorder_row(this, cx), reset_row(resettable, cx)],
+            vec![
+                recorder_row(this, recorder_anchor, cx),
+                reset_row(resettable, reset_anchor, cx),
+            ],
             &theme,
         ))
         // The binding's state: why the chosen one is not registered — a
@@ -193,6 +256,7 @@ fn render(
             vec![switch(
                 preference,
                 unavailable.is_none(),
+                login_anchor,
                 &theme,
                 // The click reports the choice to the host settings: the
                 // registration is changed, the record written, and the
@@ -244,7 +308,11 @@ fn group(label: &'static str, rows: Vec<Stateful<Div>>, theme: &Theme) -> Div {
 /// and takes the keys pressed as the binding being recorded (Escape
 /// cancels); a combination that is refused keeps it listening for another
 /// try.
-fn recorder_row(this: &mut SettingsWindow, cx: &mut Context<SettingsWindow>) -> Stateful<Div> {
+fn recorder_row(
+    this: &mut SettingsWindow,
+    anchor: ScrollAnchor,
+    cx: &mut Context<SettingsWindow>,
+) -> Stateful<Div> {
     let theme = crate::settings::visuals(cx).theme;
     let typography = &theme.typography;
     let geometry = &theme.geometry;
@@ -298,6 +366,7 @@ fn recorder_row(this: &mut SettingsWindow, cx: &mut Context<SettingsWindow>) -> 
                 ),
         )
         .child(binding_chip(&binding, recording, &theme))
+        .anchor_scroll(Some(anchor))
         .key_context(RECORDER)
         .track_focus(&focus)
         .role(Role::Button)
@@ -359,7 +428,11 @@ fn binding_chip(binding: &str, recording: bool, theme: &Theme) -> Stateful<Div> 
 /// The reset row: back to the provisional default, through the same
 /// checks as recording (a reset that cannot be applied is refused and
 /// leaves the binding working). Inert while the default is the choice.
-fn reset_row(resettable: bool, cx: &mut Context<SettingsWindow>) -> Stateful<Div> {
+fn reset_row(
+    resettable: bool,
+    anchor: ScrollAnchor,
+    cx: &mut Context<SettingsWindow>,
+) -> Stateful<Div> {
     let theme = crate::settings::visuals(cx).theme;
     let typography = &theme.typography;
     let geometry = &theme.geometry;
@@ -398,6 +471,7 @@ fn reset_row(resettable: bool, cx: &mut Context<SettingsWindow>) -> Stateful<Div
         );
     row.id("open-pane-reset")
         .debug_selector(|| "open-pane-reset".into())
+        .anchor_scroll(Some(anchor))
         .role(Role::Button)
         .aria_label(format!("Reset the Open Pane hotkey to {default}"))
         .when(!resettable, |row| row.aria_disabled(true))
@@ -416,6 +490,7 @@ fn reset_row(resettable: bool, cx: &mut Context<SettingsWindow>) -> Stateful<Div
 fn switch(
     preference: bool,
     offered: bool,
+    anchor: ScrollAnchor,
     theme: &Theme,
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
@@ -456,6 +531,7 @@ fn switch(
         .child(track(preference, theme))
         .id("launch-at-login")
         .debug_selector(|| "general-launch-at-login".into())
+        .anchor_scroll(Some(anchor))
         .role(Role::Switch)
         .aria_label("Launch Pane at login")
         .aria_toggled(if preference {
