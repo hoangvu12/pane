@@ -4,8 +4,8 @@ All verification that gates a merge happens on GitHub Actions, paced in tiers so
 
 ## The tiers
 
-- **`ci-fast.yml` — ticket worktrees (`pi-subagent/**`).** A plain push runs `cargo fmt --all --check` and `cargo check --workspace --all-targets` on Linux and Windows (~13 minutes). A push whose head commit message contains `[verify]` runs the full check leg instead: the guests, clippy `-D warnings` and the workspace tests (~30 minutes). An implementer iterates on plain pushes and asks for `[verify]` once, when it believes the branch is done. A superseded run is cancelled automatically, so iterating is cheap.
-- **`ci-branch.yml` — every other branch push.** Linux runs the full check leg (`cargo xtask ci`, ~27 minutes) while Windows and macOS run the quick compile check, all in parallel; the wall time is the Linux leg. The full test suite on Windows and macOS runs at the `[verify]` tier and in the release matrix, not per push.
+- **`ci-fast.yml` — ticket worktrees (`pi-subagent/**`).** A plain push runs `cargo fmt --all --check` and `cargo check --workspace --all-targets` on Linux and Windows (~13 minutes). A push whose head commit message contains `[verify]` runs the full check leg instead: the guests, clippy `-D warnings` and the workspace tests under cargo-nextest with two retries (~30 minutes). An implementer iterates on plain pushes and asks for `[verify]` once, when it believes the branch is done. A superseded run is cancelled automatically, so iterating is cheap.
+- **`ci-branch.yml` — every other branch push.** Two Linux jobs run beside each other — `cargo xtask ci-lints` (formatting, the prebuilt-samples check, clippy) and `cargo xtask ci-tests` (the guests and the tests, run by cargo-nextest with two retries) — while Windows and macOS run the quick compile check; the wall time is the slower Linux job (~20 minutes). The full test suite on Windows and macOS runs at the `[verify]` tier and in the release matrix, not per push.
 - **`ci.yml` — the release matrix: the smokes, renderer output, packaging, JS/TS guests from source, and licenses.** It runs on pushes to `main` and on demand (`workflow_dispatch`), and nowhere else: not on branch pushes, not on pull-request events (no duplicate runs), not when a pull request is marked ready for review. It verifies a release, not a milestone: its evidence feeds the milestone's release-validation ticket (for #70, #84) when a release is actually made.
 
 ## How merges are paced
@@ -17,7 +17,7 @@ All verification that gates a merge happens on GitHub Actions, paced in tiers so
 
 ## Flakes
 
-Two tests fail occasionally without a code cause: the macOS claim-window test in `pane-core`'s `update.rs` (fires only where macOS runs tests) and `command_search.rs`'s `a_service_that_stalls_is_given_up_on_within_the_limits` under runner load. Rerun the failed jobs once (`gh run rerun <id> --repo hoangvu12/pane --failed`) before diagnosing a real failure.
+Two tests fail occasionally without a code cause: the macOS claim-window test in `pane-core`'s `update.rs` (fires only where macOS runs tests) and `command_search.rs`'s `a_service_that_stalls_is_given_up_on_within_the_limits` under runner load. The tests run under cargo-nextest with two retries, which absorbs them. A failure that survives its retries is real: rerun the failed jobs once (`gh run rerun <id> --repo hoangvu12/pane --failed`) before diagnosing.
 
 ## What is traded
 
