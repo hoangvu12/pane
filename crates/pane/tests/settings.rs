@@ -1,7 +1,10 @@
 //! Pane's Settings window: its three entry points converge on one window,
 //! which closes without quitting Pane, keeps its keyboard input to itself,
 //! and answers for its titlebar controls. Drives the real windows through
-//! GPUI's test platform, as `window.rs` drives the launcher's.
+//! GPUI's test platform, as `window.rs` drives the launcher's. The
+//! Appearance page is driven the same way — through the page's own
+//! controls — with what the windows paint checked on their quads, so a
+//! choice is observed at the same boundary a user sees it.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -147,6 +150,80 @@ fn until<T>(
     }
 }
 
+/// One of the theme's panel colors, as the window paints it on a quad:
+/// the solid panel, or the glass tint over the window's blur. The values
+/// mirror `ui::theme`'s dark and light palettes — the solid panel and
+/// the glass tint of each.
+fn panel(hex: u32) -> gpui::Background {
+    gpui::solid_background(gpui::rgb_to_hsla(gpui::rgba(hex)))
+}
+
+/// The dark theme's panel colors: the solid panel and the glass tint.
+fn dark_panel() -> [gpui::Background; 2] {
+    [panel(0x16171AFF), panel(0x16171AB3)]
+}
+
+/// The light theme's panel colors: the solid panel and the glass tint.
+fn light_panel() -> [gpui::Background; 2] {
+    [panel(0xF6F6F8FF), panel(0xF6F6F8CC)]
+}
+
+/// Whether the window `cx` drives painted one of the panel `colors` in
+/// its last frame — the panel surface, which follows the theme and
+/// material the host settings hold.
+fn paints_panel(cx: &mut VisualTestContext, colors: &[gpui::Background]) -> bool {
+    cx.update(|window, _| {
+        window
+            .painted_quads()
+            .iter()
+            .any(|quad| colors.contains(&quad.background))
+    })
+}
+
+/// Whether the Appearance page's RadioButton named `label` is the choice
+/// in effect, as assistive technology reads it.
+fn chosen(cx: &mut VisualTestContext, label: &str) -> bool {
+    let (_, json) = accessibility(cx);
+    let tree: serde_json::Value = serde_json::from_str(&json).unwrap();
+    tree["nodes"].as_object().unwrap().values().any(|node| {
+        let aria = &node["aria"];
+        aria["role"] == "RadioButton" && aria["label"] == label && aria["toggled"] == "True"
+    })
+}
+
+/// Clicks the Appearance page's choice whose debug selector is
+/// `selector`, through the page's own control.
+fn choose(cx: &mut VisualTestContext, selector: &'static str) {
+    let choice = cx
+        .debug_bounds(selector)
+        .unwrap_or_else(|| panic!("{selector} is not drawn"));
+    cx.simulate_click(choice.center(), Modifiers::none());
+}
+
+/// Opens the Settings window over the launcher `cx` drives, on the page
+/// the window first shows (Appearance), as its own window context.
+fn open_settings(cx: &mut VisualTestContext) -> VisualTestContext {
+    cx.simulate_keystrokes(settings_shortcut());
+    cx.run_until_parked();
+    let settings = settings_windows(cx).pop().expect("Settings opened");
+    settings_context(&settings, cx)
+}
+
+/// Runs the window until the settings record exists in `data`: the save
+/// the Appearance page started is written off the window's thread.
+fn until_record(cx: &mut VisualTestContext, data: &std::path::Path) {
+    let record = data.join("settings.json");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !record.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for the record to be written"
+        );
+        cx.run_until_parked();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 #[gpui::test]
 fn the_three_entry_points_converge_on_one_focused_settings_window(cx: &mut TestAppContext) {
     let (launcher, _links, cx) = open_launcher(cx);
@@ -240,10 +317,15 @@ fn hiding_the_launcher_leaves_settings_open_and_usable(cx: &mut TestAppContext) 
     cx.run_until_parked();
     assert_eq!(settings_windows(cx), vec![settings], "Settings stayed");
 
-    // And it still answers: its About page's content is drawn.
+    // And it still answers: the page the window first shows — Appearance,
+    // the first registered section — is drawn.
     let mut settings_cx = settings_context(&settings, cx);
     settings_cx.run_until_parked();
-    assert!(settings_cx.debug_bounds("about-version").is_some());
+    assert!(
+        settings_cx
+            .debug_bounds("appearance-theme-System")
+            .is_some()
+    );
 }
 
 #[gpui::test]
@@ -263,12 +345,15 @@ fn keys_in_settings_and_the_launcher_stay_in_their_windows(cx: &mut TestAppConte
     assert_eq!(view.query(), Some("rust"));
     settings_cx.run_until_parked();
     assert!(
-        settings_cx.debug_bounds("about-version").is_some(),
-        "the About page is unchanged"
+        settings_cx
+            .debug_bounds("appearance-theme-System")
+            .is_some(),
+        "the Appearance page is unchanged"
     );
 
-    // Keys in Settings — the sidebar's navigation, which has one section —
-    // reach no launcher key: the query stays, no selection moves.
+    // Keys in Settings — the sidebar's navigation, over the sections
+    // it offers — reach no launcher key: the query stays, no selection
+    // moves.
     settings_cx.simulate_keystrokes("down up enter");
     settings_cx.run_until_parked();
     let view = cx.read_entity(&launcher, |window, _| window.launcher().view());
@@ -280,13 +365,23 @@ fn keys_in_settings_and_the_launcher_stay_in_their_windows(cx: &mut TestAppConte
         view.screen
     );
 
-    // And what Settings shows is still its own page: the About page,
-    // the section the keys stayed on.
-    assert!(settings_cx.debug_bounds("about").is_some());
+    // And what Settings shows is still its own page: the Appearance page
+    // it opened on (the two keys end where they began), whose content is
+    // drawn — not the launcher's.
+    assert!(
+        settings_cx.debug_bounds("appearance").is_some(),
+        "the page is drawn"
+    );
+    assert!(
+        settings_cx
+            .debug_bounds("appearance-theme-System")
+            .is_some(),
+        "the Appearance page is unchanged"
+    );
     assert_eq!(
         settings_cx.debug_bounds("section-About").map(|_| "About"),
         Some("About"),
-        "the sidebar stayed on About"
+        "the About section is still offered in the sidebar"
     );
 
     // The launcher's keys, in turn, never reach Settings.
@@ -450,6 +545,13 @@ fn the_about_page_shows_the_real_version_and_opens_the_documentation(cx: &mut Te
     let settings = settings_windows(cx).pop().expect("Settings opened");
     let mut settings_cx = settings_context(&settings, cx);
     settings_cx.run_until_parked();
+    // The window opens on the Appearance page; the About page is one
+    // sidebar section away.
+    let about = settings_cx
+        .debug_bounds("section-About")
+        .expect("the About section");
+    settings_cx.simulate_click(about.center(), Modifiers::none());
+    settings_cx.run_until_parked();
 
     // The version is the real one this build runs, drawn and announced.
     assert!(
@@ -494,6 +596,13 @@ fn a_refused_documentation_link_is_explained_on_the_page(cx: &mut TestAppContext
     let settings = settings_windows(cx).pop().expect("Settings opened");
     let mut settings_cx = settings_context(&settings, cx);
     settings_cx.run_until_parked();
+    // The About page is one sidebar section away from the one the window
+    // opens on.
+    let about = settings_cx
+        .debug_bounds("section-About")
+        .expect("the About section");
+    settings_cx.simulate_click(about.center(), Modifiers::none());
+    settings_cx.run_until_parked();
 
     let link = settings_cx
         .debug_bounds("about-documentation")
@@ -528,21 +637,30 @@ fn the_settings_window_keeps_its_layout_at_small_sizes(cx: &mut TestAppContext) 
     settings_cx.simulate_resize(gpui::size(px(560.), px(400.)));
     settings_cx.run_until_parked();
     let sidebar = settings_cx
-        .debug_bounds("section-About")
+        .debug_bounds("section-Appearance")
         .expect("the sidebar is laid out");
     let page = settings_cx
         .debug_bounds("settings-page")
         .expect("the page is laid out");
-    let version = settings_cx
-        .debug_bounds("about-version")
-        .expect("the version row is laid out");
+    let choice = settings_cx
+        .debug_bounds("appearance-theme-System")
+        .expect("the page's choice row is laid out");
+    let preview = settings_cx
+        .debug_bounds("appearance-preview")
+        .expect("the preview is laid out");
     assert!(
         sidebar.right() <= page.left(),
         "the sidebar is beside the page"
     );
     assert!(
-        version.right() <= page.right(),
-        "the version stays within the page"
+        choice.right() <= page.right(),
+        "the choices stay within the page"
+    );
+    // The page scrolls when the window is short, so vertical position is
+    // not containment; the preview must stay within the page's width.
+    assert!(
+        preview.right() <= page.right(),
+        "the preview stays within the page's width"
     );
 }
 
@@ -589,4 +707,412 @@ fn the_titlebars_window_controls_close_only_the_settings_window(cx: &mut TestApp
     cx.simulate_keystrokes("escape");
     let view = settle(&launcher, cx);
     assert!(matches!(view.screen, Screen::Root { .. }));
+}
+
+#[gpui::test]
+fn a_missing_record_starts_from_the_reference_defaults(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    cx.update(|cx| {
+        pane::settings::init_with_overrides(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            cx,
+        )
+    });
+    let (_launcher, _links, cx) = open_launcher(cx);
+
+    // No record exists: the reference's dark palette and the glass
+    // material are what the defaults name, and nothing is written until a
+    // choice is made.
+    assert!(paints_panel(cx, &dark_panel()), "the dark panel is drawn");
+    let mut settings_cx = open_settings(cx);
+    assert!(chosen(&mut settings_cx, "Dark"), "Dark is in effect");
+    assert!(chosen(&mut settings_cx, "Glass"), "Glass is in effect");
+    assert!(!data.path().join("settings.json").exists());
+}
+
+#[gpui::test]
+fn choosing_a_theme_re_renders_both_windows_and_the_preview(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    cx.update(|cx| {
+        pane::settings::init_with_overrides(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            cx,
+        )
+    });
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let mut settings_cx = open_settings(cx);
+
+    // The Light choice, taken through the page's own control: no
+    // restart, no second window — both windows re-render with it at
+    // once.
+    choose(&mut settings_cx, "appearance-theme-Light");
+    cx.run_until_parked();
+    settings_cx.run_until_parked();
+    assert!(
+        paints_panel(cx, &light_panel()),
+        "the launcher paints the light palette"
+    );
+    assert!(
+        paints_panel(&mut settings_cx, &light_panel()),
+        "Settings paints the light palette"
+    );
+    assert!(
+        !paints_panel(cx, &dark_panel()) && !paints_panel(&mut settings_cx, &dark_panel()),
+        "no dark panel remains in either window"
+    );
+    assert!(
+        chosen(&mut settings_cx, "Light"),
+        "the page follows its own choice"
+    );
+
+    // The preview is drawn with the choice in effect: it is laid out on
+    // the page, and the page paints the light surface. (Whether the
+    // preview's own panel quad reaches the painted scene depends on the
+    // page's scroll and the platform's culling of fully-clipped quads, so
+    // the preview is asserted by its layout, not by its quad.)
+    assert!(
+        settings_cx.debug_bounds("appearance-preview").is_some(),
+        "the preview is laid out beside the light choice"
+    );
+
+    // Dark returns the same way.
+    choose(&mut settings_cx, "appearance-theme-Dark");
+    cx.run_until_parked();
+    settings_cx.run_until_parked();
+    assert!(paints_panel(cx, &dark_panel()));
+    assert!(
+        !paints_panel(cx, &light_panel()),
+        "no light panel remains in the launcher"
+    );
+    until_record(cx, data.path());
+}
+
+#[gpui::test]
+fn the_system_choice_renders_the_appearance_the_system_reports(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    cx.update(|cx| {
+        pane::settings::init_with_overrides(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            cx,
+        )
+    });
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let mut settings_cx = open_settings(cx);
+
+    choose(&mut settings_cx, "appearance-theme-System");
+    cx.run_until_parked();
+    settings_cx.run_until_parked();
+
+    // The system's own appearance is what renders: the test platform
+    // reports the light one, so both windows follow it. (The platform's
+    // change *notification* — the observer that re-renders a following
+    // theme when the operating system switches — cannot be driven from
+    // this harness: GPUI's test window hides its simulation behind a
+    // crate-private API. The entity's half is covered by the unit tests
+    // in `pane::settings`; the notification itself is native validation,
+    // recorded in docs/evidence/settings-73/.)
+    assert!(
+        paints_panel(cx, &light_panel()),
+        "the system's light is followed"
+    );
+    assert!(paints_panel(&mut settings_cx, &light_panel()));
+    assert!(chosen(&mut settings_cx, "System"));
+    until_record(cx, data.path());
+}
+
+#[gpui::test]
+fn the_material_choice_switches_the_panel_surface(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    cx.update(|cx| {
+        pane::settings::init_with_overrides(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            cx,
+        )
+    });
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let mut settings_cx = open_settings(cx);
+
+    // The light palette first, so the two materials differ by surface.
+    choose(&mut settings_cx, "appearance-theme-Light");
+    cx.run_until_parked();
+
+    // The solid material: the opaque window's solid panel, the same on
+    // every platform.
+    choose(&mut settings_cx, "appearance-material-Solid");
+    cx.run_until_parked();
+    settings_cx.run_until_parked();
+    assert!(
+        paints_panel(cx, &[panel(0xF6F6F8FF)]),
+        "the solid panel is drawn"
+    );
+    assert!(
+        !paints_panel(cx, &[panel(0xF6F6F8CC)]),
+        "no glass tint remains"
+    );
+
+    // Glass returns: the tint where the platform provides frost, the
+    // solid surface where it does not (Linux; a Windows with transparency
+    // off) — either way the page's note under the group explains the
+    // truth that holds, and the row carries the preference.
+    choose(&mut settings_cx, "appearance-material-Glass");
+    cx.run_until_parked();
+    settings_cx.run_until_parked();
+    assert!(
+        paints_panel(cx, &light_panel()),
+        "one of the two surfaces is drawn"
+    );
+    assert!(
+        chosen(&mut settings_cx, "Glass"),
+        "the glass preference is held"
+    );
+    assert!(
+        settings_cx
+            .debug_bounds("appearance-material-note")
+            .is_some(),
+        "the material's truth is explained"
+    );
+    #[cfg(target_os = "linux")]
+    {
+        let (_, json) = accessibility(&mut settings_cx);
+        assert!(
+            json.contains("Glass is unavailable here"),
+            "the fallback is named, {json}"
+        );
+    }
+
+    // The solid surface needs no note.
+    choose(&mut settings_cx, "appearance-material-Solid");
+    cx.run_until_parked();
+    settings_cx.run_until_parked();
+    assert!(
+        settings_cx
+            .debug_bounds("appearance-material-note")
+            .is_none(),
+        "nothing to explain about the solid surface"
+    );
+    until_record(cx, data.path());
+}
+
+#[gpui::test]
+fn the_saved_choice_is_reloaded_by_a_fresh_application(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    cx.update(|cx| {
+        pane::settings::init_with_overrides(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            cx,
+        )
+    });
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let mut settings_cx = open_settings(cx);
+
+    // A user-visible change, through the page's own controls.
+    choose(&mut settings_cx, "appearance-theme-Light");
+    choose(&mut settings_cx, "appearance-material-Solid");
+    cx.run_until_parked();
+    until_record(cx, data.path());
+
+    // A fresh application over the same data folder: a new app, nothing
+    // carried over but the executors, the settings read from the record
+    // alone.
+    let mut fresh = cx.cx.new_app();
+    fresh.update(pane::bind_keys);
+    fresh.update(|cx| {
+        pane::settings::init_with_overrides(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            cx,
+        )
+    });
+    let launcher = Launcher::new(Runtime::start(), Vec::new());
+    let (_window, fresh_cx) =
+        fresh.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
+    fresh_cx.run_until_parked();
+
+    // It renders the last choice the record holds, not the defaults.
+    assert!(
+        paints_panel(fresh_cx, &[panel(0xF6F6F8FF)]),
+        "the saved light, solid choice is reloaded"
+    );
+    assert!(!paints_panel(fresh_cx, &dark_panel()));
+
+    // And its own Settings page says the same: what was saved is what is
+    // shown, as assistive technology reads it.
+    let mut fresh_settings = open_settings(fresh_cx);
+    fresh_settings.run_until_parked();
+    assert!(chosen(&mut fresh_settings, "Light"));
+    assert!(chosen(&mut fresh_settings, "Solid"));
+}
+
+#[gpui::test]
+fn a_failed_save_is_reported_and_the_shown_choice_stays_what_was_saved(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    cx.update(|cx| {
+        pane::settings::init_with_overrides(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            cx,
+        )
+    });
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let mut settings_cx = open_settings(cx);
+
+    // A choice that saves, so the record holds it.
+    choose(&mut settings_cx, "appearance-theme-Light");
+    cx.run_until_parked();
+    until_record(cx, data.path());
+
+    // Break the record's replacement: a folder where the record belongs,
+    // so the atomic write cannot rename over it.
+    std::fs::remove_file(data.path().join("settings.json")).unwrap();
+    std::fs::create_dir(data.path().join("settings.json")).unwrap();
+
+    // A choice that cannot be saved.
+    choose(&mut settings_cx, "appearance-theme-Dark");
+    cx.run_until_parked();
+    settings_cx.run_until_parked();
+
+    // The failure is the page's status, on screen and announced.
+    assert!(
+        settings_cx.debug_bounds("appearance-status").is_some(),
+        "the failure is drawn"
+    );
+    let (_, json) = accessibility(&mut settings_cx);
+    assert!(
+        json.contains("Pane could not save your choice"),
+        "the failure is explained, {json}"
+    );
+
+    // The shown choice stays what was actually saved — not Dark, which
+    // could not be written: the page shows what a fresh start would
+    // reload.
+    assert!(
+        chosen(&mut settings_cx, "Light"),
+        "the saved choice is shown"
+    );
+    assert!(
+        paints_panel(cx, &light_panel()),
+        "the windows keep the saved choice"
+    );
+}
+
+#[gpui::test]
+fn an_unreadable_record_is_reported_and_never_replaced(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let garbage = "{ not the settings record";
+    std::fs::write(data.path().join("settings.json"), garbage).unwrap();
+    cx.update(|cx| {
+        pane::settings::init_with_overrides(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            cx,
+        )
+    });
+    let (_launcher, _links, cx) = open_launcher(cx);
+
+    // Startup is not prevented: the defaults stand in.
+    assert!(paints_panel(cx, &dark_panel()), "the dark default is drawn");
+    let mut settings_cx = open_settings(cx);
+
+    // The page says choices are not saved, and why.
+    assert!(
+        settings_cx.debug_bounds("appearance-status").is_some(),
+        "the problem is drawn"
+    );
+    let (_, json) = accessibility(&mut settings_cx);
+    assert!(
+        json.contains("Pane could not read the settings record"),
+        "the problem is explained, {json}"
+    );
+
+    // A choice is refused...
+    choose(&mut settings_cx, "appearance-theme-Light");
+    cx.run_until_parked();
+    settings_cx.run_until_parked();
+    assert!(paints_panel(cx, &dark_panel()), "the choice was not taken");
+    assert!(
+        chosen(&mut settings_cx, "Dark"),
+        "the page still shows the default"
+    );
+
+    // ...and the record is left exactly as it was, for diagnosis.
+    assert_eq!(
+        std::fs::read_to_string(data.path().join("settings.json")).unwrap(),
+        garbage,
+        "the source data is retained, not silently erased"
+    );
+}
+
+#[gpui::test]
+fn a_development_override_wins_is_indicated_and_is_never_saved(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    cx.update(|cx| {
+        pane::settings::init_with_overrides(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides {
+                theme: Some(pane_core::ThemePreference::Light),
+                material: None,
+            },
+            cx,
+        )
+    });
+    let (_launcher, _links, cx) = open_launcher(cx);
+
+    // The override wins: no record exists, yet the window renders the
+    // overridden palette.
+    assert!(paints_panel(cx, &light_panel()), "the override is in force");
+
+    let mut settings_cx = open_settings(cx);
+    // The page says which variables override what...
+    assert!(
+        settings_cx.debug_bounds("appearance-override").is_some(),
+        "the override is drawn"
+    );
+    let (_, json) = accessibility(&mut settings_cx);
+    assert!(
+        json.contains("PANE_THEME=light"),
+        "the override is named, {json}"
+    );
+    // ...and shows the overridden choice as the one in effect.
+    assert!(chosen(&mut settings_cx, "Light"));
+
+    // Nothing is offered while the override is in force: choosing Dark
+    // changes nothing, and saves nothing.
+    choose(&mut settings_cx, "appearance-theme-Dark");
+    cx.run_until_parked();
+    settings_cx.run_until_parked();
+    assert!(
+        paints_panel(cx, &light_panel()),
+        "the override still wins over the click"
+    );
+    assert!(
+        chosen(&mut settings_cx, "Light"),
+        "the page still shows the override"
+    );
+    assert!(
+        !data.path().join("settings.json").exists(),
+        "the override was not written back"
+    );
+
+    // A fresh application without the override renders what the record
+    // holds — here the dark default, since nothing was ever saved: the
+    // override was a preference of this process only.
+    let mut fresh = cx.cx.new_app();
+    fresh.update(pane::bind_keys);
+    fresh.update(|cx| {
+        pane::settings::init_with_overrides(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            cx,
+        )
+    });
+    let launcher = Launcher::new(Runtime::start(), Vec::new());
+    let (_window, fresh_cx) =
+        fresh.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
+    fresh_cx.run_until_parked();
+    assert!(paints_panel(fresh_cx, &dark_panel()));
 }

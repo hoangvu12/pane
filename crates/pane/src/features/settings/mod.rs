@@ -5,11 +5,13 @@
 //!
 //! The window shares the launcher's own handle — the same
 //! [`pane_core::Launcher`] the launcher window holds — so Settings runs
-//! no second extension runtime and duplicates no launcher state. Its
-//! shell is the reference's Settings composition: the frost panel with
-//! the custom titlebar where the platform hides its own (macOS's traffic
-//! lights, Windows's caption buttons; Linux keeps the window manager's
-//! frame), a sidebar of sections, and the selected page's content.
+//! no second extension runtime and duplicates no launcher state. The two
+//! windows also share the host settings (`crate::settings`): what the
+//! Appearance page chooses repaints both, without a restart. Its shell is
+//! the reference's Settings composition: the frost panel with the custom
+//! titlebar where the platform hides its own (macOS's traffic lights,
+//! Windows's caption buttons; Linux keeps the window manager's frame), a
+//! sidebar of sections, and the selected page's content.
 //!
 //! ## Page registration
 //!
@@ -18,8 +20,10 @@
 //! [`SettingsWindow::new`]. Later pages add their module under
 //! `settings/` and one line there — no empty feature folder, no new
 //! framework — and the sidebar lists only registered pages, so no
-//! section ships as a placeholder. A page's state lives in its module,
-//! held by the window as a field.
+//! section ships as a placeholder. The Appearance page's choices live in
+//! the shared host settings rather than the window, since the launcher
+//! window renders by them too; a page whose state is the window's own
+//! lives in its module, held by the window as a field.
 
 use gpui::{
     AnyElement, App, Bounds, Context, Div, FocusHandle, KeyBinding, Role, Stateful,
@@ -43,6 +47,7 @@ use crate::ui::result_row::{RowContent, result_row};
 use crate::{FocusNext, FocusPrevious};
 
 mod about;
+mod appearance;
 mod shortcuts;
 
 actions!(settings, [NextSection, PreviousSection]);
@@ -95,6 +100,12 @@ impl SettingsWindow {
     fn new(launcher: &Launcher, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle().tab_stop(true);
         window.focus(&focus, cx);
+        // The host settings this window renders through — the Appearance
+        // page is one of its windows' shared consumers: what it chooses
+        // repaints this window and the launcher without a restart, and
+        // the platform's appearance notification feeds the system's
+        // appearance back into them (see `crate::settings`).
+        crate::settings::follow(&crate::settings::ensure(cx), window, cx);
         // The Shortcuts page lists the launcher's commands, and the
         // launcher's packages can change while this window sits idle:
         // installed, disabled, enabled, updated or removed in the
@@ -117,11 +128,12 @@ impl SettingsWindow {
         .detach();
         SettingsWindow {
             launcher: launcher.clone(),
-            // About stays first, as the window's default page; the pages
-            // the later tickets add (General, Launcher, Appearance, the
-            // Keyboard and Extensions sections) take their places in the
-            // sidebar's order as they land.
-            pages: vec![about::page(), shortcuts::page()],
+            // The sidebar's order: the sections the reference lists
+            // (General, Launcher, Appearance, Shortcuts, Keyboard,
+            // Extensions), About last. The Appearance page is the one the
+            // window first shows; the later tickets' pages take their
+            // places in this order as they land.
+            pages: vec![appearance::page(), shortcuts::page(), about::page()],
             selected: 0,
             focus,
             about: about::State::default(),
@@ -229,8 +241,9 @@ impl SettingsWindow {
 
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = ui::visuals().theme.clone();
-        let material = ui::visuals().material;
+        let visuals = crate::settings::visuals(cx);
+        let theme = visuals.theme;
+        let material = visuals.material;
         // The content: the shared Geist family and base text color on
         // everything, the custom titlebar where the platform's is hidden,
         // then the sidebar and the selected page.
@@ -409,7 +422,7 @@ pub(crate) fn open(launcher: &Launcher, cx: &mut App) -> WindowHandle<SettingsWi
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         window_min_size: Some(size(px(560.), px(400.))),
-        window_background: crate::window_background(),
+        window_background: crate::settings::window_background(cx),
         titlebar: Some(TitlebarOptions {
             title: Some("Settings".into()),
             appears_transparent: true,
