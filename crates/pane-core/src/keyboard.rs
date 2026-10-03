@@ -513,9 +513,6 @@ impl Keyboard {
             })?;
             keyboard.bindings.insert(action, binding);
         }
-        keyboard.check_collisions().map_err(|problem| {
-            format!("its keyboard has two actions on one shortcut: {problem}")
-        })?;
         Ok(keyboard)
     }
 
@@ -538,7 +535,11 @@ impl Keyboard {
         Ok(())
     }
 
-    /// The one reason `action` cannot take `binding`, if it cannot.
+    /// The one reason `action` cannot take `binding`, if it cannot:
+    /// protected for a focused field, or already another action's. Every
+    /// collision of a set is caught here as the set is built (each field
+    /// is compared with all the map holds), so no two actions of a valid
+    /// set ever share a binding.
     fn check(&self, action: KeyboardAction, binding: &Binding) -> Result<(), String> {
         if let Some(protected) = binding.protected() {
             return Err(format!(
@@ -555,24 +556,6 @@ impl Keyboard {
                 "{binding} already {}",
                 KeyboardAction::does(*other.0)
             ));
-        }
-        Ok(())
-    }
-
-    /// Whether two actions share one binding — an invalid set.
-    fn check_collisions(&self) -> Result<(), String> {
-        for (action, binding) in &self.bindings {
-            if let Some(other) = self
-                .bindings
-                .iter()
-                .find(|(other, held)| **other != *action && *held == binding)
-            {
-                return Err(format!(
-                    "{binding} both {} and {}",
-                    KeyboardAction::does(*action),
-                    KeyboardAction::does(*other.0)
-                ));
-            }
         }
         Ok(())
     }
@@ -632,7 +615,15 @@ mod tests {
         assert_eq!(binding("shift-escape").to_string(), "Shift+Escape");
         assert_eq!(binding("ctrl-alt-b").to_string(), "Ctrl+Alt+B");
         assert_eq!(binding("ctrl-,").to_string(), "Ctrl+,");
-        assert_eq!(binding("cmd-w").to_string(), "Cmd+W");
+        // The platform modifier is named for this system, as Shortcut is.
+        assert_eq!(
+            binding("cmd-w").to_string(),
+            if cfg!(target_os = "macos") {
+                "Cmd+W"
+            } else {
+                "Win+W"
+            }
+        );
         assert_eq!(binding("f5").to_string(), "F5");
     }
 
@@ -677,6 +668,12 @@ mod tests {
             defaults,
             "the defaults round trip"
         );
+        let ids: Vec<String> = KeyboardAction::ALL
+            .into_iter()
+            .map(|action| defaults.binding(action).id())
+            .collect();
+        let distinct: std::collections::BTreeSet<&String> = ids.iter().collect();
+        assert_eq!(ids.len(), distinct.len(), "no two actions share a default");
     }
 
     #[test]
@@ -741,11 +738,15 @@ mod tests {
         // The refusal left what was held in place.
         assert_eq!(keyboard.binding(KeyboardAction::NextResult).id(), "down");
 
-        // A set is also invalid when read whole from a record.
+        // A set is also invalid when read whole from a record: the
+        // field's check names the other action.
         let mut fields = keyboard.recorded();
         fields.insert("next-result".into(), "ctrl-b".into());
         let problem = Keyboard::parse(&fields).unwrap_err();
-        assert!(problem.contains("two actions on one shortcut"), "{problem}");
+        assert!(
+            problem.contains("cannot be used: Ctrl+B already goes back"),
+            "{problem}"
+        );
     }
 
     #[test]
