@@ -158,7 +158,8 @@ impl DisplayLayout {
     /// display there is, so a layout that names no primary still has an
     /// available display to open on.
     fn fallback(&self) -> Option<&Display> {
-        self.display(self.primary?)
+        self.primary
+            .and_then(|primary| self.display(primary))
             .or_else(|| self.displays.first())
     }
 }
