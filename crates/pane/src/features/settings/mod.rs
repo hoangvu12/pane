@@ -175,7 +175,8 @@ impl SettingsWindow {
     /// hold, each with the page it is on — the list the Settings search
     /// (#83) filters, and the one later pages register their settings
     /// into as their controls appear.
-    pub(crate) fn searchable_labels(&self) -> Vec<(&'static str, &'static str)> {
+    #[doc(hidden)]
+    pub fn searchable_labels(&self) -> Vec<(&'static str, &'static str)> {
         self.pages
             .iter()
             .flat_map(|page| page.labels.iter().map(move |&label| (page.title, label)))

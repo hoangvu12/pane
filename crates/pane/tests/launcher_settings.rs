@@ -340,10 +340,10 @@ fn the_launcher_opens_on_the_chosen_display_and_never_moves_settings(cx: &mut Te
 
     // Reopening the launcher, with the pointer on the second display,
     // keeps the primary placement until the choice says otherwise.
-    let before = dismiss(window, &default, cx, &placement);
-    press(window, &default, cx);
+    let before = dismiss(&window, &default, cx, &placement);
+    press(&window, &default, cx);
     cx.run_until_parked();
-    assert!(!hidden(window, cx));
+    assert!(!hidden(&window, cx));
     assert_eq!(placement.moves.borrow().len(), before + 1);
     assert_eq!(
         placement.origin(before),
@@ -369,8 +369,8 @@ fn the_launcher_opens_on_the_chosen_display_and_never_moves_settings(cx: &mut Te
     // The Settings window sits where it was opened; the launcher's next
     // opening moves the launcher only.
     let settings_before = settings_cx.update(|window, _| window.bounds());
-    let before = dismiss(window, &default, cx, &placement);
-    press(window, &default, cx);
+    let before = dismiss(&window, &default, cx, &placement);
+    press(&window, &default, cx);
     cx.run_until_parked();
     assert_eq!(
         placement.moves.borrow().len(),
@@ -455,8 +455,8 @@ fn a_disconnected_or_unanswered_choice_falls_back_and_says_so(cx: &mut TestAppCo
     // The launcher still opens on an available display: the fallback, not
     // nowhere.
     let default = Shortcut::open_pane_default();
-    let before = dismiss(window, &default, cx, &placement);
-    press(window, &default, cx);
+    let before = dismiss(&window, &default, cx, &placement);
+    press(&window, &default, cx);
     cx.run_until_parked();
     assert_eq!(placement.moves.borrow().len(), before + 1);
     assert_eq!(
@@ -507,7 +507,7 @@ fn a_platform_that_cannot_choose_the_display_explains_and_offers_nothing(cx: &mu
     // The launcher still opens: nothing is placed, and nothing fails.
     let default = Shortcut::open_pane_default();
     let before = placement.moves.borrow().len();
-    press(window, &default, cx);
+    press(&window, &default, cx);
     cx.run_until_parked();
     assert_eq!(placement.moves.borrow().len(), before, "nothing was placed");
 }
@@ -524,21 +524,21 @@ fn reopening_restores_the_view_and_focuses_its_search_by_default(cx: &mut TestAp
     // launcher was left on, with its search focused, so typing lands in
     // the query. Nothing is dispatched by the reopening.
     cx.simulate_input("zz");
-    let view = settle(window, cx);
+    let view = settle(&window, cx);
     assert_eq!(view.query(), Some("zz"));
     let default = Shortcut::open_pane_default();
-    dismiss(window, &default, cx, &placement);
-    press(window, &default, cx);
+    dismiss(&window, &default, cx, &placement);
+    press(&window, &default, cx);
     cx.run_until_parked();
-    assert!(!hidden(window, cx));
-    let view = cx.read_entity(window, |window, _| window.launcher().view());
+    assert!(!hidden(&window, cx));
+    let view = cx.read_entity(&window, |window, _| window.launcher().view());
     assert_eq!(
         view.query(),
         Some("zz"),
         "the restored view kept what was typed"
     );
     cx.simulate_input("q");
-    let view = settle(window, cx);
+    let view = settle(&window, cx);
     assert_eq!(view.query(), Some("zzq"), "the search has focus");
     assert!(matches!(view.screen, Screen::Root { .. }));
     assert_eq!(
@@ -568,17 +568,17 @@ fn choosing_root_search_starts_the_reopening_from_root_search(cx: &mut TestAppCo
     // A query typed, then a dismissal: the reopening starts from root
     // search with an empty query, whatever was left.
     cx.simulate_input("zz");
-    let view = settle(window, cx);
+    let view = settle(&window, cx);
     assert_eq!(view.query(), Some("zz"));
     let default = Shortcut::open_pane_default();
-    dismiss(window, &default, cx, &placement);
-    press(window, &default, cx);
+    dismiss(&window, &default, cx, &placement);
+    press(&window, &default, cx);
     cx.run_until_parked();
-    let view = settle(window, cx);
+    let view = settle(&window, cx);
     assert_eq!(view.query(), Some(""), "the query was left behind");
     assert!(matches!(view.screen, Screen::Root { .. }));
     cx.simulate_input("q");
-    let view = settle(window, cx);
+    let view = settle(&window, cx);
     assert_eq!(view.query(), Some("q"), "root search's query has focus");
 }
 
@@ -603,24 +603,24 @@ fn a_view_whose_command_is_gone_returns_safely_to_root_search(cx: &mut TestAppCo
     // and enabled.
     let installing = launcher.install_package(&folder);
     cx.foreground_executor().block_on(installing);
-    let view = settle(window, cx);
+    let view = settle(&window, cx);
     assert!(
         view.rows.iter().any(|row| row.title == "Say hello"),
         "the package's command is listed"
     );
     cx.simulate_input("hello");
-    let view = settle(window, cx);
+    let view = settle(&window, cx);
     assert_eq!(view.selected, Some(0), "the command is the selected row");
     cx.simulate_keystrokes("enter");
-    let view = settle(window, cx);
+    let view = settle(&window, cx);
     assert!(matches!(view.screen, Screen::Command), "{:?}", view.screen);
 
     // The reopening restores the command's view.
     let default = Shortcut::open_pane_default();
-    dismiss(window, &default, cx, &placement);
-    press(window, &default, cx);
+    dismiss(&window, &default, cx, &placement);
+    press(&window, &default, cx);
     cx.run_until_parked();
-    let view = cx.read_entity(window, |window, _| window.launcher().view());
+    let view = cx.read_entity(&window, |window, _| window.launcher().view());
     assert!(
         matches!(view.screen, Screen::Command),
         "the command's view was restored, {:?}",
@@ -629,9 +629,9 @@ fn a_view_whose_command_is_gone_returns_safely_to_root_search(cx: &mut TestAppCo
 
     // The package disabled: its commands offer none, so the view is not
     // one to return to, and the reopening goes safely to root search.
-    press(window, &default, cx);
+    press(&window, &default, cx);
     cx.run_until_parked();
-    assert!(hidden(window, cx));
+    assert!(hidden(&window, cx));
     let identity = launcher
         .packages()
         .first()
@@ -639,9 +639,9 @@ fn a_view_whose_command_is_gone_returns_safely_to_root_search(cx: &mut TestAppCo
         .identity
         .clone();
     block_on(launcher.set_enabled(&identity, false));
-    press(window, &default, cx);
+    press(&window, &default, cx);
     cx.run_until_parked();
-    let view = settle(window, cx);
+    let view = settle(&window, cx);
     assert!(
         matches!(view.screen, Screen::Root { .. }),
         "an invalid view returned safely to root search, {:?}",
@@ -677,20 +677,20 @@ fn a_commands_hotkey_still_opens_its_command_with_the_root_preference(cx: &mut T
     let installing = launcher.install_package(&folder);
     cx.foreground_executor().block_on(installing);
     cx.simulate_input("hello");
-    let view = settle(window, cx);
+    let view = settle(&window, cx);
     assert_eq!(view.selected, Some(0));
     cx.simulate_keystrokes("enter");
-    let view = settle(window, cx);
+    let view = settle(&window, cx);
     assert!(matches!(view.screen, Screen::Command), "{:?}", view.screen);
 
     // Dismiss, then press the command's own global hotkey: it opens its
     // named command, not root search — the reopening preference governs
     // the launcher's opening, never a command's binding.
     let default = Shortcut::open_pane_default();
-    dismiss(window, &default, cx, &placement);
-    press(window, &hello_hotkey, cx);
+    dismiss(&window, &default, cx, &placement);
+    press(&window, &hello_hotkey, cx);
     cx.run_until_parked();
-    let view = settle(window, cx);
+    let view = settle(&window, cx);
     assert!(
         matches!(view.screen, Screen::Command),
         "the command's hotkey opened its command, {:?}",
@@ -811,8 +811,8 @@ fn a_save_that_fails_is_reported_and_the_shown_choice_stays_what_was_saved(
 
     // The choice that could not be saved never took effect: the launcher's
     // next opening places as the record holds.
-    let before = dismiss(window, &default, cx, &placement);
-    press(window, &default, cx);
+    let before = dismiss(&window, &default, cx, &placement);
+    press(&window, &default, cx);
     cx.run_until_parked();
     assert_eq!(placement.moves.borrow().len(), before + 1);
     assert_eq!(
@@ -834,12 +834,12 @@ fn a_move_that_fails_is_said_not_hidden(cx: &mut TestAppContext) {
     // mistaken for one that did.
     *placement.refuse.borrow_mut() = Some("the window manager refused the move".into());
     let default = Shortcut::open_pane_default();
-    let before = dismiss(window, &default, cx, &placement);
-    press(window, &default, cx);
+    let before = dismiss(&window, &default, cx, &placement);
+    press(&window, &default, cx);
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         cx.run_until_parked();
-        let view = cx.read_entity(window, |window, _| window.launcher().view());
+        let view = cx.read_entity(&window, |window, _| window.launcher().view());
         if matches!(view.status, pane_core::Status::Error(_)) {
             let message = match view.status {
                 pane_core::Status::Error(message) => message,
@@ -874,12 +874,12 @@ fn escape_at_root_search_with_an_empty_query_hides_the_launcher(cx: &mut TestApp
     // A query typed: Escape clears it, as it always has, and hides
     // nothing.
     cx.simulate_input("zz");
-    let view = settle(window, cx);
+    let view = settle(&window, cx);
     assert_eq!(view.query(), Some("zz"));
     cx.simulate_keystrokes("escape");
-    let view = settle(window, cx);
+    let view = settle(&window, cx);
     assert_eq!(view.query(), Some(""));
-    assert!(!hidden(window, cx), "the query was cleared, nothing hid");
+    assert!(!hidden(&window, cx), "the query was cleared, nothing hid");
 
     // Root search, an empty query: the end of the Escape chain — nothing
     // is left to back out of — dismisses the launcher. Hidden, not
@@ -887,11 +887,11 @@ fn escape_at_root_search_with_an_empty_query_hides_the_launcher(cx: &mut TestApp
     // placement is applied to it as to any opening.
     cx.simulate_keystrokes("escape");
     cx.run_until_parked();
-    assert!(hidden(window, cx), "the launcher hid");
+    assert!(hidden(&window, cx), "the launcher hid");
     let default = Shortcut::open_pane_default();
-    press(window, &default, cx);
+    press(&window, &default, cx);
     cx.run_until_parked();
-    assert!(!hidden(window, cx), "the hidden launcher was shown again");
+    assert!(!hidden(&window, cx), "the hidden launcher was shown again");
 }
 
 #[gpui::test]
