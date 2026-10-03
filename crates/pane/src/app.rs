@@ -27,6 +27,7 @@ use crate::features::root_search;
 use crate::features::settings;
 use crate::ui::icon::{Glyph, IconTone};
 use crate::ui::keycap::{self, Key as ActionKey};
+use crate::ui::motion::{self, Direction};
 use crate::ui::result_row::{RowContent, result_row};
 use crate::ui::{self, material::Material};
 use crate::{Back, Confirm, FocusNext, FocusPrevious, OpenSettings, SelectNext, SelectPrevious};
@@ -57,6 +58,24 @@ pub struct LauncherWindow {
     /// Whether the next frame scrolls to the selected row again, once the
     /// list changed in this one has been laid out.
     scroll_again: bool,
+    /// The view transition in flight, if any: the arriving screen's
+    /// content is fading in over a tiny directional shift. Presentation
+    /// only — see [`crate::ui::motion`].
+    transition: Option<motion::Transition>,
+    /// Which way the last navigation went, for the next view transition's
+    /// direction: `back()` leaves a view, everything else that changes the
+    /// screen (opening a command, a form, a custom view, a preview, a
+    /// hotkey) enters one.
+    navigation: Direction,
+    /// The screen *kind* the last frame drew, to tell a real view
+    /// transition (the kind changed) from a query or result update (it
+    /// did not — those never animate).
+    drawn_screen: Option<Discriminant<Screen>>,
+    /// The arriving content's presentation as the last frame drew it
+    /// (see [`LauncherWindow::view_transition`]). Test and debug builds
+    /// only.
+    #[cfg(any(test, debug_assertions))]
+    arriving: Option<(f32, f32)>,
     /// The launcher's view as the last frame drew it, for tests (see
     /// [`LauncherWindow::drawn_view`]). Test and debug builds only.
     #[cfg(any(test, debug_assertions))]
@@ -103,6 +122,11 @@ impl LauncherWindow {
             scrolled_for: None,
             scroll_again: false,
             custom_view: None,
+            transition: None,
+            navigation: Direction::Forward,
+            drawn_screen: None,
+            #[cfg(any(test, debug_assertions))]
+            arriving: None,
             menu_button,
             menu: None,
             #[cfg(any(test, debug_assertions))]
@@ -123,6 +147,17 @@ impl LauncherWindow {
     #[doc(hidden)]
     pub fn drawn_view(&self) -> Option<&LauncherView> {
         self.drawn.as_ref()
+    }
+
+    /// Test support: the view transition the last frame drew, as the
+    /// arriving content's (offset from rest in px — below rest for a view
+    /// that opens, above for backing out — and opacity); `None` when
+    /// settled, which is also what reduced motion always reports. Test and
+    /// debug builds only.
+    #[cfg(any(test, debug_assertions))]
+    #[doc(hidden)]
+    pub fn view_transition(&self) -> Option<(f32, f32)> {
+        self.arriving
     }
 
     /// Redraws whenever the launcher changes in the background, as
@@ -169,6 +204,10 @@ impl LauncherWindow {
 
     fn back(&mut self, _: &Back, window: &mut Window, cx: &mut Context<Self>) {
         self.launcher.back();
+        // Backing out is the one navigation that leaves a view; the next
+        // frame's view transition (if the screen kind changed) settles the
+        // arriving content down into place.
+        self.navigation = Direction::Back;
         self.sync_screen(window, cx);
         cx.notify();
     }
@@ -176,6 +215,7 @@ impl LauncherWindow {
     /// Shows the package in `folder` with its identity and compatibility,
     /// redrawing when the check finishes.
     pub fn preview_package(&mut self, folder: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        self.navigation = Direction::Forward;
         let pending = self.launcher.preview_package(folder);
         self.show_until_done(pending, window, cx);
     }
@@ -183,6 +223,7 @@ impl LauncherWindow {
     /// Downloads and shows the npm package `spec` names, as
     /// [`LauncherWindow::preview_package`] shows a folder.
     pub fn preview_npm(&mut self, spec: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.navigation = Direction::Forward;
         let pending = self.launcher.preview_npm(spec);
         self.show_until_done(pending, window, cx);
     }
@@ -190,6 +231,7 @@ impl LauncherWindow {
     /// Fetches and shows the revision of the Git repository `spec` names,
     /// as [`LauncherWindow::preview_package`] shows a folder.
     pub fn preview_git(&mut self, spec: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.navigation = Direction::Forward;
         let pending = self.launcher.preview_git(spec);
         self.show_until_done(pending, window, cx);
     }
@@ -290,6 +332,7 @@ impl LauncherWindow {
         };
         window.activate_window();
         cx.activate(true);
+        self.navigation = Direction::Forward;
         self.show_until_done(pending, window, cx);
     }
 
@@ -313,6 +356,7 @@ impl LauncherWindow {
         match shortcut {
             Ok(shortcut) => {
                 let pending = self.launcher.record_hotkey(shortcut);
+                self.navigation = Direction::Forward;
                 self.show_until_done(pending, window, cx);
             }
             Err(problem) => {
@@ -339,6 +383,7 @@ impl LauncherWindow {
     /// Starts the selected row's action and redraws when the guest answers,
     /// without blocking the window meanwhile.
     fn activate_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.navigation = Direction::Forward;
         // The Settings root result opens the Settings window; the launcher
         // itself does nothing (see [`Launcher::selected_opens_settings`]).
         if self.launcher.selected_opens_settings() {
@@ -595,6 +640,28 @@ impl Render for LauncherWindow {
             self.drawn = Some(view.clone());
         }
         self.keep_selected_visible(&view, window);
+        // A view transition runs when the screen *kind* changed — root
+        // search to a command, a command back to root, a form or custom
+        // view opening or closing — and moves only the content that
+        // changed, while the shell chrome (panel, footer, query field,
+        // heading) stays put. Query and result updates never animate; the
+        // launcher has already navigated, dispatched and focused when the
+        // first frame draws, so nothing waits on the transition. See
+        // `crate::ui::motion` for the whole policy.
+        let now = cx.background_executor().now();
+        let screen = discriminant(&view.screen);
+        let arriving = motion::advance(
+            &mut self.transition,
+            self.navigation,
+            self.drawn_screen.is_some_and(|last| last != screen),
+            cx.reduce_motion(),
+            now,
+        );
+        self.drawn_screen = Some(screen);
+        #[cfg(any(test, debug_assertions))]
+        {
+            self.arriving = arriving;
+        }
         let theme = ui::visuals().theme.clone();
         let material = ui::visuals().material;
         let empty = match &view.screen {
@@ -722,19 +789,38 @@ impl Render for LauncherWindow {
             ),
         };
 
+        // The content that changes between screens — the results, a form,
+        // a custom view — is what arrives with the transition. On the
+        // search screens the query field is the shell's search header,
+        // above the results and outside the moving area, so the field
+        // never moves while the list below it arrives.
         let body = match view.screen {
-            Screen::Form(form) => self.render_form(view.title.clone(), form, cx),
-            Screen::CustomView(custom_view) => self.render_custom_view(custom_view, cx),
-            Screen::Root { query } => {
-                self.render_search(query, root_search::ROOT_PLACEHOLDER, list, cx)
+            Screen::Form(form) => {
+                motion::arriving(self.render_form(view.title.clone(), form, cx), arriving)
+                    .into_any_element()
             }
+            Screen::CustomView(custom_view) => {
+                motion::arriving(self.render_custom_view(custom_view, cx), arriving)
+                    .into_any_element()
+            }
+            Screen::Root { query } => self.render_search(
+                query,
+                root_search::ROOT_PLACEHOLDER,
+                motion::arriving(list, arriving),
+                cx,
+            ),
             // The opened command's own search field, the same control.
-            Screen::CommandSearch { query } => {
-                self.render_search(query, root_search::COMMAND_PLACEHOLDER, list, cx)
-            }
+            Screen::CommandSearch { query } => self.render_search(
+                query,
+                root_search::COMMAND_PLACEHOLDER,
+                motion::arriving(list, arriving),
+                cx,
+            ),
             // The list holds keyboard focus; the selected row is its active
             // descendant, and key actions bubble to the root.
-            _ => list.track_focus(&self.focus_handle).into_any_element(),
+            _ => {
+                motion::arriving(list.track_focus(&self.focus_handle), arriving).into_any_element()
+            }
         };
 
         // The launcher's content: the shared Geist family and base text
@@ -864,6 +950,13 @@ impl Render for LauncherWindow {
                             }),
                     ),
             );
+        // While the arriving content is still in flight, keep frames
+        // coming; the frame that completes the transition requests none,
+        // so a settled window is idle. The scroll relayout above keeps its
+        // own separate request, for the frame after the rows change.
+        if arriving.is_some() {
+            window.request_animation_frame();
+        }
         // The panel surface: the frost material's L1 glass around the
         // content, with the sheen beneath it.
         material.panel(&theme, content)

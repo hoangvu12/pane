@@ -57,6 +57,12 @@ fn main() {
         if let Err(error) = pane::configure_visuals(cx) {
             eprintln!("Pane's fonts could not be loaded: {error:#}");
         }
+        // The operating system's reduced-motion preference, followed for as
+        // long as Pane runs: the launcher's view transitions settle at once
+        // while it is set, including mid-transition when the system reports
+        // the change.
+        pane::observe_reduced_motion(cx);
+        cx.on_window_closed(|cx, _| cx.quit()).detach();
         let runtime = match pane::cache_dir() {
             Some(dir) => Runtime::start_with_cache(dir),
             None => Runtime::start(),
