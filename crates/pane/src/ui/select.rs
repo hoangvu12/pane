@@ -692,7 +692,7 @@ impl Select {
     /// editable combo box whose list is the choices below it. The focus
     /// ring is drawn from the focus state read at render, since the box
     /// itself no longer tracks the handle.
-    fn query_field(&self, model: &Model, field_focused: bool, cx: &mut Context<Self>) -> gpui::Div {
+    fn query_field(&self, model: &Model, field_focused: bool) -> gpui::Div {
         let theme = &model.theme;
         let input = &self.query;
         div()
@@ -798,7 +798,7 @@ impl Select {
             .flex()
             .flex_col()
             .p(px(6.))
-            .child(self.query_field(model, field_focused, cx))
+            .child(self.query_field(model, field_focused))
             .child(list);
         // The elevation shadow sits on the wrapper, which GPUI paints
         // behind the surface's translucent fill — the same treatment the
