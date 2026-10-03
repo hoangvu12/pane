@@ -792,7 +792,9 @@ fn the_footer_menu_opens_traverses_dismisses_and_restores_focus(cx: &mut TestApp
     assert_eq!(focused_label(cx).as_deref(), Some("Settings"));
 
     // The popup overlays the list: it sits above the footer strip, over
-    // the results.
+    // the results. Its entrance has settled (the frames it asked for
+    // delivered), so this reads it at rest.
+    settle_frames(cx);
     let menu = cx.debug_bounds("menu").expect("the menu");
     let footer = cx.debug_bounds("status-idle").expect("the footer");
     assert!(
@@ -805,12 +807,14 @@ fn the_footer_menu_opens_traverses_dismisses_and_restores_focus(cx: &mut TestApp
     // the footer.
     cx.simulate_keystrokes("escape");
     cx.run_until_parked();
-    assert!(cx.debug_bounds("menu").is_none(), "the menu is closed");
+    // The focus is restored at once, while the popup's exit still paints.
     assert_eq!(
         focused_label(cx).as_deref(),
         Some("More actions"),
         "focus is restored to what had it: the menu's button"
     );
+    settle_frames(cx);
+    assert!(cx.debug_bounds("menu").is_none(), "the menu is closed");
     let view = settle(&launcher, cx);
     assert!(matches!(view.screen, Screen::Root { .. }));
     assert_eq!(view.status, Status::Idle, "nothing was activated");
@@ -828,12 +832,13 @@ fn the_footer_menu_opens_traverses_dismisses_and_restores_focus(cx: &mut TestApp
     let settings = settings_windows(cx)
         .pop()
         .expect("the menu's item opened the Settings window");
-    assert!(cx.debug_bounds("menu").is_none(), "the menu closed with it");
     assert_eq!(
         focused_label(cx).as_deref(),
         Some("More actions"),
         "focus is restored to what had it: the menu's button"
     );
+    settle_frames(cx);
+    assert!(cx.debug_bounds("menu").is_none(), "the menu closed with it");
     let mut settings_cx = settings_context(&settings, cx);
     settings_cx.update(|window, _| window.remove_window());
     cx.run_until_parked();
@@ -848,6 +853,7 @@ fn the_footer_menu_opens_traverses_dismisses_and_restores_focus(cx: &mut TestApp
     let row = cx.debug_bounds("row-Rust sample").expect("a result row");
     cx.simulate_click(row.center(), Modifiers::none());
     cx.run_until_parked();
+    settle_frames(cx);
     assert!(cx.debug_bounds("menu").is_none(), "the menu closed");
     let view = settle(&launcher, cx);
     assert!(matches!(view.screen, Screen::Root { .. }), "no row opened");
@@ -869,6 +875,7 @@ fn the_menu_button_toggles_and_assistive_technology_sees_it_named(cx: &mut TestA
     assert!(cx.debug_bounds("menu").is_some());
     cx.simulate_click(button.center(), Modifiers::none());
     cx.run_until_parked();
+    settle_frames(cx);
     assert!(
         cx.debug_bounds("menu").is_none(),
         "the button toggled closed"
@@ -906,6 +913,241 @@ fn the_menu_button_toggles_and_assistive_technology_sees_it_named(cx: &mut TestA
     cx.run_until_parked();
     let view = settle(&launcher, cx);
     assert!(matches!(view.screen, Screen::Root { .. }));
+}
+
+/// The footer menu's popup enters from the strip and exits back into it:
+/// the entrance starts the full tiny shift toward the strip, already
+/// faintly visible, and settles at rest above the footer; the exit
+/// recedes over the shorter span, is inert while it paints — the focus
+/// is already restored, the item's click does nothing, and a click on
+/// the results under the overlay reaches nothing — and unmounts leaving
+/// the window idle, with the page under it answering again.
+#[gpui::test]
+fn the_menu_popup_enters_from_the_strip_and_exits_back_into_it(cx: &mut TestAppContext) {
+    let (launcher, _links, cx) = open_launcher(cx);
+    settle(&launcher, cx);
+    settle_frames(cx);
+
+    let button = cx.debug_bounds("footer-menu").expect("the menu button");
+    cx.simulate_click(button.center(), Modifiers::none());
+    cx.run_until_parked();
+    // The entrance starts the full shift toward the strip (down, from
+    // the popup's rest above it) and the fade's floor.
+    let entering = menu_popup(&launcher, cx).expect("the popup is entering");
+    assert!(
+        entering.0 > 2.5 && entering.0 < 3.5,
+        "the entrance starts the full shift toward the strip: {}",
+        entering.0
+    );
+    assert!(
+        entering.1 < 0.45,
+        "the entrance starts faint: {}",
+        entering.1
+    );
+    let moving = cx.debug_bounds("menu").expect("the menu is drawn");
+    // Frames pass, and the entrance progresses toward rest.
+    assert!(frame(cx, Duration::from_millis(40)) >= 1);
+    let progressed = menu_popup(&launcher, cx).expect("the popup is still entering");
+    assert!(
+        progressed.0 < entering.0 && progressed.0 > 0.,
+        "the entrance progressed toward rest: {} from {}",
+        progressed.0,
+        entering.0
+    );
+    // Past the entrance's span the popup is at rest — above the footer,
+    // shifted exactly the entrance's offset up from where it started —
+    // and the window is idle.
+    assert!(frame(cx, Duration::from_millis(130)) >= 1);
+    assert!(menu_popup(&launcher, cx).is_none());
+    let rest = cx.debug_bounds("menu").expect("the menu is at rest");
+    let footer = cx.debug_bounds("status-idle").expect("the footer");
+    assert!(
+        rest.bottom() <= footer.top(),
+        "the popup settled above the footer"
+    );
+    assert_eq!(
+        moving.bottom() - rest.bottom(),
+        px(entering.0),
+        "the popup was shifted exactly the entrance's offset below its rest"
+    );
+    assert_eq!(settle_frames(cx), 0, "a settled menu schedules no frame");
+
+    // Escape closes it: the focus is restored the frame the menu closed,
+    // while the exit still paints; the exit recedes toward the strip.
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert_eq!(
+        focused_label(cx).as_deref(),
+        Some("More actions"),
+        "the focus returned the frame the menu closed"
+    );
+    let leaving = menu_popup(&launcher, cx).expect("the exit is painting");
+    assert!(leaving.0 < 0.5, "the exit starts at rest: {}", leaving.0);
+    assert!(frame(cx, Duration::from_millis(30)) >= 1);
+    let receding = menu_popup(&launcher, cx).expect("the exit is still painting");
+    assert!(
+        receding.0 > 1.,
+        "the exit recedes toward the strip: {}",
+        receding.0
+    );
+    assert!(
+        receding.1 < 1.,
+        "the exit fades the popup out: {}",
+        receding.1
+    );
+
+    // The exit's visuals are inert: the item's click does nothing — the
+    // exit's list carries no handlers, and the overlay takes the clicks
+    // that land on it, so nothing under or on it is invoked.
+    let item = cx
+        .debug_bounds("menu-item-Settings")
+        .expect("the item is still painted");
+    cx.simulate_click(item.center(), Modifiers::none());
+    cx.run_until_parked();
+    let view = settle(&launcher, cx);
+    assert!(
+        matches!(view.screen, Screen::Root { .. }),
+        "the exiting menu's item invoked nothing"
+    );
+    assert_eq!(
+        settings_windows(cx).len(),
+        0,
+        "the exiting menu's item opened no Settings window"
+    );
+
+    // Past the exit's span the popup unmounts — nothing of it is drawn,
+    // visible or not, so no invisible overlay survives to intercept a
+    // click — and the window is idle.
+    assert!(frame(cx, Duration::from_millis(90)) >= 1);
+    assert!(menu_popup(&launcher, cx).is_none());
+    assert!(
+        cx.debug_bounds("menu").is_none(),
+        "the exit unmounted the popup"
+    );
+    assert_eq!(settle_frames(cx), 0, "a closed menu schedules no frame");
+}
+
+/// A menu reopened during its exit reverses from the presentation on
+/// screen instead of restarting, and the item the exit was still
+/// painting is the item the reopened menu shows.
+#[gpui::test]
+fn a_menu_reopened_during_its_exit_retargets(cx: &mut TestAppContext) {
+    let (launcher, _links, cx) = open_launcher(cx);
+    settle(&launcher, cx);
+    settle_frames(cx);
+
+    // Open, and let the entrance settle.
+    let button = cx.debug_bounds("footer-menu").expect("the menu button");
+    cx.simulate_click(button.center(), Modifiers::none());
+    cx.run_until_parked();
+    settle_frames(cx);
+    assert!(menu_popup(&launcher, cx).is_none());
+
+    // Close, let part of the exit run, and reopen — with the exit still
+    // in flight.
+    cx.simulate_click(button.center(), Modifiers::none());
+    cx.run_until_parked();
+    assert!(menu_popup(&launcher, cx).is_some());
+    assert!(frame(cx, Duration::from_millis(25)) >= 1);
+    let mid_exit = menu_popup(&launcher, cx).expect("the exit is painting");
+
+    cx.simulate_click(button.center(), Modifiers::none());
+    cx.run_until_parked();
+    let reversing = menu_popup(&launcher, cx).expect("the popup is reopening");
+    assert!(
+        reversing.0 < mid_exit.0 + 0.5 && reversing.0 < 2.5,
+        "the reopen continued from the exit's presentation, not the full \
+         shift: {} from {}",
+        reversing.0,
+        mid_exit.0
+    );
+    assert!(
+        reversing.1 > 0.4,
+        "the reopen did not reset to the entrance's floor: {}",
+        reversing.1
+    );
+    // The reopened menu is the interactive one: its item activates.
+    assert!(
+        cx.debug_bounds("menu-item-Settings").is_some(),
+        "the reopened menu is drawn"
+    );
+    settle_frames(cx);
+    let item = cx
+        .debug_bounds("menu-item-Settings")
+        .expect("the item is drawn");
+    cx.simulate_click(item.center(), Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(
+        settings_windows(cx).len(),
+        1,
+        "the reopened menu's item opened Settings"
+    );
+    settle_frames(cx);
+    assert!(cx.debug_bounds("menu").is_none(), "the menu closed with it");
+}
+
+/// Reduced motion lands the menu popup at its endpoint with no frame at
+/// all: opening draws it at rest above the footer, closing unmounts it
+/// at once, and a preference engaged mid-entrance settles it on the next
+/// frame.
+#[gpui::test]
+fn reduced_motion_lands_the_menu_popup_at_once(cx: &mut TestAppContext) {
+    let (launcher, _links, cx) = open_launcher(cx);
+    settle(&launcher, cx);
+    settle_frames(cx);
+    cx.update(|_, cx| cx.set_reduce_motion(true));
+
+    // Opening under reduced motion: no entrance starts.
+    let button = cx.debug_bounds("footer-menu").expect("the menu button");
+    cx.simulate_click(button.center(), Modifiers::none());
+    cx.run_until_parked();
+    assert!(menu_popup(&launcher, cx).is_none());
+    let menu = cx.debug_bounds("menu").expect("the menu is drawn at rest");
+    let footer = cx.debug_bounds("status-idle").expect("the footer");
+    assert!(
+        menu.bottom() <= footer.top(),
+        "the popup is at rest above the footer"
+    );
+    assert_eq!(settle_frames(cx), 0, "no frame was asked for");
+
+    // Closing under reduced motion: the popup unmounts at once.
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert!(menu_popup(&launcher, cx).is_none());
+    assert!(cx.debug_bounds("menu").is_none());
+    assert_eq!(settle_frames(cx), 0, "no frame was asked for");
+
+    // Reduced motion engaged mid-entrance ends it on the next frame.
+    cx.update(|_, cx| cx.set_reduce_motion(false));
+    cx.simulate_click(button.center(), Modifiers::none());
+    cx.run_until_parked();
+    assert!(
+        menu_popup(&launcher, cx).is_some(),
+        "the entrance began under full motion"
+    );
+    cx.update(|_, cx| cx.set_reduce_motion(true));
+    assert!(frame(cx, Duration::ZERO) >= 1);
+    assert!(
+        menu_popup(&launcher, cx).is_none(),
+        "the entrance settled the moment reduced motion engaged"
+    );
+    assert_eq!(
+        settle_frames(cx),
+        0,
+        "the window asked for no further frame"
+    );
+}
+
+/// The menu popup's presentation as the last frame drew it — the offset
+/// from rest toward the strip in px (positive: the popup sits above the
+/// strip, so toward it is down) and the opacity; `None` when the last
+/// frame drew the popup settled (at rest while open, absent while
+/// closed). See [`LauncherWindow::menu_popup_presentation`].
+fn menu_popup(
+    launcher: &gpui::Entity<LauncherWindow>,
+    cx: &mut VisualTestContext,
+) -> Option<(f32, f32)> {
+    cx.read_entity(launcher, |window, _| window.menu_popup_presentation())
 }
 
 #[gpui::test]

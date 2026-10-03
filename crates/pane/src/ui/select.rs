@@ -59,10 +59,19 @@
 //! popup follows the trigger as the page scrolls, being deferred from
 //! the trigger's own place in the scrolled content.
 //!
-//! Nothing here animates: opening, filtering, dismissal and focus are
-//! immediate, as the motion policy requires of query and result
-//! updates; the popup's entrance micro-transition is the later popup
-//! polish ticket's (#88), built on the seams this component leaves.
+//! The popup's own motion is the shared policy's popup family (see
+//! [`crate::ui::motion`]): it enters from the trigger over a tiny shift
+//! and fade, and exits back toward it, faster, on the same tween
+//! machinery every Pane transition runs. The shift and the fade sit on
+//! a wrapper *inside* the popup, so the anchored element still measures
+//! the popup at its resting size and the window-edge snapping never
+//! moves mid-flight. While the exit runs the popup is inert — no row
+//! can commit, the whole subtree is hidden from accessibility, and the
+//! overlay keeps occluding so a click on it cannot reach the page
+//! underneath — and the frame that completes the exit unmounts it, so
+//! nothing of a closed popup intercepts a click. Typing, filtering,
+//! the highlight's movement and the focus contract are exactly what
+//! they were: only the popup's paint moves.
 //!
 //! ## Accessibility
 //!
@@ -224,6 +233,27 @@ pub(crate) struct Select {
     /// The highlighted (active) choice's id, if one is: navigation
     /// state only — never the committed choice, which the model holds.
     active: Option<SharedString>,
+    /// The popup's entrance or exit in flight, if any: the popup's look
+    /// (0 closed, 1 open), presentation only — see [`crate::ui::motion`].
+    /// The draft below it outlives the close that started the exit (a
+    /// fresh open resets it), so the exiting popup paints what the user
+    /// saw; nothing interactive reads it while the exit runs.
+    transition: Option<crate::ui::motion::Tween>,
+    /// Whether the last drawn frame drew the popup open — the one thing
+    /// that starts or retargets the transition, so a reopen during the
+    /// exit reverses from the presentation on screen.
+    drawn_open: bool,
+    /// Whether the next [`TextChanged`] the field reports is the popup's
+    /// own draft reset (the clear a fresh open makes), not the user's
+    /// typing: the reset is not a navigation, so it must not move the
+    /// highlight off the open's start.
+    opened: bool,
+    /// The popup's presentation (offset from rest toward the trigger in
+    /// px, opacity) as the last frame drew it; `None` when the last
+    /// frame drew the popup settled — at rest while open, absent while
+    /// closed. Test and debug builds only.
+    #[cfg(any(test, debug_assertions))]
+    drawn_popup: Option<(f32, f32)>,
     /// The trigger's focus: a tab stop, where Escape and a commit
     /// return the keyboard.
     trigger: FocusHandle,
@@ -255,6 +285,14 @@ impl Select {
         // in the tree at all.
         query.focus_handle(cx).tab_stop(false);
         let _query_changes = cx.subscribe(&query, |this, _, _: &TextChanged, cx| {
+            // The draft's reset when the popup opens is not a navigation:
+            // the open's own start (the committed choice, else the first
+            // that can be used) stands, and only the user's next keystroke
+            // moves the highlight.
+            if this.opened {
+                this.opened = false;
+                return;
+            }
             // A new query is a new navigation, as every search of
             // Pane's treats it: the first enabled match is highlighted.
             let model = (this.model.clone())(cx);
@@ -278,6 +316,11 @@ impl Select {
             _query_changes,
             _deactivation,
             active: None,
+            transition: None,
+            drawn_open: false,
+            opened: false,
+            #[cfg(any(test, debug_assertions))]
+            drawn_popup: None,
             trigger: cx.focus_handle().tab_stop(true),
             scroll: ScrollHandle::new(),
         }
@@ -294,6 +337,17 @@ impl Select {
     /// jumps to the control and focuses it.
     pub(crate) fn trigger_focus(&self) -> FocusHandle {
         self.trigger.clone()
+    }
+
+    /// Test support: the popup's presentation as the last frame drew it
+    /// — the offset from rest toward the trigger in px and the opacity;
+    /// `None` when the last frame drew the popup settled (at rest while
+    /// open, absent while closed), which is also what reduced motion
+    /// ever reports. Test and debug builds only.
+    #[cfg(any(test, debug_assertions))]
+    #[doc(hidden)]
+    pub(crate) fn popup_presentation(&self) -> Option<(f32, f32)> {
+        self.drawn_popup
     }
 
     /// Whether `choice` matches `query`: every whitespace-separated word
@@ -345,11 +399,23 @@ impl Select {
     /// the draft query starts empty, and the highlight starts on the
     /// committed choice — the one the user is most likely to keep — or
     /// the first choice that can be used. Nothing is saved by opening.
+    /// The frame this draws starts the popup's entrance from the trigger
+    /// (see [`crate::ui::motion`]).
     fn open_popup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.open {
             return;
         }
         self.open = true;
+        // A fresh open starts a fresh draft: whatever a cancelled open
+        // left in the field is gone — cleared first, so the start below
+        // and the rows this frame draws are the fresh draft's, and the
+        // field's own change report is marked as the reset it is (see
+        // `opened`).
+        let leftover = self.query.read(cx).as_str().to_owned();
+        if !leftover.is_empty() {
+            self.opened = true;
+            self.query.update(cx, |query, cx| query.emplace("", cx));
+        }
         let model = (self.model.clone())(cx);
         let query = self.query.read(cx).as_str().to_owned();
         let filtered = self.filtered(&model, &query);
@@ -367,33 +433,27 @@ impl Select {
             .or_else(|| Self::enabled(&filtered, &model).first().copied())
             .map(|index| model.choices[index].id.clone());
         self.active = start;
-        // A fresh open starts a fresh draft: whatever a cancelled open
-        // left in the field is gone.
-        if !query.is_empty() {
-            self.query.update(cx, |query, cx| query.emplace("", cx));
-        }
         let field = self.query.focus_handle(cx);
         window.focus(&field, cx);
         cx.notify();
     }
 
-    /// Closes the popup without committing anything: the draft query is
-    /// discarded, the highlight goes with it, and the keyboard returns
-    /// to the trigger. Whatever had focus before the popup opened is
-    /// not tracked — the trigger is where the control's own contract
-    /// returns it (Escape and commit); Tab continues traversal from
-    /// here, and an outside click's target takes focus after the click
-    /// lands on it.
+    /// Closes the popup without committing anything: the keyboard
+    /// returns to the trigger, and the popup's exit starts on the frame
+    /// this draws — receding toward the trigger over the shorter span,
+    /// inert (see the module docs). The draft query and the highlight
+    /// stay exactly as the user left them for the exit to paint, and a
+    /// fresh open resets both; nothing of them is saved, committed or
+    /// offered while the exit runs. Whatever had focus before the popup
+    /// opened is not tracked — the trigger is where the control's own
+    /// contract returns it (Escape and commit); Tab continues traversal
+    /// from here, and an outside click's target takes focus after the
+    /// click lands on it.
     fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.open {
             return;
         }
         self.open = false;
-        self.active = None;
-        let query = self.query.read(cx).as_str().to_owned();
-        if !query.is_empty() {
-            self.query.update(cx, |query, cx| query.emplace("", cx));
-        }
         window.focus(&self.trigger, cx);
         cx.notify();
     }
@@ -610,7 +670,6 @@ impl Select {
             .px(geometry.row_padding_x)
             .rounded(geometry.row_radius)
             .cursor_pointer()
-            .hover(|row| row.bg(theme.row_hover))
             // Visible keyboard focus, the shared focus-ring treatment.
             .focus(|row| {
                 row.shadow(vec![
@@ -669,6 +728,12 @@ impl Select {
         let name = self.name.clone();
         let debug = self.debug.clone();
         row.id("trigger")
+            // The pointer feedback, on the named row: the hover wash
+            // fades over the shared pointer span, and the press takes
+            // the selected wash, one rung above the hover one.
+            .hover(|row| row.bg(theme.row_hover))
+            .active(|row| row.bg(theme.row_selected))
+            .transitions(|fades| fades.bg(crate::ui::motion::pointer_fade()))
             .debug_selector(move || debug.to_string())
             .key_context(TRIGGER)
             .track_focus(&self.trigger)
@@ -730,16 +795,21 @@ impl Select {
     /// above the window and is constrained inside it. The popup is as
     /// wide as its contents ask — the field, the rows — bounded by the
     /// space the trigger leaves (content-width dropdowns, as Raycast's
-    /// are); the finer coordination with the trigger's geometry is the
-    /// popup polish ticket's (#88). See the module docs for the
-    /// placement. `active` is the highlighted choice's id, if one is
-    /// highlighted.
+    /// are). See the module docs for the placement. `active` is the
+    /// highlighted choice's id, if one is highlighted; `in_flight` is
+    /// the popup's presentation while its entrance or exit runs — the
+    /// offset from rest toward the trigger and the opacity — and it is
+    /// `None` at rest. While the control is closed (`self.open` false)
+    /// the popup is the exit's inert visuals: the rows cannot commit,
+    /// and the whole subtree is hidden from accessibility, while the
+    /// overlay still takes the clicks that land on it.
     fn popup(
         &self,
         model: &Model,
         filtered: &[usize],
         active: Option<&SharedString>,
         field_focused: bool,
+        in_flight: Option<(f32, f32)>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = &model.theme;
@@ -804,13 +874,22 @@ impl Select {
             .p(px(6.))
             .child(self.query_field(model, field_focused))
             .child(list);
-        // The elevation shadow sits on the wrapper, which GPUI paints
-        // behind the surface's translucent fill — the same treatment the
-        // footer menu's popup gives its popover.
+        // The popup's motion wrapper: always in the tree while the popup
+        // paints, with the entrance/exit's shift and fade as no-op styles
+        // at rest, so the surface it wraps keeps its identity and state
+        // across the transition. The shift is the same relative-inset
+        // treatment the view transitions use — applied after layout, so
+        // the anchored element still measures the popup at its resting
+        // size, and the window-edge snapping never moves mid-flight —
+        // and the elevation shadow sits on the wrapper, which GPUI
+        // paints behind the surface's translucent fill, so the shadow
+        // follows the surface it belongs to (the same treatment the
+        // footer menu's popup gives its popover).
+        let (offset, opacity) = in_flight.unwrap_or((0., 1.));
+        let exiting = !self.open;
         let debug = format!("{}-popup", self.debug);
         let popup = div()
             .id("popup")
-            .debug_selector(move || debug.clone())
             .key_context(POPUP)
             .w_full()
             .flex()
@@ -819,14 +898,15 @@ impl Select {
             // choice (or on a disabled one, or the empty state) is the
             // popup's own, never the page's rows underneath — the same
             // discipline the footer menu's overlay keeps, from the
-            // other side (its outside dismissal).
+            // other side (its outside dismissal). While the exit runs
+            // this is what keeps the fading overlay inert: clicks on it
+            // cannot invoke anything underneath, and the frame that
+            // completes the exit unmounts it, so no invisible overlay
+            // survives to intercept one.
             .occlude()
-            .shadow(vec![
-                BoxShadow::new(px(0.), px(0.), gpui::rgba(0x000000CC)).spread_radius(px(0.5)),
-                BoxShadow::new(px(0.), px(28.), gpui::rgba(0x000000BF))
-                    .blur_radius(px(70.))
-                    .spread_radius(px(-14.)),
-            ])
+            // The exit's visuals are not in the accessibility tree: a
+            // closed popup has nothing active to announce.
+            .when(exiting, |popup| popup.aria_hidden())
             .on_action(cx.listener(Self::next_choice))
             .on_action(cx.listener(Self::previous_choice))
             .on_action(cx.listener(Self::first_choice))
@@ -838,9 +918,26 @@ impl Select {
             // A mouse-down outside the popup cancels the draft and is
             // left to land, so the clicked target keeps its focus (see
             // [`Select::outside_down`]). The trigger's own press was
-            // already settled in the capture phase before this.
+            // already settled in the capture phase before this. While
+            // the exit runs this listener is a no-op (the popup is
+            // already closed), so the outside click lands as it would
+            // without the popup.
             .on_mouse_down_out(cx.listener(Self::outside_down))
-            .child(model.material.popover(theme, content));
+            .child(
+                div()
+                    .relative()
+                    .top(px(offset))
+                    .when(opacity < 1., |wrapper| wrapper.opacity(opacity))
+                    .shadow(vec![
+                        BoxShadow::new(px(0.), px(0.), gpui::rgba(0x000000CC))
+                            .spread_radius(px(0.5)),
+                        BoxShadow::new(px(0.), px(28.), gpui::rgba(0x000000BF))
+                            .blur_radius(px(70.))
+                            .spread_radius(px(-14.)),
+                    ])
+                    .debug_selector(move || debug.clone())
+                    .child(model.material.popover(theme, content)),
+            );
         deferred(
             anchored()
                 .anchor(gpui::Anchor::TopLeft)
@@ -884,10 +981,7 @@ impl Select {
             .min_h(geometry.row_min_height)
             .px(geometry.row_padding_x)
             .rounded(geometry.row_radius)
-            .when(offered, |row| {
-                row.cursor_pointer()
-                    .when(!highlighted, |row| row.hover(|row| row.bg(theme.row_hover)))
-            })
+            .when(offered, |row| row.cursor_pointer())
             .when(!offered, |row| row.opacity(0.5).cursor_default())
             .when(highlighted, |row| {
                 row.bg(theme.row_selected).shadow(vec![
@@ -938,6 +1032,18 @@ impl Select {
         let description_label = description.clone();
         let row_element = row_element
             .id(choice.id.clone())
+            // The pointer feedback, on the named row: the hover wash
+            // fades over the shared pointer span, and the press takes
+            // the selected wash, the rung above the hover one. The fade
+            // attaches only while the row is unhighlighted, so the
+            // highlight's wash both arrives and leaves at once — the
+            // keyboard's active option stays immediately legible — and
+            // only the pointer's own wash fades.
+            .when(offered && !highlighted, |row| {
+                row.hover(|row| row.bg(theme.row_hover))
+                    .active(|row| row.bg(theme.row_selected))
+                    .transitions(|fades| fades.bg(crate::ui::motion::pointer_fade()))
+            })
             .debug_selector(move || debug.clone())
             .role(Role::ListBoxOption)
             .aria_label(label)
@@ -948,7 +1054,11 @@ impl Select {
         let offered_row = if offered {
             let id = id.clone();
             row_element.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                this.commit(&id, window, cx);
+                // The exit's visuals are inert: a row of a closed popup
+                // cannot commit, however visibly it is still fading.
+                if this.open {
+                    this.commit(&id, window, cx);
+                }
             }))
         } else {
             row_element
@@ -984,13 +1094,47 @@ impl Render for Select {
             .active_choice(&model, &filtered)
             .map(|choice| choice.id.clone());
         let trigger = self.trigger_row(&model, cx);
-        let open = self.open;
+        // The popup's entrance or exit, on the shared tween machinery:
+        // only the control's own open state flipping starts or retargets
+        // it — filtering and the model's changes are content updates,
+        // which never animate — and the popup the element below paints
+        // is open (settled or arriving), exiting, or nothing at all. See
+        // [`crate::ui::motion`] for the family's rules.
+        let popup_in_flight = crate::ui::motion::advance_popup(
+            &mut self.transition,
+            self.open,
+            -crate::ui::motion::VIEW_SHIFT,
+            self.drawn_open != self.open,
+            cx.reduce_motion(),
+            cx.background_executor().now(),
+        );
+        self.drawn_open = self.open;
+        #[cfg(any(test, debug_assertions))]
+        {
+            self.drawn_popup = popup_in_flight;
+        }
         // The boxed field's focus ring, read from the focus state the
         // frame draws with: the box itself tracks nothing (the popup's
         // content is the field's accessibility node, as root search's
         // wrapper is — see [`Select::popup`]).
         let field_focused = self.query.focus_handle(cx).is_focused(window);
-        let popup = open.then(|| self.popup(&model, &filtered, active.as_ref(), field_focused, cx));
+        let popup = (self.open || popup_in_flight.is_some()).then(|| {
+            self.popup(
+                &model,
+                &filtered,
+                active.as_ref(),
+                field_focused,
+                popup_in_flight,
+                cx,
+            )
+        });
+        // While the popup's entrance or exit is still in flight, keep
+        // frames coming; the frame that completes it requests none, so a
+        // control whose popup is settled (open at rest, or closed and
+        // unmounted) schedules no cosmetic frame at all.
+        if popup_in_flight.is_some() {
+            window.request_animation_frame();
+        }
         // The control's block: the trigger, then a zero-height row that
         // positions the popup — its content-box origin is the trigger's
         // bottom-left, so the anchored popup opens below the trigger
