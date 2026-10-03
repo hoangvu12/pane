@@ -11,6 +11,13 @@
 //! the platform seam this page also reads to explain the choices), and
 //! what reopening shows is applied when the launcher is next opened.
 //!
+//! The opening monitor is the Pane-styled searchable select
+//! ([`crate::ui::select`]): the first real consumer of the shared
+//! control, whose choices are few but whose search and keywords the
+//! control needs exercised. The reopening choices keep the direct
+//! choice rows — two fixed rows a user scans faster than searches, the
+//! control's own rule for when a searchable select is warranted.
+//!
 //! What the page explains, as the General page does for its hotkey: the
 //! choices the platform cannot answer — the pointer's display where the
 //! system does not tell Pane where the pointer is, the active window's
@@ -23,39 +30,45 @@
 //! choice: backing out of what is open — a composition, a menu, a screen
 //! — comes first, and hiding the launcher never quits Pane.
 
+use std::rc::Rc;
+
 use gpui::{
-    AnyElement, App, Context, Div, Hsla, Role, ScrollAnchor, Stateful, Toggled, Window, div,
-    prelude::*, px,
+    AnyElement, App, Context, Div, Entity, Hsla, Role, ScrollAnchor, SharedString, Stateful,
+    Toggled, Window, div, prelude::*, px,
 };
 use pane_core::placement::{DisplayLayout, resolve};
 use pane_core::{Launcher, OpeningMonitor, Reopening};
 
 use super::{Page, SettingsWindow, search};
 use crate::ui::icon::{Glyph, IconTone};
+use crate::ui::select::{Choice, Model, Select};
 use crate::ui::theme::Theme;
 
 /// The opening-monitor choices the page offers, in row order: the
-/// preference, the row's name and subtitle, and its test selector. The
-/// subtitle of the default names it as the provisional default, so the
-/// page does not silently turn the specification's proposal into a
-/// confirmed product decision.
-const MONITORS: [(OpeningMonitor, &str, &str, &str); 3] = [
+/// preference, the row's name, subtitle, declared search keywords and
+/// test selector. The subtitle of the default names it as the
+/// provisional default, so the page does not silently turn the
+/// specification's proposal into a confirmed product decision.
+const MONITORS: [(OpeningMonitor, &str, &str, &[&str], &str); 3] = [
     (
         OpeningMonitor::Primary,
         "Primary display",
         "The system's main display, the provisional default",
+        &["main"],
         "launcher-monitor-Primary",
     ),
     (
         OpeningMonitor::Pointer,
         "Pointer's display",
         "The display the pointer is on when the launcher opens",
+        &["mouse", "cursor"],
         "launcher-monitor-Pointer",
     ),
     (
         OpeningMonitor::ActiveWindow,
         "Active window's display",
         "The display of the window you are working in",
+        &["focused", "foreground"],
         "launcher-monitor-ActiveWindow",
     ),
 ];
@@ -90,18 +103,135 @@ pub(crate) fn page() -> Page {
     }
 }
 
+/// The Launcher page's state, held by the window as a field: the
+/// opening-monitor select control.
+pub(crate) struct State {
+    /// The opening monitor's searchable select, the choice control the
+    /// page embeds (see [`crate::ui::select`]). Everything the page
+    /// shows it comes from live reads — the display layout and the host
+    /// settings — and every choice it takes goes through the host
+    /// settings, as the rows it replaced did.
+    monitor: Entity<Select>,
+}
+
+impl State {
+    /// The page's state: the opening-monitor select, wired to the host
+    /// settings and the placement the page itself reads.
+    pub(crate) fn new(window: &mut Window, cx: &mut Context<SettingsWindow>) -> State {
+        let monitor = cx.new(|cx| {
+            Select::new(
+                "Display",
+                "The display the launcher opens on",
+                "launcher-monitor",
+                // The model, read live every render: the choices as the
+                // platform answers them, the committed choice as the
+                // host settings hold it, and the visuals the window
+                // renders by — all three re-read each frame, so a
+                // layout or a save that changed underneath the open
+                // popup is what the next frame shows.
+                Rc::new(|cx: &App| monitor_model(cx)),
+                Rc::new(|id: &str, _window: &mut Window, cx: &mut App| {
+                    // The commit path the rows it replaced took, unchanged:
+                    // the host settings record the choice, write the
+                    // record off the window's thread, and report a
+                    // failure with the shown choice rolled back.
+                    if let Some(monitor) = monitor_of(id) {
+                        crate::settings::shared(cx).update(cx, |settings, cx| {
+                            settings.set_opening_monitor(monitor, cx);
+                        });
+                    }
+                }),
+                window,
+                cx,
+            )
+        });
+        State { monitor }
+    }
+
+    /// The popup's search field, for tests that drive composition the
+    /// way a platform input method does.
+    #[doc(hidden)]
+    pub(crate) fn field(
+        &self,
+        cx: &App,
+    ) -> Entity<gpui_elements::editable_text::EditableTextState> {
+        self.monitor.read(cx).query().clone()
+    }
+}
+
+/// What the select's model reads: the choices the platform can answer,
+/// which of them the host settings hold, and the visuals in effect.
+fn monitor_model(cx: &App) -> Model {
+    let visuals = crate::settings::visuals(cx);
+    let committed = crate::settings::shared(cx).read(cx).opening_monitor();
+    let layout = crate::placement::shared(cx).layout();
+    Model {
+        theme: visuals.theme,
+        material: visuals.material,
+        choices: MONITORS
+            .iter()
+            .map(|&(monitor, name, subtitle, keywords, _)| Choice {
+                // The choice's identity: the preference itself, as the
+                // commit path and the saved choice name it.
+                id: monitor_name(monitor).into(),
+                label: name.into(),
+                subtitle: Some(subtitle.into()),
+                keywords: keywords.iter().map(|&word| word.into()).collect(),
+                // A choice whose answer the system does not give is
+                // listed with its reason, not offered: choosing it
+                // would pretend a placement that cannot be made.
+                unavailable_reason: unsupported(&layout, monitor).map(SharedString::from),
+            })
+            .collect(),
+        committed: Some(monitor_name(committed).into()),
+    }
+}
+
+/// The choice's stable id, the same string the commit path maps back to
+/// the preference.
+fn monitor_name(monitor: OpeningMonitor) -> &'static str {
+    match monitor {
+        OpeningMonitor::Primary => "Primary",
+        OpeningMonitor::Pointer => "Pointer",
+        OpeningMonitor::ActiveWindow => "ActiveWindow",
+    }
+}
+
+/// The preference a committed choice's id names, if it names one.
+fn monitor_of(id: &str) -> Option<OpeningMonitor> {
+    MONITORS
+        .iter()
+        .map(|&(monitor, ..)| monitor)
+        .find(|&monitor| monitor_name(monitor) == id)
+}
+
+impl SettingsWindow {
+    /// Test support: the opening-monitor select's search field, as the
+    /// search field and the alias fields are; a platform input method
+    /// talks to it while composing text, and tests read what it holds.
+    #[doc(hidden)]
+    pub fn monitor_select_field(
+        &self,
+        cx: &App,
+    ) -> Entity<gpui_elements::editable_text::EditableTextState> {
+        self.launcher_page.field(cx)
+    }
+}
+
 /// The settings the page offers the sidebar's search: each choice of both
 /// groups, named as the page names it, in the group it sits in, saying
 /// why it cannot be used where the system does not answer it — the result
 /// stays listed with its reason, as the control does on the page. The
-/// reopening choices are no platform integration: they are always usable.
+/// opening monitor's choices all jump to the one select control that
+/// offers them; the reopening choices to their rows. The reopening
+/// choices are no platform integration: they are always usable.
 fn entries(_launcher: &Launcher, cx: &App) -> Vec<search::Entry> {
     let placement = crate::placement::shared(cx);
     let layout = placement.layout();
     let unavailable = placement.unavailable();
-    let monitors = MONITORS.iter().map(|&(monitor, name, _, selector)| {
+    let monitors = MONITORS.iter().map(|&(monitor, name, _, _, _)| {
         search::Entry {
-            control: Some(selector.into()),
+            control: Some("launcher-monitor".into()),
             title: name.into(),
             group: Some("Opening monitor".into()),
             unavailable: match &unavailable {
@@ -123,11 +253,24 @@ fn entries(_launcher: &Launcher, cx: &App) -> Vec<search::Entry> {
     monitors.chain(reopenings).collect()
 }
 
-/// The page's controls take no keyboard focus (they are chosen with the
-/// pointer, as the reference's settings rows are), so a jump to one
-/// reveals it where it drew and the sidebar keeps the focus: `false`.
-fn focus(_: &mut SettingsWindow, _: &str, _: &mut Window, _: &mut Context<SettingsWindow>) -> bool {
-    false
+/// The page's one keyboard control is the opening-monitor select: its
+/// trigger takes focus (it is a tab stop, and Enter opens its choices),
+/// so a jump to any of the monitor's choices focuses it. The reopening
+/// rows take no keyboard focus (they are chosen with the pointer, as
+/// the reference's settings rows are), so a jump to one reveals it and
+/// the sidebar keeps the focus: `false`.
+fn focus(
+    this: &mut SettingsWindow,
+    target: &str,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> bool {
+    if target != "launcher-monitor" {
+        return false;
+    }
+    let trigger = this.launcher_page.monitor.read(cx).trigger_focus();
+    window.focus(&trigger, cx);
+    true
 }
 
 /// Draws the Launcher page: the opening-monitor group, the reopening
@@ -153,6 +296,10 @@ fn render(
     let visuals = crate::settings::visuals(cx);
     let theme = &visuals.theme;
     let typography = &theme.typography;
+    // The select's scroll anchor, which the search's reveal scrolls to
+    // (see the window's render): the whole control is what a jump to
+    // any of the monitor's choices reveals.
+    let anchor = this.search_anchor("launcher-monitor");
 
     let page = div()
         .id("launcher")
@@ -186,33 +333,7 @@ fn render(
         .when(offered, |page| {
             page.child(group(
                 "Opening monitor",
-                MONITORS
-                    .iter()
-                    .map(|&(monitor, name, subtitle, selector)| {
-                        // A choice whose answer the system does not give is
-                        // shown with its reason, not offered: choosing it
-                        // would pretend a placement that cannot be made.
-                        let reason = unsupported(&layout, monitor);
-                        // The choice's scroll anchor, which the search's
-                        // reveal scrolls to (see the window's render).
-                        let anchor = this.search_anchor(selector);
-                        choice(
-                            selector,
-                            name,
-                            subtitle,
-                            monitor == chosen,
-                            reason.is_none(),
-                            reason,
-                            anchor,
-                            theme,
-                            cx.listener(move |_, _, _, cx| {
-                                crate::settings::shared(cx).update(cx, |settings, cx| {
-                                    settings.set_opening_monitor(monitor, cx);
-                                });
-                            }),
-                        )
-                    })
-                    .collect(),
+                vec![monitor_select(this, anchor)],
                 theme,
             ))
             // The choice's own honesty: what the launcher would open on
@@ -312,6 +433,21 @@ fn group(label: &'static str, rows: Vec<Stateful<Div>>, theme: &Theme) -> Div {
                 .child(label),
         )
         .children(rows)
+}
+
+/// The opening-monitor select, embedded as the group's one control: a
+/// plain wrapper that carries the scroll anchor the search's reveal
+/// scrolls to — the control itself owns its trigger and its popup (see
+/// [`crate::ui::select`]). Everything it shows is read live through its
+/// model and every choice it takes goes through the host settings, as
+/// the radio rows it replaced did; the page around it keeps only its
+/// own honesty notes.
+fn monitor_select(this: &mut SettingsWindow, anchor: ScrollAnchor) -> Stateful<Div> {
+    div()
+        .id("launcher-monitor")
+        .w_full()
+        .anchor_scroll(Some(anchor))
+        .child(this.launcher_page.monitor.clone())
 }
 
 /// One choice row: the reference's row chrome carrying a radio's marks
