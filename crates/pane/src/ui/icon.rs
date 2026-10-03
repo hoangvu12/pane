@@ -45,6 +45,12 @@ pub(crate) enum Glyph {
     Gear,
     /// A globe: Settings' documentation entry.
     Globe,
+    /// A keyboard: the Settings window's Shortcuts section.
+    Keyboard,
+    /// A chevron pointing down: a group of rows expanded.
+    ChevronDown,
+    /// A chevron pointing right: a group of rows collapsed.
+    ChevronRight,
     /// The Windows titlebar's close mark.
     #[cfg(target_os = "windows")]
     WindowClose,
@@ -69,6 +75,9 @@ impl Glyph {
             Glyph::Ellipsis => include_bytes!("../../assets/icons/ellipsis.svg"),
             Glyph::Gear => include_bytes!("../../assets/icons/gear.svg"),
             Glyph::Globe => include_bytes!("../../assets/icons/globe.svg"),
+            Glyph::Keyboard => include_bytes!("../../assets/icons/keyboard.svg"),
+            Glyph::ChevronDown => include_bytes!("../../assets/icons/chevron-down.svg"),
+            Glyph::ChevronRight => include_bytes!("../../assets/icons/chevron-right.svg"),
             #[cfg(target_os = "windows")]
             Glyph::WindowClose => include_bytes!("../../assets/icons/window-close.svg"),
             #[cfg(target_os = "windows")]

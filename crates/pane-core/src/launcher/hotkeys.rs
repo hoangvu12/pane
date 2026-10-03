@@ -111,6 +111,23 @@ impl Bindings {
             .find(|(command, chosen)| *chosen == shortcut && command.as_str() != except)
             .map(|(command, _)| command.as_str())
     }
+
+    /// The hotkey recorded for `command`, for the Shortcuts catalog.
+    pub(super) fn hotkey_of(&self, command: &str) -> Option<Shortcut> {
+        self.chosen().get(command).cloned()
+    }
+
+    /// Why the hotkey recorded for `command` could not be registered with
+    /// the system, if it could not; for the Shortcuts catalog.
+    pub(super) fn problem_of(&self, command: &str) -> Option<String> {
+        self.problems.get(command).cloned()
+    }
+
+    /// Every command id with a hotkey recorded; for the Shortcuts
+    /// catalog's rows of choices whose commands are gone.
+    pub(super) fn recorded(&self) -> Vec<&str> {
+        self.chosen().keys().map(String::as_str).collect()
+    }
 }
 
 /// The commands offered by enabled packages, each with why it is
