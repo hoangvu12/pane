@@ -955,7 +955,7 @@ fn uninstalling_from_the_page_offers_the_saved_data_choice_and_keeps_it(cx: &mut
 fn a_reload_that_fails_to_start_is_explained_on_the_page_and_offers_retry(cx: &mut TestAppContext) {
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let folder = hello_package(&sources.path().join("hello"));
-    let (launcher, cx) = open_installed(cx, &data, &folder);
+    let (_launcher, cx) = open_installed(cx, &data, &folder);
     let (_settings, mut settings_cx) = open_settings(cx);
 
     // A source that no longer builds a startable package: the reload's
@@ -1090,7 +1090,7 @@ fn the_page_follows_a_background_build_failure_by_itself(cx: &mut TestAppContext
         Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"))
             .with_development(Arc::new(FakeBuilder), sender);
     install(&launcher, &folder);
-    let (launcher, cx) = cx.add_window_view(|window, cx| {
+    let (_launcher, cx) = cx.add_window_view(|window, cx| {
         let mut launcher = LauncherWindow::new(launcher, window, cx);
         launcher.follow_changes(changes, window, cx);
         launcher
