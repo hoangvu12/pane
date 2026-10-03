@@ -7,8 +7,9 @@
 use std::path::PathBuf;
 
 use gpui::{App, KeyBinding, WindowBackgroundAppearance, actions};
-// The Window of the Windows-only DWM corner preference below; the import
-// follows the same gate so it is not unused on the other platforms.
+// `Window` names the rounded-corner preference's parameter, which only
+// Windows has; the import follows the same gate so it is not unused on the
+// other platforms.
 #[cfg(target_os = "windows")]
 use gpui::Window;
 use pane_core::CommandRegistration;
@@ -188,6 +189,17 @@ pub fn default_extensions() -> Vec<pane_core::DefaultExtension> {
 pub fn configure_visuals(cx: &mut App) -> gpui::Result<()> {
     settings::init(data_dir(), cx);
     ui::load_fonts(cx)
+}
+
+/// Follows the operating system's reduced-motion preference for the whole
+/// app, once, before the first window opens: what is actually read on each
+/// system, what falls back where nothing is readable, and how a Windows
+/// change is applied while Pane runs are documented on the policy itself
+/// (`ui::motion`). Call before the first frame draws; the launcher's view
+/// transitions (and anything else that consults
+/// [`gpui::App::reduce_motion`]) then follow the preference.
+pub fn observe_reduced_motion(cx: &mut App) {
+    ui::motion::observe_reduced_motion(cx)
 }
 
 /// The window background appearance the host settings' material asks for,

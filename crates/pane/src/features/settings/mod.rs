@@ -39,8 +39,8 @@ use pane_core::Launcher;
 
 use crate::ui;
 use crate::ui::icon::{Glyph, IconTone};
-// The bare glyph of the Windows-only caption buttons below; the import
-// follows the same gate so it is not unused on the other platforms.
+// The caption buttons' glyph painter, Windows-only like the buttons it
+// draws; the import follows the same gate so it is not unused elsewhere.
 #[cfg(target_os = "windows")]
 use crate::ui::icon::glyph;
 use crate::ui::result_row::{RowContent, result_row};
