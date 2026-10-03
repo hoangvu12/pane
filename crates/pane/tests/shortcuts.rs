@@ -1344,7 +1344,14 @@ fn returning_to_the_shortcuts_page_keeps_its_state(cx: &mut TestAppContext) {
         "the filter narrowed the page"
     );
     click_group(&mut settings_cx, &hello_key);
-    assert!(settings_cx.debug_bounds(hello_row).is_none());
+    // A filter shows the commands that match it, whatever the expanded
+    // state: collapsing under one turns the chevron but keeps the rows
+    // drawn — the collapsed state's own visibility comes once the filter
+    // clears, below.
+    assert!(
+        settings_cx.debug_bounds(hello_row).is_some(),
+        "the filter keeps showing the collapsed group's commands"
+    );
     settle_frames(&mut settings_cx);
 
     // Switch away to Appearance, then back to Shortcuts.
@@ -1368,16 +1375,18 @@ fn returning_to_the_shortcuts_page_keeps_its_state(cx: &mut TestAppContext) {
     );
 
     // The page's state survived the round trip: the filter still
-    // narrows it, and the Hello group is still collapsed. No group
-    // replays an arrival — the only transition in flight is the
-    // section's own.
+    // narrows it, and the Hello group is still collapsed — a filter
+    // shows the collapsed group's commands, so its collapse is proven
+    // where it shows: once the filter clears below, its rows stay
+    // unmounted. No group replays an arrival — the only transition in
+    // flight is the section's own.
     assert!(
         settings_cx.debug_bounds(query_group).is_none(),
         "the filter was retained"
     );
     assert!(
-        settings_cx.debug_bounds(hello_row).is_none(),
-        "the collapsed group was retained"
+        settings_cx.debug_bounds(hello_row).is_some(),
+        "the filter still shows the collapsed group's commands"
     );
     assert!(
         disclosure(&settings, &hello_key, &mut settings_cx).is_none(),
@@ -1386,12 +1395,23 @@ fn returning_to_the_shortcuts_page_keeps_its_state(cx: &mut TestAppContext) {
     settle_frames(&mut settings_cx);
 
     // Clearing the filter is a content update: the rows come back with
-    // no transition at all.
+    // no transition at all, and the collapsed group's stay unmounted.
+    // Click the filter first, as the user would: the collapse moved the
+    // focus to the group's header, which switching sections never moved.
+    let filter = settings_cx
+        .debug_bounds("shortcut-filter")
+        .expect("the filter");
+    settings_cx.simulate_click(filter.center(), Modifiers::none());
+    settings_cx.run_until_parked();
     settings_cx.simulate_keystrokes("backspace backspace backspace backspace backspace");
     settings_cx.run_until_parked();
     assert!(
         settings_cx.debug_bounds(query_group).is_some(),
         "clearing the filter brought the rows back"
+    );
+    assert!(
+        settings_cx.debug_bounds(hello_row).is_none(),
+        "the collapsed group's rows stayed unmounted"
     );
     assert!(
         disclosure(&settings, &hello_key, &mut settings_cx).is_none(),
