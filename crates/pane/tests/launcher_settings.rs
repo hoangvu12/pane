@@ -910,7 +910,7 @@ fn the_page_registers_its_settings_in_the_settings_search(cx: &mut TestAppContex
     // The Launcher page's settings are in the catalog the sidebar's search
     // filters: each choice, named as the page names it, in the group it
     // sits in. The reopening choices are found by their own words.
-    let (settings, mut settings_cx) = open_launcher_page(cx);
+    let (settings, _settings_cx) = open_launcher_page(cx);
     let mut search_cx = VisualTestContext::from_window(AnyWindowHandle::from(settings), &cx.cx);
     search_cx.simulate_keystrokes(find_shortcut());
     search_cx.simulate_input("monitor");
