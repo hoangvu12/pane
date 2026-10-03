@@ -19,10 +19,12 @@ use gpui::{
     AnyElement, App, BoxShadow, ClickEvent, Context, Div, FocusHandle, KeyBinding, MouseDownEvent,
     Role, Stateful, Subscription, Window, actions, div, prelude::*, px, relative, rgba,
 };
+use pane_core::KeyboardAction;
 
 use crate::app::LauncherWindow;
 use crate::features::settings;
 use crate::ui::icon::{Glyph, glyph};
+use crate::ui::keycap::binding_keycap;
 use crate::ui::{self};
 
 actions!(
@@ -69,6 +71,10 @@ struct MenuItem {
     title: &'static str,
     /// What activating the entry does.
     activate: fn(&mut LauncherWindow, &mut Window, &mut Context<LauncherWindow>),
+    /// The in-app navigation action whose binding the entry shows as its
+    /// shortcut hint, if it has one: the hint follows the effective
+    /// binding, so it teaches the key that opens the entry now.
+    hint: Option<KeyboardAction>,
 }
 
 /// The menu's entries, in order. Settings is the only one this milestone;
@@ -77,6 +83,7 @@ struct MenuItem {
 const ITEMS: [MenuItem; 1] = [MenuItem {
     title: "Settings",
     activate: LauncherWindow::choose_menu_settings,
+    hint: Some(KeyboardAction::OpenSettings),
 }];
 
 /// The open footer menu: its own keyboard focus, its selected entry and
@@ -290,6 +297,16 @@ impl LauncherWindow {
             }))
             .children(ITEMS.iter().enumerate().map(|(index, item)| {
                 let item_selected = index == selected;
+                // The entry's shortcut hint, when it has one: the binding in
+                // force for the action that opens it, in the shared keycap
+                // chrome.
+                let hint = item.hint.map(|action| {
+                    crate::settings::shared(cx)
+                        .read(cx)
+                        .keyboard()
+                        .binding(action)
+                        .clone()
+                });
                 div()
                     .id(("menu-item", index))
                     .debug_selector(move || format!("menu-item-{}", item.title))
@@ -318,6 +335,10 @@ impl LauncherWindow {
                         }
                     }))
                     .child(item.title)
+                    .when_some(hint, |item, hint| {
+                        item.child(div().flex_1().min_w(px(0.)))
+                            .child(binding_keycap(&hint, &theme))
+                    })
             }));
         // The popover's bottom edge sits on the strip's top edge, however
         // tall the status message has grown the strip.

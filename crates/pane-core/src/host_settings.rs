@@ -23,12 +23,14 @@
 //! the window layer resolves them into a theme and a material, including
 //! the platform's own normalization of glass to solid.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde_json::{Map, Value};
 
 use crate::atomic::{Readers, write_atomically};
 use crate::hotkeys::Shortcut;
+use crate::keyboard::Keyboard;
 
 /// The file the settings are recorded in, in Pane's data folder.
 const FILE: &str = "settings.json";
@@ -121,8 +123,9 @@ pub enum Reopening {
 }
 
 /// The host settings as the user chose them: one theme preference, one
-/// material preference, the Open Pane hotkey, the launch-at-login choice,
-/// the launcher's opening display and what reopening shows, the whole of
+/// material preference, the Open Pane hotkey, the tray visibility, the
+/// launch-at-login choice, the launcher's opening display and what
+/// reopening shows, and the in-app navigation bindings, the whole of
 /// what the Settings pages built so far offer. Later pages add fields
 /// beside these, with the same rules: missing fields default, and
 /// unknown values fail the record.
@@ -138,6 +141,13 @@ pub struct HostSettings {
     /// stays while extensions are disabled, and is applied through the
     /// same platform registration path the command hotkeys use.
     pub open_pane: Shortcut,
+    /// Whether Pane shows its tray or menu-bar entry — the item whose
+    /// menu opens the launcher, Settings and Quit, reachable while the
+    /// launcher is hidden. A provisional default, as the Open Pane
+    /// shortcut's is: the entry is shown, since it is the one place
+    /// those actions live outside Pane's own windows; the General page
+    /// can hide it, where the platform provides one.
+    pub tray_visible: bool,
     /// Whether the user chose Pane to start at login. A preference, not a
     /// registration: whether Pane actually starts is the platform's own
     /// login integration, which the window layer reconciles with this
@@ -154,6 +164,11 @@ pub struct HostSettings {
     /// records; dismissal behavior itself follows the specification's
     /// Escape contract and is not a choice here.
     pub reopening: Reopening,
+    /// The in-app navigation bindings the Keyboard page rebinds: one
+    /// binding per action of the bounded set, from the same defaults when
+    /// the record holds none. These keys belong to Pane's own windows, not
+    /// to any focused field's text editing.
+    pub keyboard: Keyboard,
 }
 
 impl Default for HostSettings {
@@ -162,9 +177,11 @@ impl Default for HostSettings {
             theme: ThemePreference::default(),
             material: MaterialPreference::default(),
             open_pane: Shortcut::open_pane_default(),
+            tray_visible: true,
             launch_at_login: false,
             opening_monitor: OpeningMonitor::default(),
             reopening: Reopening::default(),
+            keyboard: Keyboard::default_for_this_system(),
         }
     }
 }
@@ -211,13 +228,20 @@ impl HostSettings {
                 )
             })?,
         };
+        let keyboard = match recorded.keyboard {
+            None => Keyboard::default_for_this_system(),
+            Some(fields) => Keyboard::parse(&fields)
+                .map_err(|problem| format!("{} is invalid: {problem}", file.display()))?,
+        };
         Ok(HostSettings {
             theme: recorded.theme,
             material: recorded.material,
             open_pane,
+            tray_visible: recorded.tray_visible,
             launch_at_login: recorded.launch_at_login,
             opening_monitor: recorded.opening_monitor,
             reopening: recorded.reopening,
+            keyboard,
         })
     }
 
@@ -232,9 +256,11 @@ impl HostSettings {
             theme: self.theme,
             material: self.material,
             open_pane: Some(self.open_pane.id()),
+            tray_visible: self.tray_visible,
             launch_at_login: self.launch_at_login,
             opening_monitor: self.opening_monitor,
             reopening: self.reopening,
+            keyboard: Some(self.keyboard.recorded()),
         };
         let text = serde_json::to_string_pretty(&recorded).map_err(|error| error.to_string())?;
         let file = dir.join(FILE);
@@ -261,6 +287,12 @@ struct Recorded {
     /// while the record's other fields follow the house camelCase names.
     #[serde(default, rename = "open_pane")]
     open_pane: Option<String>,
+    /// Whether the tray or menu-bar entry is shown; missing means shown,
+    /// the provisional default. A value that is not a boolean fails the
+    /// whole record, as unknown values do.
+    #[serde(default = "shown_by_default")]
+    tray_visible: bool,
+    /// Whether the user chose Pane to start at login; missing means not.
     #[serde(default)]
     launch_at_login: bool,
     /// The display the launcher opens on, as one of the three words the
@@ -272,11 +304,24 @@ struct Recorded {
     /// still-valid view, the provisional default.
     #[serde(default)]
     reopening: Reopening,
+    /// The in-app navigation bindings, each action's id mapped to its
+    /// binding's id, as [`Keyboard::recorded`] writes them; missing means
+    /// this system's provisional defaults. An unknown action, a binding
+    /// that is not one or two actions on one binding fails the whole
+    /// record.
+    #[serde(default)]
+    keyboard: Option<BTreeMap<String, String>>,
+}
+
+/// The record's default for the tray visibility: shown.
+fn shown_by_default() -> bool {
+    true
 }
 
 #[cfg(test)]
 mod tests {
     use super::{FILE, HostSettings, MaterialPreference, Shortcut, ThemePreference};
+    use crate::keyboard::{Keyboard, KeyboardAction};
 
     /// Reads what `text` records in a fresh folder.
     fn reading(text: &str) -> Result<HostSettings, String> {
@@ -314,13 +359,22 @@ mod tests {
     #[test]
     fn a_record_round_trips() {
         let dir = tempfile::tempdir().unwrap();
+        let mut keyboard = Keyboard::default_for_this_system();
+        keyboard
+            .checked_set(
+                KeyboardAction::Back,
+                crate::keyboard::Binding::parse("ctrl-b").unwrap(),
+            )
+            .unwrap();
         let settings = HostSettings {
             theme: ThemePreference::System,
             material: MaterialPreference::Solid,
             open_pane: Shortcut::parse("ctrl+alt+b").unwrap(),
+            tray_visible: false,
             launch_at_login: true,
             opening_monitor: super::OpeningMonitor::Pointer,
             reopening: super::Reopening::RootSearch,
+            keyboard,
         };
         settings.save(dir.path()).unwrap();
         assert_eq!(HostSettings::open(dir.path()).unwrap(), settings);
@@ -358,6 +412,56 @@ mod tests {
             reading(r#"{ "version": 1 }"#).unwrap().reopening,
             super::Reopening::RestoreView
         );
+    }
+
+    #[test]
+    fn the_keyboard_field_defaults_and_an_invalid_one_fails_the_record() {
+        // Missing: this system's provisional defaults, and a partial set
+        // keeps the rest.
+        assert_eq!(
+            reading(r#"{ "version": 1, "keys": "missing" }"#).unwrap(),
+            HostSettings::default()
+        );
+        let settings = reading(r#"{ "version": 1, "keyboard": { "back": "ctrl-b" } }"#).unwrap();
+        assert_eq!(
+            settings.keyboard.binding(KeyboardAction::Back).id(),
+            "ctrl-b"
+        );
+        assert_eq!(
+            settings.keyboard.binding(KeyboardAction::NextResult).id(),
+            "down"
+        );
+        // Two actions on one binding fails the whole record, as a binding
+        // that is not one and an action that is not one do.
+        for text in [
+            r#"{ "version": 1, "keyboard": { "back": "up" } }"#,
+            r#"{ "version": 1, "keyboard": { "back": "not one" } }"#,
+            r#"{ "version": 1, "keyboard": { "launch": "ctrl-l" } }"#,
+            r#"{ "version": 1, "keyboard": { "back": "b" } }"#,
+        ] {
+            let problem = reading(text);
+            assert!(problem.is_err(), "{text} half-loads");
+        }
+    }
+
+    #[test]
+    fn the_tray_visibility_defaults_to_shown_and_a_non_boolean_fails_the_record() {
+        // Missing: shown, the provisional default.
+        assert_eq!(
+            reading(r#"{ "version": 1, "tray": "missing" }"#).unwrap(),
+            HostSettings::default()
+        );
+        // Recorded as the record's camelCase field, and read back.
+        assert_eq!(
+            reading(r#"{ "version": 1, "trayVisible": false }"#).unwrap(),
+            HostSettings {
+                tray_visible: false,
+                ..HostSettings::default()
+            }
+        );
+        // A value that is not a boolean fails the whole record.
+        let problem = reading(r#"{ "version": 1, "trayVisible": "no" }"#);
+        assert!(problem.is_err(), "{problem:?}");
     }
 
     #[test]
@@ -459,9 +563,11 @@ mod tests {
             theme: ThemePreference::Light,
             material: MaterialPreference::Solid,
             open_pane: Shortcut::parse("ctrl+alt+b").unwrap(),
+            tray_visible: false,
             launch_at_login: true,
             opening_monitor: super::OpeningMonitor::Pointer,
             reopening: super::Reopening::RootSearch,
+            keyboard: Keyboard::default_for_this_system(),
         }
         .save(dir.path());
         assert!(failed.is_err(), "{failed:?}");

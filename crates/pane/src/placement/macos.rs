@@ -14,7 +14,7 @@ use core_graphics::display::{
     CGDirectDisplayID, CGDisplayBounds, CGGetActiveDisplayList, CGMainDisplayID,
 };
 use core_graphics::event::CGEvent;
-use core_graphics::event_source::{CGEventSource, CGEventSourceStateHIDSystemState};
+use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use core_graphics::geometry::CGRect;
 use gpui::Window;
 use objc2::encode::{Encode, Encoding};
@@ -112,7 +112,7 @@ impl Placement for MacDisplays {
 /// global display space the displays' bounds are in), as a fresh event of
 /// the HID system reports it; `None` when none can be made.
 fn pointer() -> Option<Point> {
-    let source = CGEventSource::new(CGEventSourceStateHIDSystemState).ok()?;
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState).ok()?;
     let event = CGEvent::new(source).ok()?;
     let location = event.location();
     Some(Point {
