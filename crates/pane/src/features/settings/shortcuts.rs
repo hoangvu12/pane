@@ -1175,6 +1175,15 @@ fn hotkey_cell(
         .hotkey_inactive
         .as_ref()
         .map(|why| format!("Not active: {why}"));
+    // What assistive technology is told after the cell's name: while the
+    // recorder listens, why the last capture was refused — as the alias
+    // editor's field announces its error — with the reason the hotkey is
+    // not active as the fallback while it listens and alone otherwise.
+    let description = if listening {
+        rejection.clone().or_else(|| inactive.clone())
+    } else {
+        inactive.clone()
+    };
 
     // The recorder button, or the plain label of a command that cannot
     // record here.
@@ -1216,7 +1225,7 @@ fn hotkey_cell(
             .track_focus(&handle)
             .role(Role::Button)
             .aria_label(label)
-            .when_some(inactive.clone(), |cell, why| cell.aria_description(why))
+            .when_some(description.clone(), |cell, why| cell.aria_description(why))
             .on_action(cx.listener(move |this, _: &RecordHotkey, window, cx| {
                 this.shortcuts_record_hotkey(&for_keys, window, cx);
             }))
@@ -1256,7 +1265,7 @@ fn hotkey_cell(
             .debug_selector(|| format!("shortcut-hotkey-{id}"))
             .role(Role::Label)
             .aria_label(label)
-            .when_some(inactive, |cell, why| cell.aria_description(why))
+            .when_some(description, |cell, why| cell.aria_description(why))
             .flex()
             .items_center()
             .min_h(px(30.))

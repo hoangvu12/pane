@@ -1154,12 +1154,12 @@ fn escape_cancels_and_a_key_without_a_modifier_is_explained(cx: &mut TestAppCont
     // keeps the recorder listening, since it would take over typing.
     let mut settings_cx = record_hotkey(&settings, cx, &hello_id);
     settings_cx.simulate_keystrokes("b");
-    settings_cx.run_until_parked();
-    let (label, json) = accessibility(&mut settings_cx);
+    let json = until_text(&mut settings_cx, "does not take over typing");
     assert!(
         json.contains("does not take over typing"),
         "the key without a modifier is explained, {json}"
     );
+    let (label, _) = accessibility(&mut settings_cx);
     assert!(
         label
             .as_deref()
@@ -1213,8 +1213,7 @@ fn collisions_with_another_command_and_with_open_pane_are_refused(cx: &mut TestA
     // recorder keeps listening.
     let mut settings_cx = record_hotkey(&settings, cx, &echo_id);
     settings_cx.simulate_keystrokes("ctrl-alt-p");
-    settings_cx.run_until_parked();
-    let (_, json) = accessibility(&mut settings_cx);
+    let json = until_text(&mut settings_cx, "already opens Say hello");
     assert!(
         json.contains(&format!(
             "{taken} already opens Say hello: remove it there first, or press another shortcut."
@@ -1225,8 +1224,7 @@ fn collisions_with_another_command_and_with_open_pane_are_refused(cx: &mut TestA
     // So are the keys the Open Pane binding holds: Pane's own binding
     // keeps working and nothing is written for Echo.
     settings_cx.simulate_keystrokes(open_pane_keystrokes());
-    settings_cx.run_until_parked();
-    let (_, json) = accessibility(&mut settings_cx);
+    let json = until_text(&mut settings_cx, "opens Pane itself");
     assert!(
         json.contains(&format!(
             "{open_pane} opens Pane itself: choose another shortcut for Echo, or change Pane's \
@@ -1287,8 +1285,7 @@ fn a_registration_another_application_has_is_refused_and_keeps_the_binding(
     hotkeys.taken.lock().unwrap().push(wanted.clone());
     let mut settings_cx = record_hotkey(&settings, cx, &hello_id);
     settings_cx.simulate_keystrokes("ctrl-alt-b");
-    settings_cx.run_until_parked();
-    let (_, json) = accessibility(&mut settings_cx);
+    let json = until_text(&mut settings_cx, "cannot be used");
     assert!(
         json.contains(&format!(
             "{wanted} cannot be used: another application or the system already uses it. Press \
