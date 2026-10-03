@@ -19,6 +19,7 @@ mod helpers;
 mod host_settings;
 pub mod hotkeys;
 mod http;
+mod keyboard;
 mod launcher;
 mod links;
 pub mod npm;
@@ -40,6 +41,7 @@ pub use host_settings::{
 };
 #[doc(hidden)]
 pub use http::HttpLimits;
+pub use keyboard::{Binding, Keyboard, KeyboardAction};
 pub use launcher::{
     AliasOutcome, ApplicationUpdate, BuildFailure, CommandRegistration, CustomViewSnapshot,
     Development, FormField, FormView, Launcher, LauncherView, Question, Row, Screen,

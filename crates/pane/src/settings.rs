@@ -72,7 +72,9 @@ use gpui::{
 };
 use pane_core::autostart::{Autostart, Registration};
 use pane_core::hotkeys::Shortcut;
-use pane_core::{HostSettings, Launcher, MaterialPreference, ThemePreference};
+use pane_core::{
+    Binding, HostSettings, Keyboard, KeyboardAction, Launcher, MaterialPreference, ThemePreference,
+};
 
 use crate::ui::Visuals;
 use crate::ui::material::{Material, MaterialMode};
@@ -398,6 +400,49 @@ impl Settings {
         self.chosen.open_pane.clone()
     }
 
+    /// The in-app navigation bindings the host settings hold: what the
+    /// Keyboard page shows and what every window's keys follow.
+    pub(crate) fn keyboard(&self) -> Keyboard {
+        self.chosen.keyboard.clone()
+    }
+
+    /// Records `binding` for `action`, one of the bounded set of in-app
+    /// navigation actions: it is applied to every window's keys at once
+    /// (the keymap is re-made over the new set, so the binding it replaces
+    /// stops working) and only then written to the record off the window's
+    /// thread. A binding that is protected for a focused field, or one
+    /// another action of the set already has, is refused — `Err` names the
+    /// problem and nothing changes. A write that fails rolls the choice
+    /// back to what the record holds and re-applies it, so the keys that
+    /// work are the keys the record names (see [`Settings::written`]).
+    pub(crate) fn set_keyboard(
+        &mut self,
+        action: KeyboardAction,
+        binding: Binding,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        // The record's rule: never replace what cannot be read.
+        if let Some(problem) = &self.unreadable {
+            return Err(format!(
+                "Pane could not read the settings record, so the shortcut is not changed: {problem}"
+            ));
+        }
+        let mut chosen = self.chosen.clone();
+        chosen.keyboard.checked_set(action, binding)?;
+        if chosen == self.chosen {
+            // The binding it already has: a retry that made it apply needs
+            // no new record.
+            cx.notify();
+            return Ok(());
+        }
+        self.chosen = chosen;
+        let keyboard = self.chosen.keyboard.clone();
+        crate::keyboard::rebuild(cx, &keyboard);
+        cx.notify();
+        self.save(cx);
+        Ok(())
+    }
+
     /// Records `shortcut` as the Open Pane hotkey, the application-owned
     /// binding that summons the launcher from any application. It is
     /// applied through the attached launcher *first* — checked against the
@@ -657,6 +702,14 @@ impl Settings {
                         }
                     }
                     self.changed(cx);
+                    // The in-app navigation bindings follow the record back
+                    // the same way: the keymap is re-made over what the
+                    // record holds, so a binding that could not be saved
+                    // stops working and the recorded one works again.
+                    if snapshot.keyboard != self.saved.keyboard {
+                        let keyboard = self.chosen.keyboard.clone();
+                        crate::keyboard::rebuild(cx, &keyboard);
+                    }
                 }
                 self.save_error = Some(problem);
             }
@@ -782,6 +835,16 @@ pub(crate) fn ensure(cx: &mut App) -> Entity<Settings> {
 /// [`ensure`] to have run.
 pub(crate) fn shared(cx: &App) -> Entity<Settings> {
     cx.global::<Shared>().0.clone()
+}
+
+/// The in-app navigation bindings in force, for the keymap: the host
+/// settings' if they are initialized, this system's provisional defaults
+/// otherwise (before [`init`] runs, as in a test that binds keys without
+/// a record).
+pub(crate) fn keyboard_of(cx: &App) -> Keyboard {
+    cx.try_global::<Shared>()
+        .map(|shared| shared.0.read(cx).chosen.keyboard.clone())
+        .unwrap_or_default()
 }
 
 /// Attaches the launcher that owns the window's global-shortcut
