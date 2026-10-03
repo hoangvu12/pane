@@ -1380,7 +1380,9 @@ fn the_settings_window_keeps_its_layout_at_small_sizes(cx: &mut TestAppContext) 
 
 /// A helper for the section-transition tests: the Settings window over
 /// the sample launcher, opened and settled, as (window, its context).
-fn opened_settings(cx: &mut VisualTestContext) -> (WindowHandle<SettingsWindow>, VisualTestContext) {
+fn opened_settings(
+    cx: &mut VisualTestContext,
+) -> (WindowHandle<SettingsWindow>, VisualTestContext) {
     cx.simulate_keystrokes(settings_shortcut());
     cx.run_until_parked();
     let settings = settings_windows(cx).pop().expect("Settings opened");
