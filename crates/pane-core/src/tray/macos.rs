@@ -20,6 +20,7 @@
 use std::sync::Mutex;
 
 use objc2::rc::Retained;
+use objc2::runtime::NSObject;
 use objc2::{ClassType, DefinedClass, MainThreadMarker, define_class, msg_send, sel};
 use objc2_app_kit::{NSMenu, NSMenuItem, NSStatusBar, NSStatusItem, NSVariableStatusItemLength};
 use objc2_foundation::{NSObjectProtocol, NSString};
@@ -54,6 +55,16 @@ struct State {
     /// dropped.
     item: Option<Retained<NSStatusItem>>,
 }
+
+// SAFETY: the AppKit objects `State` holds belong to the main thread,
+// and the adapter is the only thing that ever touches them, always on
+// it: `MacTray::start` refuses any other thread, and `set_visible`
+// checks the marker before it makes the item. Moving the state to
+// another thread — which is all `Send` does — never uses the objects,
+// and the `Retained`s' own reference counting, which their drop
+// releases, is thread-safe, so the adapter's one discipline carries the
+// sharing the trait asks for.
+unsafe impl Send for State {}
 
 /// The menu items' target: one action method per menu item, each
 /// reporting its selection. The class carries no AppKit behavior of its
