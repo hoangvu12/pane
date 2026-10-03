@@ -1,6 +1,6 @@
-//! Pane's host settings: the appearance preferences and the Open Pane
-//! hotkey the application owns, held as one observable entity every window
-//! renders through.
+//! Pane's host settings: the appearance preferences, the Open Pane hotkey
+//! and the tray visibility the application owns, held as one observable
+//! entity every window renders through.
 //!
 //! [`init`] reads the record — `settings.json` in Pane's data folder, kept
 //! by [`pane_core::HostSettings`] under the house record rules — applies
@@ -30,7 +30,11 @@
 //! last successfully saved choice. The Open Pane hotkey follows the same
 //! rule with one more step: it is registered with the system *before* it
 //! is kept, and a write that fails also releases the registration the
-//! record does not hold, so what the record names is what works. A record
+//! record does not hold, so what the record names is what works. The
+//! tray or menu-bar visibility follows the same step: the native entry
+//! is shown or hidden *before* the choice is kept, so a change the
+//! system refuses is explained and nothing is saved, and a write that
+//! fails takes the entry back to what the record holds. A record
 //! that cannot be read is never replaced: the choice is refused, the
 //! reason is reported, and the source data stays on disk for diagnosis.
 //!
@@ -49,12 +53,14 @@
 //! explains that.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use gpui::{
     App, AppContext as _, Context, Entity, Global, Window, WindowAppearance,
     WindowBackgroundAppearance,
 };
 use pane_core::hotkeys::Shortcut;
+use pane_core::tray::Tray;
 use pane_core::{HostSettings, Launcher, MaterialPreference, ThemePreference};
 
 use crate::ui::Visuals;
@@ -184,6 +190,16 @@ pub(crate) struct Settings {
     /// launcher window has attached it (see [`attach_launcher`]); `None`
     /// until then, so the choice still persists without one to apply it.
     launcher: Option<Launcher>,
+    /// The adapter that shows and hides the native tray or menu-bar
+    /// entry, once one has been attached (see [`attach_tray`]); `None`
+    /// until then, so the choice still persists with nothing to apply
+    /// it to.
+    tray: Option<Arc<dyn Tray>>,
+    /// Why the native entry is not in the state the preference names, if
+    /// it is not — a show or hide the system refused. The standing
+    /// unavailability of a whole platform (Linux today) is read from the
+    /// adapter itself, not kept here.
+    tray_problem: Option<String>,
 }
 
 impl Settings {
@@ -217,6 +233,8 @@ impl Settings {
             saving: false,
             pending: false,
             launcher: None,
+            tray: None,
+            tray_problem: None,
         }
     }
 
@@ -287,6 +305,75 @@ impl Settings {
     /// shows and what a fresh start registers.
     pub(crate) fn open_pane(&self) -> Shortcut {
         self.chosen.open_pane.clone()
+    }
+
+    /// Whether the tray or menu-bar entry is shown: what the General
+    /// page's toggle shows and what a fresh start shows.
+    pub(crate) fn tray_visible(&self) -> bool {
+        self.chosen.tray_visible
+    }
+
+    /// Why the native tray or menu-bar entry is not in the state the
+    /// preference names, if it is not: the adapter's own explanation
+    /// where the platform has no entry at all, or the reason the last
+    /// show or hide was refused. What the page shows, so the preference
+    /// and the native state stay distinguishable.
+    pub(crate) fn tray_status(&self) -> Option<String> {
+        if let Some(unavailable) = self.tray.as_ref().and_then(|tray| tray.unavailable()) {
+            return Some(unavailable);
+        }
+        self.tray_problem.clone()
+    }
+
+    /// Chooses `visible` for the tray or menu-bar entry. It is applied
+    /// through the attached adapter *first*, and only then kept as the
+    /// choice and written to the record off the window's thread — so a
+    /// change the system refuses is explained (by the page) and nothing
+    /// is kept or saved, and a write that fails rolls the native entry
+    /// back to what the record holds (see [`Settings::written`]). An
+    /// unreadable record refuses the change, as it refuses every choice.
+    /// `Err` names why the change was refused.
+    pub(crate) fn set_tray_visible(
+        &mut self,
+        visible: bool,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let Some(tray) = self.tray.clone() else {
+            return Err("Pane has no tray or menu-bar entry to configure".into());
+        };
+        // The record's rule: never replace what cannot be read.
+        if let Some(problem) = &self.unreadable {
+            return Err(format!(
+                "Pane could not read the settings record, so the entry is not changed: {problem}"
+            ));
+        }
+        if let Err(error) = tray.set_visible(visible) {
+            self.tray_problem = Some(error.to_string());
+            cx.notify();
+            return Err(error.to_string());
+        }
+        self.tray_problem = None;
+        if self.chosen.tray_visible != visible {
+            self.chosen.tray_visible = visible;
+            cx.notify();
+            self.save(cx);
+        } else {
+            // The record already holds it: a retry that made it take
+            // effect needs no new record.
+            cx.notify();
+        }
+        Ok(())
+    }
+
+    /// Hides the native entry without touching the choice or the record:
+    /// the quit path, which removes Pane's own resources but changes no
+    /// preference. A failure is not reported — there is no window left
+    /// to report it to, and the system reclaims the entry with the
+    /// process anyway.
+    pub(crate) fn release_tray(&mut self) {
+        if let Some(tray) = &self.tray {
+            let _ = tray.set_visible(false);
+        }
     }
 
     /// Records `shortcut` as the Open Pane hotkey, the application-owned
@@ -427,6 +514,18 @@ impl Settings {
                         // surface here.
                         let _ = launcher.sync_open_pane(self.saved.open_pane.clone());
                     }
+                    // The tray entry follows the record back too, by the
+                    // same rule: what the record last held is what the
+                    // native state goes back to, so the preference the page
+                    // shows matches what Pane actually saved.
+                    if snapshot.tray_visible != self.saved.tray_visible
+                        && let Some(tray) = &self.tray
+                    {
+                        self.tray_problem = tray
+                            .set_visible(self.saved.tray_visible)
+                            .err()
+                            .map(|error| error.to_string());
+                    }
                     self.chosen = self.saved.clone();
                     self.changed(cx);
                 }
@@ -549,6 +648,41 @@ pub(crate) fn attach_launcher(launcher: &Launcher, cx: &mut App) {
     // the window's thread. The outcome is the binding's own state (the
     // problem), not a status the launcher surfaces.
     let _ = launcher.sync_open_pane(recorded);
+}
+
+/// Attaches the adapter that shows and hides the native tray or
+/// menu-bar entry, and applies the recorded visibility through it: the
+/// entry Pane starts with, whatever the record holds — shown, unless the
+/// user hid it. Called once, at startup, after [`init`], as the binary
+/// does; the tests attach theirs the same way. A choice that cannot be
+/// applied — a system where the entry cannot be used at all, or one the
+/// system refuses to show — stays the record's choice, with the reason
+/// kept as the entry's problem for the General page to explain, as the
+/// Open Pane hotkey's refusal is. No entry is made on a platform whose
+/// adapter says it has none: the choice stays recorded, and the page
+/// explains.
+pub fn attach_tray(tray: Arc<dyn pane_core::tray::Tray>, cx: &mut App) {
+    let settings = ensure(cx);
+    let recorded = settings.read(cx).tray_visible();
+    settings.update(cx, |settings, _| {
+        settings.tray = Some(tray);
+    });
+    // The entry the record names is shown now, on the window's thread the
+    // adapter is applied from; a refusal keeps the choice, with the reason
+    // as the entry's problem for the General page — the outcome is the
+    // entry's own state, not a status to surface here, as the Open Pane
+    // binding's startup application is not.
+    settings.update(cx, |settings, cx| {
+        let applied = settings
+            .tray
+            .as_ref()
+            .map(|tray| tray.set_visible(recorded))
+            .unwrap_or(Ok(()));
+        if let Err(error) = applied {
+            settings.tray_problem = Some(error.to_string());
+            cx.notify();
+        }
+    });
 }
 
 /// The wiring every Pane window takes around the host settings: its

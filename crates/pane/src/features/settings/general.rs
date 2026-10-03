@@ -1,13 +1,23 @@
 //! The General page: the Open Pane hotkey — the application-owned global
 //! binding that summons the launcher from any application, recorded here
-//! and applied through the platform's global-shortcut registration.
+//! and applied through the platform's global-shortcut registration — and
+//! the tray or menu-bar visibility, the preference that shows and hides
+//! Pane's native entry, applied through the platform's tray adapter.
 //!
 //! The binding is Pane's own, not any extension's: the record it is kept
 //! in is the host settings' (`settings.json`, whose rules the entity in
 //! `crate::settings` keeps), it is registered through the launcher this
 //! window shares with the launcher window, and it stays registered while
 //! every extension is disabled and while the extension runtime has
-//! failed — nothing of its lifecycle belongs to a package.
+//! failed — nothing of its lifecycle belongs to a package. The tray
+//! visibility is a host setting the same way: the entry is the platform's
+//! own — the one place outside Pane's windows whose menu opens the
+//! launcher, Settings and Quit — so hiding it leaves the launcher's
+//! footer menu, its Settings root result and the local Settings shortcut
+//! as the entry points they always were, and a launcher whose Open Pane
+//! binding failed keeps its window: nothing here can hide the only
+//! usable recovery window, because the entry is the only thing the
+//! preference ever hides.
 //!
 //! The recorder captures keys without executing them. While it listens,
 //! its row holds focus and its key context swallows the keys that would
@@ -31,13 +41,34 @@
 
 use gpui::{
     AnyElement, App, Context, Div, FocusHandle, Hsla, KeyBinding, KeyDownEvent, MouseDownEvent,
-    Role, Stateful, Window, actions, div, prelude::*, px,
+    Role, Stateful, Toggled, Window, actions, div, prelude::*, px,
 };
 use pane_core::hotkeys::Shortcut;
 
 use super::{Page, SettingsWindow};
 use crate::ui::icon::{Glyph, IconTone};
 use crate::ui::theme::Theme;
+
+/// The tray row's title, in the platform's own terms for the entry: the
+/// menu bar's status item on macOS, the notification area's tray icon
+/// elsewhere.
+fn tray_row_title() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Show in Menu Bar"
+    } else {
+        "Show in tray"
+    }
+}
+
+/// The tray row's subtitle, in the same terms: what the entry is and
+/// what its menu holds.
+fn tray_row_subtitle() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Pane's menu-bar item, with Open Pane, Settings and Quit Pane"
+    } else {
+        "Pane's item in the notification area, with Open Pane, Settings and Exit"
+    }
+}
 
 /// The recorder row's key context: while the recorder holds focus, its
 /// keys are the binding being recorded, not the window's navigation.
@@ -79,7 +110,8 @@ pub(crate) fn page() -> Page {
     }
 }
 
-/// The General page's state, held by the window as a field: the recorder.
+/// The General page's state, held by the window as a field: the recorder
+/// and the tray toggle's last refusal.
 pub(crate) struct State {
     /// Whether the recorder is listening for a new binding.
     recording: bool,
@@ -87,6 +119,11 @@ pub(crate) struct State {
     /// collision or the system's refusal. Shown as the page's status; the
     /// recorder keeps listening for another try.
     rejection: Option<String>,
+    /// Why the last tray or menu-bar toggle was refused, if it was: the
+    /// system's refusal, or the platform's lack of an entry. Shown as the
+    /// page's status; the entry's own state is explained beside the
+    /// toggle.
+    tray_refusal: Option<String>,
     /// The recorder row's focus, held while it listens (and a tab stop
     /// otherwise, so the keyboard reaches the row).
     focus: FocusHandle,
@@ -98,6 +135,7 @@ impl State {
         State {
             recording: false,
             rejection: None,
+            tray_refusal: None,
             focus: cx.focus_handle().tab_stop(true),
         }
     }
@@ -124,6 +162,11 @@ fn render(
     let problem = this.launcher.open_pane_problem();
     let rejection = this.general.rejection.clone();
     let resettable = choice != Shortcut::open_pane_default();
+    let (tray_visible, tray_status) = {
+        let settings = crate::settings::shared(cx).read(cx);
+        (settings.tray_visible(), settings.tray_status())
+    };
+    let tray_refusal = this.general.tray_refusal.clone();
 
     let page = div()
         .id("general")
@@ -146,6 +189,11 @@ fn render(
             vec![recorder_row(this, cx), reset_row(resettable, cx)],
             &theme,
         ))
+        .child(group(
+            "Application",
+            vec![tray_row(tray_visible, cx)],
+            &theme,
+        ))
         // The binding's state: why the chosen one is not registered — a
         // registration the system refused, or a system where global
         // hotkeys cannot be used at all, with the adapter's own
@@ -159,7 +207,20 @@ fn render(
                 &theme,
             ))
         })
-        // What the last attempt was refused with, if anything.
+        // The entry's state: why the native entry is not what the
+        // preference names — a system with no tray or menu-bar entry at
+        // all (Linux today, with the adapter's own guidance), or a show
+        // or hide the system refused. An unavailable entry is explained
+        // rather than represented as a successful toggle.
+        .when_some(tray_status, |page, status| {
+            page.child(note("tray-note", &status, theme.warning, &theme))
+        })
+        // What the last tray toggle was refused with, if anything.
+        .when_some(tray_refusal, |page, refusal| {
+            page.child(note("tray-refusal", &refusal, theme.danger, &theme))
+        })
+        // What the last attempt to record a binding was refused with, if
+        // anything.
         .when_some(rejection, |page, rejection| {
             page.child(note("general-refusal", &rejection, theme.danger, &theme))
         })
@@ -304,6 +365,74 @@ fn binding_chip(binding: &str, recording: bool, theme: &Theme) -> Stateful<Div> 
         } else {
             binding.to_owned()
         })
+}
+
+/// The tray or menu-bar visibility row: a checkbox that shows the
+/// preference in effect and, clicked, applies its other value through
+/// the host settings — which apply it to the native entry first and save
+/// only what took. The mark carries the row's state for the keyboard
+/// and assistive technology, as the appearance choices' radios do.
+fn tray_row(visible: bool, cx: &mut Context<SettingsWindow>) -> Stateful<Div> {
+    let theme = crate::settings::visuals(cx).theme;
+    let typography = &theme.typography;
+    let geometry = &theme.geometry;
+    let title = tray_row_title();
+    let subtitle = tray_row_subtitle();
+    div()
+        .flex()
+        .items_center()
+        .gap(geometry.row_gap)
+        .min_h(geometry.row_min_height)
+        .px(geometry.row_padding_x)
+        .rounded(geometry.row_radius)
+        .cursor_pointer()
+        .hover(|row| row.bg(theme.row_hover))
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .truncate()
+                        .text_size(typography.row_title_size)
+                        .font_weight(typography.medium)
+                        .text_color(theme.text_title)
+                        .child(title),
+                )
+                .child(
+                    div()
+                        .text_size(typography.row_subtitle_size)
+                        .text_color(theme.text_muted)
+                        .child(subtitle),
+                ),
+        )
+        .child(
+            // The checkbox's mark, as the appearance rows' radios are
+            // drawn: the state itself, not an interactive control beside
+            // the row — the row is the control.
+            div()
+                .flex_none()
+                .w(px(18.))
+                .text_size(typography.row_title_size)
+                .text_color(theme.text_title)
+                .child(if visible { "✓" } else { " " }),
+        )
+        .id("tray-visibility")
+        .debug_selector(|| "tray-visibility".into())
+        .role(Role::CheckBox)
+        .aria_label(title)
+        .aria_description(subtitle)
+        .aria_toggled(if visible {
+            Toggled::True
+        } else {
+            Toggled::False
+        })
+        .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+            let visible = crate::settings::shared(cx).read(cx).tray_visible();
+            this.apply_tray_visible(!visible, cx);
+        }))
 }
 
 /// The reset row: back to the provisional default, through the same
@@ -477,5 +606,21 @@ impl SettingsWindow {
                 cx.notify();
             }
         }
+    }
+
+    /// Applies `visible` as the tray or menu-bar visibility, as the
+    /// toggle's click does: through the host settings, which apply it to
+    /// the native entry first and only then keep and save the choice. A
+    /// refusal leaves the entry and the record as they were; the reason
+    /// is the page's status, and the entry's own state is explained
+    /// beside the toggle whether or not a change was attempted.
+    fn apply_tray_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        let applied = crate::settings::shared(cx)
+            .update(cx, |settings, cx| settings.set_tray_visible(visible, cx));
+        match applied {
+            Ok(()) => self.general.tray_refusal = None,
+            Err(reason) => self.general.tray_refusal = Some(reason),
+        }
+        cx.notify();
     }
 }

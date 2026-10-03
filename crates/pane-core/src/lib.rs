@@ -29,6 +29,7 @@ mod platform;
 mod runtime;
 mod search;
 mod threads;
+pub mod tray;
 mod zip;
 
 pub use defaults::{ArtifactSource, DefaultExtension};

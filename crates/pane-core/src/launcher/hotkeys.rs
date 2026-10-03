@@ -558,6 +558,28 @@ impl Launcher {
         applied
     }
 
+    /// Releases every hotkey registered with the system — the commands'
+    /// and the Open Pane binding — leaving nothing of Pane's registered.
+    /// This is the quit path: the tray's Quit item calls it before it
+    /// ends Pane, and the window-close quit path reaches it through the
+    /// quit hooks, so the registrations are removed by Pane itself
+    /// rather than left for the system to reclaim with the process. The
+    /// adapters also release their registrations when they are dropped,
+    /// but a quit that ends the process may never run a destructor.
+    pub fn release_hotkeys(&self) {
+        let mut state = self.lock();
+        let registered: Vec<Shortcut> = state.bindings.registered.values().cloned().collect();
+        for shortcut in registered {
+            self.hotkeys.unregister(&shortcut);
+        }
+        state.bindings.registered.clear();
+        if let Some(open) = state.open_pane.registered.take() {
+            self.hotkeys.unregister(&open);
+        }
+        // Nothing is registered, so nothing is explained as not.
+        state.open_pane.problem = None;
+    }
+
     /// Applies `shortcut` to the Open Pane binding's state and the system:
     /// validate, register the new one, then release the one it replaces.
     /// `Err` leaves the state exactly as it was.

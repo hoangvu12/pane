@@ -73,11 +73,11 @@ pub enum MaterialPreference {
     Solid,
 }
 
-/// The host settings as the user chose them: one theme preference, one
-/// material preference and the Open Pane hotkey, the whole of what the
-/// pages built so far offer. Later pages add fields beside these, with
-/// the same rules: missing fields default, and unknown values fail the
-/// record.
+/// The host settings as the user chose them: the theme and material
+/// preferences, the Open Pane hotkey and the tray visibility, the whole
+/// of what the pages built so far offer. Later pages add fields beside
+/// these, with the same rules: missing fields default, and unknown
+/// values fail the record.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostSettings {
     /// The theme the user chose for Pane's windows.
@@ -90,6 +90,13 @@ pub struct HostSettings {
     /// stays while extensions are disabled, and is applied through the
     /// same platform registration path the command hotkeys use.
     pub open_pane: Shortcut,
+    /// Whether Pane shows its tray or menu-bar entry — the item whose
+    /// menu opens the launcher, Settings and Quit, reachable while the
+    /// launcher is hidden. A provisional default, as the Open Pane
+    /// shortcut's is: the entry is shown, since it is the one place
+    /// those actions live outside Pane's own windows; the General page
+    /// can hide it, where the platform provides one.
+    pub tray_visible: bool,
 }
 
 impl Default for HostSettings {
@@ -98,6 +105,7 @@ impl Default for HostSettings {
             theme: ThemePreference::default(),
             material: MaterialPreference::default(),
             open_pane: Shortcut::open_pane_default(),
+            tray_visible: true,
         }
     }
 }
@@ -148,6 +156,7 @@ impl HostSettings {
             theme: recorded.theme,
             material: recorded.material,
             open_pane,
+            tray_visible: recorded.tray_visible,
         })
     }
 
@@ -162,6 +171,7 @@ impl HostSettings {
             theme: self.theme,
             material: self.material,
             open_pane: Some(self.open_pane.id()),
+            tray_visible: self.tray_visible,
         };
         let text = serde_json::to_string_pretty(&recorded).map_err(|error| error.to_string())?;
         let file = dir.join(FILE);
@@ -184,6 +194,16 @@ struct Recorded {
     /// shortcut fails the whole record.
     #[serde(default)]
     open_pane: Option<String>,
+    /// Whether the tray or menu-bar entry is shown; missing means shown,
+    /// the provisional default. A value that is not a boolean fails the
+    /// whole record, as unknown values do.
+    #[serde(default = "shown_by_default")]
+    tray_visible: bool,
+}
+
+/// The record's default for the tray visibility: shown.
+fn shown_by_default() -> bool {
+    true
 }
 
 #[cfg(test)]
@@ -206,6 +226,7 @@ mod tests {
                 theme: ThemePreference::Dark,
                 material: MaterialPreference::Glass,
                 open_pane: Shortcut::open_pane_default(),
+                tray_visible: true,
             }
         );
     }
@@ -229,9 +250,30 @@ mod tests {
             theme: ThemePreference::System,
             material: MaterialPreference::Solid,
             open_pane: Shortcut::parse("ctrl+alt+b").unwrap(),
+            tray_visible: false,
         };
         settings.save(dir.path()).unwrap();
         assert_eq!(HostSettings::open(dir.path()).unwrap(), settings);
+    }
+
+    #[test]
+    fn the_tray_visibility_defaults_to_shown_and_a_non_boolean_fails_the_record() {
+        // Missing: shown, the provisional default.
+        assert_eq!(
+            reading(r#"{ "version": 1, "tray": "missing" }"#).unwrap(),
+            HostSettings::default()
+        );
+        // Recorded plainly, and read back.
+        assert_eq!(
+            reading(r#"{ "version": 1, "tray_visible": false }"#).unwrap(),
+            HostSettings {
+                tray_visible: false,
+                ..HostSettings::default()
+            }
+        );
+        // A value that is not a boolean fails the whole record.
+        let problem = reading(r#"{ "version": 1, "tray_visible": "no" }"#);
+        assert!(problem.is_err(), "{problem:?}");
     }
 
     #[test]
@@ -309,6 +351,7 @@ mod tests {
             theme: ThemePreference::Light,
             material: MaterialPreference::Solid,
             open_pane: Shortcut::parse("ctrl+alt+b").unwrap(),
+            tray_visible: false,
         }
         .save(dir.path());
         assert!(failed.is_err(), "{failed:?}");
