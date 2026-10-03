@@ -485,17 +485,23 @@ pub(super) fn result_rows(
     cx: &mut Context<SettingsWindow>,
 ) -> Vec<gpui::AnyElement> {
     if this.search.results.is_empty() {
+        let message = format!(
+            "No settings match “{}”",
+            this.search.query.read(cx).as_str().trim()
+        );
         return vec![
             div()
                 .id("settings-search-empty")
                 .debug_selector(|| "settings-search-empty".into())
+                // A live status, so assistive technology announces that the
+                // query found nothing (plain text children are invisible to
+                // the tree without a role).
+                .role(Role::Status)
+                .aria_label(message.clone())
                 .px(theme.geometry.row_padding_x)
                 .text_size(theme.typography.row_kind_size)
                 .text_color(theme.text_muted)
-                .child(format!(
-                    "No settings match “{}”",
-                    this.search.query.read(cx).as_str().trim()
-                ))
+                .child(message)
                 .into_any_element(),
         ];
     }

@@ -552,7 +552,7 @@ fn registrations_that_appear_and_go_are_found_and_lost(cx: &mut TestAppContext) 
     );
     assert_eq!(
         focused_label(&mut sc).as_deref(),
-        Some("Appearance"),
+        Some("Extensions"),
         "the sidebar has the keyboard focus, its selected section read"
     );
 
