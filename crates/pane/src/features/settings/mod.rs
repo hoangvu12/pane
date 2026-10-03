@@ -16,6 +16,19 @@
 //! sidebar of sections with the search field above them ([`search`]),
 //! and the selected page's content.
 //!
+//! ## Section transitions
+//!
+//! Switching sections runs the shared motion policy's section arrival
+//! (see [`crate::ui::motion`]): the selected page's content fades in over
+//! a tiny shift from the side the sidebar moved, while the sidebar, the
+//! titlebar, the window bounds and the page's scroll viewport stay
+//! exactly where they were. The switch itself — the sidebar's selected
+//! row, the visible selection, the focus — is applied before the frame
+//! draws, and the page's own state (a filter, collapsed groups, an open
+//! edit) survives the round trip untouched; a rapid switch retargets
+//! from the presentation on screen. Nothing resizes the window, and
+//! reduced motion draws every switch settled.
+//!
 //! ## Page registration
 //!
 //! A page is one [`Page`]: its sidebar entry (title, description, icon),
@@ -50,6 +63,7 @@ use crate::ui::icon::{Glyph, IconTone};
 // draws; the import follows the same gate so it is not unused elsewhere.
 #[cfg(target_os = "windows")]
 use crate::ui::icon::glyph;
+use crate::ui::motion;
 use crate::ui::result_row::{RowContent, result_row};
 use crate::{FocusNext, FocusPrevious};
 
@@ -98,6 +112,19 @@ pub struct SettingsWindow {
     pages: Vec<Page>,
     /// The selected page, an index into `pages`.
     selected: usize,
+    /// The section arrival in flight, if any: the selected page's
+    /// content is fading in over a tiny directional shift. Presentation
+    /// only — see [`crate::ui::motion`].
+    section_arrival: Option<motion::Tween>,
+    /// The section the last frame drew, an index into `pages`, to tell a
+    /// real section change (which transitions) from a page's own content
+    /// update (which never animates).
+    drawn_section: Option<usize>,
+    /// The arriving content's presentation as the last frame drew it
+    /// (see [`SettingsWindow::section_arrival`]). Test and debug builds
+    /// only.
+    #[cfg(any(test, debug_assertions))]
+    arriving: Option<(f32, f32)>,
     /// The sidebar's focus, which is the window's keyboard focus.
     focus: FocusHandle,
     /// The About page's state, owned by its module.
@@ -162,6 +189,10 @@ impl SettingsWindow {
                 about::page(),
             ],
             selected: 0,
+            section_arrival: None,
+            drawn_section: None,
+            #[cfg(any(test, debug_assertions))]
+            arriving: None,
             focus,
             about: about::State::default(),
             general: general::State::new(cx),
@@ -191,6 +222,18 @@ impl SettingsWindow {
 
     fn focus_next(&mut self, _: &FocusNext, window: &mut Window, cx: &mut Context<Self>) {
         window.focus_next(cx);
+    }
+
+    /// Test support: the section arrival the last frame drew, as the
+    /// arriving page content's (offset from rest in px — below rest when
+    /// the sidebar moved down to the section, above when it moved up —
+    /// and its opacity); `None` when the frame drew the page settled,
+    /// which is also all reduced motion ever reports. Test and debug
+    /// builds only.
+    #[cfg(any(test, debug_assertions))]
+    #[doc(hidden)]
+    pub fn section_arrival(&self) -> Option<(f32, f32)> {
+        self.arriving
     }
 
     fn focus_previous(&mut self, _: &FocusPrevious, window: &mut Window, cx: &mut Context<Self>) {
@@ -287,6 +330,16 @@ impl SettingsWindow {
     /// registers — cleared here, filled by the page's render — so a
     /// search reveal only ever scrolls a control on the page now
     /// showing.
+    ///
+    /// The section arrival: the content that changes between sections —
+    /// the page — fades in over a tiny directional shift, from the side
+    /// the sidebar moved, while everything around it (the sidebar, the
+    /// titlebar, the scroll viewport itself) stays exactly where it was.
+    /// The section is already switched — the sidebar's selected row and
+    /// the window's focus were updated before this frame draws — and the
+    /// page's own state (a filter, collapsed groups, an open edit) is
+    /// the page's, untouched by the paint. Query and content updates
+    /// never animate. See `crate::ui::motion` for the whole policy.
     fn render_page(
         &mut self,
         theme: &ui::theme::Theme,
@@ -294,8 +347,39 @@ impl SettingsWindow {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         self.search.clear_anchors();
+        let now = cx.background_executor().now();
+        // A section change transitions from the side the sidebar moved:
+        // down the list, the page arrives from below; up, from above. A
+        // rapid switch retargets from the interrupted presentation, and
+        // the first frame a window draws is settled.
+        let moving_down = self.drawn_section.is_some_and(|last| last < self.selected);
+        let from = if moving_down {
+            motion::VIEW_SHIFT
+        } else {
+            -motion::VIEW_SHIFT
+        };
+        let changed = self.drawn_section.is_some_and(|last| last != self.selected);
+        let arriving = motion::advance_arrival(
+            &mut self.section_arrival,
+            from,
+            changed,
+            cx.reduce_motion(),
+            now,
+        );
+        self.drawn_section = Some(self.selected);
+        #[cfg(any(test, debug_assertions))]
+        {
+            self.arriving = arriving;
+        }
         let render = self.pages[self.selected].render;
         let content = render(self, window, cx);
+        // While the arriving page is still in flight — or one of its
+        // groups is disclosing (the page's render asked for its own
+        // frames) — keep frames coming; the frame that completes them
+        // requests none, so a settled window is idle.
+        if arriving.is_some() {
+            window.request_animation_frame();
+        }
         div()
             .id("settings-page")
             .debug_selector(|| "settings-page".into())
@@ -308,7 +392,7 @@ impl SettingsWindow {
             .py(px(20.))
             .text_size(theme.typography.row_subtitle_size)
             .text_color(theme.text_body)
-            .child(content)
+            .child(motion::arriving_page(content, arriving))
     }
 }
 

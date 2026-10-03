@@ -22,6 +22,17 @@
 //! expands or collapses it) and each editable alias cell are tab stops.
 //! The editor's Enter and Escape are bound in its own key context, so
 //! they reach the editor and nothing else.
+//!
+//! Groups disclose on the shared motion policy (see `crate::ui::motion`):
+//! one tween per group drives both the header chevron's rotation and the
+//! commands' arrival, so the two coordinate on one timeline and retarget
+//! together when the user reverses mid-flight. Expanding mounts the rows
+//! at once — the real layout, hit targets and all — and fades the whole
+//! block in; collapsing unmounts them at once, never drawing the
+//! departing rows fading out, while the chevron turns back. Focus inside
+//! a collapsing group moves to its controlling header, and an open
+//! editor in it closes without committing. Typing in the filter is a
+//! content update: rows appear and vanish with no transition at all.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -35,7 +46,8 @@ use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged
 use pane_core::{AliasOutcome, Launcher, ShortcutCatalog, ShortcutCommand, ShortcutGroup};
 
 use super::{Page, SettingsWindow, search};
-use crate::ui::icon::{Glyph, IconTone, glyph};
+use crate::ui::icon::{Glyph, IconTone, glyph, glyph_rotated};
+use crate::ui::motion;
 use crate::ui::theme::Theme;
 
 /// The page's sidebar title, its identity in the sidebar and the tests'
@@ -143,6 +155,25 @@ pub(crate) struct State {
     /// The groups the user has collapsed, by the group's stable key (see
     /// [`group_key`]). Groups start expanded.
     collapsed: HashSet<String>,
+    /// Each group's disclosure tween, by the group's stable key: the
+    /// group's look (0 collapsed, 1 expanded) while a toggle's
+    /// transition is in flight, `None` when settled. The chevron's
+    /// rotation and the commands' arrival both follow it, so the group
+    /// coordinates on one timeline (see `crate::ui::motion`).
+    disclosures: HashMap<String, Option<motion::Tween>>,
+    /// Each group's disclosure as the last frame drew it, collapsed or
+    /// expanded, by key — only a flip here with the filter unchanged is
+    /// a real toggle, which transitions; a filter change or a group's
+    /// first draw is a content update, which never animates.
+    drawn_collapsed: HashMap<String, bool>,
+    /// Whether the page is drawing with no filter, as the last frame drew
+    /// it: the same comparison's other half.
+    drawn_blank: bool,
+    /// Whether any group's disclosure was still in flight as the frame
+    /// being drawn found it, so the page asks for the one animation
+    /// frame that continues them; the frame that settles them all asks
+    /// for none, so a settled page is idle.
+    disclosing: bool,
     /// The command whose alias is being edited inline, if any.
     editing: Option<Editing>,
     /// Each editable command's alias cell focus, created when the command
@@ -158,6 +189,16 @@ pub(crate) struct State {
     drawn: Option<ShortcutCatalog>,
     /// What the last alias change came to, as the page's status line.
     status: Option<StatusLine>,
+    /// Each group's disclosure state as the last frame drew it, for
+    /// tests (see [`SettingsWindow::group_disclosure`]). Test and debug
+    /// builds only.
+    #[cfg(any(test, debug_assertions))]
+    drawn_looks: HashMap<String, Option<f32>>,
+    /// Each group's arriving commands as the last frame drew them — the
+    /// block's (offset from rest in px, opacity) — for tests (see
+    /// [`SettingsWindow::group_arrival`]). Test and debug builds only.
+    #[cfg(any(test, debug_assertions))]
+    drawn_arrivals: HashMap<String, Option<(f32, f32)>>,
 }
 
 /// The inline alias editor for one command, in the place of its cell.
@@ -196,11 +237,19 @@ impl State {
             query,
             _query_changes,
             collapsed: HashSet::new(),
+            disclosures: HashMap::new(),
+            drawn_collapsed: HashMap::new(),
+            drawn_blank: true,
+            disclosing: false,
             editing: None,
             alias_cells: HashMap::new(),
             group_cells: HashMap::new(),
             drawn: Some(launcher.shortcut_catalog()),
             status: None,
+            #[cfg(any(test, debug_assertions))]
+            drawn_looks: HashMap::new(),
+            #[cfg(any(test, debug_assertions))]
+            drawn_arrivals: HashMap::new(),
         }
     }
 }
@@ -220,11 +269,78 @@ impl SettingsWindow {
             .map(|editing| editing.input.clone())
     }
 
+    /// Test support: the disclosure state of the group with `key` as the
+    /// last frame drew it: its look — 0 collapsed, 1 expanded — while the
+    /// disclosure is in flight, which the chevron's angle and the
+    /// commands' arrival both follow; `None` when the frame drew it
+    /// settled. Test and debug builds only.
+    #[cfg(any(test, debug_assertions))]
+    #[doc(hidden)]
+    pub fn group_disclosure(&self, key: &str) -> Option<f32> {
+        self.shortcuts.drawn_looks.get(key).copied().flatten()
+    }
+
+    /// Test support: the group with `key`'s arriving commands as the
+    /// last frame drew them — the whole block's (offset from rest in px,
+    /// opacity) while the disclosure is in flight; `None` when the frame
+    /// drew them settled, which is also all reduced motion ever draws.
+    /// Test and debug builds only.
+    #[cfg(any(test, debug_assertions))]
+    #[doc(hidden)]
+    pub fn group_arrival(&self, key: &str) -> Option<(f32, f32)> {
+        self.shortcuts.drawn_arrivals.get(key).copied().flatten()
+    }
+
     /// Expands or collapses the group with `key`, from its header's keys
-    /// or click.
-    fn shortcuts_toggle_group(&mut self, key: &str, cx: &mut Context<Self>) {
-        if !self.shortcuts.collapsed.remove(key) {
+    /// or click — `commands` are the ids of the commands the group holds,
+    /// as the last frame drew them.
+    ///
+    /// Collapsing unmounts the group's rows at once — the departing
+    /// content is never drawn fading out, so it can expose no hit targets
+    /// or active accessibility nodes — which means anything inside them
+    /// that holds the focus must give it up first: an open inline editor
+    /// for one of the group's commands closes without committing, as
+    /// Escape closes it, and the focus — the editor's field or a row's
+    /// alias cell — moves to the header that controls the group, which
+    /// stays. Expanding needs nothing: the rows mount and arrive on the
+    /// disclosure's timeline (see [`group_element`]).
+    fn shortcuts_toggle_group(
+        &mut self,
+        key: &str,
+        commands: &[String],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let collapsing = if !self.shortcuts.collapsed.remove(key) {
             self.shortcuts.collapsed.insert(key.to_owned());
+            true
+        } else {
+            false
+        };
+        if collapsing {
+            // The inline editor for a command in the group, if one is
+            // open, closes without committing (as Escape closes it):
+            // its field unmounts with the rows and cannot keep the
+            // focus or take further input.
+            let editor = self
+                .shortcuts
+                .editing
+                .take_if(|editing| commands.contains(&editing.command));
+            // Focus inside the collapsing group — the open editor's
+            // field, or a row's alias cell — moves to the header that
+            // controls the group. Focus elsewhere stays where it is.
+            let inside = editor
+                .as_ref()
+                .is_some_and(|editing| editing.input.focus_handle(cx).is_focused(window))
+                || commands.iter().any(|id| {
+                    self.shortcuts
+                        .alias_cells
+                        .get(id)
+                        .is_some_and(|cell| cell.is_focused(window))
+                });
+            if inside && let Some(header) = self.shortcuts.group_cells.get(key) {
+                window.focus(header, cx);
+            }
         }
         cx.notify();
     }
@@ -368,7 +484,7 @@ impl SettingsWindow {
 /// and their commands, and the status line.
 fn render(
     this: &mut SettingsWindow,
-    _window: &mut Window,
+    window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     // The theme the host settings resolve to now: the page redraws with
@@ -379,6 +495,17 @@ fn render(
     let catalog = this.launcher.shortcut_catalog();
     this.shortcuts.drawn = Some(catalog.clone());
     let query = this.shortcuts.query.read(cx).as_str().to_owned();
+    // A filter change is a content update — rows appear and vanish as
+    // the filter narrows or clears, and no disclosure transitions for
+    // it — so the page notes the blank state this frame draws, for the
+    // groups to compare against.
+    let blank = query.trim().is_empty();
+    let filtering = this.shortcuts.drawn_blank != blank;
+    this.shortcuts.drawn_blank = blank;
+    // Whether any group's disclosure is in flight starts false each
+    // frame; the groups that draw in flight set it, and the page asks
+    // for the one frame that continues them below.
+    this.shortcuts.disclosing = false;
     let editing = this
         .shortcuts
         .editing
@@ -387,8 +514,14 @@ fn render(
     let groups: Vec<AnyElement> = catalog
         .groups
         .iter()
-        .filter_map(|group| group_element(this, group, &query, &editing, &theme, cx))
+        .filter_map(|group| group_element(this, group, &query, &editing, filtering, &theme, cx))
         .collect();
+    // While any group's disclosure is still in flight, keep frames
+    // coming; the frame that completes them requests none, so a settled
+    // page is idle.
+    if this.shortcuts.disclosing {
+        window.request_animation_frame();
+    }
     div()
         .id("shortcuts")
         .debug_selector(|| "shortcuts".into())
@@ -531,11 +664,16 @@ fn columns_header(hotkeys_unavailable: Option<&str>, theme: &Theme) -> Stateful<
 /// One group: the header that expands and collapses it, then its commands
 /// as the filter and the expanded state leave them. `None` when a filter
 /// is on and nothing in the group matches it.
+///
+/// `filtering` says the filter changed since the last drawn frame, which
+/// makes whatever rows appear or vanish here a content update — those
+/// never animate.
 fn group_element(
     this: &mut SettingsWindow,
     group: &ShortcutGroup,
     query: &str,
     editing: &Option<String>,
+    filtering: bool,
     theme: &Theme,
     cx: &mut Context<SettingsWindow>,
 ) -> Option<AnyElement> {
@@ -557,14 +695,57 @@ fn group_element(
     if !blank && shown.is_empty() {
         return None;
     }
+    // The group's disclosure: its look — 0 collapsed, 1 expanded — while
+    // a toggle's transition is in flight. Only a real toggle of this
+    // group starts or retargets it (the drawn state flipped with the
+    // filter unchanged); a filter change and the group's first draw are
+    // content updates, which never animate. The look is the one number
+    // the chevron's rotation and the commands' arrival below derive
+    // from, so the group coordinates on one timeline and retargets
+    // together; reduced motion settles it at once. See
+    // `crate::ui::motion` for the whole policy.
+    let drawn = this
+        .shortcuts
+        .drawn_collapsed
+        .insert(key.clone(), collapsed);
+    let toggled = !filtering && drawn == Some(!collapsed);
+    let look = motion::advance_disclosure(
+        this.shortcuts.disclosures.entry(key.clone()).or_default(),
+        !collapsed,
+        toggled,
+        cx.reduce_motion(),
+        cx.background_executor().now(),
+    );
+    let in_flight = look.is_some();
+    if in_flight {
+        this.shortcuts.disclosing = true;
+    }
+    #[cfg(any(test, debug_assertions))]
+    {
+        this.shortcuts.drawn_looks.insert(key.clone(), look);
+    }
     let handle = this
         .shortcuts
         .group_cells
         .entry(key.clone())
         .or_insert_with(|| cx.focus_handle().tab_stop(true))
         .clone();
-    let for_keys = key.clone();
-    let for_click = key.clone();
+    // The group's commands, for the header's toggle to act on — the ids
+    // as this frame draws them.
+    let commands: Vec<String> = group
+        .commands
+        .iter()
+        .map(|command| command.id.clone())
+        .collect();
+    let for_keys = (key.clone(), commands.clone());
+    let for_click = (key.clone(), commands);
+    // The chevron: one glyph, rotated from pointing right (collapsed, at
+    // 0) to pointing down (expanded, at a quarter turn) by the look's
+    // angle — so its turn runs on the disclosure's own timeline and
+    // retargets with it, never snapping ahead or behind the content.
+    // Paint only: the element's layout and hit target are the unrotated
+    // box's.
+    let angle = std::f32::consts::FRAC_PI_2 * look.unwrap_or(if collapsed { 0. } else { 1. });
     let header = div()
         .id(key.clone())
         .debug_selector(|| format!("shortcut-group-{key}"))
@@ -573,11 +754,11 @@ fn group_element(
         .role(Role::Button)
         .aria_label(group_label(group))
         .aria_expanded(!collapsed)
-        .on_action(cx.listener(move |this, _: &ToggleGroup, _, cx| {
-            this.shortcuts_toggle_group(&for_keys, cx);
+        .on_action(cx.listener(move |this, _: &ToggleGroup, window, cx| {
+            this.shortcuts_toggle_group(&for_keys.0, &for_keys.1, window, cx);
         }))
-        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-            this.shortcuts_toggle_group(&for_click, cx);
+        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+            this.shortcuts_toggle_group(&for_click.0, &for_click.1, window, cx);
         }))
         .flex()
         .items_center()
@@ -588,14 +769,11 @@ fn group_element(
         .cursor_pointer()
         .hover(|header| header.bg(theme.row_hover))
         .focus(|header| focus_ring(header, theme.focus_ring))
-        .child(glyph(
-            if collapsed {
-                Glyph::ChevronRight
-            } else {
-                Glyph::ChevronDown
-            },
+        .child(glyph_rotated(
+            Glyph::ChevronRight,
             px(14.),
             theme.text_muted,
+            gpui::radians(angle),
         ))
         .child(
             div()
@@ -633,6 +811,10 @@ fn group_element(
                 }),
         );
     let rows: Vec<AnyElement> = if blank && collapsed {
+        // Collapsed: the rows are unmounted — the departing content is
+        // never drawn fading out, so it can expose no hit targets or
+        // active accessibility nodes. The chevron's turn above is the
+        // collapse's transition.
         Vec::new()
     } else {
         shown
@@ -640,13 +822,44 @@ fn group_element(
             .map(|command| row_element(this, command, editing, theme, cx))
             .collect()
     };
-    // The commands the group shows, in one container of their own: the
-    // seam #87's group transitions animate later — nothing here animates.
+    // The commands the group shows, in one container of their own, which
+    // arrives with the disclosure while it is in flight: the whole block
+    // of rows fades in over the tiny shift from below — one arrival for
+    // the group, never a stagger of rows — mounted and interactive from
+    // the first frame, because the state has already flipped. The offset
+    // is a relative `top` inset, applied after layout, so the real
+    // layout (the page's actual height, the scroll range, the rows'
+    // hit targets) is the expanded one from the first frame too, and
+    // nothing resizes the window. Collapsing, or settled, draws plain.
+    let (offset, opacity) = look
+        .filter(|_| !collapsed)
+        .map(|look| {
+            (
+                motion::VIEW_SHIFT * (1. - look),
+                motion::VIEW_OPACITY_FLOOR + (1. - motion::VIEW_OPACITY_FLOOR) * look,
+            )
+        })
+        .unwrap_or((0., 1.));
+    // The commands' arrival this frame draws, for the tests (see
+    // [`SettingsWindow::group_arrival`]): the block's (offset, opacity)
+    // while the disclosure is in flight, `None` when settled. Test and
+    // debug builds only.
+    #[cfg(any(test, debug_assertions))]
+    {
+        this.shortcuts.drawn_arrivals.insert(
+            key.clone(),
+            look.filter(|_| !collapsed).map(|_| (offset, opacity)),
+        );
+    }
     let commands = div()
         .id(format!("commands-{key}"))
+        .debug_selector(|| format!("commands-{key}"))
         .flex()
         .flex_col()
         .gap(px(2.))
+        .relative()
+        .top(px(offset))
+        .when(opacity < 1., |commands| commands.opacity(opacity))
         .children(rows);
     Some(
         div()
