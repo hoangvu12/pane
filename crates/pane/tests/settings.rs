@@ -921,7 +921,11 @@ fn uninstalling_from_the_page_offers_the_saved_data_choice_and_keeps_it(
     assert!(keeps_settings(&settings, &key), "the saved data is kept");
     // Nothing is installed; the retained data is listed for the same
     // identity, with its own row and confirmation, as in the launcher.
-    assert_eq!(cx.read_entity(&launcher, |window, _| window.launcher().packages()).len(), 0);
+    assert!(
+        cx.read_entity(&launcher, |window, _| window.launcher().packages())
+            .is_empty(),
+        "nothing is installed"
+    );
     assert!(
         settings_cx
             .debug_bounds("extension-row-Delete retained data of Settings sample")

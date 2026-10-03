@@ -29,9 +29,7 @@
 //! [`crate::app::LauncherWindow::sync_screen`]). After any operation,
 //! including a failed one, the page shows what the launcher holds.
 
-use gpui::{
-    AnyElement, Context, Div, Role, SharedString, Stateful, Window, div, prelude::*, px,
-};
+use gpui::{AnyElement, Context, Div, Role, SharedString, Stateful, Window, div, prelude::*, px};
 use pane_core::{Screen, Status};
 
 use super::{Page, SettingsWindow};
@@ -122,11 +120,7 @@ fn render(
     // The list the page shows: the launcher's own rows, either read
     // without entering the flow or live from the flow the page entered —
     // the confirmation rows among them, answered here.
-    let list = if flow {
-        live
-    } else {
-        this.launcher.extension_list()
-    };
+    let list = if flow { live } else { this.launcher.extension_list() };
     let leaving_details = details_screen(&list.screen);
     let title = list.title.clone();
     let details = list.details().to_vec();
