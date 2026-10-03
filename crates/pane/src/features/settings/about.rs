@@ -192,7 +192,9 @@ fn render(
             Action::None,
         ),
     };
-    // The update section's row, from the action the state offers.
+    // The update section's row, from the action the state offers. Each
+    // row's subtitle is also its accessible description, as root search's
+    // rows' are, so what a row explains is read, not only painted.
     let update_row = match action {
         Action::None => None,
         Action::Check => Some(
@@ -213,6 +215,7 @@ fn render(
             .debug_selector(|| "about-check-update".into())
             .role(Role::Button)
             .aria_label("Check for updates")
+            .aria_description("Read the artifact source's index for a newer version of Pane")
             .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
                 this.about.started = Some(Started::Check);
                 run(this.launcher.check_application_update_again(), cx);
@@ -243,6 +246,10 @@ fn render(
                 .debug_selector(|| "about-update".into())
                 .role(Role::Button)
                 .aria_label(row_title)
+                .aria_description(
+                    "Your extensions and settings are kept; the new version is used the next \
+                     time Pane starts",
+                )
                 .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
                     this.about.started = Some(Started::Install);
                     run(this.launcher.install_application_update(), cx);
@@ -282,6 +289,7 @@ fn render(
                         .debug_selector(|| "about-version".into())
                         .role(Role::Label)
                         .aria_label(format!("Pane {}", crate::APP_VERSION))
+                        .aria_description("The version of this Pane build")
                         .text_size(typography.row_title_size)
                         .font_weight(typography.medium)
                         .text_color(theme.text_title)
@@ -329,6 +337,7 @@ fn render(
             .debug_selector(|| "about-documentation".into())
             .role(Role::Link)
             .aria_label("Documentation")
+            .aria_description("Open Pane's repository documentation")
             .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
                 // A system handler may take a moment to start, so the
                 // opening happens off the window's thread; what it
@@ -388,6 +397,7 @@ fn render(
             .debug_selector(|| "about-diagnostics".into())
             .role(Role::Button)
             .aria_label("Copy diagnostics")
+            .aria_description("Copy what Pane knows of this installation")
             .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
                 // The report is what the launcher holds as of this click,
                 // not as of the frame that drew the row.
