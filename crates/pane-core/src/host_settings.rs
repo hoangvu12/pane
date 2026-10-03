@@ -226,10 +226,7 @@ mod tests {
         );
         // A record without the field is one an older Pane wrote: the
         // choice defaults to off, not an error.
-        assert_eq!(
-            reading(r#"{ "version": 1 }"#).unwrap().launch_at_login,
-            false
-        );
+        assert!(!reading(r#"{ "version": 1 }"#).unwrap().launch_at_login);
     }
 
     #[test]
