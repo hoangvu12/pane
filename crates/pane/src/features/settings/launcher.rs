@@ -123,10 +123,6 @@ impl State {
                 "Display",
                 "The display the launcher opens on",
                 "launcher-monitor",
-                // The choices are few but the control is the searchable
-                // one: the query and its keywords are the real consumer
-                // the searchable select needs (see the ticket).
-                true,
                 // The model, read live every render: the choices as the
                 // platform answers them, the committed choice as the
                 // host settings hold it, and the visuals the window

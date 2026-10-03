@@ -1,7 +1,10 @@
 //! Pane's searchable select: the choice control for a setting whose
 //! options a user may want to search rather than scan — a trigger row
 //! showing the committed choice, opening an L2 popover that holds a
-//! local search field and the choices as rows.
+//! local search field and the choices as rows. The search is local and
+//! optional to *use*: a blank query lists every choice in the
+//! consumer's order, and typing narrows it — no list is too short for
+//! the control, and no search is forced on one.
 //!
 //! Interaction reference: the Raycast dropdown and the shadcn combobox
 //! as *behavior* references only (`docs/research/searchable-settings-
@@ -198,10 +201,6 @@ pub(crate) struct Select {
     /// `{debug}-popup`, a choice's row `{debug}-{id}`, the field
     /// `{debug}-query` and the no-results line `{debug}-empty`.
     debug: SharedString,
-    /// Whether the popup offers its local search field. A short,
-    /// easily scanned list can do without it; the choices then show
-    /// unfiltered.
-    searchable: bool,
     /// The consumer's live model, read each render.
     model: Rc<dyn Fn(&App) -> Model>,
     /// The consumer's commit path: the id of the choice the user
@@ -235,15 +234,12 @@ impl Select {
     ///
     /// `name` and `description` are the trigger row's title and
     /// subtitle; `debug` is the prefix of the control's debug
-    /// selectors; `searchable` is whether the popup offers its local
-    /// search field. `window` is the window the control lives in — the
+    /// selectors. `window` is the window the control lives in — the
     /// popup closes when it loses activation.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         name: impl Into<SharedString>,
         description: impl Into<SharedString>,
         debug: impl Into<SharedString>,
-        searchable: bool,
         model: Rc<dyn Fn(&App) -> Model>,
         on_commit: Rc<dyn Fn(&str, &mut Window, &mut App)>,
         window: &mut Window,
@@ -272,7 +268,6 @@ impl Select {
             name: name.into(),
             description: description.into(),
             debug: debug.into(),
-            searchable,
             model,
             on_commit,
             open: false,
@@ -789,9 +784,7 @@ impl Select {
             .flex()
             .flex_col()
             .p(px(6.))
-            .when(self.searchable, |content| {
-                content.child(self.query_field(model, cx))
-            })
+            .child(self.query_field(model, cx))
             .child(list);
         // The elevation shadow sits on the wrapper, which GPUI paints
         // behind the surface's translucent fill — the same treatment the
