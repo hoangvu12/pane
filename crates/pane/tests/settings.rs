@@ -180,19 +180,6 @@ fn paints_panel(cx: &mut VisualTestContext, colors: &[gpui::Background]) -> bool
     })
 }
 
-/// How many of the window `cx` drives' panels painted one of the panel
-/// `colors` in its last frame: one for the window's own panel, another
-/// for the Appearance page's live preview.
-fn panels_painting(cx: &mut VisualTestContext, colors: &[gpui::Background]) -> usize {
-    cx.update(|window, _| {
-        window
-            .painted_quads()
-            .iter()
-            .filter(|quad| colors.contains(&quad.background))
-            .count()
-    })
-}
-
 /// Whether the Appearance page's RadioButton named `label` is the choice
 /// in effect, as assistive technology reads it.
 fn chosen(cx: &mut VisualTestContext, label: &str) -> bool {
