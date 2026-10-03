@@ -215,7 +215,7 @@ fn open_extensions(
     cx.simulate_keystrokes(settings_shortcut());
     cx.run_until_parked();
     let settings = settings_windows(cx).pop().expect("Settings opened");
-    let settings_cx = settings_context(&settings, cx);
+    let mut settings_cx = settings_context(&settings, cx);
     settings_cx.simulate_resize(gpui::size(px(740.), px(1100.)));
     settings_cx.run_until_parked();
     let extensions = settings_cx
