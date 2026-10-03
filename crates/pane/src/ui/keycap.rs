@@ -77,8 +77,7 @@ pub(crate) fn binding_keycap(binding: &Binding, theme: &Theme) -> Stateful<Div> 
     // A binding of the plain Enter key keeps the Enter glyph; anything
     // else — another key, or a modifier with it — is named in text.
     let (control, alt, _shift, platform, function) = binding.modifiers();
-    let plain_enter =
-        !control && !alt && !platform && !function && binding.key() == "enter";
+    let plain_enter = !control && !alt && !platform && !function && binding.key() == "enter";
     if plain_enter {
         return keycap(Key::Enter, theme);
     }

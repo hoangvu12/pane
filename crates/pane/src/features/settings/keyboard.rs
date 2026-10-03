@@ -281,28 +281,22 @@ fn recorder_row(
         .on_action(cx.listener(move |this, _: &ActivateRecorder, window, cx| {
             this.keyboard_activate_recorder(action, window, cx);
         }))
-        .on_action(cx.listener(
-            move |this, _: &CancelRecording, window, cx| {
-                this.keyboard_cancel_recording(window, cx);
-            },
-        ))
-        .on_key_down(cx.listener(
-            move |this, event: &KeyDownEvent, window, cx| {
-                this.keyboard_key_down(event, window, cx);
-            },
-        ))
+        .on_action(cx.listener(move |this, _: &CancelRecording, window, cx| {
+            this.keyboard_cancel_recording(window, cx);
+        }))
+        .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+            this.keyboard_key_down(event, window, cx);
+        }))
         // A mouse-down anywhere outside the row while it listens cancels
         // the recording and is consumed, as the footer menu's popup does:
         // the click underneath does not act, and the recorder gives up
         // the keys.
-        .on_mouse_down_out(cx.listener(
-            move |this, _: &MouseDownEvent, window, cx| {
-                if this.keyboard.recording.is_some() {
-                    this.keyboard_cancel_recording(window, cx);
-                    cx.stop_propagation();
-                }
-            },
-        ))
+        .on_mouse_down_out(cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+            if this.keyboard.recording.is_some() {
+                this.keyboard_cancel_recording(window, cx);
+                cx.stop_propagation();
+            }
+        }))
         .on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
             this.keyboard_activate_recorder(action, window, cx);
         }))
@@ -342,7 +336,11 @@ fn binding_chip(binding: &Binding, recording: bool, theme: &Theme) -> Stateful<D
 /// pointer-only, back through the same checks a recording takes, so a
 /// reset that would land on another action's binding is refused with the
 /// same explanation beside the row.
-fn reset_row(action: KeyboardAction, default: &Binding, cx: &mut Context<SettingsWindow>) -> Stateful<Div> {
+fn reset_row(
+    action: KeyboardAction,
+    default: &Binding,
+    cx: &mut Context<SettingsWindow>,
+) -> Stateful<Div> {
     let theme = crate::settings::visuals(cx).theme;
     let typography = &theme.typography;
     let geometry = &theme.geometry;
@@ -474,8 +472,9 @@ impl SettingsWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let applied = crate::settings::shared(cx)
-            .update(cx, |settings, cx| settings.set_keyboard(action, binding, cx));
+        let applied = crate::settings::shared(cx).update(cx, |settings, cx| {
+            settings.set_keyboard(action, binding, cx)
+        });
         match applied {
             Ok(()) => {
                 // The change landed: the recorder is done, and focus

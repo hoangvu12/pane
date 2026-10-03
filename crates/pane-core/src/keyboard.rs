@@ -31,7 +31,7 @@ use std::collections::BTreeMap;
 const PLATFORM_MODIFIER: &str = "cmd";
 
 /// The modifiers a binding can hold, in the order their ids are written.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 struct Modifiers {
     control: bool,
     alt: bool,
@@ -439,19 +439,22 @@ impl Default for Keyboard {
     }
 }
 
+/// The macOS spelling of a default binding, or the one everywhere
+/// else: the platform's own modifier where macOS uses Command.
+fn platform(macos: &'static str, other: &'static str) -> &'static str {
+    if cfg!(target_os = "macos") {
+        macos
+    } else {
+        other
+    }
+}
+
 impl Keyboard {
     /// The provisional defaults: Up/Down for selection, Enter for
     /// invocation, Escape for back, Cmd+Esc on macOS / Shift+Esc
     /// elsewhere for return to root, Cmd+W / Ctrl+W for dismissing the
     /// launcher, and Cmd+, / Ctrl+, for Settings.
     pub fn default_for_this_system() -> Keyboard {
-        let platform = |macos: &str, other: &str| {
-            if cfg!(target_os = "macos") {
-                macos
-            } else {
-                other
-            }
-        };
         let bindings = [
             ("up", KeyboardAction::PreviousResult),
             ("down", KeyboardAction::NextResult),
@@ -461,10 +464,7 @@ impl Keyboard {
                 platform("cmd-escape", "shift-escape"),
                 KeyboardAction::ReturnToRoot,
             ),
-            (
-                platform("cmd-w", "ctrl-w"),
-                KeyboardAction::DismissLauncher,
-            ),
+            (platform("cmd-w", "ctrl-w"), KeyboardAction::DismissLauncher),
             (platform("cmd-,", "ctrl-,"), KeyboardAction::OpenSettings),
         ]
         .into_iter()
@@ -503,21 +503,19 @@ impl Keyboard {
                 format!("its keyboard names “{id}”, which is not one of the actions")
             })?;
             let binding = Binding::parse(binding).map_err(|problem| {
+                format!("its binding for {} is not one: {problem}", action.title())
+            })?;
+            keyboard.check(action, &binding).map_err(|problem| {
                 format!(
-                    "its binding for {} is not one: {problem}",
+                    "its binding for {} cannot be used: {problem}",
                     action.title()
                 )
             })?;
-            keyboard
-                .check(action, &binding)
-                .map_err(|problem| {
-                    format!("its binding for {} cannot be used: {problem}", action.title())
-                })?;
             keyboard.bindings.insert(action, binding);
         }
-        keyboard
-            .check_collisions()
-            .map_err(|problem| format!("its keyboard has two actions on one shortcut: {problem}"))?;
+        keyboard.check_collisions().map_err(|problem| {
+            format!("its keyboard has two actions on one shortcut: {problem}")
+        })?;
         Ok(keyboard)
     }
 
@@ -644,9 +642,7 @@ mod tests {
         assert_eq!(defaults.binding(KeyboardAction::PreviousResult).id(), "up");
         assert_eq!(defaults.binding(KeyboardAction::NextResult).id(), "down");
         assert_eq!(
-            defaults
-                .binding(KeyboardAction::InvokeSelectedAction)
-                .id(),
+            defaults.binding(KeyboardAction::InvokeSelectedAction).id(),
             "enter"
         );
         assert_eq!(defaults.binding(KeyboardAction::Back).id(), "escape");
@@ -749,10 +745,7 @@ mod tests {
         let mut fields = keyboard.recorded();
         fields.insert("next-result".into(), "ctrl-b".into());
         let problem = Keyboard::parse(&fields).unwrap_err();
-        assert!(
-            problem.contains("two actions on one shortcut"),
-            "{problem}"
-        );
+        assert!(problem.contains("two actions on one shortcut"), "{problem}");
     }
 
     #[test]

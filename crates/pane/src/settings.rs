@@ -55,7 +55,9 @@ use gpui::{
     WindowBackgroundAppearance,
 };
 use pane_core::hotkeys::Shortcut;
-use pane_core::{Binding, HostSettings, Keyboard, KeyboardAction, Launcher, MaterialPreference, ThemePreference};
+use pane_core::{
+    Binding, HostSettings, Keyboard, KeyboardAction, Launcher, MaterialPreference, ThemePreference,
+};
 
 use crate::ui::Visuals;
 use crate::ui::material::{Material, MaterialMode};

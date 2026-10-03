@@ -154,9 +154,8 @@ impl HostSettings {
         };
         let keyboard = match recorded.keyboard {
             None => Keyboard::default_for_this_system(),
-            Some(fields) => Keyboard::parse(&fields).map_err(|problem| {
-                format!("{} is invalid: {problem}", file.display())
-            })?,
+            Some(fields) => Keyboard::parse(&fields)
+                .map_err(|problem| format!("{} is invalid: {problem}", file.display()))?,
         };
         Ok(HostSettings {
             theme: recorded.theme,
@@ -270,10 +269,7 @@ mod tests {
             reading(r#"{ "version": 1, "keys": "missing" }"#).unwrap(),
             HostSettings::default()
         );
-        let settings = reading(
-            r#"{ "version": 1, "keyboard": { "back": "ctrl-b" } }"#,
-        )
-        .unwrap();
+        let settings = reading(r#"{ "version": 1, "keyboard": { "back": "ctrl-b" } }"#).unwrap();
         assert_eq!(
             settings.keyboard.binding(KeyboardAction::Back).id(),
             "ctrl-b"

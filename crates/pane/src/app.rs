@@ -14,9 +14,9 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, BoxShadow, ClipboardItem, Context, Div, EntityInputHandler, FocusHandle, Hsla, KeyDownEvent,
-    PathPromptOptions, Pixels, Role, ScrollHandle, SharedString, Size, Stateful, Window,
-    WindowControlArea, div, prelude::*, px, relative,
+    App, BoxShadow, ClipboardItem, Context, Div, EntityInputHandler, FocusHandle, Hsla,
+    KeyDownEvent, PathPromptOptions, Pixels, Role, ScrollHandle, SharedString, Size, Stateful,
+    Window, WindowControlArea, div, prelude::*, px, relative,
 };
 use pane_core::changes::Changes;
 use pane_core::hotkeys::Shortcut;

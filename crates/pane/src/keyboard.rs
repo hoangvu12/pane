@@ -76,9 +76,7 @@ fn launcher_binding(id: &str, action: KeyboardAction) -> KeyBinding {
         KeyboardAction::InvokeSelectedAction => KeyBinding::new(id, Confirm, Some(KEY_CONTEXT)),
         KeyboardAction::Back => KeyBinding::new(id, Back, Some(KEY_CONTEXT)),
         KeyboardAction::ReturnToRoot => KeyBinding::new(id, ReturnToRoot, Some(KEY_CONTEXT)),
-        KeyboardAction::DismissLauncher => {
-            KeyBinding::new(id, DismissLauncher, Some(KEY_CONTEXT))
-        }
+        KeyboardAction::DismissLauncher => KeyBinding::new(id, DismissLauncher, Some(KEY_CONTEXT)),
         KeyboardAction::OpenSettings => KeyBinding::new(id, OpenSettings, Some(KEY_CONTEXT)),
     }
 }
