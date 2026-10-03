@@ -76,10 +76,11 @@ pub enum MaterialPreference {
 }
 
 /// The host settings as the user chose them: one theme preference, one
-/// material preference, the Open Pane hotkey and the in-app navigation
-/// bindings, the whole of what the pages built so far offer. Later pages
-/// add fields beside these, with the same rules: missing fields default,
-/// and unknown values fail the record.
+/// material preference, the Open Pane hotkey, the launch-at-login choice
+/// and the in-app navigation bindings, the whole of what the Settings
+/// pages built so far offer. Later pages add fields beside these, with
+/// the same rules: missing fields default, and unknown values fail the
+/// record.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostSettings {
     /// The theme the user chose for Pane's windows.
@@ -92,6 +93,12 @@ pub struct HostSettings {
     /// stays while extensions are disabled, and is applied through the
     /// same platform registration path the command hotkeys use.
     pub open_pane: Shortcut,
+    /// Whether the user chose Pane to start at login. A preference, not a
+    /// registration: whether Pane actually starts is the platform's own
+    /// login integration, which the window layer reconciles with this
+    /// choice (see `crate::autostart`) rather than trusting either side
+    /// alone.
+    pub launch_at_login: bool,
     /// The in-app navigation bindings the Keyboard page rebinds: one
     /// binding per action of the bounded set, from the same defaults when
     /// the record holds none. These keys belong to Pane's own windows, not
@@ -105,6 +112,7 @@ impl Default for HostSettings {
             theme: ThemePreference::default(),
             material: MaterialPreference::default(),
             open_pane: Shortcut::open_pane_default(),
+            launch_at_login: false,
             keyboard: Keyboard::default_for_this_system(),
         }
     }
@@ -161,6 +169,7 @@ impl HostSettings {
             theme: recorded.theme,
             material: recorded.material,
             open_pane,
+            launch_at_login: recorded.launch_at_login,
             keyboard,
         })
     }
@@ -176,6 +185,7 @@ impl HostSettings {
             theme: self.theme,
             material: self.material,
             open_pane: Some(self.open_pane.id()),
+            launch_at_login: self.launch_at_login,
             keyboard: Some(self.keyboard.recorded()),
         };
         let text = serde_json::to_string_pretty(&recorded).map_err(|error| error.to_string())?;
@@ -188,6 +198,7 @@ impl HostSettings {
 /// The settings as the record holds them. Every field is written every
 /// time; missing fields read as the defaults.
 #[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct Recorded {
     version: u64,
     #[serde(default)]
@@ -196,9 +207,13 @@ struct Recorded {
     material: MaterialPreference,
     /// The Open Pane hotkey as its id, such as `ctrl+alt+space`; missing
     /// means this system's provisional default. A value that is not a
-    /// shortcut fails the whole record.
+    /// shortcut fails the whole record. Named `open_pane` as it shipped,
+    /// beside the record's camelCase fields.
     #[serde(default)]
+    #[serde(rename = "open_pane")]
     open_pane: Option<String>,
+    #[serde(default)]
+    launch_at_login: bool,
     /// The in-app navigation bindings, each action's id mapped to its
     /// binding's id, as [`Keyboard::recorded`] writes them; missing means
     /// this system's provisional defaults. An unknown action, a binding
@@ -255,6 +270,7 @@ mod tests {
             theme: ThemePreference::System,
             material: MaterialPreference::Solid,
             open_pane: Shortcut::parse("ctrl+alt+b").unwrap(),
+            launch_at_login: true,
             keyboard,
         };
         settings.save(dir.path()).unwrap();
@@ -318,6 +334,27 @@ mod tests {
     }
 
     #[test]
+    fn the_launch_at_login_choice_is_written_and_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings = HostSettings {
+            launch_at_login: true,
+            ..HostSettings::default()
+        };
+        settings.save(dir.path()).unwrap();
+        assert_eq!(HostSettings::open(dir.path()).unwrap(), settings);
+        // The field is named as the house records name their fields, so
+        // the choice survives a Pane that knows it by name alone.
+        let text = std::fs::read_to_string(dir.path().join(FILE)).unwrap();
+        assert!(
+            text.contains("\"launchAtLogin\": true"),
+            "the record is {text}"
+        );
+        // A record without the field is one an older Pane wrote: the
+        // choice defaults to off, not an error.
+        assert!(!reading(r#"{ "version": 1 }"#).unwrap().launch_at_login);
+    }
+
+    #[test]
     fn an_unparseable_record_is_a_problem() {
         let problem = reading("{ not a record");
         assert!(problem.is_err(), "{problem:?}");
@@ -349,6 +386,7 @@ mod tests {
             r#"{ "version": 1, "theme": "sepia" }"#,
             r#"{ "version": 1, "material": "frost" }"#,
             r#"{ "version": 1, "theme": 3 }"#,
+            r#"{ "version": 1, "launchAtLogin": "yes" }"#,
         ] {
             assert!(reading(text).is_err(), "{text} half-loads");
         }
@@ -366,6 +404,7 @@ mod tests {
             theme: ThemePreference::Light,
             material: MaterialPreference::Solid,
             open_pane: Shortcut::parse("ctrl+alt+b").unwrap(),
+            launch_at_login: true,
             keyboard: Keyboard::default_for_this_system(),
         }
         .save(dir.path());

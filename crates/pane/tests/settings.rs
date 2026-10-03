@@ -4,8 +4,11 @@
 //! GPUI's test platform, as `window.rs` drives the launcher's. The
 //! Appearance page is driven the same way — through the page's own
 //! controls — with what the windows paint checked on their quads, so a
-//! choice is observed at the same boundary a user sees it; the Extensions
-//! page manages extensions through the launcher's own operations.
+//! choice is observed at the same boundary a user sees it. The General
+//! page's launch-at-login toggle is driven the same way, through a fake
+//! login system the tests script — no test ever touches the real login
+//! configuration of the machine running it; and the Extensions page
+//! manages extensions through the launcher's own operations.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -16,6 +19,7 @@ use gpui::{
     AnyWindowHandle, Modifiers, TestAppContext, VisualTestContext, WindowHandle, prelude::*, px,
 };
 use pane::{APP_VERSION, LauncherWindow, SettingsWindow};
+use pane_core::autostart::{Autostart, Registration};
 use pane_core::develop::{Build, BuildJob, BuildOutcome, Builder};
 use pane_core::{Launcher, PackageIdentity, Runtime, Screen, Status};
 use tempfile::TempDir;
@@ -54,6 +58,53 @@ struct RefusingLinks;
 impl pane_core::LinkOpener for RefusingLinks {
     fn open(&self, _url: &str) -> Result<(), String> {
         Err("no program to open web links is installed".into())
+    }
+}
+
+/// A fake login system, standing where the pane binary puts the
+/// platform's own: the registration its fake platform holds, and the
+/// refusals its changes are scripted to answer with. The tests drive the
+/// General page's launch-at-login toggle through it, so nothing here
+/// touches the login configuration of the machine running the test.
+#[derive(Default)]
+struct FakeLogin {
+    /// The registration the fake platform holds now.
+    registration: std::sync::Mutex<Registration>,
+    /// The refusals the next enable and the next disable answer with,
+    /// when a test scripts failures; each fires once.
+    refusals: std::sync::Mutex<(Option<String>, Option<String>)>,
+}
+
+impl FakeLogin {
+    /// The registration the fake platform holds.
+    fn registration(&self) -> Registration {
+        *self.registration.lock().unwrap()
+    }
+}
+
+impl Autostart for FakeLogin {
+    fn unavailable(&self) -> Option<String> {
+        None
+    }
+
+    fn registered(&self) -> Result<Registration, String> {
+        Ok(self.registration())
+    }
+
+    fn enable(&self) -> Result<Registration, String> {
+        if let Some(why) = self.refusals.lock().unwrap().0.take() {
+            return Err(why);
+        }
+        *self.registration.lock().unwrap() = Registration::Enabled;
+        Ok(Registration::Enabled)
+    }
+
+    fn disable(&self) -> Result<Registration, String> {
+        if let Some(why) = self.refusals.lock().unwrap().1.take() {
+            return Err(why);
+        }
+        *self.registration.lock().unwrap() = Registration::Disabled;
+        Ok(Registration::Disabled)
     }
 }
 
@@ -383,6 +434,16 @@ fn open_settings(cx: &mut VisualTestContext) -> VisualTestContext {
     settings_cx
 }
 
+/// Opens the Settings window over the launcher `cx` drives, on the
+/// General page it first shows, as its own window context: the page the
+/// Open Pane hotkey's recorder and the launch-at-login switch live on.
+fn general_page(cx: &mut VisualTestContext) -> VisualTestContext {
+    cx.simulate_keystrokes(settings_shortcut());
+    cx.run_until_parked();
+    let settings = settings_windows(cx).pop().expect("Settings opened");
+    settings_context(&settings, cx)
+}
+
 /// Runs the window until the settings record exists in `data`: the save
 /// the Appearance page started is written off the window's thread.
 fn until_record(cx: &mut VisualTestContext, data: &std::path::Path) {
@@ -491,10 +552,19 @@ fn hiding_the_launcher_leaves_settings_open_and_usable(cx: &mut TestAppContext) 
     cx.run_until_parked();
     assert_eq!(settings_windows(cx), vec![settings], "Settings stayed");
 
-    // And it still answers: the Appearance page — one sidebar section
-    // from the General page the window opens on — is drawn.
+    // And it still answers: the page the window first shows — General,
+    // the first registered section — is drawn, with both of the choices
+    // that live on it: the Open Pane hotkey's recorder and the
+    // launch-at-login switch.
     let mut settings_cx = settings_context(&settings, cx);
     settings_cx.run_until_parked();
+    assert!(settings_cx.debug_bounds("open-pane-recorder").is_some());
+    assert!(
+        settings_cx
+            .debug_bounds("general-launch-at-login")
+            .is_some()
+    );
+    // The Appearance page — one sidebar section away — answers too.
     let appearance = settings_cx
         .debug_bounds("section-Appearance")
         .expect("the Appearance section");
@@ -531,17 +601,10 @@ fn keys_in_settings_and_the_launcher_stay_in_their_windows(cx: &mut TestAppConte
     cx.run_until_parked();
     let settings = settings_windows(cx).pop().expect("Settings opened");
     let mut settings_cx = settings_context(&settings, cx);
-    // The Appearance page — one sidebar section from the General page
-    // the window opens on.
-    let appearance = settings_cx
-        .debug_bounds("section-Appearance")
-        .expect("the Appearance section");
-    settings_cx.simulate_click(appearance.center(), Modifiers::none());
-    settings_cx.run_until_parked();
 
     // Typing in the launcher narrows its results and touches nothing in
-    // Settings, which shows its own page (the Appearance page it is on
-    // here).
+    // Settings, which shows its own page (the General page it opened
+    // on here).
     cx.simulate_input("rust");
     settle(&launcher, cx);
     let view = cx.read_entity(&launcher, |window, _| window.launcher().view());
@@ -549,9 +612,9 @@ fn keys_in_settings_and_the_launcher_stay_in_their_windows(cx: &mut TestAppConte
     settings_cx.run_until_parked();
     assert!(
         settings_cx
-            .debug_bounds("appearance-theme-System")
+            .debug_bounds("general-launch-at-login")
             .is_some(),
-        "the Appearance page is unchanged"
+        "the General page is unchanged"
     );
 
     // Keys in Settings — the sidebar's navigation, over the sections
@@ -570,23 +633,40 @@ fn keys_in_settings_and_the_launcher_stay_in_their_windows(cx: &mut TestAppConte
         view.screen
     );
 
-    // And what Settings shows is still its own page: the Appearance page
-    // it is on (the two keys end where they began), whose content is
-    // drawn — not the launcher's.
+    // And what Settings shows is still its own page: the General page
+    // it opened on (the two keys end where they began), whose content is
+    // drawn — not the launcher's — with both of the choices that live on
+    // it.
     assert!(
-        settings_cx.debug_bounds("appearance").is_some(),
+        settings_cx.debug_bounds("general").is_some(),
         "the page is drawn"
     );
     assert!(
+        settings_cx.debug_bounds("open-pane-recorder").is_some(),
+        "the hotkey's row is drawn"
+    );
+    assert!(
         settings_cx
-            .debug_bounds("appearance-theme-System")
+            .debug_bounds("general-launch-at-login")
             .is_some(),
-        "the Appearance page is unchanged"
+        "the General page is unchanged"
     );
     assert_eq!(
         settings_cx.debug_bounds("section-About").map(|_| "About"),
         Some("About"),
         "the About section is still offered in the sidebar"
+    );
+
+    // The Appearance page — one sidebar section away — answers too, and
+    // walking to it reaches no launcher key either.
+    let appearance = settings_cx
+        .debug_bounds("section-Appearance")
+        .expect("the Appearance section");
+    settings_cx.simulate_click(appearance.center(), Modifiers::none());
+    settings_cx.run_until_parked();
+    assert!(
+        settings_cx.debug_bounds("appearance").is_some(),
+        "the Appearance page is drawn"
     );
 
     // The launcher's keys, in turn, never reach Settings.
@@ -749,7 +829,7 @@ fn the_about_page_shows_the_real_version_and_opens_the_documentation(cx: &mut Te
     cx.run_until_parked();
     let settings = settings_windows(cx).pop().expect("Settings opened");
     let mut settings_cx = settings_context(&settings, cx);
-    // The window opens on the Appearance page; the About page is reached
+    // The window opens on the General page; the About page is reached
     // through the sidebar.
     settings_cx.run_until_parked();
     let about = settings_cx
@@ -801,8 +881,8 @@ fn a_refused_documentation_link_is_explained_on_the_page(cx: &mut TestAppContext
     let settings = settings_windows(cx).pop().expect("Settings opened");
     let mut settings_cx = settings_context(&settings, cx);
     settings_cx.run_until_parked();
-    // The About page is not the page the window opens on; the sidebar
-    // reaches it.
+    // The About page is a few sidebar sections away from the one the window
+    // opens on.
     let about = settings_cx
         .debug_bounds("section-About")
         .expect("the About section");
@@ -1260,9 +1340,8 @@ fn the_settings_window_keeps_its_layout_at_small_sizes(cx: &mut TestAppContext) 
     let settings = settings_windows(cx).pop().expect("Settings opened");
     let mut settings_cx = settings_context(&settings, cx);
     settings_cx.run_until_parked();
-    // The Appearance page — one sidebar section from the General page the
-    // window opens on — is the demanding one: its choices and its live
-    // preview.
+    // The window opens on the General page; the Appearance page — the
+    // demanding one — is one sidebar click away.
     let appearance = settings_cx
         .debug_bounds("section-Appearance")
         .expect("the Appearance section");
@@ -1777,4 +1856,456 @@ fn a_development_override_wins_is_indicated_and_is_never_saved(cx: &mut TestAppC
         fresh.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
     fresh_cx.run_until_parked();
     assert!(paints_panel(fresh_cx, &dark_panel()));
+}
+
+// The General page's launch-at-login toggle, driven through the fake
+// login system above: the user-visible toggle, repeat operations, the
+// restart that reconciles the saved choice with the registration the
+// platform reports, and the failure paths — a registration the platform
+// refuses, a save that fails, an integration that cannot manage the
+// registration here at all, a record that cannot be read.
+
+/// Whether the launch-at-login switch reads as on, as assistive
+/// technology sees it — the saved preference the switch carries.
+fn login_chosen(cx: &mut VisualTestContext) -> bool {
+    let (_, json) = accessibility(cx);
+    let tree: serde_json::Value = serde_json::from_str(&json).unwrap();
+    tree["nodes"].as_object().unwrap().values().any(|node| {
+        let aria = &node["aria"];
+        aria["role"] == "Switch"
+            && aria["label"] == "Launch Pane at login"
+            && aria["toggled"] == "True"
+    })
+}
+
+/// The settings record's text, as it stands in `data`.
+fn record_of(data: &std::path::Path) -> String {
+    std::fs::read_to_string(data.join("settings.json")).expect("the settings record")
+}
+
+/// Runs the window until the settings record in `data` holds `text`: the
+/// save the choice started is written off the window's thread, so what is
+/// waited for is the record the platform's change was kept with — a
+/// record not yet written reads as the empty string, which holds nothing.
+fn until_record_holds(cx: &mut VisualTestContext, data: &std::path::Path, text: &str) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        cx.run_until_parked();
+        let record = std::fs::read_to_string(data.join("settings.json")).unwrap_or_default();
+        if record.contains(text) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for the record to hold {text:?}"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[gpui::test]
+fn the_launch_at_login_toggle_takes_the_choice_and_saves_it(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let login = Arc::new(FakeLogin::default());
+    cx.update(|cx| {
+        pane::settings::init_with_login(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            login.clone(),
+            cx,
+        )
+    });
+    let (_launcher, _links, cx) = open_launcher(cx);
+
+    // The window opens on the General page, whose switch carries the
+    // saved preference: off, the record's default.
+    cx.simulate_keystrokes(settings_shortcut());
+    cx.run_until_parked();
+    let settings = settings_windows(cx).pop().expect("Settings opened");
+    let mut settings_cx = settings_context(&settings, cx);
+    settings_cx.run_until_parked();
+    assert!(
+        settings_cx
+            .debug_bounds("general-launch-at-login")
+            .is_some(),
+        "the switch is drawn"
+    );
+    assert!(!login_chosen(&mut settings_cx), "the choice is off");
+    assert_eq!(login.registration(), Registration::Disabled);
+
+    // Taking the choice: the fake platform's registration changes, the
+    // switch follows, and the record keeps it.
+    choose(&mut settings_cx, "general-launch-at-login");
+    cx.run_until_parked();
+    until_record_holds(&mut settings_cx, data.path(), "\"launchAtLogin\": true");
+    assert!(login_chosen(&mut settings_cx), "the choice is taken");
+    assert_eq!(login.registration(), Registration::Enabled);
+    assert!(record_of(data.path()).contains("\"launchAtLogin\": true"));
+
+    // Taking it back, and taking it again: repeated changes replace the
+    // one registration rather than piling up, and each lands in the
+    // record.
+    choose(&mut settings_cx, "general-launch-at-login");
+    cx.run_until_parked();
+    until_record_holds(&mut settings_cx, data.path(), "\"launchAtLogin\": false");
+    assert!(!login_chosen(&mut settings_cx));
+    assert_eq!(login.registration(), Registration::Disabled);
+    assert!(record_of(data.path()).contains("\"launchAtLogin\": false"));
+    choose(&mut settings_cx, "general-launch-at-login");
+    cx.run_until_parked();
+    until_record_holds(&mut settings_cx, data.path(), "\"launchAtLogin\": true");
+    assert!(login_chosen(&mut settings_cx));
+    assert_eq!(login.registration(), Registration::Enabled);
+    assert!(record_of(data.path()).contains("\"launchAtLogin\": true"));
+}
+
+#[gpui::test]
+fn a_fresh_application_reconciles_a_registration_the_platform_lost(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let first = Arc::new(FakeLogin::default());
+    cx.update(|cx| {
+        pane::settings::init_with_login(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            first.clone(),
+            cx,
+        )
+    });
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let mut settings_cx = general_page(cx);
+    choose(&mut settings_cx, "general-launch-at-login");
+    cx.run_until_parked();
+    until_record(&mut settings_cx, data.path());
+    assert_eq!(
+        first.registration(),
+        Registration::Enabled,
+        "the first Pane registered"
+    );
+
+    // The platform's registration is gone — an OS reset, a login item
+    // removed by hand — while the record still holds the user's choice.
+    // A fresh application over the same data folder repairs the
+    // registration to what the user chose: the preference is neither
+    // silently dropped nor silently changed.
+    let lost = Arc::new(FakeLogin::default());
+    let mut fresh = cx.cx.new_app();
+    fresh.update(pane::bind_keys);
+    fresh.update(|cx| {
+        pane::settings::init_with_login(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            lost.clone(),
+            cx,
+        )
+    });
+    let launcher = Launcher::new(Runtime::start(), Vec::new());
+    let (_window, fresh_cx) =
+        fresh.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
+    fresh_cx.run_until_parked();
+    assert_eq!(
+        lost.registration(),
+        Registration::Enabled,
+        "the missing registration was repaired at start"
+    );
+
+    // And the page it reports is the one the user chose, unchanged: the
+    // preference still on, the registration back, nothing to explain
+    // about the choice or the registration — the one note Linux carries
+    // with the choice on is the freedesktop convention's limit, which
+    // says nothing about this repair.
+    fresh_cx.simulate_keystrokes(settings_shortcut());
+    fresh_cx.run_until_parked();
+    let settings = settings_windows(fresh_cx).pop().expect("Settings opened");
+    let mut fresh_settings = settings_context(&settings, fresh_cx);
+    fresh_settings.run_until_parked();
+    assert!(login_chosen(&mut fresh_settings));
+    if cfg!(target_os = "linux") {
+        // The convention's caveat, not a problem with the repair.
+        assert!(
+            fresh_settings.debug_bounds("general-login-note").is_some(),
+            "the freedesktop convention's limit is explained"
+        );
+    } else {
+        assert!(
+            fresh_settings.debug_bounds("general-login-note").is_none(),
+            "nothing needs explaining: the choice and the registration agree"
+        );
+    }
+}
+
+#[gpui::test]
+fn a_stale_registration_is_removed_without_enabling_the_choice(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    // A record whose user left the choice off...
+    let record = r#"{ "version": 1, "launchAtLogin": false }"#;
+    std::fs::write(data.path().join("settings.json"), record).unwrap();
+    // ...beside a platform registration that says otherwise: stale, not
+    // the user's.
+    let stale = Arc::new(FakeLogin::default());
+    *stale.registration.lock().unwrap() = Registration::Enabled;
+    cx.update(|cx| {
+        pane::settings::init_with_login(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            stale.clone(),
+            cx,
+        )
+    });
+    let (_launcher, _links, cx) = open_launcher(cx);
+
+    // At start the registration is reconciled to the record: removed,
+    // not obeyed — a user-disabled preference is never silently enabled
+    // by what the platform happens to hold.
+    assert_eq!(
+        stale.registration(),
+        Registration::Disabled,
+        "the stale registration was removed"
+    );
+    assert_eq!(record_of(data.path()), record);
+
+    // The page shows the preference the record holds: off.
+    cx.simulate_keystrokes(settings_shortcut());
+    cx.run_until_parked();
+    let settings = settings_windows(cx).pop().expect("Settings opened");
+    let mut settings_cx = settings_context(&settings, cx);
+    settings_cx.run_until_parked();
+    assert!(!login_chosen(&mut settings_cx));
+}
+
+#[gpui::test]
+fn a_failed_registration_is_explained_and_nothing_is_saved(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let record = r#"{ "version": 1 }"#;
+    std::fs::write(data.path().join("settings.json"), record).unwrap();
+    let login = Arc::new(FakeLogin::default());
+    *login.refusals.lock().unwrap() = (
+        Some("the system refused it: another program owns the startup list".into()),
+        None,
+    );
+    cx.update(|cx| {
+        pane::settings::init_with_login(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            login.clone(),
+            cx,
+        )
+    });
+    let (_launcher, _links, cx) = open_launcher(cx);
+
+    cx.simulate_keystrokes(settings_shortcut());
+    cx.run_until_parked();
+    let settings = settings_windows(cx).pop().expect("Settings opened");
+    let mut settings_cx = settings_context(&settings, cx);
+    settings_cx.run_until_parked();
+
+    // The switch is offered and off; taking it fails, and the failure is
+    // the page's note — not a switch that pretends it succeeded.
+    choose(&mut settings_cx, "general-launch-at-login");
+    cx.run_until_parked();
+    settings_cx.run_until_parked();
+    assert!(!login_chosen(&mut settings_cx), "the choice was not taken");
+    assert!(
+        settings_cx.debug_bounds("general-login-note").is_some(),
+        "the refusal is drawn"
+    );
+    let (_, json) = accessibility(&mut settings_cx);
+    assert!(
+        json.contains("the system refused it"),
+        "the refusal is explained, {json}"
+    );
+
+    // The preference, the registration and the record all stand: a
+    // failed registration never masquerades as a saved choice.
+    assert_eq!(login.registration(), Registration::Disabled);
+    assert_eq!(record_of(data.path()), record);
+}
+
+#[gpui::test]
+fn a_failed_save_rolls_the_registration_back_to_what_was_saved(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let login = Arc::new(FakeLogin::default());
+    cx.update(|cx| {
+        pane::settings::init_with_login(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            login.clone(),
+            cx,
+        )
+    });
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let mut settings_cx = general_page(cx);
+
+    // A choice that saves, so the record holds it.
+    choose(&mut settings_cx, "general-launch-at-login");
+    cx.run_until_parked();
+    until_record(&mut settings_cx, data.path());
+    assert!(login.registration().registered());
+
+    // Break the record's replacement: a folder where the record belongs,
+    // so the atomic write cannot rename over it.
+    std::fs::remove_file(data.path().join("settings.json")).unwrap();
+    std::fs::create_dir(data.path().join("settings.json")).unwrap();
+
+    // Turning the choice off: the platform's registration is released,
+    // but the choice cannot be kept — so the registration is put back to
+    // what the record last held, and the failure is the page's status.
+    choose(&mut settings_cx, "general-launch-at-login");
+    cx.run_until_parked();
+    settings_cx.run_until_parked();
+    assert!(
+        settings_cx.debug_bounds("general-status").is_some(),
+        "the failure is drawn"
+    );
+    let (_, json) = accessibility(&mut settings_cx);
+    assert!(
+        json.contains("Pane could not save your choice"),
+        "the failure is explained, {json}"
+    );
+    assert!(
+        login_chosen(&mut settings_cx),
+        "the switch shows what was saved: on"
+    );
+    assert!(
+        login.registration().registered(),
+        "the registration was rolled back to what was saved"
+    );
+}
+
+#[gpui::test]
+fn an_unavailable_login_integration_is_explained_and_not_offered(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    cx.update(|cx| {
+        pane::settings::init_with_login(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            Arc::new(pane_core::autostart::Unavailable(
+                "Not available in this development build: Pane registers itself at login only as \
+                 the installed application"
+                    .into(),
+            )),
+            cx,
+        )
+    });
+    let (_launcher, _links, cx) = open_launcher(cx);
+
+    cx.simulate_keystrokes(settings_shortcut());
+    cx.run_until_parked();
+    let settings = settings_windows(cx).pop().expect("Settings opened");
+    let mut settings_cx = settings_context(&settings, cx);
+    settings_cx.run_until_parked();
+
+    // The switch is there and says off, but the reason it cannot be
+    // taken is the page's note: the integration's own explanation, not a
+    // toggle that pretends to work.
+    assert!(
+        settings_cx
+            .debug_bounds("general-launch-at-login")
+            .is_some(),
+        "the switch is drawn"
+    );
+    assert!(!login_chosen(&mut settings_cx));
+    assert!(
+        settings_cx.debug_bounds("general-login-note").is_some(),
+        "the limitation is drawn"
+    );
+    let (_, json) = accessibility(&mut settings_cx);
+    assert!(
+        json.contains("Not available in this development build"),
+        "the limitation is explained, {json}"
+    );
+
+    // Taking the choice anyway changes nothing: the platform was never
+    // asked, and nothing was saved.
+    choose(&mut settings_cx, "general-launch-at-login");
+    cx.run_until_parked();
+    settings_cx.run_until_parked();
+    assert!(!login_chosen(&mut settings_cx));
+    assert!(!data.path().join("settings.json").exists());
+}
+
+#[gpui::test]
+fn a_registration_awaiting_approval_is_explained(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    std::fs::write(
+        data.path().join("settings.json"),
+        r#"{ "version": 1, "launchAtLogin": true }"#,
+    )
+    .unwrap();
+    // The platform holds the registration, but its approval is still
+    // the user's to give, as macOS's login items are.
+    let login = Arc::new(FakeLogin::default());
+    *login.registration.lock().unwrap() = Registration::NeedsApproval;
+    cx.update(|cx| {
+        pane::settings::init_with_login(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            login.clone(),
+            cx,
+        )
+    });
+    let (_launcher, _links, cx) = open_launcher(cx);
+
+    // At start the registration already matches the choice, so nothing
+    // is re-registered: what is left is the approval, which is the
+    // page's to say.
+    assert_eq!(login.registration(), Registration::NeedsApproval);
+    cx.simulate_keystrokes(settings_shortcut());
+    cx.run_until_parked();
+    let settings = settings_windows(cx).pop().expect("Settings opened");
+    let mut settings_cx = settings_context(&settings, cx);
+    settings_cx.run_until_parked();
+    assert!(login_chosen(&mut settings_cx), "the choice is on");
+    assert!(
+        settings_cx.debug_bounds("general-login-note").is_some(),
+        "the approval is drawn"
+    );
+    let (_, json) = accessibility(&mut settings_cx);
+    assert!(
+        json.contains("macOS asks for your approval"),
+        "the approval is explained, {json}"
+    );
+}
+
+#[gpui::test]
+fn an_unreadable_record_refuses_the_login_choice(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let garbage = "{ not the settings record";
+    std::fs::write(data.path().join("settings.json"), garbage).unwrap();
+    let login = Arc::new(FakeLogin::default());
+    cx.update(|cx| {
+        pane::settings::init_with_login(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            login.clone(),
+            cx,
+        )
+    });
+    let (_launcher, _links, cx) = open_launcher(cx);
+
+    cx.simulate_keystrokes(settings_shortcut());
+    cx.run_until_parked();
+    let settings = settings_windows(cx).pop().expect("Settings opened");
+    let mut settings_cx = settings_context(&settings, cx);
+    settings_cx.run_until_parked();
+
+    // The page says choices are not saved, and why.
+    assert!(
+        settings_cx.debug_bounds("general-status").is_some(),
+        "the problem is drawn"
+    );
+    let (_, json) = accessibility(&mut settings_cx);
+    assert!(
+        json.contains("Pane could not read the settings record"),
+        "the problem is explained, {json}"
+    );
+
+    // The choice is refused: the record's rule is not to replace what
+    // cannot be read, and the platform is not asked to hold a choice
+    // nothing would remember.
+    choose(&mut settings_cx, "general-launch-at-login");
+    cx.run_until_parked();
+    settings_cx.run_until_parked();
+    assert!(!login_chosen(&mut settings_cx), "the choice was refused");
+    assert_eq!(login.registration(), Registration::Disabled);
+    assert_eq!(record_of(data.path()), garbage);
 }

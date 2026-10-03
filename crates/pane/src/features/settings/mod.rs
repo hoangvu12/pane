@@ -7,7 +7,9 @@
 //! [`pane_core::Launcher`] the launcher window holds — so Settings runs
 //! no second extension runtime and duplicates no launcher state. The two
 //! windows also share the host settings (`crate::settings`): what the
-//! Appearance page chooses repaints both, without a restart. Its shell is
+//! Appearance page chooses repaints both, without a restart, and what the
+//! General page chooses — today, the Open Pane hotkey and whether Pane
+//! starts at login — reaches the platform through the same entity. Its shell is
 //! the reference's Settings composition: the frost panel with the custom
 //! titlebar where the platform hides its own (macOS's traffic lights,
 //! Windows's caption buttons; Linux keeps the window manager's frame), a
@@ -20,9 +22,11 @@
 //! [`SettingsWindow::new`]. Later pages add their module under
 //! `settings/` and one line there — no empty feature folder, no new
 //! framework — and the sidebar lists only registered pages, so no
-//! section ships as a placeholder. The Appearance page's choices live in
+//! section ships as a placeholder. The Appearance and General pages'
+//! choices live in
 //! the shared host settings rather than the window, since the launcher
-//! window renders by them too; a page whose state is the window's own
+//! window renders by them too (and the platform's login registration
+//! outlives any window); a page whose state is the window's own
 //! lives in its module, held by the window as a field.
 
 use gpui::{
@@ -155,9 +159,9 @@ impl SettingsWindow {
             // (General, Launcher, Appearance, Shortcuts, Keyboard,
             // Extensions), About last. Of those, this milestone ships
             // General, Appearance, Shortcuts, Keyboard and Extensions;
-            // General — the Open Pane hotkey — is the page the window
-            // first shows, and the later tickets' pages take their places
-            // in this order as they land.
+            // General — the Open Pane hotkey and the launch-at-login
+            // choice — is the page the window first shows, and the later
+            // tickets' pages take their places in this order as they land.
             pages: vec![
                 general::page(),
                 appearance::page(),
