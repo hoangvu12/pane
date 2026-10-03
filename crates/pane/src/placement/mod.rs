@@ -121,9 +121,15 @@ pub(crate) fn shared(cx: &mut App) -> Rc<dyn Placement> {
 /// them — and AppKit points on macOS, where the layout is in points and a
 /// window's logical size already is.
 pub(crate) fn units_per_pixel(window: &Window) -> f32 {
-    if cfg!(target_os = "macos") {
+    #[cfg(target_os = "macos")]
+    {
+        // The layout is in AppKit points, and a window's logical size
+        // already is: one unit per pixel.
+        let _ = window;
         1.
-    } else {
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
         window.scale_factor()
     }
 }

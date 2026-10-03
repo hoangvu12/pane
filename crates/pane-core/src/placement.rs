@@ -52,10 +52,8 @@ impl Rect {
     /// counts as inside, as a pointer held at the very edge of a display
     /// still is on that display.
     pub fn contains(&self, point: Point) -> bool {
-        point.x >= self.origin.x
-            && point.y >= self.origin.y
-            && point.x <= self.origin.x + self.size.width
-            && point.y <= self.origin.y + self.size.height
+        (self.origin.x..=self.origin.x + self.size.width).contains(&point.x)
+            && (self.origin.y..=self.origin.y + self.size.height).contains(&point.y)
     }
 
     /// The center of this rectangle.
