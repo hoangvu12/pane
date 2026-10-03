@@ -449,7 +449,8 @@ fn a_platform_without_an_entry_is_explained_not_toggled(cx: &mut TestAppContext)
 fn open_pane_from_the_tray_summons_a_hidden_launcher_and_never_hides_it(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
     let system = tray();
-    let launcher = Launcher::new(Runtime::start(), Vec::new());
+    let hotkeys = Arc::new(FakeHotkeys::default());
+    let launcher = Launcher::new(Runtime::start(), Vec::new()).with_hotkeys(hotkeys);
     let (window, cx) = open(cx, launcher, Some(data.path()), system.clone());
     let handle = handle_of(cx);
     let default = Shortcut::open_pane_default();
@@ -492,7 +493,8 @@ fn open_pane_from_the_tray_summons_a_hidden_launcher_and_never_hides_it(cx: &mut
 fn settings_from_the_tray_opens_and_focuses_the_one_window(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
     let system = tray();
-    let launcher = Launcher::new(Runtime::start(), Vec::new());
+    let hotkeys = Arc::new(FakeHotkeys::default());
+    let launcher = Launcher::new(Runtime::start(), Vec::new()).with_hotkeys(hotkeys);
     let (window, cx) = open(cx, launcher, Some(data.path()), system.clone());
     let default = Shortcut::open_pane_default();
 
