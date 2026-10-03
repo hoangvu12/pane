@@ -29,7 +29,9 @@
 //! [`crate::app::LauncherWindow::sync_screen`]). After any operation,
 //! including a failed one, the page shows what the launcher holds.
 
-use gpui::{AnyElement, Context, Div, Role, SharedString, Window, div, prelude::*, px};
+use gpui::{
+    AnyElement, Context, Div, Role, SharedString, Stateful, Window, div, prelude::*, px,
+};
 use pane_core::{Screen, Status};
 
 use super::{Page, SettingsWindow};
@@ -347,7 +349,7 @@ fn render(
 }
 
 /// A small muted label above one of the page's own groups of rows.
-fn section(label: &'static str) -> Div {
+fn section(label: &'static str) -> Stateful<Div> {
     let theme = &ui::visuals().theme;
     div()
         .id(label)

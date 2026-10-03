@@ -172,11 +172,11 @@ fn operations_package(folder: &Path, title: &str, dependencies: &str) -> PathBuf
 /// `data`'s extensions folder, with `folder`'s package installed: the
 /// Extensions page's tests manage those, through the launcher the Settings
 /// window shares with this one.
-fn open_installed(
-    cx: &mut TestAppContext,
+fn open_installed<'a>(
+    cx: &'a mut TestAppContext,
     data: &TempDir,
     folder: &Path,
-) -> (gpui::Entity<LauncherWindow>, &mut VisualTestContext) {
+) -> (gpui::Entity<LauncherWindow>, &'a mut VisualTestContext) {
     let launcher =
         Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"));
     install(&launcher, folder);
