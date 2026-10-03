@@ -4,8 +4,11 @@
 //! GPUI's test platform, as `window.rs` drives the launcher's. The
 //! Appearance page is driven the same way — through the page's own
 //! controls — with what the windows paint checked on their quads, so a
-//! choice is observed at the same boundary a user sees it; the Extensions
-//! page manages extensions through the launcher's own operations.
+//! choice is observed at the same boundary a user sees it. The General
+//! page's launch-at-login toggle is driven the same way, through a fake
+//! login system the tests script — no test ever touches the real login
+//! configuration of the machine running it; and the Extensions page
+//! manages extensions through the launcher's own operations.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -16,12 +19,20 @@ use gpui::{
     AnyWindowHandle, Modifiers, TestAppContext, VisualTestContext, WindowHandle, prelude::*, px,
 };
 use pane::{APP_VERSION, LauncherWindow, SettingsWindow};
-use pane_core::develop::{Build, BuildJob, BuildOutcome, Builder};
-use pane_core::{Launcher, PackageIdentity, Runtime, Screen, Status};
+use pane_core::autostart::{Autostart, Registration};
+use pane_core::changes;
+use pane_core::defaults::ArtifactSource;
+use pane_core::develop::{Build, BuildJob, BuildOutcome, Builder, Toolchains};
+use pane_core::{Launcher, PackageIdentity, Runtime, Screen, Status, Target};
 use tempfile::TempDir;
 
 #[path = "support/settle.rs"]
 mod settle;
+
+#[path = "../../pane-core/tests/support/artifacts.rs"]
+mod artifacts;
+
+use artifacts::Artifacts;
 
 use settle::settle;
 
@@ -54,6 +65,53 @@ struct RefusingLinks;
 impl pane_core::LinkOpener for RefusingLinks {
     fn open(&self, _url: &str) -> Result<(), String> {
         Err("no program to open web links is installed".into())
+    }
+}
+
+/// A fake login system, standing where the pane binary puts the
+/// platform's own: the registration its fake platform holds, and the
+/// refusals its changes are scripted to answer with. The tests drive the
+/// General page's launch-at-login toggle through it, so nothing here
+/// touches the login configuration of the machine running the test.
+#[derive(Default)]
+struct FakeLogin {
+    /// The registration the fake platform holds now.
+    registration: std::sync::Mutex<Registration>,
+    /// The refusals the next enable and the next disable answer with,
+    /// when a test scripts failures; each fires once.
+    refusals: std::sync::Mutex<(Option<String>, Option<String>)>,
+}
+
+impl FakeLogin {
+    /// The registration the fake platform holds.
+    fn registration(&self) -> Registration {
+        *self.registration.lock().unwrap()
+    }
+}
+
+impl Autostart for FakeLogin {
+    fn unavailable(&self) -> Option<String> {
+        None
+    }
+
+    fn registered(&self) -> Result<Registration, String> {
+        Ok(self.registration())
+    }
+
+    fn enable(&self) -> Result<Registration, String> {
+        if let Some(why) = self.refusals.lock().unwrap().0.take() {
+            return Err(why);
+        }
+        *self.registration.lock().unwrap() = Registration::Enabled;
+        Ok(Registration::Enabled)
+    }
+
+    fn disable(&self) -> Result<Registration, String> {
+        if let Some(why) = self.refusals.lock().unwrap().1.take() {
+            return Err(why);
+        }
+        *self.registration.lock().unwrap() = Registration::Disabled;
+        Ok(Registration::Disabled)
     }
 }
 
@@ -315,6 +373,85 @@ fn until<T>(
     }
 }
 
+/// The last drawn frame's section arrival, as the arriving page content's
+/// (offset from rest in px — below rest when the sidebar moved down to
+/// the section, above when it moved up — and opacity); `None` when the
+/// frame drew the page settled, which is also all reduced motion ever
+/// reports. See [`SettingsWindow::section_arrival`].
+fn section_arrival(
+    settings: &WindowHandle<SettingsWindow>,
+    cx: &mut VisualTestContext,
+) -> Option<(f32, f32)> {
+    settings
+        .read_with(cx, |window, _| window.section_arrival())
+        .expect("the Settings window is open")
+}
+
+/// Delivers the animation frame the Settings window has asked for, as the
+/// native frame loop would, with `elapsed` passing first on the test
+/// platform's controlled clock. The test platform delivers no frames on
+/// its own, so this is the only thing that advances a running arrival;
+/// one call draws at most one frame. Returns how many next-frame
+/// callbacks ran — `0` means the window had asked for no frame, so
+/// nothing drew.
+fn frame(cx: &mut VisualTestContext, elapsed: Duration) -> usize {
+    cx.executor().advance_clock(elapsed);
+    let ran = cx.update(|window, cx| window.simulate_next_frame(cx));
+    cx.run_until_parked();
+    ran
+}
+
+/// Delivers frames until the window asks for none, so an arrival in
+/// flight completes, and returns the frames it delivered. `0` means the
+/// window was already idle: no frame was pending. Bounded, so a window
+/// that never stopped asking for frames fails the test instead of
+/// hanging it.
+fn settle_frames(cx: &mut VisualTestContext) -> usize {
+    let mut delivered = 0;
+    for _ in 0..20 {
+        let ran = frame(cx, Duration::from_millis(25));
+        if ran == 0 {
+            return delivered;
+        }
+        delivered += ran;
+    }
+    panic!("the window never stopped asking for animation frames");
+}
+
+/// Clicks the sidebar's section whose debug selector is `selector`
+/// ("section-<title>"), switching the window to it.
+fn click_section(cx: &mut VisualTestContext, selector: &'static str) {
+    let section = cx
+        .debug_bounds(selector)
+        .unwrap_or_else(|| panic!("{selector} is drawn"));
+    cx.simulate_click(section.center(), Modifiers::none());
+    cx.run_until_parked();
+}
+
+/// Waits until the sidebar's selected section is exactly `title`, as
+/// assistive technology reads it — the visible selected-section state
+/// updates on the frame the switch draws, while the arrival is still in
+/// flight — and returns that frame's tree. (Polled, not read once: the
+/// captured tree can follow the drawn frame by one on the Windows test
+/// platform.)
+fn selected_section(cx: &mut VisualTestContext, title: &str) {
+    until(cx, |cx| {
+        let (_, json) = accessibility(cx);
+        let tree: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let selected: Vec<&str> = tree["nodes"]
+            .as_object()
+            .unwrap()
+            .values()
+            .filter(|node| {
+                node["aria"]["role"] == "ListBoxOption"
+                    && node["aria"]["selected"] == serde_json::json!(true)
+            })
+            .map(|node| node["aria"]["label"].as_str().unwrap_or_default())
+            .collect();
+        (selected == [title]).then_some(())
+    });
+}
+
 /// One of the theme's panel colors, as the window paints it on a quad:
 /// the solid panel, or the glass tint over the window's blur. The values
 /// mirror `ui::theme`'s dark and light palettes — the solid panel and
@@ -381,6 +518,16 @@ fn open_settings(cx: &mut VisualTestContext) -> VisualTestContext {
     settings_cx.simulate_click(appearance.center(), Modifiers::none());
     settings_cx.run_until_parked();
     settings_cx
+}
+
+/// Opens the Settings window over the launcher `cx` drives, on the
+/// General page it first shows, as its own window context: the page the
+/// Open Pane hotkey's recorder and the launch-at-login switch live on.
+fn general_page(cx: &mut VisualTestContext) -> VisualTestContext {
+    cx.simulate_keystrokes(settings_shortcut());
+    cx.run_until_parked();
+    let settings = settings_windows(cx).pop().expect("Settings opened");
+    settings_context(&settings, cx)
 }
 
 /// Runs the window until the settings record exists in `data`: the save
@@ -491,10 +638,19 @@ fn hiding_the_launcher_leaves_settings_open_and_usable(cx: &mut TestAppContext) 
     cx.run_until_parked();
     assert_eq!(settings_windows(cx), vec![settings], "Settings stayed");
 
-    // And it still answers: the Appearance page — one sidebar section
-    // from the General page the window opens on — is drawn.
+    // And it still answers: the page the window first shows — General,
+    // the first registered section — is drawn, with both of the choices
+    // that live on it: the Open Pane hotkey's recorder and the
+    // launch-at-login switch.
     let mut settings_cx = settings_context(&settings, cx);
     settings_cx.run_until_parked();
+    assert!(settings_cx.debug_bounds("open-pane-recorder").is_some());
+    assert!(
+        settings_cx
+            .debug_bounds("general-launch-at-login")
+            .is_some()
+    );
+    // The Appearance page — one sidebar section away — answers too.
     let appearance = settings_cx
         .debug_bounds("section-Appearance")
         .expect("the Appearance section");
@@ -531,17 +687,10 @@ fn keys_in_settings_and_the_launcher_stay_in_their_windows(cx: &mut TestAppConte
     cx.run_until_parked();
     let settings = settings_windows(cx).pop().expect("Settings opened");
     let mut settings_cx = settings_context(&settings, cx);
-    // The Appearance page — one sidebar section from the General page
-    // the window opens on.
-    let appearance = settings_cx
-        .debug_bounds("section-Appearance")
-        .expect("the Appearance section");
-    settings_cx.simulate_click(appearance.center(), Modifiers::none());
-    settings_cx.run_until_parked();
 
     // Typing in the launcher narrows its results and touches nothing in
-    // Settings, which shows its own page (the Appearance page it is on
-    // here).
+    // Settings, which shows its own page (the General page it opened
+    // on here).
     cx.simulate_input("rust");
     settle(&launcher, cx);
     let view = cx.read_entity(&launcher, |window, _| window.launcher().view());
@@ -549,9 +698,9 @@ fn keys_in_settings_and_the_launcher_stay_in_their_windows(cx: &mut TestAppConte
     settings_cx.run_until_parked();
     assert!(
         settings_cx
-            .debug_bounds("appearance-theme-System")
+            .debug_bounds("general-launch-at-login")
             .is_some(),
-        "the Appearance page is unchanged"
+        "the General page is unchanged"
     );
 
     // Keys in Settings — the sidebar's navigation, over the sections
@@ -570,23 +719,40 @@ fn keys_in_settings_and_the_launcher_stay_in_their_windows(cx: &mut TestAppConte
         view.screen
     );
 
-    // And what Settings shows is still its own page: the Appearance page
-    // it is on (the two keys end where they began), whose content is
-    // drawn — not the launcher's.
+    // And what Settings shows is still its own page: the General page
+    // it opened on (the two keys end where they began), whose content is
+    // drawn — not the launcher's — with both of the choices that live on
+    // it.
     assert!(
-        settings_cx.debug_bounds("appearance").is_some(),
+        settings_cx.debug_bounds("general").is_some(),
         "the page is drawn"
     );
     assert!(
+        settings_cx.debug_bounds("open-pane-recorder").is_some(),
+        "the hotkey's row is drawn"
+    );
+    assert!(
         settings_cx
-            .debug_bounds("appearance-theme-System")
+            .debug_bounds("general-launch-at-login")
             .is_some(),
-        "the Appearance page is unchanged"
+        "the General page is unchanged"
     );
     assert_eq!(
         settings_cx.debug_bounds("section-About").map(|_| "About"),
         Some("About"),
         "the About section is still offered in the sidebar"
+    );
+
+    // The Appearance page — one sidebar section away — answers too, and
+    // walking to it reaches no launcher key either.
+    let appearance = settings_cx
+        .debug_bounds("section-Appearance")
+        .expect("the Appearance section");
+    settings_cx.simulate_click(appearance.center(), Modifiers::none());
+    settings_cx.run_until_parked();
+    assert!(
+        settings_cx.debug_bounds("appearance").is_some(),
+        "the Appearance page is drawn"
     );
 
     // The launcher's keys, in turn, never reach Settings.
@@ -749,7 +915,7 @@ fn the_about_page_shows_the_real_version_and_opens_the_documentation(cx: &mut Te
     cx.run_until_parked();
     let settings = settings_windows(cx).pop().expect("Settings opened");
     let mut settings_cx = settings_context(&settings, cx);
-    // The window opens on the Appearance page; the About page is reached
+    // The window opens on the General page; the About page is reached
     // through the sidebar.
     settings_cx.run_until_parked();
     let about = settings_cx
@@ -801,8 +967,8 @@ fn a_refused_documentation_link_is_explained_on_the_page(cx: &mut TestAppContext
     let settings = settings_windows(cx).pop().expect("Settings opened");
     let mut settings_cx = settings_context(&settings, cx);
     settings_cx.run_until_parked();
-    // The About page is not the page the window opens on; the sidebar
-    // reaches it.
+    // The About page is a few sidebar sections away from the one the window
+    // opens on.
     let about = settings_cx
         .debug_bounds("section-About")
         .expect("the About section");
@@ -827,6 +993,460 @@ fn a_refused_documentation_link_is_explained_on_the_page(cx: &mut TestAppContext
     );
     let view = cx.read_entity(&launcher, |window, _| window.launcher().view());
     assert_eq!(view.status, Status::Idle, "the launcher is untouched");
+}
+
+/// The world of one About-page update test: the folder Pane's program is
+/// installed in, the folder its data lives in, and a local artifact source
+/// on 127.0.0.1 (pane-core's test support; nothing reaches the network or
+/// Pane's published downloads) serving the index an update check reads —
+/// the same fixture `pane-core`'s application-update tests use, driven
+/// here through the highest boundary, the Settings window's own page.
+struct UpdateDirs {
+    install: TempDir,
+    data: TempDir,
+    artifacts: Artifacts,
+}
+
+impl UpdateDirs {
+    fn new() -> UpdateDirs {
+        UpdateDirs {
+            install: tempfile::tempdir().unwrap(),
+            data: tempfile::tempdir().unwrap(),
+            artifacts: Artifacts::start(),
+        }
+    }
+
+    /// The program Pane runs from, in the install folder.
+    fn program(&self) -> PathBuf {
+        self.install.path().join("pane")
+    }
+
+    /// Writes the program Pane runs from, with the given bytes.
+    fn running(&self, program: &[u8]) {
+        fs::write(self.program(), program).unwrap();
+    }
+
+    /// Publishes an application package `version` for this system, holding
+    /// `program` as the program an install replaces this Pane's with, as
+    /// `pane-core`'s own tests publish one.
+    fn publish_update(&self, version: &str, program: &[u8]) {
+        let zip = artifacts::pack_zip(&[("pane", program.to_vec())]);
+        let target = Target::current()
+            .expect("Pane names this system's target")
+            .id()
+            .to_owned();
+        self.artifacts.publish_application(version, &target, &zip);
+    }
+}
+
+/// Opens the launcher window over a launcher that checks the local
+/// artifact source for updates of the version `version` it runs from
+/// `dirs`' program file — the same wiring the binary's is, including the
+/// changes channel whose other end the window follows, so background
+/// changes (a check's answer, an install's progress) redraw the windows
+/// as they do in the app.
+fn open_updating_launcher<'a>(
+    cx: &'a mut TestAppContext,
+    dirs: &UpdateDirs,
+    version: &str,
+) -> (gpui::Entity<LauncherWindow>, &'a mut VisualTestContext) {
+    let (sender, changes) = changes::channel();
+    let launcher = Launcher::with_packages(
+        Runtime::start(),
+        vec![],
+        dirs.data.path().join("extensions"),
+    )
+    .with_application_update(
+        version,
+        ArtifactSource::local(dirs.artifacts.url()).unwrap(),
+        dirs.program(),
+    )
+    .with_development(Arc::new(Toolchains::from_env(None)), sender);
+    cx.executor().allow_parking();
+    cx.update(pane::bind_keys);
+    let (window, cx) = cx.add_window_view(|window, cx| {
+        let mut launcher = LauncherWindow::new(launcher, window, cx);
+        launcher.follow_changes(changes, window, cx);
+        launcher
+    });
+    (window, cx)
+}
+
+/// Opens the Settings window with the local `Ctrl+,` shortcut and returns
+/// a context driving it, on its About page: the window opens on the
+/// General page, so this walks the sidebar to About first. The window
+/// is made tall enough that the page's rows are in reach of a click
+/// without scrolling it — the page itself scrolls when the window is
+/// smaller.
+fn open_about(cx: &mut VisualTestContext) -> (WindowHandle<SettingsWindow>, VisualTestContext) {
+    cx.simulate_keystrokes(settings_shortcut());
+    cx.run_until_parked();
+    let settings = settings_windows(cx).pop().expect("Settings opened");
+    let mut settings_cx = settings_context(&settings, cx);
+    settings_cx.simulate_resize(gpui::size(px(740.), px(1100.)));
+    settings_cx.run_until_parked();
+    let about = settings_cx
+        .debug_bounds("section-About")
+        .expect("the About section");
+    settings_cx.simulate_click(about.center(), Modifiers::none());
+    settings_cx.run_until_parked();
+    (settings, settings_cx)
+}
+
+#[gpui::test]
+fn the_about_page_explains_where_no_release_source_is_configured(cx: &mut TestAppContext) {
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let (_settings, mut settings_cx) = open_about(cx);
+
+    // A launcher with no updater wired — no artifact source given, as a
+    // development checkout without PANE_ARTIFACTS runs — is explained as
+    // what it is: no release to check, no claim of a feed or an available
+    // release, and no row to click.
+    until_text(
+        &mut settings_cx,
+        "No artifact source is configured for this Pane",
+    );
+    assert!(
+        settings_cx.debug_bounds("about-check-update").is_none(),
+        "no check is offered against a source that is not there"
+    );
+    assert!(settings_cx.debug_bounds("about-update").is_none());
+}
+
+#[gpui::test]
+fn a_check_from_the_page_that_finds_nothing_newer_says_pane_is_up_to_date(cx: &mut TestAppContext) {
+    let dirs = UpdateDirs::new();
+    dirs.running(b"the 0.1.0 program");
+    let (launcher, cx) = open_updating_launcher(cx, &dirs, "0.1.0");
+    let (_settings, mut settings_cx) = open_about(cx);
+
+    // The check the user asked for, from the page: the page answers, and
+    // so does the status line — the same answer, as the user asked both.
+    click_row(&mut settings_cx, "about-check-update");
+    until_text(&mut settings_cx, "Pane is up to date");
+    // The row stays: the user can ask again.
+    assert!(
+        settings_cx.debug_bounds("about-check-update").is_some(),
+        "the check is offered again"
+    );
+    let view = cx.read_entity(&launcher, |window, _| window.launcher().view());
+    assert_eq!(view.status, Status::Result("Pane is up to date".into()));
+    // Root search lists no update row: there is nothing to choose.
+    let rows = titles(&launcher, cx);
+    assert!(
+        !rows.contains(&"Update Pane to 99.0.0".to_owned()),
+        "{rows:?}"
+    );
+    assert!(
+        !rows.contains(&"Check for a Pane update".to_owned()),
+        "{rows:?}"
+    );
+}
+
+#[gpui::test]
+fn an_unreachable_release_source_is_explained_on_the_page(cx: &mut TestAppContext) {
+    let dirs = UpdateDirs::new();
+    dirs.publish_update("99.0.0", b"the 99.0.0 program");
+    dirs.running(b"the 0.1.0 program");
+    let (launcher, cx) = open_updating_launcher(cx, &dirs, "0.1.0");
+    // Nothing answers where the artifact source is: the check cannot be
+    // made.
+    drop(dirs.artifacts);
+    let (_settings, mut settings_cx) = open_about(cx);
+
+    click_row(&mut settings_cx, "about-check-update");
+    until_text(&mut settings_cx, "Could not check for a Pane update");
+    // The failure explains the unreachable source, retried as an
+    // interrupted acquisition is, and the page offers the check again.
+    let (_, json) = accessibility(&mut settings_cx);
+    assert!(
+        json.contains("could not be reached") && json.contains("Pane tried 3 times"),
+        "the unreachable source is explained, {json}"
+    );
+    assert!(
+        settings_cx.debug_bounds("about-check-update").is_some(),
+        "the check is offered again"
+    );
+    // The root search holds the same failure with its own row: the two
+    // entry points share one state.
+    assert!(
+        titles(&launcher, cx).contains(&"Check for a Pane update".to_owned()),
+        "the root row is listed"
+    );
+    let view = cx.read_entity(&launcher, |window, _| window.launcher().view());
+    assert!(
+        matches!(&view.status, Status::Error(text) if text.starts_with(
+            "Could not check for a Pane update: Pane's downloads at"
+        )),
+        "the status line says it too: {:?}",
+        view.status
+    );
+}
+
+#[gpui::test]
+fn a_failed_check_is_tried_again_from_the_page_and_finds_the_update(cx: &mut TestAppContext) {
+    let dirs = UpdateDirs::new();
+    dirs.running(b"the 0.1.0 program");
+    // The source answers its index with an error, retried as an
+    // interrupted acquisition is, so the check fails.
+    dirs.artifacts
+        .fail_status("pane-defaults.json", 503, usize::MAX);
+    let (launcher, cx) = open_updating_launcher(cx, &dirs, "0.1.0");
+    let (_settings, mut settings_cx) = open_about(cx);
+
+    click_row(&mut settings_cx, "about-check-update");
+    until_text(&mut settings_cx, "Could not check for a Pane update");
+
+    // The source works again, with a newer version published: the retry
+    // from the page finds it, and both entry points show the offer.
+    dirs.artifacts.stop_failing("pane-defaults.json");
+    dirs.publish_update("99.0.0", b"the 99.0.0 program");
+    click_row(&mut settings_cx, "about-check-update");
+    until_text(&mut settings_cx, "Pane 99.0.0 is available");
+    assert!(settings_cx.debug_bounds("about-update").is_some());
+    assert!(titles(&launcher, cx).contains(&"Update Pane to 99.0.0".to_owned()));
+}
+
+#[gpui::test]
+fn the_page_offers_the_update_and_installs_it_by_the_users_choice(cx: &mut TestAppContext) {
+    let dirs = UpdateDirs::new();
+    dirs.publish_update("99.0.0", b"the 99.0.0 program");
+    dirs.running(b"the 0.1.0 program");
+    let (launcher, cx) = open_updating_launcher(cx, &dirs, "0.1.0");
+    let (_settings, mut settings_cx) = open_about(cx);
+
+    // The check from the page finds the newer version: the page offers
+    // what the root row offers — the version, and what installing does.
+    click_row(&mut settings_cx, "about-check-update");
+    until_text(&mut settings_cx, "Pane 99.0.0 is available");
+    let (_, json) = accessibility(&mut settings_cx);
+    assert!(json.contains("Update Pane to 99.0.0"), "{json}");
+    assert!(
+        json.contains(
+            "Your extensions and settings are kept; the new version is used the next time Pane \
+             starts"
+        ),
+        "the row says what installing does, {json}"
+    );
+    assert!(
+        titles(&launcher, cx).contains(&"Update Pane to 99.0.0".to_owned()),
+        "root search holds the same offer"
+    );
+
+    // The package arrives in two pieces, so the page is seen following the
+    // download as it goes.
+    let file = format!("pane-99.0.0-{}.zip", Target::current().unwrap().id());
+    dirs.artifacts.stall(&file, 8, Duration::from_millis(1200));
+
+    // Installing is the user's choice, the row clicked: the page follows
+    // the install's progress, and the answer when it lands.
+    click_row(&mut settings_cx, "about-update");
+    until_text(&mut settings_cx, "Downloading Pane 99.0.0: ");
+    // Mid-install there is no row to click: nothing else can be started
+    // against the same offer.
+    assert!(settings_cx.debug_bounds("about-update").is_none());
+    until_text(
+        &mut settings_cx,
+        "Installed Pane 99.0.0; the new version is used the next time Pane starts",
+    );
+
+    // The program was swapped: the new one in place, the old one renamed
+    // out of its way, nothing else in the install folder.
+    assert_eq!(fs::read(dirs.program()).unwrap(), b"the 99.0.0 program");
+    assert_eq!(
+        fs::read(dirs.install.path().join("pane.old")).unwrap(),
+        b"the 0.1.0 program"
+    );
+    // The launcher's status line said the same thing, and the offer is
+    // gone from both entry points.
+    let view = cx.read_entity(&launcher, |window, _| window.launcher().view());
+    assert_eq!(
+        view.status,
+        Status::Result(
+            "Installed Pane 99.0.0; the new version is used the next time Pane starts".into()
+        )
+    );
+    assert!(settings_cx.debug_bounds("about-update").is_none());
+    assert!(!titles(&launcher, cx).contains(&"Update Pane to 99.0.0".to_owned()));
+}
+
+#[gpui::test]
+fn a_failed_install_is_explained_and_the_offer_stays_to_try_again(cx: &mut TestAppContext) {
+    let dirs = UpdateDirs::new();
+    dirs.publish_update("99.0.0", b"the 99.0.0 program");
+    dirs.running(b"the 0.1.0 program");
+    let (launcher, cx) = open_updating_launcher(cx, &dirs, "0.1.0");
+    let (_settings, mut settings_cx) = open_about(cx);
+    click_row(&mut settings_cx, "about-check-update");
+    until_text(&mut settings_cx, "Pane 99.0.0 is available");
+    // The package the index names is not what arrives: its bytes were
+    // damaged, so they do not match the integrity the index gives.
+    dirs.artifacts.corrupt_application();
+
+    click_row(&mut settings_cx, "about-update");
+    until_text(&mut settings_cx, "Could not update Pane to 99.0.0");
+
+    // The failure is explained with the offer still offered, ready to be
+    // chosen again; nothing changed.
+    let (_, json) = accessibility(&mut settings_cx);
+    assert!(
+        json.contains("does not match the sha512 integrity"),
+        "{json}"
+    );
+    assert!(
+        settings_cx.debug_bounds("about-update").is_some(),
+        "the offer stays"
+    );
+    assert_eq!(fs::read(dirs.program()).unwrap(), b"the 0.1.0 program");
+    let view = cx.read_entity(&launcher, |window, _| window.launcher().view());
+    assert!(
+        matches!(&view.status, Status::Error(text) if text.starts_with(
+            "Could not update Pane to 99.0.0: "
+        )),
+        "the status line says it too: {:?}",
+        view.status
+    );
+
+    // The source works again; choosing the offer again installs it.
+    dirs.publish_update("99.0.0", b"the 99.0.0 program");
+    click_row(&mut settings_cx, "about-update");
+    until_text(
+        &mut settings_cx,
+        "Installed Pane 99.0.0; the new version is used the next time Pane starts",
+    );
+    assert_eq!(fs::read(dirs.program()).unwrap(), b"the 99.0.0 program");
+}
+
+#[gpui::test]
+fn an_interrupted_download_from_the_page_is_tried_again_and_lands(cx: &mut TestAppContext) {
+    let dirs = UpdateDirs::new();
+    dirs.publish_update("99.0.0", b"the 99.0.0 program");
+    dirs.running(b"the 0.1.0 program");
+    let (launcher, cx) = open_updating_launcher(cx, &dirs, "0.1.0");
+    let (_settings, mut settings_cx) = open_about(cx);
+    click_row(&mut settings_cx, "about-check-update");
+    until_text(&mut settings_cx, "Pane 99.0.0 is available");
+
+    // The first download of the package is interrupted partway: the
+    // connection closes after its first bytes, as an offline moment
+    // does. The install the page started rides the retry the download
+    // itself makes — the same retry the root row's install does — and
+    // lands.
+    let file = format!("pane-99.0.0-{}.zip", Target::current().unwrap().id());
+    dirs.artifacts.drop_after(&file, 16, 1);
+
+    click_row(&mut settings_cx, "about-update");
+    until_text(
+        &mut settings_cx,
+        "Installed Pane 99.0.0; the new version is used the next time Pane starts",
+    );
+    assert_eq!(fs::read(dirs.program()).unwrap(), b"the 99.0.0 program");
+    assert_eq!(
+        fs::read(dirs.install.path().join("pane.old")).unwrap(),
+        b"the 0.1.0 program"
+    );
+    // The package was downloaded twice: the interrupted one, and the
+    // retry that landed.
+    let downloads = dirs
+        .artifacts
+        .requests()
+        .iter()
+        .filter(|path| path.ends_with(".zip"))
+        .count();
+    assert_eq!(downloads, 2, "the interrupted download was retried");
+    // The status line answered the same landing, and neither entry
+    // point offers the update any more.
+    let view = cx.read_entity(&launcher, |window, _| window.launcher().view());
+    assert_eq!(
+        view.status,
+        Status::Result(
+            "Installed Pane 99.0.0; the new version is used the next time Pane starts".into()
+        )
+    );
+    assert!(settings_cx.debug_bounds("about-update").is_none());
+    assert!(!titles(&launcher, cx).contains(&"Update Pane to 99.0.0".to_owned()));
+}
+
+#[gpui::test]
+fn leaving_the_page_while_a_check_runs_cancels_nothing(cx: &mut TestAppContext) {
+    let dirs = UpdateDirs::new();
+    dirs.publish_update("99.0.0", b"the 99.0.0 program");
+    dirs.running(b"the 0.1.0 program");
+    // The index answers slowly, so the check is still running when the
+    // user leaves the page.
+    dirs.artifacts
+        .stall("pane-defaults.json", 8, Duration::from_millis(1200));
+    let (launcher, cx) = open_updating_launcher(cx, &dirs, "0.1.0");
+    let (_settings, mut settings_cx) = open_about(cx);
+
+    // The check starts from the page; the user walks away to another
+    // section while it runs.
+    click_row(&mut settings_cx, "about-check-update");
+    until_text(&mut settings_cx, "Checking for a Pane update");
+    let extensions = settings_cx
+        .debug_bounds("section-Extensions")
+        .expect("the Extensions section");
+    settings_cx.simulate_click(extensions.center(), Modifiers::none());
+    settings_cx.run_until_parked();
+
+    // Leaving cancelled nothing: the check ran to its end, and its answer
+    // is where both entry points read it — the launcher's state and
+    // status line, with the root row listed.
+    until(cx, |cx| {
+        cx.read_entity(&launcher, |window, _| window.launcher().view())
+            .status
+            .eq(&Status::Result("Pane 99.0.0 is available".into()))
+            .then_some(())
+    });
+    assert!(titles(&launcher, cx).contains(&"Update Pane to 99.0.0".to_owned()));
+
+    // Back on the About page, the same state: the offer, with the row that
+    // installs it.
+    let about = settings_cx
+        .debug_bounds("section-About")
+        .expect("the About section");
+    settings_cx.simulate_click(about.center(), Modifiers::none());
+    settings_cx.run_until_parked();
+    until_text(&mut settings_cx, "Pane 99.0.0 is available");
+    assert!(settings_cx.debug_bounds("about-update").is_some());
+}
+
+#[gpui::test]
+fn the_page_copies_the_diagnostics_to_the_clipboard_locally(cx: &mut TestAppContext) {
+    let dirs = UpdateDirs::new();
+    dirs.publish_update("99.0.0", b"the 99.0.0 program");
+    dirs.running(b"the 0.1.0 program");
+    let (_launcher, cx) = open_updating_launcher(cx, &dirs, "0.1.0");
+    let (_settings, mut settings_cx) = open_about(cx);
+    click_row(&mut settings_cx, "about-check-update");
+    until_text(&mut settings_cx, "Pane 99.0.0 is available");
+
+    // The copy is the user's explicit click, and its completion is the
+    // page's own status.
+    click_row(&mut settings_cx, "about-diagnostics");
+    until_text(&mut settings_cx, "Copied the diagnostics to the clipboard");
+    // What was copied is what Pane knows of this installation — the real
+    // version, the system, the data folder, the update state — as plain
+    // text on this computer's clipboard: nothing was sent anywhere, and
+    // nothing of any extension's settings or data is in it (none is
+    // read).
+    let report = settings_cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .expect("the report was copied");
+    assert!(
+        report.starts_with(&format!("Pane {APP_VERSION}")),
+        "{report}"
+    );
+    assert!(
+        report.contains(&format!("Built for {}", Target::current().unwrap().id())),
+        "{report}"
+    );
+    assert!(report.contains("Data folder: "), "{report}");
+    assert!(
+        report.contains("Update check: Pane 99.0.0 is available"),
+        "{report}"
+    );
 }
 
 /// Runs the window until its accessibility tree contains `text`, so what
@@ -1260,9 +1880,8 @@ fn the_settings_window_keeps_its_layout_at_small_sizes(cx: &mut TestAppContext) 
     let settings = settings_windows(cx).pop().expect("Settings opened");
     let mut settings_cx = settings_context(&settings, cx);
     settings_cx.run_until_parked();
-    // The Appearance page — one sidebar section from the General page the
-    // window opens on — is the demanding one: its choices and its live
-    // preview.
+    // The window opens on the General page; the Appearance page — the
+    // demanding one — is one sidebar click away.
     let appearance = settings_cx
         .debug_bounds("section-Appearance")
         .expect("the Appearance section");
@@ -1323,6 +1942,244 @@ fn the_settings_window_keeps_its_layout_at_small_sizes(cx: &mut TestAppContext) 
     assert!(
         version.right() <= page.right(),
         "the version stays within the page"
+    );
+}
+
+/// A helper for the section-transition tests: the Settings window over
+/// the sample launcher, opened and settled, as (window, its context).
+fn opened_settings(
+    cx: &mut VisualTestContext,
+) -> (WindowHandle<SettingsWindow>, VisualTestContext) {
+    cx.simulate_keystrokes(settings_shortcut());
+    cx.run_until_parked();
+    let settings = settings_windows(cx).pop().expect("Settings opened");
+    let mut settings_cx = settings_context(&settings, cx);
+    settings_cx.run_until_parked();
+    // The window opens settled: the first frame has no section to come
+    // from, and none is pending — a settled window is idle.
+    assert_eq!(frame(&mut settings_cx, Duration::ZERO), 0);
+    assert!(section_arrival(&settings, &mut settings_cx).is_none());
+    (settings, settings_cx)
+}
+
+/// Switching sections transitions the content that changes — the page —
+/// with the shared policy's short fade and tiny shift from the side the
+/// sidebar moved, while the shell around it (a sidebar row, the page's
+/// scroll viewport) stays exactly where it was. The switch itself is
+/// immediate: the page's content is drawn on the frame the click draws,
+/// the sidebar's selected row is the new section's, and the arrival is
+/// driven on the controlled clock — it progresses as frames are
+/// delivered, completes within its bounded span, and leaves the window
+/// asking for no frame at all.
+#[gpui::test]
+fn switching_sections_transitions_the_content_and_keeps_the_shell_still(cx: &mut TestAppContext) {
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let (settings, mut settings_cx) = opened_settings(cx);
+
+    // The shell: an unselected sidebar row, and the page's scroll
+    // viewport.
+    let about_row = settings_cx
+        .debug_bounds("section-About")
+        .expect("a sidebar row");
+    let viewport = settings_cx
+        .debug_bounds("settings-page")
+        .expect("the page viewport");
+
+    // Shortcuts is further down the sidebar than the General page the
+    // window opens on: the page's content arrives from below.
+    click_section(&mut settings_cx, "section-Shortcuts");
+    assert!(
+        settings_cx.debug_bounds("shortcuts-title").is_some(),
+        "the Shortcuts page is drawn at once, mid-arrival"
+    );
+    let (offset, opacity) =
+        section_arrival(&settings, &mut settings_cx).expect("the page is arriving");
+    assert!(
+        offset > 2.5 && offset < 3.5,
+        "the arrival starts the full shift below rest: {offset}"
+    );
+    assert!(opacity < 0.45, "the arrival starts faint: {opacity}");
+    // The shell did not move with it.
+    assert_eq!(
+        settings_cx.debug_bounds("section-About").expect("the row"),
+        about_row,
+        "the sidebar row stayed still"
+    );
+    assert_eq!(
+        settings_cx
+            .debug_bounds("settings-page")
+            .expect("the viewport"),
+        viewport,
+        "the page viewport stayed still"
+    );
+    // The visible selected-section state updated immediately, on this
+    // same frame — exactly one section selected, the new one.
+    selected_section(&mut settings_cx, "Shortcuts");
+
+    // The content is displaced from its rest by the arrival's shift.
+    let title = settings_cx
+        .debug_bounds("shortcuts-title")
+        .expect("the page's title");
+
+    // Frames pass, and the arrival progresses without restarting.
+    assert!(frame(&mut settings_cx, Duration::from_millis(40)) >= 1);
+    let (progressed, _) =
+        section_arrival(&settings, &mut settings_cx).expect("the page is still arriving");
+    assert!(
+        progressed > 0.05 && progressed < offset,
+        "the arrival progressed toward rest: {progressed} from {offset}"
+    );
+    // Past the section span, the next delivered frame lands the content
+    // at rest and asks for no further frame: the window is idle.
+    assert!(frame(&mut settings_cx, Duration::from_millis(130)) >= 1);
+    assert!(section_arrival(&settings, &mut settings_cx).is_none());
+    let settled = settings_cx
+        .debug_bounds("shortcuts-title")
+        .expect("the page's title");
+    assert_eq!(
+        title.origin.y - settled.origin.y,
+        px(offset),
+        "the page was shifted exactly the arrival's offset below its rest"
+    );
+    assert_eq!(
+        settle_frames(&mut settings_cx),
+        0,
+        "a settled window asks for no frame"
+    );
+}
+
+/// Moving back up the sidebar is the paired arrival: the page's content
+/// settles down into place from above rest, over the same section span,
+/// and settles leaving the window idle.
+#[gpui::test]
+fn moving_up_the_sidebar_arrives_from_above(cx: &mut TestAppContext) {
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let (settings, mut settings_cx) = opened_settings(cx);
+
+    // Down to About — the last section — and settled.
+    click_section(&mut settings_cx, "section-About");
+    settle_frames(&mut settings_cx);
+    assert!(section_arrival(&settings, &mut settings_cx).is_none());
+
+    // Back up to Appearance, the first section: the content arrives from
+    // above.
+    click_section(&mut settings_cx, "section-Appearance");
+    assert!(
+        settings_cx.debug_bounds("appearance").is_some(),
+        "the Appearance page is drawn at once, mid-arrival"
+    );
+    let (offset, _) = section_arrival(&settings, &mut settings_cx).expect("the page is arriving");
+    assert!(
+        offset < -2.5 && offset > -3.5,
+        "the arrival starts the full shift above rest: {offset}"
+    );
+
+    // The section span settles it: 160ms — past its 150ms — leaves the
+    // window idle.
+    assert!(frame(&mut settings_cx, Duration::from_millis(160)) >= 1);
+    assert!(section_arrival(&settings, &mut settings_cx).is_none());
+    assert_eq!(
+        settle_frames(&mut settings_cx),
+        0,
+        "a settled window asks for no frame"
+    );
+}
+
+/// A rapid section switch retargets each arrival from the presentation
+/// on screen — the interrupted offset carries over, so nothing restarts
+/// and nothing flashes — and the outgoing page's content is unmounted at
+/// once: the page drawn is always the section the user is on.
+#[gpui::test]
+fn rapid_section_switches_retarget_the_arrival_from_where_it_is(cx: &mut TestAppContext) {
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let (settings, mut settings_cx) = opened_settings(cx);
+
+    // Switch down to Shortcuts, and — with no clock time passing between
+    // them — down again to Extensions, whose page is different content.
+    click_section(&mut settings_cx, "section-Shortcuts");
+    let (offset, _) = section_arrival(&settings, &mut settings_cx).expect("Shortcuts is arriving");
+
+    click_section(&mut settings_cx, "section-Extensions");
+    let (continued, _) =
+        section_arrival(&settings, &mut settings_cx).expect("Extensions is arriving");
+    assert!(
+        (continued - offset).abs() < 0.05,
+        "the switch continued the presentation: {continued} from {offset}"
+    );
+    // The outgoing page's content is gone at once: the page drawn is
+    // Extensions', and none of Shortcuts' content lingers over it.
+    assert!(settings_cx.debug_bounds("extensions-title").is_some());
+    assert!(settings_cx.debug_bounds("shortcuts-title").is_none());
+
+    // And back up again, still from the presentation on screen.
+    click_section(&mut settings_cx, "section-Shortcuts");
+    let (back, _) =
+        section_arrival(&settings, &mut settings_cx).expect("Shortcuts is arriving again");
+    assert!(
+        (back - offset).abs() < 0.05,
+        "the return continued the presentation too: {back} from {offset}"
+    );
+    // What is drawn is Shortcuts' page, not a fading-out Extensions.
+    assert!(settings_cx.debug_bounds("shortcuts-title").is_some());
+    assert!(settings_cx.debug_bounds("extensions-title").is_none());
+
+    // The retargeted arrival then completes like any other.
+    settle_frames(&mut settings_cx);
+    assert!(section_arrival(&settings, &mut settings_cx).is_none());
+}
+
+/// Reduced motion settles every section switch at once: a switch under
+/// it starts no arrival, and reducing motion mid-arrival ends it on the
+/// next drawn frame. Either way the window schedules no frame for
+/// presentation — and at the window's floor the pages still switch and
+/// lay out.
+#[gpui::test]
+fn reduced_motion_settles_section_switches_at_once_at_the_window_boundary(cx: &mut TestAppContext) {
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let (settings, mut settings_cx) = opened_settings(cx);
+    // The window's floor: the boundary the reduced presentation must
+    // still work at.
+    settings_cx.simulate_resize(gpui::size(px(560.), px(400.)));
+    settings_cx.run_until_parked();
+
+    // A switch under reduced motion starts no arrival: the frame that
+    // draws the new page is already settled.
+    settings_cx.update(|_, cx| cx.set_reduce_motion(true));
+    click_section(&mut settings_cx, "section-About");
+    assert!(
+        settings_cx.debug_bounds("about").is_some(),
+        "the About page is drawn at the floor"
+    );
+    assert!(
+        section_arrival(&settings, &mut settings_cx).is_none(),
+        "reduced motion drew the page settled"
+    );
+    assert_eq!(
+        settle_frames(&mut settings_cx),
+        0,
+        "the window asked for no frame for the presentation"
+    );
+
+    // Reduced motion engaged mid-arrival ends it on the next frame. Begin
+    // a return under full motion, then flip the preference.
+    settings_cx.update(|_, cx| cx.set_reduce_motion(false));
+    click_section(&mut settings_cx, "section-Appearance");
+    assert!(
+        section_arrival(&settings, &mut settings_cx).is_some(),
+        "the switch began under full motion"
+    );
+    settings_cx.update(|_, cx| cx.set_reduce_motion(true));
+    // The frame the arrival had asked for draws settled, and asks for
+    // nothing further.
+    assert!(frame(&mut settings_cx, Duration::ZERO) >= 1);
+    assert!(
+        section_arrival(&settings, &mut settings_cx).is_none(),
+        "the arrival settled the moment reduced motion engaged"
+    );
+    assert_eq!(
+        settle_frames(&mut settings_cx),
+        0,
+        "the window asked for no further frame"
     );
 }
 
@@ -1777,4 +2634,456 @@ fn a_development_override_wins_is_indicated_and_is_never_saved(cx: &mut TestAppC
         fresh.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
     fresh_cx.run_until_parked();
     assert!(paints_panel(fresh_cx, &dark_panel()));
+}
+
+// The General page's launch-at-login toggle, driven through the fake
+// login system above: the user-visible toggle, repeat operations, the
+// restart that reconciles the saved choice with the registration the
+// platform reports, and the failure paths — a registration the platform
+// refuses, a save that fails, an integration that cannot manage the
+// registration here at all, a record that cannot be read.
+
+/// Whether the launch-at-login switch reads as on, as assistive
+/// technology sees it — the saved preference the switch carries.
+fn login_chosen(cx: &mut VisualTestContext) -> bool {
+    let (_, json) = accessibility(cx);
+    let tree: serde_json::Value = serde_json::from_str(&json).unwrap();
+    tree["nodes"].as_object().unwrap().values().any(|node| {
+        let aria = &node["aria"];
+        aria["role"] == "Switch"
+            && aria["label"] == "Launch Pane at login"
+            && aria["toggled"] == "True"
+    })
+}
+
+/// The settings record's text, as it stands in `data`.
+fn record_of(data: &std::path::Path) -> String {
+    std::fs::read_to_string(data.join("settings.json")).expect("the settings record")
+}
+
+/// Runs the window until the settings record in `data` holds `text`: the
+/// save the choice started is written off the window's thread, so what is
+/// waited for is the record the platform's change was kept with — a
+/// record not yet written reads as the empty string, which holds nothing.
+fn until_record_holds(cx: &mut VisualTestContext, data: &std::path::Path, text: &str) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        cx.run_until_parked();
+        let record = std::fs::read_to_string(data.join("settings.json")).unwrap_or_default();
+        if record.contains(text) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for the record to hold {text:?}"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[gpui::test]
+fn the_launch_at_login_toggle_takes_the_choice_and_saves_it(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let login = Arc::new(FakeLogin::default());
+    cx.update(|cx| {
+        pane::settings::init_with_login(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            login.clone(),
+            cx,
+        )
+    });
+    let (_launcher, _links, cx) = open_launcher(cx);
+
+    // The window opens on the General page, whose switch carries the
+    // saved preference: off, the record's default.
+    cx.simulate_keystrokes(settings_shortcut());
+    cx.run_until_parked();
+    let settings = settings_windows(cx).pop().expect("Settings opened");
+    let mut settings_cx = settings_context(&settings, cx);
+    settings_cx.run_until_parked();
+    assert!(
+        settings_cx
+            .debug_bounds("general-launch-at-login")
+            .is_some(),
+        "the switch is drawn"
+    );
+    assert!(!login_chosen(&mut settings_cx), "the choice is off");
+    assert_eq!(login.registration(), Registration::Disabled);
+
+    // Taking the choice: the fake platform's registration changes, the
+    // switch follows, and the record keeps it.
+    choose(&mut settings_cx, "general-launch-at-login");
+    cx.run_until_parked();
+    until_record_holds(&mut settings_cx, data.path(), "\"launchAtLogin\": true");
+    assert!(login_chosen(&mut settings_cx), "the choice is taken");
+    assert_eq!(login.registration(), Registration::Enabled);
+    assert!(record_of(data.path()).contains("\"launchAtLogin\": true"));
+
+    // Taking it back, and taking it again: repeated changes replace the
+    // one registration rather than piling up, and each lands in the
+    // record.
+    choose(&mut settings_cx, "general-launch-at-login");
+    cx.run_until_parked();
+    until_record_holds(&mut settings_cx, data.path(), "\"launchAtLogin\": false");
+    assert!(!login_chosen(&mut settings_cx));
+    assert_eq!(login.registration(), Registration::Disabled);
+    assert!(record_of(data.path()).contains("\"launchAtLogin\": false"));
+    choose(&mut settings_cx, "general-launch-at-login");
+    cx.run_until_parked();
+    until_record_holds(&mut settings_cx, data.path(), "\"launchAtLogin\": true");
+    assert!(login_chosen(&mut settings_cx));
+    assert_eq!(login.registration(), Registration::Enabled);
+    assert!(record_of(data.path()).contains("\"launchAtLogin\": true"));
+}
+
+#[gpui::test]
+fn a_fresh_application_reconciles_a_registration_the_platform_lost(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let first = Arc::new(FakeLogin::default());
+    cx.update(|cx| {
+        pane::settings::init_with_login(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            first.clone(),
+            cx,
+        )
+    });
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let mut settings_cx = general_page(cx);
+    choose(&mut settings_cx, "general-launch-at-login");
+    cx.run_until_parked();
+    until_record(&mut settings_cx, data.path());
+    assert_eq!(
+        first.registration(),
+        Registration::Enabled,
+        "the first Pane registered"
+    );
+
+    // The platform's registration is gone — an OS reset, a login item
+    // removed by hand — while the record still holds the user's choice.
+    // A fresh application over the same data folder repairs the
+    // registration to what the user chose: the preference is neither
+    // silently dropped nor silently changed.
+    let lost = Arc::new(FakeLogin::default());
+    let mut fresh = cx.cx.new_app();
+    fresh.update(pane::bind_keys);
+    fresh.update(|cx| {
+        pane::settings::init_with_login(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            lost.clone(),
+            cx,
+        )
+    });
+    let launcher = Launcher::new(Runtime::start(), Vec::new());
+    let (_window, fresh_cx) =
+        fresh.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
+    fresh_cx.run_until_parked();
+    assert_eq!(
+        lost.registration(),
+        Registration::Enabled,
+        "the missing registration was repaired at start"
+    );
+
+    // And the page it reports is the one the user chose, unchanged: the
+    // preference still on, the registration back, nothing to explain
+    // about the choice or the registration — the one note Linux carries
+    // with the choice on is the freedesktop convention's limit, which
+    // says nothing about this repair.
+    fresh_cx.simulate_keystrokes(settings_shortcut());
+    fresh_cx.run_until_parked();
+    let settings = settings_windows(fresh_cx).pop().expect("Settings opened");
+    let mut fresh_settings = settings_context(&settings, fresh_cx);
+    fresh_settings.run_until_parked();
+    assert!(login_chosen(&mut fresh_settings));
+    if cfg!(target_os = "linux") {
+        // The convention's caveat, not a problem with the repair.
+        assert!(
+            fresh_settings.debug_bounds("general-login-note").is_some(),
+            "the freedesktop convention's limit is explained"
+        );
+    } else {
+        assert!(
+            fresh_settings.debug_bounds("general-login-note").is_none(),
+            "nothing needs explaining: the choice and the registration agree"
+        );
+    }
+}
+
+#[gpui::test]
+fn a_stale_registration_is_removed_without_enabling_the_choice(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    // A record whose user left the choice off...
+    let record = r#"{ "version": 1, "launchAtLogin": false }"#;
+    std::fs::write(data.path().join("settings.json"), record).unwrap();
+    // ...beside a platform registration that says otherwise: stale, not
+    // the user's.
+    let stale = Arc::new(FakeLogin::default());
+    *stale.registration.lock().unwrap() = Registration::Enabled;
+    cx.update(|cx| {
+        pane::settings::init_with_login(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            stale.clone(),
+            cx,
+        )
+    });
+    let (_launcher, _links, cx) = open_launcher(cx);
+
+    // At start the registration is reconciled to the record: removed,
+    // not obeyed — a user-disabled preference is never silently enabled
+    // by what the platform happens to hold.
+    assert_eq!(
+        stale.registration(),
+        Registration::Disabled,
+        "the stale registration was removed"
+    );
+    assert_eq!(record_of(data.path()), record);
+
+    // The page shows the preference the record holds: off.
+    cx.simulate_keystrokes(settings_shortcut());
+    cx.run_until_parked();
+    let settings = settings_windows(cx).pop().expect("Settings opened");
+    let mut settings_cx = settings_context(&settings, cx);
+    settings_cx.run_until_parked();
+    assert!(!login_chosen(&mut settings_cx));
+}
+
+#[gpui::test]
+fn a_failed_registration_is_explained_and_nothing_is_saved(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let record = r#"{ "version": 1 }"#;
+    std::fs::write(data.path().join("settings.json"), record).unwrap();
+    let login = Arc::new(FakeLogin::default());
+    *login.refusals.lock().unwrap() = (
+        Some("the system refused it: another program owns the startup list".into()),
+        None,
+    );
+    cx.update(|cx| {
+        pane::settings::init_with_login(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            login.clone(),
+            cx,
+        )
+    });
+    let (_launcher, _links, cx) = open_launcher(cx);
+
+    cx.simulate_keystrokes(settings_shortcut());
+    cx.run_until_parked();
+    let settings = settings_windows(cx).pop().expect("Settings opened");
+    let mut settings_cx = settings_context(&settings, cx);
+    settings_cx.run_until_parked();
+
+    // The switch is offered and off; taking it fails, and the failure is
+    // the page's note — not a switch that pretends it succeeded.
+    choose(&mut settings_cx, "general-launch-at-login");
+    cx.run_until_parked();
+    settings_cx.run_until_parked();
+    assert!(!login_chosen(&mut settings_cx), "the choice was not taken");
+    assert!(
+        settings_cx.debug_bounds("general-login-note").is_some(),
+        "the refusal is drawn"
+    );
+    let (_, json) = accessibility(&mut settings_cx);
+    assert!(
+        json.contains("the system refused it"),
+        "the refusal is explained, {json}"
+    );
+
+    // The preference, the registration and the record all stand: a
+    // failed registration never masquerades as a saved choice.
+    assert_eq!(login.registration(), Registration::Disabled);
+    assert_eq!(record_of(data.path()), record);
+}
+
+#[gpui::test]
+fn a_failed_save_rolls_the_registration_back_to_what_was_saved(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let login = Arc::new(FakeLogin::default());
+    cx.update(|cx| {
+        pane::settings::init_with_login(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            login.clone(),
+            cx,
+        )
+    });
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let mut settings_cx = general_page(cx);
+
+    // A choice that saves, so the record holds it.
+    choose(&mut settings_cx, "general-launch-at-login");
+    cx.run_until_parked();
+    until_record(&mut settings_cx, data.path());
+    assert!(login.registration().registered());
+
+    // Break the record's replacement: a folder where the record belongs,
+    // so the atomic write cannot rename over it.
+    std::fs::remove_file(data.path().join("settings.json")).unwrap();
+    std::fs::create_dir(data.path().join("settings.json")).unwrap();
+
+    // Turning the choice off: the platform's registration is released,
+    // but the choice cannot be kept — so the registration is put back to
+    // what the record last held, and the failure is the page's status.
+    choose(&mut settings_cx, "general-launch-at-login");
+    cx.run_until_parked();
+    settings_cx.run_until_parked();
+    assert!(
+        settings_cx.debug_bounds("general-status").is_some(),
+        "the failure is drawn"
+    );
+    let (_, json) = accessibility(&mut settings_cx);
+    assert!(
+        json.contains("Pane could not save your choice"),
+        "the failure is explained, {json}"
+    );
+    assert!(
+        login_chosen(&mut settings_cx),
+        "the switch shows what was saved: on"
+    );
+    assert!(
+        login.registration().registered(),
+        "the registration was rolled back to what was saved"
+    );
+}
+
+#[gpui::test]
+fn an_unavailable_login_integration_is_explained_and_not_offered(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    cx.update(|cx| {
+        pane::settings::init_with_login(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            Arc::new(pane_core::autostart::Unavailable(
+                "Not available in this development build: Pane registers itself at login only as \
+                 the installed application"
+                    .into(),
+            )),
+            cx,
+        )
+    });
+    let (_launcher, _links, cx) = open_launcher(cx);
+
+    cx.simulate_keystrokes(settings_shortcut());
+    cx.run_until_parked();
+    let settings = settings_windows(cx).pop().expect("Settings opened");
+    let mut settings_cx = settings_context(&settings, cx);
+    settings_cx.run_until_parked();
+
+    // The switch is there and says off, but the reason it cannot be
+    // taken is the page's note: the integration's own explanation, not a
+    // toggle that pretends to work.
+    assert!(
+        settings_cx
+            .debug_bounds("general-launch-at-login")
+            .is_some(),
+        "the switch is drawn"
+    );
+    assert!(!login_chosen(&mut settings_cx));
+    assert!(
+        settings_cx.debug_bounds("general-login-note").is_some(),
+        "the limitation is drawn"
+    );
+    let (_, json) = accessibility(&mut settings_cx);
+    assert!(
+        json.contains("Not available in this development build"),
+        "the limitation is explained, {json}"
+    );
+
+    // Taking the choice anyway changes nothing: the platform was never
+    // asked, and nothing was saved.
+    choose(&mut settings_cx, "general-launch-at-login");
+    cx.run_until_parked();
+    settings_cx.run_until_parked();
+    assert!(!login_chosen(&mut settings_cx));
+    assert!(!data.path().join("settings.json").exists());
+}
+
+#[gpui::test]
+fn a_registration_awaiting_approval_is_explained(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    std::fs::write(
+        data.path().join("settings.json"),
+        r#"{ "version": 1, "launchAtLogin": true }"#,
+    )
+    .unwrap();
+    // The platform holds the registration, but its approval is still
+    // the user's to give, as macOS's login items are.
+    let login = Arc::new(FakeLogin::default());
+    *login.registration.lock().unwrap() = Registration::NeedsApproval;
+    cx.update(|cx| {
+        pane::settings::init_with_login(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            login.clone(),
+            cx,
+        )
+    });
+    let (_launcher, _links, cx) = open_launcher(cx);
+
+    // At start the registration already matches the choice, so nothing
+    // is re-registered: what is left is the approval, which is the
+    // page's to say.
+    assert_eq!(login.registration(), Registration::NeedsApproval);
+    cx.simulate_keystrokes(settings_shortcut());
+    cx.run_until_parked();
+    let settings = settings_windows(cx).pop().expect("Settings opened");
+    let mut settings_cx = settings_context(&settings, cx);
+    settings_cx.run_until_parked();
+    assert!(login_chosen(&mut settings_cx), "the choice is on");
+    assert!(
+        settings_cx.debug_bounds("general-login-note").is_some(),
+        "the approval is drawn"
+    );
+    let (_, json) = accessibility(&mut settings_cx);
+    assert!(
+        json.contains("macOS asks for your approval"),
+        "the approval is explained, {json}"
+    );
+}
+
+#[gpui::test]
+fn an_unreadable_record_refuses_the_login_choice(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let garbage = "{ not the settings record";
+    std::fs::write(data.path().join("settings.json"), garbage).unwrap();
+    let login = Arc::new(FakeLogin::default());
+    cx.update(|cx| {
+        pane::settings::init_with_login(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            login.clone(),
+            cx,
+        )
+    });
+    let (_launcher, _links, cx) = open_launcher(cx);
+
+    cx.simulate_keystrokes(settings_shortcut());
+    cx.run_until_parked();
+    let settings = settings_windows(cx).pop().expect("Settings opened");
+    let mut settings_cx = settings_context(&settings, cx);
+    settings_cx.run_until_parked();
+
+    // The page says choices are not saved, and why.
+    assert!(
+        settings_cx.debug_bounds("general-status").is_some(),
+        "the problem is drawn"
+    );
+    let (_, json) = accessibility(&mut settings_cx);
+    assert!(
+        json.contains("Pane could not read the settings record"),
+        "the problem is explained, {json}"
+    );
+
+    // The choice is refused: the record's rule is not to replace what
+    // cannot be read, and the platform is not asked to hold a choice
+    // nothing would remember.
+    choose(&mut settings_cx, "general-launch-at-login");
+    cx.run_until_parked();
+    settings_cx.run_until_parked();
+    assert!(!login_chosen(&mut settings_cx), "the choice was refused");
+    assert_eq!(login.registration(), Registration::Disabled);
+    assert_eq!(record_of(data.path()), garbage);
 }

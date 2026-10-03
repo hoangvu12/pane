@@ -24,12 +24,13 @@
 //! — comes first, and hiding the launcher never quits Pane.
 
 use gpui::{
-    AnyElement, App, Context, Div, Hsla, Role, Stateful, Toggled, Window, div, prelude::*, px,
+    AnyElement, App, Context, Div, Hsla, Role, ScrollAnchor, Stateful, Toggled, Window, div,
+    prelude::*, px,
 };
 use pane_core::placement::{DisplayLayout, resolve};
-use pane_core::{OpeningMonitor, Reopening};
+use pane_core::{Launcher, OpeningMonitor, Reopening};
 
-use super::{Page, SettingsWindow};
+use super::{Page, SettingsWindow, search};
 use crate::ui::icon::{Glyph, IconTone};
 use crate::ui::theme::Theme;
 
@@ -81,19 +82,52 @@ const REOPENINGS: [(Reopening, &str, &str, &str); 2] = [
 pub(crate) fn page() -> Page {
     Page {
         title: "Launcher",
+        about: "The display the launcher opens on, and what reopening shows",
         icon: (IconTone::Command, Glyph::Monitor),
-        labels: &[
-            "Launcher",
-            "opening monitor",
-            "primary display",
-            "pointer's display",
-            "active window's display",
-            "reopening",
-            "restore the current view",
-            "start at root search",
-        ],
         render,
+        search: entries,
+        focus,
     }
+}
+
+/// The settings the page offers the sidebar's search: each choice of both
+/// groups, named as the page names it, in the group it sits in, saying
+/// why it cannot be used where the system does not answer it — the result
+/// stays listed with its reason, as the control does on the page. The
+/// reopening choices are no platform integration: they are always usable.
+fn entries(_launcher: &Launcher, cx: &App) -> Vec<search::Entry> {
+    let placement = crate::placement::shared(cx);
+    let layout = placement.layout();
+    let unavailable = placement.unavailable();
+    let monitors = MONITORS.iter().map(|&(monitor, name, _, selector)| {
+        search::Entry {
+            control: Some(selector.into()),
+            title: name.into(),
+            group: Some("Opening monitor".into()),
+            unavailable: match &unavailable {
+                // The platform cannot choose the launcher's display at all:
+                // every choice says so, as the page does.
+                Some(why) => Some(why.clone()),
+                None => unsupported(&layout, monitor),
+            },
+        }
+    });
+    let reopenings = REOPENINGS
+        .iter()
+        .map(|&(_, name, _, selector)| search::Entry {
+            control: Some(selector.into()),
+            title: name.into(),
+            group: Some("Reopening".into()),
+            unavailable: None,
+        });
+    monitors.chain(reopenings).collect()
+}
+
+/// The page's controls take no keyboard focus (they are chosen with the
+/// pointer, as the reference's settings rows are), so a jump to one
+/// reveals it where it drew and the sidebar keeps the focus: `false`.
+fn focus(_: &mut SettingsWindow, _: &str, _: &mut Window, _: &mut Context<SettingsWindow>) -> bool {
+    false
 }
 
 /// Draws the Launcher page: the opening-monitor group, the reopening
@@ -101,7 +135,7 @@ pub(crate) fn page() -> Page {
 /// platform report — an unsupported choice, a fallback, a save that
 /// failed.
 fn render(
-    _this: &mut SettingsWindow,
+    this: &mut SettingsWindow,
     _window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
@@ -159,6 +193,9 @@ fn render(
                         // shown with its reason, not offered: choosing it
                         // would pretend a placement that cannot be made.
                         let reason = unsupported(&layout, monitor);
+                        // The choice's scroll anchor, which the search's
+                        // reveal scrolls to (see the window's render).
+                        let anchor = this.search_anchor(selector);
                         choice(
                             selector,
                             name,
@@ -166,6 +203,7 @@ fn render(
                             monitor == chosen,
                             reason.is_none(),
                             reason,
+                            anchor,
                             theme,
                             cx.listener(move |_, _, _, cx| {
                                 crate::settings::shared(cx).update(cx, |settings, cx| {
@@ -188,6 +226,7 @@ fn render(
             REOPENINGS
                 .iter()
                 .map(|&(preference, name, subtitle, selector)| {
+                    let anchor = this.search_anchor(selector);
                     choice(
                         selector,
                         name,
@@ -195,6 +234,7 @@ fn render(
                         preference == reopening,
                         true,
                         None,
+                        anchor,
                         theme,
                         cx.listener(move |_, _, _, cx| {
                             crate::settings::shared(cx).update(cx, |settings, cx| {
@@ -278,8 +318,9 @@ fn group(label: &'static str, rows: Vec<Stateful<Div>>, theme: &Theme) -> Div {
 /// and semantics. `chosen` is whether the row's choice is the one in
 /// effect; `offered` is whether choosing it does anything (a choice whose
 /// answer this system does not give is shown with its `reason`, not
-/// offered); `on_click` reports the choice to the host settings, which
-/// records and saves it.
+/// offered); `anchor` is the scroll anchor the search's reveal scrolls
+/// to; `on_click` reports the choice to the host settings, which records
+/// and saves it.
 #[allow(clippy::too_many_arguments)]
 fn choice(
     selector: &'static str,
@@ -288,6 +329,7 @@ fn choice(
     chosen: bool,
     offered: bool,
     reason: Option<String>,
+    anchor: ScrollAnchor,
     theme: &Theme,
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
@@ -344,6 +386,7 @@ fn choice(
         );
     row.id(name)
         .debug_selector(move || selector.into())
+        .anchor_scroll(Some(anchor))
         .role(Role::RadioButton)
         .aria_label(name)
         .aria_toggled(if chosen {

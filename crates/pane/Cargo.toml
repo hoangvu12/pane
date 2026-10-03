@@ -61,4 +61,8 @@ tempfile = "3"
 sha2 = "0.10"
 tar = { version = "0.4.44", default-features = false }
 flate2 = "1"
+# The zip packer of that same test support, which the Settings tests now
+# reuse for the local artifact source's application packages; already in the
+# tree through `pane-core`'s zip reader.
+crc32fast = "1"
 gpui ={ package = "gpui-ce", git = "https://github.com/hoangvu12/gpui-ce", rev = "bcf3a0acd047c1873293069d0ed42085a38f699b", default-features = false, features = ["test-support"] }

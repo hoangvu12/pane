@@ -121,10 +121,11 @@ pub enum Reopening {
 }
 
 /// The host settings as the user chose them: one theme preference, one
-/// material preference, the Open Pane hotkey, the launcher's opening
-/// display and what reopening shows, the whole of what the pages built so
-/// far offer. Later pages add fields beside these, with the same rules:
-/// missing fields default, and unknown values fail the record.
+/// material preference, the Open Pane hotkey, the launch-at-login choice,
+/// the launcher's opening display and what reopening shows, the whole of
+/// what the Settings pages built so far offer. Later pages add fields
+/// beside these, with the same rules: missing fields default, and
+/// unknown values fail the record.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostSettings {
     /// The theme the user chose for Pane's windows.
@@ -137,6 +138,12 @@ pub struct HostSettings {
     /// stays while extensions are disabled, and is applied through the
     /// same platform registration path the command hotkeys use.
     pub open_pane: Shortcut,
+    /// Whether the user chose Pane to start at login. A preference, not a
+    /// registration: whether Pane actually starts is the platform's own
+    /// login integration, which the window layer reconciles with this
+    /// choice (see `crate::autostart`) rather than trusting either side
+    /// alone.
+    pub launch_at_login: bool,
     /// The display the launcher window opens on, as the Launcher page
     /// records it. A preference: the placement is resolved against the
     /// display layout when the launcher opens (see `crate::placement`),
@@ -155,6 +162,7 @@ impl Default for HostSettings {
             theme: ThemePreference::default(),
             material: MaterialPreference::default(),
             open_pane: Shortcut::open_pane_default(),
+            launch_at_login: false,
             opening_monitor: OpeningMonitor::default(),
             reopening: Reopening::default(),
         }
@@ -207,6 +215,7 @@ impl HostSettings {
             theme: recorded.theme,
             material: recorded.material,
             open_pane,
+            launch_at_login: recorded.launch_at_login,
             opening_monitor: recorded.opening_monitor,
             reopening: recorded.reopening,
         })
@@ -223,6 +232,7 @@ impl HostSettings {
             theme: self.theme,
             material: self.material,
             open_pane: Some(self.open_pane.id()),
+            launch_at_login: self.launch_at_login,
             opening_monitor: self.opening_monitor,
             reopening: self.reopening,
         };
@@ -251,6 +261,8 @@ struct Recorded {
     /// while the record's other fields follow the house camelCase names.
     #[serde(default, rename = "open_pane")]
     open_pane: Option<String>,
+    #[serde(default)]
+    launch_at_login: bool,
     /// The display the launcher opens on, as one of the three words the
     /// preference names; missing means the primary display, the
     /// provisional default.
@@ -306,6 +318,7 @@ mod tests {
             theme: ThemePreference::System,
             material: MaterialPreference::Solid,
             open_pane: Shortcut::parse("ctrl+alt+b").unwrap(),
+            launch_at_login: true,
             opening_monitor: super::OpeningMonitor::Pointer,
             reopening: super::Reopening::RootSearch,
         };
@@ -374,6 +387,27 @@ mod tests {
     }
 
     #[test]
+    fn the_launch_at_login_choice_is_written_and_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings = HostSettings {
+            launch_at_login: true,
+            ..HostSettings::default()
+        };
+        settings.save(dir.path()).unwrap();
+        assert_eq!(HostSettings::open(dir.path()).unwrap(), settings);
+        // The field is named as the house records name their fields, so
+        // the choice survives a Pane that knows it by name alone.
+        let text = std::fs::read_to_string(dir.path().join(FILE)).unwrap();
+        assert!(
+            text.contains("\"launchAtLogin\": true"),
+            "the record is {text}"
+        );
+        // A record without the field is one an older Pane wrote: the
+        // choice defaults to off, not an error.
+        assert!(!reading(r#"{ "version": 1 }"#).unwrap().launch_at_login);
+    }
+
+    #[test]
     fn an_unparseable_record_is_a_problem() {
         let problem = reading("{ not a record");
         assert!(problem.is_err(), "{problem:?}");
@@ -405,6 +439,7 @@ mod tests {
             r#"{ "version": 1, "theme": "sepia" }"#,
             r#"{ "version": 1, "material": "frost" }"#,
             r#"{ "version": 1, "theme": 3 }"#,
+            r#"{ "version": 1, "launchAtLogin": "yes" }"#,
             r#"{ "version": 1, "openingMonitor": "nearest" }"#,
             r#"{ "version": 1, "reopening": "blank" }"#,
         ] {
@@ -424,6 +459,7 @@ mod tests {
             theme: ThemePreference::Light,
             material: MaterialPreference::Solid,
             open_pane: Shortcut::parse("ctrl+alt+b").unwrap(),
+            launch_at_login: true,
             opening_monitor: super::OpeningMonitor::Pointer,
             reopening: super::Reopening::RootSearch,
         }

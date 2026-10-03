@@ -98,21 +98,29 @@ impl Global for Shared {}
 
 /// Installs `placement` as the placement this app uses, before any window
 /// reads it. The tests call this with their own; nothing else needs to,
-/// since [`shared`] falls back to the platform's.
+/// since [`ensure`] falls back to the platform's.
 pub fn init(placement: Rc<dyn Placement>, cx: &mut App) {
     cx.set_global(Shared(placement));
 }
 
 /// The placement every window places the launcher and explains the choices
-/// through. The first call makes it the platform's own
-/// ([`native`]); the window layer has no startup step of its own for this.
-pub(crate) fn shared(cx: &mut App) -> Rc<dyn Placement> {
+/// through, ensuring it exists: the global [`init`] made, or — for a
+/// window built without a startup step, as the tests are — the platform's
+/// own. Each window's constructor calls this, as it does the host
+/// settings' own ensure, so whatever reads the placement later finds one.
+pub(crate) fn ensure(cx: &mut App) -> Rc<dyn Placement> {
     if let Some(shared) = cx.try_global::<Shared>() {
         return shared.0.clone();
     }
     let native = native();
     cx.set_global(Shared(native.clone()));
     native
+}
+
+/// The placement, as the windows' renders and the pages' searches read it.
+/// Requires a window's constructor to have called [`ensure`].
+pub(crate) fn shared(cx: &App) -> Rc<dyn Placement> {
+    cx.global::<Shared>().0.clone()
 }
 
 /// How many of the layout's units one of the window's logical pixels is:

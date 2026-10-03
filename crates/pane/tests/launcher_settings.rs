@@ -896,40 +896,55 @@ fn escape_at_root_search_with_an_empty_query_hides_the_launcher(cx: &mut TestApp
 }
 
 #[gpui::test]
-fn the_page_registers_its_settings_in_the_host_page_catalog(cx: &mut TestAppContext) {
+fn the_page_registers_its_settings_in_the_settings_search(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
     let placement = Rc::new(FakePlacement::default());
-    placement.layout(None, None);
-    let (_window, cx) = open(cx, Some(data.path()), &placement);
+    placement.layout(Some(Point { x: 100., y: 100. }), Some(DisplayId(1)));
+    let (window, cx) = open(cx, Some(data.path()), &placement);
 
-    // The Launcher page's settings are registered under their searchable
-    // labels, each with the page it is on — the catalog the Settings
-    // search (#83) filters.
-    let (_settings, mut settings_cx) = open_launcher_page(cx);
-    let labels: Vec<(String, String)> = settings_cx.update(|_, cx| {
-        let settings = cx
-            .windows()
-            .into_iter()
-            .filter_map(|window| window.downcast::<SettingsWindow>())
-            .next()
-            .expect("the Settings window");
-        settings
-            .update(cx, |window, _, _| window.searchable_labels())
-            .expect("the window answers")
-            .into_iter()
-            .map(|(page, label)| (page.to_owned(), label.to_owned()))
-            .collect()
-    });
+    // The Launcher page's settings are in the catalog the sidebar's search
+    // filters: each choice, named as the page names it, in the group it
+    // sits in. The reopening choices are found by their own words.
+    let (settings, mut settings_cx) = open_launcher_page(cx);
+    let mut search_cx = VisualTestContext::from_window(AnyWindowHandle::from(settings), &cx.cx);
+    search_cx.simulate_keystrokes(find_shortcut());
+    search_cx.simulate_input("monitor");
+    search_cx.run_until_parked();
     assert!(
-        labels.contains(&("Launcher".into(), "opening monitor".into())),
-        "the opening monitor is registered, {labels:?}"
+        search_cx
+            .debug_bounds("settings-search-result-Primary display")
+            .is_some(),
+        "the opening monitor's choices are found"
     );
+    let tree = a11y(&mut search_cx);
     assert!(
-        labels.contains(&("Launcher".into(), "reopening".into())),
-        "reopening is registered, {labels:?}"
+        tree.contains("Launcher \u{b7} Opening monitor"),
+        "the result names the page and the group, {tree}"
     );
+    search_cx.simulate_input(" reopening");
+    search_cx.run_until_parked();
     assert!(
-        labels.contains(&("Launcher".into(), "pointer's display".into())),
-        "the choices are registered by the words a user would look for, {labels:?}"
+        search_cx
+            .debug_bounds("settings-search-result-Start at root search")
+            .is_some(),
+        "the reopening choices are found"
     );
+    // Clearing the query brings the sections back.
+    search_cx.simulate_keystrokes("escape");
+    search_cx.run_until_parked();
+    assert!(
+        search_cx.debug_bounds("section-Launcher").is_some(),
+        "the sections are back"
+    );
+    let _ = window;
+}
+
+/// The keystroke that focuses the Settings search: Cmd+F on macOS,
+/// Ctrl+F on Windows and Linux.
+fn find_shortcut() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "cmd-f"
+    } else {
+        "ctrl-f"
+    }
 }

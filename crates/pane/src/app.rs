@@ -70,7 +70,7 @@ pub struct LauncherWindow {
     /// The view transition in flight, if any: the arriving screen's
     /// content is fading in over a tiny directional shift. Presentation
     /// only — see [`crate::ui::motion`].
-    transition: Option<motion::Transition>,
+    transition: Option<motion::Tween>,
     /// Which way the last navigation went, for the next view transition's
     /// direction: `back()` leaves a view, everything else that changes the
     /// screen (opening a command, a form, a custom view, a preview, a
@@ -136,6 +136,9 @@ impl LauncherWindow {
         // system here, at startup, and the settings keep this launcher for
         // every later change (see `crate::settings::attach_launcher`).
         crate::settings::attach_launcher(&launcher, cx);
+        // The placement the launcher window opens through, ensuring it
+        // exists before the window below is placed by it.
+        crate::placement::ensure(cx);
         // Quitting ends development: its watchers go and a running build
         // is stopped with the processes it started.
         cx.on_app_quit(|this: &mut Self, _| {
