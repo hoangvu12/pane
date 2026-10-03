@@ -220,7 +220,8 @@ fn recorder_row(
     let typography = &theme.typography;
     let geometry = &theme.geometry;
     let listening = recording == Some(action);
-    let default = Keyboard::default_for_this_system().binding(action);
+    let defaults = Keyboard::default_for_this_system();
+    let default = defaults.binding(action);
     let subtitle: String = if listening {
         "The keys are captured here: they do not act".into()
     } else if binding == default {
