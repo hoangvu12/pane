@@ -284,7 +284,6 @@ impl Settings {
             cx.notify();
             return;
         }
-        eprintln!("CHOOSE taken {chosen:?}");
         self.chosen = chosen;
         self.changed(cx);
         self.save(cx);
@@ -434,9 +433,7 @@ pub fn init(dir: Option<PathBuf>, cx: &mut App) {
 /// [`init`] with the overrides named outright, so a caller (the tests)
 /// fixes what the process overrides without touching the environment.
 pub fn init_with_overrides(dir: Option<PathBuf>, overrides: Overrides, cx: &mut App) {
-    eprintln!("INIT overrides={overrides:?} dir={dir:?}");
     if cx.try_global::<Shared>().is_some() {
-        eprintln!("INIT skipped: global exists");
         return;
     }
     let settings = cx.new(|cx| Settings::open(dir, overrides, cx));
@@ -454,10 +451,8 @@ pub fn init_with_overrides(dir: Option<PathBuf>, overrides: Overrides, cx: &mut 
 /// no environment overrides, so those windows render deterministically.
 pub(crate) fn ensure(cx: &mut App) -> Entity<Settings> {
     if let Some(shared) = cx.try_global::<Shared>() {
-        eprintln!("ENSURE existing entity={:?}", shared.0.entity_id());
         return shared.0.clone();
     }
-    eprintln!("ENSURE creating fallback");
     init_with_overrides(None, Overrides::default(), cx);
     cx.global::<Shared>().0.clone()
 }
