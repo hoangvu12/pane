@@ -20,6 +20,7 @@ use gpui::{
 };
 use pane_core::changes::Changes;
 use pane_core::hotkeys::Shortcut;
+use pane_core::tray::TrayAction;
 use pane_core::{Launcher, LauncherView, Row, Screen, SelectedAction, Status};
 
 use crate::extension_views::{custom_view, form};
@@ -549,6 +550,17 @@ impl LauncherWindow {
             self.hide(window, cx);
             return;
         }
+        self.summon(window, cx);
+    }
+
+    /// Shows and focuses the launcher: the hotkey's show path, and the
+    /// one the tray's Open Pane takes — an entry point that reaches the
+    /// launcher from outside Pane's own windows must find a visible,
+    /// focused launcher. It never hides, whatever state the launcher
+    /// was in: only the hotkey toggles, because its press is the user's
+    /// other hand on the same control; the tray's item says Open Pane
+    /// and does only that.
+    fn summon(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.unhide(window, cx);
         window.activate_window();
         cx.activate(true);
@@ -570,6 +582,39 @@ impl LauncherWindow {
             self.query.focus(window, cx);
         }
         cx.notify();
+    }
+
+    /// One selection of the native tray or menu-bar entry, as its adapter
+    /// reported the menu's choice ([`pane_core::tray`]): Open Pane summons
+    /// the launcher — shown and focused, never hidden, so the entry stays
+    /// usable while the launcher is hidden and never starts a second
+    /// window; Settings opens or focuses the one Settings window, which
+    /// shares this launcher, so no second window or extension runtime
+    /// comes of it; Quit ends Pane explicitly — Pane's own native
+    /// resources, the tray entry and the global hotkey registrations, go
+    /// first, and the quit hooks then stop the runtime's helpers and the
+    /// development watches, as closing the launcher's window does.
+    pub fn tray_selected(
+        &mut self,
+        action: TrayAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match action {
+            TrayAction::OpenPane => self.summon(window, cx),
+            TrayAction::Settings => {
+                settings::open(&self.launcher, cx);
+            }
+            TrayAction::Quit => {
+                // Pane's own resources are removed deliberately — a quit
+                // that ended the process might never run a destructor —
+                // and then the same quit path closing the launcher's
+                // window is taken.
+                crate::settings::shared(cx).update(cx, |settings, _| settings.release_tray());
+                self.launcher.release_hotkeys();
+                cx.quit();
+            }
+        }
     }
 
     /// On the hotkey screen, a key pressed with its modifiers is the new
