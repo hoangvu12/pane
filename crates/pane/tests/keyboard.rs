@@ -991,7 +991,8 @@ fn the_rebound_back_key_clears_a_command_search_before_leaving_it(cx: &mut TestA
     cx.simulate_input(&service.url());
     cx.simulate_keystrokes("enter");
     settle(&window, cx);
-    cx.simulate_keystrokes("escape");
+    // The rebound back key leaves the form, as Escape did.
+    cx.simulate_keystrokes("ctrl-b");
     settle(&window, cx);
 
     // A search in the command's own field.
