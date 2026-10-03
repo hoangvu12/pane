@@ -1138,6 +1138,56 @@ fn a_failed_install_is_explained_and_the_offer_stays_to_try_again(cx: &mut TestA
 }
 
 #[gpui::test]
+fn an_interrupted_download_from_the_page_is_tried_again_and_lands(cx: &mut TestAppContext) {
+    let dirs = UpdateDirs::new();
+    dirs.publish_update("99.0.0", b"the 99.0.0 program");
+    dirs.running(b"the 0.1.0 program");
+    let (launcher, cx) = open_updating_launcher(cx, &dirs, "0.1.0");
+    let (_settings, mut settings_cx) = open_about(cx);
+    click_row(&mut settings_cx, "about-check-update");
+    until_text(&mut settings_cx, "Pane 99.0.0 is available");
+
+    // The first download of the package is interrupted partway: the
+    // connection closes after its first bytes, as an offline moment
+    // does. The install the page started rides the retry the download
+    // itself makes — the same retry the root row's install does — and
+    // lands.
+    let file = format!("pane-99.0.0-{}.zip", Target::current().unwrap().id());
+    dirs.artifacts.drop_after(&file, 16, 1);
+
+    click_row(&mut settings_cx, "about-update");
+    until_text(
+        &mut settings_cx,
+        "Installed Pane 99.0.0; the new version is used the next time Pane starts",
+    );
+    assert_eq!(fs::read(dirs.program()).unwrap(), b"the 99.0.0 program");
+    assert_eq!(
+        fs::read(dirs.install.path().join("pane.old")).unwrap(),
+        b"the 0.1.0 program"
+    );
+    // The package was downloaded twice: the interrupted one, and the
+    // retry that landed.
+    let downloads = dirs
+        .artifacts
+        .requests()
+        .iter()
+        .filter(|path| path.ends_with(".zip"))
+        .count();
+    assert_eq!(downloads, 2, "the interrupted download was retried");
+    // The status line answered the same landing, and neither entry
+    // point offers the update any more.
+    let view = cx.read_entity(&launcher, |window, _| window.launcher().view());
+    assert_eq!(
+        view.status,
+        Status::Result(
+            "Installed Pane 99.0.0; the new version is used the next time Pane starts".into()
+        )
+    );
+    assert!(settings_cx.debug_bounds("about-update").is_none());
+    assert!(!titles(&launcher, cx).contains(&"Update Pane to 99.0.0".to_owned()));
+}
+
+#[gpui::test]
 fn leaving_the_page_while_a_check_runs_cancels_nothing(cx: &mut TestAppContext) {
     let dirs = UpdateDirs::new();
     dirs.publish_update("99.0.0", b"the 99.0.0 program");
