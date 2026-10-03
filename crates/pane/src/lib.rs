@@ -1,20 +1,31 @@
 //! Pane's native launcher, rendered with GPUI CE: this module exposes the
 //! crate's entry points — the key bindings, the build's sample commands and
-//! default extensions, and the folders Pane keeps — and re-exports the
-//! launcher window ([`app`]) and the system's link opener ([`links`]).
+//! default extensions, the folders Pane keeps, and the host settings — and
+//! re-exports the launcher window ([`app`]), the Settings window
+//! ([`features::settings`]) and the system's link opener ([`links`]).
 
 use std::path::PathBuf;
 
-use gpui::{App, KeyBinding, Window, WindowBackgroundAppearance, actions};
-use pane_core::CommandRegistration;
+use gpui::{App, KeyBinding, WindowBackgroundAppearance, actions};
+// `Window` names the rounded-corner preference's parameter, which only
+// Windows has; the import follows the same gate so it is not unused on the
+// other platforms.
+#[cfg(target_os = "windows")]
+use gpui::Window;
+use pane_core::{CommandRegistration, Keyboard};
 
 mod app;
 mod extension_views;
 mod features;
+mod keyboard;
 mod links;
 mod ui;
 
+pub mod placement;
+pub mod settings;
+
 pub use app::LauncherWindow;
+pub use features::settings::SettingsWindow;
 pub use links::SystemLinks;
 
 actions!(
@@ -25,24 +36,40 @@ actions!(
         Confirm,
         Back,
         FocusNext,
-        FocusPrevious
+        FocusPrevious,
+        OpenSettings,
+        ReturnToRoot,
+        DismissLauncher
     ]
 );
 
-/// Registers the launcher's key bindings.
+/// Registers the launcher's key bindings: the full registration over the
+/// bindings the host settings hold (see [`keyboard`]), so a record the
+/// Keyboard page saved is in force from the first window. The settings
+/// must have been initialized first, as the binary does before this
+/// runs.
 pub fn bind_keys(cx: &mut App) {
+    bind_keys_with(cx, &settings::keyboard_of(cx));
+}
+
+/// The full key registration over `keyboard`: [`bind_keys`] is this over
+/// the host settings' bindings, and the settings entity itself re-runs it
+/// over the keyboard it holds as a choice changes
+/// ([`keyboard::rebuild`]) — it cannot read itself back through
+/// [`settings::keyboard_of`] while its own update is in flight.
+pub(crate) fn bind_keys_with(cx: &mut App, keyboard: &Keyboard) {
     cx.bind_keys([
-        KeyBinding::new("down", SelectNext, Some(app::KEY_CONTEXT)),
-        KeyBinding::new("up", SelectPrevious, Some(app::KEY_CONTEXT)),
-        KeyBinding::new("enter", Confirm, Some(app::KEY_CONTEXT)),
-        KeyBinding::new("escape", Back, Some(app::KEY_CONTEXT)),
         KeyBinding::new("tab", FocusNext, Some(app::KEY_CONTEXT)),
         KeyBinding::new("shift-tab", FocusPrevious, Some(app::KEY_CONTEXT)),
     ]);
     let text_editing = ui::input::bind_text_editing(cx);
     extension_views::form::bind_keys(cx, &text_editing);
-    features::root_search::bind_keys(cx, &text_editing);
+    features::root_search::bind_keys(cx, &text_editing, keyboard);
+    features::footer_menu::bind_keys(cx);
+    features::settings::bind_keys(cx);
+    ui::select::bind_keys(cx);
     extension_views::custom_view::bind_keys(cx);
+    keyboard::bind_keys(cx, keyboard);
 }
 
 /// The version of Pane this build is: the workspace's version, or the one
@@ -154,22 +181,40 @@ pub fn default_extensions() -> Vec<pane_core::DefaultExtension> {
     extensions
 }
 
-/// Reads `PANE_THEME` (`dark`, the default, or `light`) and `PANE_MATERIAL`
-/// (`opaque`, the default, or `glass`) once, embeds the Geist fonts, and
-/// fixes the visuals the launcher window renders with. The binary calls
-/// this once at startup, before opening the first window; a font error is
-/// returned but the caller may continue with the system's default font.
-/// Tests never call it: the window falls back to the default dark theme.
-pub fn configure_visuals(cx: &App) -> gpui::Result<()> {
-    ui::configure(cx)
+/// Initializes Pane's host settings — the appearance preferences, the
+/// Open Pane hotkey and the launch-at-login choice recorded in
+/// `settings.json` in Pane's data folder, which both windows follow as
+/// they change, with the development overrides `PANE_THEME` and
+/// `PANE_MATERIAL` winning for this process and the platform's login
+/// integration reconciled with the saved choice
+/// — and embeds the Geist fonts.
+/// The binary calls this once at startup, before opening the first window;
+/// a font error is returned but the caller may continue with the system's
+/// default font. Tests never call it: a window built without initialized
+/// settings falls back to the in-memory defaults (see [`settings::ensure`]).
+pub fn configure_visuals(cx: &mut App) -> gpui::Result<()> {
+    settings::init(data_dir(), cx);
+    ui::load_fonts(cx)
 }
 
-/// The window background appearance the configured material asks for,
-/// for the binary to pass into `WindowOptions::window_background`:
-/// blurred behind a glass panel on the frost-capable platforms, opaque
-/// otherwise and for the explicit opaque material.
-pub fn window_background() -> WindowBackgroundAppearance {
-    ui::visuals().material.window_appearance()
+/// Follows the operating system's reduced-motion preference for the whole
+/// app, once, before the first window opens: what is actually read on each
+/// system, what falls back where nothing is readable, and how a Windows
+/// change is applied while Pane runs are documented on the policy itself
+/// (`ui::motion`). Call before the first frame draws; the launcher's view
+/// transitions (and anything else that consults
+/// [`gpui::App::reduce_motion`]) then follow the preference.
+pub fn observe_reduced_motion(cx: &mut App) {
+    ui::motion::observe_reduced_motion(cx)
+}
+
+/// The window background appearance the host settings' material asks for,
+/// for the binary to pass into `WindowOptions::window_background`: blurred
+/// behind a glass panel on the frost-capable platforms, opaque otherwise
+/// and for the solid material. The windows keep following it as the
+/// material changes (see [`settings`]).
+pub fn window_background(cx: &mut App) -> WindowBackgroundAppearance {
+    settings::window_background(cx)
 }
 
 /// Asks Windows's Desktop Window Manager to round the window's own corners

@@ -75,19 +75,24 @@ mod reload;
 mod retained;
 mod schedules;
 mod services;
+mod shortcuts;
 mod uninstall;
 mod updates;
 
 use acquire::{Acquisitions, Defaults};
 use aliases::AliasChoices;
+pub use aliases::AliasOutcome;
+pub use application_update::ApplicationUpdate;
 use application_update::{Application, Updates};
 use choices::Record;
 use developing::Developing;
 pub use developing::{BuildFailure, Development};
-use hotkeys::Bindings;
+pub use hotkeys::HotkeyOutcome;
+use hotkeys::{Bindings, OpenPane};
 use pausing::{Pauses, Recorder};
 use schedules::Schedules;
 use services::Services;
+pub use shortcuts::{ShortcutCatalog, ShortcutCommand, ShortcutGroup};
 
 /// The id of the root row that installs a package from a local folder.
 const INSTALL_FROM_FOLDER: &str = "pane.install-from-folder";
@@ -119,6 +124,9 @@ const GIT_REPOSITORY_FIELD: &str = "repository";
 /// The id of the root row that lists installed packages to enable or
 /// disable them.
 const MANAGE_EXTENSIONS: &str = "pane.manage-extensions";
+
+/// The id of the root row that opens Pane's Settings window.
+const SETTINGS: &str = "pane.settings";
 
 /// A command offered in root search, backed by one extension component.
 #[derive(Clone, Debug)]
@@ -327,6 +335,35 @@ pub enum Status {
     /// Why the most recent action failed. For a rejected form field this is
     /// "<field label>: <message>".
     Error(String),
+}
+
+/// What the launcher's primary action — Enter, or the window's footer
+/// button — does with the selected row right now: one definition for the
+/// label, the availability and the binding the window shows, so behavior
+/// and presentation cannot diverge.
+///
+/// The action's identity is the screen plus the selected row's entry,
+/// never a display title: the label says what activating that row does
+/// there — "Open command" for a selected extension command in root search,
+/// "Submit" on a form. The labels are the specification's provisional
+/// synthesis ([#70](https://github.com/hoangvu12/pane/issues/70)), named
+/// here so behavior and wording move together. Dispatch itself stays where
+/// it is: both Enter and the button route through
+/// [`Launcher::activate_selected`], or [`Launcher::submit_form`] on a form.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SelectedAction {
+    /// The action's label, from its identity. Empty where there is no
+    /// primary action to show at all: a custom view takes the keys itself,
+    /// the network details screen has only Back, and the hotkey screen
+    /// with no row to remove has only the keys it records — the window
+    /// shows no button there.
+    pub label: String,
+    /// Whether the action can run now: `false` with no row selected, for a
+    /// row whose action is unavailable on this system or paused (its reason
+    /// stays visible where the row shows it), and while an action is
+    /// already running. Enter keeps the behavior it has today either way;
+    /// this keeps the button from dispatching what cannot run.
+    pub available: bool,
 }
 
 /// An open form, as the user is filling it in.
@@ -616,6 +653,10 @@ struct State {
     paused: Pauses,
     /// The global hotkeys the user assigned to commands.
     bindings: Bindings,
+    /// The Open Pane hotkey: the application-owned binding the host
+    /// settings record and the window applies through the same
+    /// registration path (see [`crate::hotkeys`]).
+    open_pane: OpenPane,
     /// The aliases and fallbacks the user gave commands.
     aliases: Record<AliasChoices>,
     /// Acquiring Pane's default extensions: what the status line says of
@@ -914,6 +955,10 @@ enum Entry {
     Install(install::Request, Mode, dependencies::Assumptions),
     /// Show the installed packages (root).
     Manage,
+    /// Nothing in the launcher: the window opens or focuses its Settings
+    /// window (root). Which pages Settings offers is the app's, not the
+    /// launcher's.
+    Settings,
     /// Enable this installed package if it is disabled, else disable it, or
     /// first ask about the enabled packages that require it.
     Toggle(PackageIdentity),
@@ -1100,6 +1145,7 @@ impl Launcher {
             store_problem,
             paused: Pauses::default(),
             bindings,
+            open_pane: OpenPane::default(),
             aliases,
             acquisitions: Acquisitions::default(),
             updates: Updates::default(),
@@ -1191,6 +1237,15 @@ impl Launcher {
         let launcher = Launcher { links, ..self };
         launcher.report_failures();
         launcher
+    }
+
+    /// The link opener this launcher was given (see
+    /// [`Launcher::with_link_opener`]), for the app to open Pane's own
+    /// links with the same handler — the documentation entry of Settings'
+    /// About page — rather than construct a second opener instance. A
+    /// launcher given none returns the opener that says so.
+    pub fn link_opener(&self) -> Arc<dyn LinkOpener> {
+        self.links.clone()
     }
 
     /// This launcher downloading npm packages from `registry` rather than
@@ -1371,6 +1426,29 @@ impl Launcher {
     /// The installed packages, as read from their managed copies.
     pub fn packages(&self) -> Vec<InstalledPackage> {
         self.lock().packages.clone()
+    }
+
+    /// The extension list, as "Manage extensions…" shows it: its rows and
+    /// its lines of information, read without leaving the screen the
+    /// launcher is on. The rows are the ones [`Launcher::manage_extensions`]
+    /// shows once the list is entered; a second window over the launcher
+    /// (Pane's Settings) lists the installed extensions through this before
+    /// the user opens the flow itself, so it stays a reading of the
+    /// launcher's own records rather than a copy of them.
+    pub fn extension_list(&self) -> LauncherView {
+        let state = self.lock();
+        let (rows, _) = self.extension_rows(&state);
+        let details = extension_details(&state);
+        LauncherView::new(Screen::Extensions { details }, "Extensions").with_rows(rows)
+    }
+
+    /// Whether this launcher installs packages — whether it was made with
+    /// a packages folder ([`Launcher::with_packages`]). Only such a launcher
+    /// offers the install rows in root search and the extension list's
+    /// global update choice, so a window reaching those rows through the
+    /// launcher offers them only then, as root search does.
+    pub fn installs_packages(&self) -> bool {
+        self.installation.is_some()
     }
 
     /// Test support: whether an update Pane applies by itself is
@@ -1792,10 +1870,27 @@ impl Launcher {
         matches!(entry, Some(Entry::InstallFromFolder))
     }
 
+    /// Whether the selected row opens Pane's Settings window. Activating
+    /// it does nothing in the launcher: the window opens or focuses its
+    /// one Settings window, whatever opened it (the row, the ellipsis menu
+    /// or the shortcut).
+    pub fn selected_opens_settings(&self) -> bool {
+        let state = self.lock();
+        let entry = state
+            .view
+            .selected
+            .and_then(|index| state.entries.get(index));
+        matches!(entry, Some(Entry::Settings))
+    }
+
     /// Leaves an open form or custom view for its command's list, or an open
     /// command, package preview or the extension list for root search. A
-    /// custom view is closed. On root search it clears the query.
-    pub fn back(&self) {
+    /// custom view is closed. On root search it clears the query. The
+    /// answer is whether something was left: on root search with an empty
+    /// query there is nothing left to back out of — `false`, which the
+    /// window takes as the end of the Escape chain (the specification's
+    /// order ends there by hiding the launcher).
+    pub fn back(&self) -> bool {
         let mut state = self.lock();
         match &state.view.screen {
             Screen::Form(_) => {
@@ -1848,9 +1943,37 @@ impl Launcher {
             Screen::Root { query } => {
                 if !query.is_empty() {
                     self.search(&mut state, "");
+                } else {
+                    // Root search, an empty query: nothing to back out of.
+                    return false;
                 }
             }
         }
+        true
+    }
+
+    /// Shows the extension list, as activating the "Manage extensions…"
+    /// root result does, wherever the launcher now is: the same screen,
+    /// rows and operations the launcher window shows. Pane's Settings
+    /// window enters the flow through this, so both windows reach the same
+    /// operations and records — the confirmations among them — rather than
+    /// Settings growing a management flow of its own. Selecting a row and
+    /// activating it ([`Launcher::select`],
+    /// [`Launcher::activate_selected`]) drives it from there, as the
+    /// launcher window's Enter does.
+    pub fn manage_extensions(&self) {
+        let mut state = self.lock();
+        self.show_extensions(&mut state);
+    }
+
+    /// The selected action: what Enter, or the window's footer button, does
+    /// with the selected row now (see [`SelectedAction`]). One definition
+    /// for the label, the availability and the binding the window shows;
+    /// dispatch is the one both inputs already take —
+    /// [`Launcher::activate_selected`], or [`Launcher::submit_form`] on a
+    /// form — so a click and a key press cannot diverge.
+    pub fn selected_action(&self) -> SelectedAction {
+        selected_action(&self.lock())
     }
 
     /// Opens the selected command (root), opens the selected item's form or
@@ -2069,7 +2192,9 @@ impl Launcher {
                 self.show_git_form(&mut state);
                 None
             }
-            Some(Entry::InstallFromFolder | Entry::ChooseFolder(_)) | None => None,
+            Some(Entry::InstallFromFolder | Entry::ChooseFolder(_) | Entry::Settings) | None => {
+                None
+            }
             Some(entry) => {
                 state.view.status = Status::Running;
                 Some(entry)
@@ -2125,7 +2250,7 @@ impl Launcher {
                 launcher.install_application_update().await;
             }
             if check_update {
-                launcher.retry_checking_update().await;
+                launcher.check_application_update_again().await;
             }
             if let Some(identity) = stop_sharing {
                 launcher.stop_sharing_folder(identity).await;
@@ -2192,6 +2317,7 @@ impl Launcher {
                     | Entry::AskDeleteRetained(_)
                     | Entry::DeleteRetained(_)
                     | Entry::Cancel
+                    | Entry::Settings
                     | Entry::Form(..),
                 )
                 | None => {}
@@ -2747,6 +2873,48 @@ impl Launcher {
         self.show_kept_development_status(state);
     }
 
+    /// Shows root search with an empty query, leaving whatever screen is
+    /// open — the state a summoned launcher starts from, with its search
+    /// to focus. The Open Pane hotkey's show path uses this when the
+    /// launcher was left on a screen with no search of its own, and the
+    /// Launcher page's root-search choice uses it on every reopening.
+    pub fn show_root_search(&self) {
+        let mut state = self.lock();
+        self.show_root(&mut state, None);
+    }
+
+    /// Whether the view on screen can be restored by a reopened launcher:
+    /// the parent specification's provisional default reopens what the
+    /// user left, when it is still a view there is something to return
+    /// to. Root search always is, and so are the screens of Pane's own
+    /// flows (the extension list, a package's preview, their details and
+    /// confirmations); a command's view — its list, its search, a form or
+    /// a custom view of it — is only while the command's package is still
+    /// installed and enabled, since a removed or disabled extension
+    /// leaves nothing to restore and a reopening launcher returns safely
+    /// to root search instead. A command not installed as a package — one
+    /// registered with Pane at start — has no package to lose and is
+    /// always restorable.
+    pub fn restorable_view(&self) -> bool {
+        let state = self.lock();
+        // Only a command's view has something to lose. A command not
+        // installed as a package — one registered with Pane at start —
+        // owns nothing that can be removed, so it is always restorable;
+        // an installed one is while its package stays installed and
+        // enabled, since a removed or disabled extension leaves nothing
+        // to return to and a reopening launcher goes safely to root
+        // search instead. Pane's own forms, opened with no command, are
+        // Pane's to keep.
+        match state.open.as_ref() {
+            None => true,
+            Some(component) => state
+                .packages
+                .iter()
+                .find(|package| component.starts_with(&package.location))
+                .is_none_or(|package| package.enabled),
+        }
+    }
+
     /// Updates root search or the extension list on screen after a package
     /// changed; other screens show no package state.
     fn refresh(&self, state: &mut State) {
@@ -2956,6 +3124,19 @@ impl Launcher {
             };
             add(row, Entry::Manage, None, None);
         }
+        // Pane's Settings window is the app's to open; the row is listed
+        // whatever is installed, since Settings is reachable without any
+        // extension (the ellipsis menu and the local shortcut open it
+        // too).
+        {
+            let row = Row {
+                id: SETTINGS.into(),
+                title: "Settings…".into(),
+                subtitle: Some("Open Pane's settings window".into()),
+                unavailable: None,
+            };
+            add(row, Entry::Settings, None, None);
+        }
         results
     }
 
@@ -3145,29 +3326,7 @@ impl Launcher {
         let (rows, entries) = self.extension_rows(state);
         self.leave_command(state);
         state.entries = entries;
-        let mut details = vec![
-            "A disabled extension adds no commands and runs nothing; it keeps its settings.".into(),
-            "Reloading replaces an extension's code with its source folder's current build; it \
-             keeps its settings."
-                .into(),
-            "Clearing an extension's cache keeps its settings, content and credentials.".into(),
-            "Uninstalling an extension asks whether to keep its settings and content.".into(),
-            "An automatic update replaces an extension's copy with a compatible newer version \
-             of it, from npm, once no command of it is running; a pinned version never moves."
-                .into(),
-            format!(
-                "An extension that cannot start, or crashes or stops responding {}, is paused \
-                 until you retry it; it keeps its settings.",
-                pausing::within()
-            ),
-        ];
-        if !state.retained.is_empty() {
-            details.push(
-                "Data kept for an uninstalled extension is listed until you delete it or install \
-                 it again from the same source."
-                    .into(),
-            );
-        }
+        let details = extension_details(state);
         state.view =
             LauncherView::new(Screen::Extensions { details }, "Extensions").with_rows(rows);
         self.show_kept_development_status(state);
@@ -3899,6 +4058,38 @@ fn disabled(state: &State, component: &Path) -> String {
     }
 }
 
+/// The extension list's lines of information: what each kind of action
+/// there does to an extension's data, and what a pause or retained data
+/// is. Read for the list itself and for
+/// [`Launcher::extension_list`], which shows the same lines without
+/// entering the list.
+fn extension_details(state: &State) -> Vec<String> {
+    let mut details = vec![
+        "A disabled extension adds no commands and runs nothing; it keeps its settings.".into(),
+        "Reloading replaces an extension's code with its source folder's current build; it \
+         keeps its settings."
+            .into(),
+        "Clearing an extension's cache keeps its settings, content and credentials.".into(),
+        "Uninstalling an extension asks whether to keep its settings and content.".into(),
+        "An automatic update replaces an extension's copy with a compatible newer version \
+         of it, from npm, once no command of it is running; a pinned version never moves."
+            .into(),
+        format!(
+            "An extension that cannot start, or crashes or stops responding {}, is paused \
+             until you retry it; it keeps its settings.",
+            pausing::within()
+        ),
+    ];
+    if !state.retained.is_empty() {
+        details.push(
+            "Data kept for an uninstalled extension is listed until you delete it or install \
+             it again from the same source."
+                .into(),
+        );
+    }
+    details
+}
+
 /// One row per installed package, saying whether it is enabled or paused
 /// and which source it is, so copies with the same title can be told apart;
 /// then the rows that reload each enabled package, each followed, if Pane
@@ -4318,6 +4509,140 @@ fn open_form(state: &mut State, item_id: String, form: Form) {
         submitting: false,
     });
     state.next_screen();
+}
+
+/// The selected action (see [`Launcher::selected_action`]) for the
+/// launcher's current state. The label comes from the selected entry's
+/// identity — what activating that row does on that screen — never from a
+/// display title; the availability comes from what can run now. Nothing is
+/// selected, or the row's action cannot run, and the action is the
+/// screen's own, unavailable: the window shows it disabled, and Enter
+/// keeps the behavior it has today (nothing, or an explanation) instead of
+/// an extension call.
+fn selected_action(state: &State) -> SelectedAction {
+    // An action is already running: the status line reports it, and the
+    // definition keeps the button from dispatching another one meanwhile.
+    let busy = matches!(state.view.status, Status::Running);
+    let acting = |label: &str| SelectedAction {
+        label: label.into(),
+        available: !busy,
+    };
+    let unusable = |label: &str| SelectedAction {
+        label: label.into(),
+        available: false,
+    };
+    let entry = state
+        .view
+        .selected
+        .and_then(|index| state.entries.get(index));
+    match (&state.view.screen, entry) {
+        // A form submits: the form's own control keeps the label the
+        // extension gave it, but Enter — and the footer's button with it —
+        // submits the form.
+        (Screen::Form(_), _) => acting("Submit"),
+        // A custom view takes the keys itself, and the network details
+        // screen has only Back: Enter does nothing, so there is no primary
+        // action to show.
+        (Screen::CustomView(_) | Screen::NetworkDetails { .. }, _) => unusable(""),
+        // A row is selected: what activating it does is the action.
+        (_, Some(Entry::Open(_))) => acting("Open command"),
+        (_, Some(Entry::Send(sending))) => match &sending.unavailable {
+            Some(_) => unusable("Unavailable"),
+            None => acting("Send query"),
+        },
+        (_, Some(Entry::Copy(_))) => acting("Copy answer"),
+        (_, Some(Entry::OpenUrl(_))) => acting("Open link"),
+        (_, Some(Entry::OpenFile { .. })) => acting("Open file"),
+        (_, Some(Entry::OpenApplication { .. })) => acting("Open application"),
+        (_, Some(Entry::Broken(_) | Entry::Unavailable(_))) => unusable("Unavailable"),
+        (_, Some(Entry::InstallFromFolder)) => acting("Install from folder"),
+        (_, Some(Entry::AskNpm)) => acting("Install from npm"),
+        (_, Some(Entry::AskGit)) => acting("Install from Git"),
+        (_, Some(Entry::Acquire(_))) => acting("Set up extension"),
+        (_, Some(Entry::InstallUpdate)) => acting("Install update"),
+        (_, Some(Entry::CheckUpdate)) => acting("Check for update"),
+        (_, Some(Entry::Manage)) => acting("Manage extensions"),
+        // Pane's Settings row opens the Settings window, exactly as its
+        // ellipsis menu entry and the local shortcut do (the window, not
+        // the launcher, acts; see [`Launcher::selected_opens_settings`]).
+        (_, Some(Entry::Settings)) => acting("Open settings"),
+        (_, Some(Entry::Run(_))) => acting("Run item"),
+        (_, Some(Entry::Form(..))) => acting("Open form"),
+        (_, Some(Entry::CustomView(..))) => acting("Open view"),
+        (_, Some(Entry::ChooseFolder(_))) => acting("Choose folder"),
+        (_, Some(Entry::StopSharingFolder(_))) => acting("Stop sharing"),
+        (_, Some(Entry::Install(_, Mode::Install, _))) => acting("Install"),
+        (_, Some(Entry::Install(_, Mode::Update(_), _))) => acting("Update"),
+        // A confirmation's rows are its answers; the direction a toggle
+        // turns in comes from the state it acts on, not from a title.
+        (_, Some(Entry::Toggle(identity))) => {
+            let enable = state
+                .package(identity)
+                .is_some_and(|package| !package.enabled);
+            acting(if enable { "Enable" } else { "Disable" })
+        }
+        (_, Some(Entry::ToggleUpdates(None))) => acting(if state.update_controls.automatic {
+            "Turn updates off"
+        } else {
+            "Turn updates on"
+        }),
+        (_, Some(Entry::ToggleUpdates(Some(identity)))) => {
+            let off = state.update_controls.off.contains(&identity.key());
+            acting(if off {
+                "Turn updates on"
+            } else {
+                "Turn updates off"
+            })
+        }
+        (_, Some(Entry::Reload(_))) => acting("Reload"),
+        (_, Some(Entry::Retry(_))) => acting("Retry"),
+        (_, Some(Entry::PauseDetails(_))) => acting("Show details"),
+        (_, Some(Entry::NetworkDetails(_))) => acting("Show network use"),
+        (_, Some(Entry::RuntimeDetails)) => acting("Show details"),
+        (_, Some(Entry::RestartRuntime)) => acting("Restart runtime"),
+        (_, Some(Entry::Develop(_))) => acting("Start developing"),
+        (_, Some(Entry::StopDeveloping(_))) => acting("Stop developing"),
+        (_, Some(Entry::BuildDetails(_))) => acting("Show details"),
+        (_, Some(Entry::BuildAgain(_))) => acting("Build again"),
+        (_, Some(Entry::AskClearCache(_))) => acting("Clear cache"),
+        (_, Some(Entry::AskHotkey(_))) => acting("Set hotkey"),
+        (_, Some(Entry::RemoveHotkey(_))) => acting("Remove hotkey"),
+        (_, Some(Entry::AskAlias(_))) => acting("Set alias"),
+        (_, Some(Entry::ToggleFallback(command))) => {
+            let fallback = state.aliases.chosen.is_fallback(command);
+            acting(if fallback {
+                "Stop offering as fallback"
+            } else {
+                "Offer as fallback"
+            })
+        }
+        (_, Some(Entry::ForgetChoices(_))) => acting("Forget choices"),
+        (_, Some(Entry::AskUninstall(_))) => acting("Uninstall"),
+        (_, Some(Entry::AskDeleteRetained(_))) => acting("Delete retained data"),
+        (_, Some(Entry::Uninstall(_, SavedData::Keep))) => acting("Uninstall"),
+        (_, Some(Entry::Uninstall(_, SavedData::Delete))) => acting("Uninstall and delete data"),
+        (_, Some(Entry::UninstallAll(_, _, SavedData::Keep))) => acting("Uninstall all"),
+        (_, Some(Entry::UninstallAll(_, _, SavedData::Delete))) => {
+            acting("Uninstall all and delete data")
+        }
+        (_, Some(Entry::DeleteRetained(_))) => acting("Delete retained data"),
+        (_, Some(Entry::ClearCache(_))) => acting("Clear cache"),
+        (_, Some(Entry::DisableAll(..))) => acting("Disable all"),
+        (_, Some(Entry::Cancel)) => acting("Cancel"),
+        // Nothing is selected: the screen's own action, which cannot run
+        // without a row to run it on.
+        (Screen::Root { .. }, None) => unusable("Open command"),
+        (Screen::Command | Screen::CommandSearch { .. }, None) => unusable("Run item"),
+        (Screen::Package { .. }, None) => unusable("Install"),
+        (Screen::Extensions { .. }, None) => unusable("Choose"),
+        (Screen::Confirm { .. }, None) => unusable("Choose"),
+        // The hotkey screen without a row to remove has no primary action:
+        // Enter does nothing there; the keys it records are the point.
+        (Screen::Hotkey { .. }, None) => unusable(""),
+        (Screen::PauseDetails { .. }, None) => unusable("Retry"),
+        (Screen::RuntimeDetails { .. }, None) => unusable("Restart"),
+        (Screen::BuildDetails { .. }, None) => unusable("Build again"),
+    }
 }
 
 /// The rows of root search for `query`, and what activating each does: the

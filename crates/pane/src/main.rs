@@ -49,15 +49,22 @@ fn package_to_preview() -> Option<ToPreview> {
 fn main() {
     let preview = package_to_preview();
     gpui_platform::application().run(move |cx: &mut App| {
-        pane::bind_keys(cx);
-        // The visual configuration — theme (PANE_THEME), material
-        // (PANE_MATERIAL) and the embedded Geist fonts — is chosen once,
-        // before the first window. A font failure only falls back to the
-        // system's default font.
+        // Pane's own settings — the appearance preferences recorded in
+        // settings.json, with the PANE_THEME/PANE_MATERIAL development
+        // overrides winning for this process — and the embedded Geist
+        // fonts, before the key bindings: the bindings the Keyboard page
+        // recorded are registered from the record the settings hold, so
+        // a saved rebind is in force from the first window. A font
+        // failure only falls back to the system's default font.
         if let Err(error) = pane::configure_visuals(cx) {
             eprintln!("Pane's fonts could not be loaded: {error:#}");
         }
-        cx.on_window_closed(|cx, _| cx.quit()).detach();
+        pane::bind_keys(cx);
+        // The operating system's reduced-motion preference, followed for as
+        // long as Pane runs: the launcher's view transitions settle at once
+        // while it is set, including mid-transition when the system reports
+        // the change.
+        pane::observe_reduced_motion(cx);
         let runtime = match pane::cache_dir() {
             Some(dir) => Runtime::start_with_cache(dir),
             None => Runtime::start(),
@@ -147,6 +154,28 @@ fn main() {
         // whose run loop receives the presses on macOS.
         let (press_sender, mut presses) = pane_core::hotkeys::channel();
         let launcher = launcher.with_hotkeys(pane_core::hotkeys::native(press_sender));
+        // The tray or menu-bar entry: Pane's item in the system's tray
+        // (Windows) or menu bar (macOS), whose menu opens the launcher,
+        // Settings and Quit — the entry the General page's visibility
+        // preference shows and hides, applied here from what the record
+        // holds. The adapter is made on the main thread, as the hotkeys'
+        // is; on a system whose entry cannot be made, the adapter says
+        // why and the page explains.
+        let (selection_sender, mut selections) = pane_core::tray::channel();
+        let tray = pane_core::tray::native(selection_sender);
+        pane::settings::attach_tray(tray.clone(), cx);
+        // Quitting removes Pane's native tray/menu-bar entry and releases
+        // its global hotkey registrations, whichever way Pane is quit —
+        // closing the launcher's window or the tray's Quit item, which
+        // does the same itself before it asks the platform to quit.
+        let quitting = launcher.clone();
+        let quitting_tray = tray.clone();
+        cx.on_app_quit(move |_| {
+            let _ = quitting_tray.set_visible(false);
+            quitting.release_hotkeys();
+            async {}
+        })
+        .detach();
         // Clipboard history: Pane watches the clipboard only while an
         // enabled package keeps history the user turned on.
         let launcher = launcher.with_clipboard(pane_core::clipboard::native());
@@ -171,7 +200,7 @@ fn main() {
         let bounds = Bounds::centered(None, size(px(760.), px(460.)), cx);
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
-            window_background: pane::window_background(),
+            window_background: pane::window_background(cx),
             titlebar: Some(TitlebarOptions {
                 title: Some("Pane".into()),
                 appears_transparent: true,
@@ -200,11 +229,36 @@ fn main() {
                 })
             })
             .expect("failed to open the Pane window");
+        // Closing the launcher's own window quits Pane, as closing the one
+        // window always did: closing the Settings window, which shares
+        // nothing of the launcher's lifecycle, closes only that window,
+        // and quitting ends Pane as before.
+        let launcher_window = window.window_id();
+        cx.on_window_closed(move |cx, closed| {
+            if closed == launcher_window {
+                cx.quit();
+            }
+        })
+        .detach();
         // A hotkey pressed in any application opens its command here.
         cx.spawn(async move |cx| {
             while let Some(shortcut) = presses.next().await {
                 let shown = window.update(cx, |launcher, window, cx| {
                     launcher.hotkey_pressed(&shortcut, window, cx)
+                });
+                if shown.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+        // A tray or menu-bar selection arrives here the same way: the
+        // window's own dispatch runs it, whatever state the windows are
+        // in — the launcher may be hidden, and the menu stays usable.
+        cx.spawn(async move |cx| {
+            while let Some(action) = selections.next().await {
+                let shown = window.update(cx, |launcher, window, cx| {
+                    launcher.tray_selected(action, window, cx)
                 });
                 if shown.is_err() {
                     break;

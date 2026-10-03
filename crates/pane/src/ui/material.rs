@@ -5,24 +5,28 @@
 //!
 //! - **Desktop (compositor) frost** — [`MaterialMode::window_appearance`]
 //!   asks the platform for a blurred window background (Windows acrylic via
-//!   DWM composition, macOS vibrancy). It is set once at window creation
-//!   and blurs whatever is *behind the window*. This is the launcher's
-//!   glass. It is never simulated: no wallpaper is drawn inside the app.
+//!   DWM composition, macOS vibrancy). It is set at window creation and
+//!   re-applied as the material changes, and blurs whatever is *behind the
+//!   window*. This is the launcher's glass. It is never simulated: no
+//!   wallpaper is drawn inside the app.
 //! - **In-scene frost** — GPUI's `Styled::backdrop_blur(radius)` blurs
-//!   content *inside* the window, behind an element (a future popover over
-//!   the list). This slice uses none of it; the seam is noted so later
-//!   overlays know the difference.
+//!   content *inside* the window, behind an element. The L2 popover
+//!   ([`Material::popover`]) uses it in glass mode, blurring the list
+//!   behind the launcher footer's menu the way the reference's `.pop`
+//!   blurs the page behind it; the window's own glass is never simulated
+//!   with it.
 //!
 //! Failure honesty: whether the compositor actually applied the blur is not
 //! observable from the application — GPUI exposes no query for it. On
-//! Windows startup checks the supported build, transparency preference and
-//! high-contrast setting; a suppressed or unknown state selects opaque.
-//! These checks cannot establish that composition succeeded. Glass paints its tint
-//! (the dark panel at the reference's .7 alpha, the light panel at its own
-//! higher tint), which puts the panel's own content on a consistent plate
-//! even where the blur silently failed — but `Glass` does not promise
-//! blur, the tint is not a readability guarantee, and this module reports
-//! no success.
+//! Windows the checks read the supported build, transparency preference
+//! and high-contrast setting; a suppressed or unknown state selects opaque
+//! (see [`glass_fallback_reason`], which the appearance page shows where it
+//! applies). These checks cannot establish that composition succeeded.
+//! Glass paints its tint (the dark panel at the reference's .7 alpha, the
+//! light panel at its own higher tint), which puts the panel's own content
+//! on a consistent plate even where the blur silently failed — but `Glass`
+//! does not promise blur, the tint is not a readability guarantee, and this
+//! module reports no success.
 //!
 //! One consistent strategy: `Glass` on a platform without compositor frost
 //! (Linux, and any other non-Windows/macOS target) normalizes to opaque at
@@ -39,11 +43,12 @@ use gpui::{
 
 use crate::ui::theme::Theme;
 
-/// Which surface treatment the launcher uses. The integration reads
-/// `PANE_MATERIAL` once and constructs this; settings are sampled at startup,
-/// with no claim that the compositor delivered blur. Constructing
-/// normalizes: `Glass` where the platform has no compositor frost becomes
-/// `Opaque` (see [`Material::new`]).
+/// Which surface treatment the launcher uses. The host settings hold the
+/// user's preference and construct this from it, as the Appearance page
+/// changes it; a `Glass` preference does not claim the compositor
+/// delivered blur (see the module docs). Constructing normalizes: `Glass`
+/// where the platform has no compositor frost becomes `Opaque` (see
+/// [`Material::new`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MaterialMode {
     /// A translucent panel over a compositor-blurred window where the
@@ -61,6 +66,29 @@ pub(crate) enum MaterialMode {
 /// guaranteed blur, so glass normalizes to opaque.
 fn compositor_frost_supported() -> bool {
     cfg!(any(target_os = "windows", target_os = "macos"))
+}
+
+/// Why a `Glass` request normalizes to the solid surface here, if it does:
+/// this platform does not expose compositor frost, or Windows' own
+/// protections fail (its transparency preference, its high-contrast mode,
+/// or a build older than the acrylic API). `None` when a glass request
+/// stands — which is still not proof the compositor blurred anything, only
+/// that nothing suppresses the request (see the module docs). The
+/// appearance page shows this reason where glass is chosen but not in
+/// effect, so the difference between the preference and the surface is
+/// visible rather than silent.
+pub(crate) fn glass_fallback_reason() -> Option<&'static str> {
+    if !compositor_frost_supported() {
+        return Some("this platform does not expose compositor frost behind a window");
+    }
+    #[cfg(target_os = "windows")]
+    if !windows_glass_allowed() {
+        return Some(
+            "Windows has transparency turned off or high contrast on, or this build of Windows \
+             predates the acrylic blur",
+        );
+    }
+    None
 }
 
 /// Read preferences, not compositor success. Fail closed to a solid surface
@@ -107,15 +135,13 @@ pub(crate) struct Material {
 }
 
 impl Material {
-    /// The material for `mode`, normalized: `Glass` on a platform without
-    /// compositor frost (Linux and others) becomes `Opaque` — the opaque
-    /// window and the solid panel, never a glass tint over an unblurred
-    /// desktop.
+    /// The material for `mode`, normalized: `Glass` on a platform where
+    /// [`glass_fallback_reason`] names a reason becomes `Opaque` — the
+    /// opaque window and the solid panel, never a glass tint over an
+    /// unblurred desktop.
     pub(crate) fn new(mode: MaterialMode) -> Material {
         let mode = match mode {
-            MaterialMode::Glass if !compositor_frost_supported() => MaterialMode::Opaque,
-            #[cfg(target_os = "windows")]
-            MaterialMode::Glass if !windows_glass_allowed() => MaterialMode::Opaque,
+            MaterialMode::Glass if glass_fallback_reason().is_some() => MaterialMode::Opaque,
             mode => mode,
         };
         Material { mode }
@@ -191,5 +217,55 @@ impl Material {
             .bg(theme.footer_tint)
             .border_t_1()
             .border_color(theme.hairline_soft)
+    }
+
+    /// The L2 popover: the reference's `.pop` surface, for a small floating
+    /// layer over the panel (the launcher footer's menu). Draw order,
+    /// inside out: the tint (or the solid fallback), the sheen fading out
+    /// over the top 40%, then `content`. Like the panel, the surface owns
+    /// the tint-or-solid choice, clips its content, and keeps the sheen a
+    /// plain non-interactive layer.
+    ///
+    /// Two differences from the panel, both stated by the reference and
+    /// GPUI's painting order:
+    ///
+    /// - In glass mode the popover blurs what is behind it *inside the
+    ///   window* (the reference's `backdrop-filter: blur(30px)`), which
+    ///   works on every platform — unlike the window's own frost. GPUI has
+    ///   no saturation filter, so the reference's `saturate(160%)` is
+    ///   dropped rather than approximated.
+    /// - The reference's outer shadows are not painted here: GPUI paints a
+    ///   non-inset shadow under the element's own translucent fill, where
+    ///   it would show through the tint. A caller that wants the reference's
+    ///   elevation wraps this surface in a plain `relative` div carrying
+    ///   the shadow, so it paints behind the surface (see the footer menu).
+    pub(crate) fn popover(&self, theme: &Theme, content: impl IntoElement) -> Div {
+        let geometry = &theme.geometry;
+        let (background, blur) = match self.mode {
+            MaterialMode::Glass => (solid_background(theme.popover_tint), px(30.)),
+            MaterialMode::Opaque => (solid_background(theme.popover_solid), px(0.)),
+        };
+        div()
+            .relative()
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .rounded(geometry.popover_radius)
+            .when(blur > px(0.), |surface| surface.backdrop_blur(blur))
+            .bg(background)
+            // The reference's inset edge (`inset 0 0 0 1px`) and top inset
+            // (`inset 0 1px 0`), as the panel renders its own.
+            .border_1()
+            .border_color(theme.popover_edge)
+            .shadow(vec![
+                BoxShadow::new(px(0.), px(1.), theme.popover_top_highlight).inset(),
+            ])
+            // The sheen paints beneath the content, as on the panel.
+            .child(div().absolute().size_full().bg(linear_gradient(
+                180.,
+                linear_color_stop(theme.popover_sheen, 0.),
+                linear_color_stop(transparent_black(), 0.4),
+            )))
+            .child(content)
     }
 }
