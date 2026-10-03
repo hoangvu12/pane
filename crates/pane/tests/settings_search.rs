@@ -257,14 +257,16 @@ fn arrows_move_the_selection_and_the_pointer_opens_what_is_clicked(cx: &mut Test
         "the first result is selected"
     );
 
-    // The arrows move the selection, and stop at the ends.
+    // The arrows move the selection, and stop at the ends: "theme"
+    // matches the Appearance page's own entry and its three theme
+    // choices, in registration order.
     sc.simulate_keystrokes("down");
     assert_eq!(selected_result(&mut sc).as_deref(), Some("System"));
     sc.simulate_keystrokes("down");
-    assert_eq!(selected_result(&mut sc).as_deref(), Some("Dark"));
+    assert_eq!(selected_result(&mut sc).as_deref(), Some("Light"));
     sc.simulate_keystrokes("up");
     assert_eq!(selected_result(&mut sc).as_deref(), Some("System"));
-    sc.simulate_keystrokes("down down");
+    sc.simulate_keystrokes("down down down");
     assert_eq!(
         selected_result(&mut sc).as_deref(),
         Some("Dark"),
@@ -526,10 +528,12 @@ fn registrations_that_appear_and_go_are_found_and_lost(cx: &mut TestAppContext) 
         "no settings match yet"
     );
 
-    // The user installs Hello in the launcher window; the Settings
-    // window's watcher asks for the redraw, and the search — its query
-    // still showing — finds the registered management row.
+    // The user installs Hello in the launcher window — the folder
+    // picker, then Enter on the preview — and the Settings window's
+    // watcher asks for the redraw, so the search — its query still
+    // showing — finds the registered management row.
     choose_folder(&window, cx, hello);
+    cx.simulate_keystrokes("enter");
     settle(&window, cx);
     tick(&mut sc);
     assert!(
