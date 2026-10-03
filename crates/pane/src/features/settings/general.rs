@@ -528,6 +528,7 @@ fn reset_row(resettable: bool, cx: &mut Context<SettingsWindow>) -> Stateful<Div
 /// state). One presentation for every boolean the page offers, so what
 /// a switch says, whether it can be taken and what taking it does cannot
 /// diverge between the choices.
+#[allow(clippy::too_many_arguments)]
 fn switch(
     id: &'static str,
     selector: &'static str,
