@@ -1,0 +1,91 @@
+name: CI (branch)
+
+# The branch tier of CI: every push to a working branch that is not
+# main and not a pi-subagent worktree is verified here. Linux runs the
+# full check leg of the release matrix — build the guests, check
+# formatting and lints, run the tests (`cargo xtask ci`) — and the
+# other operating systems run the quick compile check (formatting plus
+# `cargo check --all-targets`): one full test run per push is the
+# verification an iterating branch needs (the single-platform pattern
+# the Cargo book recommends), and the quick legs keep the
+# platform-specific compile errors caught everywhere at a fraction of
+# the cost. The full suite on every operating system still runs: at
+# the [verify] tier of ci-fast.yml on the ticket branches, and in
+# ci.yml's release matrix where a release is at stake (main, a pull
+# request marked ready for review, on demand). pi-subagent/** worktrees
+# keep their own two-tier workflow in ci-fast.yml.
+on:
+  push:
+    branches-ignore:
+      - main
+      - "pi-subagent/**"
+
+# As in ci.yml: one run per branch, a superseded run cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Linux here matches ci.yml's check job step for step (same commands,
+  # same environment, same caches) so a green Linux leg means exactly
+  # what a green check leg means there; the other legs match ci-fast's
+  # quick tier. Keep both in sync with those workflows.
+  check:
+    name: Check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, macos-15, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    env:
+      # The many test binaries each link Pane's whole dependency tree, so
+      # the Linux legs link them with mold (Windows and macOS link with
+      # their own linkers; the empty value keeps the cache key uniform
+      # per operating system). The flag is scoped to the host triple, never
+      # RUSTFLAGS: a job-wide RUSTFLAGS would also reach the wasm32-wasip2
+      # guest builds, whose wasm-component-ld rejects native linker flags
+      # (run 36789533844 failed on "unexpected argument '-f' found"). The
+      # matrix is what a job-level env may read: the runner context exists
+      # only inside a step; and on the other legs the triple never builds,
+      # so the variable is inert there whatever it holds.
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: ${{ matrix.os == 'ubuntu-24.04' && '-C link-arg=-fuse-ld=mold' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libxcb1-dev libfontconfig1-dev libfreetype-dev libvulkan1 mesa-vulkan-drivers \
+            xvfb xdotool imagemagick mold
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            guests
+            guests/fixtures/mixed-p2
+      # The full check leg, as in ci.yml's check job. The Linux tests run
+      # without the real-clipboard opt-in there (as they always did on
+      # this leg); the one Linux adapter test that needs it runs under
+      # Xvfb below.
+      - name: Build guests, check formatting and lints, run tests
+        if: runner.os == 'Linux'
+        run: cargo xtask ci
+      - name: Run the Linux clipboard adapter test (Xvfb)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a cargo test --locked -p pane-core --test clipboard_adapter_linux
+        env:
+          PANE_TEST_REAL_CLIPBOARD: "1"
+      # The quick compile check on the other operating systems, the same
+      # commands as ci-fast's quick tier: `cargo check --all-targets`
+      # type-checks the workspace's libraries, binaries, tests and
+      # examples without codegen or linking, so the platform-specific
+      # compile errors (the cfg-gating class) are caught on every
+      # operating system in minutes.
+      - name: Quick compile check
+        if: runner.os != 'Linux'
+        run: |
+          cargo fmt --all --check
+          cargo check --locked --workspace --all-targets
