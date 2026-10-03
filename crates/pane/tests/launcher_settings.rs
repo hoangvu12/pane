@@ -202,8 +202,11 @@ fn hidden(window: &gpui::Entity<LauncherWindow>, cx: &VisualTestContext) -> bool
 }
 
 /// Hides the launcher with the Open Pane hotkey, as a dismissal does,
-/// saying how many moves the placement has been asked for so far: hiding
-/// moves nothing.
+/// saying how many moves the placement has been asked for so far: neither
+/// hiding nor being summoned moves anything. The hotkey hides a launcher
+/// that has focus; one that does not — the window as the test platform
+/// opens it, or while another window holds the focus — is brought
+/// forward first, so a second press hides it.
 fn dismiss(
     window: &gpui::Entity<LauncherWindow>,
     shortcut: &Shortcut,
@@ -213,11 +216,17 @@ fn dismiss(
     let before = placement.moves.borrow().len();
     press(window, shortcut, cx);
     cx.run_until_parked();
+    if !hidden(window, cx) {
+        // The launcher was visible without focus: the press brought it
+        // forward, and the next one hides it.
+        press(window, shortcut, cx);
+        cx.run_until_parked();
+    }
     assert!(hidden(window, cx), "the launcher hid");
     assert_eq!(
         placement.moves.borrow().len(),
         before,
-        "hiding moves nothing"
+        "hiding and being summoned move nothing"
     );
     before
 }
@@ -433,12 +442,11 @@ fn choices_the_system_does_not_answer_are_explained_not_offered(cx: &mut TestApp
 fn a_disconnected_or_unanswered_choice_falls_back_and_says_so(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
     let placement = Rc::new(FakePlacement::default());
-    placement.layout(Some(Point { x: 2500., y: 700. }), None);
+    placement.layout(Some(Point { x: 2500., y: 700. }), Some(DisplayId(1)));
     let (window, cx) = open(cx, Some(data.path()), &placement);
 
-    // The active window's display is not told: the record can still hold
-    // the choice (written on a system that could answer it), and the page
-    // says what the launcher would open on instead.
+    // The active window's display, taken through the page's own control
+    // while the system answers it: the record holds the choice.
     let (_settings, mut settings_cx) = open_launcher_page(cx);
     click(&mut settings_cx, "launcher-monitor-ActiveWindow");
     settings_cx.run_until_parked();
@@ -447,7 +455,17 @@ fn a_disconnected_or_unanswered_choice_falls_back_and_says_so(cx: &mut TestAppCo
         data.path(),
         "\"openingMonitor\": \"active-window\"",
     );
+
+    // The system stops telling Pane which window is active: the choice
+    // stays recorded, the page says what the launcher would open on
+    // instead, and the choice's own row explains itself.
+    placement.layout(Some(Point { x: 2500., y: 700. }), None);
+    let (_settings, mut settings_cx) = open_launcher_page(cx);
     let tree = a11y(&mut settings_cx);
+    assert!(
+        tree.contains("This system does not tell Pane which window is active"),
+        "the choice is explained, {tree}"
+    );
     assert!(
         tree.contains("cannot open on the display of the window you are working in"),
         "the fallback is explained, {tree}"

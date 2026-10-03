@@ -486,23 +486,19 @@ impl LauncherWindow {
         cx.activate(true);
         // What the summoned launcher starts from is the Launcher page's
         // reopening choice. Restoring the view keeps whatever the launcher
-        // was left showing — a search, a command, a form — when it is
-        // still a view there is something to return to; a view whose
-        // command is gone, or the root-search choice, starts from root
-        // search. Either way a search on screen has focus: the query of
-        // the search the view holds, or root search's own — nothing of
-        // the window that had focus before (the Settings window's focus
-        // is not the launcher's), and nothing is run.
+        // was left showing — a search, a command's list, a form — when it
+        // is still a view there is something to return to, with the
+        // search focused where the view holds one and its own focus kept
+        // where it does not (the window never lost it); the root-search
+        // choice, or a view whose command is gone, starts from root
+        // search. Nothing of the window that had focus before reaches in
+        // here (the Settings window's focus is not the launcher's), and
+        // nothing is run.
         let reopening = crate::settings::shared(cx).read(cx).reopening();
-        let restore =
-            reopening == pane_core::Reopening::RestoreView && self.launcher.restorable_view();
-        if !restore || self.launcher.view().search_field().is_none() {
+        if reopening == pane_core::Reopening::RootSearch || !self.launcher.restorable_view() {
             self.launcher.show_root_search();
             self.sync_screen(window, cx);
-        } else {
-            // The view stays as it is, with its search focused. A view
-            // with no search of its own (a command's list, a form) keeps
-            // its own focus, which the window never lost.
+        } else if self.launcher.view().search_field().is_some() {
             self.query.focus(window, cx);
         }
         cx.notify();
