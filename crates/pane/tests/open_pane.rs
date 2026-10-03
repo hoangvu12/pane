@@ -121,7 +121,7 @@ fn open_settings(cx: &mut VisualTestContext) -> (WindowHandle<SettingsWindow>, V
 
 /// Whether the window `handle` is the focused one, as the platform
 /// reports.
-fn is_active<T: 'static>(handle: &WindowHandle<T>, cx: &mut VisualTestContext) -> bool {
+fn is_active<T: Render + 'static>(handle: &WindowHandle<T>, cx: &mut VisualTestContext) -> bool {
     cx.cx.update(|cx| handle.is_active(cx)).unwrap_or(false)
 }
 
@@ -188,7 +188,7 @@ fn until<T>(
 fn until_record(cx: &mut VisualTestContext, data: &Path, id: &str) {
     let record = data.join("settings.json");
     let held = format!("\"open_pane\": \"{id}\"");
-    until(cx, |cx| {
+    until(cx, |_| {
         fs::read_to_string(&record)
             .ok()
             .filter(|text| text.contains(&held))?;
@@ -236,7 +236,7 @@ fn the_default_hotkey_registers_at_startup_and_toggles_the_launcher(cx: &mut Tes
     // The record holds nothing yet: the provisional default is what the
     // window applied at startup, through the launcher's registration.
     let default = Shortcut::open_pane_default();
-    assert_eq!(registered(&system), vec![default]);
+    assert_eq!(registered(&system), vec![default.clone()]);
 
     // Visible but without focus — the window as the test platform opens
     // it: the hotkey brings the launcher forward.
@@ -385,7 +385,7 @@ fn recording_a_new_hotkey_swaps_the_registration_and_persists_it(cx: &mut TestAp
 
     // The binding was swapped with the system: the new one registered,
     // the default released.
-    assert_eq!(registered(&system), vec![recorded]);
+    assert_eq!(registered(&system), vec![recorded.clone()]);
     // The record holds it.
     until_record(&mut settings_cx, data.path(), "ctrl+alt+b");
     // The page shows it, and the recorder is done listening.
@@ -424,7 +424,7 @@ fn a_shortcut_another_application_has_is_refused_and_keeps_the_binding(cx: &mut 
     init_settings(Some(data.path()), cx);
     cx.executor().allow_parking();
     cx.update(pane::bind_keys);
-    let (window, cx) = cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
+    let (_window, cx) = cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
     let default = Shortcut::open_pane_default();
     let (_settings, mut settings_cx) = open_settings(cx);
     settings_cx.run_until_parked();
@@ -519,7 +519,7 @@ fn a_collision_with_a_command_hotkey_is_refused(cx: &mut TestAppContext) {
     // registered, the Open Pane default still the page's binding.
     assert_eq!(
         registered(&system),
-        vec![Shortcut::open_pane_default(), command_shortcut]
+        vec![Shortcut::open_pane_default(), command_shortcut.clone()]
     );
     assert!(
         !data.path().join("settings.json").exists(),
@@ -554,7 +554,7 @@ fn a_save_that_fails_rolls_the_registration_back(cx: &mut TestAppContext) {
     settings_cx.run_until_parked();
     let kept = Shortcut::parse("ctrl+alt+b").unwrap();
     until_record(&mut settings_cx, data.path(), "ctrl+alt+b");
-    assert_eq!(registered(&system), vec![kept]);
+    assert_eq!(registered(&system), vec![kept.clone()]);
 
     // Break the record's replacement: a folder where the record belongs,
     // so the atomic write cannot rename over it.
@@ -574,7 +574,7 @@ fn a_save_that_fails_rolls_the_registration_back(cx: &mut TestAppContext) {
     // The failure is explained, and the binding the record holds is the
     // one that works: the change that could not be saved did not discard
     // the previous working binding.
-    assert_eq!(registered(&system), vec![kept]);
+    assert_eq!(registered(&system), vec![kept.clone()]);
     let tree = a11y(&mut settings_cx);
     assert!(
         tree.contains(&format!("Open Pane with {kept}")),
@@ -626,7 +626,7 @@ fn the_recorded_hotkey_is_registered_by_a_fresh_application(cx: &mut TestAppCont
 
     // The fresh application registered what the record holds, and that
     // binding summons the launcher.
-    assert_eq!(registered(&fresh_system), vec![recorded]);
+    assert_eq!(registered(&fresh_system), vec![recorded.clone()]);
     let handle = fresh_cx
         .update(|window, _| window.window_handle())
         .downcast::<LauncherWindow>()
@@ -680,7 +680,7 @@ fn escape_cancels_the_recorder_and_captured_keys_do_not_act(cx: &mut TestAppCont
     // Escape cancels: nothing changed, nothing was registered or saved.
     settings_cx.simulate_keystrokes("escape");
     settings_cx.run_until_parked();
-    assert_eq!(registered(&system), vec![default]);
+    assert_eq!(registered(&system), vec![default.clone()]);
     assert!(!data.path().join("settings.json").exists());
     let tree = a11y(&mut settings_cx);
     assert!(
@@ -735,7 +735,7 @@ fn resetting_returns_to_the_default_through_the_same_checks(cx: &mut TestAppCont
     click(&mut settings_cx, "open-pane-reset");
     settings_cx.run_until_parked();
     let default = Shortcut::open_pane_default();
-    assert_eq!(registered(&system), vec![default]);
+    assert_eq!(registered(&system), vec![default.clone()]);
     until_record(&mut settings_cx, data.path(), &default.id());
     let tree = a11y(&mut settings_cx);
     assert!(
@@ -767,7 +767,7 @@ fn the_hotkey_stays_available_while_the_runtime_has_failed(cx: &mut TestAppConte
 
     // The application-owned binding registered as ever, with no extension
     // runtime to run.
-    assert_eq!(registered(&system), vec![default]);
+    assert_eq!(registered(&system), vec![default.clone()]);
     press(&window, &default, cx);
     cx.run_until_parked();
     assert!(is_active(&handle, cx), "the launcher was summoned");

@@ -421,7 +421,10 @@ impl Settings {
                     // was last recorded keeps working.
                     if snapshot.open_pane != self.saved.open_pane {
                         if let Some(launcher) = &self.launcher {
-                            launcher.sync_open_pane(self.saved.open_pane.clone());
+                            // The outcome is the binding's own state (the
+                            // problem the page explains), not a value to
+                            // surface here.
+                            let _ = launcher.sync_open_pane(self.saved.open_pane.clone());
                         }
                     }
                     self.chosen = self.saved.clone();
