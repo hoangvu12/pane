@@ -2,6 +2,14 @@ name: CI
 
 on:
   push:
+    # The spec-milestone worktrees (pi-subagent/**) push often while
+    # their implementing agents iterate; they take their fast compile,
+    # lint and test feedback from ci-fast.yml instead of this full
+    # release matrix, which runs here for every other branch and for
+    # the PRs. Their state reaches this matrix when the merger lands it
+    # on the milestone's PR branch.
+    branches-ignore:
+      - "pi-subagent/**"
   pull_request:
   workflow_dispatch:
 

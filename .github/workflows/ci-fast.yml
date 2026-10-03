@@ -1,0 +1,62 @@
+name: CI (fast)
+
+# The fast tier of CI for the spec-milestone worktrees: branches named
+# pi-subagent/** push often while their implementing agents iterate, and
+# they need compile, lint and test feedback quickly, not the whole
+# release matrix. This workflow runs only the Check legs of the two
+# operating systems whose code those branches most plausibly break
+# (Linux for cross-platform compile errors, Windows for its
+# window/native paths; macOS is checked when the branch merges, by the
+# full matrix on the PR branch). The full ci.yml ignores these branches
+# on push; the smoke, renderer, packaging and guest legs all run there,
+# on the branches whose state is the milestone's actual product.
+on:
+  push:
+    branches:
+      - "pi-subagent/**"
+
+# As in ci.yml: one run per branch, a superseded run cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    env:
+      # As in ci.yml's check job: the Linux test binaries link with mold,
+      # host-triple-scoped so the wasm guest builds keep their own linker.
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: ${{ matrix.os == 'ubuntu-24.04' && '-C link-arg=-fuse-ld=mold' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libxcb1-dev libfontconfig1-dev libfreetype-dev libvulkan1 mesa-vulkan-drivers \
+            xvfb xdotool imagemagick mold
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            guests
+            guests/fixtures/mixed-p2
+      - name: Build guests, check formatting and lints, run tests
+        run: cargo xtask ci
+        env:
+          # As in ci.yml: the real-clipboard adapter tests opt in where a
+          # logged-in session exists; on Linux they run under Xvfb below.
+          PANE_TEST_REAL_CLIPBOARD: ${{ runner.os != 'Linux' && '1' || '' }}
+      - name: Run the Linux clipboard adapter test (Xvfb)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a cargo test --locked -p pane-core --test clipboard_adapter_linux
+        env:
+          PANE_TEST_REAL_CLIPBOARD: "1"
