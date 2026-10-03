@@ -109,6 +109,10 @@ fn render(
     // overrides it for this process; an override is in force otherwise,
     // and the notice below says so.
     let overridden = !overrides.is_empty();
+    eprintln!(
+        "APPEARANCE RENDER overridden={overridden} overrides={overrides:?} entity={:?}",
+        settings.entity_id()
+    );
 
     let page = div()
         .id("appearance")
