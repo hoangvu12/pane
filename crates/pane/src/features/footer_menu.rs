@@ -395,8 +395,9 @@ fn menu_list(
                 item.bg(theme.row_selected)
                     .when(!inert, |item| item.aria_active_descendant())
             })
-            .when(!inert, |item| {
-                item.role(Role::MenuItem)
+            .when(!inert, |entry| {
+                entry
+                    .role(Role::MenuItem)
                     .aria_label(item.title)
                     .aria_selected(item_selected)
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
