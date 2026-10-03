@@ -52,8 +52,8 @@
 use std::collections::HashMap;
 
 use gpui::{
-    App, Context, Div, Entity, KeyBinding, Role, ScrollAnchor, ScrollHandle, Stateful,
-    Subscription, Window, actions, div, prelude::*, px,
+    App, Context, Div, Entity, Focusable, KeyBinding, Role, ScrollAnchor, ScrollHandle,
+    SharedString, Stateful, Subscription, Window, actions, div, prelude::*, px,
 };
 use gpui_elements::editable_text::actions::DEFAULT_INPUT_CONTEXT;
 use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged, text_input};
@@ -206,6 +206,26 @@ impl State {
         let query = self.query.read(cx).as_str().to_owned();
         self.results = results(launcher, pages, &query, cx);
         self.selected = self.selected.min(self.results.len().saturating_sub(1));
+    }
+
+    /// Whether a query is showing — the sidebar lists the search's
+    /// results rather than the sections. The field's text decides: a
+    /// blank query is no query.
+    pub(crate) fn searching(&self, cx: &App) -> bool {
+        !self.query.read(cx).as_str().trim().is_empty()
+    }
+
+    /// The page area's scroll container, which the reveal scrolls: the
+    /// window's page render tracks it.
+    pub(crate) fn scroll(&self) -> &ScrollHandle {
+        &self.scroll
+    }
+
+    /// Drops the controls' scroll anchors, as the window's page render
+    /// does before the page about to draw fills them in again — so a
+    /// reveal only ever scrolls a control on the page now showing.
+    pub(crate) fn clear_anchors(&mut self) {
+        self.anchors.clear();
     }
 }
 
@@ -365,7 +385,7 @@ impl SettingsWindow {
             // yet; the anchor records where the control drew when that
             // paint lays the page out, so the scroll waits for it.
             let this = cx.entity();
-            window.on_next_frame(move |window, cx| {
+            window.on_next_frame(move |window, _cx| {
                 window.on_next_frame(move |window, cx| {
                     // The page has painted; the anchors are the ones it
                     // drew. Ask the control's anchor to scroll — it runs
@@ -507,7 +527,7 @@ pub(super) fn result_rows(
                 RowContent {
                     title: hit.entry.title.clone().into(),
                     subtitle: Some(subtitle.into()),
-                    unavailable_reason: hit.entry.unavailable.clone().map(Into::into),
+                    unavailable_reason: hit.entry.unavailable.clone().map(SharedString::from),
                     unavailable_id: ("settings-search-unavailable", index).into(),
                     selected,
                     icon,

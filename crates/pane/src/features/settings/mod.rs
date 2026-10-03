@@ -193,7 +193,7 @@ impl SettingsWindow {
     fn render_sidebar(&self, theme: &ui::theme::Theme, cx: &mut Context<Self>) -> Div {
         // While a query shows, the list is the search's results; the
         // search module builds those rows (or its no-results line).
-        let searching = !self.search.query.read(cx).as_str().trim().is_empty();
+        let searching = self.search.searching(cx);
         let rows: Vec<AnyElement> = if searching {
             search::result_rows(self, theme, cx)
         } else {
@@ -282,7 +282,7 @@ impl SettingsWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        self.search.anchors.clear();
+        self.search.clear_anchors();
         let render = self.pages[self.selected].render;
         let content = render(self, window, cx);
         div()
@@ -292,7 +292,7 @@ impl SettingsWindow {
             .min_w(px(0.))
             .h_full()
             .overflow_y_scroll()
-            .track_scroll(&self.search.scroll)
+            .track_scroll(self.search.scroll())
             .px(px(28.))
             .py(px(20.))
             .text_size(theme.typography.row_subtitle_size)

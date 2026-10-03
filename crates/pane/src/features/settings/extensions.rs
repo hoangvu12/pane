@@ -32,7 +32,7 @@
 use gpui::{
     AnyElement, App, Context, Div, Role, SharedString, Stateful, Window, div, prelude::*, px,
 };
-use pane_core::{Screen, Status};
+use pane_core::{Launcher, Screen, Status};
 
 use super::{Page, SettingsWindow, search};
 use crate::app::{LauncherWindow, launcher_changed_outside, row_icon};
