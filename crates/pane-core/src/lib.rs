@@ -35,8 +35,9 @@ pub use helpers::runner::{HELPER_TIME_LIMIT, MAX_HELPER_INPUT, MAX_HELPER_OUTPUT
 #[doc(hidden)]
 pub use http::HttpLimits;
 pub use launcher::{
-    BuildFailure, CommandRegistration, CustomViewSnapshot, Development, FormField, FormView,
-    Launcher, LauncherView, Question, Row, Screen, SelectedAction, Status, Unavailable,
+    AliasOutcome, BuildFailure, CommandRegistration, CustomViewSnapshot, Development, FormField,
+    FormView, Launcher, LauncherView, Question, Row, Screen, SelectedAction, ShortcutCatalog,
+    ShortcutCommand, ShortcutGroup, Status, Unavailable,
 };
 pub use links::LinkOpener;
 pub use operations::{MAX_CALL_DEPTH, MAX_OPERATION_JSON};

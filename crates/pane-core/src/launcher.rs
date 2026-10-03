@@ -75,11 +75,13 @@ mod reload;
 mod retained;
 mod schedules;
 mod services;
+mod shortcuts;
 mod uninstall;
 mod updates;
 
 use acquire::{Acquisitions, Defaults};
 use aliases::AliasChoices;
+pub use aliases::AliasOutcome;
 use application_update::{Application, Updates};
 use choices::Record;
 use developing::Developing;
@@ -88,6 +90,7 @@ use hotkeys::Bindings;
 use pausing::{Pauses, Recorder};
 use schedules::Schedules;
 use services::Services;
+pub use shortcuts::{ShortcutCatalog, ShortcutCommand, ShortcutGroup};
 
 /// The id of the root row that installs a package from a local folder.
 const INSTALL_FROM_FOLDER: &str = "pane.install-from-folder";
