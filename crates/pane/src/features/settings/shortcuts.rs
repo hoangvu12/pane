@@ -810,6 +810,7 @@ fn group_element(
     }
     let commands = div()
         .id(format!("commands-{key}"))
+        .debug_selector(|| format!("commands-{key}"))
         .flex()
         .flex_col()
         .gap(px(2.))

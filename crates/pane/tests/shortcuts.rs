@@ -1288,9 +1288,10 @@ fn collapsing_a_group_moves_focus_inside_it_to_its_header(cx: &mut TestAppContex
         json.contains("Alias for Echo: none"),
         "the uncommitted edit was discarded, {json}"
     );
-    assert_eq!(
-        aliases_record(&data),
-        serde_json::json!({"version": 1, "aliases": {}, "fallbacks": []}).to_string(),
+    // The record never came to be: this data dir was never seeded, and
+    // closing the editor without committing writes nothing at all.
+    assert!(
+        !data.path().join("extensions").join("aliases.json").exists(),
         "nothing was written"
     );
 
