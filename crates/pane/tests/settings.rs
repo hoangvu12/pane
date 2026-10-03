@@ -865,11 +865,11 @@ impl UpdateDirs {
 /// changes channel whose other end the window follows, so background
 /// changes (a check's answer, an install's progress) redraw the windows
 /// as they do in the app.
-fn open_updating_launcher(
-    cx: &mut TestAppContext,
+fn open_updating_launcher<'a>(
+    cx: &'a mut TestAppContext,
     dirs: &UpdateDirs,
     version: &str,
-) -> (gpui::Entity<LauncherWindow>, &mut VisualTestContext) {
+) -> (gpui::Entity<LauncherWindow>, &'a mut VisualTestContext) {
     let (sender, changes) = changes::channel();
     let launcher = Launcher::with_packages(
         Runtime::start(),
