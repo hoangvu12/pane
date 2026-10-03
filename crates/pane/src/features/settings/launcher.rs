@@ -112,6 +112,9 @@ fn render(
     };
     let placement = crate::placement::shared(cx);
     let unavailable = placement.unavailable();
+    // Whether the opening-monitor choices are offered at all: a platform
+    // that cannot choose the launcher's display explains that instead.
+    let offered = unavailable.is_none();
     let layout = placement.layout();
     let visuals = crate::settings::visuals(cx);
     let theme = &visuals.theme;
@@ -146,7 +149,7 @@ fn render(
             }),
             |page, note| page.child(note),
         )
-        .when(unavailable.is_none(), |page| {
+        .when(offered, |page| {
             page.child(group(
                 "Opening monitor",
                 MONITORS
