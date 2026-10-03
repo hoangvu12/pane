@@ -477,9 +477,12 @@ fn a_disconnected_or_unanswered_choice_falls_back_and_says_so(cx: &mut TestAppCo
 
     // The system stops telling Pane which window is active: the choice
     // stays recorded, the page says what the launcher would open on
-    // instead, and the choice's own row explains itself.
+    // instead, and the choice's own row explains itself — inside the
+    // select's popup, which is where the choices are listed.
     placement.layout(Some(Point { x: 2500., y: 700. }), None);
     let (_settings, mut settings_cx) = open_launcher_page(cx);
+    click(&mut settings_cx, "launcher-monitor");
+    settings_cx.run_until_parked();
     let tree = a11y(&mut settings_cx);
     assert!(
         tree.contains("This system does not tell Pane which window is active"),
@@ -1064,10 +1067,13 @@ fn the_select_opens_below_the_trigger_and_commits_the_highlighted_choice(cx: &mu
         popup.size.width, trigger.size.width,
         "the popup is the trigger's width"
     );
+    // The keyboard moves into the field — the a11y focus is the field's
+    // node, whose active descendant (honored only under a focused
+    // ancestor) is the committed choice the highlight starts on.
     assert_eq!(
         focused_label(&mut sc).as_deref(),
-        Some("Search choices"),
-        "the popup's field takes the focus"
+        Some("Primary display"),
+        "the popup's field takes the focus, the highlight on the committed choice"
     );
 
     // The exposure: the trigger is a combo box carrying the committed

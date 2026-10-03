@@ -1,0 +1,2057 @@
+﻿2026-10-03T17:11:30.5868847Z Current runner version: '2.337.0'
+2026-10-03T17:11:30.5899465Z ##[group]Runner Image Provisioner
+2026-10-03T17:11:30.5900246Z Hosted Compute Agent
+2026-10-03T17:11:30.5900901Z Version: 20260901.588
+2026-10-03T17:11:30.5901753Z Commit: f88ec8081b781fac6c440065ac7ff9e710ce3d0b
+2026-10-03T17:11:30.5902431Z Build Date: 2026-09-01T19:56:44Z
+2026-10-03T17:11:30.5903071Z Worker ID: {bb999f6c-fe68-442a-a9b0-61d76b0304fe}
+2026-10-03T17:11:30.5903748Z Azure Region: eastus
+2026-10-03T17:11:30.5904556Z ##[endgroup]
+2026-10-03T17:11:30.5906217Z ##[group]Operating System
+2026-10-03T17:11:30.5906872Z Microsoft Windows Server 2025
+2026-10-03T17:11:30.5907482Z 10.0.26100
+2026-10-03T17:11:30.5907978Z Datacenter
+2026-10-03T17:11:30.5908464Z ##[endgroup]
+2026-10-03T17:11:30.5908971Z ##[group]Runner Image
+2026-10-03T17:11:30.5909524Z Image: windows-2025-vs2026
+2026-10-03T17:11:30.5910115Z Version: 20260925.250.1
+2026-10-03T17:11:30.5911504Z Included Software: https://github.com/actions/runner-images/blob/win25-vs2026/20260925.250/images/windows/Windows2025-VS2026-Readme.md
+2026-10-03T17:11:30.5913147Z Image Release: https://github.com/actions/runner-images/releases/tag/win25-vs2026%2F20260925.250
+2026-10-03T17:11:30.5914097Z ##[endgroup]
+2026-10-03T17:11:30.5915577Z ##[group]GITHUB_TOKEN Permissions
+2026-10-03T17:11:30.5917612Z Contents: read
+2026-10-03T17:11:30.5918171Z Metadata: read
+2026-10-03T17:11:30.5918691Z Packages: read
+2026-10-03T17:11:30.5919211Z ##[endgroup]
+2026-10-03T17:11:30.5922494Z Secret source: Actions
+2026-10-03T17:11:30.5923587Z Cache mode: write
+2026-10-03T17:11:30.5924392Z Prepare workflow directory
+2026-10-03T17:11:30.6462732Z Prepare all required actions
+2026-10-03T17:11:30.6514335Z Getting action download info
+2026-10-03T17:11:30.8026611Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-10-03T17:11:30.9385062Z Download action repository 'Swatinem/rust-cache@v2' (SHA:6323deb102c322ba6fcbdcafc7e3dddab59af2b6)
+2026-10-03T17:11:31.2117450Z Download action repository 'taiki-e/install-action@v2' (SHA:861a07ce7084f55488e375df125cdc99bba60eb7)
+2026-10-03T17:11:31.6704139Z Complete job name: Check (windows-2025)
+2026-10-03T17:11:31.8225286Z ##[group]Run actions/checkout@v4
+2026-10-03T17:11:31.8226550Z with:
+2026-10-03T17:11:31.8227093Z   repository: hoangvu12/pane
+2026-10-03T17:11:31.8232487Z   token: ***
+2026-10-03T17:11:31.8232931Z   ssh-strict: true
+2026-10-03T17:11:31.8233366Z   ssh-user: git
+2026-10-03T17:11:31.8233794Z   persist-credentials: true
+2026-10-03T17:11:31.8234278Z   clean: true
+2026-10-03T17:11:31.8234712Z   sparse-checkout-cone-mode: true
+2026-10-03T17:11:31.8235236Z   fetch-depth: 1
+2026-10-03T17:11:31.8235651Z   fetch-tags: false
+2026-10-03T17:11:31.8236108Z   show-progress: true
+2026-10-03T17:11:31.8236541Z   lfs: false
+2026-10-03T17:11:31.8236941Z   submodules: false
+2026-10-03T17:11:31.8237392Z   set-safe-directory: true
+2026-10-03T17:11:31.8237896Z   allow-unsafe-pr-checkout: false
+2026-10-03T17:11:31.8238656Z env:
+2026-10-03T17:11:31.8239133Z   CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: 
+2026-10-03T17:11:31.8239746Z ##[endgroup]
+2026-10-03T17:11:31.9666593Z Syncing repository: hoangvu12/pane
+2026-10-03T17:11:31.9668406Z ##[group]Getting Git version info
+2026-10-03T17:11:31.9669501Z Working directory is 'D:\a\pane\pane'
+2026-10-03T17:11:32.0853245Z [command]"C:\Program Files\Git\bin\git.exe" version
+2026-10-03T17:11:32.5023825Z git version 2.55.0.windows.5
+2026-10-03T17:11:32.5074243Z ##[endgroup]
+2026-10-03T17:11:32.5094142Z Temporarily overriding HOME='D:\a\_temp\f175f3f6-08ca-4a25-b747-7c24d096d77a' before making global git config changes
+2026-10-03T17:11:32.5096173Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-03T17:11:32.5105560Z [command]"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\pane\pane
+2026-10-03T17:11:32.5791368Z Deleting the contents of 'D:\a\pane\pane'
+2026-10-03T17:11:32.5799489Z ##[group]Initializing the repository
+2026-10-03T17:11:32.5809110Z [command]"C:\Program Files\Git\bin\git.exe" init D:\a\pane\pane
+2026-10-03T17:11:32.7092644Z Initialized empty Git repository in D:/a/pane/pane/.git/
+2026-10-03T17:11:32.7135738Z [command]"C:\Program Files\Git\bin\git.exe" remote add origin https://github.com/hoangvu12/pane
+2026-10-03T17:11:32.7823389Z ##[endgroup]
+2026-10-03T17:11:32.7825343Z ##[group]Disabling automatic garbage collection
+2026-10-03T17:11:32.7831424Z [command]"C:\Program Files\Git\bin\git.exe" config --local gc.auto 0
+2026-10-03T17:11:32.8125745Z ##[endgroup]
+2026-10-03T17:11:32.8128506Z ##[group]Setting up auth
+2026-10-03T17:11:32.8131924Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+2026-10-03T17:11:32.8458649Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+2026-10-03T17:11:34.4322246Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-03T17:11:34.4607708Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+2026-10-03T17:11:35.0139212Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-03T17:11:35.0430493Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "git config --local --show-origin --name-only --get-regexp remote.origin.url"
+2026-10-03T17:11:35.5833892Z [command]"C:\Program Files\Git\bin\git.exe" config --local http.https://github.com/.extraheader "AUTHORIZATION: basic ***"
+2026-10-03T17:11:35.6138235Z ##[endgroup]
+2026-10-03T17:11:35.6138760Z ##[group]Fetching the repository
+2026-10-03T17:11:35.6153804Z [command]"C:\Program Files\Git\bin\git.exe" -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +4906a8fd220f6d4d96e8398a267d07d8d040e642:refs/remotes/origin/pi-subagent/ticket-85
+2026-10-03T17:11:39.7429326Z From https://github.com/hoangvu12/pane
+2026-10-03T17:11:39.7430929Z  * [new ref]         4906a8fd220f6d4d96e8398a267d07d8d040e642 -> origin/pi-subagent/ticket-85
+2026-10-03T17:11:39.7474506Z ##[endgroup]
+2026-10-03T17:11:39.7475154Z ##[group]Determining the checkout info
+2026-10-03T17:11:39.7478370Z ##[endgroup]
+2026-10-03T17:11:39.7491036Z [command]"C:\Program Files\Git\bin\git.exe" sparse-checkout disable
+2026-10-03T17:11:39.7943110Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset-all extensions.worktreeConfig
+2026-10-03T17:11:39.8230631Z ##[group]Checking out the ref
+2026-10-03T17:11:39.8239706Z [command]"C:\Program Files\Git\bin\git.exe" checkout --progress --force -B pi-subagent/ticket-85 refs/remotes/origin/pi-subagent/ticket-85
+2026-10-03T17:11:40.4680934Z Switched to a new branch 'pi-subagent/ticket-85'
+2026-10-03T17:11:40.4758808Z branch 'pi-subagent/ticket-85' set up to track 'origin/pi-subagent/ticket-85'.
+2026-10-03T17:11:40.4842803Z ##[endgroup]
+2026-10-03T17:11:40.5282809Z [command]"C:\Program Files\Git\bin\git.exe" log -1 --format=%H
+2026-10-03T17:11:40.5798410Z 4906a8fd220f6d4d96e8398a267d07d8d040e642
+2026-10-03T17:11:40.6293639Z ##[group]Run rustup toolchain install
+2026-10-03T17:11:40.6294044Z [36;1mrustup toolchain install[0m
+2026-10-03T17:11:40.6931536Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2026-10-03T17:11:40.6931956Z env:
+2026-10-03T17:11:40.6932203Z   CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: 
+2026-10-03T17:11:40.6932514Z ##[endgroup]
+2026-10-03T17:11:41.8606519Z info: syncing channel updates for 1.98.1-x86_64-pc-windows-msvc
+2026-10-03T17:11:42.4578766Z info: latest update on 2026-09-03 for version 1.98.1 (48a229cea 2026-09-01)
+2026-10-03T17:11:42.4651564Z info: downloading 6 components
+2026-10-03T17:11:53.8870498Z info: the active toolchain `1.98.1-x86_64-pc-windows-msvc` has been installed
+2026-10-03T17:11:53.8871649Z info: it's active because: overridden by 'D:\a\pane\pane\rust-toolchain.toml'
+2026-10-03T17:11:54.0165733Z ##[group]Run Swatinem/rust-cache@v2
+2026-10-03T17:11:54.0166186Z with:
+2026-10-03T17:11:54.0166548Z   workspaces: .
+guests
+guests/fixtures/mixed-p2
+
+2026-10-03T17:11:54.0166991Z   prefix-key: v0-rust
+2026-10-03T17:11:54.0167294Z   add-job-id-key: true
+2026-10-03T17:11:54.0167684Z   add-rust-environment-hash-key: true
+2026-10-03T17:11:54.0168069Z   cache-targets: true
+2026-10-03T17:11:54.0168370Z   cache-all-crates: false
+2026-10-03T17:11:54.0168708Z   cache-workspace-crates: false
+2026-10-03T17:11:54.0169042Z   save-if: true
+2026-10-03T17:11:54.0169315Z   cache-provider: github
+2026-10-03T17:11:54.0169619Z   cache-bin: true
+2026-10-03T17:11:54.0170314Z   lookup-only: false
+2026-10-03T17:11:54.0170607Z   cmd-format: {0}
+2026-10-03T17:11:54.0170887Z env:
+2026-10-03T17:11:54.0171189Z   CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: 
+2026-10-03T17:11:54.0171633Z ##[endgroup]
+2026-10-03T17:11:59.6240630Z ##[group]Cache Configuration
+2026-10-03T17:11:59.6241040Z Cache Provider:
+2026-10-03T17:11:59.6241343Z     github
+2026-10-03T17:11:59.6241597Z Workspaces:
+2026-10-03T17:11:59.6242234Z     D:\a\pane\pane
+2026-10-03T17:11:59.6242650Z     D:\a\pane\pane\guests
+2026-10-03T17:11:59.6243093Z     D:\a\pane\pane\guests\fixtures\mixed-p2
+2026-10-03T17:11:59.6243576Z Cache Paths:
+2026-10-03T17:11:59.6243920Z     C:\Users\runneradmin\.cargo\bin
+2026-10-03T17:11:59.6244318Z     C:\Users\runneradmin\.cargo\.crates.toml
+2026-10-03T17:11:59.6245082Z     C:\Users\runneradmin\.cargo\.crates2.json
+2026-10-03T17:11:59.6245597Z     C:\Users\runneradmin\.cargo\registry
+2026-10-03T17:11:59.6246144Z     C:\Users\runneradmin\.cargo\git
+2026-10-03T17:11:59.6246576Z     D:\a\pane\pane\target
+2026-10-03T17:11:59.6247751Z     D:\a\pane\pane\guests\target
+2026-10-03T17:11:59.6248074Z     D:\a\pane\pane\guests\fixtures\mixed-p2\target
+2026-10-03T17:11:59.6248368Z Restore Key:
+2026-10-03T17:11:59.6248566Z     v0-rust-check-Windows_NT-x64-40a42ff5
+2026-10-03T17:11:59.6248820Z Cache Key:
+2026-10-03T17:11:59.6249026Z     v0-rust-check-Windows_NT-x64-40a42ff5-76394fcb
+2026-10-03T17:11:59.6249295Z .. Prefix:
+2026-10-03T17:11:59.6249508Z   - v0-rust-check-Windows_NT-x64
+2026-10-03T17:11:59.6249755Z .. Environment considered:
+2026-10-03T17:11:59.6249966Z   - Rust Versions:
+2026-10-03T17:11:59.6250256Z     - 1.98.1 x86_64-pc-windows-msvc 48a229ceaefd4985c50990b14116b6d856af0985
+2026-10-03T17:11:59.6250606Z   - CARGO_INCREMENTAL
+2026-10-03T17:11:59.6250809Z .. Lockfiles considered:
+2026-10-03T17:11:59.6251024Z   - D:\a\pane\pane\.cargo\config.toml
+2026-10-03T17:11:59.6251269Z   - D:\a\pane\pane\Cargo.lock
+2026-10-03T17:11:59.6251512Z   - D:\a\pane\pane\crates\pane-core\Cargo.toml
+2026-10-03T17:11:59.6251802Z   - D:\a\pane\pane\crates\pane-target\Cargo.toml
+2026-10-03T17:11:59.6252088Z   - D:\a\pane\pane\crates\pane\Cargo.toml
+2026-10-03T17:11:59.6252370Z   - D:\a\pane\pane\guests\applications\Cargo.toml
+2026-10-03T17:11:59.6252708Z   - D:\a\pane\pane\guests\calculator\Cargo.toml
+2026-10-03T17:11:59.6253004Z   - D:\a\pane\pane\guests\Cargo.lock
+2026-10-03T17:11:59.6253281Z   - D:\a\pane\pane\guests\clipboard-history\Cargo.toml
+2026-10-03T17:11:59.6253773Z   - D:\a\pane\pane\guests\files\Cargo.toml
+2026-10-03T17:11:59.6254266Z   - D:\a\pane\pane\guests\fixtures\failing-start\Cargo.toml
+2026-10-03T17:11:59.6254614Z   - D:\a\pane\pane\guests\fixtures\faulty\Cargo.toml
+2026-10-03T17:11:59.6254943Z   - D:\a\pane\pane\guests\fixtures\mismatched-api\Cargo.toml
+2026-10-03T17:11:59.6255278Z   - D:\a\pane\pane\guests\fixtures\mixed-p2\Cargo.lock
+2026-10-03T17:11:59.6255583Z   - D:\a\pane\pane\guests\fixtures\mixed-p2\Cargo.toml
+2026-10-03T17:11:59.6255885Z   - D:\a\pane\pane\guests\fixtures\old-api\Cargo.toml
+2026-10-03T17:11:59.6256201Z   - D:\a\pane\pane\guests\fixtures\operations\Cargo.toml
+2026-10-03T17:11:59.6256840Z   - D:\a\pane\pane\guests\fixtures\refusing-view\Cargo.toml
+2026-10-03T17:11:59.6257175Z   - D:\a\pane\pane\guests\git\greeter\Cargo.toml
+2026-10-03T17:11:59.6259759Z   - D:\a\pane\pane\guests\pane-guest\Cargo.toml
+2026-10-03T17:11:59.6260173Z   - D:\a\pane\pane\guests\quicklinks\Cargo.toml
+2026-10-03T17:11:59.6260542Z   - D:\a\pane\pane\guests\sample-dependencies\Cargo.toml
+2026-10-03T17:11:59.6260884Z   - D:\a\pane\pane\guests\sample-helper\Cargo.toml
+2026-10-03T17:11:59.6261225Z   - D:\a\pane\pane\guests\sample-operations\Cargo.toml
+2026-10-03T17:11:59.6261558Z   - D:\a\pane\pane\guests\sample-query\Cargo.toml
+2026-10-03T17:11:59.6261872Z   - D:\a\pane\pane\guests\sample-rust\Cargo.toml
+2026-10-03T17:11:59.6262220Z   - D:\a\pane\pane\guests\sample-schedule\Cargo.toml
+2026-10-03T17:11:59.6262753Z   - D:\a\pane\pane\guests\sample-search\Cargo.toml
+2026-10-03T17:11:59.6263082Z   - D:\a\pane\pane\guests\sample-service\Cargo.toml
+2026-10-03T17:11:59.6263511Z   - D:\a\pane\pane\guests\sample-settings\Cargo.toml
+2026-10-03T17:11:59.6263889Z   - D:\a\pane\pane\rust-toolchain.toml
+2026-10-03T17:11:59.6264153Z   - D:\a\pane\pane\xtask\Cargo.toml
+2026-10-03T17:11:59.6264551Z ##[endgroup]
+2026-10-03T17:11:59.6264659Z 
+2026-10-03T17:11:59.6264731Z ... Restoring cache ...
+2026-10-03T17:11:59.8181490Z Cache hit for: v0-rust-check-Windows_NT-x64-40a42ff5-76394fcb
+2026-10-03T17:12:00.8574174Z Received 201326592 of 1322080610 (15.2%), 191.0 MBs/sec
+2026-10-03T17:12:01.8713288Z Received 402653184 of 1322080610 (30.5%), 190.2 MBs/sec
+2026-10-03T17:12:02.8804008Z Received 645922816 of 1322080610 (48.9%), 203.4 MBs/sec
+2026-10-03T17:12:03.8842956Z Received 809500672 of 1322080610 (61.2%), 191.5 MBs/sec
+2026-10-03T17:12:04.8860315Z Received 1061158912 of 1322080610 (80.3%), 201.0 MBs/sec
+2026-10-03T17:12:05.8906095Z Received 1216348160 of 1322080610 (92.0%), 192.1 MBs/sec
+2026-10-03T17:12:06.4556479Z Received 1322080610 of 1322080610 (100.0%), 190.9 MBs/sec
+2026-10-03T17:12:06.4559611Z Cache Size: ~1261 MB (1322080610 B)
+2026-10-03T17:12:06.4632955Z [command]"C:\Program Files\Git\usr\bin\tar.exe" -xf D:/a/_temp/cd78d7b4-8641-4f48-b106-3423ff1f8bef/cache.tzst -P -C D:/a/pane/pane --force-local --use-compress-program "zstd -d"
+2026-10-03T17:12:30.7934881Z Cache restored successfully
+2026-10-03T17:12:30.8641095Z Restored from cache key "v0-rust-check-Windows_NT-x64-40a42ff5-76394fcb" full match: true.
+2026-10-03T17:12:30.9053439Z ##[group]Run taiki-e/install-action@v2
+2026-10-03T17:12:30.9053775Z with:
+2026-10-03T17:12:30.9053971Z   tool: cargo-nextest@0.9.146
+2026-10-03T17:12:30.9054203Z   checksum: true
+2026-10-03T17:12:30.9054411Z   fallback: cargo-binstall
+2026-10-03T17:12:30.9054618Z env:
+2026-10-03T17:12:30.9054832Z   CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: 
+2026-10-03T17:12:30.9055130Z   CACHE_ON_FAILURE: false
+2026-10-03T17:12:30.9055358Z   CARGO_INCREMENTAL: 0
+2026-10-03T17:12:30.9055554Z ##[endgroup]
+2026-10-03T17:12:30.9136705Z ##[start-action display=Run bail() {;id=__taiki-e_install-action.__run]
+2026-10-03T17:12:30.9144619Z ##[end-action id=__taiki-e_install-action.__run;outcome=skipped;conclusion=skipped;duration_ms=0]
+2026-10-03T17:12:30.9149790Z ##[start-action display=Run Set-StrictMode -Version Latest;id=__taiki-e_install-action.__run_2]
+2026-10-03T17:12:30.9290987Z ##[group]Run Set-StrictMode -Version Latest
+2026-10-03T17:12:30.9291388Z [36;1mSet-StrictMode -Version Latest[0m
+2026-10-03T17:12:30.9291807Z [36;1m$remove_env = @('ENV','BASH_ENV','CDPATH','SHELLOPTS','BASHOPTS','BASH_FUNC_*')[0m
+2026-10-03T17:12:30.9292225Z [36;1mforeach ($name in $remove_env) {[0m
+2026-10-03T17:12:30.9292564Z [36;1m  if (Test-Path "Env:$name") { Remove-Item "Env:\$name" }[0m
+2026-10-03T17:12:30.9292887Z [36;1m}[0m
+2026-10-03T17:12:30.9293078Z [36;1mfor ($i=1; $i -le 10; $i++) {[0m
+2026-10-03T17:12:30.9293373Z [36;1m  $prev_err_action = $ErrorActionPreference[0m
+2026-10-03T17:12:30.9293866Z [36;1m  $ErrorActionPreference = "Continue"[0m
+2026-10-03T17:12:30.9294237Z [36;1m  & bash --noprofile --norc "$env:GITHUB_ACTION_PATH\main.sh"[0m
+2026-10-03T17:12:30.9294581Z [36;1m  $code = $LASTEXITCODE[0m
+2026-10-03T17:12:30.9294866Z [36;1m  $ErrorActionPreference = "$prev_err_action"[0m
+2026-10-03T17:12:30.9295238Z [36;1m  if (Test-Path "$env:USERPROFILE\.install-action\init") {[0m
+2026-10-03T17:12:30.9295648Z [36;1m    # If bash started successfully, main.sh creates init file.[0m
+2026-10-03T17:12:30.9296071Z [36;1m    Remove-Item "$env:USERPROFILE\.install-action\init" -Force[0m
+2026-10-03T17:12:30.9296408Z [36;1m    exit $code[0m
+2026-10-03T17:12:30.9296614Z [36;1m  }[0m
+2026-10-03T17:12:30.9296798Z [36;1m  if ($i -lt 10) {[0m
+2026-10-03T17:12:30.9297502Z [36;1m    Write-Output "::warning::install-action: installation failed due to bash startup failure (<https://github.com/actions/partner-runner-images/issues/169>); retrying..."[0m
+2026-10-03T17:12:30.9298221Z [36;1m  }[0m
+2026-10-03T17:12:30.9298403Z [36;1m}[0m
+2026-10-03T17:12:30.9299114Z [36;1mWrite-Output "::error::install-action: installation failed due to bash startup failure (<https://github.com/actions/partner-runner-images/issues/169>); this maybe resolved by re-running job"[0m
+2026-10-03T17:12:30.9299897Z [36;1mexit 1[0m
+2026-10-03T17:12:30.9370522Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2026-10-03T17:12:30.9370873Z env:
+2026-10-03T17:12:30.9371101Z   CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: 
+2026-10-03T17:12:30.9371395Z   CACHE_ON_FAILURE: false
+2026-10-03T17:12:30.9371620Z   CARGO_INCREMENTAL: 0
+2026-10-03T17:12:30.9371838Z   INPUT_TOOL: cargo-nextest@0.9.146
+2026-10-03T17:12:30.9372098Z   INPUT_CHECKSUM: true
+2026-10-03T17:12:30.9372321Z   INPUT_FALLBACK: cargo-binstall
+2026-10-03T17:12:30.9374990Z   DEFAULT_GITHUB_TOKEN: ***
+2026-10-03T17:12:30.9375266Z   ACTION_USER_AGENT: taiki-e/install-action (v2)
+2026-10-03T17:12:30.9375555Z   RUNNER_OS: Windows
+2026-10-03T17:12:30.9375754Z   RUNNER_ARCH: X64
+2026-10-03T17:12:30.9375940Z ##[endgroup]
+2026-10-03T17:12:31.5431758Z info: host platform: x86_64_windows
+2026-10-03T17:12:31.5964911Z info: cargo is located at /c/Users/runneradmin/.cargo/bin/cargo
+2026-10-03T17:12:32.2558726Z info: installing cargo-nextest@0.9.146
+2026-10-03T17:12:32.6439414Z info: downloading https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.146/cargo-nextest-0.9.146-x86_64-pc-windows-msvc.tar.gz
+2026-10-03T17:12:32.9280505Z info: verifying sha256 checksum for cargo-nextest-0.9.146-x86_64-pc-windows-msvc.tar.gz
+2026-10-03T17:12:34.0347536Z info: cargo-nextest installed at /c/Users/runneradmin/.cargo/bin/cargo-nextest.exe
+2026-10-03T17:12:34.0448277Z + cargo-nextest nextest --version
+2026-10-03T17:12:34.0705183Z cargo-nextest 0.9.146 (8af696ddc 2026-09-21)
+2026-10-03T17:12:34.0705779Z release: 0.9.146
+2026-10-03T17:12:34.0706139Z commit-hash: 8af696ddcce8fff2962d6a5168b6d138b8616a35
+2026-10-03T17:12:34.0706605Z commit-date: 2026-09-21
+2026-10-03T17:12:34.0706931Z host: x86_64-pc-windows-msvc
+2026-10-03T17:12:34.0730718Z 
+2026-10-03T17:12:34.1307990Z ##[end-action id=__taiki-e_install-action.__run_2;outcome=success;conclusion=success;duration_ms=3215]
+2026-10-03T17:12:34.1481977Z ##[group]Run cargo xtask ci
+2026-10-03T17:12:34.1482310Z [36;1mcargo xtask ci[0m
+2026-10-03T17:12:34.1550864Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2026-10-03T17:12:34.1551223Z env:
+2026-10-03T17:12:34.1551729Z   CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: 
+2026-10-03T17:12:34.1552036Z   CACHE_ON_FAILURE: false
+2026-10-03T17:12:34.1552260Z   CARGO_INCREMENTAL: 0
+2026-10-03T17:12:34.1552482Z   PANE_TEST_REAL_CLIPBOARD: 1
+2026-10-03T17:12:34.1552730Z ##[endgroup]
+2026-10-03T17:12:49.1450440Z pane-js: prebuilt components match their sources
+2026-10-03T17:12:49.1475774Z pane-js: bundled npm packages are permissively licensed
+2026-10-03T17:13:22.8618767Z    Compiling ring v0.17.14
+2026-10-03T17:13:22.8682901Z     Checking pane-target v0.1.0 (D:\a\pane\pane\crates\pane-target)
+2026-10-03T17:13:22.9882840Z     Checking xtask v0.1.0 (D:\a\pane\pane\xtask)
+2026-10-03T17:13:27.0022147Z    Compiling rustls v0.23.45
+2026-10-03T17:13:28.0149623Z     Checking rustls-webpki v0.103.15
+2026-10-03T17:13:30.7616661Z     Checking tokio-rustls v0.26.6
+2026-10-03T17:13:30.9630425Z     Checking pane-core v0.1.0 (D:\a\pane\pane\crates\pane-core)
+2026-10-03T17:13:38.1892639Z     Checking pane v0.1.0 (D:\a\pane\pane\crates\pane)
+2026-10-03T17:13:49.7583725Z     Finished `dev` profile [unoptimized + debuginfo] target(s) in 59.86s
+2026-10-03T17:13:50.0203933Z     Checking pane-target v0.1.0 (D:\a\pane\pane\crates\pane-target)
+2026-10-03T17:13:50.0929204Z     Checking pane-echo v0.1.0 (D:\a\pane\pane\guests\helpers\echo)
+2026-10-03T17:13:50.1643208Z     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.25s
+2026-10-03T17:13:52.3900554Z    Compiling proc-macro2 v1.0.107
+2026-10-03T17:13:52.3901244Z    Compiling quote v1.0.47
+2026-10-03T17:13:52.3902512Z    Compiling unicode-ident v1.0.26
+2026-10-03T17:13:52.3903170Z    Compiling serde_core v1.0.229
+2026-10-03T17:13:52.5074456Z    Compiling zmij v1.0.23
+2026-10-03T17:13:52.7830313Z    Compiling foldhash v0.2.0
+2026-10-03T17:13:52.8656193Z    Compiling equivalent v1.0.2
+2026-10-03T17:13:52.9283770Z    Compiling hashbrown v0.17.1
+2026-10-03T17:13:52.9795959Z    Compiling anyhow v1.0.104
+2026-10-03T17:13:53.3954321Z    Compiling semver v1.0.28
+2026-10-03T17:13:53.8438987Z    Compiling bitflags v2.13.2
+2026-10-03T17:13:54.0960107Z    Compiling syn v3.0.6
+2026-10-03T17:13:54.2266855Z    Compiling serde v1.0.229
+2026-10-03T17:13:54.2318664Z    Compiling serde_json v1.0.151
+2026-10-03T17:13:54.8859642Z    Compiling itoa v1.0.18
+2026-10-03T17:13:55.0945073Z    Compiling prettyplease v0.3.0
+2026-10-03T17:13:55.1348724Z    Compiling memchr v2.8.3
+2026-10-03T17:13:55.3874289Z    Compiling id-arena v2.3.0
+2026-10-03T17:13:55.5237458Z    Compiling log v0.4.34
+2026-10-03T17:13:55.7454726Z    Compiling leb128fmt v0.1.0
+2026-10-03T17:13:55.9540108Z    Compiling wit-bindgen-rust v0.62.0
+2026-10-03T17:13:56.1643917Z    Compiling heck v0.5.0
+2026-10-03T17:13:56.1859924Z    Compiling wit-bindgen-rust-macro v0.62.0
+2026-10-03T17:13:56.4528784Z    Compiling indexmap v2.14.2
+2026-10-03T17:13:57.4474299Z    Compiling wasmparser v0.259.0
+2026-10-03T17:13:57.4946374Z    Compiling wit-bindgen v0.62.0
+2026-10-03T17:13:58.2265178Z    Compiling cfg-if v1.0.5
+2026-10-03T17:13:58.2805303Z    Compiling dlmalloc v0.2.14
+2026-10-03T17:14:00.7918622Z    Compiling serde_derive v1.0.229
+2026-10-03T17:14:00.9807762Z    Compiling futures-sink v0.3.34
+2026-10-03T17:14:01.0638639Z    Compiling futures-core v0.3.34
+2026-10-03T17:14:01.2147645Z    Compiling futures-macro v0.3.34
+2026-10-03T17:14:02.4569289Z    Compiling pin-project-lite v0.2.17
+2026-10-03T17:14:02.5566778Z    Compiling futures-task v0.3.34
+2026-10-03T17:14:02.7833546Z    Compiling futures-util v0.3.34
+2026-10-03T17:14:05.2971580Z    Compiling futures-channel v0.3.34
+2026-10-03T17:14:05.4883963Z    Compiling futures-io v0.3.34
+2026-10-03T17:14:05.5468725Z    Compiling futures v0.3.34
+2026-10-03T17:14:06.5730792Z    Compiling wit-parser v0.259.0
+2026-10-03T17:14:06.5732426Z    Compiling wasm-encoder v0.259.0
+2026-10-03T17:14:09.2224188Z    Compiling wasm-metadata v0.259.0
+2026-10-03T17:14:10.1667385Z    Compiling wit-bindgen-core v0.62.0
+2026-10-03T17:14:10.1668004Z    Compiling wit-component v0.259.0
+2026-10-03T17:14:16.5768295Z    Compiling pane-guest v0.1.0 (D:\a\pane\pane\guests\pane-guest)
+2026-10-03T17:14:16.5769098Z    Compiling wasip3 v0.9.0+wasi-0.3.0
+2026-10-03T17:14:16.7860046Z    Compiling mismatched-api v0.1.0 (D:\a\pane\pane\guests\fixtures\mismatched-api)
+2026-10-03T17:14:16.7860912Z    Compiling old-api v0.1.0 (D:\a\pane\pane\guests\fixtures\old-api)
+2026-10-03T17:14:18.8157675Z    Compiling quicklinks v0.1.0 (D:\a\pane\pane\guests\quicklinks)
+2026-10-03T17:14:18.8158912Z    Compiling sample-rust v0.1.0 (D:\a\pane\pane\guests\sample-rust)
+2026-10-03T17:14:18.8160432Z    Compiling applications v0.1.0 (D:\a\pane\pane\guests\applications)
+2026-10-03T17:14:18.8161556Z    Compiling sample-service v0.1.0 (D:\a\pane\pane\guests\sample-service)
+2026-10-03T17:14:20.4050202Z    Compiling clipboard_history v0.1.0 (D:\a\pane\pane\guests\clipboard-history)
+2026-10-03T17:14:20.6346965Z    Compiling git-greeter v0.1.0 (D:\a\pane\pane\guests\git\greeter)
+2026-10-03T17:14:21.2828025Z    Compiling operations-fixture v0.1.0 (D:\a\pane\pane\guests\fixtures\operations)
+2026-10-03T17:14:21.3701267Z    Compiling sample-query v0.1.0 (D:\a\pane\pane\guests\sample-query)
+2026-10-03T17:14:22.4713380Z    Compiling sample-settings v0.1.0 (D:\a\pane\pane\guests\sample-settings)
+2026-10-03T17:14:22.5729807Z    Compiling sample-helper v0.1.0 (D:\a\pane\pane\guests\sample-helper)
+2026-10-03T17:14:22.9407124Z    Compiling faulty v0.1.0 (D:\a\pane\pane\guests\fixtures\faulty)
+2026-10-03T17:14:24.0350428Z    Compiling calculator v0.1.0 (D:\a\pane\pane\guests\calculator)
+2026-10-03T17:14:24.1044348Z    Compiling refusing-view v0.1.0 (D:\a\pane\pane\guests\fixtures\refusing-view)
+2026-10-03T17:14:24.2507171Z    Compiling sample-schedule v0.1.0 (D:\a\pane\pane\guests\sample-schedule)
+2026-10-03T17:14:24.8039175Z    Compiling files v0.1.0 (D:\a\pane\pane\guests\files)
+2026-10-03T17:14:25.1754942Z    Compiling sample-search v0.1.0 (D:\a\pane\pane\guests\sample-search)
+2026-10-03T17:14:25.7760087Z    Compiling failing-start v0.1.0 (D:\a\pane\pane\guests\fixtures\failing-start)
+2026-10-03T17:14:26.1720426Z    Compiling sample-operations v0.1.0 (D:\a\pane\pane\guests\sample-operations)
+2026-10-03T17:14:26.7121744Z    Compiling sample-dependencies v0.1.0 (D:\a\pane\pane\guests\sample-dependencies)
+2026-10-03T17:14:28.8985069Z     Finished `release` profile [optimized] target(s) in 38.70s
+2026-10-03T17:14:29.2315220Z    Compiling serde_core v1.0.229
+2026-10-03T17:14:29.2316584Z    Compiling proc-macro2 v1.0.107
+2026-10-03T17:14:29.2317254Z    Compiling unicode-ident v1.0.26
+2026-10-03T17:14:29.2317782Z    Compiling quote v1.0.47
+2026-10-03T17:14:29.3470610Z    Compiling foldhash v0.2.0
+2026-10-03T17:14:29.5650069Z    Compiling hashbrown v0.17.1
+2026-10-03T17:14:29.6034998Z    Compiling equivalent v1.0.2
+2026-10-03T17:14:29.6735747Z    Compiling bitflags v2.13.2
+2026-10-03T17:14:29.9276013Z    Compiling anyhow v1.0.104
+2026-10-03T17:14:30.3374229Z    Compiling zmij v1.0.23
+2026-10-03T17:14:30.6694872Z    Compiling semver v1.0.28
+2026-10-03T17:14:30.8616665Z    Compiling syn v3.0.6
+2026-10-03T17:14:31.1138933Z    Compiling serde_json v1.0.151
+2026-10-03T17:14:31.1154469Z    Compiling serde v1.0.229
+2026-10-03T17:14:31.8615584Z    Compiling prettyplease v0.3.0
+2026-10-03T17:14:31.9489438Z    Compiling itoa v1.0.18
+2026-10-03T17:14:32.1587224Z    Compiling memchr v2.8.3
+2026-10-03T17:14:32.1868353Z    Compiling id-arena v2.3.0
+2026-10-03T17:14:32.3257709Z    Compiling log v0.4.34
+2026-10-03T17:14:32.5464889Z    Compiling leb128fmt v0.1.0
+2026-10-03T17:14:32.7485007Z    Compiling heck v0.5.0
+2026-10-03T17:14:33.0298339Z    Compiling wit-bindgen-rust v0.62.0
+2026-10-03T17:14:33.1649218Z    Compiling wit-bindgen-rust-macro v0.62.0
+2026-10-03T17:14:33.2502859Z    Compiling indexmap v2.14.2
+2026-10-03T17:14:34.2710753Z    Compiling wasmparser v0.259.0
+2026-10-03T17:14:35.2129405Z    Compiling macro-string v0.3.0
+2026-10-03T17:14:35.6471805Z    Compiling wit-bindgen v0.62.0
+2026-10-03T17:14:36.6723285Z    Compiling serde_derive v1.0.229
+2026-10-03T17:14:41.3895220Z    Compiling wit-parser v0.259.0
+2026-10-03T17:14:41.3895721Z    Compiling wasm-encoder v0.259.0
+2026-10-03T17:14:44.2350324Z    Compiling wasm-metadata v0.259.0
+2026-10-03T17:14:45.0477818Z    Compiling wit-component v0.259.0
+2026-10-03T17:14:45.0478342Z    Compiling wit-bindgen-core v0.62.0
+2026-10-03T17:14:51.9928563Z    Compiling mixed-p2 v0.1.0 (D:\a\pane\pane\guests\fixtures\mixed-p2)
+2026-10-03T17:14:52.5688428Z     Finished `release` profile [optimized] target(s) in 23.63s
+2026-10-03T17:14:52.7626799Z    Compiling pane-target v0.1.0 (D:\a\pane\pane\crates\pane-target)
+2026-10-03T17:14:52.9162998Z    Compiling pane-echo v0.1.0 (D:\a\pane\pane\guests\helpers\echo)
+2026-10-03T17:14:55.1730167Z     Finished `release` profile [optimized] target(s) in 2.49s
+2026-10-03T17:14:57.1457295Z guests built into D:\a\pane\pane\target/guests
+2026-10-03T17:14:58.8459527Z    Compiling unicode-ident v1.0.26
+2026-10-03T17:14:58.8466813Z    Compiling serde_core v1.0.229
+2026-10-03T17:14:58.8467369Z    Compiling windows-link v0.2.1
+2026-10-03T17:14:58.8472920Z    Compiling libm v0.2.16
+2026-10-03T17:14:58.9080763Z    Compiling foldhash v0.2.0
+2026-10-03T17:14:58.9885208Z    Compiling proc-macro2 v1.0.107
+2026-10-03T17:14:59.1484768Z    Compiling typeid v1.0.3
+2026-10-03T17:14:59.2937251Z    Compiling memchr v2.8.3
+2026-10-03T17:15:00.3225339Z    Compiling quote v1.0.47
+2026-10-03T17:15:00.7305131Z    Compiling syn v3.0.6
+2026-10-03T17:15:00.7491273Z    Compiling syn v2.0.119
+2026-10-03T17:15:01.3886544Z    Compiling equivalent v1.0.2
+2026-10-03T17:15:01.4566928Z    Compiling getrandom v0.4.3
+2026-10-03T17:15:01.6411729Z    Compiling windows-sys v0.61.2
+2026-10-03T17:15:02.5819190Z    Compiling serde_fmt v1.1.0
+2026-10-03T17:15:02.8192671Z    Compiling erased-serde v0.4.10
+2026-10-03T17:15:03.7045428Z    Compiling value-bag-serde1 v1.14.1
+2026-10-03T17:15:03.7697726Z    Compiling value-bag v1.14.1
+2026-10-03T17:15:04.6300914Z    Compiling log v0.4.34
+2026-10-03T17:15:05.3076340Z    Compiling pin-project-lite v0.2.17
+2026-10-03T17:15:05.3923645Z    Compiling hashbrown v0.17.1
+2026-10-03T17:15:06.4008508Z    Compiling jobserver v0.1.35
+2026-10-03T17:15:07.7972736Z    Compiling once_cell v1.21.4
+2026-10-03T17:15:08.0765258Z    Compiling stable_deref_trait v1.2.1
+2026-10-03T17:15:08.1401545Z    Compiling cc v1.5.1
+2026-10-03T17:15:09.4054600Z    Compiling anyhow v1.0.104
+2026-10-03T17:15:09.7548841Z    Compiling serde_derive v1.0.229
+2026-10-03T17:15:10.1078314Z    Compiling thiserror-impl v2.0.21
+2026-10-03T17:15:11.1398390Z    Compiling bitflags v2.13.2
+2026-10-03T17:15:11.5006307Z    Compiling crossbeam-utils v0.8.23
+2026-10-03T17:15:12.1925637Z    Compiling thiserror v2.0.21
+2026-10-03T17:15:12.2901429Z    Compiling either v1.18.0
+2026-10-03T17:15:12.3624651Z    Compiling synstructure v0.14.0
+2026-10-03T17:15:12.5617276Z    Compiling indexmap v2.14.2
+2026-10-03T17:15:13.3465414Z    Compiling zerofrom-derive v0.1.8
+2026-10-03T17:15:13.6381617Z    Compiling yoke-derive v0.8.3
+2026-10-03T17:15:15.0036530Z    Compiling serde v1.0.229
+2026-10-03T17:15:15.6814282Z    Compiling futures-io v0.3.34
+2026-10-03T17:15:15.7580708Z    Compiling zerofrom v0.1.8
+2026-10-03T17:15:15.9025620Z    Compiling yoke v0.8.3
+2026-10-03T17:15:15.9135476Z    Compiling zerovec-derive v0.11.6
+2026-10-03T17:15:16.1135365Z    Compiling smallvec v1.16.2
+2026-10-03T17:15:16.1433951Z    Compiling simd-adler32 v0.3.10
+2026-10-03T17:15:16.4099103Z    Compiling crossbeam-epoch v0.9.21
+2026-10-03T17:15:16.4691732Z    Compiling displaydoc v0.2.7
+2026-10-03T17:15:16.9508285Z    Compiling windows-implement v0.60.2
+2026-10-03T17:15:16.9664504Z    Compiling windows-interface v0.59.3
+2026-10-03T17:15:17.7114255Z    Compiling zerovec v0.11.8
+2026-10-03T17:15:18.0538190Z    Compiling hashbrown v0.16.1
+2026-10-03T17:15:18.1765119Z    Compiling scopeguard v1.2.0
+2026-10-03T17:15:18.2668089Z    Compiling crossbeam-deque v0.8.8
+2026-10-03T17:15:18.5086880Z    Compiling futures-core v0.3.34
+2026-10-03T17:15:18.6407133Z    Compiling rayon-core v1.13.0
+2026-10-03T17:15:18.7047187Z    Compiling libc v0.2.189
+2026-10-03T17:15:18.7340631Z    Compiling futures-macro v0.3.34
+2026-10-03T17:15:18.8810839Z    Compiling futures-task v0.3.34
+2026-10-03T17:15:18.9683949Z    Compiling fnv v1.0.7
+2026-10-03T17:15:19.0542455Z    Compiling tinystr v0.8.4
+2026-10-03T17:15:19.0917179Z    Compiling writeable v0.6.4
+2026-10-03T17:15:19.3357546Z    Compiling litemap v0.8.3
+2026-10-03T17:15:19.4518024Z    Compiling potential_utf v0.1.6
+2026-10-03T17:15:19.5966741Z    Compiling icu_locale_core v2.3.0
+2026-10-03T17:15:19.6435803Z    Compiling zerotrie v0.2.5
+2026-10-03T17:15:19.9791255Z    Compiling itertools v0.14.0
+2026-10-03T17:15:20.0922837Z    Compiling windows-result v0.4.1
+2026-10-03T17:15:20.1807902Z    Compiling windows-strings v0.5.1
+2026-10-03T17:15:20.5174252Z    Compiling bytes v1.12.1
+2026-10-03T17:15:20.7561821Z    Compiling utf8_iter v1.0.4
+2026-10-03T17:15:20.9379929Z    Compiling rustc-hash v2.1.3
+2026-10-03T17:15:21.0636072Z    Compiling icu_provider v2.3.1
+2026-10-03T17:15:21.5835649Z    Compiling icu_collections v2.3.0
+2026-10-03T17:15:21.7140344Z    Compiling rayon v1.12.0
+2026-10-03T17:15:21.9624194Z    Compiling miniz_oxide v0.9.1
+2026-10-03T17:15:22.2213957Z    Compiling futures-sink v0.3.34
+2026-10-03T17:15:22.3286607Z    Compiling icu_normalizer_data v2.3.0
+2026-10-03T17:15:22.3994732Z    Compiling wasmtime-internal-core v49.0.1
+2026-10-03T17:15:22.5849795Z    Compiling icu_properties_data v2.3.0
+2026-10-03T17:15:22.7660862Z    Compiling flate2 v1.1.10
+2026-10-03T17:15:23.3919591Z    Compiling windows_x86_64_msvc v0.52.6
+2026-10-03T17:15:23.4519992Z    Compiling getrandom v0.2.17
+2026-10-03T17:15:23.5061782Z    Compiling rand_core v0.10.1
+2026-10-03T17:15:23.5694600Z    Compiling windows-targets v0.52.6
+2026-10-03T17:15:23.6004665Z    Compiling icu_properties v2.3.0
+2026-10-03T17:15:23.6306002Z    Compiling serde_json v1.0.151
+2026-10-03T17:15:23.7084526Z    Compiling slab v0.4.12
+2026-10-03T17:15:24.1379128Z    Compiling cranelift-bitset v0.136.1
+2026-10-03T17:15:24.4253857Z    Compiling futures-channel v0.3.34
+2026-10-03T17:15:24.7438889Z    Compiling tracing-attributes v0.1.31
+2026-10-03T17:15:25.1641534Z    Compiling tracing-core v0.1.36
+2026-10-03T17:15:26.2204180Z    Compiling winnow v1.0.4
+2026-10-03T17:15:26.3200377Z    Compiling leb128fmt v0.1.0
+2026-10-03T17:15:26.5297833Z    Compiling winapi-util v0.1.11
+2026-10-03T17:15:26.7952222Z    Compiling toml_parser v1.1.3+spec-1.1.0
+2026-10-03T17:15:26.9271420Z    Compiling pulley-macros v49.0.1
+2026-10-03T17:15:27.0044715Z    Compiling tracing v0.1.44
+2026-10-03T17:15:27.3549921Z    Compiling serde_spanned v1.1.1
+2026-10-03T17:15:27.3887430Z    Compiling toml_datetime v1.1.1+spec-1.1.0
+2026-10-03T17:15:27.4420693Z    Compiling tinyvec v1.13.3
+2026-10-03T17:15:27.5286432Z    Compiling toml_writer v1.1.2+spec-1.1.0
+2026-10-03T17:15:27.8079888Z    Compiling toml v1.1.6+spec-1.1.0
+2026-10-03T17:15:27.9990452Z    Compiling futures-util v0.3.34
+2026-10-03T17:15:28.1208757Z    Compiling cranelift-entity v0.136.1
+2026-10-03T17:15:28.2900987Z    Compiling http v1.5.0
+2026-10-03T17:15:28.7926488Z    Compiling cobs v0.3.0
+2026-10-03T17:15:29.0383103Z    Compiling windows-threading v0.2.1
+2026-10-03T17:15:29.2236207Z    Compiling percent-encoding v2.3.2
+2026-10-03T17:15:29.5454733Z    Compiling form_urlencoded v1.2.2
+2026-10-03T17:15:29.7806983Z    Compiling postcard v1.1.3
+2026-10-03T17:15:30.3245027Z    Compiling cranelift-bforest v0.136.1
+2026-10-03T17:15:30.3389469Z    Compiling pulley-interpreter v49.0.1
+2026-10-03T17:15:30.8569197Z    Compiling target-lexicon v0.13.5
+2026-10-03T17:15:31.2917482Z    Compiling gimli v0.33.0
+2026-10-03T17:15:31.4774090Z    Compiling cranelift-codegen-shared v0.136.1
+2026-10-03T17:15:31.5747177Z    Compiling semver v1.0.28
+2026-10-03T17:15:32.1591743Z    Compiling futures-executor v0.3.34
+2026-10-03T17:15:32.3550913Z    Compiling futures v0.3.34
+2026-10-03T17:15:32.4676021Z    Compiling allocator-api2 v0.2.21
+2026-10-03T17:15:32.6270152Z    Compiling zstd-sys v2.1.0+zstd.1.5.7
+2026-10-03T17:15:32.9680810Z    Compiling bumpalo v3.20.3
+2026-10-03T17:15:33.1267588Z    Compiling wasmparser v0.258.0
+2026-10-03T17:15:33.3716559Z    Compiling cranelift-codegen-meta v0.136.1
+2026-10-03T17:15:33.4577529Z    Compiling termcolor v1.4.1
+2026-10-03T17:15:34.2396340Z    Compiling icu_normalizer v2.3.0
+2026-10-03T17:15:38.2808825Z    Compiling windows-core v0.62.2
+2026-10-03T17:15:38.7059337Z    Compiling cranelift-codegen v0.136.1
+2026-10-03T17:15:39.1427779Z    Compiling wasmtime-internal-versioned-export-macros v49.0.1
+2026-10-03T17:15:39.6183665Z    Compiling arbitrary v1.4.2
+2026-10-03T17:15:41.2450301Z    Compiling wasmtime-internal-component-util v49.0.1
+2026-10-03T17:15:41.3462387Z    Compiling cranelift-control v0.136.1
+2026-10-03T17:15:41.4391150Z    Compiling idna_adapter v1.2.2
+2026-10-03T17:15:41.5898679Z    Compiling cranelift-assembler-x64 v0.136.1
+2026-10-03T17:15:49.7608963Z    Compiling wasmprinter v0.258.0
+2026-10-03T17:15:59.2329496Z    Compiling regalloc2 v0.15.2
+2026-10-03T17:16:11.3405077Z    Compiling wasm-encoder v0.258.0
+2026-10-03T17:16:13.9111812Z    Compiling object v0.40.0
+2026-10-03T17:16:25.3454617Z    Compiling fastrand v2.5.0
+2026-10-03T17:16:25.6548609Z    Compiling wasmtime-environ v49.0.1
+2026-10-03T17:16:48.1387354Z    Compiling idna v1.1.0
+2026-10-03T17:16:52.6903742Z    Compiling zstd-safe v7.3.0
+2026-10-03T17:16:52.7108445Z    Compiling wit-parser v0.258.0
+2026-10-03T17:17:02.7929617Z    Compiling url v2.5.8
+2026-10-03T17:17:04.5095186Z    Compiling wasm-metadata v0.258.0
+2026-10-03T17:17:05.1676766Z    Compiling windows_x86_64_msvc v0.53.1
+2026-10-03T17:17:05.2315690Z    Compiling winapi v0.3.9
+2026-10-03T17:17:06.8934586Z    Compiling windows-future v0.3.2
+2026-10-03T17:17:08.0888212Z    Compiling windows-numerics v0.3.1
+2026-10-03T17:17:08.3577758Z    Compiling windows-collections v0.3.2
+2026-10-03T17:17:08.4340626Z    Compiling socket2 v0.6.5
+2026-10-03T17:17:09.0080965Z    Compiling mio v1.2.3
+2026-10-03T17:17:09.3351271Z    Compiling windows v0.62.2
+2026-10-03T17:17:10.6554433Z    Compiling tokio v1.53.1
+2026-10-03T17:17:21.4069609Z    Compiling dirs-sys-next v0.1.2
+2026-10-03T17:17:21.8589650Z    Compiling windows-targets v0.53.5
+2026-10-03T17:17:21.9111481Z    Compiling wit-component v0.258.0
+2026-10-03T17:17:31.3020286Z    Compiling tempfile v3.27.0
+2026-10-03T17:17:32.1704495Z    Compiling wasmtime-internal-fiber v49.0.1
+2026-10-03T17:17:32.5464724Z    Compiling ring v0.17.14
+2026-10-03T17:17:39.7822715Z    Compiling wasmtime-internal-wit-bindgen v49.0.1
+2026-10-03T17:17:42.3908112Z    Compiling windows-sys v0.60.2
+2026-10-03T17:17:46.1857753Z    Compiling zstd v0.13.3
+2026-10-03T17:17:46.8116186Z    Compiling directories-next v2.0.0
+2026-10-03T17:17:47.1335453Z    Compiling wasmtime-internal-unwinder v49.0.1
+2026-10-03T17:17:47.8591335Z    Compiling cranelift-frontend v0.136.1
+2026-10-03T17:18:05.1454116Z    Compiling cranelift-native v0.136.1
+2026-10-03T17:18:05.5971025Z    Compiling wasmtime v49.0.1
+2026-10-03T17:18:06.5529094Z    Compiling windows-sys v0.59.0
+2026-10-03T17:18:10.6058785Z    Compiling core_detect v1.0.0
+2026-10-03T17:18:11.0394223Z    Compiling zeroize v1.9.0
+2026-10-03T17:18:11.5961932Z    Compiling base64 v0.22.1
+2026-10-03T17:18:12.6944507Z    Compiling simdutf8 v0.1.5
+2026-10-03T17:18:13.3288956Z    Compiling encoding_rs v0.8.42
+2026-10-03T17:18:19.3851406Z    Compiling wasmtime-internal-cache v49.0.1
+2026-10-03T17:18:24.4752184Z    Compiling rustls-pki-types v1.15.1
+2026-10-03T17:18:26.0826554Z    Compiling wasmtime-internal-cranelift v49.0.1
+2026-10-03T17:18:28.8330292Z    Compiling wasmtime-internal-component-macro v49.0.1
+2026-10-03T17:18:35.4768302Z    Compiling io-lifetimes v2.0.4
+2026-10-03T17:18:36.0949626Z    Compiling io-lifetimes v3.0.1
+2026-10-03T17:18:36.4703136Z    Compiling wasmtime-internal-jit-icache-coherence v49.0.1
+2026-10-03T17:18:36.8608052Z    Compiling async-trait v0.1.92
+2026-10-03T17:18:39.8781031Z    Compiling cpufeatures v0.3.1
+2026-10-03T17:18:40.2821502Z    Compiling untrusted v0.9.0
+2026-10-03T17:18:47.4949263Z    Compiling chacha20 v0.10.2
+2026-10-03T17:19:35.7076289Z    Compiling io-extras v0.19.0
+2026-10-03T17:19:36.1831036Z    Compiling fs-set-times v0.20.3
+2026-10-03T17:19:36.4445791Z    Compiling winx v0.36.4
+2026-10-03T17:19:37.3611726Z    Compiling tokio-util v0.7.19
+2026-10-03T17:19:37.8570658Z    Compiling http-body v1.1.0
+2026-10-03T17:19:38.1391063Z    Compiling errno v0.3.14
+2026-10-03T17:19:38.5894314Z    Compiling maybe-owned v0.3.4
+2026-10-03T17:19:38.6518525Z    Compiling atomic-waker v1.1.2
+2026-10-03T17:19:38.8461140Z    Compiling ambient-authority v0.0.2
+2026-10-03T17:19:38.8756219Z    Compiling ipnet v2.12.2
+2026-10-03T17:19:38.9272980Z    Compiling try-lock v0.2.5
+2026-10-03T17:19:39.0572595Z    Compiling want v0.3.1
+2026-10-03T17:19:39.2657989Z    Compiling cap-primitives v4.0.3
+2026-10-03T17:19:39.9354693Z    Compiling h2 v0.4.19
+2026-10-03T17:19:40.4249114Z    Compiling rustls v0.23.45
+2026-10-03T17:19:40.4362918Z    Compiling rustix v1.1.5
+2026-10-03T17:19:41.8147233Z    Compiling wasmtime-wasi-io v49.0.1
+2026-10-03T17:19:43.4532119Z    Compiling rand v0.10.3
+2026-10-03T17:19:44.6962715Z    Compiling rustls-webpki v0.103.15
+2026-10-03T17:19:46.7072067Z    Compiling httparse v1.10.1
+2026-10-03T17:19:47.0145211Z    Compiling same-file v1.0.6
+2026-10-03T17:19:47.2149694Z    Compiling subtle v2.6.1
+2026-10-03T17:19:47.2530819Z    Compiling httpdate v1.0.3
+2026-10-03T17:19:47.6531921Z    Compiling hyper v1.11.1
+2026-10-03T17:19:51.4743481Z    Compiling walkdir v2.5.0
+2026-10-03T17:19:52.1671200Z    Compiling wasmtime-wasi v49.0.1
+2026-10-03T17:20:01.9476694Z    Compiling http-body-util v0.1.5
+2026-10-03T17:20:02.3411970Z    Compiling sha1 v0.10.7
+2026-10-03T17:20:02.6549480Z    Compiling schannel v0.1.29
+2026-10-03T17:20:03.7982222Z    Compiling notify-types v2.1.0
+2026-10-03T17:20:04.3981238Z    Compiling notify v8.2.0
+2026-10-03T17:20:07.1072769Z    Compiling rustls-native-certs v0.8.4
+2026-10-03T17:20:07.7585826Z    Compiling sha1-checked v0.10.0
+2026-10-03T17:20:08.4129660Z    Compiling tokio-rustls v0.26.6
+2026-10-03T17:20:08.8209300Z    Compiling unicode-normalization v0.1.25
+2026-10-03T17:20:09.5838691Z    Compiling unicase v2.9.0
+2026-10-03T17:20:09.8882758Z    Compiling num-traits v0.2.19
+2026-10-03T17:20:11.1164764Z    Compiling wasmtime-wasi-http v49.0.1
+2026-10-03T17:20:16.9294034Z    Compiling pane-core v0.1.0 (D:\a\pane\pane\crates\pane-core)
+2026-10-03T17:20:35.5295313Z    Compiling arrayvec v0.7.8
+2026-10-03T17:20:35.8369535Z    Compiling bytemuck_derive v1.12.1
+2026-10-03T17:20:37.5127552Z    Compiling zerocopy-derive v0.8.59
+2026-10-03T17:20:37.8317995Z    Compiling bytemuck v1.25.2
+2026-10-03T17:20:38.2038537Z    Compiling font-types v0.12.5
+2026-10-03T17:20:38.8941718Z    Compiling miniz_oxide v0.8.9
+2026-10-03T17:20:40.2781813Z    Compiling lock_api v0.4.14
+2026-10-03T17:20:40.6157873Z    Compiling equator-macro v0.4.2
+2026-10-03T17:20:40.6715502Z    Compiling zerocopy v0.8.59
+2026-10-03T17:20:41.6331063Z    Compiling siphasher v1.0.4
+2026-10-03T17:20:41.8865129Z    Compiling equator v0.4.2
+2026-10-03T17:20:42.2264218Z    Compiling polycool v0.4.0
+2026-10-03T17:20:42.9663450Z    Compiling num-integer v0.1.47
+2026-10-03T17:20:43.5837096Z    Compiling fdeflate v0.3.7
+2026-10-03T17:20:44.4090534Z    Compiling float-cmp v0.9.0
+2026-10-03T17:20:44.5517488Z    Compiling windows-link v0.1.3
+2026-10-03T17:20:44.6111521Z    Compiling parking v2.2.1
+2026-10-03T17:20:44.8280616Z    Compiling strict-num v0.1.1
+2026-10-03T17:20:45.0064196Z    Compiling num-bigint v0.4.8
+2026-10-03T17:20:47.1645699Z    Compiling half v2.7.1
+2026-10-03T17:20:47.8645775Z    Compiling aligned-vec v0.6.4
+2026-10-03T17:20:48.0349055Z    Compiling slotmap v1.1.1
+2026-10-03T17:20:48.1392275Z    Compiling getrandom v0.3.4
+2026-10-03T17:20:48.3990064Z    Compiling read-fonts v0.41.0
+2026-10-03T17:20:48.8140092Z    Compiling arrayref v0.3.9
+2026-10-03T17:20:48.8794525Z    Compiling quick-error v2.0.1
+2026-10-03T17:20:48.9750088Z    Compiling tiny-skia-path v0.12.0
+2026-10-03T17:20:50.3677187Z    Compiling rand_core v0.9.5
+2026-10-03T17:20:50.6911901Z    Compiling v_frame v0.3.9
+2026-10-03T17:20:51.0042491Z    Compiling num-rational v0.4.2
+2026-10-03T17:20:52.3172851Z    Compiling num-complex v0.4.6
+2026-10-03T17:20:53.0334184Z    Compiling euclid v0.22.14
+2026-10-03T17:20:54.2365904Z    Compiling as-slice v0.2.1
+2026-10-03T17:20:57.5020242Z    Compiling winsafe v0.0.19
+2026-10-03T17:21:03.7755534Z    Compiling reborrow v0.5.5
+2026-10-03T17:21:03.8619040Z    Compiling pulp-wasm-simd-flag v0.1.1
+2026-10-03T17:21:03.9160285Z    Compiling sha1_smol v1.0.1
+2026-10-03T17:21:04.2482987Z    Compiling weezl v0.1.12
+2026-10-03T17:21:05.1903686Z    Compiling zune-core v0.5.3
+2026-10-03T17:21:05.6206896Z    Compiling unicode-segmentation v1.13.3
+2026-10-03T17:21:06.3277079Z    Compiling zune-jpeg v0.5.15
+2026-10-03T17:21:08.0384311Z    Compiling aligned v0.4.3
+2026-10-03T17:21:08.1591174Z    Compiling ppv-lite86 v0.2.21
+2026-10-03T17:21:08.6952905Z    Compiling windows-result v0.3.4
+2026-10-03T17:21:09.1247396Z    Compiling windows-strings v0.4.2
+2026-10-03T17:21:09.6808741Z    Compiling rgb v0.8.53
+2026-10-03T17:21:10.2072360Z    Compiling ref-cast-impl v1.0.27
+2026-10-03T17:21:10.8558469Z    Compiling pin-project-internal v1.1.13
+2026-10-03T17:21:10.8578556Z    Compiling arg_enum_proc_macro v0.3.4
+2026-10-03T17:21:11.6454180Z    Compiling profiling-procmacros v1.0.18
+2026-10-03T17:21:12.1201256Z    Compiling serde_derive_internals v0.30.0
+2026-10-03T17:21:12.7114465Z    Compiling no_std_io2 v0.9.4
+2026-10-03T17:21:12.7816377Z    Compiling nom v8.0.0
+2026-10-03T17:21:13.6974016Z    Compiling byteorder-lite v0.1.0
+2026-10-03T17:21:14.0794672Z    Compiling color_quant v1.1.0
+2026-10-03T17:21:14.3841433Z    Compiling memmap2 v0.9.11
+2026-10-03T17:21:14.6995436Z    Compiling y4m v0.8.0
+2026-10-03T17:21:15.0685092Z    Compiling av-scenechange v0.14.1
+2026-10-03T17:21:16.3316915Z    Compiling fontdb v0.24.0
+2026-10-03T17:21:17.6425912Z    Compiling av1-grain v0.2.5
+2026-10-03T17:21:17.9056110Z    Compiling gif v0.14.2
+2026-10-03T17:21:19.4951267Z    Compiling image-webp v0.2.4
+2026-10-03T17:21:19.7889423Z    Compiling schemars_derive v1.2.2
+2026-10-03T17:21:22.4188930Z    Compiling bitstream-io v4.10.0
+2026-10-03T17:21:22.5187793Z    Compiling pin-project v1.1.13
+2026-10-03T17:21:22.5981664Z    Compiling profiling v1.0.18
+2026-10-03T17:21:22.6587200Z    Compiling ref-cast v1.0.27
+2026-10-03T17:21:22.7699640Z    Compiling windows-core v0.61.2
+2026-10-03T17:21:23.3981043Z    Compiling rand_chacha v0.9.0
+2026-10-03T17:21:23.5960436Z    Compiling skrifa v0.44.0
+2026-10-03T17:21:24.2939879Z    Compiling lyon_geom v1.0.19
+2026-10-03T17:21:24.9910957Z    Compiling spin v0.9.9
+2026-10-03T17:21:25.2478590Z    Compiling maybe-rayon v0.1.1
+2026-10-03T17:21:25.3192687Z    Compiling nanorand v0.7.0
+2026-10-03T17:21:25.7390393Z    Compiling zune-inflate v0.2.54
+2026-10-03T17:21:26.2806041Z    Compiling num-derive v0.4.2
+2026-10-03T17:21:27.7161462Z    Compiling enumn v0.1.14
+2026-10-03T17:21:28.2298762Z    Compiling simplecss v0.2.2
+2026-10-03T17:21:29.1596447Z    Compiling simd_helpers v0.1.0
+2026-10-03T17:21:29.5609441Z    Compiling roxmltree v0.21.1
+2026-10-03T17:21:31.2744586Z    Compiling new_debug_unreachable v1.0.6
+2026-10-03T17:21:31.3385303Z    Compiling bit_field v0.10.3
+2026-10-03T17:21:31.5218885Z    Compiling xmlwriter v0.1.0
+2026-10-03T17:21:31.8849402Z    Compiling lebe v0.5.3
+2026-10-03T17:21:32.1630751Z    Compiling dyn-clone v1.0.20
+2026-10-03T17:21:32.3031838Z    Compiling imagesize v0.15.0
+2026-10-03T17:21:33.2623502Z    Compiling unicode-bidi v0.3.18
+2026-10-03T17:21:34.4207439Z    Compiling base64 v0.23.1
+2026-10-03T17:21:34.9082748Z    Compiling unicode-vo v0.1.0
+2026-10-03T17:21:35.0245595Z    Compiling data-url v0.3.2
+2026-10-03T17:21:35.2483894Z    Compiling pico-args v0.5.0
+2026-10-03T17:21:35.6263940Z    Compiling imgref v1.12.3
+2026-10-03T17:21:35.6562076Z    Compiling unicode-script v0.5.8
+2026-10-03T17:21:35.9137051Z    Compiling loop9 v0.1.5
+2026-10-03T17:21:36.0260420Z    Compiling rav1e v0.8.1
+2026-10-03T17:21:36.1762149Z    Compiling lyon_path v1.0.19
+2026-10-03T17:21:37.1069529Z    Compiling rand v0.9.5
+2026-10-03T17:21:38.0809136Z    Compiling event-listener v5.4.2
+2026-10-03T17:21:38.5096662Z    Compiling avif-serialize v0.8.9
+2026-10-03T17:21:39.7853347Z    Compiling vswhom-sys v0.1.3
+2026-10-03T17:21:40.1820212Z    Compiling thiserror-impl v1.0.69
+2026-10-03T17:21:42.1474635Z    Compiling rustc-demangle v0.1.28
+2026-10-03T17:21:42.9611632Z    Compiling byteorder v1.5.0
+2026-10-03T17:21:43.2014183Z    Compiling regex-syntax v0.8.11
+2026-10-03T17:21:44.7850529Z    Compiling fax v0.2.7
+2026-10-03T17:21:45.2589686Z    Compiling static_assertions v1.1.0
+2026-10-03T17:21:45.3241015Z    Compiling pxfm v0.1.30
+2026-10-03T17:21:49.1549849Z    Compiling moxcms v0.8.1
+2026-10-03T17:21:52.4498616Z    Compiling tiff v0.11.3
+2026-10-03T17:22:00.3830020Z    Compiling hash32 v0.3.1
+2026-10-03T17:22:00.5307047Z    Compiling ravif v0.13.0
+2026-10-03T17:22:01.8510695Z    Compiling backtrace v0.3.76
+2026-10-03T17:22:02.9050966Z    Compiling thiserror v1.0.69
+2026-10-03T17:22:06.5387508Z    Compiling event-listener-strategy v0.5.4
+2026-10-03T17:22:06.7152835Z    Compiling convert_case v0.10.0
+2026-10-03T17:22:07.1725103Z    Compiling windows-threading v0.1.0
+2026-10-03T17:22:07.3115618Z    Compiling phf_shared v0.13.1
+2026-10-03T17:22:07.6705612Z    Compiling qoi v0.4.1
+2026-10-03T17:22:07.9945741Z    Compiling chrono v0.4.45
+2026-10-03T17:22:09.5777442Z    Compiling crossbeam-queue v0.3.14
+2026-10-03T17:22:09.7787516Z    Compiling concurrent-queue v2.5.0
+2026-10-03T17:22:10.0370610Z    Compiling aho-corasick v1.1.5
+2026-10-03T17:22:10.5323785Z    Compiling pollster v0.2.5
+2026-10-03T17:22:10.6888317Z    Compiling hexf-parse v0.2.1
+2026-10-03T17:22:10.8567927Z    Compiling smol_str v0.3.6
+2026-10-03T17:22:11.2498195Z    Compiling web-time v1.1.0
+2026-10-03T17:22:11.3212945Z    Compiling atomic v0.5.3
+2026-10-03T17:22:11.5701067Z    Compiling float_next_after v1.0.0
+2026-10-03T17:22:11.6663156Z    Compiling bit-vec v0.9.1
+2026-10-03T17:22:12.0402454Z    Compiling fixedbitset v0.5.7
+2026-10-03T17:22:12.5569274Z    Compiling unicode-width v0.2.2
+2026-10-03T17:22:12.9121958Z    Compiling async-task v4.7.1
+2026-10-03T17:22:13.1781189Z    Compiling codespan-reporting v0.13.1
+2026-10-03T17:22:14.1044111Z    Compiling bit-set v0.9.1
+2026-10-03T17:22:14.2907206Z    Compiling lyon_tessellation v1.0.22
+2026-10-03T17:22:14.8596853Z    Compiling regex-automata v0.4.18
+2026-10-03T17:22:16.3396346Z    Compiling palette_derive v0.7.7
+2026-10-03T17:22:17.8529191Z    Compiling phf v0.13.1
+2026-10-03T17:22:18.0307767Z    Compiling windows-future v0.2.1
+2026-10-03T17:22:18.5386520Z    Compiling derive_more-impl v2.1.1
+2026-10-03T17:22:19.8822871Z    Compiling heapless v0.9.3
+2026-10-03T17:22:21.3924176Z    Compiling lyon_algorithms v1.0.21
+2026-10-03T17:22:22.3617680Z    Compiling windows-collections v0.2.0
+2026-10-03T17:22:22.6864215Z    Compiling windows-numerics v0.2.0
+2026-10-03T17:22:22.9402606Z    Compiling home v0.5.12
+2026-10-03T17:22:23.1452272Z    Compiling png v0.18.1
+2026-10-03T17:22:23.2687319Z    Compiling kurbo v0.13.1
+2026-10-03T17:22:23.3070959Z    Compiling parking_lot_core v0.9.12
+2026-10-03T17:22:23.7776682Z    Compiling read-fonts v0.43.3
+2026-10-03T17:22:26.1967818Z    Compiling approx v0.5.1
+2026-10-03T17:22:26.8692389Z    Compiling raw-cpuid v11.6.0
+2026-10-03T17:22:31.9214246Z    Compiling strum_macros v0.27.2
+2026-10-03T17:22:32.7055637Z    Compiling snafu-derive v0.8.9
+2026-10-03T17:22:36.5610736Z    Compiling gpui_ce_derive_refineable v0.2.2 (https://github.com/hoangvu12/gpui-ce?rev=bcf3a0acd047c1873293069d0ed42085a38f699b#bcf3a0ac)
+2026-10-03T17:22:36.9009252Z    Compiling palette_math v0.7.7
+2026-10-03T17:22:37.1999844Z    Compiling link-section v0.19.3
+2026-10-03T17:22:37.6020981Z    Compiling svg_fmt v0.4.5
+2026-10-03T17:22:37.7821412Z    Compiling ctor v1.0.13
+2026-10-03T17:22:37.9609822Z    Compiling gpui_ce_refineable v0.2.2 (https://github.com/hoangvu12/gpui-ce?rev=bcf3a0acd047c1873293069d0ed42085a38f699b#bcf3a0ac)
+2026-10-03T17:22:37.9841701Z    Compiling etagere v0.2.15
+2026-10-03T17:22:38.0968794Z    Compiling palette v0.7.7
+2026-10-03T17:22:38.4603274Z    Compiling snafu v0.8.9
+2026-10-03T17:22:39.0220620Z    Compiling strum v0.27.2
+2026-10-03T17:22:39.1584713Z    Compiling skrifa v0.46.2
+2026-10-03T17:22:47.5699177Z    Compiling winreg v0.55.0
+2026-10-03T17:22:48.0512763Z    Compiling pulp v0.22.3
+2026-10-03T17:22:48.6932864Z    Compiling svgtypes v0.16.1
+2026-10-03T17:22:49.9614927Z    Compiling parking_lot v0.12.5
+2026-10-03T17:22:50.7450022Z    Compiling derive_more v2.1.1
+2026-10-03T17:22:50.8484687Z    Compiling which v6.0.3
+2026-10-03T17:22:50.8866403Z    Compiling windows v0.61.3
+2026-10-03T17:22:51.6797142Z    Compiling lyon v1.0.19
+2026-10-03T17:22:51.8338773Z    Compiling gpui_ce_sum_tree v0.2.2 (https://github.com/hoangvu12/gpui-ce?rev=bcf3a0acd047c1873293069d0ed42085a38f699b#bcf3a0ac)
+2026-10-03T17:22:52.5587440Z    Compiling vswhom v0.1.0
+2026-10-03T17:22:52.6942887Z    Compiling regex v1.13.1
+2026-10-03T17:22:53.5753971Z    Compiling uuid v1.26.1
+2026-10-03T17:22:53.5757655Z    Compiling harfrust v0.12.0
+2026-10-03T17:22:57.8813851Z    Compiling spin v0.10.1
+2026-10-03T17:22:59.8881480Z    Compiling gpui_ce_macros v0.1.0 (https://github.com/hoangvu12/gpui-ce?rev=bcf3a0acd047c1873293069d0ed42085a38f699b#bcf3a0ac)
+2026-10-03T17:23:02.5678897Z    Compiling pollster v0.4.0
+2026-10-03T17:23:02.7603412Z    Compiling seahash v4.1.0
+2026-10-03T17:23:02.9793773Z    Compiling waker-fn v1.2.0
+2026-10-03T17:23:03.0578407Z    Compiling num_cpus v1.17.0
+2026-10-03T17:23:03.2359724Z    Compiling wgsl-rs-ir v0.1.0 (https://github.com/schell/wgsl-rs?rev=b2de16a1b81e67d76bc265c296184f882864badb#b2de16a1)
+2026-10-03T17:23:03.7114394Z    Compiling raw-window-handle v0.6.2
+2026-10-03T17:23:03.7115870Z    Compiling inventory v0.3.24
+2026-10-03T17:23:03.8272803Z    Compiling futures-lite v2.6.1
+2026-10-03T17:23:05.0680347Z    Compiling wgsl-rs-macros v0.1.0 (https://github.com/schell/wgsl-rs?rev=b2de16a1b81e67d76bc265c296184f882864badb#b2de16a1)
+2026-10-03T17:23:07.0280647Z    Compiling embed-resource v3.0.11
+2026-10-03T17:23:07.4204814Z    Compiling usvg v0.48.1
+2026-10-03T17:23:11.1783770Z    Compiling accesskit v0.24.1
+2026-10-03T17:23:12.0678743Z    Compiling exr v1.74.2
+2026-10-03T17:23:13.7175120Z    Compiling gpui_ce_util v0.2.6 (https://github.com/hoangvu12/gpui-ce?rev=bcf3a0acd047c1873293069d0ed42085a38f699b#bcf3a0ac)
+2026-10-03T17:23:16.0458574Z    Compiling tiny-skia v0.12.0
+2026-10-03T17:23:19.3289695Z    Compiling schemars v1.2.2
+2026-10-03T17:23:20.5201913Z    Compiling flume v0.11.1
+2026-10-03T17:23:20.6497581Z    Compiling convert_case v0.11.0
+2026-10-03T17:23:21.8693464Z    Compiling strum_macros v0.26.4
+2026-10-03T17:23:23.0227988Z    Compiling bit-vec v0.8.0
+2026-10-03T17:23:23.3644489Z    Compiling wait-timeout v0.2.1
+2026-10-03T17:23:23.5244850Z    Compiling glam v0.30.10
+2026-10-03T17:23:25.0341931Z    Compiling quick-error v1.2.3
+2026-10-03T17:23:25.1597341Z    Compiling rusty-fork v0.3.1
+2026-10-03T17:23:31.5746219Z    Compiling codespan-reporting v0.11.1
+2026-10-03T17:23:32.3551877Z    Compiling bit-set v0.8.0
+2026-10-03T17:23:32.5418951Z    Compiling strum v0.26.3
+2026-10-03T17:23:33.7844239Z    Compiling proptest-macro v0.5.0
+2026-10-03T17:23:33.8502685Z    Compiling gpui_ce_scheduler v0.2.2 (https://github.com/hoangvu12/gpui-ce?rev=bcf3a0acd047c1873293069d0ed42085a38f699b#bcf3a0ac)
+2026-10-03T17:23:34.7921522Z    Compiling gpui_ce_shared_string v0.1.0 (https://github.com/hoangvu12/gpui-ce?rev=bcf3a0acd047c1873293069d0ed42085a38f699b#bcf3a0ac)
+2026-10-03T17:23:35.6749414Z    Compiling resvg v0.48.1
+2026-10-03T17:23:36.2968873Z    Compiling image v0.25.10
+2026-10-03T17:23:41.7805153Z    Compiling gpui_ce_collections v0.2.2 (https://github.com/hoangvu12/gpui-ce?rev=bcf3a0acd047c1873293069d0ed42085a38f699b#bcf3a0ac)
+2026-10-03T17:23:41.9407236Z    Compiling naga v29.0.4
+2026-10-03T17:24:05.2480656Z    Compiling gpui-ce v0.2.2 (https://github.com/hoangvu12/gpui-ce?rev=bcf3a0acd047c1873293069d0ed42085a38f699b#bcf3a0ac)
+2026-10-03T17:24:06.4840395Z    Compiling futures-concurrency v7.7.1
+2026-10-03T17:24:12.1816275Z    Compiling postage v0.5.0
+2026-10-03T17:24:12.8626816Z    Compiling async-channel v2.5.0
+2026-10-03T17:24:15.0073219Z    Compiling rand_xorshift v0.4.0
+2026-10-03T17:24:15.1734517Z    Compiling taffy v0.13.0
+2026-10-03T17:24:18.2661371Z    Compiling unarray v0.1.4
+2026-10-03T17:24:18.3728463Z    Compiling proptest v1.11.0
+2026-10-03T17:24:28.3646894Z    Compiling wgsl-rs v0.1.0 (https://github.com/schell/wgsl-rs?rev=b2de16a1b81e67d76bc265c296184f882864badb#b2de16a1)
+2026-10-03T17:24:30.1534728Z    Compiling naga v24.0.0
+2026-10-03T17:24:43.5146883Z    Compiling rustc-hash v1.1.0
+2026-10-03T17:24:50.7556421Z    Compiling accesskit_consumer v0.37.0
+2026-10-03T17:25:15.5061599Z    Compiling accesskit_windows v0.33.1
+2026-10-03T17:25:18.4827650Z    Compiling windows-registry v0.6.1
+2026-10-03T17:25:18.5652572Z    Compiling dunce v1.0.5
+2026-10-03T17:25:18.8308695Z    Compiling gpui_ce_elements v0.1.0 (https://github.com/hoangvu12/gpui-ce?rev=bcf3a0acd047c1873293069d0ed42085a38f699b#bcf3a0ac)
+2026-10-03T17:25:18.9330973Z    Compiling open v5.4.4
+2026-10-03T17:25:41.9905801Z    Compiling gpui_ce_render v0.1.0 (https://github.com/hoangvu12/gpui-ce?rev=bcf3a0acd047c1873293069d0ed42085a38f699b#bcf3a0ac)
+2026-10-03T17:26:36.0884877Z    Compiling gpui_ce_windows v0.1.0 (https://github.com/hoangvu12/gpui-ce?rev=bcf3a0acd047c1873293069d0ed42085a38f699b#bcf3a0ac)
+2026-10-03T17:26:47.0525238Z    Compiling gpui_ce_platform v0.1.0 (https://github.com/hoangvu12/gpui-ce?rev=bcf3a0acd047c1873293069d0ed42085a38f699b#bcf3a0ac)
+2026-10-03T17:26:47.6428380Z    Compiling pane v0.1.0 (D:\a\pane\pane\crates\pane)
+2026-10-03T17:32:29.8474807Z    Compiling xtask v0.1.0 (D:\a\pane\pane\xtask)
+2026-10-03T17:32:32.8532645Z    Compiling pane-target v0.1.0 (D:\a\pane\pane\crates\pane-target)
+2026-10-03T17:32:55.1765460Z     Finished `test` profile [unoptimized + debuginfo] target(s) in 17m 57s
+2026-10-03T17:32:57.3835878Z ────────────
+2026-10-03T17:32:57.3839264Z  Nextest run ID fb9b85ea-2cd0-42d2-b88d-eac6092c2cb8 with nextest profile: default
+2026-10-03T17:32:57.3840294Z     Starting 1248 tests across 62 binaries
+2026-10-03T17:32:57.4364014Z         PASS [   0.021s] (   1/1248) pane settings::tests::overrides_parse_the_environment_values
+2026-10-03T17:32:57.5237733Z         PASS [   0.147s] (   2/1248) pane settings::tests::a_system_appearance_change_re_resolves_a_following_theme
+2026-10-03T17:32:57.5244004Z         PASS [   0.148s] (   3/1248) pane settings::tests::an_unreadable_record_refuses_choices_and_is_not_replaced
+2026-10-03T17:32:59.5913183Z         PASS [   2.065s] (   4/1248) pane::hotkeys a_command_hotkey_cannot_take_the_open_pane_keys
+2026-10-03T17:33:00.3634813Z         PASS [   2.973s] (   5/1248) pane::aliases an_alias_and_a_fallback_set_in_the_window_send_the_typed_text_to_the_command
+2026-10-03T17:33:01.2868312Z         PASS [   3.860s] (   6/1248) pane::command_search the_commands_own_search_field_lists_the_service_results
+2026-10-03T17:33:01.9055444Z         PASS [   2.314s] (   7/1248) pane::hotkeys pressing_keys_on_the_hotkey_screen_assigns_them_and_the_hotkey_opens_the_command
+2026-10-03T17:33:02.2965058Z         PASS [   1.947s] (   8/1248) pane::install a_chosen_package_is_previewed_installed_and_run
+2026-10-03T17:33:03.6763987Z         PASS [   2.378s] (   9/1248) pane::install a_package_that_keeps_crashing_is_paused_and_retried
+2026-10-03T17:33:04.2686531Z         PASS [   2.358s] (  10/1248) pane::install a_reload_that_fails_to_start_offers_retry
+2026-10-03T17:33:05.4321887Z         PASS [   1.792s] (  11/1248) pane::install an_installed_package_cache_is_cleared_after_confirming
+2026-10-03T17:33:05.6006695Z         PASS [   8.076s] (  12/1248) pane::develop the_window_shows_a_failed_build_and_the_reload_after_a_fix
+2026-10-03T17:33:06.1767394Z         PASS [   1.914s] (  13/1248) pane::install an_installed_package_is_disabled_and_enabled_from_the_extension_list
+2026-10-03T17:33:06.4039822Z         PASS [   0.202s] (  14/1248) pane::install an_unsupported_folder_is_explained_and_escape_returns_to_root
+2026-10-03T17:33:06.5963235Z         PASS [   0.199s] (  15/1248) pane::install cancelling_the_folder_picker_stays_on_root
+2026-10-03T17:33:07.0907641Z         PASS [   1.472s] (  16/1248) pane::install an_installed_package_is_uninstalled_after_choosing_what_to_keep
+2026-10-03T17:33:08.0833547Z         PASS [   5.786s] (  17/1248) pane::install a_short_confirmation_after_a_scrolled_extension_list_shows_its_first_choice
+2026-10-03T17:33:08.6005652Z         PASS [   2.003s] (  18/1248) pane::install retained_data_is_deleted_from_the_extension_list_after_confirming
+2026-10-03T17:33:08.8423079Z         PASS [   1.765s] (  19/1248) pane::install uninstalling_a_required_dependency_shows_its_dependent_and_the_choices_in_the_window
+2026-10-03T17:33:09.6944240Z         PASS [   1.593s] (  20/1248) pane::launcher_settings a_commands_hotkey_still_opens_its_command_with_the_root_preference
+2026-10-03T17:33:09.7420640Z   TRY 1 FAIL [   1.094s] (─────────) pane::launcher_settings a_disconnected_or_unanswered_choice_falls_back_and_says_so
+2026-10-03T17:33:09.7424594Z   stdout ───
+2026-10-03T17:33:09.7424897Z 
+2026-10-03T17:33:09.7425056Z     running 1 test
+2026-10-03T17:33:09.7425757Z     test a_disconnected_or_unanswered_choice_falls_back_and_says_so ... FAILED
+2026-10-03T17:33:09.7429240Z 
+2026-10-03T17:33:09.7429473Z     failures:
+2026-10-03T17:33:09.7429743Z 
+2026-10-03T17:33:09.7429893Z     failures:
+2026-10-03T17:33:09.7433181Z         a_disconnected_or_unanswered_choice_falls_back_and_says_so
+2026-10-03T17:33:09.7433773Z 
+2026-10-03T17:33:09.7434327Z     test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 21 filtered out; finished in 1.02s
+2026-10-03T17:33:09.7435014Z 
+2026-10-03T17:33:09.7435339Z   stderr ───
+2026-10-03T17:33:09.7438368Z 
+2026-10-03T17:33:09.7439149Z     thread 'a_disconnected_or_unanswered_choice_falls_back_and_says_so' (3240) panicked at crates\pane\tests\launcher_settings.rs:484:5:
+2026-10-03T17:33:09.7440360Z     the choice is explained, {
+2026-10-03T17:33:09.7444021Z       "root": "q",
+2026-10-03T17:33:09.7444569Z       "gpui_focus": "k",
+2026-10-03T17:33:09.7445059Z       "active_descendant_focus": "f",
+2026-10-03T17:33:09.7449936Z       "frame": {
+2026-10-03T17:33:09.7450508Z         "rendered_at": "2026-10-03T17:33:09.629+00:00",
+2026-10-03T17:33:09.7453580Z         "frame_number": 1,
+2026-10-03T17:33:09.7454140Z         "window_title": "Settings",
+2026-10-03T17:33:09.7454660Z         "node_count": 17,
+2026-10-03T17:33:09.7457543Z         "tab_stop_count": 3,
+2026-10-03T17:33:09.7458052Z         "viewport_size": {
+2026-10-03T17:33:09.7460940Z           "width": 740.0,
+2026-10-03T17:33:09.7461456Z           "height": 530.0
+2026-10-03T17:33:09.7464323Z         },
+2026-10-03T17:33:09.7465125Z         "scale_factor": 2.0
+2026-10-03T17:33:09.7465581Z       },
+2026-10-03T17:33:09.7469477Z       "nodes": {
+2026-10-03T17:33:09.7469844Z         "a": {
+2026-10-03T17:33:09.7473003Z           "accesskit_id": "1455139278699994500",
+2026-10-03T17:33:09.7473668Z           "element_id": "Name(\"window-minimize\")",
+2026-10-03T17:33:09.7474293Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:09.7478039Z           "source_location": "crates\\pane\\src\\features\\settings\\mod.rs:546:5",
+2026-10-03T17:33:09.7478870Z           "aria": {
+2026-10-03T17:33:09.7482027Z             "role": "Button",
+2026-10-03T17:33:09.7482603Z             "on_action": [
+2026-10-03T17:33:09.7483041Z               "Click"
+2026-10-03T17:33:09.7486038Z             ],
+2026-10-03T17:33:09.7486439Z             "label": "Minimize"
+2026-10-03T17:33:09.7491316Z           }
+2026-10-03T17:33:09.7491741Z         },
+2026-10-03T17:33:09.7492127Z         "b": {
+2026-10-03T17:33:09.7495755Z           "accesskit_id": "13360486394635904456",
+2026-10-03T17:33:09.7496508Z           "element_id": "Name(\"window-maximize\")",
+2026-10-03T17:33:09.7499758Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:09.7501012Z           "source_location": "crates\\pane\\src\\features\\settings\\mod.rs:546:5",
+2026-10-03T17:33:09.7501792Z           "aria": {
+2026-10-03T17:33:09.7504769Z             "role": "Button",
+2026-10-03T17:33:09.7505256Z             "on_action": [
+2026-10-03T17:33:09.7508132Z               "Click"
+2026-10-03T17:33:09.7508609Z             ],
+2026-10-03T17:33:09.7508995Z             "label": "Maximize"
+2026-10-03T17:33:09.7511715Z           }
+2026-10-03T17:33:09.7516543Z         },
+2026-10-03T17:33:09.7517312Z         "c": {
+2026-10-03T17:33:09.7517730Z           "accesskit_id": "4676168741999185767",
+2026-10-03T17:33:09.7520986Z           "element_id": "Name(\"window-close\")",
+2026-10-03T17:33:09.7521708Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:09.7525257Z           "source_location": "crates\\pane\\src\\features\\settings\\mod.rs:546:5",
+2026-10-03T17:33:09.7526021Z           "aria": {
+2026-10-03T17:33:09.7526411Z             "role": "Button",
+2026-10-03T17:33:09.7529858Z             "on_action": [
+2026-10-03T17:33:09.7530288Z               "Click"
+2026-10-03T17:33:09.7533376Z             ],
+2026-10-03T17:33:09.7533798Z             "label": "Close"
+2026-10-03T17:33:09.7534310Z           }
+2026-10-03T17:33:09.7537869Z         },
+2026-10-03T17:33:09.7538232Z         "d": {
+2026-10-03T17:33:09.7541437Z           "accesskit_id": "15771091246681327687",
+2026-10-03T17:33:09.7542086Z           "element_id": "Name(\"settings-search-field\")",
+2026-10-03T17:33:09.7545328Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:09.7546238Z           "source_location": "crates\\pane\\src\\features\\settings\\search.rs:458:5",
+2026-10-03T17:33:09.7547000Z           "aria": {
+2026-10-03T17:33:09.7552663Z             "role": "EditableComboBox",
+2026-10-03T17:33:09.7553255Z             "on_action": [
+2026-10-03T17:33:09.7556301Z               "Focus"
+2026-10-03T17:33:09.7556750Z             ],
+2026-10-03T17:33:09.7557494Z             "label": "Search settings",
+2026-10-03T17:33:09.7560687Z             "value": "",
+2026-10-03T17:33:09.7561191Z             "placeholder": "Search settings"
+2026-10-03T17:33:09.7565308Z           }
+2026-10-03T17:33:09.7565772Z         },
+2026-10-03T17:33:09.7566155Z         "e": {
+2026-10-03T17:33:09.7570791Z           "accesskit_id": "4866087091850061502",
+2026-10-03T17:33:09.7571403Z           "element_id": "NamedInteger(\"section\", 0)",
+2026-10-03T17:33:09.7574873Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:09.7575744Z           "source_location": "crates\\pane\\src\\ui\\result_row.rs:60:15",
+2026-10-03T17:33:09.7579364Z           "aria": {
+2026-10-03T17:33:09.7579886Z             "role": "ListBoxOption",
+2026-10-03T17:33:09.7580430Z             "on_action": [
+2026-10-03T17:33:09.7583382Z               "Click"
+2026-10-03T17:33:09.7583878Z             ],
+2026-10-03T17:33:09.7586734Z             "label": "General",
+2026-10-03T17:33:09.7587677Z             "selected": false
+2026-10-03T17:33:09.7588141Z           }
+2026-10-03T17:33:09.7591114Z         },
+2026-10-03T17:33:09.7591538Z         "f": {
+2026-10-03T17:33:09.7594488Z           "accesskit_id": "6982455575952473194",
+2026-10-03T17:33:09.7595491Z           "element_id": "NamedInteger(\"section\", 1)",
+2026-10-03T17:33:09.7596306Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:09.7599556Z           "source_location": "crates\\pane\\src\\ui\\result_row.rs:60:15",
+2026-10-03T17:33:09.7600270Z           "aria": {
+2026-10-03T17:33:09.7603621Z             "role": "ListBoxOption",
+2026-10-03T17:33:09.7604211Z             "on_action": [
+2026-10-03T17:33:09.7604713Z               "Click"
+2026-10-03T17:33:09.7608860Z             ],
+2026-10-03T17:33:09.7609282Z             "label": "Launcher",
+2026-10-03T17:33:09.7612445Z             "selected": true
+2026-10-03T17:33:09.7612992Z           }
+2026-10-03T17:33:09.7613372Z         },
+2026-10-03T17:33:09.7617775Z         "g": {
+2026-10-03T17:33:09.7620805Z           "accesskit_id": "13273673249935482759",
+2026-10-03T17:33:09.7621501Z           "element_id": "NamedInteger(\"section\", 2)",
+2026-10-03T17:33:09.7624794Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:09.7625646Z           "source_location": "crates\\pane\\src\\ui\\result_row.rs:60:15",
+2026-10-03T17:33:09.7626386Z           "aria": {
+2026-10-03T17:33:09.7629442Z             "role": "ListBoxOption",
+2026-10-03T17:33:09.7630020Z             "on_action": [
+2026-10-03T17:33:09.7633167Z               "Click"
+2026-10-03T17:33:09.7633635Z             ],
+2026-10-03T17:33:09.7634064Z             "label": "Appearance",
+2026-10-03T17:33:09.7637270Z             "selected": false
+2026-10-03T17:33:09.7637759Z           }
+2026-10-03T17:33:09.7640637Z         },
+2026-10-03T17:33:09.7641056Z         "h": {
+2026-10-03T17:33:09.7644165Z           "accesskit_id": "3189701941956757618",
+2026-10-03T17:33:09.7644883Z           "element_id": "NamedInteger(\"section\", 3)",
+2026-10-03T17:33:09.7645638Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:09.7649127Z           "source_location": "crates\\pane\\src\\ui\\result_row.rs:60:15",
+2026-10-03T17:33:09.7649910Z           "aria": {
+2026-10-03T17:33:09.7652997Z             "role": "ListBoxOption",
+2026-10-03T17:33:09.7653611Z             "on_action": [
+2026-10-03T17:33:09.7654800Z               "Click"
+2026-10-03T17:33:09.7657894Z             ],
+2026-10-03T17:33:09.7658368Z             "label": "Shortcuts",
+2026-10-03T17:33:09.7661365Z             "selected": false
+2026-10-03T17:33:09.7661895Z           }
+2026-10-03T17:33:09.7662277Z         },
+2026-10-03T17:33:09.7665372Z         "i": {
+2026-10-03T17:33:09.7665856Z           "accesskit_id": "15225389039130098424",
+2026-10-03T17:33:09.7669059Z           "element_id": "NamedInteger(\"section\", 4)",
+2026-10-03T17:33:09.7669813Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:09.7673130Z           "source_location": "crates\\pane\\src\\ui\\result_row.rs:60:15",
+2026-10-03T17:33:09.7673897Z           "aria": {
+2026-10-03T17:33:09.7674326Z             "role": "ListBoxOption",
+2026-10-03T17:33:09.7676920Z             "on_action": [
+2026-10-03T17:33:09.7682771Z               "Click"
+2026-10-03T17:33:09.7686008Z             ],
+2026-10-03T17:33:09.7686480Z             "label": "Extensions",
+2026-10-03T17:33:09.7686998Z             "selected": false
+2026-10-03T17:33:09.7689894Z           }
+2026-10-03T17:33:09.7690316Z         },
+2026-10-03T17:33:09.7693146Z         "j": {
+2026-10-03T17:33:09.7693641Z           "accesskit_id": "17534740954133582944",
+2026-10-03T17:33:09.7694269Z           "element_id": "NamedInteger(\"section\", 5)",
+2026-10-03T17:33:09.7697562Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:09.7698374Z           "source_location": "crates\\pane\\src\\ui\\result_row.rs:60:15",
+2026-10-03T17:33:09.7701822Z           "aria": {
+2026-10-03T17:33:09.7702261Z             "role": "ListBoxOption",
+2026-10-03T17:33:09.7705269Z             "on_action": [
+2026-10-03T17:33:09.7705764Z               "Click"
+2026-10-03T17:33:09.7706175Z             ],
+2026-10-03T17:33:09.7709387Z             "label": "About",
+2026-10-03T17:33:09.7709920Z             "selected": false
+2026-10-03T17:33:09.7713626Z           }
+2026-10-03T17:33:09.7714052Z         },
+2026-10-03T17:33:09.7714402Z         "k": {
+2026-10-03T17:33:09.7718367Z           "accesskit_id": "5240332096231811110",
+2026-10-03T17:33:09.7718953Z           "children": [
+2026-10-03T17:33:09.7722305Z             "e",
+2026-10-03T17:33:09.7722759Z             "f",
+2026-10-03T17:33:09.7723220Z             "g",
+2026-10-03T17:33:09.7729477Z             "h",
+2026-10-03T17:33:09.7729933Z             "i",
+2026-10-03T17:33:09.7733205Z             "j"
+2026-10-03T17:33:09.7733621Z           ],
+2026-10-03T17:33:09.7734044Z           "element_id": "Name(\"sections\")",
+2026-10-03T17:33:09.7737792Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:09.7738652Z           "source_location": "crates\\pane\\src\\features\\settings\\mod.rs:314:17",
+2026-10-03T17:33:09.7742060Z           "aria": {
+2026-10-03T17:33:09.7742525Z             "role": "ListBox",
+2026-10-03T17:33:09.7746444Z             "on_action": [
+2026-10-03T17:33:09.7747277Z               "Focus"
+2026-10-03T17:33:09.7747755Z             ],
+2026-10-03T17:33:09.7751711Z             "label": "Settings sections"
+2026-10-03T17:33:09.7757084Z           }
+2026-10-03T17:33:09.7757491Z         },
+2026-10-03T17:33:09.7757862Z         "l": {
+2026-10-03T17:33:09.7760731Z           "accesskit_id": "6552787065447303630",
+2026-10-03T17:33:09.7761315Z           "element_id": "Name(\"trigger\")",
+2026-10-03T17:33:09.7765211Z           "source_location": "crates\\pane\\src\\ui\\select.rs:605:19",
+2026-10-03T17:33:09.7765918Z           "aria": {
+2026-10-03T17:33:09.7770980Z             "role": "ComboBox",
+2026-10-03T17:33:09.7771640Z             "on_action": [
+2026-10-03T17:33:09.7772111Z               "Click",
+2026-10-03T17:33:09.7776305Z               "Focus"
+2026-10-03T17:33:09.7776781Z             ],
+2026-10-03T17:33:09.7779733Z             "label": "Display",
+2026-10-03T17:33:09.7780379Z             "description": "The display the launcher opens on",
+2026-10-03T17:33:09.7781080Z             "value": "Active window's display",
+2026-10-03T17:33:09.7784328Z             "expanded": false
+2026-10-03T17:33:09.7785073Z           }
+2026-10-03T17:33:09.7787858Z         },
+2026-10-03T17:33:09.7788270Z         "m": {
+2026-10-03T17:33:09.7788691Z           "accesskit_id": "5442691450652888154",
+2026-10-03T17:33:09.7791959Z           "element_id": "Name(\"launcher-fallback\")",
+2026-10-03T17:33:09.7793428Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:09.7798271Z           "source_location": "crates\\pane\\src\\features\\settings\\launcher.rs:546:5",
+2026-10-03T17:33:09.7799107Z           "aria": {
+2026-10-03T17:33:09.7802101Z             "role": "Status",
+2026-10-03T17:33:09.7803646Z             "label": "Pane cannot open on the display of the window you are working in: it is not connected, or this system does not tell Pane where it is. The launcher opens on the primary display instead."
+2026-10-03T17:33:09.7805418Z           }
+2026-10-03T17:33:09.7808300Z         },
+2026-10-03T17:33:09.7808768Z         "n": {
+2026-10-03T17:33:09.7811704Z           "accesskit_id": "1748417423946330287",
+2026-10-03T17:33:09.7812453Z           "element_id": "Name(\"Restore the current view\")",
+2026-10-03T17:33:09.7813192Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:09.7816633Z           "source_location": "crates\\pane\\src\\features\\settings\\launcher.rs:477:15",
+2026-10-03T17:33:09.7817439Z           "aria": {
+2026-10-03T17:33:09.7820315Z             "role": "RadioButton",
+2026-10-03T17:33:09.7821521Z             "on_action": [
+2026-10-03T17:33:09.7822018Z               "Click"
+2026-10-03T17:33:09.7824951Z             ],
+2026-10-03T17:33:09.7825412Z             "label": "Restore the current view",
+2026-10-03T17:33:09.7829769Z             "description": "Show what the launcher was left on, when it is still valid; the provisional default",
+2026-10-03T17:33:09.7830835Z             "toggled": "False"
+2026-10-03T17:33:09.7831304Z           }
+2026-10-03T17:33:09.7835678Z         },
+2026-10-03T17:33:09.7836074Z         "o": {
+2026-10-03T17:33:09.7838838Z           "accesskit_id": "10814223515421245247",
+2026-10-03T17:33:09.7839611Z           "element_id": "Name(\"Start at root search\")",
+2026-10-03T17:33:09.7840330Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:09.7843581Z           "source_location": "crates\\pane\\src\\features\\settings\\launcher.rs:477:15",
+2026-10-03T17:33:09.7844348Z           "aria": {
+2026-10-03T17:33:09.7847337Z             "role": "RadioButton",
+2026-10-03T17:33:09.7848182Z             "on_action": [
+2026-10-03T17:33:09.7851038Z               "Click"
+2026-10-03T17:33:09.7851518Z             ],
+2026-10-03T17:33:09.7851984Z             "label": "Start at root search",
+2026-10-03T17:33:09.7855256Z             "description": "Begin from root search with an empty query, whatever was left",
+2026-10-03T17:33:09.7856098Z             "toggled": "True"
+2026-10-03T17:33:09.7858996Z           }
+2026-10-03T17:33:09.7859499Z         },
+2026-10-03T17:33:09.7859903Z         "p": {
+2026-10-03T17:33:09.7862872Z           "accesskit_id": "6091025114247384428",
+2026-10-03T17:33:09.7863558Z           "element_id": "Name(\"launcher-dismissal\")",
+2026-10-03T17:33:09.7867049Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:09.7868034Z           "source_location": "crates\\pane\\src\\features\\settings\\launcher.rs:546:5",
+2026-10-03T17:33:09.7868865Z           "aria": {
+2026-10-03T17:33:09.7872469Z             "role": "Status",
+2026-10-03T17:33:09.7883719Z             "label": "Escape still backs out of what is open — a composition, a menu, an open screen — before it clears the query, and only then hides the launcher. Hiding never quits Pane: the Settings window stays open, and the next opening of the launcher reuses the same live window."
+2026-10-03T17:33:09.7891426Z           }
+2026-10-03T17:33:09.7891886Z         },
+2026-10-03T17:33:09.7892288Z         "q": {
+2026-10-03T17:33:09.7899723Z           "accesskit_id": "0",
+2026-10-03T17:33:09.7900242Z           "children": [
+2026-10-03T17:33:09.7903726Z             "a",
+2026-10-03T17:33:09.7904154Z             "b",
+2026-10-03T17:33:09.7907180Z             "c",
+2026-10-03T17:33:09.7907707Z             "d",
+2026-10-03T17:33:09.7908144Z             "k",
+2026-10-03T17:33:09.7914004Z             "l",
+2026-10-03T17:33:09.7914412Z             "m",
+2026-10-03T17:33:09.7917508Z             "n",
+2026-10-03T17:33:09.7918016Z             "o",
+2026-10-03T17:33:09.7918426Z             "p"
+2026-10-03T17:33:09.7921529Z           ],
+2026-10-03T17:33:09.7922033Z           "aria": {
+2026-10-03T17:33:09.7933067Z             "role": "Window",
+2026-10-03T17:33:09.7933690Z             "label": "Settings"
+2026-10-03T17:33:09.7934189Z           }
+2026-10-03T17:33:09.7937356Z         }
+2026-10-03T17:33:09.7937835Z       }
+2026-10-03T17:33:09.7940775Z     }
+2026-10-03T17:33:09.7941481Z     note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+2026-10-03T17:33:09.7942108Z 
+2026-10-03T17:33:09.8300988Z         PASS [   0.982s] (  21/1248) pane::launcher_settings a_jump_from_the_settings_search_focuses_the_select
+2026-10-03T17:33:10.0506123Z         PASS [   0.372s] (  22/1248) pane::launcher_settings a_move_that_fails_is_said_not_hidden
+2026-10-03T17:33:10.4734359Z         PASS [   0.629s] (  23/1248) pane::launcher_settings a_platform_that_cannot_choose_the_display_explains_and_offers_nothing
+2026-10-03T17:33:10.7134420Z   TRY 2 FAIL [   0.950s] (─────────) pane::launcher_settings a_disconnected_or_unanswered_choice_falls_back_and_says_so
+2026-10-03T17:33:10.7163959Z   stdout ───
+2026-10-03T17:33:10.7164332Z 
+2026-10-03T17:33:10.7462817Z     running 1 test
+2026-10-03T17:33:10.7498283Z     test a_disconnected_or_unanswered_choice_falls_back_and_says_so ... FAILED
+2026-10-03T17:33:10.7804740Z 
+2026-10-03T17:33:10.7829673Z     failures:
+2026-10-03T17:33:10.7974088Z 
+2026-10-03T17:33:10.8151709Z     failures:
+2026-10-03T17:33:10.8355924Z         a_disconnected_or_unanswered_choice_falls_back_and_says_so
+2026-10-03T17:33:10.8486184Z 
+2026-10-03T17:33:10.8545236Z     test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 21 filtered out; finished in 0.87s
+2026-10-03T17:33:10.8861236Z 
+2026-10-03T17:33:10.9249520Z   stderr ───
+2026-10-03T17:33:10.9573829Z 
+2026-10-03T17:33:11.0112927Z     thread 'a_disconnected_or_unanswered_choice_falls_back_and_says_so' (5912) panicked at crates\pane\tests\launcher_settings.rs:484:5:
+2026-10-03T17:33:11.0477893Z     the choice is explained, {
+2026-10-03T17:33:11.0763677Z       "root": "q",
+2026-10-03T17:33:11.0774035Z       "gpui_focus": "k",
+2026-10-03T17:33:11.0777893Z       "active_descendant_focus": "f",
+2026-10-03T17:33:11.1033394Z       "frame": {
+2026-10-03T17:33:11.1104621Z         "rendered_at": "2026-10-03T17:33:10.643+00:00",
+2026-10-03T17:33:11.1404856Z         "frame_number": 1,
+2026-10-03T17:33:11.1449068Z         "window_title": "Settings",
+2026-10-03T17:33:11.1547746Z         "node_count": 17,
+2026-10-03T17:33:11.1758085Z         "tab_stop_count": 3,
+2026-10-03T17:33:11.1869529Z         "viewport_size": {
+2026-10-03T17:33:11.2207053Z           "width": 740.0,
+2026-10-03T17:33:11.2289612Z           "height": 530.0
+2026-10-03T17:33:11.2296579Z         },
+2026-10-03T17:33:11.2303276Z         "scale_factor": 2.0
+2026-10-03T17:33:11.2304984Z       },
+2026-10-03T17:33:11.2305405Z       "nodes": {
+2026-10-03T17:33:11.2308699Z         "a": {
+2026-10-03T17:33:11.2309183Z           "accesskit_id": "1455139278699994500",
+2026-10-03T17:33:11.2313872Z           "element_id": "Name(\"window-minimize\")",
+2026-10-03T17:33:11.2314579Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:11.2322841Z           "source_location": "crates\\pane\\src\\features\\settings\\mod.rs:546:5",
+2026-10-03T17:33:11.2323586Z           "aria": {
+2026-10-03T17:33:11.2328869Z             "role": "Button",
+2026-10-03T17:33:11.2329382Z             "on_action": [
+2026-10-03T17:33:11.2329842Z               "Click"
+2026-10-03T17:33:11.2337801Z             ],
+2026-10-03T17:33:11.2341942Z             "label": "Minimize"
+2026-10-03T17:33:11.2342430Z           }
+2026-10-03T17:33:11.2342785Z         },
+2026-10-03T17:33:11.2346109Z         "b": {
+2026-10-03T17:33:11.2346600Z           "accesskit_id": "13360486394635904456",
+2026-10-03T17:33:11.2350277Z           "element_id": "Name(\"window-maximize\")",
+2026-10-03T17:33:11.2351878Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:11.2356221Z           "source_location": "crates\\pane\\src\\features\\settings\\mod.rs:546:5",
+2026-10-03T17:33:11.2357058Z           "aria": {
+2026-10-03T17:33:11.2357494Z             "role": "Button",
+2026-10-03T17:33:11.2360690Z             "on_action": [
+2026-10-03T17:33:11.2361263Z               "Click"
+2026-10-03T17:33:11.2364517Z             ],
+2026-10-03T17:33:11.2365030Z             "label": "Maximize"
+2026-10-03T17:33:11.2365537Z           }
+2026-10-03T17:33:11.2369466Z         },
+2026-10-03T17:33:11.2369940Z         "c": {
+2026-10-03T17:33:11.2373224Z           "accesskit_id": "4676168741999185767",
+2026-10-03T17:33:11.2374001Z           "element_id": "Name(\"window-close\")",
+2026-10-03T17:33:11.2374749Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:11.2378394Z           "source_location": "crates\\pane\\src\\features\\settings\\mod.rs:546:5",
+2026-10-03T17:33:11.2379209Z           "aria": {
+2026-10-03T17:33:11.2382184Z             "role": "Button",
+2026-10-03T17:33:11.2385566Z             "on_action": [
+2026-10-03T17:33:11.2386178Z               "Click"
+2026-10-03T17:33:11.2387392Z             ],
+2026-10-03T17:33:11.2390883Z             "label": "Close"
+2026-10-03T17:33:11.2391804Z           }
+2026-10-03T17:33:11.2426883Z         },
+2026-10-03T17:33:11.2427299Z         "d": {
+2026-10-03T17:33:11.2427712Z           "accesskit_id": "15771091246681327687",
+2026-10-03T17:33:11.2432615Z           "element_id": "Name(\"settings-search-field\")",
+2026-10-03T17:33:11.2433327Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:11.2437546Z           "source_location": "crates\\pane\\src\\features\\settings\\search.rs:458:5",
+2026-10-03T17:33:11.2438304Z           "aria": {
+2026-10-03T17:33:11.2438716Z             "role": "EditableComboBox",
+2026-10-03T17:33:11.2446930Z             "on_action": [
+2026-10-03T17:33:11.2447468Z               "Focus"
+2026-10-03T17:33:11.2451200Z             ],
+2026-10-03T17:33:11.2451976Z             "label": "Search settings",
+2026-10-03T17:33:11.2455588Z             "value": "",
+2026-10-03T17:33:11.2456118Z             "placeholder": "Search settings"
+2026-10-03T17:33:11.2456619Z           }
+2026-10-03T17:33:11.2460257Z         },
+2026-10-03T17:33:11.2460627Z         "e": {
+2026-10-03T17:33:11.2463889Z           "accesskit_id": "4866087091850061502",
+2026-10-03T17:33:11.2464533Z           "element_id": "NamedInteger(\"section\", 0)",
+2026-10-03T17:33:11.2468187Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:11.2468999Z           "source_location": "crates\\pane\\src\\ui\\result_row.rs:60:15",
+2026-10-03T17:33:11.2469621Z           "aria": {
+2026-10-03T17:33:11.2472924Z             "role": "ListBoxOption",
+2026-10-03T17:33:11.2473430Z             "on_action": [
+2026-10-03T17:33:11.2477046Z               "Click"
+2026-10-03T17:33:11.2477500Z             ],
+2026-10-03T17:33:11.2477863Z             "label": "General",
+2026-10-03T17:33:11.2481106Z             "selected": false
+2026-10-03T17:33:11.2481563Z           }
+2026-10-03T17:33:11.2484621Z         },
+2026-10-03T17:33:11.2485020Z         "f": {
+2026-10-03T17:33:11.2485399Z           "accesskit_id": "6982455575952473194",
+2026-10-03T17:33:11.2488651Z           "element_id": "NamedInteger(\"section\", 1)",
+2026-10-03T17:33:11.2489293Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:11.2499421Z           "source_location": "crates\\pane\\src\\ui\\result_row.rs:60:15",
+2026-10-03T17:33:11.2500203Z           "aria": {
+2026-10-03T17:33:11.2500687Z             "role": "ListBoxOption",
+2026-10-03T17:33:11.2504005Z             "on_action": [
+2026-10-03T17:33:11.2504550Z               "Click"
+2026-10-03T17:33:11.2507925Z             ],
+2026-10-03T17:33:11.2508372Z             "label": "Launcher",
+2026-10-03T17:33:11.2511730Z             "selected": true
+2026-10-03T17:33:11.2512276Z           }
+2026-10-03T17:33:11.2512686Z         },
+2026-10-03T17:33:11.2515959Z         "g": {
+2026-10-03T17:33:11.2516442Z           "accesskit_id": "13273673249935482759",
+2026-10-03T17:33:11.2520598Z           "element_id": "NamedInteger(\"section\", 2)",
+2026-10-03T17:33:11.2521439Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:11.2522276Z           "source_location": "crates\\pane\\src\\ui\\result_row.rs:60:15",
+2026-10-03T17:33:11.2526103Z           "aria": {
+2026-10-03T17:33:11.2526597Z             "role": "ListBoxOption",
+2026-10-03T17:33:11.2529764Z             "on_action": [
+2026-10-03T17:33:11.2530279Z               "Click"
+2026-10-03T17:33:11.2530729Z             ],
+2026-10-03T17:33:11.2533864Z             "label": "Appearance",
+2026-10-03T17:33:11.2534472Z             "selected": false
+2026-10-03T17:33:11.2537558Z           }
+2026-10-03T17:33:11.2538014Z         },
+2026-10-03T17:33:11.2538412Z         "h": {
+2026-10-03T17:33:11.2541433Z           "accesskit_id": "3189701941956757618",
+2026-10-03T17:33:11.2542139Z           "element_id": "NamedInteger(\"section\", 3)",
+2026-10-03T17:33:11.2545754Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:11.2546623Z           "source_location": "crates\\pane\\src\\ui\\result_row.rs:60:15",
+2026-10-03T17:33:11.2549455Z           "aria": {
+2026-10-03T17:33:11.2556161Z             "role": "ListBoxOption",
+2026-10-03T17:33:11.2556741Z             "on_action": [
+2026-10-03T17:33:11.2560314Z               "Click"
+2026-10-03T17:33:11.2560780Z             ],
+2026-10-03T17:33:11.2566254Z             "label": "Shortcuts",
+2026-10-03T17:33:11.2566858Z             "selected": false
+2026-10-03T17:33:11.2567331Z           }
+2026-10-03T17:33:11.2570740Z         },
+2026-10-03T17:33:11.2571150Z         "i": {
+2026-10-03T17:33:11.2574201Z           "accesskit_id": "15225389039130098424",
+2026-10-03T17:33:11.2574912Z           "element_id": "NamedInteger(\"section\", 4)",
+2026-10-03T17:33:11.2575641Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:11.2580133Z           "source_location": "crates\\pane\\src\\ui\\result_row.rs:60:15",
+2026-10-03T17:33:11.2580922Z           "aria": {
+2026-10-03T17:33:11.2583260Z             "role": "ListBoxOption",
+2026-10-03T17:33:11.2586357Z             "on_action": [
+2026-10-03T17:33:11.2586847Z               "Click"
+2026-10-03T17:33:11.2589852Z             ],
+2026-10-03T17:33:11.2590858Z             "label": "Extensions",
+2026-10-03T17:33:11.2591447Z             "selected": false
+2026-10-03T17:33:11.2594511Z           }
+2026-10-03T17:33:11.2594968Z         },
+2026-10-03T17:33:11.2597893Z         "j": {
+2026-10-03T17:33:11.2598465Z           "accesskit_id": "17534740954133582944",
+2026-10-03T17:33:11.2599135Z           "element_id": "NamedInteger(\"section\", 5)",
+2026-10-03T17:33:11.2602787Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:11.2603609Z           "source_location": "crates\\pane\\src\\ui\\result_row.rs:60:15",
+2026-10-03T17:33:11.2607204Z           "aria": {
+2026-10-03T17:33:11.2607680Z             "role": "ListBoxOption",
+2026-10-03T17:33:11.2608221Z             "on_action": [
+2026-10-03T17:33:11.2611569Z               "Click"
+2026-10-03T17:33:11.2612006Z             ],
+2026-10-03T17:33:11.2615141Z             "label": "About",
+2026-10-03T17:33:11.2615641Z             "selected": false
+2026-10-03T17:33:11.2618730Z           }
+2026-10-03T17:33:11.2619175Z         },
+2026-10-03T17:33:11.2619543Z         "k": {
+2026-10-03T17:33:11.2622586Z           "accesskit_id": "5240332096231811110",
+2026-10-03T17:33:11.2623176Z           "children": [
+2026-10-03T17:33:11.2626066Z             "e",
+2026-10-03T17:33:11.2626523Z             "f",
+2026-10-03T17:33:11.2626902Z             "g",
+2026-10-03T17:33:11.2630202Z             "h",
+2026-10-03T17:33:11.2630629Z             "i",
+2026-10-03T17:33:11.2633861Z             "j"
+2026-10-03T17:33:11.2634325Z           ],
+2026-10-03T17:33:11.2634737Z           "element_id": "Name(\"sections\")",
+2026-10-03T17:33:11.2638301Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:11.2639531Z           "source_location": "crates\\pane\\src\\features\\settings\\mod.rs:314:17",
+2026-10-03T17:33:11.2642848Z           "aria": {
+2026-10-03T17:33:11.2643362Z             "role": "ListBox",
+2026-10-03T17:33:11.2646571Z             "on_action": [
+2026-10-03T17:33:11.2647109Z               "Focus"
+2026-10-03T17:33:11.2647527Z             ],
+2026-10-03T17:33:11.2650682Z             "label": "Settings sections"
+2026-10-03T17:33:11.2651177Z           }
+2026-10-03T17:33:11.2654150Z         },
+2026-10-03T17:33:11.2654561Z         "l": {
+2026-10-03T17:33:11.2654978Z           "accesskit_id": "6552787065447303630",
+2026-10-03T17:33:11.2658402Z           "element_id": "Name(\"trigger\")",
+2026-10-03T17:33:11.2659006Z           "source_location": "crates\\pane\\src\\ui\\select.rs:605:19",
+2026-10-03T17:33:11.2662114Z           "aria": {
+2026-10-03T17:33:11.2662525Z             "role": "ComboBox",
+2026-10-03T17:33:11.2662927Z             "on_action": [
+2026-10-03T17:33:11.2666167Z               "Click",
+2026-10-03T17:33:11.2666533Z               "Focus"
+2026-10-03T17:33:11.2669409Z             ],
+2026-10-03T17:33:11.2670792Z             "label": "Display",
+2026-10-03T17:33:11.2671297Z             "description": "The display the launcher opens on",
+2026-10-03T17:33:11.2674792Z             "value": "Active window's display",
+2026-10-03T17:33:11.2675347Z             "expanded": false
+2026-10-03T17:33:11.2678203Z           }
+2026-10-03T17:33:11.2678582Z         },
+2026-10-03T17:33:11.2682425Z         "m": {
+2026-10-03T17:33:11.2682949Z           "accesskit_id": "5442691450652888154",
+2026-10-03T17:33:11.2683542Z           "element_id": "Name(\"launcher-fallback\")",
+2026-10-03T17:33:11.2687089Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:11.2688049Z           "source_location": "crates\\pane\\src\\features\\settings\\launcher.rs:546:5",
+2026-10-03T17:33:11.2691844Z           "aria": {
+2026-10-03T17:33:11.2692310Z             "role": "Status",
+2026-10-03T17:33:11.2693700Z             "label": "Pane cannot open on the display of the window you are working in: it is not connected, or this system does not tell Pane where it is. The launcher opens on the primary display instead."
+2026-10-03T17:33:11.2698491Z           }
+2026-10-03T17:33:11.2698866Z         },
+2026-10-03T17:33:11.2702226Z         "n": {
+2026-10-03T17:33:11.2702700Z           "accesskit_id": "1748417423946330287",
+2026-10-03T17:33:11.2703352Z           "element_id": "Name(\"Restore the current view\")",
+2026-10-03T17:33:11.2707149Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:11.2707980Z           "source_location": "crates\\pane\\src\\features\\settings\\launcher.rs:477:15",
+2026-10-03T17:33:11.2715528Z           "aria": {
+2026-10-03T17:33:11.2716088Z             "role": "RadioButton",
+2026-10-03T17:33:11.2716614Z             "on_action": [
+2026-10-03T17:33:11.2724331Z               "Click"
+2026-10-03T17:33:11.2724785Z             ],
+2026-10-03T17:33:11.2728103Z             "label": "Restore the current view",
+2026-10-03T17:33:11.2729189Z             "description": "Show what the launcher was left on, when it is still valid; the provisional default",
+2026-10-03T17:33:11.2730144Z             "toggled": "False"
+2026-10-03T17:33:11.2733780Z           }
+2026-10-03T17:33:11.2734188Z         },
+2026-10-03T17:33:11.2738131Z         "o": {
+2026-10-03T17:33:11.2738627Z           "accesskit_id": "10814223515421245247",
+2026-10-03T17:33:11.2739321Z           "element_id": "Name(\"Start at root search\")",
+2026-10-03T17:33:11.2743613Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:11.2745024Z           "source_location": "crates\\pane\\src\\features\\settings\\launcher.rs:477:15",
+2026-10-03T17:33:11.2748912Z           "aria": {
+2026-10-03T17:33:11.2749408Z             "role": "RadioButton",
+2026-10-03T17:33:11.2749978Z             "on_action": [
+2026-10-03T17:33:11.2753621Z               "Click"
+2026-10-03T17:33:11.2754057Z             ],
+2026-10-03T17:33:11.2757013Z             "label": "Start at root search",
+2026-10-03T17:33:11.2757883Z             "description": "Begin from root search with an empty query, whatever was left",
+2026-10-03T17:33:11.2761130Z             "toggled": "True"
+2026-10-03T17:33:11.2761683Z           }
+2026-10-03T17:33:11.2762080Z         },
+2026-10-03T17:33:11.2765086Z         "p": {
+2026-10-03T17:33:11.2765551Z           "accesskit_id": "6091025114247384428",
+2026-10-03T17:33:11.2769464Z           "element_id": "Name(\"launcher-dismissal\")",
+2026-10-03T17:33:11.2770250Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:11.2771145Z           "source_location": "crates\\pane\\src\\features\\settings\\launcher.rs:546:5",
+2026-10-03T17:33:11.2774630Z           "aria": {
+2026-10-03T17:33:11.2775129Z             "role": "Status",
+2026-10-03T17:33:11.2780374Z             "label": "Escape still backs out of what is open — a composition, a menu, an open screen — before it clears the query, and only then hides the launcher. Hiding never quits Pane: the Settings window stays open, and the next opening of the launcher reuses the same live window."
+2026-10-03T17:33:11.2783220Z           }
+2026-10-03T17:33:11.2783635Z         },
+2026-10-03T17:33:11.2786520Z         "q": {
+2026-10-03T17:33:11.2786979Z           "accesskit_id": "0",
+2026-10-03T17:33:11.2790032Z           "children": [
+2026-10-03T17:33:11.2790560Z             "a",
+2026-10-03T17:33:11.2790962Z             "b",
+2026-10-03T17:33:11.2793964Z             "c",
+2026-10-03T17:33:11.2794388Z             "d",
+2026-10-03T17:33:11.2798106Z             "k",
+2026-10-03T17:33:11.2967290Z             "l",
+2026-10-03T17:33:11.2967625Z             "m",
+2026-10-03T17:33:11.2967939Z             "n",
+2026-10-03T17:33:11.2968248Z             "o",
+2026-10-03T17:33:11.2968545Z             "p"
+2026-10-03T17:33:11.2969214Z           ],
+2026-10-03T17:33:11.2969600Z           "aria": {
+2026-10-03T17:33:11.2969962Z             "role": "Window",
+2026-10-03T17:33:11.2970360Z             "label": "Settings"
+2026-10-03T17:33:11.2970725Z           }
+2026-10-03T17:33:11.2971013Z         }
+2026-10-03T17:33:11.2971289Z       }
+2026-10-03T17:33:11.2971563Z     }
+2026-10-03T17:33:11.2972090Z     note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+2026-10-03T17:33:11.2972635Z 
+2026-10-03T17:33:11.6849700Z         PASS [   1.236s] (  24/1248) pane::launcher_settings a_view_whose_command_is_gone_returns_safely_to_root_search
+2026-10-03T17:33:11.7406398Z         PASS [   6.309s] (  25/1248) pane::install an_installed_package_is_reloaded_from_the_extension_list
+2026-10-03T17:33:11.9484696Z   TRY 3 FAIL [   0.713s] (  26/1248) pane::launcher_settings a_disconnected_or_unanswered_choice_falls_back_and_says_so
+2026-10-03T17:33:11.9486197Z   stdout ───
+2026-10-03T17:33:11.9487614Z 
+2026-10-03T17:33:11.9488361Z     running 1 test
+2026-10-03T17:33:11.9489268Z     test a_disconnected_or_unanswered_choice_falls_back_and_says_so ... FAILED
+2026-10-03T17:33:11.9490964Z 
+2026-10-03T17:33:11.9491436Z     failures:
+2026-10-03T17:33:11.9491870Z 
+2026-10-03T17:33:11.9492169Z     failures:
+2026-10-03T17:33:11.9492831Z         a_disconnected_or_unanswered_choice_falls_back_and_says_so
+2026-10-03T17:33:11.9494407Z 
+2026-10-03T17:33:11.9495099Z     test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 21 filtered out; finished in 0.69s
+2026-10-03T17:33:11.9496001Z 
+2026-10-03T17:33:11.9498161Z   stderr ───
+2026-10-03T17:33:11.9498574Z 
+2026-10-03T17:33:11.9499475Z     thread 'a_disconnected_or_unanswered_choice_falls_back_and_says_so' (8308) panicked at crates\pane\tests\launcher_settings.rs:484:5:
+2026-10-03T17:33:11.9502208Z     the choice is explained, {
+2026-10-03T17:33:11.9502867Z       "root": "q",
+2026-10-03T17:33:11.9503420Z       "gpui_focus": "k",
+2026-10-03T17:33:11.9504434Z       "active_descendant_focus": "f",
+2026-10-03T17:33:11.9505980Z       "frame": {
+2026-10-03T17:33:11.9506592Z         "rendered_at": "2026-10-03T17:33:11.936+00:00",
+2026-10-03T17:33:11.9507658Z         "frame_number": 1,
+2026-10-03T17:33:11.9508406Z         "window_title": "Settings",
+2026-10-03T17:33:11.9510002Z         "node_count": 17,
+2026-10-03T17:33:11.9510956Z         "tab_stop_count": 3,
+2026-10-03T17:33:11.9512545Z         "viewport_size": {
+2026-10-03T17:33:11.9513504Z           "width": 740.0,
+2026-10-03T17:33:11.9514108Z           "height": 530.0
+2026-10-03T17:33:11.9515565Z         },
+2026-10-03T17:33:11.9516092Z         "scale_factor": 2.0
+2026-10-03T17:33:11.9516663Z       },
+2026-10-03T17:33:11.9517218Z       "nodes": {
+2026-10-03T17:33:11.9518627Z         "a": {
+2026-10-03T17:33:11.9519563Z           "accesskit_id": "1455139278699994500",
+2026-10-03T17:33:11.9520338Z           "element_id": "Name(\"window-minimize\")",
+2026-10-03T17:33:11.9522250Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:11.9523267Z           "source_location": "crates\\pane\\src\\features\\settings\\mod.rs:546:5",
+2026-10-03T17:33:11.9525397Z           "aria": {
+2026-10-03T17:33:11.9526715Z             "role": "Button",
+2026-10-03T17:33:11.9528281Z             "on_action": [
+2026-10-03T17:33:11.9528895Z               "Click"
+2026-10-03T17:33:11.9529425Z             ],
+2026-10-03T17:33:11.9529960Z             "label": "Minimize"
+2026-10-03T17:33:11.9531413Z           }
+2026-10-03T17:33:11.9532253Z         },
+2026-10-03T17:33:11.9532739Z         "b": {
+2026-10-03T17:33:11.9533272Z           "accesskit_id": "13360486394635904456",
+2026-10-03T17:33:11.9534919Z           "element_id": "Name(\"window-maximize\")",
+2026-10-03T17:33:11.9535751Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:11.9536714Z           "source_location": "crates\\pane\\src\\features\\settings\\mod.rs:546:5",
+2026-10-03T17:33:11.9538508Z           "aria": {
+2026-10-03T17:33:11.9539539Z             "role": "Button",
+2026-10-03T17:33:11.9540145Z             "on_action": [
+2026-10-03T17:33:11.9541606Z               "Click"
+2026-10-03T17:33:11.9542177Z             ],
+2026-10-03T17:33:11.9542724Z             "label": "Maximize"
+2026-10-03T17:33:11.9543304Z           }
+2026-10-03T17:33:11.9545251Z         },
+2026-10-03T17:33:11.9545843Z         "c": {
+2026-10-03T17:33:11.9546742Z           "accesskit_id": "4676168741999185767",
+2026-10-03T17:33:11.9548437Z           "element_id": "Name(\"window-close\")",
+2026-10-03T17:33:11.9550502Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:11.9552870Z           "source_location": "crates\\pane\\src\\features\\settings\\mod.rs:546:5",
+2026-10-03T17:33:11.9554085Z           "aria": {
+2026-10-03T17:33:11.9555560Z             "role": "Button",
+2026-10-03T17:33:11.9558031Z             "on_action": [
+2026-10-03T17:33:11.9562114Z               "Click"
+2026-10-03T17:33:11.9562689Z             ],
+2026-10-03T17:33:11.9563550Z             "label": "Close"
+2026-10-03T17:33:11.9565026Z           }
+2026-10-03T17:33:11.9565571Z         },
+2026-10-03T17:33:11.9567076Z         "d": {
+2026-10-03T17:33:11.9568957Z           "accesskit_id": "15771091246681327687",
+2026-10-03T17:33:11.9569728Z           "element_id": "Name(\"settings-search-field\")",
+2026-10-03T17:33:11.9570853Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:11.9573312Z           "source_location": "crates\\pane\\src\\features\\settings\\search.rs:458:5",
+2026-10-03T17:33:11.9575853Z           "aria": {
+2026-10-03T17:33:11.9576451Z             "role": "EditableComboBox",
+2026-10-03T17:33:11.9577362Z             "on_action": [
+2026-10-03T17:33:11.9578804Z               "Focus"
+2026-10-03T17:33:11.9579325Z             ],
+2026-10-03T17:33:11.9580979Z             "label": "Search settings",
+2026-10-03T17:33:11.9582889Z             "value": "",
+2026-10-03T17:33:11.9583514Z             "placeholder": "Search settings"
+2026-10-03T17:33:11.9584487Z           }
+2026-10-03T17:33:11.9585881Z         },
+2026-10-03T17:33:11.9586403Z         "e": {
+2026-10-03T17:33:11.9587864Z           "accesskit_id": "4866087091850061502",
+2026-10-03T17:33:11.9589886Z           "element_id": "NamedInteger(\"section\", 0)",
+2026-10-03T17:33:11.9590719Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:11.9592846Z           "source_location": "crates\\pane\\src\\ui\\result_row.rs:60:15",
+2026-10-03T17:33:11.9594621Z           "aria": {
+2026-10-03T17:33:11.9596485Z             "role": "ListBoxOption",
+2026-10-03T17:33:11.9597156Z             "on_action": [
+2026-10-03T17:33:11.9597997Z               "Click"
+2026-10-03T17:33:11.9599421Z             ],
+2026-10-03T17:33:11.9599931Z             "label": "General",
+2026-10-03T17:33:11.9601584Z             "selected": false
+2026-10-03T17:33:11.9603118Z           }
+2026-10-03T17:33:11.9603580Z         },
+2026-10-03T17:33:11.9604011Z         "f": {
+2026-10-03T17:33:11.9605792Z           "accesskit_id": "6982455575952473194",
+2026-10-03T17:33:11.9608121Z           "element_id": "NamedInteger(\"section\", 1)",
+2026-10-03T17:33:11.9610842Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:11.9611776Z           "source_location": "crates\\pane\\src\\ui\\result_row.rs:60:15",
+2026-10-03T17:33:11.9614678Z           "aria": {
+2026-10-03T17:33:11.9615206Z             "role": "ListBoxOption",
+2026-10-03T17:33:11.9615784Z             "on_action": [
+2026-10-03T17:33:11.9616741Z               "Click"
+2026-10-03T17:33:11.9618130Z             ],
+2026-10-03T17:33:11.9619588Z             "label": "Launcher",
+2026-10-03T17:33:11.9621458Z             "selected": true
+2026-10-03T17:33:11.9622003Z           }
+2026-10-03T17:33:11.9622413Z         },
+2026-10-03T17:33:11.9623176Z         "g": {
+2026-10-03T17:33:11.9624571Z           "accesskit_id": "13273673249935482759",
+2026-10-03T17:33:11.9626114Z           "element_id": "NamedInteger(\"section\", 2)",
+2026-10-03T17:33:11.9628510Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:11.9629354Z           "source_location": "crates\\pane\\src\\ui\\result_row.rs:60:15",
+2026-10-03T17:33:11.9631315Z           "aria": {
+2026-10-03T17:33:11.9631835Z             "role": "ListBoxOption",
+2026-10-03T17:33:11.9633261Z             "on_action": [
+2026-10-03T17:33:11.9635063Z               "Click"
+2026-10-03T17:33:11.9635548Z             ],
+2026-10-03T17:33:11.9635989Z             "label": "Appearance",
+2026-10-03T17:33:11.9637758Z             "selected": false
+2026-10-03T17:33:11.9638285Z           }
+2026-10-03T17:33:11.9638694Z         },
+2026-10-03T17:33:11.9640879Z         "h": {
+2026-10-03T17:33:11.9641360Z           "accesskit_id": "3189701941956757618",
+2026-10-03T17:33:11.9641962Z           "element_id": "NamedInteger(\"section\", 3)",
+2026-10-03T17:33:11.9642652Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:11.9644358Z           "source_location": "crates\\pane\\src\\ui\\result_row.rs:60:15",
+2026-10-03T17:33:11.9645957Z           "aria": {
+2026-10-03T17:33:11.9648475Z             "role": "ListBoxOption",
+2026-10-03T17:33:11.9649072Z             "on_action": [
+2026-10-03T17:33:11.9737208Z               "Click"
+2026-10-03T17:33:11.9789603Z             ],
+2026-10-03T17:33:11.9794137Z             "label": "Shortcuts",
+2026-10-03T17:33:11.9797738Z             "selected": false
+2026-10-03T17:33:11.9798685Z           }
+2026-10-03T17:33:11.9799610Z         },
+2026-10-03T17:33:11.9802790Z         "i": {
+2026-10-03T17:33:11.9803950Z           "accesskit_id": "15225389039130098424",
+2026-10-03T17:33:11.9808890Z           "element_id": "NamedInteger(\"section\", 4)",
+2026-10-03T17:33:11.9813220Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:11.9818344Z           "source_location": "crates\\pane\\src\\ui\\result_row.rs:60:15",
+2026-10-03T17:33:11.9824891Z           "aria": {
+2026-10-03T17:33:11.9826056Z             "role": "ListBoxOption",
+2026-10-03T17:33:11.9832182Z             "on_action": [
+2026-10-03T17:33:11.9880468Z               "Click"
+2026-10-03T17:33:11.9883205Z             ],
+2026-10-03T17:33:11.9883752Z             "label": "Extensions",
+2026-10-03T17:33:11.9887665Z             "selected": false
+2026-10-03T17:33:11.9888252Z           }
+2026-10-03T17:33:11.9907334Z         },
+2026-10-03T17:33:11.9909700Z         "j": {
+2026-10-03T17:33:11.9911247Z           "accesskit_id": "17534740954133582944",
+2026-10-03T17:33:11.9914268Z           "element_id": "NamedInteger(\"section\", 5)",
+2026-10-03T17:33:11.9915087Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:11.9920777Z           "source_location": "crates\\pane\\src\\ui\\result_row.rs:60:15",
+2026-10-03T17:33:11.9921574Z           "aria": {
+2026-10-03T17:33:11.9923242Z             "role": "ListBoxOption",
+2026-10-03T17:33:11.9925434Z             "on_action": [
+2026-10-03T17:33:11.9926932Z               "Click"
+2026-10-03T17:33:11.9928160Z             ],
+2026-10-03T17:33:11.9929794Z             "label": "About",
+2026-10-03T17:33:11.9930346Z             "selected": false
+2026-10-03T17:33:11.9932312Z           }
+2026-10-03T17:33:11.9934820Z         },
+2026-10-03T17:33:11.9935278Z         "k": {
+2026-10-03T17:33:11.9936636Z           "accesskit_id": "5240332096231811110",
+2026-10-03T17:33:11.9937303Z           "children": [
+2026-10-03T17:33:11.9937765Z             "e",
+2026-10-03T17:33:11.9940848Z             "f",
+2026-10-03T17:33:11.9941806Z             "g",
+2026-10-03T17:33:11.9943422Z             "h",
+2026-10-03T17:33:11.9943879Z             "i",
+2026-10-03T17:33:11.9945573Z             "j"
+2026-10-03T17:33:11.9947719Z           ],
+2026-10-03T17:33:11.9949543Z           "element_id": "Name(\"sections\")",
+2026-10-03T17:33:11.9952945Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:11.9953904Z           "source_location": "crates\\pane\\src\\features\\settings\\mod.rs:314:17",
+2026-10-03T17:33:11.9956873Z           "aria": {
+2026-10-03T17:33:11.9957396Z             "role": "ListBox",
+2026-10-03T17:33:11.9957996Z             "on_action": [
+2026-10-03T17:33:11.9961147Z               "Focus"
+2026-10-03T17:33:11.9963668Z             ],
+2026-10-03T17:33:11.9964171Z             "label": "Settings sections"
+2026-10-03T17:33:11.9965730Z           }
+2026-10-03T17:33:11.9966151Z         },
+2026-10-03T17:33:11.9970111Z         "l": {
+2026-10-03T17:33:11.9971189Z           "accesskit_id": "6552787065447303630",
+2026-10-03T17:33:11.9972587Z           "element_id": "Name(\"trigger\")",
+2026-10-03T17:33:11.9973367Z           "source_location": "crates\\pane\\src\\ui\\select.rs:605:19",
+2026-10-03T17:33:11.9975137Z           "aria": {
+2026-10-03T17:33:11.9975614Z             "role": "ComboBox",
+2026-10-03T17:33:11.9977419Z             "on_action": [
+2026-10-03T17:33:11.9977967Z               "Click",
+2026-10-03T17:33:11.9978418Z               "Focus"
+2026-10-03T17:33:11.9978870Z             ],
+2026-10-03T17:33:11.9981136Z             "label": "Display",
+2026-10-03T17:33:11.9997041Z             "description": "The display the launcher opens on",
+2026-10-03T17:33:11.9999418Z             "value": "Active window's display",
+2026-10-03T17:33:12.0000864Z             "expanded": false
+2026-10-03T17:33:12.0002323Z           }
+2026-10-03T17:33:12.0002795Z         },
+2026-10-03T17:33:12.0003209Z         "m": {
+2026-10-03T17:33:12.0003970Z           "accesskit_id": "5442691450652888154",
+2026-10-03T17:33:12.0006149Z           "element_id": "Name(\"launcher-fallback\")",
+2026-10-03T17:33:12.0007715Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:12.0009554Z           "source_location": "crates\\pane\\src\\features\\settings\\launcher.rs:546:5",
+2026-10-03T17:33:12.0010406Z           "aria": {
+2026-10-03T17:33:12.0011228Z             "role": "Status",
+2026-10-03T17:33:12.0014108Z             "label": "Pane cannot open on the display of the window you are working in: it is not connected, or this system does not tell Pane where it is. The launcher opens on the primary display instead."
+2026-10-03T17:33:12.0017280Z           }
+2026-10-03T17:33:12.0017734Z         },
+2026-10-03T17:33:12.0018127Z         "n": {
+2026-10-03T17:33:12.0018603Z           "accesskit_id": "1748417423946330287",
+2026-10-03T17:33:12.0019765Z           "element_id": "Name(\"Restore the current view\")",
+2026-10-03T17:33:12.0021196Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:12.0022529Z           "source_location": "crates\\pane\\src\\features\\settings\\launcher.rs:477:15",
+2026-10-03T17:33:12.0024296Z           "aria": {
+2026-10-03T17:33:12.0024825Z             "role": "RadioButton",
+2026-10-03T17:33:12.0025370Z             "on_action": [
+2026-10-03T17:33:12.0025870Z               "Click"
+2026-10-03T17:33:12.0027209Z             ],
+2026-10-03T17:33:12.0027738Z             "label": "Restore the current view",
+2026-10-03T17:33:12.0030253Z             "description": "Show what the launcher was left on, when it is still valid; the provisional default",
+2026-10-03T17:33:12.0032201Z             "toggled": "False"
+2026-10-03T17:33:12.0032971Z           }
+2026-10-03T17:33:12.0033425Z         },
+2026-10-03T17:33:12.0034722Z         "o": {
+2026-10-03T17:33:12.0035254Z           "accesskit_id": "10814223515421245247",
+2026-10-03T17:33:12.0036217Z           "element_id": "Name(\"Start at root search\")",
+2026-10-03T17:33:12.0037852Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:12.0038769Z           "source_location": "crates\\pane\\src\\features\\settings\\launcher.rs:477:15",
+2026-10-03T17:33:12.0039596Z           "aria": {
+2026-10-03T17:33:12.0040940Z             "role": "RadioButton",
+2026-10-03T17:33:12.0041798Z             "on_action": [
+2026-10-03T17:33:12.0042271Z               "Click"
+2026-10-03T17:33:12.0043592Z             ],
+2026-10-03T17:33:12.0044474Z             "label": "Start at root search",
+2026-10-03T17:33:12.0045284Z             "description": "Begin from root search with an empty query, whatever was left",
+2026-10-03T17:33:12.0047031Z             "toggled": "True"
+2026-10-03T17:33:12.0047812Z           }
+2026-10-03T17:33:12.0048518Z         },
+2026-10-03T17:33:12.0049821Z         "p": {
+2026-10-03T17:33:12.0050308Z           "accesskit_id": "6091025114247384428",
+2026-10-03T17:33:12.0050954Z           "element_id": "Name(\"launcher-dismissal\")",
+2026-10-03T17:33:12.0051800Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:12.0053625Z           "source_location": "crates\\pane\\src\\features\\settings\\launcher.rs:546:5",
+2026-10-03T17:33:12.0054558Z           "aria": {
+2026-10-03T17:33:12.0055002Z             "role": "Status",
+2026-10-03T17:33:12.0057573Z             "label": "Escape still backs out of what is open — a composition, a menu, an open screen — before it clears the query, and only then hides the launcher. Hiding never quits Pane: the Settings window stays open, and the next opening of the launcher reuses the same live window."
+2026-10-03T17:33:12.0059481Z           }
+2026-10-03T17:33:12.0060856Z         },
+2026-10-03T17:33:12.0061329Z         "q": {
+2026-10-03T17:33:12.0061791Z           "accesskit_id": "0",
+2026-10-03T17:33:12.0062308Z           "children": [
+2026-10-03T17:33:12.0063741Z             "a",
+2026-10-03T17:33:12.0064746Z             "b",
+2026-10-03T17:33:12.0065200Z             "c",
+2026-10-03T17:33:12.0065625Z             "d",
+2026-10-03T17:33:12.0066978Z             "k",
+2026-10-03T17:33:12.0067417Z             "l",
+2026-10-03T17:33:12.0067843Z             "m",
+2026-10-03T17:33:12.0068250Z             "n",
+2026-10-03T17:33:12.0068657Z             "o",
+2026-10-03T17:33:12.0069979Z             "p"
+2026-10-03T17:33:12.0070761Z           ],
+2026-10-03T17:33:12.0071211Z           "aria": {
+2026-10-03T17:33:12.0072559Z             "role": "Window",
+2026-10-03T17:33:12.0073138Z             "label": "Settings"
+2026-10-03T17:33:12.0073624Z           }
+2026-10-03T17:33:12.0074025Z         }
+2026-10-03T17:33:12.0075291Z       }
+2026-10-03T17:33:12.0076082Z     }
+2026-10-03T17:33:12.0077064Z     note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+2026-10-03T17:33:12.0078645Z 
+2026-10-03T17:33:12.0079031Z   Cancelling due to test failure: 3 tests still running
+2026-10-03T17:33:12.0770151Z   TRY 1 FAIL [   0.392s] (─────────) pane::launcher_settings arrows_home_and_end_move_the_highlight_without_saving
+2026-10-03T17:33:12.0771088Z   stdout ───
+2026-10-03T17:33:12.0771266Z 
+2026-10-03T17:33:12.0771377Z     running 1 test
+2026-10-03T17:33:12.0771850Z     test arrows_home_and_end_move_the_highlight_without_saving ... FAILED
+2026-10-03T17:33:12.0772449Z 
+2026-10-03T17:33:12.0772572Z     failures:
+2026-10-03T17:33:12.0772741Z 
+2026-10-03T17:33:12.0772859Z     failures:
+2026-10-03T17:33:12.0773270Z         arrows_home_and_end_move_the_highlight_without_saving
+2026-10-03T17:33:12.0774097Z 
+2026-10-03T17:33:12.0774575Z     test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 21 filtered out; finished in 0.37s
+2026-10-03T17:33:12.0775222Z 
+2026-10-03T17:33:12.0775816Z   stderr ───
+2026-10-03T17:33:12.0776022Z 
+2026-10-03T17:33:12.0776681Z     thread 'arrows_home_and_end_move_the_highlight_without_saving' (1444) panicked at crates\pane\tests\launcher_settings.rs:1302:5:
+2026-10-03T17:33:12.0777680Z     assertion `left == right` failed
+2026-10-03T17:33:12.0778123Z       left: Some("Search choices")
+2026-10-03T17:33:12.0778549Z      right: Some("Primary display")
+2026-10-03T17:33:12.0779193Z     note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+2026-10-03T17:33:12.0779740Z 
+2026-10-03T17:33:12.2220395Z   TRY 1 FAIL [   0.481s] (─────────) pane::launcher_settings choices_the_system_does_not_answer_are_explained_not_offered
+2026-10-03T17:33:12.2221384Z   stdout ───
+2026-10-03T17:33:12.2221974Z 
+2026-10-03T17:33:12.2222104Z     running 1 test
+2026-10-03T17:33:12.2222660Z     test choices_the_system_does_not_answer_are_explained_not_offered ... FAILED
+2026-10-03T17:33:12.2223199Z 
+2026-10-03T17:33:12.2223320Z     failures:
+2026-10-03T17:33:12.2223514Z 
+2026-10-03T17:33:12.2223628Z     failures:
+2026-10-03T17:33:12.2224058Z         choices_the_system_does_not_answer_are_explained_not_offered
+2026-10-03T17:33:12.2224510Z 
+2026-10-03T17:33:12.2224956Z     test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 21 filtered out; finished in 0.45s
+2026-10-03T17:33:12.2225583Z 
+2026-10-03T17:33:12.2225782Z   stderr ───
+2026-10-03T17:33:12.2225950Z 
+2026-10-03T17:33:12.2226650Z     thread 'choices_the_system_does_not_answer_are_explained_not_offered' (6520) panicked at crates\pane\tests\launcher_settings.rs:453:5:
+2026-10-03T17:33:12.2227634Z     nothing was kept
+2026-10-03T17:33:12.2228174Z     note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+2026-10-03T17:33:12.2228691Z 
+2026-10-03T17:33:21.0425199Z   TRY 1 FAIL [  10.995s] (─────────) pane::launcher_settings a_save_that_fails_is_reported_and_the_shown_choice_stays_what_was_saved
+2026-10-03T17:33:21.0426196Z   stdout ───
+2026-10-03T17:33:21.0426407Z 
+2026-10-03T17:33:21.0426521Z     running 1 test
+2026-10-03T17:33:21.0427106Z     test a_save_that_fails_is_reported_and_the_shown_choice_stays_what_was_saved ... FAILED
+2026-10-03T17:33:21.0427683Z 
+2026-10-03T17:33:21.0427801Z     failures:
+2026-10-03T17:33:21.0427986Z 
+2026-10-03T17:33:21.0428100Z     failures:
+2026-10-03T17:33:21.0428551Z         a_save_that_fails_is_reported_and_the_shown_choice_stays_what_was_saved
+2026-10-03T17:33:21.0429029Z 
+2026-10-03T17:33:21.0429786Z     test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 21 filtered out; finished in 10.81s
+2026-10-03T17:33:21.0430705Z 
+2026-10-03T17:33:21.0430989Z   stderr ───
+2026-10-03T17:33:21.0431121Z 
+2026-10-03T17:33:21.0431735Z     thread 'a_save_that_fails_is_reported_and_the_shown_choice_stays_what_was_saved' (8076) panicked at crates\pane\tests\launcher_settings.rs:842:9:
+2026-10-03T17:33:21.0432812Z     timed out: the page shows {
+2026-10-03T17:33:21.0433188Z       "root": "p",
+2026-10-03T17:33:21.0433540Z       "gpui_focus": "l",
+2026-10-03T17:33:21.0433790Z       "active_descendant_focus": null,
+2026-10-03T17:33:21.0434204Z       "frame": {
+2026-10-03T17:33:21.0434478Z         "rendered_at": "2026-10-03T17:33:21.032+00:00",
+2026-10-03T17:33:21.0434749Z         "frame_number": 420,
+2026-10-03T17:33:21.0434970Z         "window_title": "Settings",
+2026-10-03T17:33:21.0435421Z         "node_count": 16,
+2026-10-03T17:33:21.0435671Z         "tab_stop_count": 3,
+2026-10-03T17:33:21.0435883Z         "viewport_size": {
+2026-10-03T17:33:21.0436127Z           "width": 740.0,
+2026-10-03T17:33:21.0436475Z           "height": 530.0
+2026-10-03T17:33:21.0436669Z         },
+2026-10-03T17:33:21.0436834Z         "scale_factor": 2.0
+2026-10-03T17:33:21.0437066Z       },
+2026-10-03T17:33:21.0437230Z       "nodes": {
+2026-10-03T17:33:21.0437564Z         "a": {
+2026-10-03T17:33:21.0437839Z           "accesskit_id": "1455139278699994500",
+2026-10-03T17:33:21.0438402Z           "element_id": "Name(\"window-minimize\")",
+2026-10-03T17:33:21.0438755Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:21.0439168Z           "source_location": "crates\\pane\\src\\features\\settings\\mod.rs:546:5",
+2026-10-03T17:33:21.0439539Z           "aria": {
+2026-10-03T17:33:21.0439895Z             "role": "Button",
+2026-10-03T17:33:21.0440183Z             "on_action": [
+2026-10-03T17:33:21.0440383Z               "Click"
+2026-10-03T17:33:21.0440563Z             ],
+2026-10-03T17:33:21.0440739Z             "label": "Minimize"
+2026-10-03T17:33:21.0440944Z           }
+2026-10-03T17:33:21.0441096Z         },
+2026-10-03T17:33:21.0441258Z         "b": {
+2026-10-03T17:33:21.0441446Z           "accesskit_id": "13360486394635904456",
+2026-10-03T17:33:21.0442031Z           "element_id": "Name(\"window-maximize\")",
+2026-10-03T17:33:21.0442512Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:21.0442972Z           "source_location": "crates\\pane\\src\\features\\settings\\mod.rs:546:5",
+2026-10-03T17:33:21.0443570Z           "aria": {
+2026-10-03T17:33:21.0443884Z             "role": "Button",
+2026-10-03T17:33:21.0444111Z             "on_action": [
+2026-10-03T17:33:21.0444508Z               "Click"
+2026-10-03T17:33:21.0444739Z             ],
+2026-10-03T17:33:21.0444926Z             "label": "Maximize"
+2026-10-03T17:33:21.0445133Z           }
+2026-10-03T17:33:21.0445299Z         },
+2026-10-03T17:33:21.0445453Z         "c": {
+2026-10-03T17:33:21.0445639Z           "accesskit_id": "4676168741999185767",
+2026-10-03T17:33:21.0445918Z           "element_id": "Name(\"window-close\")",
+2026-10-03T17:33:21.0446235Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:21.0446883Z           "source_location": "crates\\pane\\src\\features\\settings\\mod.rs:546:5",
+2026-10-03T17:33:21.0453734Z           "aria": {
+2026-10-03T17:33:21.0454005Z             "role": "Button",
+2026-10-03T17:33:21.0454229Z             "on_action": [
+2026-10-03T17:33:21.0454445Z               "Click"
+2026-10-03T17:33:21.0454626Z             ],
+2026-10-03T17:33:21.0454800Z             "label": "Close"
+2026-10-03T17:33:21.0455147Z           }
+2026-10-03T17:33:21.0455448Z         },
+2026-10-03T17:33:21.0455637Z         "d": {
+2026-10-03T17:33:21.0455833Z           "accesskit_id": "15771091246681327687",
+2026-10-03T17:33:21.0456145Z           "element_id": "Name(\"settings-search-field\")",
+2026-10-03T17:33:21.0456502Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:21.0456918Z           "source_location": "crates\\pane\\src\\features\\settings\\search.rs:458:5",
+2026-10-03T17:33:21.0457385Z           "aria": {
+2026-10-03T17:33:21.0457722Z             "role": "EditableComboBox",
+2026-10-03T17:33:21.0457983Z             "on_action": [
+2026-10-03T17:33:21.0458175Z               "Focus"
+2026-10-03T17:33:21.0458348Z             ],
+2026-10-03T17:33:21.0458524Z             "label": "Search settings",
+2026-10-03T17:33:21.0458756Z             "value": "",
+2026-10-03T17:33:21.0458977Z             "placeholder": "Search settings"
+2026-10-03T17:33:21.0459215Z           }
+2026-10-03T17:33:21.0459363Z         },
+2026-10-03T17:33:21.0459512Z         "e": {
+2026-10-03T17:33:21.0459697Z           "accesskit_id": "4866087091850061502",
+2026-10-03T17:33:21.0459981Z           "element_id": "NamedInteger(\"section\", 0)",
+2026-10-03T17:33:21.0460314Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:21.0460681Z           "source_location": "crates\\pane\\src\\ui\\result_row.rs:60:15",
+2026-10-03T17:33:21.0461012Z           "aria": {
+2026-10-03T17:33:21.0461205Z             "role": "ListBoxOption",
+2026-10-03T17:33:21.0461447Z             "on_action": [
+2026-10-03T17:33:21.0461649Z               "Click"
+2026-10-03T17:33:21.0461826Z             ],
+2026-10-03T17:33:21.0462004Z             "label": "General",
+2026-10-03T17:33:21.0462215Z             "selected": false
+2026-10-03T17:33:21.0462414Z           }
+2026-10-03T17:33:21.0462755Z         },
+2026-10-03T17:33:21.0462927Z         "f": {
+2026-10-03T17:33:21.0463112Z           "accesskit_id": "6982455575952473194",
+2026-10-03T17:33:21.0463406Z           "element_id": "NamedInteger(\"section\", 1)",
+2026-10-03T17:33:21.0463732Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:21.0464127Z           "source_location": "crates\\pane\\src\\ui\\result_row.rs:60:15",
+2026-10-03T17:33:21.0464453Z           "aria": {
+2026-10-03T17:33:21.0464642Z             "role": "ListBoxOption",
+2026-10-03T17:33:21.0464874Z             "on_action": [
+2026-10-03T17:33:21.0465072Z               "Click"
+2026-10-03T17:33:21.0465249Z             ],
+2026-10-03T17:33:21.0465421Z             "label": "Launcher",
+2026-10-03T17:33:21.0465739Z             "selected": true
+2026-10-03T17:33:21.0465937Z           }
+2026-10-03T17:33:21.0466093Z         },
+2026-10-03T17:33:21.0466243Z         "g": {
+2026-10-03T17:33:21.0466432Z           "accesskit_id": "13273673249935482759",
+2026-10-03T17:33:21.0466720Z           "element_id": "NamedInteger(\"section\", 2)",
+2026-10-03T17:33:21.0467050Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:21.0467417Z           "source_location": "crates\\pane\\src\\ui\\result_row.rs:60:15",
+2026-10-03T17:33:21.0467738Z           "aria": {
+2026-10-03T17:33:21.0467923Z             "role": "ListBoxOption",
+2026-10-03T17:33:21.0468153Z             "on_action": [
+2026-10-03T17:33:21.0468345Z               "Click"
+2026-10-03T17:33:21.0468518Z             ],
+2026-10-03T17:33:21.0468692Z             "label": "Appearance",
+2026-10-03T17:33:21.0468920Z             "selected": false
+2026-10-03T17:33:21.0469114Z           }
+2026-10-03T17:33:21.0469267Z         },
+2026-10-03T17:33:21.0469423Z         "h": {
+2026-10-03T17:33:21.0469605Z           "accesskit_id": "3189701941956757618",
+2026-10-03T17:33:21.0469892Z           "element_id": "NamedInteger(\"section\", 3)",
+2026-10-03T17:33:21.0470208Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:21.0470573Z           "source_location": "crates\\pane\\src\\ui\\result_row.rs:60:15",
+2026-10-03T17:33:21.0471004Z           "aria": {
+2026-10-03T17:33:21.0471288Z             "role": "ListBoxOption",
+2026-10-03T17:33:21.0471517Z             "on_action": [
+2026-10-03T17:33:21.0471883Z               "Click"
+2026-10-03T17:33:21.0472080Z             ],
+2026-10-03T17:33:21.0472252Z             "label": "Shortcuts",
+2026-10-03T17:33:21.0472480Z             "selected": false
+2026-10-03T17:33:21.0472679Z           }
+2026-10-03T17:33:21.0472830Z         },
+2026-10-03T17:33:21.0472983Z         "i": {
+2026-10-03T17:33:21.0473170Z           "accesskit_id": "15225389039130098424",
+2026-10-03T17:33:21.0473468Z           "element_id": "NamedInteger(\"section\", 4)",
+2026-10-03T17:33:21.0473795Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:21.0474172Z           "source_location": "crates\\pane\\src\\ui\\result_row.rs:60:15",
+2026-10-03T17:33:21.0474497Z           "aria": {
+2026-10-03T17:33:21.0474683Z             "role": "ListBoxOption",
+2026-10-03T17:33:21.0474915Z             "on_action": [
+2026-10-03T17:33:21.0475105Z               "Click"
+2026-10-03T17:33:21.0475276Z             ],
+2026-10-03T17:33:21.0475450Z             "label": "Extensions",
+2026-10-03T17:33:21.0475676Z             "selected": false
+2026-10-03T17:33:21.0475871Z           }
+2026-10-03T17:33:21.0476024Z         },
+2026-10-03T17:33:21.0476175Z         "j": {
+2026-10-03T17:33:21.0476365Z           "accesskit_id": "17534740954133582944",
+2026-10-03T17:33:21.0476645Z           "element_id": "NamedInteger(\"section\", 5)",
+2026-10-03T17:33:21.0476957Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:21.0477327Z           "source_location": "crates\\pane\\src\\ui\\result_row.rs:60:15",
+2026-10-03T17:33:21.0477650Z           "aria": {
+2026-10-03T17:33:21.0477941Z             "role": "ListBoxOption",
+2026-10-03T17:33:21.0478187Z             "on_action": [
+2026-10-03T17:33:21.0478380Z               "Click"
+2026-10-03T17:33:21.0478553Z             ],
+2026-10-03T17:33:21.0478727Z             "label": "About",
+2026-10-03T17:33:21.0478931Z             "selected": false
+2026-10-03T17:33:21.0479128Z           }
+2026-10-03T17:33:21.0479278Z         },
+2026-10-03T17:33:21.0479434Z         "k": {
+2026-10-03T17:33:21.0479619Z           "accesskit_id": "5240332096231811110",
+2026-10-03T17:33:21.0479867Z           "children": [
+2026-10-03T17:33:21.0480055Z             "e",
+2026-10-03T17:33:21.0480221Z             "f",
+2026-10-03T17:33:21.0480387Z             "g",
+2026-10-03T17:33:21.0480546Z             "h",
+2026-10-03T17:33:21.0480706Z             "i",
+2026-10-03T17:33:21.0480951Z             "j"
+2026-10-03T17:33:21.0481118Z           ],
+2026-10-03T17:33:21.0481303Z           "element_id": "Name(\"sections\")",
+2026-10-03T17:33:21.0481608Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:21.0482009Z           "source_location": "crates\\pane\\src\\features\\settings\\mod.rs:314:17",
+2026-10-03T17:33:21.0482369Z           "aria": {
+2026-10-03T17:33:21.0482546Z             "role": "ListBox",
+2026-10-03T17:33:21.0482753Z             "on_action": [
+2026-10-03T17:33:21.0482941Z               "Focus"
+2026-10-03T17:33:21.0483112Z             ],
+2026-10-03T17:33:21.0483294Z             "label": "Settings sections"
+2026-10-03T17:33:21.0483519Z           }
+2026-10-03T17:33:21.0483667Z         },
+2026-10-03T17:33:21.0483816Z         "l": {
+2026-10-03T17:33:21.0483999Z           "accesskit_id": "6552787065447303630",
+2026-10-03T17:33:21.0484256Z           "element_id": "Name(\"trigger\")",
+2026-10-03T17:33:21.0484572Z           "source_location": "crates\\pane\\src\\ui\\select.rs:605:19",
+2026-10-03T17:33:21.0484888Z           "aria": {
+2026-10-03T17:33:21.0485069Z             "role": "ComboBox",
+2026-10-03T17:33:21.0485275Z             "on_action": [
+2026-10-03T17:33:21.0485467Z               "Click",
+2026-10-03T17:33:21.0485643Z               "Focus"
+2026-10-03T17:33:21.0485814Z             ],
+2026-10-03T17:33:21.0485986Z             "label": "Display",
+2026-10-03T17:33:21.0486246Z             "description": "The display the launcher opens on",
+2026-10-03T17:33:21.0486551Z             "value": "Pointer's display",
+2026-10-03T17:33:21.0486789Z             "expanded": false
+2026-10-03T17:33:21.0486993Z           }
+2026-10-03T17:33:21.0487141Z         },
+2026-10-03T17:33:21.0487291Z         "m": {
+2026-10-03T17:33:21.0487468Z           "accesskit_id": "1748417423946330287",
+2026-10-03T17:33:21.0487760Z           "element_id": "Name(\"Restore the current view\")",
+2026-10-03T17:33:21.0488085Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:21.0488496Z           "source_location": "crates\\pane\\src\\features\\settings\\launcher.rs:477:15",
+2026-10-03T17:33:21.0488863Z           "aria": {
+2026-10-03T17:33:21.0489052Z             "role": "RadioButton",
+2026-10-03T17:33:21.0489272Z             "on_action": [
+2026-10-03T17:33:21.0489460Z               "Click"
+2026-10-03T17:33:21.0489634Z             ],
+2026-10-03T17:33:21.0489824Z             "label": "Restore the current view",
+2026-10-03T17:33:21.0490283Z             "description": "Show what the launcher was left on, when it is still valid; the provisional default",
+2026-10-03T17:33:21.0490732Z             "toggled": "False"
+2026-10-03T17:33:21.0490932Z           }
+2026-10-03T17:33:21.0491202Z         },
+2026-10-03T17:33:21.0491438Z         "n": {
+2026-10-03T17:33:21.0491631Z           "accesskit_id": "10814223515421245247",
+2026-10-03T17:33:21.0492079Z           "element_id": "Name(\"Start at root search\")",
+2026-10-03T17:33:21.0492411Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:21.0492823Z           "source_location": "crates\\pane\\src\\features\\settings\\launcher.rs:477:15",
+2026-10-03T17:33:21.0493189Z           "aria": {
+2026-10-03T17:33:21.0493474Z             "role": "RadioButton",
+2026-10-03T17:33:21.0493701Z             "on_action": [
+2026-10-03T17:33:21.0493895Z               "Click"
+2026-10-03T17:33:21.0494067Z             ],
+2026-10-03T17:33:21.0494250Z             "label": "Start at root search",
+2026-10-03T17:33:21.0494634Z             "description": "Begin from root search with an empty query, whatever was left",
+2026-10-03T17:33:21.0495020Z             "toggled": "True"
+2026-10-03T17:33:21.0495215Z           }
+2026-10-03T17:33:21.0495368Z         },
+2026-10-03T17:33:21.0495517Z         "o": {
+2026-10-03T17:33:21.0495701Z           "accesskit_id": "6091025114247384428",
+2026-10-03T17:33:21.0495987Z           "element_id": "Name(\"launcher-dismissal\")",
+2026-10-03T17:33:21.0497055Z           "view": "pane::features::settings::SettingsWindow",
+2026-10-03T17:33:21.0497482Z           "source_location": "crates\\pane\\src\\features\\settings\\launcher.rs:546:5",
+2026-10-03T17:33:21.0497861Z           "aria": {
+2026-10-03T17:33:21.0498048Z             "role": "Status",
+2026-10-03T17:33:21.0499263Z             "label": "Escape still backs out of what is open — a composition, a menu, an open screen — before it clears the query, and only then hides the launcher. Hiding never quits Pane: the Settings window stays open, and the next opening of the launcher reuses the same live window."
+2026-10-03T17:33:21.0500286Z           }
+2026-10-03T17:33:21.0500450Z         },
+2026-10-03T17:33:21.0500607Z         "p": {
+2026-10-03T17:33:21.0500787Z           "accesskit_id": "0",
+2026-10-03T17:33:21.0501002Z           "children": [
+2026-10-03T17:33:21.0501193Z             "a",
+2026-10-03T17:33:21.0501358Z             "b",
+2026-10-03T17:33:21.0501525Z             "c",
+2026-10-03T17:33:21.0501693Z             "d",
+2026-10-03T17:33:21.0501853Z             "k",
+2026-10-03T17:33:21.0502015Z             "l",
+2026-10-03T17:33:21.0502177Z             "m",
+2026-10-03T17:33:21.0502340Z             "n",
+2026-10-03T17:33:21.0502508Z             "o"
+2026-10-03T17:33:21.0502680Z           ],
+2026-10-03T17:33:21.0502844Z           "aria": {
+2026-10-03T17:33:21.0503027Z             "role": "Window",
+2026-10-03T17:33:21.0503242Z             "label": "Settings"
+2026-10-03T17:33:21.0503450Z           }
+2026-10-03T17:33:21.0503615Z         }
+2026-10-03T17:33:21.0503770Z       }
+2026-10-03T17:33:21.0503918Z     }
+2026-10-03T17:33:21.0504208Z     note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+2026-10-03T17:33:21.0504514Z 
+2026-10-03T17:33:21.0504634Z ────────────
+2026-10-03T17:33:21.0504894Z      Summary [  23.686s] 26/1248 tests run: 25 passed, 1 failed, 0 skipped
+2026-10-03T17:33:21.0505461Z   TRY 3 FAIL [   0.713s] (  26/1248) pane::launcher_settings a_disconnected_or_unanswered_choice_falls_back_and_says_so
+2026-10-03T17:33:21.0506202Z warning: 1222/1248 tests were not run due to test failure (run with --no-fail-fast to run all tests, or run with --max-fail)
+2026-10-03T17:33:21.0938780Z error: test run failed
+2026-10-03T17:33:21.1281055Z xtask: "C:\\Users\\runneradmin\\.rustup\\toolchains\\1.98.1-x86_64-pc-windows-msvc\\bin\\cargo.exe" "nextest" "run" "--locked" "--workspace" "--retries" "2" failed with exit code: 100
+2026-10-03T17:33:22.2002917Z ##[error]Process completed with exit code 1.
+2026-10-03T17:33:22.4152292Z Post job cleanup.
+2026-10-03T17:33:23.2764497Z [command]"C:\Program Files\Git\bin\git.exe" version
+2026-10-03T17:33:23.3730667Z git version 2.55.0.windows.5
+2026-10-03T17:33:23.3836316Z Temporarily overriding HOME='D:\a\_temp\d0a1fb74-cb73-4f0e-b901-a8585f29b5fd' before making global git config changes
+2026-10-03T17:33:23.3837421Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-03T17:33:23.3850947Z [command]"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\pane\pane
+2026-10-03T17:33:23.4201478Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+2026-10-03T17:33:23.4504470Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+2026-10-03T17:33:24.0779077Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-03T17:33:24.1049126Z http.https://github.com/.extraheader
+2026-10-03T17:33:24.1091462Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset-all http.https://github.com/.extraheader
+2026-10-03T17:33:24.1397558Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+2026-10-03T17:33:24.6750903Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-03T17:33:24.7052532Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "git config --local --show-origin --name-only --get-regexp remote.origin.url"
+2026-10-03T17:33:25.2840450Z Cleaning up orphan processes
+2026-10-03T17:33:25.4359966Z Terminate orphan process: pid (1260) (vctip)
+2026-10-03T17:33:25.4558555Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

@@ -685,18 +685,17 @@ impl Select {
     }
 
     /// The popup's search field: the shared editable text element in
-    /// the boxed field the Settings search's field is. The wrapper is
-    /// the field's accessibility node, and carries the focus — the
-    /// query input keeps it while the popup is open, so the arrows
-    /// move the highlight without stealing text focus.
-    fn query_field(&self, model: &Model, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+    /// the boxed field the Settings search's field is. The box is
+    /// presentation only — the accessibility and the focus live one
+    /// level up, on the popup's content (see [`Select::popup`]), which
+    /// is the field's node the way root search's wrapper is: an
+    /// editable combo box whose list is the choices below it. The focus
+    /// ring is drawn from the focus state read at render, since the box
+    /// itself no longer tracks the handle.
+    fn query_field(&self, model: &Model, field_focused: bool, cx: &mut Context<Self>) -> gpui::Div {
         let theme = &model.theme;
-        let query = self.query.read(cx).as_str().to_owned();
         let input = &self.query;
-        let debug = format!("{}-query", self.debug);
         div()
-            .id("query")
-            .debug_selector(move || debug.clone())
             .flex()
             .items_center()
             .gap(px(6.))
@@ -706,13 +705,8 @@ impl Select {
             .rounded_md()
             .border_1()
             .border_color(theme.hairline)
+            .when(field_focused, |field| field.border_color(theme.focus_ring))
             .bg(theme.tile_background)
-            .focus(|field| field.border_color(theme.focus_ring))
-            .track_focus(&input.focus_handle(cx))
-            .role(Role::TextInput)
-            .aria_label(PLACEHOLDER)
-            .aria_value(query.clone())
-            .aria_placeholder(PLACEHOLDER)
             .child(glyph(Glyph::Search, px(14.), theme.text_muted))
             .child(
                 text_input("query")
@@ -741,6 +735,7 @@ impl Select {
         model: &Model,
         filtered: &[usize],
         active: Option<&SharedString>,
+        field_focused: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = &model.theme;
@@ -784,11 +779,26 @@ impl Select {
             .role(Role::ListBox)
             .aria_label("Choices")
             .children(rows);
+        let input = &self.query;
+        // The popup's content is the field's accessibility node, as root
+        // search's wrapper is: it tracks the query's focus, and the list
+        // is its list — so while the popup is open, the highlighted
+        // choice reads as the focused field's active descendant, and
+        // assistive technology follows the highlight as the arrows move
+        // it. The editable text element itself has no node of its own.
+        let debug = format!("{}-query", self.debug);
         let content = div()
+            .id("query")
+            .debug_selector(move || debug.clone())
+            .track_focus(&input.focus_handle(cx))
+            .role(Role::EditableComboBox)
+            .aria_label(PLACEHOLDER)
+            .aria_value(query.clone())
+            .aria_placeholder(PLACEHOLDER)
             .flex()
             .flex_col()
             .p(px(6.))
-            .child(self.query_field(model, cx))
+            .child(self.query_field(model, field_focused, cx))
             .child(list);
         // The elevation shadow sits on the wrapper, which GPUI paints
         // behind the surface's translucent fill — the same treatment the
@@ -801,6 +811,12 @@ impl Select {
             .w_full()
             .flex()
             .flex_col()
+            // The popup takes the clicks that land on it: a click on a
+            // choice (or on a disabled one, or the empty state) is the
+            // popup's own, never the page's rows underneath — the same
+            // discipline the footer menu's overlay keeps, from the
+            // other side (its outside dismissal).
+            .occlude()
             .shadow(vec![
                 BoxShadow::new(px(0.), px(0.), gpui::rgba(0x000000CC)).spread_radius(px(0.5)),
                 BoxShadow::new(px(0.), px(28.), gpui::rgba(0x000000BF))
@@ -938,7 +954,7 @@ impl Select {
 }
 
 impl Render for Select {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let model = (self.model.clone())(cx);
         let query = self.query.read(cx).as_str().to_owned();
         let filtered = self.filtered(&model, &query);
@@ -965,7 +981,12 @@ impl Render for Select {
             .map(|choice| choice.id.clone());
         let trigger = self.trigger_row(&model, cx);
         let open = self.open;
-        let popup = open.then(|| self.popup(&model, &filtered, active.as_ref(), cx));
+        // The boxed field's focus ring, read from the focus state the
+        // frame draws with: the box itself tracks nothing (the popup's
+        // content is the field's accessibility node, as root search's
+        // wrapper is — see [`Select::popup`]).
+        let field_focused = self.query.focus_handle(cx).is_focused(window);
+        let popup = open.then(|| self.popup(&model, &filtered, active.as_ref(), field_focused, cx));
         // The control's block: the trigger, then a zero-height row that
         // positions the popup — its content-box origin is the trigger's
         // bottom-left, so the anchored popup opens below the trigger
