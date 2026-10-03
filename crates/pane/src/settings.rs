@@ -200,7 +200,7 @@ impl Settings {
             None => (HostSettings::default(), None),
         };
         let system = appearance_of(cx.window_appearance());
-        let chosen = saved;
+        let chosen = saved.clone();
         Settings {
             dir,
             effective: visuals_of(
@@ -270,7 +270,7 @@ impl Settings {
     /// nothing visible would change, and the record's rule is not to
     /// replace what cannot be read.
     pub(crate) fn set_theme(&mut self, preference: ThemePreference, cx: &mut Context<Self>) {
-        let mut chosen = self.chosen;
+        let mut chosen = self.chosen.clone();
         chosen.theme = preference;
         self.choose(chosen, cx);
     }
@@ -278,7 +278,7 @@ impl Settings {
     /// Chooses `preference` for the material, as [`Settings::set_theme`]
     /// does.
     pub(crate) fn set_material(&mut self, preference: MaterialPreference, cx: &mut Context<Self>) {
-        let mut chosen = self.chosen;
+        let mut chosen = self.chosen.clone();
         chosen.material = preference;
         self.choose(chosen, cx);
     }
@@ -383,11 +383,12 @@ impl Settings {
         };
         self.saving = true;
         self.save_error = None;
-        let snapshot = self.chosen;
+        let snapshot = self.chosen.clone();
+        let writing = snapshot.clone();
         cx.spawn(async move |this, cx| {
             let written = cx
                 .background_executor()
-                .spawn(async move { snapshot.save(&dir) })
+                .spawn(async move { writing.save(&dir) })
                 .await;
             this.update(cx, |settings, cx| settings.written(written, snapshot, cx))
                 .ok();

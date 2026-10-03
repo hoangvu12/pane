@@ -212,6 +212,8 @@ fn recorder_row(this: &mut SettingsWindow, cx: &mut Context<SettingsWindow>) -> 
     );
     let focus = this.general.focus.clone();
     div()
+        .id("open-pane-recorder")
+        .debug_selector(|| "open-pane-recorder".into())
         .flex()
         .items_center()
         .gap(geometry.row_gap)
@@ -272,8 +274,6 @@ fn recorder_row(this: &mut SettingsWindow, cx: &mut Context<SettingsWindow>) -> 
                 cx.notify();
             }
         }))
-        .id("open-pane-recorder")
-        .debug_selector(|| "open-pane-recorder".into())
 }
 
 /// The binding the row shows: the shortcut as the user names it, in the
@@ -299,7 +299,11 @@ fn binding_chip(binding: &str, recording: bool, theme: &Theme) -> Stateful<Div> 
         } else {
             theme.text_title
         })
-        .child(if recording { "…" } else { binding })
+        .child(if recording {
+            "…".to_owned()
+        } else {
+            binding.to_owned()
+        })
 }
 
 /// The reset row: back to the provisional default, through the same
