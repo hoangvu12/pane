@@ -1,5 +1,6 @@
-//! Pane's host settings: the appearance preferences the application owns,
-//! held as one observable entity every window renders through.
+//! Pane's host settings: the appearance preferences and the
+//! launch-at-login choice the application owns, held as one observable
+//! entity every window renders through.
 //!
 //! [`init`] reads the record — `settings.json` in Pane's data folder, kept
 //! by [`pane_core::HostSettings`] under the house record rules — applies
@@ -38,6 +39,20 @@
 //! with the product defaults and nowhere to save, and no environment
 //! overrides, so those windows render deterministically.
 //!
+//! The launch-at-login choice is the same discipline with one more
+//! party: the platform's own registration, reached through the
+//! [`pane_core::autostart`] adapter the entity holds. The registration
+//! is changed before the record is written, so a platform that refuses
+//! leaves the preference, the registration and the record as they were;
+//! at start the saved choice is reconciled with the registration the
+//! platform reports (a missing or stale one repaired, a registration
+//! the user did not choose removed, a disabled choice never silently
+//! enabled); and the entity keeps the three truths apart — the saved
+//! preference, the registration the platform reports, and the
+//! integration's own unavailability — so the General page can show all
+//! three instead of one pretense. The adapters the tests inject are
+//! fakes; an entity built without one manages no registration at all.
+//!
 //! What this module does not do: it makes no palette or surface decision
 //! of its own. [`crate::ui::Visuals`] stays presentation — this module
 //! resolves the preferences into it, including the platform's
@@ -45,11 +60,13 @@
 //! explains that.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use gpui::{
     App, AppContext as _, Context, Entity, Global, Window, WindowAppearance,
     WindowBackgroundAppearance,
 };
+use pane_core::autostart::{Autostart, Registration};
 use pane_core::{HostSettings, MaterialPreference, ThemePreference};
 
 use crate::ui::Visuals;
@@ -141,12 +158,28 @@ fn material_word(preference: MaterialPreference) -> &'static str {
     }
 }
 
+/// The launch-at-login integration: the system adapter Pane reaches the
+/// platform through, and the registration it last reported — the
+/// *effective* state, as distinct from the user's saved preference and
+/// from the platform's ability to manage a registration at all.
+struct Login {
+    /// The adapter: the platform's own, or one a test injects in its
+    /// place. One adapter for the whole entity's life.
+    adapter: Arc<dyn Autostart>,
+    /// The registration the adapter last reported: its own query, or the
+    /// outcome of the last change that succeeded; `Err` the problem the
+    /// last query or change failed with, which the General page explains
+    /// instead of showing a preference that pretends.
+    state: Result<Registration, String>,
+}
+
 /// The host settings as one observable entity: what the record holds, what
 /// Pane shows and saves now, the process's development overrides, the
-/// system's appearance as the windows observe it, and the effective
-/// visuals every window renders with. Built by [`init`] (or
-/// [`ensure`]); the accessors below are what windows and the appearance
-/// page read, and the setters what the page drives.
+/// system's appearance as the windows observe it, the effective
+/// visuals every window renders with, and the launch-at-login
+/// integration the General page manages. Built by [`init`] (or
+/// [`ensure`]); the accessors below are what windows and the settings
+/// pages read, and the setters what the pages drive.
 pub(crate) struct Settings {
     /// Pane's data folder, where the record is kept; `None` when there is
     /// none, so choices last only until this Pane quits.
@@ -172,17 +205,27 @@ pub(crate) struct Settings {
     /// Whether a choice arrived while a save was in flight, to save what
     /// is chosen then once the write answers.
     pending: bool,
+    /// The launch-at-login integration, whose registration the General
+    /// page manages through the entity (see [`Login`]).
+    login: Login,
     /// What every window renders with, recomputed whenever any input to it
     /// changes.
     effective: Visuals,
 }
 
 impl Settings {
-    /// The settings over the record in `dir`, with `overrides` in force and
-    /// the system's appearance as the app reports it now. An unreadable
-    /// record loads the defaults beside its problem, which the page
-    /// reports; it is never replaced while Pane runs.
-    fn open(dir: Option<PathBuf>, overrides: Overrides, cx: &Context<Self>) -> Settings {
+    /// The settings over the record in `dir`, with `overrides` in force,
+    /// the system's appearance as the app reports it now, and the login
+    /// `integration` the General page manages. An unreadable record loads
+    /// the defaults beside its problem, which the page reports; it is
+    /// never replaced while Pane runs. The saved launch-at-login choice
+    /// is reconciled with the registration the integration reports.
+    fn open(
+        dir: Option<PathBuf>,
+        overrides: Overrides,
+        integration: Arc<dyn Autostart>,
+        cx: &Context<Self>,
+    ) -> Settings {
         let (saved, unreadable) = match &dir {
             Some(dir) => match HostSettings::open(dir) {
                 Ok(saved) => (saved, None),
@@ -192,7 +235,7 @@ impl Settings {
         };
         let system = appearance_of(cx.window_appearance());
         let chosen = saved;
-        Settings {
+        let mut settings = Settings {
             dir,
             effective: visuals_of(
                 overrides.theme.unwrap_or(chosen.theme),
@@ -207,7 +250,13 @@ impl Settings {
             save_error: None,
             saving: false,
             pending: false,
-        }
+            login: Login {
+                adapter: integration,
+                state: Ok(Registration::Disabled),
+            },
+        };
+        settings.reconcile_login();
+        settings
     }
 
     /// The theme the windows render by: the override's, or the chosen
@@ -271,6 +320,104 @@ impl Settings {
         let mut chosen = self.chosen;
         chosen.material = preference;
         self.choose(chosen, cx);
+    }
+
+    /// Whether the user chose Pane to start at login: the *saved
+    /// preference*, as distinct from the registration the platform
+    /// actually holds (see [`Settings::login_registration`]).
+    pub(crate) fn launch_at_login(&self) -> bool {
+        self.chosen.launch_at_login
+    }
+
+    /// Why the launch-at-login registration cannot be managed here at
+    /// all, if it cannot — an unsupported platform, a development build,
+    /// an operating system without the API. The General page explains
+    /// the reason and offers no toggle; nothing pretends to manage a
+    /// registration the platform will not let Pane touch.
+    pub(crate) fn login_unavailable(&self) -> Option<String> {
+        self.login.adapter.unavailable()
+    }
+
+    /// The registration the platform last reported: the *effective*
+    /// state, as distinct from the preference. `Err` holds the problem
+    /// the last query or change failed with, which the page explains.
+    pub(crate) fn login_registration(&self) -> &Result<Registration, String> {
+        &self.login.state
+    }
+
+    /// Chooses whether Pane starts at login: the platform's registration
+    /// is changed first, so a refusal leaves the preference, the
+    /// registration and the record as they were — a failed registration
+    /// or removal never masquerades as a successful toggle — and the
+    /// record is then written off the window's thread, as the appearance
+    /// choices are. An unreadable record refuses the choice, as it
+    /// refuses the appearance's: the record's rule is not to replace
+    /// what cannot be read.
+    pub(crate) fn set_launch_at_login(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if enabled == self.chosen.launch_at_login {
+            return;
+        }
+        if let Some(problem) = self.unreadable.clone() {
+            self.save_error = Some(format!("Pane does not replace it: {problem}"));
+            cx.notify();
+            return;
+        }
+        let changed = if enabled {
+            self.login.adapter.enable()
+        } else {
+            self.login.adapter.disable()
+        };
+        match changed {
+            Ok(registration) => {
+                self.login.state = Ok(registration);
+                self.chosen.launch_at_login = enabled;
+                self.changed(cx);
+                self.save(cx);
+            }
+            Err(problem) => {
+                // An adapter that cannot manage the registration here
+                // answers with its reason, which is exactly what the
+                // page needs to show; the preference stays what it was.
+                self.login.state = Err(problem);
+                cx.notify();
+            }
+        }
+    }
+
+    /// Reconciles the saved launch-at-login choice with the registration
+    /// the integration reports at start: a registration missing or stale
+    /// (the platform's own state, not the record's) is repaired to what
+    /// the user chose, and a registration the user did not choose is
+    /// removed — a disabled choice is never silently enabled, because
+    /// the repair only ever follows the record. A record that cannot be
+    /// read, an integration that cannot manage the registration here, or
+    /// a system that cannot be asked leaves the registration exactly as
+    /// it is: the state is reported and the page explains the problem
+    /// rather than guessing.
+    fn reconcile_login(&mut self) {
+        if self.unreadable.is_some() {
+            // The record cannot be asked what the user chose; touching
+            // the registration would impose a choice nobody made.
+            return;
+        }
+        if let Some(reason) = self.login.adapter.unavailable() {
+            self.login.state = Err(reason);
+            return;
+        }
+        match self.login.adapter.registered() {
+            Err(problem) => self.login.state = Err(problem),
+            Ok(registration) if registration.registered() == self.chosen.launch_at_login => {
+                self.login.state = Ok(registration);
+            }
+            Ok(_) => {
+                let repair = if self.chosen.launch_at_login {
+                    self.login.adapter.enable()
+                } else {
+                    self.login.adapter.disable()
+                };
+                self.login.state = repair;
+            }
+        }
     }
 
     /// Takes `chosen`, repaints, and saves. The single path every choice
@@ -359,11 +506,33 @@ impl Settings {
                 self.saved = snapshot;
             }
             Err(why) => {
-                self.save_error = Some(format!("Pane could not save your choice: {why}"));
+                let mut problem = format!("Pane could not save your choice: {why}");
                 if self.chosen == snapshot {
                     self.chosen = self.saved;
+                    if snapshot.launch_at_login != self.saved.launch_at_login {
+                        // The registration was changed for a choice that
+                        // could not be kept: undo it, so what Pane
+                        // actually starts at login is what the record
+                        // last held — a failed save never masquerades as a
+                        // successful toggle. An undo that itself fails is
+                        // reported beside the save's problem, not hidden.
+                        let undone = if self.saved.launch_at_login {
+                            self.login.adapter.enable()
+                        } else {
+                            self.login.adapter.disable()
+                        };
+                        match undone {
+                            Ok(registration) => self.login.state = Ok(registration),
+                            Err(undo) => {
+                                problem = format!(
+                                    "{problem}; Pane could not undo the login registration: {undo}"
+                                )
+                            }
+                        }
+                    }
                     self.changed(cx);
                 }
+                self.save_error = Some(problem);
             }
         }
         if self.pending {
@@ -423,20 +592,46 @@ impl Global for Shared {}
 
 /// Initializes the host settings and makes them the app's global: the
 /// record in `dir` (Pane's data folder), with the development overrides
-/// the environment names in force for this process. The first initializer
-/// wins — later calls leave the existing settings alone. Call once, at
-/// startup, before the first window opens.
+/// the environment names in force for this process, and the platform's
+/// own login integration, whose registration is reconciled with the
+/// saved launch-at-login choice. The first initializer wins — later
+/// calls leave the existing settings alone. Call once, at startup,
+/// before the first window opens.
 pub fn init(dir: Option<PathBuf>, cx: &mut App) {
-    init_with_overrides(dir, Overrides::from_env(), cx);
+    init_with_login(
+        dir,
+        Overrides::from_env(),
+        pane_core::autostart::native(),
+        cx,
+    );
 }
 
 /// [`init`] with the overrides named outright, so a caller (the tests)
 /// fixes what the process overrides without touching the environment.
+/// The login integration stays unset: an entity built this way manages
+/// no registration — the tests inject their own adapter through
+/// [`init_with_login`] — so no test ever touches the login configuration
+/// of the machine it runs on.
 pub fn init_with_overrides(dir: Option<PathBuf>, overrides: Overrides, cx: &mut App) {
+    init_with_login(dir, overrides, pane_core::autostart::none(), cx);
+}
+
+/// [`init`] with the overrides *and* the login integration named
+/// outright: the integration the entity manages the registration
+/// through, which the binary leaves to the platform's own
+/// ([`pane_core::autostart::native`]) and the tests replace with their
+/// fake (see the General page's tests). The saved launch-at-login
+/// choice is reconciled with the registration it reports, as at start.
+pub fn init_with_login(
+    dir: Option<PathBuf>,
+    overrides: Overrides,
+    integration: Arc<dyn Autostart>,
+    cx: &mut App,
+) {
     if cx.try_global::<Shared>().is_some() {
         return;
     }
-    let settings = cx.new(|cx| Settings::open(dir, overrides, cx));
+    let settings = cx.new(|cx| Settings::open(dir, overrides, integration, cx));
     let theme = settings.read(cx).theme_preference();
     cx.set_global(Shared(settings));
     // The native chrome follows the theme the settings resolve to, so the

@@ -72,16 +72,23 @@ pub enum MaterialPreference {
     Solid,
 }
 
-/// The host settings as the user chose them: one theme preference and one
-/// material preference, the whole of what the appearance page offers
-/// today. Later pages add fields beside these, with the same rules:
-/// missing fields default, and unknown values fail the record.
+/// The host settings as the user chose them: one theme preference, one
+/// material preference and the launch-at-login choice, the whole of
+/// what the Settings pages offer today. Later pages add fields beside
+/// these, with the same rules: missing fields default, and unknown values
+/// fail the record.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct HostSettings {
     /// The theme the user chose for Pane's windows.
     pub theme: ThemePreference,
     /// The surface the user chose for Pane's windows.
     pub material: MaterialPreference,
+    /// Whether the user chose Pane to start at login. A preference, not a
+    /// registration: whether Pane actually starts is the platform's own
+    /// login integration, which the window layer reconciles with this
+    /// choice (see `crate::autostart`) rather than trusting either side
+    /// alone.
+    pub launch_at_login: bool,
 }
 
 impl HostSettings {
@@ -120,6 +127,7 @@ impl HostSettings {
         Ok(HostSettings {
             theme: recorded.theme,
             material: recorded.material,
+            launch_at_login: recorded.launch_at_login,
         })
     }
 
@@ -133,6 +141,7 @@ impl HostSettings {
             version: VERSION,
             theme: self.theme,
             material: self.material,
+            launch_at_login: self.launch_at_login,
         };
         let text = serde_json::to_string_pretty(&recorded).map_err(|error| error.to_string())?;
         let file = dir.join(FILE);
@@ -141,15 +150,18 @@ impl HostSettings {
     }
 }
 
-/// The settings as the record holds them. Both fields are written every
+/// The settings as the record holds them. All fields are written every
 /// time, and missing fields read as the defaults.
 #[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct Recorded {
     version: u64,
     #[serde(default)]
     theme: ThemePreference,
     #[serde(default)]
     material: MaterialPreference,
+    #[serde(default)]
+    launch_at_login: bool,
 }
 
 #[cfg(test)]
@@ -167,11 +179,7 @@ mod tests {
     fn no_record_means_the_defaults() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(
-            HostSettings::open(dir.path()).unwrap(),
-            HostSettings {
-                theme: ThemePreference::Dark,
-                material: MaterialPreference::Glass
-            }
+            HostSettings::open(dir.path()).unwrap(),n            HostSettings::default()
         );
     }
 
@@ -193,9 +201,34 @@ mod tests {
         let settings = HostSettings {
             theme: ThemePreference::System,
             material: MaterialPreference::Solid,
+            launch_at_login: true,
         };
         settings.save(dir.path()).unwrap();
         assert_eq!(HostSettings::open(dir.path()).unwrap(), settings);
+    }
+
+    #[test]
+    fn the_launch_at_login_choice_is_written_and_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings = HostSettings {
+            launch_at_login: true,
+            ..HostSettings::default()
+        };
+        settings.save(dir.path()).unwrap();
+        assert_eq!(HostSettings::open(dir.path()).unwrap(), settings);
+        // The field is named as the house records name their fields, so
+        // the choice survives a Pane that knows it by name alone.
+        let text = std::fs::read_to_string(dir.path().join(FILE)).unwrap();
+        assert!(
+            text.contains("\"launchAtLogin\": true"),
+            "the record is {text}"
+        );
+        // A record without the field is one an older Pane wrote: the
+        // choice defaults to off, not an error.
+        assert_eq!(
+            reading(r#"{ "version": 1 }"#).unwrap().launch_at_login,
+            false
+        );
     }
 
     #[test]
@@ -230,6 +263,7 @@ mod tests {
             r#"{ "version": 1, "theme": "sepia" }"#,
             r#"{ "version": 1, "material": "frost" }"#,
             r#"{ "version": 1, "theme": 3 }"#,
+            r#"{ "version": 1, "launchAtLogin": "yes" }"#,
         ] {
             assert!(reading(text).is_err(), "{text} half-loads");
         }
@@ -246,6 +280,7 @@ mod tests {
         let failed = HostSettings {
             theme: ThemePreference::Light,
             material: MaterialPreference::Solid,
+            launch_at_login: true,
         }
         .save(dir.path());
         assert!(failed.is_err(), "{failed:?}");

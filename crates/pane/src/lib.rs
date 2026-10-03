@@ -178,10 +178,12 @@ pub fn default_extensions() -> Vec<pane_core::DefaultExtension> {
     extensions
 }
 
-/// Initializes Pane's host settings — the appearance preferences recorded
-/// in `settings.json` in Pane's data folder, which both windows follow as
-/// they change, with the development overrides `PANE_THEME` and
-/// `PANE_MATERIAL` winning for this process — and embeds the Geist fonts.
+/// Initializes Pane's host settings — the appearance preferences and the
+/// launch-at-login choice recorded in `settings.json` in Pane's data
+/// folder, which both windows follow as they change, with the development
+/// overrides `PANE_THEME` and `PANE_MATERIAL` winning for this process
+/// and the platform's login integration reconciled with the saved choice
+/// — and embeds the Geist fonts.
 /// The binary calls this once at startup, before opening the first window;
 /// a font error is returned but the caller may continue with the system's
 /// default font. Tests never call it: a window built without initialized
