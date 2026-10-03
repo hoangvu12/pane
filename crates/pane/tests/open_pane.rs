@@ -599,7 +599,7 @@ fn a_save_that_fails_rolls_the_registration_back(cx: &mut TestAppContext) {
     // Another change: it registers with the system, but cannot be saved.
     click(&mut settings_cx, "open-pane-recorder");
     settings_cx.run_until_parked();
-    settings_cx.simulate_keystrokes("ctrl+alt+c");
+    settings_cx.simulate_keystrokes("ctrl-alt-c");
     until_diag(&mut settings_cx, |tree| {
         tree.contains("Pane could not save your choice")
     });
