@@ -335,6 +335,9 @@ fn choice(
 ) -> Stateful<Div> {
     let typography = &theme.typography;
     let geometry = &theme.geometry;
+    // What the row says under its name: the reason a choice cannot be
+    // answered here, where it cannot, else the choice's own subtitle.
+    let description = reason.unwrap_or_else(|| subtitle.to_owned());
     let row = div()
         .flex()
         .items_center()
@@ -381,7 +384,7 @@ fn choice(
                     div()
                         .text_size(typography.row_subtitle_size)
                         .text_color(theme.text_muted)
-                        .child(reason.unwrap_or_else(|| subtitle.to_owned())),
+                        .child(description.clone()),
                 ),
         );
     row.id(name)
@@ -389,6 +392,9 @@ fn choice(
         .anchor_scroll(Some(anchor))
         .role(Role::RadioButton)
         .aria_label(name)
+        // The reason a choice cannot be used here is read as the row's
+        // description, as root search's rows read their subtitles.
+        .aria_description(description)
         .aria_toggled(if chosen {
             Toggled::True
         } else {
