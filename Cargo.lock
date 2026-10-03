@@ -4376,6 +4376,7 @@ checksum = "6e6eb142958d64335fb0e345c5b9ead2ecd6fc438c307e9d7d3c4fd428dbaf12"
 name = "pane"
 version = "0.1.0"
 dependencies = [
+ "crc32fast",
  "flate2",
  "futures",
  "gpui-ce",
