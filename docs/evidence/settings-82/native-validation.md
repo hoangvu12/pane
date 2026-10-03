@@ -29,6 +29,21 @@ hand-written index is the same shape). A second run with `PANE_ARTIFACTS`
 cleared captures the no-source state; nothing reaches Pane's published
 downloads or the network in either run.
 
+## What the simulated coverage already pins
+
+`crates/pane/tests/settings.rs` drives every state the flow has through the
+real Settings window — the version row's real build version, the
+documentation entry's opening (and its refusal, where no handler is
+installed), no-source, a check that answers up to date, an unreachable
+source, a failed check retried, the offer installed by the user's click,
+an install whose download is interrupted partway and retried, an install
+whose package fails its integrity check with the offer kept, a check left
+running while the page is left, and the diagnostics copy to the clipboard —
+against the local artifact source, never a real release service. The native
+run below adds what a simulated window cannot: the real program swap on a
+real install folder, the real system handler opening the documentation, and
+the real clipboard.
+
 ## What to capture natively (Windows first)
 
 1. **The page with no release source.** `Ctrl+,` opens Settings, walk the
