@@ -671,7 +671,8 @@ fn a_commands_hotkey_still_opens_its_command_with_the_root_preference(cx: &mut T
             .with_hotkeys(Arc::new(FakeSystem::default()));
     cx.executor().allow_parking();
     cx.update(pane::bind_keys);
-    let (window, cx) = cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
+    let (window, cx) =
+        cx.add_window_view(|window, cx| LauncherWindow::new(launcher.clone(), window, cx));
 
     // Install the package and open its command, then leave it open.
     let installing = launcher.install_package(&folder);
@@ -703,7 +704,7 @@ fn the_recorded_choices_are_applied_by_a_fresh_application(cx: &mut TestAppConte
     let data = tempfile::tempdir().unwrap();
     let placement = Rc::new(FakePlacement::default());
     placement.layout(Some(Point { x: 2500., y: 700. }), None);
-    let (window, cx) = open(cx, Some(data.path()), &placement);
+    let (_window, cx) = open(cx, Some(data.path()), &placement);
 
     // Both choices, taken through the page's own controls.
     let (_settings, mut settings_cx) = open_launcher_page(cx);
