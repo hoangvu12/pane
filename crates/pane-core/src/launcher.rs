@@ -82,6 +82,7 @@ mod updates;
 use acquire::{Acquisitions, Defaults};
 use aliases::AliasChoices;
 pub use aliases::AliasOutcome;
+pub use application_update::ApplicationUpdate;
 use application_update::{Application, Updates};
 use choices::Record;
 use developing::Developing;
@@ -2240,7 +2241,7 @@ impl Launcher {
                 launcher.install_application_update().await;
             }
             if check_update {
-                launcher.retry_checking_update().await;
+                launcher.check_application_update_again().await;
             }
             if let Some(identity) = stop_sharing {
                 launcher.stop_sharing_folder(identity).await;
