@@ -931,7 +931,7 @@ fn a_custom_view_keeps_its_own_keys_under_a_rebound_binding(cx: &mut TestAppCont
     );
     assert_eq!(view.title, "Choose a color");
     cx.simulate_keystrokes("down");
-    until_color(&window, cx, "Dark purple, #4A148C");
+    until_color(&window, cx, "Dark blue, #0D47A1");
     cx.simulate_keystrokes("escape");
     let view = settle(&window, cx);
     assert_eq!(view.screen, Screen::Command, "the back key closed the view");
