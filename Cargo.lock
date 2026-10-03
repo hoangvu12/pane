@@ -4377,7 +4377,7 @@ name = "pane"
 version = "0.1.0"
 dependencies = [
  "core-graphics",
- "flake2",
+ "flate2",
  "futures",
  "gpui-ce",
  "gpui_ce_elements",
