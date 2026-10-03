@@ -4,6 +4,7 @@
 mod application_update;
 pub mod applications;
 mod atomic;
+pub mod autostart;
 pub mod changes;
 pub mod clipboard;
 pub mod defaults;

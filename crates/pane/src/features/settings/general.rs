@@ -1,9 +1,11 @@
-//! The General page: the Open Pane hotkey — the application-owned global
-//! binding that summons the launcher from any application, recorded here
-//! and applied through the platform's global-shortcut registration.
+//! The General page: the choices that govern Pane as a whole — today,
+//! the Open Pane hotkey and whether Pane starts at login.
 //!
-//! The binding is Pane's own, not any extension's: the record it is kept
-//! in is the host settings' (`settings.json`, whose rules the entity in
+//! The Open Pane hotkey is the application-owned global binding that
+//! summons the launcher from any application, recorded here and applied
+//! through the platform's global-shortcut registration. The binding is
+//! Pane's own, not any extension's: the record it is kept in is the host
+//! settings' (`settings.json`, whose rules the entity in
 //! `crate::settings` keeps), it is registered through the launcher this
 //! window shares with the launcher window, and it stays registered while
 //! every extension is disabled and while the extension runtime has
@@ -22,6 +24,23 @@
 //! binding. Reset goes back to the provisional default through the same
 //! checks as recording.
 //!
+//! The launch-at-login choice is the same discipline with one more
+//! party: the platform's own registration, reached through the
+//! [`pane_core::autostart`] adapter the entity holds. The choice, the
+//! registration and the platform's ability are three different truths,
+//! and the page shows all three rather than one pretense. The switch
+//! carries the user's *saved preference*; the note under it carries what
+//! the platform actually holds or why the last change failed (a
+//! registration that still awaits macOS's approval, a system that
+//! refused, the freedesktop convention's limit on Linux); and where the
+//! integration cannot manage a registration here at all — an unsupported
+//! platform, a development build — the switch is not offered, and the
+//! reason is shown instead. A failed registration, removal or save is
+//! the page's status, never a switch that pretends it succeeded. Every
+//! value shown and every choice taken goes through the host settings
+//! ([`crate::settings`]), so the record's own rules (atomic writes, an
+//! unreadable record never replaced) are the ones this choice lives by.
+//!
 //! What the page explains: the binding's state — why a chosen one is not
 //! registered, including the Wayland limitation and the desktop-shortcut
 //! guidance the adapter itself carries — the reason a recording was
@@ -31,8 +50,9 @@
 
 use gpui::{
     AnyElement, App, Context, Div, FocusHandle, Hsla, KeyBinding, KeyDownEvent, MouseDownEvent,
-    Role, Stateful, Window, actions, div, prelude::*, px,
+    Role, Stateful, Toggled, Window, actions, div, prelude::*, px,
 };
+use pane_core::autostart::Registration;
 use pane_core::hotkeys::Shortcut;
 
 use super::{Page, SettingsWindow};
@@ -69,12 +89,12 @@ pub(crate) fn bind_keys(cx: &mut App) {
     ]);
 }
 
-/// The General page, registered first in the window's page list: the one
-/// the window opens on, holding the Open Pane hotkey.
+/// The General page, registered first in the window's page list: the
+/// page of Pane as a whole, the one the window opens on.
 pub(crate) fn page() -> Page {
     Page {
         title: "General",
-        icon: (IconTone::Command, Glyph::Prompt),
+        icon: (IconTone::Command, Glyph::Sliders),
         render,
     }
 }
@@ -104,8 +124,8 @@ impl State {
 }
 
 /// Draws the General page: the Open Pane hotkey — its recorder and reset —
-/// what the binding's state explains, and what the last attempt or save
-/// reported.
+/// the launch-at-login switch, what each of them explains, and what the
+/// last attempt or save reported.
 fn render(
     this: &mut SettingsWindow,
     _window: &mut Window,
@@ -115,11 +135,20 @@ fn render(
     let typography = &theme.typography;
     // Everything the page shows about the binding comes from the host
     // settings (the choice, the save's word) and the launcher (what is
-    // registered, and why not): what the record holds and what actually
+    // registered, and why not), and everything about the login choice
+    // comes from the host settings (the preference, the registration and
+    // the platform's ability): what the record holds and what actually
     // works stay distinguishable.
-    let (choice, status) = {
-        let settings = crate::settings::shared(cx).read(cx);
-        (settings.open_pane(), settings.status())
+    let settings = crate::settings::shared(cx);
+    let (choice, status, preference, unavailable, registration) = {
+        let state = settings.read(cx);
+        (
+            state.open_pane(),
+            state.status(),
+            state.launch_at_login(),
+            state.login_unavailable(),
+            state.login_registration().clone(),
+        )
     };
     let problem = this.launcher.open_pane_problem();
     let rejection = this.general.rejection.clone();
@@ -159,6 +188,27 @@ fn render(
                 &theme,
             ))
         })
+        .child(group(
+            "Startup",
+            vec![switch(
+                preference,
+                unavailable.is_none(),
+                &theme,
+                // The click reports the choice to the host settings: the
+                // registration is changed, the record written, and the
+                // switch redrawn with what was actually kept.
+                cx.listener(move |_, _, _, cx| {
+                    crate::settings::shared(cx).update(cx, |settings, cx| {
+                        settings.set_launch_at_login(!preference, cx);
+                    });
+                }),
+            )],
+            &theme,
+        ))
+        .when_some(
+            login_note(preference, unavailable, registration, &theme),
+            |page, note| page.child(note),
+        )
         // What the last attempt was refused with, if anything.
         .when_some(rejection, |page, rejection| {
             page.child(note("general-refusal", &rejection, theme.danger, &theme))
@@ -358,6 +408,96 @@ fn reset_row(resettable: bool, cx: &mut Context<SettingsWindow>) -> Stateful<Div
         })
 }
 
+/// The launch-at-login switch row: the reference's row chrome carrying a
+/// switch's marks and semantics, the switch itself at the right. The
+/// switch carries the *saved preference*; `offered` is whether choosing
+/// it does anything (nothing is offered where the platform cannot manage
+/// the registration, and the row says so by its state).
+fn switch(
+    preference: bool,
+    offered: bool,
+    theme: &Theme,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+) -> Stateful<Div> {
+    let typography = &theme.typography;
+    let geometry = &theme.geometry;
+    div()
+        .flex()
+        .items_center()
+        .gap(geometry.row_gap)
+        .min_h(geometry.row_min_height)
+        .px(geometry.row_padding_x)
+        .rounded(geometry.row_radius)
+        .when(offered, |row| {
+            row.cursor_pointer().hover(|row| row.bg(theme.row_hover))
+        })
+        .when(!offered, |row| row.opacity(0.5).cursor_default())
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .truncate()
+                        .text_size(typography.row_title_size)
+                        .font_weight(typography.medium)
+                        .text_color(theme.text_title)
+                        .child("Launch Pane at login"),
+                )
+                .child(
+                    div()
+                        .text_size(typography.row_subtitle_size)
+                        .text_color(theme.text_muted)
+                        .child("Pane is ready when you log in"),
+                ),
+        )
+        .child(track(preference, theme))
+        .id("launch-at-login")
+        .debug_selector(|| "general-launch-at-login".into())
+        .role(Role::Switch)
+        .aria_label("Launch Pane at login")
+        .aria_toggled(if preference {
+            Toggled::True
+        } else {
+            Toggled::False
+        })
+        .when(!offered, |row| row.aria_disabled(true))
+        .when(offered, |row| row.on_click(on_click))
+}
+
+/// The switch itself: the track with its knob, slid to the side the
+/// preference names. Presentation only — the row owns the interaction.
+fn track(preference: bool, theme: &Theme) -> Div {
+    div()
+        .flex_none()
+        .flex()
+        .w(px(36.))
+        .h(px(20.))
+        .px(px(2.))
+        .items_center()
+        .rounded(px(10.))
+        // The track says the choice itself: the success tone when Pane
+        // starts at login, the quiet hairline when it does not.
+        .when(preference, |track| track.bg(theme.success))
+        .when(!preference, |track| track.bg(theme.hairline))
+        .when(preference, |track| track.justify_end())
+        .child(
+            div()
+                .flex_none()
+                .size(px(16.))
+                .rounded(px(8.))
+                .bg(theme.panel_solid)
+                // The knob's lift off the track: a faint shadow.
+                .shadow(vec![gpui::BoxShadow::new(
+                    px(0.),
+                    px(0.),
+                    gpui::rgb_to_hsla(gpui::rgba(0x00000026)),
+                )]),
+        )
+}
+
 /// One explanatory line of the page: `text` in `color`, named for
 /// assistive technology and drawn as a status.
 fn note(selector: &'static str, text: &str, color: Hsla, theme: &Theme) -> Stateful<Div> {
@@ -370,6 +510,56 @@ fn note(selector: &'static str, text: &str, color: Hsla, theme: &Theme) -> State
         .text_size(theme.typography.row_subtitle_size)
         .text_color(color)
         .child(text.to_owned())
+}
+
+/// The note under the startup group, if the launch-at-login choice needs
+/// one: why the integration is unavailable here, what the platform
+/// actually holds when that differs from a working registration, or the
+/// limit of the convention the platform uses. `None` when the preference
+/// and the registration agree and the platform needs no explanation.
+fn login_note(
+    preference: bool,
+    unavailable: Option<String>,
+    registration: Result<Registration, String>,
+    theme: &Theme,
+) -> Option<Stateful<Div>> {
+    let (text, color) = if let Some(reason) = unavailable {
+        // The platform (or this build) cannot manage the registration
+        // here at all: the reason, not a toggle that pretends.
+        (reason, theme.warning)
+    } else if let Err(problem) = registration {
+        // The last query or change failed, and the preference is what it
+        // was: the problem is the truth to show.
+        (problem, theme.warning)
+    } else if registration == Ok(Registration::NeedsApproval) {
+        (
+            "Pane is registered, but macOS asks for your approval: open System Settings, \
+             under General → Login Items, and allow Pane."
+                .into(),
+            theme.text_muted,
+        )
+    } else if cfg!(target_os = "linux") && preference {
+        (
+            "The registration is an autostart entry in the freedesktop convention: the major \
+             desktop environments start these, but not every desktop does, and Pane cannot see \
+             whether it was started."
+                .into(),
+            theme.text_muted,
+        )
+    } else {
+        return None;
+    };
+    Some(
+        div()
+            .id("general-login-note")
+            .debug_selector(|| "general-login-note".into())
+            .pt(px(6.))
+            .role(Role::Status)
+            .aria_label(text.clone())
+            .text_size(theme.typography.row_kind_size)
+            .text_color(color)
+            .child(text),
+    )
 }
 
 impl SettingsWindow {
