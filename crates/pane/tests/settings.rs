@@ -763,65 +763,12 @@ fn choosing_a_theme_re_renders_both_windows_and_the_preview(cx: &mut TestAppCont
     let row = settings_cx
         .debug_bounds("appearance-theme-Light")
         .expect("the Light choice is drawn");
-    eprintln!(
-        "DIAG row={row:?} page={:?}",
-        settings_cx.debug_bounds("settings-page")
-    );
-    settings_cx.simulate_mouse_move(row.center(), None, Modifiers::none());
-    settings_cx.run_until_parked();
-    settings_cx.update(|window, _| {
-        eprintln!(
-            "DIAG hovered hitboxes at row center: {}",
-            window.mouse_hit_test().iter_hovered().count()
-        );
-    });
-    // A point inside the page but in its left padding, over no row.
-    settings_cx.simulate_mouse_move(
-        gpui::Point::new(px(210.), row.center().y),
-        None,
-        Modifiers::none(),
-    );
-    settings_cx.run_until_parked();
-    settings_cx.update(|window, _| {
-        eprintln!(
-            "DIAG hovered hitboxes in the page padding: {}",
-            window.mouse_hit_test().iter_hovered().count()
-        );
-    });
-    settings_cx.simulate_mouse_move(row.center(), None, Modifiers::none());
-    settings_cx.run_until_parked();
-    // The hover wash: the row's hover style paints the wash quad when its
-    // hitbox is hovered.
-    let wash = panel(0xFFFFFF09);
-    settings_cx.update(|window, _| {
-        eprintln!(
-            "DIAG hover wash quads: {}",
-            window
-                .painted_quads()
-                .iter()
-                .filter(|quad| quad.background == wash)
-                .count()
-        );
-    });
-    settings_cx.simulate_click(row.center(), Modifiers::none());
-    settings_cx.run_until_parked();
+    // The Light choice, taken through the page's own control: no
+    // restart, no second window — both windows re-render with it at
+    // once.
+    choose(&mut settings_cx, "appearance-theme-Light");
     cx.run_until_parked();
-    eprintln!(
-        "DIAG after click: Light chosen={} quads={}",
-        chosen(&mut settings_cx, "Light"),
-        panels_painting(&mut settings_cx, &light_panel())
-    );
-    // The control: a sidebar row click in the same window and frame —
-    // known-good construction, known to switch pages.
-    let about = settings_cx
-        .debug_bounds("section-About")
-        .expect("the About section is drawn");
-    settings_cx.simulate_click(about.center(), Modifiers::none());
     settings_cx.run_until_parked();
-    eprintln!(
-        "DIAG control click: about-version drawn={}",
-        settings_cx.debug_bounds("about-version").is_some()
-    );
     assert!(
         paints_panel(cx, &light_panel()),
         "the launcher paints the light palette"

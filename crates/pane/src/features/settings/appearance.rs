@@ -143,10 +143,8 @@ fn render(
                         overridden,
                         theme,
                         cx.listener(move |_, _, _, cx| {
-                            eprintln!("APPEARANCE CLICK theme {preference:?}");
                             crate::settings::shared(cx)
                                 .update(cx, |settings, cx| settings.set_theme(preference, cx));
-                            eprintln!("APPEARANCE CLICK theme done");
                         }),
                     )
                 })
@@ -166,10 +164,8 @@ fn render(
                         overridden,
                         theme,
                         cx.listener(move |_, _, _, cx| {
-                            eprintln!("APPEARANCE CLICK material {preference:?}");
                             crate::settings::shared(cx)
                                 .update(cx, |settings, cx| settings.set_material(preference, cx));
-                            eprintln!("APPEARANCE CLICK material done");
                         }),
                     )
                 })
@@ -276,7 +272,7 @@ fn choice(
     chosen: bool,
     offered: bool,
     theme: &Theme,
-    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+    on_press: impl Fn(&gpui::MouseDownEvent, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
     let mark = if chosen { "◉ " } else { "○ " };
     let title: SharedString = format!("{mark}{name}").into();
@@ -302,18 +298,14 @@ fn choice(
         Toggled::False
     })
     .when(!offered, |row| row.aria_disabled(true).opacity(0.5))
-    .on_mouse_down(gpui::MouseButton::Left, move |_, _, _| {
-        eprintln!("APPEARANCE MOUSEDOWN {name}");
-    })
-    .on_mouse_up(gpui::MouseButton::Left, move |_, _, _| {
-        eprintln!("APPEARANCE MOUSEUP {name}");
-    })
-    .on_click(move |event: &gpui::ClickEvent, window, cx| {
-        if offered {
-            eprintln!("APPEARANCE CLICK2 {name}");
-            on_click(event, window, cx);
-        }
-    })
+    .on_mouse_down(
+        gpui::MouseButton::Left,
+        move |event: &gpui::MouseDownEvent, window, cx| {
+            if offered {
+                on_press(event, window, cx);
+            }
+        },
+    )
 }
 
 /// The material's note, if the chosen material needs one: the platform's
