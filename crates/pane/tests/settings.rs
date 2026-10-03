@@ -1920,7 +1920,21 @@ fn the_settings_window_keeps_its_layout_at_small_sizes(cx: &mut TestAppContext) 
     );
 
     // The About page keeps its own rows laid out at the same floor,
-    // reached through the sidebar.
+    // reached through the sidebar. The Keyboard page has joined the
+    // sections since this floor was written, so the sidebar's list
+    // scrolls at this size on the platforms whose titlebar is inside
+    // the window: turn its wheel to bring the About section's row
+    // into view before it is clicked.
+    let sections = settings_cx
+        .debug_bounds("sections")
+        .expect("the sections list");
+    settings_cx.simulate_event(gpui::ScrollWheelEvent {
+        position: sections.center(),
+        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(-120.))),
+        modifiers: Modifiers::none(),
+        touch_phase: gpui::TouchPhase::Moved,
+    });
+    settings_cx.run_until_parked();
     let about = settings_cx
         .debug_bounds("section-About")
         .expect("the About section");
