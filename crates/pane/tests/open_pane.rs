@@ -189,6 +189,25 @@ fn until<T>(
     }
 }
 
+/// Runs `cx` until the window's accessibility tree satisfies `done`,
+/// reporting the tree when it never does, so a wait that stalls says
+/// what the page was showing when it stalled.
+fn until_diag(cx: &mut VisualTestContext, mut done: impl FnMut(&str) -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        cx.run_until_parked();
+        let tree = a11y(cx);
+        if done(&tree) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for the page; tree {tree}"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 /// Runs `cx` until the settings record in `data` holds `id` as the Open
 /// Pane hotkey: the save the page started is written off the window's
 /// thread.
@@ -488,6 +507,10 @@ fn a_collision_with_a_command_hotkey_is_refused(cx: &mut TestAppContext) {
         launcher.preview_package(&folder, window, cx);
         launcher
     });
+    // As the hotkey tests' fixture waits: the preview's package is
+    // prepared off the window's thread, and the install's Enter must find
+    // it ready, not the still-loading preview.
+    settle(&window, cx);
 
     // Install the package and give its command a hotkey, through the
     // launcher's own flow.
@@ -561,8 +584,12 @@ fn a_save_that_fails_rolls_the_registration_back(cx: &mut TestAppContext) {
     settings_cx.simulate_keystrokes("ctrl-alt-b");
     settings_cx.run_until_parked();
     let kept = Shortcut::parse("ctrl+alt+b").unwrap();
+    assert_eq!(
+        registered(&system),
+        vec![kept.clone()],
+        "the recorded binding is the one that works"
+    );
     until_record(&mut settings_cx, data.path(), "ctrl+alt+b");
-    assert_eq!(registered(&system), vec![kept.clone()]);
 
     // Break the record's replacement: a folder where the record belongs,
     // so the atomic write cannot rename over it.
@@ -573,10 +600,8 @@ fn a_save_that_fails_rolls_the_registration_back(cx: &mut TestAppContext) {
     click(&mut settings_cx, "open-pane-recorder");
     settings_cx.run_until_parked();
     settings_cx.simulate_keystrokes("ctrl+alt+c");
-    until(&mut settings_cx, |cx| {
-        a11y(cx)
-            .contains("Pane could not save your choice")
-            .then_some(())
+    until_diag(&mut settings_cx, |tree| {
+        tree.contains("Pane could not save your choice")
     });
 
     // The failure is explained, and the binding the record holds is the
