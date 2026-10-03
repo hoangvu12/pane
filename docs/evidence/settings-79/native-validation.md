@@ -22,16 +22,21 @@ window or extension runtime) and Quit (releases the native entry and every
 global hotkey registration, then ends Pane through the quit hooks that
 stop the runtime helpers and development watches). The General page's
 visibility preference is kept in `settings.json` beside the appearance and
-Open Pane hotkey choices, applied through the platform's adapter *before*
-anything is kept — so only successful changes persist, a refusal or an
-unavailable platform is explained on the page, and a failed save rolls
-the native entry back to what the record holds.
+Open Pane hotkey choices (as the record's camelCase `trayVisible` field,
+named as #80's launch-at-login choice is), applied through the
+platform's adapter *before* anything is kept — so only successful
+changes persist, a refusal or an unavailable platform is explained on
+the page, and a failed save rolls the native entry back to what the
+record holds. Where the platform has no entry at all (Linux today), the
+switch is not offered and the adapter's own explanation stands in its
+place, as the launch-at-login switch is not offered where that
+integration cannot manage a registration.
 
 The application-side machinery is tested in
 `crates/pane/tests/tray.rs` through real keystrokes, clicks and the
 accessibility tree, with a fake native adapter that records what Pane
 showed and hides and can be told to refuse: the startup application of
-the record's preference, the toggle's save, a refusal, an unavailable
+the record's preference, the switch's save, a refusal, an unavailable
 platform, the menu dispatch (summon from hidden, never hiding, the one
 Settings window), quit's cleanup, and the save-failure rollback. The
 record field's defaults and failures are unit-tested in `pane-core`.

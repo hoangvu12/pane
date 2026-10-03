@@ -192,14 +192,22 @@ fn render(
 ) -> AnyElement {
     let theme = crate::settings::visuals(cx).theme;
     let typography = &theme.typography;
-    // Everything the page shows about the binding comes from the host
-    // settings (the choice, the save's word) and the launcher (what is
-    // registered, and why not), and everything about the login choice
-    // comes from the host settings (the preference, the registration and
-    // the platform's ability): what the record holds and what actually
-    // works stay distinguishable.
+    // Everything the page shows comes from the host settings (the
+    // choices, the save's word, the registration and ability each
+    // integration reports, the entry's state) and the launcher (what is
+    // registered, and why not): what the record holds and what actually
+    // works stay distinguishable, choice by choice.
     let settings = crate::settings::shared(cx);
-    let (choice, status, preference, unavailable, registration) = {
+    let (
+        choice,
+        status,
+        preference,
+        unavailable,
+        registration,
+        tray_visible,
+        tray_unavailable,
+        tray_status,
+    ) = {
         let state = settings.read(cx);
         (
             state.open_pane(),
@@ -207,14 +215,6 @@ fn render(
             state.launch_at_login(),
             state.login_unavailable(),
             state.login_registration().clone(),
-        )
-    };
-    // Everything the page shows about the entry comes from the host
-    // settings too: the preference, the native state's problem, and the
-    // platform's ability to have an entry at all.
-    let (tray_visible, tray_unavailable, tray_status) = {
-        let state = settings.read(cx);
-        (
             state.tray_visible(),
             state.tray_unavailable(),
             state.tray_status(),
