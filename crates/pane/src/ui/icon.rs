@@ -49,9 +49,9 @@ pub(crate) enum Glyph {
     Globe,
     /// A keyboard: the Settings window's Shortcuts section.
     Keyboard,
-    /// A chevron pointing down: a group of rows expanded.
-    ChevronDown,
-    /// A chevron pointing right: a group of rows collapsed.
+    /// A chevron pointing right: a group of rows — rotated to point
+    /// down by [`glyph_rotated`] while the group it belongs to is
+    /// expanded, on the disclosure's timeline.
     ChevronRight,
     /// A circle split down the middle: the Appearance page's sidebar entry
     /// (the two palettes its theme choice stands between).
@@ -84,7 +84,6 @@ impl Glyph {
             Glyph::Gear => include_bytes!("../../assets/icons/gear.svg"),
             Glyph::Globe => include_bytes!("../../assets/icons/globe.svg"),
             Glyph::Keyboard => include_bytes!("../../assets/icons/keyboard.svg"),
-            Glyph::ChevronDown => include_bytes!("../../assets/icons/chevron-down.svg"),
             Glyph::ChevronRight => include_bytes!("../../assets/icons/chevron-right.svg"),
             Glyph::Theme => include_bytes!("../../assets/icons/theme.svg"),
             Glyph::Sliders => include_bytes!("../../assets/icons/sliders.svg"),
@@ -134,6 +133,26 @@ fn app_tone(tone: IconTone) -> Option<(Hsla, Hsla, Hsla)> {
 /// without a tile, like the search header's magnifier.
 pub(crate) fn glyph(glyph: Glyph, size: gpui::Pixels, color: Hsla) -> Svg {
     svg().data(glyph.svg_bytes()).size(size).text_color(color)
+}
+
+/// A bare glyph at `size`, tinted `color`, rotated clockwise by `angle`
+/// about its center — paint only: the element's layout, hit target and
+/// debug bounds stay the unrotated box's, the renderer's scene
+/// transformation carrying the turn. The one user is a disclosure
+/// group's chevron, which turns from pointing right (the group
+/// collapsed, at 0) to pointing down (expanded, at a quarter turn) on
+/// the same timeline the group's content arrives on.
+pub(crate) fn glyph_rotated(
+    glyph: Glyph,
+    size: gpui::Pixels,
+    color: Hsla,
+    angle: gpui::Radians,
+) -> Svg {
+    svg()
+        .data(glyph.svg_bytes())
+        .size(size)
+        .text_color(color)
+        .with_transformation(gpui::Transformation::rotate(angle))
 }
 
 /// The reference's icon tile: 28px, radius 7, a vertical gradient for app

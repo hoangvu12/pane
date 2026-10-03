@@ -160,7 +160,15 @@ fn selected_result(cx: &mut VisualTestContext) -> Option<String> {
 /// that advances them. Bounded, so a chain that never stopped asking for
 /// frames fails the test instead of hanging it.
 fn pump(cx: &mut VisualTestContext) {
-    for _ in 0..8 {
+    for _ in 0..16 {
+        // The frames carry the clock with them, as the section-transition
+        // tests' do: a jump is a page change, whose arrival settles over
+        // its bounded span, and the reveal — which waits for that rest —
+        // scrolls and repaints after it. The budget of sixteen 25ms
+        // frames covers the 150ms span, the wait and the scroll's own
+        // frames with room to spare, and stays short of the watcher's
+        // 500ms tick.
+        cx.cx.executor().advance_clock(Duration::from_millis(25));
         let ran = cx.update(|window, cx| window.simulate_next_frame(cx));
         cx.run_until_parked();
         if ran == 0 {
