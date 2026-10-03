@@ -19,11 +19,12 @@
 //! provides frost, the solid surface (with the reason) where it does not.
 
 use gpui::{
-    AnyElement, App, BoxShadow, Context, Div, Role, Stateful, Toggled, Window, div, prelude::*, px,
+    AnyElement, App, BoxShadow, Context, Div, Role, ScrollAnchor, Stateful, Toggled, Window, div,
+    prelude::*, px,
 };
-use pane_core::{MaterialPreference, ThemePreference};
+use pane_core::{Launcher, MaterialPreference, ThemePreference};
 
-use super::{Page, SettingsWindow};
+use super::{Page, SettingsWindow, search};
 use crate::ui::icon::{Glyph, IconTone, glyph};
 use crate::ui::keycap;
 use crate::ui::material::Material;
@@ -76,16 +77,63 @@ const MATERIALS: [(MaterialPreference, &str, &str, &str); 2] = [
 pub(crate) fn page() -> Page {
     Page {
         title: "Appearance",
+        about: "Theme and material choices, with a live preview",
         icon: (IconTone::Command, Glyph::Theme),
         render,
+        search: entries,
+        focus,
     }
+}
+
+/// The settings the page offers the sidebar's search: each choice of the
+/// theme and material groups, named as the page names it, in the group
+/// it sits in. An override in force leaves the choices listed — the page
+/// still shows them — but says why none can be used here, as the page's
+/// own notice does.
+fn entries(_launcher: &Launcher, cx: &App) -> Vec<search::Entry> {
+    let overrides = crate::settings::shared(cx).read(cx).override_descriptions();
+    let unavailable = (!overrides.is_empty()).then(|| {
+        let verbs = if overrides.len() == 1 {
+            "overrides"
+        } else {
+            "override"
+        };
+        format!(
+            "{} {} the saved choice for this process: choosing here changes nothing, and Pane \
+             does not save it",
+            overrides.join(" and "),
+            verbs,
+        )
+    });
+    THEMES
+        .iter()
+        .map(|&(_, name, _, selector)| (name, selector, "Theme"))
+        .chain(
+            MATERIALS
+                .iter()
+                .map(|&(_, name, _, selector)| (name, selector, "Material")),
+        )
+        .map(|(name, selector, group)| search::Entry {
+            control: Some(selector.into()),
+            title: name.into(),
+            group: Some(group.into()),
+            unavailable: unavailable.clone(),
+        })
+        .collect()
+}
+
+/// The page's controls take no keyboard focus (they are chosen with the
+/// pointer, as the reference's settings rows are), so a jump to one
+/// reveals it where it drew and the sidebar keeps the focus: `false`.
+fn focus(_: &mut SettingsWindow, _: &str, _: &mut Window, _: &mut Context<SettingsWindow>) -> bool {
+    false
 }
 
 /// Draws the Appearance page: the theme group, the material group with
 /// its honesty note, the live preview, and whatever the host settings
 /// report — an override in force, or a save that failed.
 fn render(
-    _this: &mut SettingsWindow,
+    this: &mut SettingsWindow,
     _window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
@@ -134,12 +182,16 @@ fn render(
             THEMES
                 .iter()
                 .map(|&(preference, name, subtitle, selector)| {
+                    // The choice's scroll anchor, which the search's
+                    // reveal scrolls to (see the window's render).
+                    let anchor = this.search_anchor(selector);
                     choice(
                         selector,
                         name,
                         subtitle,
                         preference == theme_preference,
                         !overridden,
+                        anchor,
                         theme,
                         cx.listener(move |_, _, _, cx| {
                             crate::settings::shared(cx)
@@ -155,12 +207,14 @@ fn render(
             MATERIALS
                 .iter()
                 .map(|&(preference, name, subtitle, selector)| {
+                    let anchor = this.search_anchor(selector);
                     choice(
                         selector,
                         name,
                         subtitle,
                         preference == material_preference,
                         !overridden,
+                        anchor,
                         theme,
                         cx.listener(move |_, _, _, cx| {
                             crate::settings::shared(cx)
@@ -262,14 +316,17 @@ fn group(label: &'static str, rows: Vec<Stateful<Div>>, theme: &Theme) -> Div {
 /// and semantics. `chosen` is whether the row's choice is the one in
 /// effect; `offered` is whether choosing it does anything (nothing is
 /// offered while an override is in force, and the row says so by its
-/// state); `on_click` reports the choice to the host settings, which
-/// repaints both windows and saves.
+/// state); `anchor` is the scroll anchor the search's reveal scrolls to;
+/// `on_click` reports the choice to the host settings, which repaints
+/// both windows and saves.
+#[allow(clippy::too_many_arguments)]
 fn choice(
     selector: &'static str,
     name: &'static str,
     subtitle: &'static str,
     chosen: bool,
     offered: bool,
+    anchor: ScrollAnchor,
     theme: &Theme,
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
@@ -326,6 +383,7 @@ fn choice(
         );
     row.id(name)
         .debug_selector(move || selector.into())
+        .anchor_scroll(Some(anchor))
         .role(Role::RadioButton)
         .aria_label(name)
         .aria_toggled(if chosen {
