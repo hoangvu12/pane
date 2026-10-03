@@ -588,9 +588,10 @@ mod tests {
         ] {
             assert_eq!(binding(id).id(), id, "{id} round trips");
         }
-        // Synonyms normalize to the one spelling.
+        // Synonyms normalize to the one spelling; `option` is Alt, as
+        // the window layer's grammar reads it.
         assert_eq!(binding("control-alt-command-b").id(), "ctrl-alt-cmd-b");
-        assert_eq!(binding("win-super-option-b").id(), "cmd-b");
+        assert_eq!(binding("win-super-option-b").id(), "alt-cmd-b");
         assert_eq!(binding("Control-B").id(), "ctrl-b");
     }
 
