@@ -1,15 +1,17 @@
 name: CI (fast)
 
 # The fast tier of CI for the spec-milestone worktrees: branches named
-# pi-subagent/** push often while their implementing agents iterate, and
-# they need compile, lint and test feedback quickly, not the whole
-# release matrix. This workflow runs only the Check legs of the two
-# operating systems whose code those branches most plausibly break
-# (Linux for cross-platform compile errors, Windows for its
-# window/native paths; macOS is checked when the branch merges, by the
-# full matrix on the PR branch). The full ci.yml ignores these branches
-# on push; the smoke, renderer, packaging and guest legs all run there,
-# on the branches whose state is the milestone's actual product.
+# pi-subagent/** push often while their implementing agents iterate.
+# A plain push gets compile feedback only — formatting plus a
+# `cargo check --all-targets` of the workspace, which needs no wasm
+# guest builds, no test-binary linking and no test runs — so a
+# cross-platform compile error comes back in minutes. A push whose head
+# commit message contains "[verify]" runs the full check leg instead
+# (guests, clippy -D warnings, the workspace tests), which the agent
+# asks for once it believes the branch is done; plain iterations never
+# pay for it. The full ci.yml matrix (smokes, renderers, packaging,
+# guests-from-source) ignores these branches and runs on the PR branch
+# when the merger lands them there.
 on:
   push:
     branches:
@@ -29,8 +31,9 @@ jobs:
         os: [ubuntu-24.04, windows-2025]
     runs-on: ${{ matrix.os }}
     env:
-      # As in ci.yml's check job: the Linux test binaries link with mold,
-      # host-triple-scoped so the wasm guest builds keep their own linker.
+      # As in ci.yml's check job: the Linux binaries link with mold,
+      # host-triple-scoped so the wasm guest builds keep their own
+      # linker (a [verify] run builds them).
       CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: ${{ matrix.os == 'ubuntu-24.04' && '-C link-arg=-fuse-ld=mold' || '' }}
     steps:
       - uses: actions/checkout@v4
@@ -49,14 +52,29 @@ jobs:
             .
             guests
             guests/fixtures/mixed-p2
-      - name: Build guests, check formatting and lints, run tests
+      # The quick tier: compile feedback only. `cargo check
+      # --all-targets` type-checks the workspace's libraries, binaries,
+      # tests and examples without codegen or linking, and the root
+      # workspace does not include the guest crates, so no wasm is
+      # built. It catches the cross-platform compile errors (the
+      # cfg-gating class) in minutes.
+      - name: Quick compile check
+        if: ${{ !contains(github.event.head_commit.message || '', '[verify]') }}
+        run: |
+          cargo fmt --all --check
+          cargo check --locked --workspace --all-targets
+      # The verification tier: the agent asks for it by putting
+      # "[verify]" in the pushed commit's message — the full check leg
+      # of ci.yml (guests, clippy -D warnings, the workspace tests).
+      - name: Full checks and tests
+        if: ${{ contains(github.event.head_commit.message || '', '[verify]') }}
         run: cargo xtask ci
         env:
           # As in ci.yml: the real-clipboard adapter tests opt in where a
           # logged-in session exists; on Linux they run under Xvfb below.
           PANE_TEST_REAL_CLIPBOARD: ${{ runner.os != 'Linux' && '1' || '' }}
       - name: Run the Linux clipboard adapter test (Xvfb)
-        if: runner.os == 'Linux'
+        if: ${{ runner.os == 'Linux' && contains(github.event.head_commit.message || '', '[verify]') }}
         run: xvfb-run -a cargo test --locked -p pane-core --test clipboard_adapter_linux
         env:
           PANE_TEST_REAL_CLIPBOARD: "1"
