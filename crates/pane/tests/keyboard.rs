@@ -479,6 +479,44 @@ fn the_menus_hint_follows_the_settings_binding(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn the_windows_close_shortcut_is_captured_while_a_recorder_listens(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let (_window, cx) = open_sample(cx, Some(data.path()));
+
+    // Recording captures keys without executing them: the window's own
+    // close shortcut — the dismiss binding's default — is swallowed
+    // while a recorder listens, so the Settings window stays open and
+    // the keys reach the binding being recorded (here: refused, for
+    // colliding with the dismiss binding that has them).
+    let (settings, mut settings_cx) = keyboard_page(cx);
+    click(&mut settings_cx, "keyboard-back");
+    settings_cx.run_until_parked();
+    settings_cx.simulate_keystrokes(dismiss_shortcut());
+    settings_cx.run_until_parked();
+    let tree = a11y(&mut settings_cx);
+    assert!(
+        tree.contains("already dismisses the launcher"),
+        "the keys reached the binding, {tree}"
+    );
+    assert!(
+        tree.contains("Recording; Back"),
+        "the recorder keeps listening, {tree}"
+    );
+    settings_cx.run_until_parked();
+    assert!(
+        settings_cx.debug_bounds("keyboard-title").is_some(),
+        "the Settings window stayed open"
+    );
+    // The window still closes on it when no recorder is listening.
+    settings_cx.simulate_keystrokes("escape");
+    settings_cx.run_until_parked();
+    settings_cx.update(|window, _| window.remove_window());
+    cx.run_until_parked();
+    let _ = settings;
+    assert_eq!(settings_windows(cx), 0, "the window closed");
+}
+
+#[gpui::test]
 fn a_collision_with_another_action_is_refused_and_keeps_the_recorder_listening(
     cx: &mut TestAppContext,
 ) {

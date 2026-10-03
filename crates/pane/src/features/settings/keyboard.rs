@@ -68,6 +68,19 @@ pub(crate) fn bind_keys(cx: &mut App) {
         KeyBinding::new("up", gpui::NoAction, Some(RECORDER)),
         KeyBinding::new("tab", gpui::NoAction, Some(RECORDER)),
         KeyBinding::new("shift-tab", gpui::NoAction, Some(RECORDER)),
+        // The window's close shortcut is swallowed there too: recording
+        // captures keys without executing them, so pressing the dismiss
+        // binding's own default (Cmd+W / Ctrl+W) records it instead of
+        // closing the window the recorder lives in.
+        KeyBinding::new(
+            if cfg!(target_os = "macos") {
+                "cmd-w"
+            } else {
+                "ctrl-w"
+            },
+            gpui::NoAction,
+            Some(RECORDER),
+        ),
     ]);
 }
 
@@ -270,7 +283,7 @@ fn recorder_row(
                     div()
                         .text_size(typography.row_subtitle_size)
                         .text_color(theme.text_muted)
-                        .child(subtitle),
+                        .child(subtitle.clone()),
                 ),
         )
         .child(binding_chip(binding, listening, &theme))
