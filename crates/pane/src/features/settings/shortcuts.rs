@@ -35,7 +35,6 @@ use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged
 use pane_core::{AliasOutcome, Launcher, ShortcutCatalog, ShortcutCommand, ShortcutGroup};
 
 use super::{Page, SettingsWindow};
-use crate::ui;
 use crate::ui::icon::{Glyph, IconTone, glyph};
 use crate::ui::theme::Theme;
 
@@ -334,7 +333,7 @@ fn render(
     _window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
-    let theme = ui::visuals().theme.clone();
+    let theme = crate::settings::visuals(cx).theme;
     // Read the catalog fresh: any redraw shows the launcher's packages as
     // they are now, whatever made the window redraw.
     let catalog = this.launcher.shortcut_catalog();
