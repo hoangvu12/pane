@@ -419,13 +419,13 @@ impl Settings {
                     // a choice that could not be saved does not leave the
                     // launcher bound to what the record does not hold; what
                     // was last recorded keeps working.
-                    if snapshot.open_pane != self.saved.open_pane {
-                        if let Some(launcher) = &self.launcher {
-                            // The outcome is the binding's own state (the
-                            // problem the page explains), not a value to
-                            // surface here.
-                            let _ = launcher.sync_open_pane(self.saved.open_pane.clone());
-                        }
+                    if snapshot.open_pane != self.saved.open_pane
+                        && let Some(launcher) = &self.launcher
+                    {
+                        // The outcome is the binding's own state (the
+                        // problem the page explains), not a value to
+                        // surface here.
+                        let _ = launcher.sync_open_pane(self.saved.open_pane.clone());
                     }
                     self.chosen = self.saved.clone();
                     self.changed(cx);
