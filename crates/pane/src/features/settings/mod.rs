@@ -48,6 +48,7 @@ use crate::{FocusNext, FocusPrevious};
 
 mod about;
 mod appearance;
+mod extensions;
 mod shortcuts;
 
 actions!(settings, [NextSection, PreviousSection]);
@@ -130,10 +131,16 @@ impl SettingsWindow {
             launcher: launcher.clone(),
             // The sidebar's order: the sections the reference lists
             // (General, Launcher, Appearance, Shortcuts, Keyboard,
-            // Extensions), About last. The Appearance page is the one the
-            // window first shows; the later tickets' pages take their
-            // places in this order as they land.
-            pages: vec![appearance::page(), shortcuts::page(), about::page()],
+            // Extensions), About last. Of those, this milestone ships
+            // Appearance, Shortcuts and Extensions; the Appearance page
+            // is the one the window first shows, and the later tickets'
+            // pages take their places in this order as they land.
+            pages: vec![
+                appearance::page(),
+                shortcuts::page(),
+                extensions::page(),
+                about::page(),
+            ],
             selected: 0,
             focus,
             about: about::State::default(),

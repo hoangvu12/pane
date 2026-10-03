@@ -13,9 +13,9 @@ use std::mem::{Discriminant, discriminant};
 use std::path::Path;
 
 use gpui::{
-    BoxShadow, ClipboardItem, Context, Div, FocusHandle, Hsla, KeyDownEvent, PathPromptOptions,
-    Pixels, Role, ScrollHandle, SharedString, Size, Stateful, Window, WindowControlArea, div,
-    prelude::*, px, relative,
+    App, BoxShadow, ClipboardItem, Context, Div, FocusHandle, Hsla, KeyDownEvent,
+    PathPromptOptions, Pixels, Role, ScrollHandle, SharedString, Size, Stateful, Window,
+    WindowControlArea, div, prelude::*, px, relative,
 };
 use pane_core::changes::Changes;
 use pane_core::hotkeys::Shortcut;
@@ -411,6 +411,49 @@ impl LauncherWindow {
         self.show_until_done(pending, window, cx);
     }
 
+    /// Activates the root result with `id` in this window, as clicking it
+    /// in root search does: the launcher returns to root search first,
+    /// wherever it is, this window is summoned and focused, and the result
+    /// is selected and activated through the same Enter path
+    /// ([`LauncherWindow::activate_selected`]). The Settings window's
+    /// Extensions page reaches the launcher's own install rows and a
+    /// package's commands through this, so those flows keep running where
+    /// their forms, folder pickers and key capture already live — here,
+    /// with the window they belong to in front.
+    pub(crate) fn activate_root_result(
+        &mut self,
+        id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.navigation = Direction::Forward;
+        // Root search is reached as Escape reaches it, one screen back at a
+        // time, wherever the launcher is (a form, a command, the extension
+        // list Settings entered); every `back` moves toward root search,
+        // and at root search this stops.
+        while !matches!(self.launcher.view().screen, Screen::Root { .. }) {
+            self.launcher.back();
+        }
+        window.activate_window();
+        cx.activate(true);
+        let Some(index) = self
+            .launcher
+            .view()
+            .rows
+            .iter()
+            .position(|row| row.id == id)
+        else {
+            // No such root result (the row was disabled or removed since
+            // the page drew it): root search is shown, focused, which is as
+            // far as this reaches.
+            self.sync_screen(window, cx);
+            cx.notify();
+            return;
+        };
+        self.launcher.select(index);
+        self.activate_selected(window, cx);
+    }
+
     /// Shows the launcher's state now and again when `pending`, a launcher
     /// action's reply, has been applied, without blocking the window
     /// meanwhile. Each time the form's and custom view's controls follow the
@@ -474,12 +517,23 @@ impl LauncherWindow {
 
     /// Makes the form's and custom view's controls, root search's query
     /// field, and focus, follow the launcher's screen.
+    ///
+    /// This also asks every window to redraw, not only this one: the
+    /// Settings window's Extensions page reads the launcher's state — the
+    /// same records this window shows — so wherever the launcher changed
+    /// here (an operation's reply, a background change the changes channel
+    /// reported, a key this window handled), each window showing it
+    /// re-reads what it holds. A window refresh rather than a notify on
+    /// one window's view, so no window is left out; it is an effect, so it
+    /// is safe wherever the launcher changed, including from another
+    /// window's own flow.
     fn sync_screen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_form(window, cx);
         self.sync_custom_view(window, cx);
         // Last: coming back to root search, even as a view closes, focuses
         // the query rather than the list.
         self.sync_root_search(window, cx);
+        cx.refresh_windows();
     }
 
     fn render_row(
@@ -971,11 +1025,32 @@ impl Render for LauncherWindow {
     }
 }
 
+/// Tells the launcher window that the launcher changed outside its own
+/// flow — the Settings window's Extensions page drove an operation through
+/// the launcher — so it redraws with what the launcher holds: its screen
+/// may have moved under it (an open form closes when its package is
+/// disabled from Settings), and the screen sync the update runs asks
+/// every window to redraw, Settings included. Focus is not taken: the
+/// flow runs in Settings.
+pub(crate) fn launcher_changed_outside(cx: &mut App) {
+    for window in cx.windows() {
+        let Some(launcher) = window.downcast::<LauncherWindow>() else {
+            continue;
+        };
+        launcher
+            .update(cx, |this, window, cx| {
+                this.sync_screen(window, cx);
+                cx.notify();
+            })
+            .ok();
+    }
+}
+
 /// The icon presentation for a row, chosen by the row's stable id: the
 /// built-in rows and this build's sample commands are known identities,
 /// each with a reference tone and glyph; everything else is a plain
 /// command. No presentation is inferred from a title's text.
-fn row_icon(id: &str) -> Option<(IconTone, Glyph)> {
+pub(crate) fn row_icon(id: &str) -> Option<(IconTone, Glyph)> {
     match id {
         "rust-sample" => Some((IconTone::Term, Glyph::Prompt)),
         "javascript-sample" | "typescript-sample" => Some((IconTone::Code, Glyph::Code)),
