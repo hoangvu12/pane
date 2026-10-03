@@ -1,0 +1,1012 @@
+//! Pane's searchable select: the choice control for a setting whose
+//! options a user may want to search rather than scan — a trigger row
+//! showing the committed choice, opening an L2 popover that holds a
+//! local search field and the choices as rows.
+//!
+//! Interaction reference: the Raycast dropdown and the shadcn combobox
+//! as *behavior* references only (`docs/research/searchable-settings-
+//! selects.md`) — the visual language is entirely Pane's: the reference's
+//! row chrome, the L2 popover material, the shared editable text element
+//! for the field, and the semantic theme. Nothing here imports a React
+//! toolkit, re-creates the theme, or knows what a setting is.
+//!
+//! ## State: the control's own, and only the control's
+//!
+//! The control is one [`Select`] entity, embedded by its consumer as a
+//! child. It owns everything transient — open or closed, the query, the
+//! highlighted (active) choice — and owns its whole interaction: the
+//! popup's opening and dismissal, the query's local filtering, the
+//! arrows' movement of the highlight, Enter's commit, Escape's cancel,
+//! Tab's leave. The committed choice is *not* transient state: the
+//! consumer supplies it live through the model callback every render,
+//! and commits travel out through the `on_commit` callback into the
+//! consumer's own persistence path. Opening, filtering and highlighting
+//! never save anything; a failed save is the consumer's to report, and
+//! the trigger simply shows whatever the model holds next — the honest
+//! choice, rolled back or not.
+//!
+//! ## The draft/commit boundary
+//!
+//! While open, the query filters the choices and the arrows move the
+//! highlight; neither touches the committed choice. Enter, or a click on
+//! an enabled row, commits that choice through `on_commit` and closes.
+//! Escape cancels the whole draft — query and highlight are discarded,
+//! nothing is committed — and returns focus to the trigger. Tab and
+//! Shift-Tab close without committing and continue focus traversal from
+//! the trigger. A mouse-down outside the popup cancels the draft and
+//! lets the click land: whatever was clicked takes focus as it would
+//! have without the popup. A mouse-down on the trigger itself toggles
+//! the popup closed, consuming the click so it cannot reopen.
+//!
+//! This deliberately differs from the extension form's choice control,
+//! where the arrows change the choice and Enter submits the form: this
+//! is a settings control with its own draft/commit boundary, and the
+//! page around it commits nothing on the form's behalf.
+//!
+//! ## Placement and constraint
+//!
+//! The popup is a [`deferred`] + [`anchored`] overlay: deferred so it
+//! paints above the whole window (and is not clipped by the page's
+//! scroll viewport), anchored below the trigger — it is a child of a
+//! zero-height row the control renders after the trigger, so the anchor
+//! point is the trigger's bottom-left however tall the trigger grew —
+//! and snapped to the window, so a popup that would overflow the
+//! window's edge is constrained inside it. The option list scrolls
+//! within that bound and keeps the highlighted choice visible. The
+//! popup follows the trigger as the page scrolls, being deferred from
+//! the trigger's own place in the scrolled content.
+//!
+//! Nothing here animates: opening, filtering, dismissal and focus are
+//! immediate, as the motion policy requires of query and result
+//! updates; the popup's entrance micro-transition is the later popup
+//! polish ticket's (#88), built on the seams this component leaves.
+//!
+//! ## Accessibility
+//!
+//! The trigger is a combo box: named, carrying the committed choice as
+//! its value and its expanded state. The popup's field is a text input
+//! (the search), the choices a list box's options — the committed one
+//! selected, the highlighted one the focused field's active descendant,
+//! a choice the system cannot answer disabled with its reason as the
+//! description. Keyboard focus sits in the field while the popup is
+//! open, so the arrows move the highlight without stealing text focus
+//! from the query.
+
+use std::rc::Rc;
+
+use gpui::{
+    AnyElement, App, BoxShadow, ClickEvent, Context, Entity, FocusHandle, KeyBinding,
+    MouseDownEvent, Pixels, Role, ScrollHandle, SharedString, Subscription, Window, actions,
+    anchored, deferred, div, prelude::*, px,
+};
+use gpui_elements::editable_text::actions::DEFAULT_INPUT_CONTEXT;
+use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged, text_input};
+
+use super::icon::{Glyph, glyph, glyph_rotated};
+use super::material::Material;
+use super::theme::Theme;
+
+/// The trigger's key context: its activation keys (Enter, Space, Down)
+/// are bound here, so they open the select rather than acting as the
+/// window's keys while the trigger holds focus.
+const TRIGGER: &str = "PaneSelect";
+
+/// The open popup's key context: the navigation, commit and dismissal
+/// keys are bound here over the search field's own editing context, so
+/// they drive the popup only while its field is focused.
+const POPUP: &str = "PaneSelectPopup";
+
+/// The popup's search field's placeholder, and its accessible name.
+const PLACEHOLDER: &str = "Search choices";
+
+/// The popup's option list's height bound: the list scrolls past this,
+/// keeping the highlighted choice visible, so the popup stays a
+/// reasonable overlay even over a long choice list.
+const LIST_MAX_HEIGHT: Pixels = px(300.);
+
+actions!(
+    pane_select,
+    [
+        OpenSelect,
+        NextChoice,
+        PreviousChoice,
+        FirstChoice,
+        LastChoice,
+        CommitChoice,
+        CancelSelect,
+        LeaveForward,
+        LeaveBackward
+    ]
+);
+
+/// Registers the select's key bindings: the trigger's activation keys in
+/// the trigger's context, and the popup's navigation, commit and
+/// dismissal keys in the popup's context above the editable text
+/// element's own — the same nesting the Settings search's field uses,
+/// so the arrows take the keystrokes from the caret only while the
+/// field is focused, and Tab, Enter and Escape (left unbound for every
+/// editable element) never reach the window's traversal or the page.
+pub(crate) fn bind_keys(cx: &mut App) {
+    let field = format!("{POPUP} > {DEFAULT_INPUT_CONTEXT}");
+    cx.bind_keys([
+        KeyBinding::new("enter", OpenSelect, Some(TRIGGER)),
+        KeyBinding::new("space", OpenSelect, Some(TRIGGER)),
+        KeyBinding::new("down", OpenSelect, Some(TRIGGER)),
+        KeyBinding::new("down", NextChoice, Some(&field)),
+        KeyBinding::new("up", PreviousChoice, Some(&field)),
+        KeyBinding::new("home", FirstChoice, Some(&field)),
+        KeyBinding::new("end", LastChoice, Some(&field)),
+        KeyBinding::new("enter", CommitChoice, Some(&field)),
+        KeyBinding::new("escape", CancelSelect, Some(&field)),
+        KeyBinding::new("tab", LeaveForward, Some(&field)),
+        KeyBinding::new("shift-tab", LeaveBackward, Some(&field)),
+    ]);
+}
+
+/// One choice the select offers: its stable identity, what the row
+/// shows, and the words the local search matches beside the label. A
+/// choice the system cannot answer carries its reason, is listed with
+/// it, and cannot be committed.
+#[derive(Clone, Debug)]
+pub(crate) struct Choice {
+    /// The choice's stable id — the identity commits travel out as, and
+    /// the one the consumer's saved choice comes back as.
+    pub(crate) id: SharedString,
+    /// The row's label: what the trigger shows when this choice is
+    /// committed, and what the search matches first.
+    pub(crate) label: SharedString,
+    /// The row's subtitle, if it has one.
+    pub(crate) subtitle: Option<SharedString>,
+    /// The words the local search matches beside the label — the
+    /// consumer's own declared vocabulary for the choice, not words
+    /// invented here.
+    pub(crate) keywords: Vec<SharedString>,
+    /// Why this choice cannot be used here, if it cannot: the row lists
+    /// it, cannot be committed, and reads it as its description.
+    pub(crate) unavailable_reason: Option<SharedString>,
+}
+
+/// What the consumer supplies the control live, every render: the
+/// visuals to draw with, the choices as they stand, and which of them
+/// is committed. Nothing here is cached — the control re-reads it each
+/// frame, so a choice that appears, goes or changes underneath it is
+/// what the next frame shows, exactly as the Settings search re-reads
+/// its catalog.
+pub(crate) struct Model {
+    /// The theme the control renders with.
+    pub(crate) theme: Theme,
+    /// The material the popup's surface renders with.
+    pub(crate) material: Material,
+    /// The choices, in the order the consumer lists them.
+    pub(crate) choices: Vec<Choice>,
+    /// The id of the committed choice, if one is: what the trigger
+    /// shows and the list marks as selected.
+    pub(crate) committed: Option<SharedString>,
+}
+
+/// The searchable select control. One entity, embedded by its consumer
+/// as a child (see the module docs); construct with [`Select::new`],
+/// and let the consumer's render simply include it.
+pub(crate) struct Select {
+    /// The control's accessible name, and the trigger row's title.
+    name: SharedString,
+    /// What the trigger row says under its title: the consumer's own
+    /// one-line description of the setting.
+    description: SharedString,
+    /// The prefix of the control's debug selectors, the tests' and
+    /// smokes' convention: the trigger is `{debug}`, the popup
+    /// `{debug}-popup`, a choice's row `{debug}-{id}`, the field
+    /// `{debug}-query` and the no-results line `{debug}-empty`.
+    debug: SharedString,
+    /// Whether the popup offers its local search field. A short,
+    /// easily scanned list can do without it; the choices then show
+    /// unfiltered.
+    searchable: bool,
+    /// The consumer's live model, read each render.
+    model: Rc<dyn Fn(&App) -> Model>,
+    /// The consumer's commit path: the id of the choice the user
+    /// accepted, reported once per commit. Persistence, validation and
+    /// failure reporting are the consumer's; the control only closes
+    /// and hands the choice over.
+    on_commit: Rc<dyn Fn(&str, &mut Window, &mut App)>,
+    /// Whether the popup is open.
+    open: bool,
+    /// The popup's search field.
+    query: Entity<EditableTextState>,
+    /// The query's changes, moving the highlight to the first enabled
+    /// match as the query narrows.
+    _query_changes: Subscription,
+    /// The popup's dismissal when the window loses activation, as
+    /// native popovers close; ends with the control.
+    _deactivation: Subscription,
+    /// The highlighted (active) choice's id, if one is: navigation
+    /// state only — never the committed choice, which the model holds.
+    active: Option<SharedString>,
+    /// The trigger's focus: a tab stop, where Escape and a commit
+    /// return the keyboard.
+    trigger: FocusHandle,
+    /// The option list's scroll, keeping the highlighted choice
+    /// visible.
+    scroll: ScrollHandle,
+}
+
+impl Select {
+    /// The select control over `model`, committing through `on_commit`.
+    ///
+    /// `name` and `description` are the trigger row's title and
+    /// subtitle; `debug` is the prefix of the control's debug
+    /// selectors; `searchable` is whether the popup offers its local
+    /// search field. `window` is the window the control lives in — the
+    /// popup closes when it loses activation.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        name: impl Into<SharedString>,
+        description: impl Into<SharedString>,
+        debug: impl Into<SharedString>,
+        searchable: bool,
+        model: Rc<dyn Fn(&App) -> Model>,
+        on_commit: Rc<dyn Fn(&str, &mut Window, &mut App)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Select {
+        let query = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
+        // Not a tab stop: the field is reached by opening the popup, not
+        // by traversal — while the popup is open, Tab leaves it (and
+        // continues traversal), and while it is closed the field is not
+        // in the tree at all.
+        query.focus_handle(cx).tab_stop(false);
+        let _query_changes = cx.subscribe(&query, |this, _, _: &TextChanged, cx| {
+            // A new query is a new navigation, as every search of
+            // Pane's treats it: the first enabled match is highlighted.
+            let model = (this.model.clone())(cx);
+            let query = this.query.read(cx).as_str().to_owned();
+            this.active = first_enabled(&model, &query);
+            cx.notify();
+        });
+        let _deactivation = cx.observe_window_activation(window, |this, window, cx| {
+            if !window.is_window_active() && this.open {
+                this.close(window, cx);
+            }
+        });
+        Select {
+            name: name.into(),
+            description: description.into(),
+            debug: debug.into(),
+            searchable,
+            model,
+            on_commit,
+            open: false,
+            query,
+            _query_changes,
+            _deactivation,
+            active: None,
+            trigger: cx.focus_handle().tab_stop(true),
+            scroll: ScrollHandle::new(),
+        }
+    }
+
+    /// The popup's search field, for tests that drive composition the
+    /// way a platform input method does.
+    #[doc(hidden)]
+    pub(crate) fn query(&self) -> &Entity<EditableTextState> {
+        &self.query
+    }
+
+    /// The trigger's focus handle, for a consumer whose settings search
+    /// jumps to the control and focuses it.
+    pub(crate) fn trigger_focus(&self) -> FocusHandle {
+        self.trigger.clone()
+    }
+
+    /// Whether `choice` matches `query`: every whitespace-separated word
+    /// of the query appears, caselessly, in the choice's label or one of
+    /// its declared keywords. An empty query matches every choice. The
+    /// matching is local and deterministic — no ranking, no reordering:
+    /// the choices keep the consumer's order, so their identities and
+    /// positions stay stable while filtering. (This is deliberately not
+    /// the Settings search's matcher: that one ranks a whole catalog of
+    /// settings; this one filters one control's rows.)
+    fn matches(choice: &Choice, query: &str) -> bool {
+        let words = query.to_lowercase().split_whitespace().collect::<Vec<_>>();
+        if words.is_empty() {
+            return true;
+        }
+        let label = choice.label.to_lowercase();
+        words.iter().all(|word| {
+            label.contains(word.as_str())
+                || choice
+                    .keywords
+                    .iter()
+                    .any(|keyword| keyword.to_lowercase().contains(word.as_str()))
+        })
+    }
+
+    /// The choices matching the query as it stands, as indices into the
+    /// model's list, in the model's order.
+    fn filtered(&self, model: &Model, query: &str) -> Vec<usize> {
+        model
+            .choices
+            .iter()
+            .enumerate()
+            .filter(|(_, choice)| Self::matches(choice, query))
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    /// The indices of the filtered choices that can be committed.
+    fn enabled(filtered: &[usize], model: &Model) -> Vec<usize> {
+        filtered
+            .iter()
+            .copied()
+            .filter(|&index| model.choices[index].unavailable_reason.is_none())
+            .collect()
+    }
+
+    /// Opens the popup: the field takes focus (typing filters at once),
+    /// the draft query starts empty, and the highlight starts on the
+    /// committed choice — the one the user is most likely to keep — or
+    /// the first choice that can be used. Nothing is saved by opening.
+    fn open_popup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.open {
+            return;
+        }
+        self.open = true;
+        let model = (self.model.clone())(cx);
+        let query = self.query.read(cx).as_str().to_owned();
+        let filtered = self.filtered(&model, &query);
+        let committed = model
+            .committed
+            .as_ref()
+            .and_then(|id| {
+                filtered
+                    .iter()
+                    .copied()
+                    .find(|&index| &model.choices[index].id == id)
+            })
+            .filter(|&index| model.choices[index].unavailable_reason.is_none());
+        let start = committed
+            .or_else(|| Self::enabled(&filtered, &model).first().copied())
+            .map(|index| model.choices[index].id.clone());
+        self.active = start;
+        // A fresh open starts a fresh draft: whatever a cancelled open
+        // left in the field is gone.
+        if !query.is_empty() {
+            self.query.update(cx, |query, cx| query.emplace("", cx));
+        }
+        let field = self.query.focus_handle(cx);
+        window.focus(&field, cx);
+        cx.notify();
+    }
+
+    /// Closes the popup without committing anything: the draft query is
+    /// discarded, the highlight goes with it, and the keyboard returns
+    /// to the trigger. Whatever had focus before the popup opened is
+    /// not tracked — the trigger is where the control's own contract
+    /// returns it (Escape and commit); Tab continues traversal from
+    /// here, and an outside click's target takes focus after the click
+    /// lands on it.
+    fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.open {
+            return;
+        }
+        self.open = false;
+        self.active = None;
+        let query = self.query.read(cx).as_str().to_owned();
+        if !query.is_empty() {
+            self.query.update(cx, |query, cx| query.emplace("", cx));
+        }
+        window.focus(&self.trigger, cx);
+        cx.notify();
+    }
+
+    /// Commits `choice` — the user accepted it (Enter on the highlight,
+    /// or a click on its row): the popup closes as a cancel does, and
+    /// the choice travels out through the consumer's commit path. What
+    /// the trigger shows next is whatever the consumer's model holds
+    /// after that path runs — the choice, or the saved one rolled back
+    /// with the failure reported beside it.
+    fn commit(&mut self, id: &SharedString, window: &mut Window, cx: &mut Context<Self>) {
+        let on_commit = self.on_commit.clone();
+        self.close(window, cx);
+        on_commit(id, window, cx);
+    }
+
+    /// The choice the highlight is on, as the model holds it now: kept
+    /// when it is still in the filtered list and can be used, else
+    /// nothing. Called with the model the current frame just read, so
+    /// the highlight never points at a choice that is no longer offered.
+    fn active_choice<'a>(&self, model: &'a Model, filtered: &[usize]) -> Option<&'a Choice> {
+        self.active.as_ref().and_then(|id| {
+            filtered
+                .iter()
+                .copied()
+                .map(|index| &model.choices[index])
+                .find(|choice| &choice.id == id && choice.unavailable_reason.is_none())
+        })
+    }
+
+    /// The trigger's activation — Enter, Space or Down on the trigger,
+    /// or a click on it.
+    fn open_action(&mut self, _: &OpenSelect, window: &mut Window, cx: &mut Context<Self>) {
+        cx.stop_propagation();
+        self.open_popup(window, cx);
+    }
+
+    /// Moves the highlight down, as far as the last choice that can be
+    /// used — the codebase's every list clamps rather than wraps. From
+    /// nothing, the first. Nothing is saved by moving.
+    fn next_choice(&mut self, _: &NextChoice, _: &mut Window, cx: &mut Context<Self>) {
+        cx.stop_propagation();
+        self.move_highlight(1, cx);
+    }
+
+    /// Moves the highlight up, as far as the first.
+    fn previous_choice(&mut self, _: &PreviousChoice, _: &mut Window, cx: &mut Context<Self>) {
+        cx.stop_propagation();
+        self.move_highlight(-1, cx);
+    }
+
+    /// The highlight to the first choice that can be used (Home).
+    fn first_choice(&mut self, _: &FirstChoice, _: &mut Window, cx: &mut Context<Self>) {
+        cx.stop_propagation();
+        self.set_highlight_to_first(cx);
+    }
+
+    /// The highlight to the last choice that can be used (End).
+    fn last_choice(&mut self, _: &LastChoice, _: &mut Window, cx: &mut Context<Self>) {
+        cx.stop_propagation();
+        self.set_highlight_to_last(cx);
+    }
+
+    /// Enter: commits the highlighted choice, if one is highlighted and
+    /// can be used. On none — nothing matches, or every match is
+    /// unavailable — Enter does nothing: no accidental value is saved.
+    fn commit_action(&mut self, _: &CommitChoice, window: &mut Window, cx: &mut Context<Self>) {
+        cx.stop_propagation();
+        let model = (self.model.clone())(cx);
+        let query = self.query.read(cx).as_str().to_owned();
+        let filtered = self.filtered(&model, &query);
+        if let Some(choice) = self.active_choice(&model, &filtered) {
+            let id = choice.id.clone();
+            self.commit(&id, window, cx);
+        }
+    }
+
+    /// Escape: cancels the draft and returns the keyboard to the
+    /// trigger, the committed choice untouched.
+    fn cancel_action(&mut self, _: &CancelSelect, window: &mut Window, cx: &mut Context<Self>) {
+        cx.stop_propagation();
+        self.close(window, cx);
+    }
+
+    /// Tab: closes the popup without committing and continues focus
+    /// traversal forward from the trigger.
+    fn leave_forward(&mut self, _: &LeaveForward, window: &mut Window, cx: &mut Context<Self>) {
+        cx.stop_propagation();
+        self.close(window, cx);
+        window.focus_next(cx);
+    }
+
+    /// Shift-Tab: the same, backward.
+    fn leave_backward(&mut self, _: &LeaveBackward, window: &mut Window, cx: &mut Context<Self>) {
+        cx.stop_propagation();
+        self.close(window, cx);
+        window.focus_prev(cx);
+    }
+
+    /// A mouse-down outside the popup: the draft is cancelled and the
+    /// click is left to land — whatever was clicked takes focus exactly
+    /// as it would without the popup, so an outside click respects the
+    /// clicked focus target. (The trigger's own press is handled before
+    /// this, by the trigger: see [`Select::trigger_pressed`].)
+    fn outside_down(&mut self, _: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.open {
+            self.close(window, cx);
+        }
+    }
+
+    /// A mouse-down on the trigger while the popup is open: the click
+    /// closes the popup, and is consumed so the click tracking never
+    /// fires the trigger's own click (which would reopen it) — the
+    /// trigger toggles. Runs in the capture phase (and only when the
+    /// press is on the trigger), before the popup's outside dismissal:
+    /// the main scene's listeners are registered before the deferred
+    /// popup's, so the press on an open trigger is settled — closed and
+    /// consumed — before anything else sees it.
+    fn trigger_pressed(&mut self, _: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.open {
+            self.close(window, cx);
+            cx.stop_propagation();
+        }
+    }
+
+    /// Moves the highlight by `step` among the choices that can be
+    /// used, clamped at the ends; from nothing, forward moves to the
+    /// first and backward to the last. Keeps the new highlight visible
+    /// in the list.
+    fn move_highlight(&mut self, step: i32, cx: &mut Context<Self>) {
+        let model = (self.model.clone())(cx);
+        let query = self.query.read(cx).as_str().to_owned();
+        let filtered = self.filtered(&model, &query);
+        let enabled = Self::enabled(&filtered, &model);
+        let position = enabled
+            .iter()
+            .position(|&index| Some(&model.choices[index].id) == self.active.as_ref());
+        // Clamped at the ends, as every list of Pane's clamps; from
+        // nothing, forward starts at the first and backward at the last.
+        let next = match (position, step.is_positive()) {
+            (None, true) => enabled.first().copied(),
+            (None, false) => enabled.last().copied(),
+            (Some(at), true) => enabled.get(at + 1).or_else(|| enabled.last()).copied(),
+            (Some(at), false) => enabled
+                .get(at.saturating_sub(1))
+                .or_else(|| enabled.first())
+                .copied(),
+        };
+        if let Some(index) = next {
+            self.reveal_highlight(index, &filtered, &model, cx);
+        }
+    }
+
+    /// The highlight to the first choice that can be used.
+    fn set_highlight_to_first(&mut self, cx: &mut Context<Self>) {
+        let model = (self.model.clone())(cx);
+        let query = self.query.read(cx).as_str().to_owned();
+        let filtered = self.filtered(&model, &query);
+        if let Some(&index) = Self::enabled(&filtered, &model).first() {
+            self.reveal_highlight(index, &filtered, &model, cx);
+        }
+    }
+
+    /// The highlight to the last choice that can be used.
+    fn set_highlight_to_last(&mut self, cx: &mut Context<Self>) {
+        let model = (self.model.clone())(cx);
+        let query = self.query.read(cx).as_str().to_owned();
+        let filtered = self.filtered(&model, &query);
+        if let Some(&index) = Self::enabled(&filtered, &model).last() {
+            self.reveal_highlight(index, &filtered, &model, cx);
+        }
+    }
+
+    /// Sets the highlight to the choice at `index` of the model (which
+    /// must be filtered and usable) and scrolls the list to keep it
+    /// visible — the list's own scroll, so the bounded popup never
+    /// grows past its height for the highlight's sake.
+    fn reveal_highlight(
+        &mut self,
+        index: usize,
+        filtered: &[usize],
+        model: &Model,
+        cx: &mut Context<Self>,
+    ) {
+        self.active = Some(model.choices[index].id.clone());
+        // The row's place among the list's children: the filtered
+        // choices are the list's rows, in order.
+        let row = filtered.iter().position(|&i| i == index).unwrap_or(0);
+        self.scroll.scroll_to_item(row);
+        cx.notify();
+    }
+
+    /// The trigger row: the reference's row chrome carrying a combo
+    /// box's semantics — the setting's name and description on the
+    /// left, the committed choice and the chevron on the right. The
+    /// committed choice is what the consumer's model holds, read this
+    /// frame: a save that failed has rolled it back by the time this
+    /// draws, and the trigger shows the honest value.
+    fn trigger_row(&self, model: &Model, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let theme = &model.theme;
+        let typography = &theme.typography;
+        let geometry = &theme.geometry;
+        let committed = model
+            .committed
+            .as_ref()
+            .and_then(|id| model.choices.iter().find(|choice| &choice.id == id))
+            .map(|choice| choice.label.clone())
+            .unwrap_or_else(|| "None".into());
+        let row = div()
+            .flex()
+            .items_center()
+            .gap(geometry.row_gap)
+            .min_h(geometry.row_min_height)
+            .px(geometry.row_padding_x)
+            .rounded(geometry.row_radius)
+            .cursor_pointer()
+            .hover(|row| row.bg(theme.row_hover))
+            // Visible keyboard focus, the shared focus-ring treatment.
+            .focus(|row| {
+                row.shadow(vec![
+                    BoxShadow::new(px(0.), px(0.), theme.focus_ring)
+                        .spread_radius(px(1.))
+                        .inset(),
+                ])
+            })
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .truncate()
+                            .text_size(typography.row_title_size)
+                            .font_weight(typography.medium)
+                            .text_color(theme.text_title)
+                            .child(self.name.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_size(typography.row_subtitle_size)
+                            .text_color(theme.text_muted)
+                            .child(self.description.clone()),
+                    ),
+            )
+            // The committed choice, in the chip chrome the General
+            // page's binding shows, beside the chevron that says the
+            // list opens.
+            .child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .child(
+                        div()
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .h(geometry.keycap_height)
+                            .px(geometry.keycap_padding_x)
+                            .rounded(geometry.keycap_radius)
+                            .bg(theme.tile_background)
+                            .text_size(typography.row_title_size)
+                            .font_weight(typography.medium)
+                            .text_color(theme.text_title)
+                            .child(committed.clone()),
+                    )
+                    .child(glyph_rotated_down(theme)),
+            );
+        let name = self.name.clone();
+        let debug = self.debug.clone();
+        row.id("trigger")
+            .debug_selector(move || debug.to_string())
+            .key_context(TRIGGER)
+            .track_focus(&self.trigger)
+            .role(Role::ComboBox)
+            .aria_label(name)
+            .aria_value(committed)
+            .aria_expanded(self.open)
+            .aria_description(self.description.clone())
+            .on_action(cx.listener(Self::open_action))
+            .capture_any_mouse_down(cx.listener(Self::trigger_pressed))
+            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                this.open_popup(window, cx);
+            }))
+    }
+
+    /// The popup's search field: the shared editable text element in
+    /// the boxed field the Settings search's field is. The wrapper is
+    /// the field's accessibility node, and carries the focus — the
+    /// query input keeps it while the popup is open, so the arrows
+    /// move the highlight without stealing text focus.
+    fn query_field(&self, model: &Model, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let theme = &model.theme;
+        let query = self.query.read(cx).as_str().to_owned();
+        let input = &self.query;
+        let debug = format!("{}-query", self.debug);
+        div()
+            .id("query")
+            .debug_selector(move || debug.clone())
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .mb(px(4.))
+            .px(px(7.))
+            .py(px(5.))
+            .rounded_md()
+            .border_1()
+            .border_color(theme.hairline)
+            .bg(theme.tile_background)
+            .focus(|field| field.border_color(theme.focus_ring))
+            .track_focus(&input.focus_handle(cx))
+            .role(Role::TextInput)
+            .aria_label(PLACEHOLDER)
+            .aria_value(query.clone())
+            .aria_placeholder(PLACEHOLDER)
+            .child(glyph(Glyph::Search, px(14.), theme.text_muted))
+            .child(
+                text_input("query")
+                    .state(input.downgrade())
+                    .placeholder(PLACEHOLDER)
+                    .placeholder_color(theme.text_placeholder)
+                    .caret_color(theme.accent_text)
+                    .selection_color(theme.row_selected)
+                    .marked_color(theme.accent_text)
+                    .text_color(theme.text_body)
+                    .text_size(theme.typography.row_subtitle_size)
+                    .w_full()
+                    .min_w(px(0.))
+                    .whitespace_nowrap()
+                    .overflow_x_scroll(),
+            )
+    }
+
+    /// The popup: the L2 popover surface with the search field above
+    /// the choice rows, on the anchored, deferred overlay that paints
+    /// above the window and is constrained inside it. See the module
+    /// docs for the placement. `active` is the highlighted choice's
+    /// id, if one is highlighted.
+    fn popup(
+        &self,
+        model: &Model,
+        filtered: &[usize],
+        active: Option<&SharedString>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = &model.theme;
+        let geometry = &theme.geometry;
+        let query = self.query.read(cx).as_str().to_owned();
+        let rows: Vec<AnyElement> = if filtered.is_empty() {
+            let message = format!("No choices match “{}”", query.trim());
+            vec![
+                div()
+                    .id("empty")
+                    .debug_selector(move || format!("{}-empty", self.debug))
+                    // A live status, so assistive technology announces that
+                    // the query found nothing; not selectable.
+                    .role(Role::Status)
+                    .aria_label(message.clone())
+                    .px(geometry.row_padding_x)
+                    .min_h(geometry.row_min_height)
+                    .flex()
+                    .items_center()
+                    .text_size(theme.typography.row_kind_size)
+                    .text_color(theme.text_muted)
+                    .child(message)
+                    .into_any_element(),
+            ]
+        } else {
+            filtered
+                .iter()
+                .map(|&index| self.choice_row(model, index, active, cx))
+                .collect()
+        };
+        let list = div()
+            .id("list")
+            .debug_selector(move || format!("{}-list", self.debug))
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h(px(0.))
+            .max_h(LIST_MAX_HEIGHT)
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll)
+            .role(Role::ListBox)
+            .aria_label("Choices")
+            .children(rows);
+        let content = div()
+            .flex()
+            .flex_col()
+            .p(px(6.))
+            .when(self.searchable, |content| {
+                content.child(self.query_field(model, cx))
+            })
+            .child(list);
+        // The elevation shadow sits on the wrapper, which GPUI paints
+        // behind the surface's translucent fill — the same treatment the
+        // footer menu's popup gives its popover.
+        let debug = format!("{}-popup", self.debug);
+        let popup = div()
+            .id("popup")
+            .debug_selector(move || debug.clone())
+            .key_context(POPUP)
+            .w_full()
+            .flex()
+            .flex_col()
+            .shadow(vec![
+                BoxShadow::new(px(0.), px(0.), gpui::rgba(0x000000CC)).spread_radius(px(0.5)),
+                BoxShadow::new(px(0.), px(28.), gpui::rgba(0x000000BF))
+                    .blur_radius(px(70.))
+                    .spread_radius(px(-14.)),
+            ])
+            .on_action(cx.listener(Self::next_choice))
+            .on_action(cx.listener(Self::previous_choice))
+            .on_action(cx.listener(Self::first_choice))
+            .on_action(cx.listener(Self::last_choice))
+            .on_action(cx.listener(Self::commit_action))
+            .on_action(cx.listener(Self::cancel_action))
+            .on_action(cx.listener(Self::leave_forward))
+            .on_action(cx.listener(Self::leave_backward))
+            // A mouse-down outside the popup cancels the draft and is
+            // left to land, so the clicked target keeps its focus (see
+            // [`Select::outside_down`]). The trigger's own press was
+            // already settled in the capture phase before this.
+            .on_mouse_down_out(cx.listener(Self::outside_down))
+            .child(model.material.popover(theme, content));
+        deferred(
+            anchored()
+                .anchor(gpui::Anchor::TopLeft)
+                .snap_to_window()
+                .child(popup),
+        )
+        .into_any_element()
+    }
+
+    /// One choice row: the reference's row chrome carrying a list-box
+    /// option's semantics. The committed choice is marked selected and
+    /// carries the radio's dot, as the settings pages' choice rows do;
+    /// the highlighted choice takes the selected wash and is the
+    /// focused field's active descendant; a choice the system cannot
+    /// answer is listed with its reason and cannot be committed.
+    fn choice_row(
+        &self,
+        model: &Model,
+        index: usize,
+        active: Option<&SharedString>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = &model.theme;
+        let typography = &theme.typography;
+        let geometry = &theme.geometry;
+        let choice = &model.choices[index];
+        let committed = model.committed.as_ref() == Some(&choice.id);
+        let highlighted = active.is_some_and(|id| id == &choice.id);
+        let offered = choice.unavailable_reason.is_none();
+        // What the row says under its label: the reason a choice cannot
+        // be used here, where it cannot, else the choice's own subtitle.
+        let description = choice
+            .unavailable_reason
+            .clone()
+            .or_else(|| choice.subtitle.clone())
+            .unwrap_or_default();
+        let row_element = div()
+            .flex()
+            .items_center()
+            .gap(geometry.row_gap)
+            .min_h(geometry.row_min_height)
+            .px(geometry.row_padding_x)
+            .rounded(geometry.row_radius)
+            .when(offered, |row| {
+                row.cursor_pointer()
+                    .when(!highlighted, |row| row.hover(|row| row.bg(theme.row_hover)))
+            })
+            .when(!offered, |row| row.opacity(0.5).cursor_default())
+            .when(highlighted, |row| {
+                row.bg(theme.row_selected).shadow(vec![
+                    BoxShadow::new(px(0.), px(0.), theme.row_selected_border)
+                        .spread_radius(px(1.))
+                        .inset(),
+                ])
+            })
+            .child(
+                // The committed choice's mark, as the settings pages'
+                // choice rows render theirs.
+                div()
+                    .flex_none()
+                    .w(px(18.))
+                    .text_size(typography.row_title_size)
+                    .text_color(theme.text_title)
+                    .child(if committed { "◉" } else { "○" }),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .truncate()
+                            .text_size(typography.row_title_size)
+                            .font_weight(typography.medium)
+                            .text_color(theme.text_title)
+                            .child(choice.label.clone()),
+                    )
+                    .when_some(
+                        (!description.is_empty()).then(|| description.clone()),
+                        |column, description| {
+                            column.child(
+                                div()
+                                    .text_size(typography.row_subtitle_size)
+                                    .text_color(theme.text_muted)
+                                    .child(description),
+                            )
+                        },
+                    ),
+            );
+        let id = choice.id.clone();
+        let debug = format!("{}-{}", self.debug, choice.id);
+        let label = choice.label.clone();
+        let description_label = description.clone();
+        let row_element = row_element
+            .id(choice.id.clone())
+            .debug_selector(move || debug.clone())
+            .role(Role::ListBoxOption)
+            .aria_label(label)
+            .aria_description(description_label)
+            .aria_selected(committed)
+            .when(highlighted, |row| row.aria_active_descendant())
+            .when(!offered, |row| row.aria_disabled(true));
+        let offered_row = if offered {
+            let id = id.clone();
+            row_element.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.commit(&id, window, cx);
+            }))
+        } else {
+            row_element
+        };
+        offered_row.into_any_element()
+    }
+}
+
+impl Render for Select {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let model = (self.model.clone())(cx);
+        let query = self.query.read(cx).as_str().to_owned();
+        let filtered = self.filtered(&model, &query);
+        // The highlight self-heals: a choice that went (the consumer's
+        // model changed, or the query moved under it) hands the
+        // highlight back to the committed choice, else the first that
+        // can be used — never a stale or unusable one.
+        if self.active_choice(&model, &filtered).is_none() {
+            self.active = model
+                .committed
+                .as_ref()
+                .and_then(|id| {
+                    filtered
+                        .iter()
+                        .copied()
+                        .find(|&index| &model.choices[index].id == id)
+                })
+                .filter(|&index| model.choices[index].unavailable_reason.is_none())
+                .map(|index| model.choices[index].id.clone())
+                .or_else(|| first_enabled(&model, &query));
+        }
+        let active = self
+            .active_choice(&model, &filtered)
+            .map(|choice| choice.id.clone());
+        let trigger = self.trigger_row(&model, cx);
+        let open = self.open;
+        let popup = open.then(|| self.popup(&model, &filtered, active.as_ref(), cx));
+        // The control's block: the trigger, then a zero-height row that
+        // positions the popup — its content-box origin is the trigger's
+        // bottom-left, so the anchored popup opens below the trigger
+        // however tall the trigger grew, and the popup is deferred from
+        // there (painting above the window, following the page's
+        // scroll).
+        div()
+            .relative()
+            .flex()
+            .flex_col()
+            .w_full()
+            .child(trigger)
+            .child(
+                div()
+                    .flex_none()
+                    .h(px(0.))
+                    .w_full()
+                    .when_some(popup, |anchor, popup| anchor.child(popup)),
+            )
+    }
+}
+
+/// The first choice that matches `query` and can be used, as its id.
+fn first_enabled(model: &Model, query: &str) -> Option<SharedString> {
+    model
+        .choices
+        .iter()
+        .find(|choice| choice.unavailable_reason.is_none() && Select::matches(choice, query))
+        .map(|choice| choice.id.clone())
+}
+
+/// The chevron that says the list opens, pointing down as an open list
+/// does: the disclosure groups' own glyph, turned to its open angle.
+fn glyph_rotated_down(theme: &Theme) -> gpui::Svg {
+    glyph_rotated(
+        Glyph::ChevronRight,
+        px(14.),
+        theme.text_muted,
+        gpui::radians(std::f32::consts::FRAC_PI_2),
+    )
+}

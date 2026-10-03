@@ -67,6 +67,7 @@ pub fn bind_keys(cx: &mut App) {
     features::root_search::bind_keys(cx, &text_editing);
     features::footer_menu::bind_keys(cx);
     features::settings::bind_keys(cx);
+    ui::select::bind_keys(cx);
     extension_views::custom_view::bind_keys(cx);
 }
 
