@@ -123,12 +123,12 @@ pub enum Reopening {
 }
 
 /// The host settings as the user chose them: one theme preference, one
-/// material preference, the Open Pane hotkey, the launch-at-login choice,
-/// the launcher's opening display and what reopening shows, and the
-/// in-app navigation bindings, the whole of what the Settings pages
-/// built so far offer. Later pages add fields beside these, with the
-/// same rules: missing fields default, and unknown values fail the
-/// record.
+/// material preference, the Open Pane hotkey, the tray visibility, the
+/// launch-at-login choice, the launcher's opening display and what
+/// reopening shows, and the in-app navigation bindings, the whole of
+/// what the Settings pages built so far offer. Later pages add fields
+/// beside these, with the same rules: missing fields default, and
+/// unknown values fail the record.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostSettings {
     /// The theme the user chose for Pane's windows.
@@ -141,6 +141,13 @@ pub struct HostSettings {
     /// stays while extensions are disabled, and is applied through the
     /// same platform registration path the command hotkeys use.
     pub open_pane: Shortcut,
+    /// Whether Pane shows its tray or menu-bar entry — the item whose
+    /// menu opens the launcher, Settings and Quit, reachable while the
+    /// launcher is hidden. A provisional default, as the Open Pane
+    /// shortcut's is: the entry is shown, since it is the one place
+    /// those actions live outside Pane's own windows; the General page
+    /// can hide it, where the platform provides one.
+    pub tray_visible: bool,
     /// Whether the user chose Pane to start at login. A preference, not a
     /// registration: whether Pane actually starts is the platform's own
     /// login integration, which the window layer reconciles with this
@@ -170,6 +177,7 @@ impl Default for HostSettings {
             theme: ThemePreference::default(),
             material: MaterialPreference::default(),
             open_pane: Shortcut::open_pane_default(),
+            tray_visible: true,
             launch_at_login: false,
             opening_monitor: OpeningMonitor::default(),
             reopening: Reopening::default(),
@@ -229,6 +237,7 @@ impl HostSettings {
             theme: recorded.theme,
             material: recorded.material,
             open_pane,
+            tray_visible: recorded.tray_visible,
             launch_at_login: recorded.launch_at_login,
             opening_monitor: recorded.opening_monitor,
             reopening: recorded.reopening,
@@ -247,6 +256,7 @@ impl HostSettings {
             theme: self.theme,
             material: self.material,
             open_pane: Some(self.open_pane.id()),
+            tray_visible: self.tray_visible,
             launch_at_login: self.launch_at_login,
             opening_monitor: self.opening_monitor,
             reopening: self.reopening,
@@ -277,6 +287,12 @@ struct Recorded {
     /// while the record's other fields follow the house camelCase names.
     #[serde(default, rename = "open_pane")]
     open_pane: Option<String>,
+    /// Whether the tray or menu-bar entry is shown; missing means shown,
+    /// the provisional default. A value that is not a boolean fails the
+    /// whole record, as unknown values do.
+    #[serde(default = "shown_by_default")]
+    tray_visible: bool,
+    /// Whether the user chose Pane to start at login; missing means not.
     #[serde(default)]
     launch_at_login: bool,
     /// The display the launcher opens on, as one of the three words the
@@ -295,6 +311,11 @@ struct Recorded {
     /// record.
     #[serde(default)]
     keyboard: Option<BTreeMap<String, String>>,
+}
+
+/// The record's default for the tray visibility: shown.
+fn shown_by_default() -> bool {
+    true
 }
 
 #[cfg(test)]
@@ -349,6 +370,7 @@ mod tests {
             theme: ThemePreference::System,
             material: MaterialPreference::Solid,
             open_pane: Shortcut::parse("ctrl+alt+b").unwrap(),
+            tray_visible: false,
             launch_at_login: true,
             opening_monitor: super::OpeningMonitor::Pointer,
             reopening: super::Reopening::RootSearch,
@@ -420,6 +442,26 @@ mod tests {
             let problem = reading(text);
             assert!(problem.is_err(), "{text} half-loads");
         }
+    }
+
+    #[test]
+    fn the_tray_visibility_defaults_to_shown_and_a_non_boolean_fails_the_record() {
+        // Missing: shown, the provisional default.
+        assert_eq!(
+            reading(r#"{ "version": 1, "tray": "missing" }"#).unwrap(),
+            HostSettings::default()
+        );
+        // Recorded as the record's camelCase field, and read back.
+        assert_eq!(
+            reading(r#"{ "version": 1, "trayVisible": false }"#).unwrap(),
+            HostSettings {
+                tray_visible: false,
+                ..HostSettings::default()
+            }
+        );
+        // A value that is not a boolean fails the whole record.
+        let problem = reading(r#"{ "version": 1, "trayVisible": "no" }"#);
+        assert!(problem.is_err(), "{problem:?}");
     }
 
     #[test]
@@ -521,6 +563,7 @@ mod tests {
             theme: ThemePreference::Light,
             material: MaterialPreference::Solid,
             open_pane: Shortcut::parse("ctrl+alt+b").unwrap(),
+            tray_visible: false,
             launch_at_login: true,
             opening_monitor: super::OpeningMonitor::Pointer,
             reopening: super::Reopening::RootSearch,

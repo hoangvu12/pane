@@ -154,6 +154,28 @@ fn main() {
         // whose run loop receives the presses on macOS.
         let (press_sender, mut presses) = pane_core::hotkeys::channel();
         let launcher = launcher.with_hotkeys(pane_core::hotkeys::native(press_sender));
+        // The tray or menu-bar entry: Pane's item in the system's tray
+        // (Windows) or menu bar (macOS), whose menu opens the launcher,
+        // Settings and Quit — the entry the General page's visibility
+        // preference shows and hides, applied here from what the record
+        // holds. The adapter is made on the main thread, as the hotkeys'
+        // is; on a system whose entry cannot be made, the adapter says
+        // why and the page explains.
+        let (selection_sender, mut selections) = pane_core::tray::channel();
+        let tray = pane_core::tray::native(selection_sender);
+        pane::settings::attach_tray(tray.clone(), cx);
+        // Quitting removes Pane's native tray/menu-bar entry and releases
+        // its global hotkey registrations, whichever way Pane is quit —
+        // closing the launcher's window or the tray's Quit item, which
+        // does the same itself before it asks the platform to quit.
+        let quitting = launcher.clone();
+        let quitting_tray = tray.clone();
+        cx.on_app_quit(move |_| {
+            let _ = quitting_tray.set_visible(false);
+            quitting.release_hotkeys();
+            async {}
+        })
+        .detach();
         // Clipboard history: Pane watches the clipboard only while an
         // enabled package keeps history the user turned on.
         let launcher = launcher.with_clipboard(pane_core::clipboard::native());
@@ -223,6 +245,20 @@ fn main() {
             while let Some(shortcut) = presses.next().await {
                 let shown = window.update(cx, |launcher, window, cx| {
                     launcher.hotkey_pressed(&shortcut, window, cx)
+                });
+                if shown.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+        // A tray or menu-bar selection arrives here the same way: the
+        // window's own dispatch runs it, whatever state the windows are
+        // in — the launcher may be hidden, and the menu stays usable.
+        cx.spawn(async move |cx| {
+            while let Some(action) = selections.next().await {
+                let shown = window.update(cx, |launcher, window, cx| {
+                    launcher.tray_selected(action, window, cx)
                 });
                 if shown.is_err() {
                     break;
