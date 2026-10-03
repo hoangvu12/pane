@@ -87,6 +87,7 @@ use application_update::{Application, Updates};
 use choices::Record;
 use developing::Developing;
 pub use developing::{BuildFailure, Development};
+pub use hotkeys::HotkeyOutcome;
 use hotkeys::{Bindings, OpenPane};
 use pausing::{Pauses, Recorder};
 use schedules::Schedules;
