@@ -11,6 +11,7 @@
 use std::future::Future;
 use std::mem::{Discriminant, discriminant};
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use gpui::{
     App, BoxShadow, ClipboardItem, Context, Div, FocusHandle, Hsla, KeyDownEvent,
@@ -33,6 +34,14 @@ use crate::ui::result_row::{RowContent, result_row};
 use crate::{Back, Confirm, FocusNext, FocusPrevious, OpenSettings, SelectNext, SelectPrevious};
 
 pub(crate) const KEY_CONTEXT: &str = "Launcher";
+
+/// How long after an accepted Open Pane press another press of the same
+/// binding is treated as the repeat of a key still held, not a new press.
+/// The Windows and X11 adapters stop the system's key repeat at its source
+/// (`MOD_NOREPEAT`, detectable auto-repeat); macOS's Carbon hot keys
+/// report a held key again, so the window keeps the guard itself. A
+/// genuine second press after this long toggles again.
+const OPEN_PANE_REPEAT: Duration = Duration::from_millis(600);
 
 /// The launcher window's root view.
 pub struct LauncherWindow {
@@ -80,6 +89,16 @@ pub struct LauncherWindow {
     /// [`LauncherWindow::drawn_view`]). Test and debug builds only.
     #[cfg(any(test, debug_assertions))]
     drawn: Option<LauncherView>,
+    /// When the Open Pane hotkey was last accepted, so the repeats of a
+    /// held key do not toggle again and again (see [`OPEN_PANE_REPEAT`]).
+    open_pane_press: Option<Instant>,
+    /// Whether the launcher window is hidden by the Open Pane hotkey —
+    /// hidden, not closed: Pane keeps running, and the next press shows
+    /// the same window and the same launcher again. Drives the toggle's
+    /// decision together with the window's focus, so what the hotkey does
+    /// is the same whatever the platform reports about a hidden window.
+    /// The test-observable copy is [`LauncherWindow::hidden`].
+    hidden: bool,
 }
 
 /// What the list was last scrolled for. When any of it changes, the list
@@ -112,6 +131,11 @@ impl LauncherWindow {
         // in effect, and the platform's appearance notification feeds the
         // system's appearance back into them (see `crate::settings`).
         crate::settings::follow(&crate::settings::ensure(cx), window, cx);
+        // The launcher this window runs owns the global-shortcut
+        // registration: the recorded Open Pane hotkey is applied to the
+        // system here, at startup, and the settings keep this launcher for
+        // every later change (see `crate::settings::attach_launcher`).
+        crate::settings::attach_launcher(&launcher, cx);
         // Quitting ends development: its watchers go and a running build
         // is stopped with the processes it started.
         cx.on_app_quit(|this: &mut Self, _| {
@@ -135,6 +159,8 @@ impl LauncherWindow {
             arriving: None,
             menu_button,
             menu: None,
+            open_pane_press: None,
+            hidden: false,
             #[cfg(any(test, debug_assertions))]
             drawn: None,
         }
@@ -164,6 +190,16 @@ impl LauncherWindow {
     #[doc(hidden)]
     pub fn view_transition(&self) -> Option<(f32, f32)> {
         self.arriving
+    }
+
+    /// Test support: whether the Open Pane hotkey has hidden the window —
+    /// the platform's own visibility is not observable from outside GPUI,
+    /// so the window reports the state it drove. Test and debug builds
+    /// only.
+    #[cfg(any(test, debug_assertions))]
+    #[doc(hidden)]
+    pub fn hidden(&self) -> bool {
+        self.hidden
     }
 
     /// Redraws whenever the launcher changes in the background, as
@@ -326,20 +362,74 @@ impl LauncherWindow {
     /// Opens the command whose global hotkey `shortcut` is, as the system
     /// reported it pressed while any application had focus: the window
     /// comes to the front and shows the command. A press that opens nothing
-    /// (a hotkey released meanwhile) leaves the window where it is.
+    /// (a hotkey released meanwhile) leaves the window where it is. The
+    /// Open Pane hotkey is not a command's: its press summons, focuses or
+    /// hides the launcher itself ([`LauncherWindow::open_pane_pressed`]).
     pub fn hotkey_pressed(
         &mut self,
         shortcut: &Shortcut,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.launcher.opens_pane(shortcut) {
+            self.open_pane_pressed(window, cx);
+            return;
+        }
         let Some(pending) = self.launcher.press_hotkey(shortcut) else {
             return;
         };
+        self.unhide(window);
         window.activate_window();
         cx.activate(true);
         self.navigation = Direction::Forward;
         self.show_until_done(pending, window, cx);
+    }
+
+    /// Shows the window if the Open Pane hotkey hid it: every activation
+    /// of the launcher — the hotkey's show path, a command's hotkey, an
+    /// entry point that reaches the launcher from Settings — must find a
+    /// visible window.
+    fn unhide(&mut self, window: &mut Window) {
+        if self.hidden {
+            window.set_visible(true);
+            self.hidden = false;
+        }
+    }
+
+    /// The Open Pane hotkey's press: hidden, the launcher is shown and its
+    /// search focused; visible but without focus (another application's,
+    /// or the Settings window's — its focus does not count), it is brought
+    /// forward; already focused, it is hidden — hidden, not closed, so
+    /// Pane keeps running in the background, the Settings window stays
+    /// open and the next press reuses the same live launcher.
+    fn open_pane_pressed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let now = cx.background_executor().now();
+        if self
+            .open_pane_press
+            .is_some_and(|last| now.duration_since(last) < OPEN_PANE_REPEAT)
+        {
+            // The repeat of a key still held, not a new press.
+            return;
+        }
+        self.open_pane_press = Some(now);
+        if !self.hidden && window.is_window_active() {
+            window.set_visible(false);
+            self.hidden = true;
+            return;
+        }
+        self.unhide(window);
+        window.activate_window();
+        cx.activate(true);
+        // The summoned launcher's search has focus: the query of the search
+        // on screen, or root search's when the launcher was left on a
+        // screen with no search of its own.
+        if self.launcher.view().search_field().is_some() {
+            self.query.focus(window, cx);
+        } else {
+            self.launcher.show_root_search();
+            self.sync_screen(window, cx);
+        }
+        cx.notify();
     }
 
     /// On the hotkey screen, a key pressed with its modifiers is the new
@@ -434,6 +524,7 @@ impl LauncherWindow {
         while !matches!(self.launcher.view().screen, Screen::Root { .. }) {
             self.launcher.back();
         }
+        self.unhide(window);
         window.activate_window();
         cx.activate(true);
         let Some(index) = self
