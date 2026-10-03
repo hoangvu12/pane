@@ -276,8 +276,10 @@ mod tests {
 
     #[test]
     fn the_pointer_choice_opens_on_the_display_the_pointer_is_on() {
-        // On the second display, including at its very edge.
-        for (x, y) in [(2500., 700.), (1920., 0.), (4479., 1439.)] {
+        // On the second display, including at its very edge. The edge the
+        // two displays share belongs to both; the first in the layout
+        // wins it, as the primary is listed first.
+        for (x, y) in [(2500., 700.), (1921., 1.), (4479., 1439.)] {
             let resolved =
                 resolve(&layout(Some(Point { x, y }), None), OpeningMonitor::Pointer).unwrap();
             assert_eq!(resolved.display.id, DisplayId(2), "the pointer at {x},{y}");
@@ -372,24 +374,26 @@ mod tests {
     }
 
     #[test]
-    fn a_window_opens_centered_in_the_usable_area_and_clamped_to_it() {
+    fn a_window_opens_centered_in_the_usable_area_and_within_it() {
         let display = display(2, 1920., 0., 2560., 1440., 60.);
-        // A window that fits: centered in the usable area.
+        // The usable area runs 1980 to 4420 across and 60 to 1380 down.
+        // A window that fits: centered in it.
         let bounds = display.window_bounds(Size {
             width: 760.,
             height: 460.,
         });
-        assert_eq!(bounds.origin, Point { x: 2820., y: 460. });
-        // A window nearly as tall as the usable area is clamped inside it
-        // rather than centered across its edges.
+        assert_eq!(bounds.origin, Point { x: 2820., y: 490. });
+        // A window exactly as tall as the area: centered is its top, and
+        // the window ends at its bottom — every part of it, its controls
+        // included, is on the display.
         let bounds = display.window_bounds(Size {
             width: 760.,
-            height: 1300.,
+            height: 1320.,
         });
         assert_eq!(bounds.origin, Point { x: 2820., y: 60. });
         assert_eq!(
             bounds.origin.y + bounds.size.height,
-            1360.,
+            1380.,
             "the window ends inside the usable area"
         );
         // A window larger than the usable area sits at its top left: the
