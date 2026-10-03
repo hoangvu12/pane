@@ -20,6 +20,7 @@ mod features;
 mod links;
 mod ui;
 
+pub mod placement;
 pub mod settings;
 
 pub use app::LauncherWindow;

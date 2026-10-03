@@ -71,6 +71,7 @@ mod about;
 mod appearance;
 mod extensions;
 mod general;
+mod launcher;
 mod search;
 mod shortcuts;
 
@@ -149,6 +150,9 @@ impl SettingsWindow {
         // the platform's appearance notification feeds the system's
         // appearance back into them (see `crate::settings`).
         crate::settings::follow(&crate::settings::ensure(cx), window, cx);
+        // The placement the Launcher page explains its choices through,
+        // ensuring it exists before the page's search reads it.
+        crate::placement::ensure(cx);
         // The Shortcuts page lists the launcher's commands, and the
         // launcher's packages can change while this window sits idle:
         // installed, disabled, enabled, updated or removed in the
@@ -177,12 +181,14 @@ impl SettingsWindow {
             // The sidebar's order: the sections the reference lists
             // (General, Launcher, Appearance, Shortcuts, Keyboard,
             // Extensions), About last. Of those, this milestone ships
-            // General, Appearance, Shortcuts and Extensions; General —
-            // the Open Pane hotkey and the launch-at-login choice — is
-            // the page the window first shows, and the later tickets'
-            // pages take their places in this order as they land.
+            // General, Launcher, Appearance, Shortcuts and Extensions;
+            // General — the Open Pane hotkey and the launch-at-login
+            // choice — is the page the window first shows, and the later
+            // tickets' pages take their places in this order as they
+            // land.
             pages: vec![
                 general::page(),
+                launcher::page(),
                 appearance::page(),
                 shortcuts::page(),
                 extensions::page(),
@@ -614,8 +620,8 @@ pub(crate) fn open(launcher: &Launcher, cx: &mut App) -> WindowHandle<SettingsWi
     .expect("failed to open Pane's Settings window")
 }
 
-/// One page of Pane's Settings: the sidebar entry that lists it, and the
-/// content it draws. See the module docs for how a page registers.
+/// One page of Pane's Settings: the sidebar entry that lists it, and
+/// the content it draws. See the module docs for how a page registers.
 pub(crate) struct Page {
     /// The sidebar entry's title, the page's identity in the sidebar and
     /// the tests' selectors.

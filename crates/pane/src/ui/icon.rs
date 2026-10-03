@@ -62,6 +62,9 @@ pub(crate) enum Glyph {
     /// A circle split down the middle: the Appearance page's sidebar entry
     /// (the two palettes its theme choice stands between).
     Theme,
+    /// A display with its stand: the Settings window's Launcher section
+    /// (the window this page's choices place).
+    Monitor,
     /// Three sliders: the General page's sidebar entry (the choices that
     /// govern Pane as a whole).
     Sliders,
@@ -94,6 +97,7 @@ impl Glyph {
             Glyph::Keyboard => include_bytes!("../../assets/icons/keyboard.svg"),
             Glyph::ChevronRight => include_bytes!("../../assets/icons/chevron-right.svg"),
             Glyph::Theme => include_bytes!("../../assets/icons/theme.svg"),
+            Glyph::Monitor => include_bytes!("../../assets/icons/monitor.svg"),
             Glyph::Sliders => include_bytes!("../../assets/icons/sliders.svg"),
             #[cfg(target_os = "windows")]
             Glyph::WindowClose => include_bytes!("../../assets/icons/window-close.svg"),
