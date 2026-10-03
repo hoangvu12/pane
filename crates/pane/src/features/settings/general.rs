@@ -74,6 +74,7 @@ pub(crate) fn bind_keys(cx: &mut App) {
 pub(crate) fn page() -> Page {
     Page {
         title: "General",
+        labels: &[],
         icon: (IconTone::Command, Glyph::Prompt),
         render,
     }

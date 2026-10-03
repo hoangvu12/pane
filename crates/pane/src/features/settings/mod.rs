@@ -50,6 +50,7 @@ mod about;
 mod appearance;
 mod extensions;
 mod general;
+mod launcher;
 mod shortcuts;
 
 actions!(settings, [NextSection, PreviousSection]);
@@ -136,12 +137,13 @@ impl SettingsWindow {
             // The sidebar's order: the sections the reference lists
             // (General, Launcher, Appearance, Shortcuts, Keyboard,
             // Extensions), About last. Of those, this milestone ships
-            // General, Appearance, Shortcuts and Extensions; General —
-            // the Open Pane hotkey — is the page the window first shows,
-            // and the later tickets' pages take their places in this
-            // order as they land.
+            // General, Launcher, Appearance, Shortcuts and Extensions;
+            // General — the Open Pane hotkey — is the page the window
+            // first shows, and the later tickets' pages take their
+            // places in this order as they land.
             pages: vec![
                 general::page(),
+                launcher::page(),
                 appearance::page(),
                 shortcuts::page(),
                 extensions::page(),
@@ -167,6 +169,17 @@ impl SettingsWindow {
             self.selected -= 1;
             cx.notify();
         }
+    }
+
+    /// The host page catalog: every searchable label the registered pages
+    /// hold, each with the page it is on — the list the Settings search
+    /// (#83) filters, and the one later pages register their settings
+    /// into as their controls appear.
+    pub(crate) fn searchable_labels(&self) -> Vec<(&'static str, &'static str)> {
+        self.pages
+            .iter()
+            .flat_map(|page| page.labels.iter().map(move |&label| (page.title, label)))
+            .collect()
     }
 
     fn focus_next(&mut self, _: &FocusNext, window: &mut Window, cx: &mut Context<Self>) {
@@ -464,14 +477,22 @@ pub(crate) fn open(launcher: &Launcher, cx: &mut App) -> WindowHandle<SettingsWi
     .expect("failed to open Pane's Settings window")
 }
 
-/// One page of Pane's Settings: the sidebar entry that lists it, and the
-/// content it draws. See the module docs for how a page registers.
+/// One page of Pane's Settings: the sidebar entry that lists it, the
+/// content it draws, and the searchable labels its settings register in
+/// the host page catalog. See the module docs for how a page registers.
 pub(crate) struct Page {
     /// The sidebar entry's title, the page's identity in the sidebar and
     /// the tests' selectors.
     pub(crate) title: &'static str,
     /// The icon the sidebar entry shows.
     pub(crate) icon: (IconTone, Glyph),
+    /// The labels under which the page's settings are found: the words
+    /// the host page catalog holds for this page, one per setting the
+    /// page owns, named as the user would look for them. The Settings
+    /// search (#83) filters this catalog; a page whose settings come with
+    /// a later ticket registers theirs then, so an empty list is a page
+    /// with nothing registered yet, not a page without settings.
+    pub(crate) labels: &'static [&'static str],
     /// Draws the page's content into the page area; the window hands
     /// itself over, since a page's state lives in its module, held by the
     /// window as a field.

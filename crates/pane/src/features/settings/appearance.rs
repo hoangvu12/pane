@@ -76,6 +76,7 @@ const MATERIALS: [(MaterialPreference, &str, &str, &str); 2] = [
 pub(crate) fn page() -> Page {
     Page {
         title: "Appearance",
+        labels: &[],
         icon: (IconTone::Command, Glyph::Theme),
         render,
     }

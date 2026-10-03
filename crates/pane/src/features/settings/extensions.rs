@@ -44,6 +44,7 @@ use crate::ui::theme::Theme;
 pub(crate) fn page() -> Page {
     Page {
         title: "Extensions",
+        labels: &[],
         // The blocks tile, as the launcher's own Manage extensions row.
         icon: (IconTone::Command, Glyph::Blocks),
         render,

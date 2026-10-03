@@ -90,6 +90,7 @@ pub(crate) fn bind_keys(cx: &mut App) {
 pub(crate) fn page() -> Page {
     Page {
         title: TITLE,
+        labels: &[],
         icon: (IconTone::Command, Glyph::Keyboard),
         render,
     }

@@ -24,6 +24,7 @@ const DOCUMENTATION: &str = "https://github.com/hoangvu12/pane";
 pub(crate) fn page() -> Page {
     Page {
         title: "About",
+        labels: &[],
         icon: (IconTone::Command, Glyph::Gear),
         render,
     }

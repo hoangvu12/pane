@@ -18,6 +18,7 @@ mod app;
 mod extension_views;
 mod features;
 mod links;
+mod placement;
 mod ui;
 
 pub mod settings;

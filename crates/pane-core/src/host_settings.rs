@@ -73,11 +73,58 @@ pub enum MaterialPreference {
     Solid,
 }
 
+/// The display the launcher window opens on, as the user chose it. The
+/// choice is a preference, not a placement: where the launcher actually
+/// opens is the display layout the platform reports and the resolution
+/// that turns this choice into a display (see `crate::placement`), which
+/// falls back to an available display when the chosen one is gone.
+///
+/// The default is the primary display, matching where the launcher has
+/// opened since it first shipped; it is the provisional default of the
+/// settings specification, not a separately confirmed product decision,
+/// and the Launcher page names it as such.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OpeningMonitor {
+    /// The system's primary display, whatever else is connected.
+    #[default]
+    Primary,
+    /// The display the pointer is on when the launcher opens, where the
+    /// system tells Pane where the pointer is.
+    Pointer,
+    /// The display of the operating system's active window — the one the
+    /// user is working in — where the system tells Pane which window is
+    /// active.
+    #[serde(rename = "active-window")]
+    ActiveWindow,
+}
+
+/// What reopening the launcher shows, as the user chose it. Dismissal —
+/// hiding the launcher, by the Open Pane hotkey or by Escape at root
+/// search with an empty query — never quits Pane, and what the next
+/// opening starts from is this choice.
+///
+/// The default restores a still-valid view, as the settings
+/// specification proposes provisionally; a view that is no longer valid —
+/// its command removed or its extension disabled — returns safely to
+/// root search either way.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Reopening {
+    /// Show the view the launcher was left on, when it is still valid.
+    #[serde(rename = "restore-view")]
+    #[default]
+    RestoreView,
+    /// Start from root search, with an empty query, whatever was left.
+    #[serde(rename = "root-search")]
+    RootSearch,
+}
+
 /// The host settings as the user chose them: one theme preference, one
-/// material preference and the Open Pane hotkey, the whole of what the
-/// pages built so far offer. Later pages add fields beside these, with
-/// the same rules: missing fields default, and unknown values fail the
-/// record.
+/// material preference, the Open Pane hotkey, the launcher's opening
+/// display and what reopening shows, the whole of what the pages built so
+/// far offer. Later pages add fields beside these, with the same rules:
+/// missing fields default, and unknown values fail the record.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostSettings {
     /// The theme the user chose for Pane's windows.
@@ -90,6 +137,16 @@ pub struct HostSettings {
     /// stays while extensions are disabled, and is applied through the
     /// same platform registration path the command hotkeys use.
     pub open_pane: Shortcut,
+    /// The display the launcher window opens on, as the Launcher page
+    /// records it. A preference: the placement is resolved against the
+    /// display layout when the launcher opens (see `crate::placement`),
+    /// with a fallback when the chosen display is gone.
+    pub opening_monitor: OpeningMonitor,
+    /// What reopening the launcher shows: the view it was left on, when
+    /// still valid, or root search. A preference the Launcher page
+    /// records; dismissal behavior itself follows the specification's
+    /// Escape contract and is not a choice here.
+    pub reopening: Reopening,
 }
 
 impl Default for HostSettings {
@@ -98,6 +155,8 @@ impl Default for HostSettings {
             theme: ThemePreference::default(),
             material: MaterialPreference::default(),
             open_pane: Shortcut::open_pane_default(),
+            opening_monitor: OpeningMonitor::default(),
+            reopening: Reopening::default(),
         }
     }
 }
@@ -148,6 +207,8 @@ impl HostSettings {
             theme: recorded.theme,
             material: recorded.material,
             open_pane,
+            opening_monitor: recorded.opening_monitor,
+            reopening: recorded.reopening,
         })
     }
 
@@ -162,6 +223,8 @@ impl HostSettings {
             theme: self.theme,
             material: self.material,
             open_pane: Some(self.open_pane.id()),
+            opening_monitor: self.opening_monitor,
+            reopening: self.reopening,
         };
         let text = serde_json::to_string_pretty(&recorded).map_err(|error| error.to_string())?;
         let file = dir.join(FILE);
@@ -171,7 +234,9 @@ impl HostSettings {
 }
 
 /// The settings as the record holds them. Every field is written every
-/// time; missing fields read as the defaults.
+/// time; missing fields read as the defaults. The record's fields are
+/// named as the house records name theirs, in camelCase.
+#[serde(rename_all = "camelCase")]
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Recorded {
     version: u64,
@@ -181,9 +246,20 @@ struct Recorded {
     material: MaterialPreference,
     /// The Open Pane hotkey as its id, such as `ctrl+alt+space`; missing
     /// means this system's provisional default. A value that is not a
-    /// shortcut fails the whole record.
-    #[serde(default)]
+    /// shortcut fails the whole record. The field keeps the name it was
+    /// first recorded with, so records an earlier Pane wrote still read,
+    /// while the record's other fields follow the house camelCase names.
+    #[serde(default, rename = "open_pane")]
     open_pane: Option<String>,
+    /// The display the launcher opens on, as one of the three words the
+    /// preference names; missing means the primary display, the
+    /// provisional default.
+    #[serde(default)]
+    opening_monitor: OpeningMonitor,
+    /// What reopening the launcher shows; missing means restoring a
+    /// still-valid view, the provisional default.
+    #[serde(default)]
+    reopening: Reopening,
 }
 
 #[cfg(test)]
@@ -206,6 +282,7 @@ mod tests {
                 theme: ThemePreference::Dark,
                 material: MaterialPreference::Glass,
                 open_pane: Shortcut::open_pane_default(),
+                ..HostSettings::default()
             }
         );
     }
@@ -229,9 +306,45 @@ mod tests {
             theme: ThemePreference::System,
             material: MaterialPreference::Solid,
             open_pane: Shortcut::parse("ctrl+alt+b").unwrap(),
+            opening_monitor: super::OpeningMonitor::Pointer,
+            reopening: super::Reopening::RootSearch,
         };
         settings.save(dir.path()).unwrap();
         assert_eq!(HostSettings::open(dir.path()).unwrap(), settings);
+    }
+
+    #[test]
+    fn the_launcher_choices_are_written_and_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings = HostSettings {
+            opening_monitor: super::OpeningMonitor::ActiveWindow,
+            reopening: super::Reopening::RootSearch,
+            ..HostSettings::default()
+        };
+        settings.save(dir.path()).unwrap();
+        assert_eq!(HostSettings::open(dir.path()).unwrap(), settings);
+        // The fields are named as the house records name theirs, and the
+        // values as the preferences name theirs, so the choices survive a
+        // Pane that knows them by name alone.
+        let text = std::fs::read_to_string(dir.path().join(FILE)).unwrap();
+        assert!(
+            text.contains("\"openingMonitor\": \"active-window\""),
+            "the record is {text}"
+        );
+        assert!(
+            text.contains("\"reopening\": \"root-search\""),
+            "the record is {text}"
+        );
+        // A record without the fields is one an older Pane wrote: the
+        // provisional defaults, not an error.
+        assert_eq!(
+            reading(r#"{ "version": 1 }"#).unwrap().opening_monitor,
+            super::OpeningMonitor::Primary
+        );
+        assert_eq!(
+            reading(r#"{ "version": 1 }"#).unwrap().reopening,
+            super::Reopening::RestoreView
+        );
     }
 
     #[test]
@@ -292,6 +405,8 @@ mod tests {
             r#"{ "version": 1, "theme": "sepia" }"#,
             r#"{ "version": 1, "material": "frost" }"#,
             r#"{ "version": 1, "theme": 3 }"#,
+            r#"{ "version": 1, "openingMonitor": "nearest" }"#,
+            r#"{ "version": 1, "reopening": "blank" }"#,
         ] {
             assert!(reading(text).is_err(), "{text} half-loads");
         }
@@ -309,6 +424,8 @@ mod tests {
             theme: ThemePreference::Light,
             material: MaterialPreference::Solid,
             open_pane: Shortcut::parse("ctrl+alt+b").unwrap(),
+            opening_monitor: super::OpeningMonitor::Pointer,
+            reopening: super::Reopening::RootSearch,
         }
         .save(dir.path());
         assert!(failed.is_err(), "{failed:?}");

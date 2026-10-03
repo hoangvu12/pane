@@ -55,6 +55,9 @@ pub(crate) enum Glyph {
     /// A circle split down the middle: the Appearance page's sidebar entry
     /// (the two palettes its theme choice stands between).
     Theme,
+    /// A display with its stand: the Settings window's Launcher section
+    /// (the window this page's choices place).
+    Monitor,
     /// The Windows titlebar's close mark.
     #[cfg(target_os = "windows")]
     WindowClose,
@@ -83,6 +86,7 @@ impl Glyph {
             Glyph::ChevronDown => include_bytes!("../../assets/icons/chevron-down.svg"),
             Glyph::ChevronRight => include_bytes!("../../assets/icons/chevron-right.svg"),
             Glyph::Theme => include_bytes!("../../assets/icons/theme.svg"),
+            Glyph::Monitor => include_bytes!("../../assets/icons/monitor.svg"),
             #[cfg(target_os = "windows")]
             Glyph::WindowClose => include_bytes!("../../assets/icons/window-close.svg"),
             #[cfg(target_os = "windows")]
