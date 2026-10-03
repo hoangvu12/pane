@@ -110,9 +110,12 @@ single-display host still validates the primary and fallback rows):
 8. Mixed DPI where the host can arrange it: the second display at a
    different scale, the same phases 2–4, capturing that the window
    arrives centered and keeps a usable size.
-9. A restart over the same scratch data dir: capture the choices kept and
+9. The Settings search (`Cmd+F` / `Ctrl+F`, typing `monitor`): the
+   Launcher page's choices found and jumped to, revealed on the page —
+   the same catalog the in-window tests drive.
+10. A restart over the same scratch data dir: capture the choices kept and
    applied by the fresh window.
-10. (Where a Wayland session is available) run the Linux binary under
+11. (Where a Wayland session is available) run the Linux binary under
     it: capture the page's "Not available" note with the Wayland
     explanation and no choices offered.
 
