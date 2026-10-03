@@ -601,9 +601,7 @@ impl Launcher {
 
     /// Removes the hotkey of `command`, releasing it; the future records it.
     pub(super) fn remove_hotkey(&self, state: &mut State, command: &str) -> Option<HotkeyChange> {
-        if state.bindings.chosen().get(command).is_none() {
-            return None;
-        }
+        state.bindings.chosen().get(command)?;
         let set = self
             .set_hotkey_of(state, command, None)
             .expect("clearing a hotkey takes no check");
