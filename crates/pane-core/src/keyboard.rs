@@ -779,8 +779,9 @@ mod tests {
             assert_eq!(what("alt-a"), None, "Alt+A is free elsewhere");
         }
         // The defaults never collide with the editing combinations.
+        let defaults = Keyboard::default_for_this_system();
         for action in KeyboardAction::ALL {
-            let binding = Keyboard::default_for_this_system().binding(action);
+            let binding = defaults.binding(action);
             assert!(
                 binding.protected().is_none(),
                 "{binding} is protected for a field"

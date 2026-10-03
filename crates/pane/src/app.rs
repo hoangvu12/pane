@@ -262,7 +262,7 @@ impl LauncherWindow {
         if let Screen::Root { query } = &self.launcher.view().screen
             && query.is_empty()
         {
-            self.dismiss(window, cx);
+            self.hide(window);
             return;
         }
         self.launcher.back();

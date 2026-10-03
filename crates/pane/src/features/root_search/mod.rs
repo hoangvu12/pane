@@ -57,12 +57,12 @@ pub(crate) fn bind_keys(cx: &mut App, _: &TextEditingKeys, keyboard: &Keyboard) 
     let context = field_context();
     cx.bind_keys([
         KeyBinding::new(
-            keyboard.binding(KeyboardAction::NextResult).id(),
+            &keyboard.binding(KeyboardAction::NextResult).id(),
             SelectNext,
             Some(&context),
         ),
         KeyBinding::new(
-            keyboard.binding(KeyboardAction::PreviousResult).id(),
+            &keyboard.binding(KeyboardAction::PreviousResult).id(),
             SelectPrevious,
             Some(&context),
         ),

@@ -141,7 +141,7 @@ fn render(
         // pointer-only recovery path back to the default, through the same
         // checks a recording takes.
         if !keyboard.is_default(action) {
-            rows.push(reset_row(action, defaults.binding(action), cx));
+            rows.push(reset_row(action, defaults.binding(action).clone(), cx));
         }
     }
 
@@ -221,8 +221,8 @@ fn recorder_row(
     let geometry = &theme.geometry;
     let listening = recording == Some(action);
     let default = Keyboard::default_for_this_system().binding(action);
-    let subtitle = if listening {
-        "The keys are captured here: they do not act"
+    let subtitle: String = if listening {
+        "The keys are captured here: they do not act".into()
     } else if binding == default {
         format!("{} — the default", action.does())
     } else {
@@ -338,7 +338,7 @@ fn binding_chip(binding: &Binding, recording: bool, theme: &Theme) -> Stateful<D
 /// same explanation beside the row.
 fn reset_row(
     action: KeyboardAction,
-    default: &Binding,
+    default: Binding,
     cx: &mut Context<SettingsWindow>,
 ) -> Stateful<Div> {
     let theme = crate::settings::visuals(cx).theme;
