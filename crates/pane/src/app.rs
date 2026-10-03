@@ -462,7 +462,9 @@ impl LauncherWindow {
     ) {
         match action {
             TrayAction::OpenPane => self.summon(window, cx),
-            TrayAction::Settings => settings::open(&self.launcher, cx),
+            TrayAction::Settings => {
+                settings::open(&self.launcher, cx);
+            }
             TrayAction::Quit => {
                 // Pane's own resources are removed deliberately — a quit
                 // that ended the process might never run a destructor —

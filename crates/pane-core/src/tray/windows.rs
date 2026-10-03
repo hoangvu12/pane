@@ -24,8 +24,8 @@ use std::sync::{Arc, Mutex};
 
 use ::windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use ::windows::Win32::UI::Shell::{
-    NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFY_ICON_DATA_FLAGS,
-    NOTIFY_ICON_MESSAGE, NOTIFYICONDATAW, Shell_NotifyIconW,
+    NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFY_ICON_DATA_FLAGS, NOTIFYICONDATAW,
+    Shell_NotifyIconW,
 };
 use ::windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, DefWindowProcW, DestroyMenu, GDI_IMAGE_TYPE, GetCursorPos, HICON,
@@ -108,8 +108,8 @@ fn icon() -> HICON {
         // embeds, and the shared load keeps the system's cache of it.
         && let Ok(image) = unsafe {
             LoadImageW(
-                Some(module),
-                PCWSTR(usize::from(ICON_ID) as _),
+                Some(module.into()),
+                PCWSTR(ICON_ID as _),
                 GDI_IMAGE_TYPE(IMAGE_ICON.0),
                 0,
                 0,
@@ -173,8 +173,9 @@ fn shell_notify(entry: &mut Entry, shown: bool) -> Result<(), TrayError> {
     // SAFETY: `data` is fully initialized; the icon is this thread's own.
     let done = unsafe { Shell_NotifyIconW(message, &data) };
     if !done.as_bool() {
-        // SAFETY: no arguments; it reads the calling thread's last error.
-        let why = unsafe { ::windows::core::Error::from_thread().message() };
+        // It reads the calling thread's last error, which the failed call
+        // just left there.
+        let why = ::windows::core::Error::from_thread().message();
         return Err(TrayError::Refused(why));
     }
     entry.shown = shown;
@@ -233,7 +234,7 @@ extern "system" fn procedure(
     }
 }
 
-fn handle(window: HWND, message: u32, _wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+fn handle(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if stop_sent(message) {
         return LRESULT(0);
     }
