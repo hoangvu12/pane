@@ -236,8 +236,8 @@ impl HostSettings {
 /// The settings as the record holds them. Every field is written every
 /// time; missing fields read as the defaults. The record's fields are
 /// named as the house records name theirs, in camelCase.
-#[serde(rename_all = "camelCase")]
 #[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct Recorded {
     version: u64,
     #[serde(default)]
