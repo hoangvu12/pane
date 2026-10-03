@@ -237,7 +237,7 @@ impl Binding {
                 "Pane cannot use {key} in a shortcut: hold one more key with it"
             ));
         }
-        if key.is_empty() || key.contains('-') {
+        if key.is_empty() || key.contains('-') || key.chars().any(char::is_whitespace) {
             return Err(format!("Pane cannot use “{key}” as a key in a shortcut"));
         }
         Ok(Binding {
