@@ -61,7 +61,7 @@ pub struct LauncherWindow {
     /// The view transition in flight, if any: the arriving screen's
     /// content is fading in over a tiny directional shift. Presentation
     /// only — see [`crate::ui::motion`].
-    transition: Option<motion::Transition>,
+    transition: Option<motion::Tween>,
     /// Which way the last navigation went, for the next view transition's
     /// direction: `back()` leaves a view, everything else that changes the
     /// screen (opening a command, a form, a custom view, a preview, a

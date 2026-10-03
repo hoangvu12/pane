@@ -315,6 +315,85 @@ fn until<T>(
     }
 }
 
+/// The last drawn frame's section arrival, as the arriving page content's
+/// (offset from rest in px — below rest when the sidebar moved down to
+/// the section, above when it moved up — and opacity); `None` when the
+/// frame drew the page settled, which is also all reduced motion ever
+/// reports. See [`SettingsWindow::section_arrival`].
+fn section_arrival(
+    settings: &WindowHandle<SettingsWindow>,
+    cx: &mut VisualTestContext,
+) -> Option<(f32, f32)> {
+    settings
+        .read_with(cx, |window, _| window.section_arrival())
+        .expect("the Settings window is open")
+}
+
+/// Delivers the animation frame the Settings window has asked for, as the
+/// native frame loop would, with `elapsed` passing first on the test
+/// platform's controlled clock. The test platform delivers no frames on
+/// its own, so this is the only thing that advances a running arrival;
+/// one call draws at most one frame. Returns how many next-frame
+/// callbacks ran — `0` means the window had asked for no frame, so
+/// nothing drew.
+fn frame(cx: &mut VisualTestContext, elapsed: Duration) -> usize {
+    cx.executor().advance_clock(elapsed);
+    let ran = cx.update(|window, cx| window.simulate_next_frame(cx));
+    cx.run_until_parked();
+    ran
+}
+
+/// Delivers frames until the window asks for none, so an arrival in
+/// flight completes, and returns the frames it delivered. `0` means the
+/// window was already idle: no frame was pending. Bounded, so a window
+/// that never stopped asking for frames fails the test instead of
+/// hanging it.
+fn settle_frames(cx: &mut VisualTestContext) -> usize {
+    let mut delivered = 0;
+    for _ in 0..20 {
+        let ran = frame(cx, Duration::from_millis(25));
+        if ran == 0 {
+            return delivered;
+        }
+        delivered += ran;
+    }
+    panic!("the window never stopped asking for animation frames");
+}
+
+/// Clicks the sidebar's section whose debug selector is `selector`
+/// ("section-<title>"), switching the window to it.
+fn click_section(cx: &mut VisualTestContext, selector: &'static str) {
+    let section = cx
+        .debug_bounds(selector)
+        .unwrap_or_else(|| panic!("{selector} is drawn"));
+    cx.simulate_click(section.center(), Modifiers::none());
+    cx.run_until_parked();
+}
+
+/// Waits until the sidebar's selected section is exactly `title`, as
+/// assistive technology reads it — the visible selected-section state
+/// updates on the frame the switch draws, while the arrival is still in
+/// flight — and returns that frame's tree. (Polled, not read once: the
+/// captured tree can follow the drawn frame by one on the Windows test
+/// platform.)
+fn selected_section(cx: &mut VisualTestContext, title: &str) {
+    until(cx, |cx| {
+        let (_, json) = accessibility(cx);
+        let tree: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let selected: Vec<&str> = tree["nodes"]
+            .as_object()
+            .unwrap()
+            .values()
+            .filter(|node| {
+                node["aria"]["role"] == "ListBoxOption"
+                    && node["aria"]["selected"] == serde_json::json!(true)
+            })
+            .map(|node| node["aria"]["label"].as_str().unwrap_or_default())
+            .collect();
+        (selected == [title]).then_some(())
+    });
+}
+
 /// One of the theme's panel colors, as the window paints it on a quad:
 /// the solid panel, or the glass tint over the window's blur. The values
 /// mirror `ui::theme`'s dark and light palettes — the solid panel and
@@ -1296,6 +1375,242 @@ fn the_settings_window_keeps_its_layout_at_small_sizes(cx: &mut TestAppContext) 
     assert!(
         version.right() <= page.right(),
         "the version stays within the page"
+    );
+}
+
+/// A helper for the section-transition tests: the Settings window over
+/// the sample launcher, opened and settled, as (window, its context).
+fn opened_settings(cx: &mut TestAppContext) -> (WindowHandle<SettingsWindow>, VisualTestContext) {
+    cx.simulate_keystrokes(settings_shortcut());
+    cx.run_until_parked();
+    let settings = settings_windows(cx).pop().expect("Settings opened");
+    let mut settings_cx = settings_context(&settings, cx);
+    settings_cx.run_until_parked();
+    // The window opens settled: the first frame has no section to come
+    // from, and none is pending — a settled window is idle.
+    assert_eq!(frame(&mut settings_cx, Duration::ZERO), 0);
+    assert!(section_arrival(&settings, &mut settings_cx).is_none());
+    (settings, settings_cx)
+}
+
+/// Switching sections transitions the content that changes — the page —
+/// with the shared policy's short fade and tiny shift from the side the
+/// sidebar moved, while the shell around it (a sidebar row, the page's
+/// scroll viewport) stays exactly where it was. The switch itself is
+/// immediate: the page's content is drawn on the frame the click draws,
+/// the sidebar's selected row is the new section's, and the arrival is
+/// driven on the controlled clock — it progresses as frames are
+/// delivered, completes within its bounded span, and leaves the window
+/// asking for no frame at all.
+#[gpui::test]
+fn switching_sections_transitions_the_content_and_keeps_the_shell_still(cx: &mut TestAppContext) {
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let (settings, mut settings_cx) = opened_settings(cx);
+
+    // The shell: an unselected sidebar row, and the page's scroll
+    // viewport.
+    let about_row = settings_cx
+        .debug_bounds("section-About")
+        .expect("a sidebar row");
+    let viewport = settings_cx
+        .debug_bounds("settings-page")
+        .expect("the page viewport");
+
+    // Shortcuts is further down the sidebar than the Appearance page the
+    // window opened on: the page's content arrives from below.
+    click_section(&mut settings_cx, "section-Shortcuts");
+    assert!(
+        settings_cx.debug_bounds("shortcuts-title").is_some(),
+        "the Shortcuts page is drawn at once, mid-arrival"
+    );
+    let (offset, opacity) =
+        section_arrival(&settings, &mut settings_cx).expect("the page is arriving");
+    assert!(
+        offset > 2.5 && offset < 3.5,
+        "the arrival starts the full shift below rest: {offset}"
+    );
+    assert!(opacity < 0.45, "the arrival starts faint: {opacity}");
+    // The shell did not move with it.
+    assert_eq!(
+        settings_cx.debug_bounds("section-About").expect("the row"),
+        about_row,
+        "the sidebar row stayed still"
+    );
+    assert_eq!(
+        settings_cx
+            .debug_bounds("settings-page")
+            .expect("the viewport"),
+        viewport,
+        "the page viewport stayed still"
+    );
+    // The visible selected-section state updated immediately, on this
+    // same frame — exactly one section selected, the new one.
+    selected_section(&mut settings_cx, "Shortcuts");
+
+    // The content is displaced from its rest by the arrival's shift.
+    let title = settings_cx
+        .debug_bounds("shortcuts-title")
+        .expect("the page's title");
+
+    // Frames pass, and the arrival progresses without restarting.
+    assert!(frame(&mut settings_cx, Duration::from_millis(40)) >= 1);
+    let (progressed, _) =
+        section_arrival(&settings, &mut settings_cx).expect("the page is still arriving");
+    assert!(
+        progressed > 0.05 && progressed < offset,
+        "the arrival progressed toward rest: {progressed} from {offset}"
+    );
+    // Past the section span, the next delivered frame lands the content
+    // at rest and asks for no further frame: the window is idle.
+    assert!(frame(&mut settings_cx, Duration::from_millis(130)) >= 1);
+    assert!(section_arrival(&settings, &mut settings_cx).is_none());
+    let settled = settings_cx
+        .debug_bounds("shortcuts-title")
+        .expect("the page's title");
+    assert_eq!(
+        title.origin.y - settled.origin.y,
+        px(offset),
+        "the page was shifted exactly the arrival's offset below its rest"
+    );
+    assert_eq!(
+        settle_frames(&mut settings_cx),
+        0,
+        "a settled window asks for no frame"
+    );
+}
+
+/// Moving back up the sidebar is the paired arrival: the page's content
+/// settles down into place from above rest, over the same section span,
+/// and settles leaving the window idle.
+#[gpui::test]
+fn moving_up_the_sidebar_arrives_from_above(cx: &mut TestAppContext) {
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let (settings, mut settings_cx) = opened_settings(cx);
+
+    // Down to About — the last section — and settled.
+    click_section(&mut settings_cx, "section-About");
+    settle_frames(&mut settings_cx);
+    assert!(section_arrival(&settings, &mut settings_cx).is_none());
+
+    // Back up to Appearance, the first section: the content arrives from
+    // above.
+    click_section(&mut settings_cx, "section-Appearance");
+    assert!(
+        settings_cx.debug_bounds("appearance").is_some(),
+        "the Appearance page is drawn at once, mid-arrival"
+    );
+    let (offset, _) = section_arrival(&settings, &mut settings_cx).expect("the page is arriving");
+    assert!(
+        offset < -2.5 && offset > -3.5,
+        "the arrival starts the full shift above rest: {offset}"
+    );
+
+    // The section span settles it: 160ms — past its 150ms — leaves the
+    // window idle.
+    assert!(frame(&mut settings_cx, Duration::from_millis(160)) >= 1);
+    assert!(section_arrival(&settings, &mut settings_cx).is_none());
+    assert_eq!(
+        settle_frames(&mut settings_cx),
+        0,
+        "a settled window asks for no frame"
+    );
+}
+
+/// A rapid section switch retargets each arrival from the presentation
+/// on screen — the interrupted offset carries over, so nothing restarts
+/// and nothing flashes — and the outgoing page's content is unmounted at
+/// once: the page drawn is always the section the user is on.
+#[gpui::test]
+fn rapid_section_switches_retarget_the_arrival_from_where_it_is(cx: &mut TestAppContext) {
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let (settings, mut settings_cx) = opened_settings(cx);
+
+    // Switch down to Shortcuts, and — with no clock time passing between
+    // them — down again to Extensions, whose page is different content.
+    click_section(&mut settings_cx, "section-Shortcuts");
+    let (offset, _) = section_arrival(&settings, &mut settings_cx).expect("Shortcuts is arriving");
+
+    click_section(&mut settings_cx, "section-Extensions");
+    let (continued, _) =
+        section_arrival(&settings, &mut settings_cx).expect("Extensions is arriving");
+    assert!(
+        (continued - offset).abs() < 0.05,
+        "the switch continued the presentation: {continued} from {offset}"
+    );
+    // The outgoing page's content is gone at once: the page drawn is
+    // Extensions', and none of Shortcuts' content lingers over it.
+    assert!(settings_cx.debug_bounds("extensions-title").is_some());
+    assert!(settings_cx.debug_bounds("shortcuts-title").is_none());
+
+    // And back up again, still from the presentation on screen.
+    click_section(&mut settings_cx, "section-Shortcuts");
+    let (back, _) =
+        section_arrival(&settings, &mut settings_cx).expect("Shortcuts is arriving again");
+    assert!(
+        (back - offset).abs() < 0.05,
+        "the return continued the presentation too: {back} from {offset}"
+    );
+    // What is drawn is Shortcuts' page, not a fading-out Extensions.
+    assert!(settings_cx.debug_bounds("shortcuts-title").is_some());
+    assert!(settings_cx.debug_bounds("extensions-title").is_none());
+
+    // The retargeted arrival then completes like any other.
+    settle_frames(&mut settings_cx);
+    assert!(section_arrival(&settings, &mut settings_cx).is_none());
+}
+
+/// Reduced motion settles every section switch at once: a switch under
+/// it starts no arrival, and reducing motion mid-arrival ends it on the
+/// next drawn frame. Either way the window schedules no frame for
+/// presentation — and at the window's floor the pages still switch and
+/// lay out.
+#[gpui::test]
+fn reduced_motion_settles_section_switches_at_once_at_the_window_boundary(cx: &mut TestAppContext) {
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let (settings, mut settings_cx) = opened_settings(cx);
+    // The window's floor: the boundary the reduced presentation must
+    // still work at.
+    settings_cx.simulate_resize(gpui::size(px(560.), px(400.)));
+    settings_cx.run_until_parked();
+
+    // A switch under reduced motion starts no arrival: the frame that
+    // draws the new page is already settled.
+    settings_cx.update(|_, cx| cx.set_reduce_motion(true));
+    click_section(&mut settings_cx, "section-About");
+    assert!(
+        settings_cx.debug_bounds("about").is_some(),
+        "the About page is drawn at the floor"
+    );
+    assert!(
+        section_arrival(&settings, &mut settings_cx).is_none(),
+        "reduced motion drew the page settled"
+    );
+    assert_eq!(
+        settle_frames(&mut settings_cx),
+        0,
+        "the window asked for no frame for the presentation"
+    );
+
+    // Reduced motion engaged mid-arrival ends it on the next frame. Begin
+    // a return under full motion, then flip the preference.
+    settings_cx.update(|_, cx| cx.set_reduce_motion(false));
+    click_section(&mut settings_cx, "section-Appearance");
+    assert!(
+        section_arrival(&settings, &mut settings_cx).is_some(),
+        "the switch began under full motion"
+    );
+    settings_cx.update(|_, cx| cx.set_reduce_motion(true));
+    // The frame the arrival had asked for draws settled, and asks for
+    // nothing further.
+    assert!(frame(&mut settings_cx, Duration::ZERO) >= 1);
+    assert!(
+        section_arrival(&settings, &mut settings_cx).is_none(),
+        "the arrival settled the moment reduced motion engaged"
+    );
+    assert_eq!(
+        settle_frames(&mut settings_cx),
+        0,
+        "the window asked for no further frame"
     );
 }
 
