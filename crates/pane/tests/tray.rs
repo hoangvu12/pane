@@ -260,11 +260,13 @@ fn until_diag(cx: &mut VisualTestContext, mut done: impl FnMut(&str) -> bool) {
     }
 }
 
-/// Runs `cx` until the settings record in `data` holds `tray_visible` as
-/// `shown`: the save the page started is written off the window's thread.
+/// Runs `cx` until the settings record in `data` holds `trayVisible` as
+/// `shown` (the record's camelCase field name, as the launch-at-login
+/// choice's is): the save the page started is written off the window's
+/// thread.
 fn until_record(cx: &mut VisualTestContext, data: &Path, shown: bool) {
     let record = data.join("settings.json");
-    let held = format!("\"tray_visible\": {shown}");
+    let held = format!("\"trayVisible\": {shown}");
     until(cx, |_| {
         fs::read_to_string(&record)
             .ok()
@@ -310,7 +312,7 @@ fn the_entry_the_record_names_is_shown_when_it_attaches(cx: &mut TestAppContext)
     let data = tempfile::tempdir().unwrap();
     fs::write(
         data.path().join("settings.json"),
-        r#"{ "version": 1, "tray_visible": false }"#,
+        r#"{ "version": 1, "trayVisible": false }"#,
     )
     .unwrap();
     let system = tray();
@@ -424,18 +426,21 @@ fn a_platform_without_an_entry_is_explained_not_toggled(cx: &mut TestAppContext)
     let settings = settings_window(&mut cx.cx).expect("Settings opened");
     let mut settings_cx = VisualTestContext::from_window(AnyWindowHandle::from(settings), &cx.cx);
 
-    // The page carries the platform's own explanation beside the toggle,
-    // without any change attempted.
+    // The page carries the platform's own explanation beside the row,
+    // without any change attempted: the switch is not even offered where
+    // the platform has no entry, as the launch-at-login switch is not
+    // where that integration cannot manage a registration.
     until_diag(&mut settings_cx, |tree| {
         tree.contains(why) && tree.contains("Show in")
     });
 
-    // The toggle is refused with the same explanation, one attempt and
-    // no success: the unavailable entry is not represented as a
-    // successful toggle, and nothing is kept or saved.
+    // A click on the unoffered switch does nothing at all: the
+    // unavailable entry is not represented as a successful toggle, no
+    // change is asked of the adapter beyond the startup application the
+    // record's preference made, and nothing is kept or saved.
     click(&mut settings_cx, "tray-visibility");
-    until_diag(&mut settings_cx, |tree| tree.contains(why));
-    assert_eq!(system.asked.lock().unwrap().clone(), vec![false]);
+    settings_cx.run_until_parked();
+    assert_eq!(system.asked.lock().unwrap().clone(), vec![true]);
     assert!(!data.path().join("settings.json").exists());
 }
 

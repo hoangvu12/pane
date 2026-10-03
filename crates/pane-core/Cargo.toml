@@ -78,7 +78,7 @@ global-hotkey = "0.8"
 # CE's and global-hotkey's AppKit code.
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSControl", "NSMenu", "NSMenuItem", "NSPasteboard", "NSResponder", "NSStatusBar", "NSStatusBarButton", "NSStatusItem", "NSView", "NSButton", "objc2-core-foundation"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSData", "NSString", "std"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSData", "NSError", "NSString", "std"] }
 
 [dev-dependencies]
 tempfile = "3"
