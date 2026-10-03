@@ -206,14 +206,11 @@ fn install(launcher: &Launcher, folder: &Path) {
 /// window is made tall enough that the page's whole list is in reach of a
 /// click without scrolling it — the page itself scrolls when the window is
 /// smaller.
-fn open_settings(
-    launcher: &gpui::Entity<LauncherWindow>,
-    cx: &mut VisualTestContext,
-) -> (WindowHandle<SettingsWindow>, VisualTestContext) {
+fn open_settings(cx: &mut VisualTestContext) -> (WindowHandle<SettingsWindow>, VisualTestContext) {
     cx.simulate_keystrokes(settings_shortcut());
     cx.run_until_parked();
     let settings = settings_windows(cx).pop().expect("Settings opened");
-    let mut settings_cx = settings_context(&settings, cx);
+    let settings_cx = settings_context(&settings, cx);
     settings_cx.simulate_resize(gpui::size(px(740.), px(1100.)));
     settings_cx.run_until_parked();
     (settings, settings_cx)
@@ -767,7 +764,7 @@ fn the_extensions_page_lists_the_installed_extensions_and_their_reach(cx: &mut T
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let folder = settings_package(&sources.path().join("settings"));
     let (launcher, cx) = open_installed(cx, &data, &folder);
-    let (_settings, mut settings_cx) = open_settings(&launcher, cx);
+    let (_settings, mut settings_cx) = open_settings(cx);
 
     // The page lists the package with its state and identity, the
     // management rows the launcher's own list holds, the package's
@@ -814,7 +811,7 @@ fn disabling_a_required_extension_from_the_page_confirms_and_disables_all(cx: &m
              "operations": [{ "id": "echo", "version": 1 }] }"#,
     );
     let (launcher, cx) = open_installed(cx, &data, &caller);
-    let (_settings, mut settings_cx) = open_settings(&launcher, cx);
+    let (_settings, mut settings_cx) = open_settings(cx);
 
     // The page's row for the dependency, clicked, enters the launcher's
     // own flow and asks the required-dependent confirmation there — the
@@ -907,7 +904,7 @@ fn uninstalling_from_the_page_offers_the_saved_data_choice_and_keeps_it(cx: &mut
     let saved = serde_json::json!({ "version": 1, "packages": { &key: { "style": "formal" } } });
     fs::write(&settings, saved.to_string()).unwrap();
     let (launcher, cx) = open_installed(cx, &data, &folder);
-    let (_settings, mut settings_cx) = open_settings(&launcher, cx);
+    let (_settings, mut settings_cx) = open_settings(cx);
 
     // The uninstall row asks first, with the saved-data choice the
     // launcher's own confirmation offers.
@@ -959,7 +956,7 @@ fn a_reload_that_fails_to_start_is_explained_on_the_page_and_offers_retry(cx: &m
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let folder = hello_package(&sources.path().join("hello"));
     let (launcher, cx) = open_installed(cx, &data, &folder);
-    let (_settings, mut settings_cx) = open_settings(&launcher, cx);
+    let (_settings, mut settings_cx) = open_settings(cx);
 
     // A source that no longer builds a startable package: the reload's
     // failure is the page's status, and the paused package's Retry row is
@@ -991,8 +988,11 @@ fn opening_an_extensions_command_from_the_page_summons_the_launcher(cx: &mut Tes
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let folder = settings_package(&sources.path().join("settings"));
     let (launcher, cx) = open_installed(cx, &data, &folder);
-    let launcher_window = cx.update(|window, _| window.window_handle());
-    let (_settings, mut settings_cx) = open_settings(&launcher, cx);
+    let launcher_window = cx
+        .update(|window, _| window.window_handle())
+        .downcast::<LauncherWindow>()
+        .expect("the launcher window");
+    let (_settings, mut settings_cx) = open_settings(cx);
 
     // The settings sample's command is an extension-owned settings
     // command: the page opens it where it lives — in the launcher window,
@@ -1023,8 +1023,11 @@ fn the_install_rows_from_the_page_open_the_launcher_windows_flows(cx: &mut TestA
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let folder = settings_package(&sources.path().join("settings"));
     let (launcher, cx) = open_installed(cx, &data, &folder);
-    let launcher_window = cx.update(|window, _| window.window_handle());
-    let (_settings, mut settings_cx) = open_settings(&launcher, cx);
+    let launcher_window = cx
+        .update(|window, _| window.window_handle())
+        .downcast::<LauncherWindow>()
+        .expect("the launcher window");
+    let (_settings, mut settings_cx) = open_settings(cx);
 
     // The install rows are the launcher's own root rows: clicking one opens
     // the flow in the launcher window, where its form (or folder picker)
@@ -1051,7 +1054,7 @@ fn the_page_follows_a_change_the_launcher_window_made(cx: &mut TestAppContext) {
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let folder = settings_package(&sources.path().join("settings"));
     let (launcher, cx) = open_installed(cx, &data, &folder);
-    let (_settings, mut settings_cx) = open_settings(&launcher, cx);
+    let (_settings, mut settings_cx) = open_settings(cx);
 
     // The launcher window enters its own Manage extensions flow and
     // disables the package: the page, open on the Extensions page,
@@ -1092,7 +1095,7 @@ fn the_page_follows_a_background_build_failure_by_itself(cx: &mut TestAppContext
         launcher.follow_changes(changes, window, cx);
         launcher
     });
-    let (_settings, mut settings_cx) = open_settings(&launcher, cx);
+    let (_settings, mut settings_cx) = open_settings(cx);
 
     // Development starts from the page: the same row the launcher's list
     // holds, entered through the same flow.
