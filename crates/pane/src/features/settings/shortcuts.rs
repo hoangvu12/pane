@@ -510,7 +510,6 @@ impl SettingsWindow {
                 if let Some(cell) = self.shortcuts.hotkey_cells.get(command) {
                     window.focus(cell, cx);
                 }
-                let command = command.to_owned();
                 cx.spawn(async move |this, cx| {
                     let outcome = pending.await;
                     this.update(cx, |window, cx| {

@@ -424,21 +424,18 @@ impl Launcher {
             Ok(set) => set,
         };
         self.show_extensions_at_hotkey(state, &command);
-        match set.write {
+        if set.write {
+            state.view.status = Status::Running;
+            Some(HotkeyChange {
+                command: set.command,
+                done: set.done,
+                epoch: state.screen_epoch,
+            })
+        } else {
             // The keys are already the command's working binding: nothing
             // to register, release or record.
-            false => {
-                state.view.status = Status::Result(set.done);
-                None
-            }
-            true => {
-                state.view.status = Status::Running;
-                Some(HotkeyChange {
-                    command: set.command,
-                    done: set.done,
-                    epoch: state.screen_epoch,
-                })
-            }
+            state.view.status = Status::Result(set.done);
+            None
         }
     }
 
