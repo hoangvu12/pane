@@ -21,7 +21,6 @@ use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged
 use pane_core::{FieldKind, FormField, FormView, Screen, Status};
 
 use crate::app::LauncherWindow;
-use crate::ui;
 use crate::ui::input::TextEditingKeys;
 
 actions!(form, [NextChoice, PreviousChoice, Press]);
@@ -59,6 +58,21 @@ impl Control {
             Control::Text(input) => input.focus_handle(cx),
             Control::Choice(handle) => handle.clone(),
         }
+    }
+}
+
+impl FormControls {
+    /// The form's text fields' editing states, which a platform input
+    /// method talks to while composing text — for the launcher's back
+    /// key, which cancels an active composition before it acts.
+    pub(crate) fn text_fields(&self) -> Vec<Entity<EditableTextState>> {
+        self.fields
+            .iter()
+            .filter_map(|control| match control {
+                Control::Text(input) => Some(input.clone()),
+                Control::Choice(_) => None,
+            })
+            .collect()
     }
 }
 
@@ -187,7 +201,8 @@ impl LauncherWindow {
         };
         // The form keeps its own behavior; only its paint comes from the
         // shared theme, so it stays legible in either appearance.
-        let theme = &ui::visuals().theme;
+        let visuals = crate::settings::visuals(cx);
+        let theme = &visuals.theme;
         let fields: Vec<AnyElement> = form
             .fields
             .into_iter()
@@ -246,7 +261,8 @@ impl LauncherWindow {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let error = field.error.clone();
-        let theme = &ui::visuals().theme;
+        let visuals = crate::settings::visuals(cx);
+        let theme = &visuals.theme;
         let control = match (control, &field.kind) {
             (Control::Text(input), FieldKind::Text { placeholder }) => {
                 let placeholder = placeholder.clone().unwrap_or_default();

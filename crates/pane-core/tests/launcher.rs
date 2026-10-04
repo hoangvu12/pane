@@ -101,7 +101,9 @@ fn back_returns_from_a_command_to_root_search() {
         view.screen
     );
     assert_eq!(view.status, Status::Idle);
-    assert_eq!(titles(&launcher), ["sample command"]);
+    // Pane's own Settings row is listed whatever is installed, so it is
+    // the command's row and it after going back.
+    assert_eq!(titles(&launcher), ["sample command", "Settings…"]);
 }
 
 #[test]
@@ -157,16 +159,19 @@ fn an_unavailable_runtime_leaves_root_navigable() {
 }
 
 #[test]
-fn with_no_commands_root_is_empty_and_activation_does_nothing() {
+fn with_no_commands_root_lists_only_settings_and_activation_does_nothing() {
     let launcher = launcher(vec![]);
 
     block_on(launcher.activate_selected());
 
+    // No command is installed, but Pane's own Settings row is still
+    // listed — it needs no extension — and activating it does nothing in
+    // the launcher: the window opens the Settings window.
     let view = launcher.view();
-    assert_eq!(
-        (view.rows.len(), view.selected, view.status),
-        (0, None, Status::Idle)
-    );
+    assert_eq!(titles(&launcher), ["Settings…".to_string()]);
+    assert_eq!(view.selected, Some(0));
+    assert_eq!(view.status, Status::Idle);
+    assert!(launcher.selected_opens_settings());
 }
 
 #[test]
@@ -696,4 +701,30 @@ fn replacing_a_components_code_closes_its_views() {
     assert_eq!(view.screen, Screen::Command);
     assert_eq!(error(&launcher), "The extension's view is no longer open");
     assert_eq!(block_on(runtime.view_count()), 0);
+}
+
+#[test]
+fn back_answers_whether_it_backed_out_and_what_restoring_can_return_to() {
+    let launcher = launcher(vec![command("sample", guest("sample_rust"))]);
+
+    // Root search, an empty query: nothing is left to back out of, which
+    // is what the window takes as the end of the Escape chain.
+    assert!(!launcher.back(), "root search with an empty query");
+    // Root search is always a view a reopened launcher can restore.
+    assert!(launcher.restorable_view());
+
+    // A query typed: Escape clears it, which is backing out.
+    block_on(launcher.set_query("zz"));
+    assert!(launcher.back());
+    assert_eq!(launcher.view().query(), Some(""));
+
+    // A command's view: backing out leaves it, and the view of a command
+    // registered with Pane — not installed as a package — is always one a
+    // reopened launcher can restore.
+    block_on(launcher.activate_selected());
+    assert!(matches!(launcher.view().screen, Screen::Command));
+    assert!(launcher.restorable_view());
+    assert!(launcher.back());
+    assert!(matches!(launcher.view().screen, Screen::Root { .. }));
+    assert!(!launcher.back());
 }
