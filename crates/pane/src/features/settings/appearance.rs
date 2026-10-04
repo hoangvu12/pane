@@ -388,7 +388,6 @@ fn choice(
         .when(offered && !chosen, |row| {
             row.hover(|row| row.bg(theme.row_hover))
                 .active(|row| row.bg(theme.row_selected))
-                .transitions(|fades| fades.bg(crate::ui::motion::pointer_fade()))
         })
         .debug_selector(move || selector.into())
         .anchor_scroll(Some(anchor))

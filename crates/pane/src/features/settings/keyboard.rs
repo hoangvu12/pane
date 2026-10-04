@@ -315,7 +315,6 @@ fn recorder_row(
         .hover(|row| row.bg(theme.row_hover))
         // Pressed: the selected wash, one rung above the hover one.
         .active(|row| row.bg(theme.row_selected))
-        .transitions(|fades| fades.bg(crate::ui::motion::pointer_fade()))
         .child(
             div()
                 .flex_1()
@@ -445,7 +444,6 @@ fn reset_row(
         // wash, one rung above the hover one.
         .hover(|row| row.bg(theme.row_hover))
         .active(|row| row.bg(theme.row_selected))
-        .transitions(|fades| fades.bg(crate::ui::motion::pointer_fade()))
         .debug_selector(move || format!("keyboard-reset-{}", action.id()))
         .role(Role::Button)
         .aria_label(format!("Reset {} to {default}", action.title()))
