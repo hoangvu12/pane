@@ -127,6 +127,14 @@ pub(crate) enum Glyph {
     Image,
     /// An envelope: the fixture's mail record.
     Mail,
+    /// A page with lines: notes (the reference's `notes`, a pinned
+    /// sample's).
+    Notes,
+    /// Two beamed notes: music (the reference's `music`, a pinned
+    /// sample's).
+    Music,
+    /// A pushpin: the Actions panel's quick slot entries (`A.pin`).
+    ActionPin,
     /// The Windows titlebar's close mark.
     #[cfg(target_os = "windows")]
     WindowClose,
@@ -180,6 +188,9 @@ impl Glyph {
         Glyph::Link,
         Glyph::Image,
         Glyph::Mail,
+        Glyph::Notes,
+        Glyph::Music,
+        Glyph::ActionPin,
     ];
 
     /// The embedded SVG bytes for this glyph.
@@ -223,6 +234,9 @@ impl Glyph {
             Glyph::Link => include_bytes!("../../assets/icons/link.svg"),
             Glyph::Image => include_bytes!("../../assets/icons/image.svg"),
             Glyph::Mail => include_bytes!("../../assets/icons/mail.svg"),
+            Glyph::Notes => include_bytes!("../../assets/icons/notes.svg"),
+            Glyph::Music => include_bytes!("../../assets/icons/music.svg"),
+            Glyph::ActionPin => include_bytes!("../../assets/icons/action-pin.svg"),
             #[cfg(target_os = "windows")]
             Glyph::WindowClose => include_bytes!("../../assets/icons/window-close.svg"),
             #[cfg(target_os = "windows")]
@@ -258,6 +272,10 @@ pub(crate) enum IconTone {
     Web,
     Pen,
     Folder,
+    /// The reference's `note` tone (violet).
+    Note,
+    /// The reference's `music` tone (green).
+    Music,
     Command,
 }
 
@@ -276,6 +294,8 @@ fn app_tone(tone: IconTone) -> Option<(Hsla, Hsla, Hsla)> {
         IconTone::Web => (0xFFA24DFF, 0xE2530FFF, 0xFFFFFFFF),
         IconTone::Pen => (0xFF739FFF, 0xCF2D63FF, 0xFFFFFFFF),
         IconTone::Folder => (0x74B6FFFF, 0x2F78DEFF, 0xFFFFFFFF),
+        IconTone::Note => (0xA184FFFF, 0x5B3BD0FF, 0xFFFFFFFF),
+        IconTone::Music => (0x3DDC78FF, 0x129245FF, 0xFFFFFFFF),
         IconTone::Command => return None,
     };
     Some((color(top), color(bottom), color(glyph)))

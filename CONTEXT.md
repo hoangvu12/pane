@@ -80,8 +80,16 @@ _Avoid_: Type, category
 A labelled run of root results: "Commands" over a blank query's results, "Results" with their count over a query's, then "Fallbacks"; a run of computed answers sits under the title of the command that computed them ("Calculator"). Sections only label the list; they never reorder or filter it, and none claims recent use.
 _Avoid_: Group (a shortcut group is a Settings term), suggestions
 
+**Quick slot**:
+One of the five ordered places on root search's pinned home where the user pins a root result, to invoke it with one click or Ctrl+1 to Ctrl+5. It holds the result's identity — a registered command by its id, or an indexed result under the command that supplies it — never its row, title or a computed answer, and Pane keeps the five as its own record (`quick-slots.json`), not extension data. A target that is disabled, paused, missing or not listed yet keeps its slot and says why it cannot run; an empty slot invokes nothing.
+_Avoid_: Favorite, bookmark, shortcut, dock
+
+**Pinned home**:
+What root search shows above its results while the query is blank: the "Pinned" label and the five quick slots. A query hides it; clearing the query brings it back.
+_Avoid_: Start page, dashboard, recents (Pane shows no recent use)
+
 **Actions panel**:
-The panel, opened from the launcher's footer or its Open actions binding, that lists what can be done with root search's selected result: its primary action, then the alias and hotkey configuration of an installed command. It lists only operations Pane can perform, and holds the result it opened for.
+The panel, opened from the launcher's footer or its Open actions binding, that lists what can be done with root search's selected result: its primary action, then pinning it to a quick slot, then the alias and hotkey configuration of an installed command. A quick slot has one of its own, opening, removing and moving it. It lists only operations Pane can perform, and holds the result it opened for.
 _Avoid_: Context menu, app menu (the Pane menu is separate)
 
 **Pane menu**:

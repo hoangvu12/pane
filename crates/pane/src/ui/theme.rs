@@ -228,6 +228,19 @@ pub(crate) struct Theme {
     /// see [`SplitTokens`].
     pub(crate) split: SplitTokens,
 
+    // -- The pinned home's quick slots (#101) ---------------------------------
+    /// A pinned slot's fill at rest (reference `.slot`: white 3.5%).
+    pub(crate) slot_background: Hsla,
+    /// A pinned slot's 1px inset edge (white 5%).
+    pub(crate) slot_edge: Hsla,
+    /// A pinned slot under the pointer (`.slot:hover`: white 7%).
+    pub(crate) slot_hover: Hsla,
+    /// A pinned slot's title (`.slot-t`: #D9DADD).
+    pub(crate) slot_title: Hsla,
+    /// An empty slot's dashed outline (Pane's own: the reference authors
+    /// no empty slot; white 10%).
+    pub(crate) slot_empty_edge: Hsla,
+
     // -- Type and geometry --------------------------------------------------
     /// Families, sizes and weights.
     pub(crate) typography: Typography,
@@ -298,6 +311,10 @@ pub(crate) struct Typography {
     pub(crate) actions_header_size: Pixels,
     /// An Actions group label's 11.5px (`.alabel`).
     pub(crate) action_group_size: Pixels,
+    /// A pinned slot's 12.5px title (`.slot-t`).
+    pub(crate) slot_title_size: Pixels,
+    /// The 11.5px reason under an unavailable slot's title (Pane's own).
+    pub(crate) slot_reason_size: Pixels,
     /// Title and label weight (500).
     pub(crate) medium: FontWeight,
     /// Body weight (400): a section label's note.
@@ -406,6 +423,8 @@ pub(crate) struct Geometry {
     pub(crate) popover_drop_spread: Pixels,
     /// The Actions panel.
     pub(crate) actions: ActionsGeometry,
+    /// The pinned home's strip of quick slots.
+    pub(crate) pinned: PinnedGeometry,
     /// A keycap's height, and its least width.
     pub(crate) keycap_height: Pixels,
     /// A keycap's corner radius.
@@ -516,6 +535,31 @@ pub(crate) struct SettingsGeometry {
     pub(crate) aside_width: Pixels,
     /// The gap between an aside's caption and its content.
     pub(crate) aside_gap: Pixels,
+}
+
+/// The pinned home's geometry: the reference's grid of five `.slot`s under
+/// the "Pinned" label, and each slot's anatomy.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct PinnedGeometry {
+    /// The gap between the five equal columns.
+    pub(crate) columns_gap: Pixels,
+    /// The grid's padding above and below its slots.
+    pub(crate) strip_padding_top: Pixels,
+    pub(crate) strip_padding_bottom: Pixels,
+    /// A slot: its height, radius and paddings (14 above, 8 either side,
+    /// 10 below), and the gap between its tile and its title.
+    pub(crate) slot_height: Pixels,
+    pub(crate) slot_radius: Pixels,
+    pub(crate) slot_padding_top: Pixels,
+    pub(crate) slot_padding_x: Pixels,
+    pub(crate) slot_padding_bottom: Pixels,
+    pub(crate) slot_gap: Pixels,
+    /// The corner key hint's inset from the slot's top and right (8).
+    pub(crate) keys_inset: Pixels,
+    /// The focus ring's width (the reference's 2px outline, inset).
+    pub(crate) focus_width: Pixels,
+    /// The inset edge's width (1px).
+    pub(crate) edge_width: Pixels,
 }
 
 /// One icon tile size: the square's side, its corner radius and the
@@ -863,6 +907,12 @@ impl Theme {
 
             split: SplitTokens::dark(),
 
+            slot_background: color(0xFFFFFF09),
+            slot_edge: color(0xFFFFFF0D),
+            slot_hover: color(0xFFFFFF12),
+            slot_title: color(0xD9DADDFF),
+            slot_empty_edge: color(0xFFFFFF1A),
+
             typography: Typography::shared(),
             geometry: Geometry::shared(),
         }
@@ -962,6 +1012,12 @@ impl Theme {
 
             split: SplitTokens::light(),
 
+            slot_background: color(0x00000009),
+            slot_edge: color(0x0000000D),
+            slot_hover: color(0x00000012),
+            slot_title: color(0x2A2B31FF),
+            slot_empty_edge: color(0x0000001A),
+
             typography: Typography::shared(),
             geometry: Geometry::shared(),
         }
@@ -996,6 +1052,8 @@ impl Typography {
             action_weight: FontWeight(450.),
             actions_header_size: px(12.),
             action_group_size: px(11.5),
+            slot_title_size: px(12.5),
+            slot_reason_size: px(11.5),
             medium: FontWeight::MEDIUM,
             regular: FontWeight::NORMAL,
         }
@@ -1132,6 +1190,20 @@ impl Geometry {
                 search_glyph_size: px(15.),
                 empty_padding_y: px(14.),
                 empty_padding_x: px(10.),
+            },
+            pinned: PinnedGeometry {
+                columns_gap: px(8.),
+                strip_padding_top: px(2.),
+                strip_padding_bottom: px(6.),
+                slot_height: px(100.),
+                slot_radius: px(12.),
+                slot_padding_top: px(14.),
+                slot_padding_x: px(8.),
+                slot_padding_bottom: px(10.),
+                slot_gap: px(9.),
+                keys_inset: px(8.),
+                focus_width: px(2.),
+                edge_width: px(1.),
             },
             keycap_height: px(20.),
             keycap_radius: px(5.),

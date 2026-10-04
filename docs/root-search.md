@@ -110,12 +110,13 @@ state and maps input to those calls.
 
 **The Actions panel** (#95) lists what can be done with the selected
 result, from the core's `Launcher::result_actions`: its primary action
-(the footer's, with the same dispatch), then, for an installed command,
-"Assign Hotkey…"/"Change Hotkey…" and "Add Alias…"/"Change Alias…" under
-"Pane", which open the same hotkey screen and alias form Manage extensions
-does and return to this search when they end. Nothing without a working
-operation is listed: no pin (until quick slots, #101), new window, file
-manager, quit or hide (#100). Its search field holds focus: typing filters
+(the footer's, with the same dispatch), then, under "Pane", "Pin to Quick
+Slot" for a command or an indexed result (see [the pinned
+home](#the-pinned-home)) and, for an installed command, "Assign
+Hotkey…"/"Change Hotkey…" and "Add Alias…"/"Change Alias…", which open the
+same hotkey screen and alias form Manage extensions does and return to this
+search when they end. Nothing without a working operation is listed: no new
+window, file manager, quit or hide (#100). Its search field holds focus: typing filters
 the entries by label ("No actions match" when none does), Up and Down move
 the selection, Enter or a click runs the entry once, and Escape (or Tab)
 closes only the panel, giving focus back to the query. A mouse-down outside
@@ -123,6 +124,47 @@ it closes it and is consumed, so the result it covered is never invoked.
 The panel holds its target: the pointer cannot move the selection while it
 is open, and an entry whose target is no longer selected, or no longer has
 that action, runs nothing. With no result selected it says so.
+
+### The pinned home
+
+A blank query shows the **pinned home** (#101) above the results: the
+"Pinned" label, with the slots' chord, and five **quick slots**. A query
+whose trimmed text is not blank hides it; clearing the query brings it
+back. The results below keep their own order and their "Commands" label:
+Pane lists no suggestions of recent use.
+
+- **What a slot holds** is an identity, never a row: a registered command
+  by its id, or an indexed result (an installed application) by its own id
+  under the command that supplies it. A computed answer, a file or Pane's
+  own rows cannot be pinned. A fresh installation pins nothing: empty slots
+  are dashed outlines saying so, which invoke nothing.
+- **Pinning:** the Actions panel's "Pin to Quick Slot" fills the first
+  empty slot. With all five taken, the panel lists the five slots under
+  "Replace a Quick Slot" and the one chosen is replaced. Pinning what a
+  slot already holds changes nothing, says which slot holds it and moves
+  focus there, clearing a typed query so the home and that slot show.
+- **A slot's own actions** — a secondary click on it, or Ctrl+K while it
+  has focus — open it, remove it ("Remove from Quick Slot") or move it
+  ("Move Slot Left"/"Move Slot Right", not past either end).
+- **Invoking a slot:** a click, Enter or Space while it has focus, or its
+  chord Ctrl+1 to Ctrl+5. The chords are the root search field's and the
+  slots' own, never registered with the system, and act only on root
+  search, with no overlay open, no input-method composition in the query
+  and no action already running; a held chord's repeats and a double
+  click's second click run nothing more. The slot is resolved again then,
+  and only a target that can run is run; an empty slot does nothing at
+  all, and a click keeps the query focused.
+- **Resolution:** each slot is resolved through what is enabled now. A
+  disabled, paused or missing target, or an application its command has
+  not listed yet, keeps its slot and its name and says why it cannot run;
+  it can always be removed, and enabling or installing the same identity
+  resolves it again. Showing root search asks a pinned application's
+  command for its results if it never answered, without typing a query.
+- **The record** is `quick-slots.json` in Pane's data folder, beside
+  `settings.json` (see [ADR 0026](adr/0026-host-keeps-quick-slots-by-identity.md)):
+  versioned, written atomically one write at a time; a write that fails
+  puts back what the record holds and says why, and a record Pane cannot
+  read is reported and never replaced.
 
 **The footer** shows the Pane mark at its left — the button of Pane's own
 menu (Settings), a Windows/Pane adaptation of the reference's decorative

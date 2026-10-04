@@ -176,7 +176,7 @@ fn answer(state: &State, row: &Row, entry: &Entry, query: &str) -> Option<Comput
 }
 
 /// What kind of thing activating `entry` from root search reaches.
-fn kind(entry: &Entry) -> Option<RowKind> {
+pub(super) fn kind(entry: &Entry) -> Option<RowKind> {
     match entry {
         Entry::Open(_) | Entry::Unavailable(_) => Some(RowKind::Command),
         Entry::Send(Sending {

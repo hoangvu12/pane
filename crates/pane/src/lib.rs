@@ -71,6 +71,7 @@ pub(crate) fn bind_keys_with(cx: &mut App, keyboard: &Keyboard) {
     extension_views::form::bind_keys(cx, &text_editing);
     features::root_search::bind_keys(cx, &text_editing, keyboard);
     features::clipboard_history::bind_keys(cx, &text_editing, keyboard);
+    features::quick_slots::bind_keys(cx);
     features::footer_menu::bind_keys(cx);
     features::actions_panel::bind_keys(cx, &text_editing);
     features::settings::bind_keys(cx);

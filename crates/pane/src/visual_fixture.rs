@@ -72,6 +72,7 @@ use crate::ui::icon::{Glyph, IconTone, TileSize, tile_at};
 use crate::ui::input::bind_text_editing;
 use crate::ui::keycap::{self, CapMetrics, CapStyle};
 use crate::ui::material::Material;
+use crate::ui::pinned::{self, SlotContent};
 use crate::ui::result_layouts::{self, AnswerCard, AnswerSide, HistoryRow, NoticeCopy, Suggestion};
 use crate::ui::result_row::{RowContent, RowMeta, result_row_with};
 use crate::ui::settings_shell::{self, SidebarItem};
@@ -141,16 +142,29 @@ pub(crate) struct FixtureRow {
 
 impl FixtureRow {
     /// What the launcher's Actions panel lists for this row (see
-    /// `pane_core::Launcher::result_actions`): its primary action, then,
-    /// for a command — the fixture's commands stand in for installed ones
-    /// — its hotkey and alias configuration, named by the core's rule for
-    /// whether it has them.
+    /// `pane_core::Launcher::result_actions`): its primary action, then
+    /// pinning it, for a command or an application, then, for a command —
+    /// the fixture's commands stand in for installed ones — its hotkey and
+    /// alias configuration, named by the core's rule for whether it has
+    /// them.
     fn actions(&self) -> ResultActions {
         let mut items = vec![ResultActionItem {
             action: ResultAction::Invoke,
             label: self.action.to_owned(),
             available: self.unavailable.is_none(),
         }];
+        // A command or an application is a result a quick slot can hold:
+        // the fixture's pins are not its rows, so it can be pinned (#101).
+        if self.kind == "Command" || self.kind == "Application" {
+            items.push(ResultActionItem {
+                action: ResultAction::Pin,
+                label: ResultAction::Pin
+                    .quick_slot_label()
+                    .expect("a quick slot entry")
+                    .to_owned(),
+                available: true,
+            });
+        }
         if self.kind == "Command" {
             for (action, configured) in [
                 (ResultAction::Hotkey, self.keys.is_some()),
@@ -230,7 +244,8 @@ const fn command(
 /// Settings). The fixture labels them as production does — one
 /// "Commands" section for a blank query, never a claim of recent use
 /// (#100) — so the reference's second label is a content difference the
-/// comparison reports; its pinned strip above them is #101's.
+/// comparison reports. The scenarios over these rows show the board's
+/// pinned home above them ([`ROOT_PINS`], #101).
 pub(crate) const ROOT_ROWS: &[FixtureRow] = &[
     app("Figma", (IconTone::Pen, Glyph::Pen)),
     command(
@@ -300,6 +315,51 @@ pub(crate) const UNAVAILABLE_ROWS: &[FixtureRow] = &[
         .aliased("cb")
         .keyed("ctrl-shift-v")
     },
+];
+
+/// One fixture pin: a quick slot's presentation values, copied from the
+/// reference root board's `pinnedRaw` — authored samples for the visual
+/// comparison only, never the user's pins (#101: a fresh installation
+/// pins nothing).
+#[derive(Debug, PartialEq)]
+pub(crate) struct FixturePin {
+    pub(crate) title: &'static str,
+    pub(crate) icon: (IconTone, Glyph),
+    /// Why the slot's target cannot run, for the native-only partial home.
+    pub(crate) unavailable: Option<&'static str>,
+}
+
+/// A pin of `title` with the reference's `tone` and `glyph`.
+const fn sample_pin(title: &'static str, tone: IconTone, glyph: Glyph) -> Option<FixturePin> {
+    Some(FixturePin {
+        title,
+        icon: (tone, glyph),
+        unavailable: None,
+    })
+}
+
+/// The reference root board's five pins, in its order: Terminal, Visual
+/// Studio Code, Firefox, Obsidian and Spotify, with its tones and glyphs.
+pub(crate) const ROOT_PINS: &[Option<FixturePin>] = &[
+    sample_pin("Terminal", IconTone::Term, Glyph::Prompt),
+    sample_pin("Visual Studio Code", IconTone::Code, Glyph::Code),
+    sample_pin("Firefox", IconTone::Web, Glyph::Globe),
+    sample_pin("Obsidian", IconTone::Note, Glyph::Notes),
+    sample_pin("Spotify", IconTone::Music, Glyph::Music),
+];
+
+/// A partly filled home, which the reference never authors: two pins, one
+/// of them unavailable with its reason, and three empty slots.
+pub(crate) const PARTIAL_PINS: &[Option<FixturePin>] = &[
+    sample_pin("Terminal", IconTone::Term, Glyph::Prompt),
+    None,
+    Some(FixturePin {
+        title: "Obsidian",
+        icon: (IconTone::Note, Glyph::Notes),
+        unavailable: Some("Notes is disabled"),
+    }),
+    None,
+    None,
 ];
 
 /// The launcher's kind of a fixture row's kind label: an application's
@@ -701,6 +761,18 @@ pub(crate) enum Step {
     /// Click the element the fixture declares as `target` at its center
     /// (the footer's Actions button), the pointer moving there first.
     Click { target: &'static str },
+    /// Move the pointer onto the center of the element the fixture
+    /// declares as `target` (a pinned slot, `slot-<n>`), arriving from a
+    /// pixel to its left, without pressing.
+    Point { target: &'static str },
+}
+
+/// The second pinned slot, as a point step names it.
+pub(crate) const SLOT_2: &str = "slot-2";
+
+/// The pointer onto `target`.
+const fn point(target: &'static str) -> Step {
+    Step::Point { target }
 }
 
 /// The footer's Actions button, as a click step names it.
@@ -765,6 +837,10 @@ pub(crate) struct Scenario {
     pub(crate) frame: bool,
     #[serde(skip)]
     pub(crate) rows: &'static [FixtureRow],
+    /// The pinned home's slots over a blank query, in order (`None` for an
+    /// empty slot); none at all for a scenario that shows no home.
+    #[serde(skip)]
+    pub(crate) pins: &'static [Option<FixturePin>],
     /// What the capture helpers do, in order, from the scenario's rest.
     pub(crate) steps: &'static [Step],
 }
@@ -792,6 +868,7 @@ const SCENARIOS: &[Scenario] = {
             theme: None,
             frame: false,
             rows: ROOT_ROWS,
+            pins: ROOT_PINS,
             steps: &[capture("rest")],
         },
         Scenario {
@@ -804,6 +881,7 @@ const SCENARIOS: &[Scenario] = {
             theme: None,
             frame: false,
             rows: ROOT_ROWS,
+            pins: ROOT_PINS,
             steps: &[capture("rest"), pointer(1), capture("hover")],
         },
         Scenario {
@@ -816,6 +894,7 @@ const SCENARIOS: &[Scenario] = {
             theme: None,
             frame: false,
             rows: ROOT_ROWS,
+            pins: ROOT_PINS,
             steps: &[
                 capture("rest"),
                 Key {
@@ -838,6 +917,7 @@ const SCENARIOS: &[Scenario] = {
             theme: None,
             frame: false,
             rows: ROOT_ROWS,
+            pins: ROOT_PINS,
             steps: &[
                 pointer(1),
                 capture("pointed"),
@@ -857,6 +937,7 @@ const SCENARIOS: &[Scenario] = {
             theme: None,
             frame: false,
             rows: ROOT_ROWS,
+            pins: ROOT_PINS,
             steps: &[
                 Key {
                     key: NamedKey::Down,
@@ -879,6 +960,7 @@ const SCENARIOS: &[Scenario] = {
             theme: None,
             frame: false,
             rows: ROOT_ROWS,
+            pins: ROOT_PINS,
             steps: &[
                 capture("rest"),
                 Type { text: "clip" },
@@ -899,6 +981,7 @@ const SCENARIOS: &[Scenario] = {
             theme: None,
             frame: false,
             rows: ROOT_ROWS,
+            pins: ROOT_PINS,
             steps: &[
                 DOWN,
                 capture("selected"),
@@ -924,6 +1007,7 @@ const SCENARIOS: &[Scenario] = {
             theme: None,
             frame: false,
             rows: ACTIONS_ROWS,
+            pins: &[],
             steps: &[Type { text: "fig" }, click(ACTIONS_BUTTON), capture("open")],
         },
         Scenario {
@@ -936,6 +1020,7 @@ const SCENARIOS: &[Scenario] = {
             theme: None,
             frame: false,
             rows: UNAVAILABLE_ROWS,
+            pins: &[],
             steps: &[
                 capture("rest"),
                 Key {
@@ -954,6 +1039,7 @@ const SCENARIOS: &[Scenario] = {
             theme: None,
             frame: false,
             rows: LONG_ROWS,
+            pins: &[],
             steps: &[capture("long-content")],
         },
         Scenario {
@@ -966,6 +1052,7 @@ const SCENARIOS: &[Scenario] = {
             theme: None,
             frame: true,
             rows: ROOT_ROWS,
+            pins: ROOT_PINS,
             steps: &[capture("frame")],
         },
         Scenario {
@@ -978,6 +1065,7 @@ const SCENARIOS: &[Scenario] = {
             theme: Some("light"),
             frame: true,
             rows: ROOT_ROWS,
+            pins: ROOT_PINS,
             steps: &[capture("frame-light")],
         },
         Scenario {
@@ -990,6 +1078,7 @@ const SCENARIOS: &[Scenario] = {
             theme: None,
             frame: true,
             rows: ROOT_ROWS,
+            pins: ROOT_PINS,
             steps: &[
                 capture("narrow-rest"),
                 DOWN,
@@ -1012,6 +1101,7 @@ const SCENARIOS: &[Scenario] = {
             theme: None,
             frame: false,
             rows: &[],
+            pins: &[],
             steps: &[capture("tiles")],
         },
         Scenario {
@@ -1024,6 +1114,7 @@ const SCENARIOS: &[Scenario] = {
             theme: None,
             frame: false,
             rows: &[],
+            pins: &[],
             steps: &[capture("keycaps")],
         },
         Scenario {
@@ -1036,6 +1127,7 @@ const SCENARIOS: &[Scenario] = {
             theme: None,
             frame: false,
             rows: &[],
+            pins: &[],
             steps: &[
                 capture("rest"),
                 pointer(0),
@@ -1054,6 +1146,7 @@ const SCENARIOS: &[Scenario] = {
             theme: None,
             frame: false,
             rows: &[],
+            pins: &[],
             steps: &[capture("narrow")],
         },
         Scenario {
@@ -1066,6 +1159,7 @@ const SCENARIOS: &[Scenario] = {
             theme: None,
             frame: false,
             rows: EMPTY_ROWS,
+            pins: &[],
             steps: &[capture("notice"), DOWN, capture("fallback-selected")],
         },
         Scenario {
@@ -1078,6 +1172,7 @@ const SCENARIOS: &[Scenario] = {
             theme: None,
             frame: false,
             rows: CALCULATOR_ROWS,
+            pins: &[],
             steps: &[capture("card")],
         },
         Scenario {
@@ -1090,6 +1185,7 @@ const SCENARIOS: &[Scenario] = {
             theme: None,
             frame: false,
             rows: ANSWER_ROWS,
+            pins: &[],
             steps: &[capture("answer")],
         },
         Scenario {
@@ -1102,6 +1198,7 @@ const SCENARIOS: &[Scenario] = {
             theme: None,
             frame: false,
             rows: LONG_ANSWER_ROWS,
+            pins: &[],
             steps: &[capture("long-answer")],
         },
         Scenario {
@@ -1114,6 +1211,7 @@ const SCENARIOS: &[Scenario] = {
             theme: None,
             frame: false,
             rows: &[],
+            pins: &[],
             steps: &[capture("notice")],
         },
         Scenario {
@@ -1126,6 +1224,7 @@ const SCENARIOS: &[Scenario] = {
             theme: None,
             frame: false,
             rows: &[],
+            pins: &[],
             steps: &[capture("rest")],
         },
         Scenario {
@@ -1138,6 +1237,7 @@ const SCENARIOS: &[Scenario] = {
             theme: None,
             frame: false,
             rows: &[],
+            pins: &[],
             steps: &[
                 click("clip-standup"),
                 capture("text"),
@@ -1159,6 +1259,7 @@ const SCENARIOS: &[Scenario] = {
             theme: None,
             frame: false,
             rows: &[],
+            pins: &[],
             steps: &[
                 DOWN,
                 capture("down"),
@@ -1180,6 +1281,7 @@ const SCENARIOS: &[Scenario] = {
             theme: None,
             frame: false,
             rows: &[],
+            pins: &[],
             steps: &[
                 Type { text: "zzz" },
                 capture("no-match"),
@@ -1201,6 +1303,7 @@ const SCENARIOS: &[Scenario] = {
             theme: None,
             frame: false,
             rows: &[],
+            pins: &[],
             steps: &[capture("rest"), DOWN, DOWN, DOWN, capture("long-text")],
         },
         Scenario {
@@ -1213,6 +1316,7 @@ const SCENARIOS: &[Scenario] = {
             theme: None,
             frame: false,
             rows: &[],
+            pins: &[],
             steps: &[capture("off")],
         },
         Scenario {
@@ -1225,6 +1329,7 @@ const SCENARIOS: &[Scenario] = {
             theme: None,
             frame: false,
             rows: &[],
+            pins: &[],
             steps: &[
                 capture("narrow"),
                 DOWN,
@@ -1233,6 +1338,42 @@ const SCENARIOS: &[Scenario] = {
                 DOWN,
                 capture("narrow-last"),
             ],
+        },
+        Scenario {
+            name: "pinned-strip",
+            description: "The pinned home: five sample pins under the Pinned label above a blank query's rows; a query hides the strip and clearing it restores it; the pointer over slot 2 takes the slot's hover wash",
+            family: Family::Root,
+            client: ROOT_CLIENT,
+            reference: true,
+            board: None,
+            theme: None,
+            frame: false,
+            rows: ROOT_ROWS,
+            pins: ROOT_PINS,
+            steps: &[
+                capture("rest"),
+                Type { text: "clip" },
+                capture("query-hides"),
+                Key {
+                    key: NamedKey::Escape,
+                },
+                capture("cleared-restores"),
+                point(SLOT_2),
+                capture("slot-hover"),
+            ],
+        },
+        Scenario {
+            name: "pinned-partial",
+            description: "A partly filled home: two pins, one whose target cannot run with its reason, and three empty slots (no reference counterpart)",
+            family: Family::Root,
+            client: ROOT_CLIENT,
+            reference: false,
+            board: None,
+            theme: None,
+            frame: false,
+            rows: ROOT_ROWS,
+            pins: PARTIAL_PINS,
+            steps: &[capture("partial")],
         },
     ]
 };
@@ -1256,22 +1397,13 @@ pub(crate) struct PendingScenario {
 /// deliberately absent — they stay source-only fixture references for
 /// this milestone (see the #90 specification's deferred capabilities).
 pub(crate) fn pending_scenarios() -> &'static [PendingScenario] {
-    &[
-        PendingScenario {
-            name: "appearance-page",
-            board: "settings",
-            ticket: "https://github.com/hoangvu12/pane/issues/98",
-            description: "The Appearance page's controls and live preview",
-            client: SETTINGS_CLIENT,
-        },
-        PendingScenario {
-            name: "pinned-strip",
-            board: "root",
-            ticket: "https://github.com/hoangvu12/pane/issues/101",
-            description: "The five pinned quick slots above the root list",
-            client: ROOT_CLIENT,
-        },
-    ]
+    &[PendingScenario {
+        name: "appearance-page",
+        board: "settings",
+        ticket: "https://github.com/hoangvu12/pane/issues/98",
+        description: "The Appearance page's controls and live preview",
+        client: SETTINGS_CLIENT,
+    }]
 }
 
 /// One key sequence the keycap scenario renders: a production binding,
@@ -1618,6 +1750,8 @@ fn write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
 #[derive(Clone, Debug)]
 struct FixtureState {
     all: &'static [FixtureRow],
+    /// The pinned home's slots, shown over a blank query.
+    pins: &'static [Option<FixturePin>],
     query: String,
     rows: Vec<&'static FixtureRow>,
     /// The selected row's index; past the last row while none is: a list
@@ -1638,9 +1772,10 @@ struct PanelState {
 }
 
 impl FixtureState {
-    fn new(all: &'static [FixtureRow]) -> FixtureState {
+    fn new(all: &'static [FixtureRow], pins: &'static [Option<FixturePin>]) -> FixtureState {
         FixtureState {
             all,
+            pins,
             query: String::new(),
             rows: all.iter().collect(),
             selected: 0,
@@ -1653,7 +1788,7 @@ impl FixtureState {
     /// its rows listed for it as authored, the first that is not a
     /// fallback selected (#96).
     fn of(scenario: &Scenario) -> FixtureState {
-        let mut state = FixtureState::new(scenario.rows);
+        let mut state = FixtureState::new(scenario.rows, scenario.pins);
         if let Some(board) = result_board(scenario.name) {
             state.board = Some(board);
             state.query = board.query.to_owned();
@@ -1689,10 +1824,16 @@ impl FixtureState {
     }
 
     /// The list child that shows the selected row (for scrolling to it):
-    /// after the board's notice, when it has one, and the labels.
+    /// after the pinned home's children while it shows (#101), the
+    /// board's notice, when it has one, and the labels.
     fn selected_child(&self) -> usize {
+        let home = if self.home_shown() {
+            pinned::HOME_CHILDREN
+        } else {
+            0
+        };
         let notice = self.board.is_some_and(|board| board.notice);
-        root_search::layouts::child_of_row(notice, &self.sections(), self.selected)
+        home + root_search::layouts::child_of_row(notice, &self.sections(), self.selected)
     }
 
     /// The footer's Actions button, as the launcher's opens and closes
@@ -1802,6 +1943,13 @@ impl FixtureState {
         if row < self.rows.len() {
             self.selected = row;
         }
+    }
+
+    /// Whether the pinned home shows: the scenario has one, and the
+    /// trimmed query is blank, as the launcher's rule is
+    /// (`features::quick_slots::home_shown`).
+    fn home_shown(&self) -> bool {
+        !self.pins.is_empty() && self.query.trim().is_empty()
     }
 
     /// The section labels over the shown rows, by root search's own rule
@@ -1950,6 +2098,159 @@ pub(crate) struct DeclaredSection {
     rect: Rect,
 }
 
+/// The pinned home as a capture declares it: the "Pinned" label, the
+/// strip and its slots, laid out from the theme's tokens as
+/// `crate::ui::pinned` draws them.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeclaredPinned {
+    label: Rect,
+    /// The label's chord ("Ctrl" "1–5"), filled in from shaped text when
+    /// the manifest is written.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label_keys: Option<KeyGroupRecord>,
+    strip: Rect,
+    slots: Vec<DeclaredSlot>,
+}
+
+/// One quick slot as a capture declares it.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeclaredSlot {
+    /// Its place, counting from 1.
+    number: usize,
+    /// What it holds; `None` for an empty slot.
+    title: Option<&'static str>,
+    /// "app" for a gradient tile, "command" for the neutral one.
+    tone: Option<&'static str>,
+    unavailable: Option<&'static str>,
+    rect: Rect,
+    /// Its 42px tile, centered across the slot.
+    tile: Option<Rect>,
+    /// Its title's line, inside the slot's side padding; the text is
+    /// centered in it.
+    title_rect: Option<Rect>,
+    /// Whether the pointer is over it (an occupied slot takes the hover
+    /// wash).
+    hovered: bool,
+    /// Its compact chord in its top right corner, filled in from shaped
+    /// text when the manifest is written.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    key_group: Option<KeyGroupRecord>,
+}
+
+/// The height the pinned home takes above the rows, the list's gap after
+/// it included: the label, the gap, the strip with its paddings, the gap.
+fn home_height(theme: &Theme) -> f32 {
+    let geometry = &theme.geometry;
+    let pinned = &geometry.pinned;
+    f32::from(geometry.section_height)
+        + f32::from(pinned.strip_padding_top)
+        + f32::from(pinned.slot_height)
+        + f32::from(pinned.strip_padding_bottom)
+        + 2. * f32::from(geometry.row_list_gap)
+}
+
+/// "app" for a gradient tone, "command" for the neutral tile.
+fn tone_name(tone: IconTone) -> &'static str {
+    if tone == IconTone::Command {
+        "command"
+    } else {
+        "app"
+    }
+}
+
+/// The pinned home `state` shows, at the top of the list of `frame`
+/// scrolled by `offset`, with the pointer at `pointer`; `None` while it
+/// does not show.
+fn declared_home(
+    state: &FixtureState,
+    theme: &Theme,
+    frame: &Frame,
+    offset: f32,
+    pointer: Option<(f32, f32)>,
+) -> Option<DeclaredPinned> {
+    if !state.home_shown() {
+        return None;
+    }
+    let f = f32::from;
+    let geometry = &theme.geometry;
+    let typography = &theme.typography;
+    let pinned = &geometry.pinned;
+    let x = frame.list.x + f(geometry.list_padding_x);
+    let width = frame.list.width - 2. * f(geometry.list_padding_x);
+    let top = frame.list.y + f(geometry.list_padding_top) + offset;
+    let label = Rect {
+        x,
+        y: top,
+        width,
+        height: f(geometry.section_height),
+    };
+    let strip = Rect {
+        x,
+        y: top + f(geometry.section_height) + f(geometry.row_list_gap),
+        width,
+        height: f(pinned.strip_padding_top)
+            + f(pinned.slot_height)
+            + f(pinned.strip_padding_bottom),
+    };
+    let count = state.pins.len() as f32;
+    let gap = f(pinned.columns_gap);
+    let column = (width - gap * (count - 1.)) / count;
+    let tile = f(geometry.slot_tile.size);
+    let line = f(typography.slot_title_size) * typography.line_height;
+    let reason_line = f(typography.slot_reason_size) * typography.line_height;
+    let inner = f(pinned.slot_height) - f(pinned.slot_padding_top) - f(pinned.slot_padding_bottom);
+    let slots = state
+        .pins
+        .iter()
+        .enumerate()
+        .map(|(index, pin)| {
+            let rect = Rect {
+                x: x + index as f32 * (column + gap),
+                y: strip.y + f(pinned.strip_padding_top),
+                width: column,
+                height: f(pinned.slot_height),
+            };
+            // The tile, the title and any reason, centered down the slot
+            // inside its paddings, the slot's gap between them.
+            let reason = pin.as_ref().and_then(|pin| pin.unavailable);
+            let content = tile
+                + f(pinned.slot_gap)
+                + line
+                + reason.map_or(0., |_| f(pinned.slot_gap) + reason_line);
+            let tile_y = rect.y + f(pinned.slot_padding_top) + (inner - content) / 2.;
+            DeclaredSlot {
+                number: index + 1,
+                title: pin.as_ref().map(|pin| pin.title),
+                tone: pin.as_ref().map(|pin| tone_name(pin.icon.0)),
+                unavailable: reason,
+                rect,
+                tile: pin.as_ref().map(|_| Rect {
+                    x: rect.x + (column - tile) / 2.,
+                    y: tile_y,
+                    width: tile,
+                    height: tile,
+                }),
+                title_rect: pin.as_ref().map(|_| Rect {
+                    x: rect.x + f(pinned.slot_padding_x),
+                    y: tile_y + tile + f(pinned.slot_gap),
+                    width: column - 2. * f(pinned.slot_padding_x),
+                    height: line,
+                }),
+                hovered: pin.is_some() && pointer.is_some_and(|point| rect.contains(point)),
+                key_group: None,
+            }
+        })
+        .collect();
+    Some(DeclaredPinned {
+        label,
+        label_keys: None,
+        strip,
+        slots,
+    })
+}
+
 /// The rows `state` shows, laid out in the list of `frame` scrolled by
 /// `offset` (0 or negative, as GPUI's scroll offset is), with the pointer
 /// at `pointer` (client coordinates) if it is in the window.
@@ -1985,6 +2286,18 @@ fn declared_list(
     let mut floor = false;
     let sections = state.sections();
     let mut labels = Vec::new();
+    // The pinned home above the rows, its label first among the labels,
+    // its note the caps of its chord as the reference's DOM reads them
+    // ("Ctrl1–5").
+    if let Some(home) = declared_home(state, theme, frame, offset, None) {
+        let keys = crate::keyboard::quick_slots_keys(state.pins.len());
+        labels.push(DeclaredSection {
+            label: pinned::PINNED_LABEL.to_owned(),
+            note: Some(keys.keys.iter().map(|key| key.cap.as_ref()).collect()),
+            rect: home.label,
+        });
+        y += home_height(theme);
+    }
     let rows = state
         .rows
         .iter()
@@ -2088,6 +2401,9 @@ pub(crate) struct DeclaredCapture {
     /// The split view, in a clipboard scenario's captures (#102).
     #[serde(skip_serializing_if = "Option::is_none")]
     clipboard: Option<DeclaredClipboard>,
+    /// The pinned home, while it shows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pinned: Option<DeclaredPinned>,
 }
 
 /// A result board's own parts as a capture declares them (#96): the
@@ -2484,7 +2800,18 @@ pub(crate) fn replay(scenario: &Scenario, theme: &Theme) -> Replay {
                     footer: None,
                     board: None,
                     clipboard: None,
+                    pinned: declared_home(&state, theme, &frame, offset, pointer),
                 })
+            }
+            // The point is the slot's center, which the layout places.
+            Step::Point { target } => {
+                point = declared_home(&state, theme, &frame, offset, None).and_then(|home| {
+                    home.slots
+                        .iter()
+                        .find(|slot| format!("slot-{}", slot.number) == target)
+                        .map(|slot| slot.rect.center())
+                });
+                pointer = point;
             }
             Step::Pointer { row, nudge } => {
                 let rows = declared_rows(&state, theme, &frame, offset, None);
@@ -2873,6 +3200,38 @@ impl FixtureWindow {
             }))
             .into_any_element()
         });
+        // The pinned home over a blank query, through the launcher's own
+        // composition (`ui::pinned`): the fixture's authored pins, each
+        // occupied slot with its production chord.
+        let home = self.state.home_shown().then(|| {
+            let slots = self
+                .state
+                .pins
+                .iter()
+                .enumerate()
+                .map(|(index, pin)| {
+                    let content = match pin {
+                        Some(pin) => SlotContent {
+                            index,
+                            title: Some(pin.title.into()),
+                            icon: pin.icon,
+                            keys: Some(crate::keyboard::quick_slot_keys(index + 1)),
+                            unavailable: pin.unavailable.map(Into::into),
+                        },
+                        None => SlotContent {
+                            index,
+                            title: None,
+                            icon: (IconTone::Command, Glyph::Prompt),
+                            keys: None,
+                            unavailable: None,
+                        },
+                    };
+                    pinned::pinned_slot(content, theme).into_any_element()
+                })
+                .collect();
+            let keys = crate::keyboard::quick_slots_keys(self.state.pins.len());
+            pinned::home(&keys, slots, theme)
+        });
         // A result board's notice for its query (#96), as root search
         // composes it.
         let notice = self
@@ -2884,6 +3243,8 @@ impl FixtureWindow {
         let list = shell::result_list(theme)
             .aria_label("Results")
             .track_scroll(&self.scroll)
+            // The pinned home over a blank query, above the rest (#101).
+            .when_some(home, |list, home| list.children(home))
             .children(root_search::layouts::list_children(
                 notice,
                 rows,
@@ -2967,6 +3328,7 @@ impl FixtureWindow {
                     target: target.as_ref().map(|actions| (actions, kind)),
                     icon: self.state.rows.get(self.state.selected).map(|row| row.icon),
                     listed: &listed,
+                    group: actions_panel::PANE_GROUP,
                     filtering: !panel.query.trim().is_empty(),
                     selected: panel.selected,
                     invoke: &invoke_keys,
@@ -3162,6 +3524,10 @@ struct ColorRecord {
     action_icon: Hex,
     action_rule: Hex,
     actions_dimmer: Hex,
+    slot_background: Hex,
+    slot_edge: Hex,
+    slot_hover: Hex,
+    slot_title: Hex,
 }
 
 /// A color as the manifest writes it: `#RRGGBBAA`.
@@ -3721,6 +4087,69 @@ fn declared_suggestions(
     (label, rows)
 }
 
+/// The names the pinned slots' chords are recorded under, and the
+/// reference key groups they pair with, slot by slot.
+const SLOT_CHORDS: [&str; 5] = [
+    "quick-slot-1",
+    "quick-slot-2",
+    "quick-slot-3",
+    "quick-slot-4",
+    "quick-slot-5",
+];
+const SLOT_GROUPS: [&str; 5] = ["pinned-1", "pinned-2", "pinned-3", "pinned-4", "pinned-5"];
+
+/// Moves `group`, caps and all, so it begins at `x`.
+fn shift_group(group: &mut KeyGroupRecord, x: f32) {
+    let shift = x - group.rect.x;
+    group.rect.x += shift;
+    for cap in &mut group.caps {
+        cap.rect.x += shift;
+    }
+}
+
+/// Where the pinned home's chords lie, as `crate::ui::pinned` lays them
+/// out: the label's at its right padding, centered in the label below its
+/// top padding; each occupied slot's compact one in its top right corner,
+/// the slot's inset from both edges.
+fn declare_home_keys(window: &Window, theme: &Theme, home: &mut DeclaredPinned) {
+    let geometry = &theme.geometry;
+    let height = f32::from(geometry.keycap_height);
+    let content = f32::from(geometry.section_height) - f32::from(geometry.section_padding_top);
+    let y = home.label.y + f32::from(geometry.section_padding_top) + (content - height) / 2.;
+    let keys = crate::keyboard::quick_slots_keys(home.slots.len());
+    let mut label = declared_keys(
+        window,
+        theme,
+        ("quick-slots", &keys),
+        Some("pinned-label"),
+        CapStyle::Regular,
+        (0., y),
+    );
+    let right = home.label.x + home.label.width - f32::from(geometry.section_padding_x);
+    let left = right - label.rect.width;
+    shift_group(&mut label, left);
+    home.label_keys = Some(label);
+    let inset = f32::from(geometry.pinned.keys_inset);
+    for slot in &mut home.slots {
+        let index = slot.number - 1;
+        if slot.title.is_none() || index >= SLOT_CHORDS.len() {
+            continue;
+        }
+        let keys = crate::keyboard::quick_slot_keys(slot.number);
+        let mut group = declared_keys(
+            window,
+            theme,
+            (SLOT_CHORDS[index], &keys),
+            Some(SLOT_GROUPS[index]),
+            CapStyle::Compact,
+            (0., slot.rect.y + inset),
+        );
+        let left = slot.rect.x + slot.rect.width - inset - group.rect.width;
+        shift_group(&mut group, left);
+        slot.key_group = Some(group);
+    }
+}
+
 fn parse_binding(binding: &str) -> Binding {
     Binding::parse(binding).unwrap_or_else(|why| panic!("keycap fixture binding {binding}: {why}"))
 }
@@ -3782,6 +4211,21 @@ fn declared_group(
     (id, binding): (&'static str, &Binding),
     group: Option<&'static str>,
     style: CapStyle,
+    at: (f32, f32),
+) -> KeyGroupRecord {
+    let keys = crate::keyboard::binding_keys(binding);
+    declared_keys(window, theme, (id, &keys), group, style, at)
+}
+
+/// `keys` in `style`, laid out from `(x, y)` as [`declared_group`] lays
+/// out a binding's: for a sequence that is not one binding's (the pinned
+/// label's "Ctrl" "1–5").
+fn declared_keys(
+    window: &Window,
+    theme: &Theme,
+    (id, keys): (&'static str, &keycap::KeySequence),
+    group: Option<&'static str>,
+    style: CapStyle,
     (x, y): (f32, f32),
 ) -> KeyGroupRecord {
     let geometry = &theme.geometry;
@@ -3791,13 +4235,9 @@ fn declared_group(
         text_size: size,
         ..
     } = style.metrics(theme);
-    let keys = crate::keyboard::binding_keys(binding);
     let mut left = x;
     let mut caps = Vec::new();
-    for (key, (label_width, width)) in keys
-        .keys
-        .iter()
-        .zip(cap_widths(window, theme, &keys, style))
+    for (key, (label_width, width)) in keys.keys.iter().zip(cap_widths(window, theme, keys, style))
     {
         caps.push(CapRecord {
             label: key.cap.to_string(),
@@ -4431,6 +4871,9 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
                 for row in capture.rows.iter_mut().filter(|row| !row.answer) {
                     declare_trailing(window, &theme, row);
                 }
+                if let Some(home) = capture.pinned.as_mut() {
+                    declare_home_keys(window, &theme, home);
+                }
             }
             if let Some(board) = result_board(scenario.name) {
                 for capture in &mut captures {
@@ -4545,6 +4988,10 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
                 action_icon: Hex(theme.action_icon),
                 action_rule: Hex(theme.action_rule),
                 actions_dimmer: Hex(theme.actions_dimmer),
+                slot_background: Hex(theme.slot_background),
+                slot_edge: Hex(theme.slot_edge),
+                slot_hover: Hex(theme.slot_hover),
+                slot_title: Hex(theme.slot_title),
             },
         },
         search_header: frame.search,
@@ -5513,6 +5960,7 @@ fn replay_clipboard(scenario: &Scenario, theme: &Theme) -> Replay {
                             preview_edge: hex(split.preview_edge),
                         },
                     }),
+                    pinned: None,
                 });
             }
             Step::Key {
@@ -5542,7 +5990,7 @@ fn replay_clipboard(scenario: &Scenario, theme: &Theme) -> Replay {
                 }
             }
             // The clipboard scenarios move the pointer only by clicking.
-            Step::Pointer { .. } => {}
+            Step::Pointer { .. } | Step::Point { .. } => {}
         }
         if matches!(step, Step::Key { .. }) {
             offset = clip_scrolled(&state, theme, &frame, offset);
@@ -6072,7 +6520,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_scenarios_name_their_tickets_and_cover_the_three_board_sizes() {
+    fn pending_scenarios_name_their_tickets_and_every_board_size_is_registered() {
         for pending in pending_scenarios() {
             assert!(
                 pending
@@ -6087,16 +6535,20 @@ mod tests {
                     .contains(pending.ticket)
             );
         }
-        for client in [ROOT_CLIENT, SETTINGS_CLIENT] {
-            assert!(pending_scenarios().iter().any(|p| p.client == client));
+        // Every board size has registered reference scenarios: the root's
+        // (the pinned home among them, #101), the Settings board's and the
+        // clipboard board's (#102).
+        for client in [ROOT_CLIENT, SETTINGS_CLIENT, CLIPBOARD_CLIENT] {
+            assert!(
+                scenarios()
+                    .iter()
+                    .any(|scenario| scenario.reference && scenario.client == client)
+            );
         }
-        // The clipboard board's scenarios are registered (#102).
-        assert!(
-            scenarios()
-                .iter()
-                .any(|scenario| scenario.reference && scenario.client == CLIPBOARD_CLIENT)
-        );
-        assert!(pending_scenarios().iter().all(|p| p.board != "clipboard"));
+        // Only the Appearance page (#98) is still pending.
+        let pending: Vec<_> = pending_scenarios().iter().map(|p| p.name).collect();
+        assert_eq!(pending, ["appearance-page"]);
+        assert!(scenario("pinned-strip").reference);
         // Store and the snap HUD stay source-only references.
         assert!(
             pending_scenarios()
@@ -6128,11 +6580,14 @@ mod tests {
         let captures = declared_captures(scenario("root-rest"), &theme());
         let rows = &capture(&captures, "rest").rows;
         assert_eq!(rows.len(), ROOT_ROWS.len());
+        // The pinned home above them: the label (30), the list's gap, the
+        // strip (2 + 100 + 6) and the gap again.
+        let home = 30. + 2. + 108. + 2.;
         for (index, row) in rows.iter().enumerate() {
-            // Row i below the header, the list's top padding and the
-            // "Commands" label (30 and the list's gap), then one row height
-            // and one list gap per row before it.
-            let y = 64. + 4. + (30. + 2.) + index as f32 * (44. + 2.);
+            // Row i below the header, the list's top padding, the home and
+            // the "Commands" label (30 and the list's gap), then one row
+            // height and one list gap per row before it.
+            let y = 64. + 4. + home + (30. + 2.) + index as f32 * (44. + 2.);
             assert_eq!(
                 row.rect,
                 Rect {
@@ -6143,15 +6598,114 @@ mod tests {
                 }
             );
         }
-        // With the label above them the eight rows still show whole: only
-        // the list's bottom padding runs past its 404px.
-        assert!(rows.iter().all(|row| row.visible));
-        let last = rows.last().unwrap().rect;
-        assert_eq!(last.y + last.height, 64. + 402.);
+        // The first four show whole, as the reference's do; the list
+        // scrolls to the rest.
+        assert!(rows[..4].iter().all(|row| row.visible));
+        assert!(!rows.last().unwrap().visible);
         let sections = &capture(&captures, "rest").sections;
-        assert_eq!(sections.len(), 1);
-        assert_eq!(sections[0].label, "Commands");
+        let labels: Vec<_> = sections.iter().map(|label| label.label.as_str()).collect();
+        assert_eq!(labels, ["Pinned", "Commands"]);
         assert_eq!(sections[0].rect.y, 64. + 4.);
+        assert_eq!(sections[1].rect.y, 64. + 4. + home);
+    }
+
+    #[test]
+    fn the_home_lies_above_the_rows_as_the_reference_lays_it_out() {
+        let captures = declared_captures(scenario("pinned-strip"), &theme());
+        let rest = capture(&captures, "rest");
+        let home = rest.pinned.as_ref().expect("a blank query shows the home");
+        assert_eq!(home.label.y, 64. + 4.);
+        assert_eq!(home.strip.y, 64. + 4. + 30. + 2.);
+        assert_eq!(home.strip.height, 2. + 100. + 6.);
+        // Five equal columns across the list's 740px, 8px apart.
+        let column = (740. - 4. * 8.) / 5.;
+        assert_eq!(home.slots.len(), 5);
+        for (index, slot) in home.slots.iter().enumerate() {
+            assert_eq!(
+                slot.rect,
+                Rect {
+                    x: 10. + index as f32 * (column + 8.),
+                    y: home.strip.y + 2.,
+                    width: column,
+                    height: 100.
+                }
+            );
+        }
+        let last = home.slots[4].rect;
+        assert!((last.x + last.width - 750.).abs() < 0.01, "{last:?}");
+        // The 42px tile and the 12.5px title (a 16.25px line) centered
+        // down the slot's 76px inside its paddings, 9px apart.
+        let first = &home.slots[0];
+        let tile = first.tile.expect("an occupied slot has a tile");
+        let top = first.rect.y + 14. + (76. - (42. + 9. + 12.5 * 1.3)) / 2.;
+        assert_eq!(
+            (tile.x, tile.width),
+            (first.rect.x + (column - 42.) / 2., 42.)
+        );
+        assert!((tile.y - top).abs() < 0.01, "{tile:?}");
+        assert_eq!(first.title, Some("Terminal"));
+        assert_eq!(first.tone, Some("app"));
+        let titles: Vec<_> = home.slots.iter().filter_map(|slot| slot.title).collect();
+        assert_eq!(
+            titles,
+            [
+                "Terminal",
+                "Visual Studio Code",
+                "Firefox",
+                "Obsidian",
+                "Spotify"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_query_hides_the_home_and_clearing_it_restores_it() {
+        let captures = declared_captures(scenario("pinned-strip"), &theme());
+        let typed = capture(&captures, "query-hides");
+        assert!(typed.pinned.is_none());
+        assert_eq!(typed.rows[0].rect.y, 64. + 4. + 30. + 2.);
+        assert!(typed.sections.iter().all(|label| label.label != "Pinned"));
+        let cleared = capture(&captures, "cleared-restores");
+        assert!(cleared.pinned.is_some());
+        assert_eq!(cleared.rows.len(), ROOT_ROWS.len());
+    }
+
+    #[test]
+    fn pointing_at_a_slot_washes_it_and_selects_no_row() {
+        let replay = replay(scenario("pinned-strip"), &theme());
+        let hover = capture(&replay.captures, "slot-hover");
+        let home = hover.pinned.as_ref().expect("the home shows");
+        let hovered: Vec<_> = home.slots.iter().map(|slot| slot.hovered).collect();
+        assert_eq!(hovered, [false, true, false, false, false]);
+        assert_eq!(
+            hover.rows.iter().position(|row| row.selected),
+            Some(0),
+            "the rows' selection stays"
+        );
+        let point = replay
+            .steps
+            .iter()
+            .find(|step| matches!(step.step, Step::Point { .. }))
+            .and_then(|step| step.point);
+        assert_eq!(point, Some(home.slots[1].rect.center()));
+    }
+
+    #[test]
+    fn a_partial_home_declares_its_empty_slots_and_its_unavailable_one() {
+        let captures = declared_captures(scenario("pinned-partial"), &theme());
+        let home = capture(&captures, "partial")
+            .pinned
+            .as_ref()
+            .expect("the home shows");
+        let empty: Vec<_> = home.slots.iter().map(|slot| slot.title.is_none()).collect();
+        assert_eq!(empty, [false, true, false, true, true]);
+        assert!(home.slots[1].tile.is_none());
+        let unavailable = &home.slots[2];
+        assert_eq!(unavailable.unavailable, Some("Notes is disabled"));
+        // The reason's line below the title moves the content up.
+        let tile = unavailable.tile.expect("its tile");
+        let available = home.slots[0].tile.expect("its tile");
+        assert!(tile.y < available.y);
     }
 
     #[test]
@@ -6228,11 +6782,17 @@ mod tests {
                 .map(|panel| panel.rows.iter().map(|row| row.label.clone()).collect())
                 .unwrap_or_default()
         };
-        // Clipboard History has an alias and a hotkey: its configuration
-        // entries offer to change them, under the "Pane" label.
+        // Clipboard History can be pinned, and has an alias and a hotkey:
+        // its configuration entries offer to change them, under the
+        // "Pane" label.
         assert_eq!(
             labels(&captures[1]),
-            ["Run Command", "Change Hotkey…", "Change Alias…"]
+            [
+                "Run Command",
+                "Pin to Quick Slot",
+                "Change Hotkey…",
+                "Change Alias…"
+            ]
         );
         let open = captures[1].actions.as_ref().expect("the panel is open");
         assert_eq!((open.groups.len(), open.rules.len()), (1, 1));

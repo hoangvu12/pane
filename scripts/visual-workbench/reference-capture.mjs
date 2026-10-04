@@ -338,6 +338,34 @@ window.__wb = {
       dimmer: dimmer ? { rect: this.rel(index, dimmer), background: getComputedStyle(dimmer).backgroundColor } : null,
     };
   },
+  // The pinned home (#101): the "Pinned" label, the slots' grid, and each
+  // slot's box, tile, title and compact key hint; null while hidden.
+  pinned(index) {
+    const doc = this.frame(index).contentDocument;
+    const slots = Array.from(doc.querySelectorAll('.slot'));
+    if (!slots.length) return null;
+    const label = Array.from(doc.querySelectorAll('.label')).find((l) => (l.querySelector(':scope > span') || l).textContent.trim() === 'Pinned');
+    return {
+      label: label ? this.rel(index, label) : null,
+      labelKeys: label ? this.group(index, label.querySelectorAll(':scope > span')[1]) : null,
+      strip: this.rel(index, slots[0].parentElement),
+      slots: slots.map((slot, i) => {
+        const tile = slot.querySelector('.tile');
+        const title = slot.querySelector('.slot-t');
+        return {
+          number: i + 1,
+          title: title ? title.textContent : null,
+          rect: this.rel(index, slot),
+          tile: tile ? this.rel(index, tile) : null,
+          tileApp: tile ? tile.classList.contains('app') : null,
+          titleRect: title ? this.rel(index, title) : null,
+          hovered: slot.matches(':hover'),
+          background: getComputedStyle(slot).backgroundColor,
+          keyGroup: this.group(index, slot.querySelector('.slot-k')),
+        };
+      }),
+    };
+  },
   state(index) {
     const doc = this.frame(index).contentDocument;
     const q = doc.querySelector('input.q');
@@ -364,6 +392,7 @@ window.__wb = {
       keycaps: this.keycapGroups(index),
       footerParts: this.footerParts(index),
       panel: this.panel(index),
+      pinned: this.pinned(index),
     };
   },
   // The Settings board (#97): its titlebar and label, the sidebar with its
@@ -651,6 +680,12 @@ const POINTER_TARGETS = {
 // driven; any other board authors its one state, captured as it is.
 const INTERACTIVE = new Set(['root', 'clipboard']);
 
+// The elements a point step names: the pinned slots, `slot-<n>` from 1.
+const POINT_TARGETS = Object.fromEntries([1, 2, 3, 4, 5].map((n) => [
+  `slot-${n}`,
+  (index) => `__wb.frame(${index}).contentDocument.querySelectorAll('.slot')[${n - 1}]`,
+]));
+
 async function runScenario(scenario, rootIndex, frames) {
   const dir = join(out, scenario.name);
   mkdirSync(dir, { recursive: true });
@@ -725,6 +760,14 @@ async function runScenario(scenario, rootIndex, frames) {
       // filters the actions, as on the native side.
       await sleep(150);
       await evaluate(`(() => { const field = __wb.frame(${boardIndex}).contentDocument.querySelector('.pop input'); if (field) field.focus({ preventScroll: true }); return !!field; })()`);
+    } else if (step.action === 'point') {
+      const target = POINT_TARGETS[step.target];
+      if (!target) throw new Error(`unknown point target ${step.target}`);
+      const point = await evaluate(`__wb.outer(${boardIndex}, ${target(boardIndex)})`);
+      // From a pixel to the left, as the native side arrives; no press (a
+      // slot's click would launch it and hide the panel).
+      await pointerTo(point.x - 1, point.y);
+      await pointerTo(point.x, point.y);
     } else if (step.action === 'type') {
       for (const character of step.text) {
         await call('Input.insertText', { text: character });

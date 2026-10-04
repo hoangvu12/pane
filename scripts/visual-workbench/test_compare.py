@@ -309,6 +309,56 @@ class SplitView(unittest.TestCase):
         self.assertAlmostEqual(rest["alpha"], 0, delta=0.5)
 
 
+class PinnedSlots(unittest.TestCase):
+    PANEL = (22, 23, 26)
+
+    def slot(self, alpha=0.035, x=10, y=30, w=142, h=100):
+        """A reference .slot on a dark panel: a white fill under a white 5%
+        inset ring, a 42px gradient tile centered across it and a bright
+        title line centered below the tile."""
+        image = Image.new("RGB", (180, 160), self.PANEL)
+        draw = ImageDraw.Draw(image)
+        fill = over_white(self.PANEL, alpha)
+        draw.rounded_rectangle((x, y, x + w - 1, y + h - 1), radius=12, fill=over_white(fill, 0.05))
+        draw.rounded_rectangle((x + 1, y + 1, x + w - 2, y + h - 2), radius=11, fill=fill)
+        tile_x, tile_y = x + (w - 42) // 2, y + 18
+        for row in range(42):
+            shade = (74 - row, 77 - row, 85 - row)
+            draw.line((tile_x, tile_y + row, tile_x + 41, tile_y + row), fill=shade)
+        draw.rectangle((x + 46, tile_y + 42 + 12, x + w - 47, tile_y + 42 + 21), fill=(217, 218, 221))
+        return image, (x, y, w, h), (tile_x, tile_y, 42, 42), (x + 8, tile_y + 51, w - 16, 16.25)
+
+    def test_a_slot_measures_its_fill_box_title_and_tile(self):
+        image, rect, tile, title = self.slot()
+        measured = compare.measure_slot(image, rect, title, tile, True)
+        self.assertAlmostEqual(measured["alpha"], 0.035 * 255, delta=1.5)
+        self.assertEqual(measured["edges"], rect)
+        self.assertAlmostEqual(measured["title"]["center"], rect[0] + rect[2] / 2, delta=0.5)
+        self.assertEqual(measured["title"]["top"], tile[1] + 42 + 12)
+        self.assertEqual(measured["tile"]["edges"][:2], tile[:2])
+
+    def test_the_hover_wash_measures_twice_the_rest(self):
+        image, rect, tile, title = self.slot(alpha=0.07)
+        self.assertAlmostEqual(compare.measure_slot(image, rect, title, tile, True)["alpha"], 0.07 * 255, delta=1.5)
+
+    def test_an_empty_slot_measures_no_fill(self):
+        image = Image.new("RGB", (180, 160), self.PANEL)
+        measured = compare.measure_slot(image, (10, 30, 142, 100), None, None, False)
+        self.assertAlmostEqual(measured["alpha"], 0, delta=0.5)
+        self.assertIsNone(measured["title"])
+
+    def test_a_label_only_the_reference_shows_counts_above_its_rows(self):
+        declared = {"sections": [{"rect": {"x": 10, "y": 68, "width": 740, "height": 30}},
+                                 {"rect": {"x": 10, "y": 210, "width": 740, "height": 30}}]}
+        state = {"labels": [{"rect": {"x": 10, "y": 68, "width": 740, "height": 30}},
+                            {"rect": {"x": 10, "y": 210, "width": 740, "height": 30}},
+                            {"rect": {"x": 10, "y": 426, "width": 740, "height": 30}}]}
+        # Above the fourth row both sides show the same two labels; above
+        # the fifth the reference shows its third.
+        self.assertEqual(compare.extra_labels_above(declared, state, 380, 380), 0)
+        self.assertEqual(compare.extra_labels_above(declared, state, 426, 458), 1)
+
+
 class Accepted(unittest.TestCase):
     def test_a_failing_check_with_a_disposition_is_accepted_not_failed(self):
         report = compare.Report()

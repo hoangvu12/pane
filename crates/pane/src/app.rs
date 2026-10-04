@@ -30,6 +30,7 @@ use crate::extension_views::{custom_view, form};
 use crate::features::actions_panel;
 use crate::features::clipboard_history;
 use crate::features::footer_menu;
+use crate::features::quick_slots;
 use crate::features::root_search;
 use crate::features::settings;
 use crate::ui::footer;
@@ -37,6 +38,7 @@ use crate::ui::icon::{Glyph, IconTone};
 use crate::ui::keycap::CapStyle;
 use crate::ui::material::Material;
 use crate::ui::motion::{self, Direction};
+use crate::ui::pinned;
 use crate::ui::result_row::{RowContent, RowMeta, result_row_with};
 use crate::ui::shell;
 use crate::ui::theme::Theme;
@@ -77,6 +79,9 @@ pub struct LauncherWindow {
     /// Pane's Clipboard History in the split view, while its command is
     /// open; see [`features::clipboard_history`].
     pub(crate) clipboard: Option<clipboard_history::ClipboardHistory>,
+    /// Root search's pinned home: its slots' focus; see
+    /// [`features::quick_slots`].
+    pub(crate) home: quick_slots::Home,
     /// The footer menu popup's entrance or exit in flight, if any: the
     /// popup's look (0 closed, 1 open), presentation only — see
     /// [`crate::ui::motion`]. One tween serves both the open menu and
@@ -216,6 +221,7 @@ impl LauncherWindow {
             menu: None,
             actions: None,
             clipboard: None,
+            home: quick_slots::Home::new(cx),
             menu_transition: None,
             menu_exit: None,
             drawn_menu: false,
@@ -229,6 +235,8 @@ impl LauncherWindow {
         // The launcher opens placed on the display the Launcher page's
         // choice resolves to, before the first frame is drawn.
         this.place(window, cx);
+        // The home's slots resolve from the first visit.
+        this.sync_home(cx);
         this
     }
 
@@ -909,13 +917,20 @@ impl LauncherWindow {
         }
         if let Some(selected) = view.selected {
             // The list's children are its rows with the section labels
-            // between them, after root search's no-results notice while it
+            // between them, after the pinned home's while it shows (a blank
+            // query's) and after root search's no-results notice while it
             // shows (over the fallbacks, whichever is selected). (Another
             // screen's empty line shows only while nothing is selected,
             // when nothing is scrolled to.)
+            let home = if quick_slots::home_shown(view) {
+                pinned::HOME_CHILDREN
+            } else {
+                0
+            };
             let notice = root_search::layouts::nothing_found(&view.screen, presentation);
             let labels = section_labels(presentation);
-            let child = root_search::layouts::child_of_row(notice.is_some(), &labels, selected);
+            let child =
+                home + root_search::layouts::child_of_row(notice.is_some(), &labels, selected);
             self.scroll.scroll_to_item(child);
         }
         self.scrolled_for = Some(shown);
@@ -947,6 +962,7 @@ impl LauncherWindow {
         self.sync_root_search(window, cx);
         // After it: the Clipboard History view focuses its own search.
         self.sync_clipboard_history(window, cx);
+        self.sync_home(cx);
         cx.refresh_windows();
     }
 
@@ -1319,6 +1335,9 @@ impl Render for LauncherWindow {
             (&view.screen, &view.status),
             (Screen::CommandSearch { .. }, Status::Error(_))
         );
+        // A blank query's pinned home, above the rows (read before the
+        // status moves out of the view).
+        let home = self.render_home(&view, &theme, cx);
         // The footer's status: while the launcher runs, works, answers or
         // fails, the strip is that message; `None` while it is idle, when
         // the strip becomes the selected action (below).
@@ -1379,6 +1398,8 @@ impl Render for LauncherWindow {
                 _ => view.title.clone(),
             })
             .track_scroll(&self.scroll)
+            // The pinned home over a blank query, above the rows (#101).
+            .when_some(home, |list, home| list.children(home))
             // Above the rows, with none selected: a command's search found
             // nothing, or a screen has no rows. (Root search's notice for a
             // query is among the rows' children, above its fallbacks.)
@@ -1463,6 +1484,7 @@ impl Render for LauncherWindow {
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::open_settings))
             .on_action(cx.listener(Self::toggle_actions))
+            .map(|content| Self::on_quick_slot_keys(content, cx))
             .on_action(cx.listener(Self::focus_next))
             .on_action(cx.listener(Self::focus_previous))
             .on_key_down(cx.listener(Self::key_down))

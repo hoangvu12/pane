@@ -47,9 +47,10 @@ pub use launcher::clipboard_view;
 pub use launcher::{
     AliasOutcome, ApplicationUpdate, BuildFailure, CommandRegistration, ComputedAnswer,
     CustomViewSnapshot, Development, FormField, FormView, HotkeyOutcome, Launcher, LauncherView,
-    Presentation, Question, ResultAction, ResultActionItem, ResultActions, Row, RowKind,
-    RowPresentation, Screen, Section, SelectedAction, ShortcutCatalog, ShortcutCommand,
-    ShortcutGroup, Status, Unavailable, answer_sections, root_sections,
+    PinTarget, Presentation, QUICK_SLOTS, Question, QuickSlot, ResultAction, ResultActionItem,
+    ResultActions, Row, RowKind, RowPresentation, Screen, Section, SelectedAction, ShortcutCatalog,
+    ShortcutCommand, ShortcutGroup, SlotChange, Status, Unavailable, answer_sections,
+    root_sections,
 };
 pub use links::LinkOpener;
 pub use operations::{MAX_CALL_DEPTH, MAX_OPERATION_JSON};

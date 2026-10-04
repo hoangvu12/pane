@@ -350,6 +350,20 @@ fn focused_label(cx: &mut VisualTestContext) -> Option<String> {
     label
 }
 
+/// Presses Tab until the node labelled `label` has focus, failing if a
+/// dozen stops never reach it; the labels focused on the way, in order.
+fn tab_to(cx: &mut VisualTestContext, label: &str) -> Vec<String> {
+    let mut passed = Vec::new();
+    for _ in 0..12 {
+        cx.simulate_keystrokes("tab");
+        match focused_label(cx) {
+            Some(focused) if focused == label => return passed,
+            focused => passed.push(focused.unwrap_or_default()),
+        }
+    }
+    panic!("Tab never reached {label:?}; it passed {passed:?}");
+}
+
 /// The window's accessibility tree as (focused label, raw JSON), forced on
 /// so the tree is built regardless of platform accessibility.
 fn accessibility(cx: &mut VisualTestContext) -> (Option<String>, String) {
@@ -828,10 +842,14 @@ fn the_footer_menu_opens_traverses_dismisses_and_restores_focus(cx: &mut TestApp
         "root search's selected result has focus"
     );
 
-    // The keyboard reaches the menu: Tab from the query field, then Enter
-    // presses the button.
-    cx.simulate_keystrokes("tab");
-    assert_eq!(focused_label(cx).as_deref(), Some("Pane menu"));
+    // The keyboard reaches the menu: Tab from the query field, past the
+    // pinned home's quick slots (tab stops between the query field and
+    // the footer), then Enter presses the button.
+    let passed = tab_to(cx, "Pane menu");
+    assert!(
+        passed.iter().all(|label| label.starts_with("Quick slot")),
+        "only the quick slots come between the query field and the menu: {passed:?}"
+    );
     cx.simulate_keystrokes("enter");
     cx.run_until_parked();
     assert!(cx.debug_bounds("menu").is_some(), "the menu is open");

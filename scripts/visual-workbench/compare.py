@@ -641,6 +641,8 @@ def compare_root(report, name, capture, declared, manifest, native, scale, ref_c
         if row.get("visible", True) and not row["heightIsFloor"] and not covered:
             harness_row_trailing(report, name, capture, row, manifest, native, scale, crops)
     harness_board(report, name, capture, declared, manifest, native, scale, pal, crops)
+    if not covered:
+        harness_pinned(report, name, capture, declared, manifest, native, scale, pal, crops)
 
     if ref_capture is None:
         return
@@ -705,8 +707,11 @@ def compare_root(report, name, capture, declared, manifest, native, scale, ref_c
             for prop, index in (("left", 0), ("width", 2), ("height", 3)):
                 report.check("parity", name, capture, subject, f"wash {prop}", n_edges[index], r_edges[index],
                              LIMITS["edge_px"], "px")
+        extra = extra_labels_above(declared, state, n_rect[1], r_rect[1])
         report.check("parity", name, capture, subject, "top in client", n_rect[1], r_rect[1], LIMITS["edge_px"], "px",
-                     "the reference lists the pinned strip and section labels above the rows (#101)")
+                     "the pinned strip and the section labels lie above the rows on both sides (#101)",
+                     accepted=EXTRA_LABEL_DISPOSITION if extra > 0 and abs(
+                         r_rect[1] - n_rect[1] - extra * LABEL_STEP) <= LIMITS["edge_px"] else None)
         n_title, r_title = measured.get("title"), ref_measured.get("title")
         if n_title and r_title:
             report.check("parity", name, capture, subject, "title ink left in row", n_title["left"], r_title["left"],
@@ -768,6 +773,8 @@ def compare_root(report, name, capture, declared, manifest, native, scale, ref_c
     parity_footer(report, name, capture, declared, manifest, native, scale, state, reference_image, pal, crops)
     parity_actions(report, name, capture, declared, manifest, native, scale, state, reference_image, pal, crops)
     parity_board(report, name, capture, declared, manifest, native, scale, state, reference_image, pal, crops)
+    if not covered:
+        parity_pinned(report, name, capture, declared, manifest, native, scale, state, reference_image, pal, crops)
 
 
 # The launcher frame (#92). Windows rounds the launcher's window itself,
@@ -1361,8 +1368,8 @@ def compare_row_trailing(report, name, capture, subject, row, ref_row, manifest,
 # commands. Pane labels a blank query's list as what it is - its commands,
 # in root search's order - and claims no recent use (#100).
 SECTION_DISPOSITION = ("accepted (#94, #100): Pane labels a blank query's rows \"Commands\" and claims no recent "
-                       "use, so the reference's \"Suggested · From your recent use\" is not shown; the reference's "
-                       "pinned strip and its label are #101's")
+                       "use, so the reference's \"Suggested · From your recent use\" is not shown; both sides show "
+                       "the pinned strip's \"Pinned\" label (#101)")
 
 
 def section_ink(image, rect, scale=1.0, pal=DARK):
@@ -1412,14 +1419,203 @@ def compare_sections(report, name, capture, declared, state, native, scale, refe
                          "right-aligned; a glyph's side bearing allowed")
 
 
+# ------------------------------------------------------ the pinned home (#101)
+
+# One section label and the list's gap after it: what a label the other
+# side does not show moves the rows below it by.
+LABEL_STEP = 32
+EXTRA_LABEL_DISPOSITION = ("accepted (#100): the reference's \"Suggested · From your recent use\" label sits above "
+                           "this row; Pane claims no recent use, so its row sits one label higher")
+# The slot title's color both sides author (#D9DADD).
+SLOT_TITLE = (217, 218, 221)
+
+
+def extra_labels_above(declared, state, native_y, reference_y):
+    """How many more section labels the reference shows above its row at
+    reference_y than the native capture declares above its row at
+    native_y: each one moves the reference's row down by LABEL_STEP."""
+    native = sum(1 for label in declared.get("sections") or [] if as_tuple(label["rect"])[1] < native_y)
+    reference = sum(1 for label in (state or {}).get("labels", []) if as_tuple(label["rect"])[1] < reference_y)
+    return reference - native
+
+
+def measure_slot(image, rect, title_rect, tile_rect, app, title_color=SLOT_TITLE, scale=1.0, lighter=True):
+    """A pinned slot: its fill (measured as a row's wash is, against the
+    strip's padding just above and below it), its box, its title's core
+    ink - the center of its extent, its top and height - and its tile.
+    title_rect and tile_rect may be None (an empty slot). Returns None
+    where the slot cannot be read."""
+    wash = row_wash(image, rect, scale, False, lighter)
+    if wash is None:
+        return None
+    result = {"alpha": wash["alpha"], "fill": wash["fill"], "edges": None, "title": None, "tile": None}
+    sign = 1 if lighter else -1
+    delta = max(3.0, sign * (luma(wash["fill"]) - luma(wash["background"])) / 2)
+    edges = wash_edges(image, scaled(rect, scale), wash["background"], delta, lighter=lighter)
+    if edges:
+        result["edges"] = tuple(v / scale for v in edges)
+    if title_rect is not None:
+        x, y, w, h = scaled(as_tuple(title_rect), scale)
+        found = ink(image, (x - 2 * scale, y - 3 * scale, x + w + 2 * scale, y + h + 3 * scale), wash["fill"],
+                    title_color, exclude_accent=False)
+        if found:
+            bx, by, bw, bh = found["box"]
+            result["title"] = {"center": (bx + bw / 2) / scale, "top": by / scale, "height": bh / scale,
+                               "color": found["color"]}
+    if tile_rect is not None:
+        result["tile"] = measure_tile(image, as_tuple(tile_rect), app, APP_GLYPH if app else COMMAND_GLYPH,
+                                      wash["fill"], scale)
+    return result
+
+
+def slot_state(slot):
+    """A declared slot's state, as its checks name it."""
+    if slot.get("title") is None:
+        return "empty"
+    return "hovered" if slot.get("hovered") else "rest"
+
+
+def harness_pinned(report, name, capture, declared, manifest, native, scale, pal, crops):
+    """The native pinned home against its declaration: each slot's fill
+    (white 3.5% at rest, 7% under the pointer, none for an empty slot), its
+    box and tile where declared, its title centered across it inside its
+    line, and the chords - each slot's and the label's - as key groups."""
+    home = declared.get("pinned")
+    if not home:
+        return
+    colors = manifest["declared"]["colors"]
+    alphas = {"rest": hex_rgba(colors.get("slotBackground", "#FFFFFF09"))[3],
+              "hovered": hex_rgba(colors.get("slotHover", "#FFFFFF12"))[3], "empty": 0}
+    title_color = hex_rgba(colors.get("slotTitle", "#D9DADDFF"))[:3]
+    for slot in home["slots"]:
+        subject = f"slot:{slot['number']}"
+        rect = as_tuple(slot["rect"])
+        state = slot_state(slot)
+        crops.append((subject, rect, None))
+        mine = measure_slot(native, rect, slot.get("titleRect"), slot.get("tile"), slot.get("tone") == "app",
+                            title_color, scale, pal["lighter"])
+        report.check("harness-native", name, capture, subject, f"fill alpha ({state})", mine and mine["alpha"],
+                     alphas[state], LIMITS["flat_fill_levels"], "levels")
+        if state == "empty":
+            continue
+        edges = mine and mine["edges"]
+        for prop, index in (("left", 0), ("top", 1), ("width", 2), ("height", 3)):
+            report.check("harness-native", name, capture, subject, f"box {prop}", edges[index] if edges else None,
+                         rect[index], LIMITS["edge_px"], "px")
+        tile = as_tuple(slot["tile"])
+        tile_edges = mine and mine["tile"] and mine["tile"]["edges"]
+        for prop, index in (("left", 0), ("top", 1), ("width", 2), ("height", 3)):
+            report.check("harness-native", name, capture, subject, f"tile {prop}",
+                         tile_edges[index] if tile_edges else None, tile[index], LIMITS["edge_px"], "px")
+        if slot.get("keyGroup"):
+            compare_key_group(report, name, capture, slot["keyGroup"], manifest, native, scale, None, None, crops,
+                              chained=True)
+        # An unavailable slot's title is muted, not the title color.
+        if slot.get("unavailable"):
+            continue
+        title = mine and mine["title"]
+        report.check("harness-native", name, capture, subject, "title ink center", title and title["center"],
+                     rect[0] + rect[2] / 2, LIMITS["edge_px"] * 1.5, "px",
+                     "centered across the slot; a glyph's side bearing allowed")
+        line = as_tuple(slot["titleRect"])
+        inside = title and line[1] - LIMITS["edge_px"] <= title["top"] and (
+            title["top"] + title["height"] <= line[1] + line[3] + LIMITS["edge_px"])
+        report.check("harness-native", name, capture, subject, "title ink inside its line",
+                     "yes" if inside else "no", "yes", 0, "")
+    if home.get("labelKeys"):
+        compare_key_group(report, name, capture, home["labelKeys"], manifest, native, scale, None, None, crops,
+                          chained=True)
+
+
+def parity_pinned(report, name, capture, declared, manifest, native, scale, state, reference_image, pal, crops):
+    """The pinned home, native against reference: shown on both sides or
+    neither (a query hides it), the same slots under the pointer, and each
+    slot's title, box, fill, title ink, tile and chord, the slot's own
+    origin taken on each side."""
+    home, ref_home = declared.get("pinned"), state.get("pinned")
+    report.check("parity", name, capture, "pinned", "shown", "yes" if home else "no", "yes" if ref_home else "no",
+                 0, "", "a blank query shows the strip; a query hides it")
+    if not (home and ref_home):
+        return
+    report.check("parity", name, capture, "pinned", "hovered slots",
+                 ", ".join(str(slot["number"]) for slot in home["slots"] if slot.get("hovered")),
+                 ", ".join(str(slot["number"]) for slot in ref_home["slots"] if slot.get("hovered")), 0, "")
+    if home.get("labelKeys") and ref_home.get("labelKeys"):
+        compare_key_group(report, name, capture, home["labelKeys"], manifest, native, scale, ref_home["labelKeys"],
+                          reference_image, crops, harness=False, chained=True)
+    title_color = hex_rgba(manifest["declared"]["colors"].get("slotTitle", "#D9DADDFF"))[:3]
+    ref_slots = {slot["number"]: slot for slot in ref_home["slots"]}
+    for slot in home["slots"]:
+        ref = ref_slots.get(slot["number"])
+        if not ref:
+            continue
+        subject = f"slot:{slot['number']}"
+        report.check("parity", name, capture, subject, "title", slot.get("title") or "", ref.get("title") or "", 0, "")
+        if slot.get("title") is None or not ref.get("title"):
+            continue
+        n_rect, r_rect = as_tuple(slot["rect"]), as_tuple(ref["rect"])
+        crops.append(("parity-" + subject, n_rect, r_rect))
+        mine = measure_slot(native, n_rect, slot.get("titleRect"), slot.get("tile"), slot.get("tone") == "app",
+                            title_color, scale, pal["lighter"])
+        theirs = measure_slot(reference_image, r_rect, ref.get("titleRect"), ref.get("tile"), bool(ref.get("tileApp")))
+        if not mine or not theirs:
+            continue
+        report.check("parity", name, capture, subject, "fill alpha", mine["alpha"], theirs["alpha"],
+                     LIMITS["flat_fill_levels"], "levels")
+        if mine["edges"] and theirs["edges"]:
+            for prop, index in (("left", 0), ("top", 1), ("width", 2), ("height", 3)):
+                report.check("parity", name, capture, subject, f"box {prop}", mine["edges"][index],
+                             theirs["edges"][index], LIMITS["edge_px"], "px")
+        n_title, r_title = mine["title"], theirs["title"]
+        if n_title and r_title:
+            report.check("parity", name, capture, subject, "title ink center in slot", n_title["center"] - n_rect[0],
+                         r_title["center"] - r_rect[0], LIMITS["edge_px"], "px")
+            report.check("parity", name, capture, subject, "title ink top in slot", n_title["top"] - n_rect[1],
+                         r_title["top"] - r_rect[1], LIMITS["edge_px"], "px")
+            report.check("parity", name, capture, subject, "title ink height", n_title["height"], r_title["height"],
+                         LIMITS["edge_px"], "px")
+            worst = max(abs(a - b) for a, b in zip(n_title["color"], r_title["color"]))
+            report.check("parity", name, capture, subject, "title glyph core color (max channel)", worst, 0,
+                         LIMITS["glyph_core_levels"], "levels",
+                         f"native {fmt_color(n_title['color'])} vs reference {fmt_color(r_title['color'])}")
+        n_tile, r_tile = mine["tile"], theirs["tile"]
+        if n_tile and r_tile:
+            sub = subject + "/tile"
+            crops.append(("parity-" + sub, as_tuple(slot["tile"]), as_tuple(ref["tile"])))
+            if n_tile["edges"] and r_tile["edges"]:
+                for prop, index in (("left", 0), ("top", 1), ("width", 2), ("height", 3)):
+                    origin = index if index < 2 else None
+                    n_value = n_tile["edges"][index] - (n_rect[origin] if origin is not None else 0)
+                    r_value = r_tile["edges"][index] - (r_rect[origin] if origin is not None else 0)
+                    report.check("parity", name, capture, sub, f"{prop}{' in slot' if index < 2 else ''}", n_value,
+                                 r_value, LIMITS["edge_px"], "px")
+            for end in ("top", "bottom"):
+                if n_tile[end] and r_tile[end]:
+                    report.check("parity", name, capture, sub, f"gradient {end} (max channel)",
+                                 max(abs(a - b) for a, b in zip(n_tile[end], r_tile[end])), 0,
+                                 LIMITS["glyph_core_levels"], "levels",
+                                 f"native {fmt_color(n_tile[end])} vs reference {fmt_color(r_tile[end])}")
+            if n_tile["glyph"] and r_tile["glyph"]:
+                for prop in ("left", "top", "width", "height"):
+                    report.check("parity", name, capture, sub, f"glyph ink {prop}", n_tile["glyph"][prop],
+                                 r_tile["glyph"][prop], LIMITS["edge_px"], "px")
+                report.check("parity", name, capture, sub, "glyph core pixels (stroke weight)",
+                             100 * (n_tile["glyph"]["count"] / max(1, r_tile["glyph"]["count"]) - 1), 0,
+                             STROKE_LIMIT, "%",
+                             f"{n_tile['glyph']['count']:.0f} vs {r_tile['glyph']['count']:.0f} core pixels")
+        if slot.get("keyGroup") and ref.get("keyGroup"):
+            compare_key_group(report, name, capture, slot["keyGroup"], manifest, native, scale, ref["keyGroup"],
+                              reference_image, crops, harness=False, chained=True)
+
+
 # ------------------------------------------------- the footer and Actions (#95)
 
 # Content the reference authors that Pane deliberately does not show: its
 # Actions lists operations Pane has no working contract for (#100), and its
 # static Actions board's footer carries a tip instead of the hint.
-ACTIONS_CONTENT = ("accepted (#95, #100): the reference lists Pin to Quick Slot (#101), Open New Window, Show in "
-                   "File Manager, Quit and Hide from Results; Pane lists only the operations it can perform - the "
-                   "primary action and an installed command's hotkey and alias")
+ACTIONS_CONTENT = ("accepted (#95, #100): the reference lists Open New Window, Show in File Manager, Quit and "
+                   "Hide from Results; Pane lists only the operations it can perform - the primary action, "
+                   "pinning to a quick slot (#101) and an installed command's hotkey and alias")
 STATIC_ENTER = ("accepted (#95): the static Actions board draws its footer's Enter as a plain cap; the root "
                 "board, live, draws it in the accent, as Pane does (#93)")
 STATIC_HINT = ("accepted (#95): the static Actions board's footer shows a tip ('Every action keeps its shortcut - no "
@@ -1660,6 +1856,8 @@ def action_of(label, index):
         return "hotkey"
     if "Alias" in label:
         return "alias"
+    if "Quick Slot" in label:
+        return "pin"
     return None
 
 

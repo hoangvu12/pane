@@ -286,6 +286,15 @@ foreach ($entry in $selected) {
                     Start-Sleep -Milliseconds 40
                     Send-Click $hwnd $pointer[0] $pointer[1] $scale
                 }
+                'point' {
+                    # The pointer arrives at the element (a pinned slot)
+                    # from a pixel to its left, and stays there unpressed.
+                    if ($null -eq $step.point) { throw "the point at $($step.target) has no point" }
+                    $pointer = @($step.point[0], $step.point[1])
+                    Send-Pointer $hwnd ($pointer[0] - 1) $pointer[1] $scale
+                    Start-Sleep -Milliseconds 40
+                    Send-Pointer $hwnd $pointer[0] $pointer[1] $scale
+                }
                 'type' {
                     foreach ($character in $step.text.ToCharArray()) {
                         [void][PaneFixtureWin]::PostMessage($hwnd, $WM_CHAR, [IntPtr][int]$character, [IntPtr]1)

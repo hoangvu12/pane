@@ -122,7 +122,7 @@ fn selected_id(launcher: &Launcher) -> String {
 }
 
 #[test]
-fn an_installed_commands_actions_are_its_primary_action_then_its_hotkey_and_alias() {
+fn an_installed_commands_actions_are_its_primary_action_pinning_then_its_hotkey_and_alias() {
     let dirs = Dirs::new();
     let launcher = dirs.launcher();
     search_and_select(&launcher, "greet", "Greeting");
@@ -135,6 +135,7 @@ fn an_installed_commands_actions_are_its_primary_action_then_its_hotkey_and_alia
         labels(&launcher),
         [
             (ResultAction::Invoke, primary.label),
+            (ResultAction::Pin, "Pin to Quick Slot".into()),
             (ResultAction::Hotkey, "Assign Hotkey…".into()),
             (ResultAction::Alias, "Add Alias…".into()),
         ]
@@ -308,7 +309,8 @@ fn matching_keeps_the_actions_whose_label_has_the_text() {
             .map(|item| item.action)
             .collect()
     };
-    assert_eq!(matching("").len(), 3, "a blank filter keeps them all");
+    assert_eq!(matching("").len(), 4, "a blank filter keeps them all");
+    assert_eq!(matching("quick slot"), [ResultAction::Pin]);
     assert_eq!(matching("  HOTKEY "), [ResultAction::Hotkey]);
     assert_eq!(matching("alias"), [ResultAction::Alias]);
     assert!(matching("quit").is_empty());
