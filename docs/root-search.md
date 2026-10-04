@@ -102,10 +102,34 @@ state and maps input to those calls.
 | --- | --- |
 | Typing, editing keys, clipboard, undo, input-method composition | Edit the query (GPUI CE's single-line editable text element); every change searches again |
 | Up / Down | Previous / next result (not the caret) |
-| Moving the pointer over a result | Select it, so the footer's action and Enter act on it; a pointer resting on a result never undoes the keys' selection, and while the selection is frozen (a layer over the list owns the target, as the contextual Actions panel will, #95) the pointer selects nothing. The first pointer event after the window shows only records where the pointer is |
+| Moving the pointer over a result | Select it, so the footer's action and Enter act on it; a pointer resting on a result never undoes the keys' selection, and while a layer over the list owns the target (the Actions panel, the Pane menu) the pointer selects nothing. The first pointer event after the window shows only records where the pointer is |
 | A click on a result | The selected result: invoke it, as Enter does. An unselected one (the keys moved the selection away while the pointer rested on it): select it; a second click invokes it |
 | Enter | Invoke the selected result: open the command, explain an unavailable or unreadable one, open Pane's own screen, copy a computed result's text to the clipboard ("Copied 42 to the clipboard"; root search stays as it was), open an application ("Opened Firefox"; root search stays as it was), or send the text to a command that takes a query, through its alias or as a fallback, and show its answer (root search stays as it was) |
 | Escape | Clear the query; with an empty query, nothing |
+| Ctrl+K (Cmd+K on macOS; the Keyboard page's Open actions), or the footer's Actions button | Open the selected result's Actions panel, or close it |
+
+**The Actions panel** (#95) lists what can be done with the selected
+result, from the core's `Launcher::result_actions`: its primary action
+(the footer's, with the same dispatch), then, for an installed command,
+"Assign Hotkey…"/"Change Hotkey…" and "Add Alias…"/"Change Alias…" under
+"Pane", which open the same hotkey screen and alias form Manage extensions
+does and return to this search when they end. Nothing without a working
+operation is listed: no pin (until quick slots, #101), new window, file
+manager, quit or hide (#100). Its search field holds focus: typing filters
+the entries by label ("No actions match" when none does), Up and Down move
+the selection, Enter or a click runs the entry once, and Escape (or Tab)
+closes only the panel, giving focus back to the query. A mouse-down outside
+it closes it and is consumed, so the result it covered is never invoked.
+The panel holds its target: the pointer cannot move the selection while it
+is open, and an entry whose target is no longer selected, or no longer has
+that action, runs nothing. With no result selected it says so.
+
+**The footer** shows the Pane mark at its left — the button of Pane's own
+menu (Settings), a Windows/Pane adaptation of the reference's decorative
+mark — then the hint ("↵ opens instantly · Ctrl K for more", or "Type to
+filter actions · Esc goes back" while the panel is open), and at its right
+the primary action and the Actions button. While a status shows, its
+message takes the strip and the buttons step aside.
 
 Each row shows what the launcher knows beyond its title and subtitle, from a read-only presentation (`Launcher::presentation`). That is:
 

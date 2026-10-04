@@ -817,7 +817,7 @@ fn the_footer_menu_opens_traverses_dismisses_and_restores_focus(cx: &mut TestApp
     // The keyboard reaches the menu: Tab from the query field, then Enter
     // presses the button.
     cx.simulate_keystrokes("tab");
-    assert_eq!(focused_label(cx).as_deref(), Some("More actions"));
+    assert_eq!(focused_label(cx).as_deref(), Some("Pane menu"));
     cx.simulate_keystrokes("enter");
     cx.run_until_parked();
     assert!(cx.debug_bounds("menu").is_some(), "the menu is open");
@@ -843,7 +843,7 @@ fn the_footer_menu_opens_traverses_dismisses_and_restores_focus(cx: &mut TestApp
     // The focus is restored at once, while the popup's exit still paints.
     assert_eq!(
         focused_label(cx).as_deref(),
-        Some("More actions"),
+        Some("Pane menu"),
         "focus is restored to what had it: the menu's button"
     );
     settle_frames(cx);
@@ -867,7 +867,7 @@ fn the_footer_menu_opens_traverses_dismisses_and_restores_focus(cx: &mut TestApp
         .expect("the menu's item opened the Settings window");
     assert_eq!(
         focused_label(cx).as_deref(),
-        Some("More actions"),
+        Some("Pane menu"),
         "focus is restored to what had it: the menu's button"
     );
     settle_frames(cx);
@@ -922,7 +922,7 @@ fn the_menu_button_toggles_and_assistive_technology_sees_it_named(cx: &mut TestA
     let nodes: Vec<&serde_json::Value> = tree["nodes"].as_object().unwrap().values().collect();
     let button = nodes
         .iter()
-        .find(|node| node["aria"]["role"] == "Button" && node["aria"]["label"] == "More actions")
+        .find(|node| node["aria"]["role"] == "Button" && node["aria"]["label"] == "Pane menu")
         .expect("the menu button is named");
     assert_eq!(
         button["aria"]["expanded"],
@@ -932,7 +932,7 @@ fn the_menu_button_toggles_and_assistive_technology_sees_it_named(cx: &mut TestA
     assert!(
         nodes
             .iter()
-            .any(|node| node["aria"]["role"] == "Menu" && node["aria"]["label"] == "More actions"),
+            .any(|node| node["aria"]["role"] == "Menu" && node["aria"]["label"] == "Pane menu"),
         "the menu is announced"
     );
     assert!(
@@ -1014,7 +1014,7 @@ fn the_menu_popup_enters_from_the_strip_and_exits_back_into_it(cx: &mut TestAppC
     cx.run_until_parked();
     assert_eq!(
         focused_label(cx).as_deref(),
-        Some("More actions"),
+        Some("Pane menu"),
         "the focus returned the frame the menu closed"
     );
     let leaving = menu_popup(&launcher, cx).expect("the exit is painting");

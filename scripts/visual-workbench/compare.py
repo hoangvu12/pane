@@ -562,8 +562,14 @@ def compare_root(report, name, capture, declared, manifest, native, scale, ref_c
                  text_title, selected_alpha, hover_alpha, crops):
     # ---- the native side against its declaration
     pal = palette(manifest)
+    # While the Actions panel is open, the results lie under its dimmer and
+    # their right ends under the panel: the rows' own checks belong to the
+    # captures with it closed.
+    covered = bool(declared.get("actions"))
     native_rows = {}
     for row in declared["rows"]:
+        if covered:
+            break
         if row["heightIsFloor"] and row["unavailable"] is None:
             continue
         if not row.get("visible", True):
@@ -594,30 +600,43 @@ def compare_root(report, name, capture, declared, manifest, native, scale, ref_c
     footer_rect = as_tuple(manifest["footer"])
     footer = measure_footer(native, footer_rect[1], scale, pal["lighter"])
     report.check("harness-native", name, capture, "footer", "rule y", footer["rule"], footer_rect[1], LIMITS["edge_px"], "px")
-    report.check("harness-native", name, capture, "footer", "tint alpha", footer["alpha"],
-                 hex_rgba(manifest["declared"]["colors"]["footerTint"])[3], LIMITS["flat_fill_levels"], "levels")
+    # The tint is read against the list just above the rule, which the
+    # open panel's dimmer darkens.
+    if not covered:
+        report.check("harness-native", name, capture, "footer", "tint alpha", footer["alpha"],
+                     hex_rgba(manifest["declared"]["colors"]["footerTint"])[3], LIMITS["flat_fill_levels"], "levels")
     if declared.get("actionButton"):
+        # The footer's buttons are transparent at rest (`.fbtn`), so they
+        # have no edge to measure: their label starts at their padding, and
+        # their keys are measured as key groups.
         button = as_tuple(declared["actionButton"])
+        background = footer_strip_background(native, footer_rect, scale)
+        label = ink_extent(native, (button[0], button[1], button[2] * 0.6, button[3]), background,
+                           hex_rgba(manifest["declared"]["colors"]["footerButtonText"])[:3], scale)
+        report.check("harness-native", name, capture, "footer-primary", "label ink left", label and label["left"],
+                     button[0] + manifest["declared"]["geometry"].get("actionPaddingX", 8), LIMITS["edge_px"] * 1.5,
+                     "px", "a glyph's side bearing allowed")
         measured = measure_cap(native, button, scale, pal["lighter"])
-        edges = measured and measured["edges"]
-        for prop, index in (("left", 0), ("top", 1), ("width", 2), ("height", 3)):
-            report.check("harness-native", name, capture, "footer-primary", f"button {prop}",
-                         edges[index] if edges else None, button[index], LIMITS["edge_px"], "px")
+        report.check("harness-native", name, capture, "footer-primary", "wash alpha (rest)",
+                     measured and measured["alpha"], 0, LIMITS["flat_fill_levels"], "levels")
         crops.append(("footer-primary", button, None))
+    harness_footer(report, name, capture, declared, manifest, native, scale, pal, crops)
+    harness_actions(report, name, capture, declared, manifest, native, scale, pal, crops)
     crops.append(("search-header", search, None))
     if manifest["scenario"].get("frame"):
         compare_frame(report, name, capture, declared, manifest, native, scale, ref_capture, reference_image, crops)
     for row in declared["rows"]:
-        if row.get("visible", True) and not row["heightIsFloor"]:
+        if row.get("visible", True) and not row["heightIsFloor"] and not covered:
             harness_row_trailing(report, name, capture, row, manifest, native, scale, crops)
 
     if ref_capture is None:
         return
     # ---- the reference side against its DOM
     state = ref_capture["state"]
+    covered = covered or bool(state.get("panel"))
     ref_rows = {}
     for row in state["rows"]:
-        if not row["visible"]:
+        if not row["visible"] or covered:
             continue
         rect = as_tuple(row["rect"])
         washed = row["selected"] or row["hovered"]
@@ -643,11 +662,12 @@ def compare_root(report, name, capture, declared, manifest, native, scale, ref_c
                  LIMITS["edge_px"], "px")
 
     # ---- parity: the same component in the same state
-    native_selected = sorted(t for t, (r, _) in native_rows.items() if r["selected"])
+    native_selected = sorted(r["title"] for r in declared["rows"] if r["selected"] and r.get("visible", True))
     ref_selected = sorted(r["title"] for r in state["rows"] if r["selected"])
     report.check("parity", name, capture, "selection", "selected rows", ", ".join(native_selected),
                  ", ".join(ref_selected), 0, "", "the pointer's movement selects the row it moves over, on both sides (#94)")
-    native_hovered = sorted(t for t, (r, _) in native_rows.items() if r["hovered"] and not r["selected"])
+    native_hovered = sorted(r["title"] for r in declared["rows"]
+                            if r["hovered"] and not r["selected"] and r.get("visible", True))
     ref_hover_only = sorted(r["title"] for r in state["rows"] if r["hovered"] and not r["selected"])
     report.check("parity", name, capture, "selection", "hover-only rows", ", ".join(native_hovered),
                  ", ".join(ref_hover_only), 0, "")
@@ -700,8 +720,9 @@ def compare_root(report, name, capture, declared, manifest, native, scale, ref_c
                          header["text"][prop], ref_header["text"][prop], LIMITS["edge_px"], "px",
                          None if state["query"] else "placeholder copy is adapted: 'Search apps and commands…' vs 'Search apps, commands, plugins…' (#92)")
     report.check("parity", name, capture, "footer", "rule y", footer["rule"], ref_footer["rule"], LIMITS["edge_px"], "px")
-    report.check("parity", name, capture, "footer", "tint alpha", footer["alpha"], ref_footer["alpha"],
-                 LIMITS["flat_fill_levels"], "levels")
+    if not covered:
+        report.check("parity", name, capture, "footer", "tint alpha", footer["alpha"], ref_footer["alpha"],
+                     LIMITS["flat_fill_levels"], "levels")
     if declared.get("actionButton") and state.get("footerPrimary"):
         button = as_tuple(declared["actionButton"])
         ref_button = as_tuple(state["footerPrimary"]["rect"])
@@ -718,9 +739,16 @@ def compare_root(report, name, capture, declared, manifest, native, scale, ref_c
         crops.append(("parity-footer-primary", button, ref_button))
     ref_groups = state.get("keycaps", {})
     for group in manifest.get("keycaps", []):
+        footer_group = group.get("group") in ("footer-primary", "footer-actions")
+        static_board = len((state.get("footerParts") or {}).get("hint") or []) == 1
         compare_key_group(report, name, capture, group, manifest, native, scale,
-                          ref_groups.get(group.get("group")), reference_image, crops)
-    compare_sections(report, name, capture, declared, state, native, scale, reference_image, crops)
+                          ref_groups.get(group.get("group")), reference_image, crops,
+                          chained=group.get("group") == "footer-primary", footer=footer_group,
+                          static=STATIC_ENTER if static_board and group.get("group") == "footer-primary" else None)
+    if not covered:
+        compare_sections(report, name, capture, declared, state, native, scale, reference_image, crops)
+    parity_footer(report, name, capture, declared, manifest, native, scale, state, reference_image, pal, crops)
+    parity_actions(report, name, capture, declared, manifest, native, scale, state, reference_image, pal, crops)
 
 
 # The launcher frame (#92). Windows rounds the launcher's window itself,
@@ -830,14 +858,20 @@ def compare_frame(report, name, capture, declared, manifest, native, scale, ref_
         for prop, index in (("top", 1), ("height", 3), ("left", 0), ("width", 2)):
             report.check("parity", name, capture, "frame", f"{label} {prop}", n_rect[index], r_rect[index],
                          LIMITS["edge_px"], "px")
-    buttons = state.get("footerButtons") or []
-    if declared.get("actionButton") and buttons:
-        n_button = as_tuple(declared["actionButton"])
-        measured = measure_cap(native, n_button, scale)
-        n_right = measured["edges"][0] + measured["edges"][2] if measured and measured["edges"] else None
-        r_last = as_tuple(buttons[-1]["rect"])
-        report.check("parity", name, capture, "frame", "footer content right edge", n_right, r_last[0] + r_last[2],
-                     LIMITS["edge_px"], "px", "the footer's 8px right padding: native's rightmost button against the reference's")
+    # The footer's content ends with the Actions button's last key, on
+    # both sides: its cap has a fill to edge (the `.fbtn` itself is
+    # transparent at rest).
+    native_keys = next((g for g in manifest.get("keycaps", []) if g.get("group") == "footer-actions"), None)
+    ref_keys = (state.get("keycaps") or {}).get("footer-actions")
+    if native_keys and ref_keys:
+        mine = measure_key(native, as_tuple(native_keys["caps"][-1]["rect"]), False,
+                           hex_rgba(manifest["declared"]["colors"]["keycapText"])[:3], scale, palette(manifest)["lighter"])
+        theirs = measure_key(reference_image, as_tuple(ref_keys["caps"][-1]["rect"]), False,
+                             hex_rgba(manifest["declared"]["colors"]["keycapText"])[:3])
+        n_right = mine["edges"][0] + mine["edges"][2] if mine and mine["edges"] else None
+        r_right = theirs["edges"][0] + theirs["edges"][2] if theirs and theirs["edges"] else None
+        report.check("parity", name, capture, "frame", "footer content right edge", n_right, r_right,
+                     LIMITS["edge_px"], "px", "the Actions button's last key: the footer's 8px right padding and the button's own")
 
 
 def fmt_color(color):
@@ -970,8 +1004,16 @@ def measure_key(image, rect, accent, text_color, scale=1.0, lighter=True):
     }
 
 
+# Positions the fixture declares through a chain of shaped widths (the
+# footer's hint, its rule, the primary action after Actions): layout rounds
+# each part to whole pixels, so a declared position drifts by up to a pixel
+# and a half; parity measures the real offset at 1px.
+CHAIN_SLACK_PX = 1.5
+CHAIN_NOTE = "declared through a chain of shaped widths, which layout rounds part by part"
+
+
 def compare_key_group(report, name, capture, group, manifest, native, scale, ref_group, reference_image, crops,
-                      harness=True):
+                      harness=True, chained=False, footer=False, static=None):
     """One key sequence: each cap against its declaration, then - when the
     reference shows the same effective binding - against the reference's
     caps: labels, sizes, fills, the bottom line and the label's place."""
@@ -991,8 +1033,10 @@ def compare_key_group(report, name, capture, group, manifest, native, scale, ref
         edges = measured and measured["edges"]
         props = (("left", 0), ("top", 1), ("width", 2)) + ((("height", 3),) if accent else ())
         for prop, i in props:
+            slack = chained and prop == "left"
             report.check("harness-native", name, capture, subject, f"cap {index} {prop}",
-                         edges[i] if edges else None, rect[i], LIMITS["edge_px"], "px")
+                         edges[i] if edges else None, rect[i], CHAIN_SLACK_PX if slack else LIMITS["edge_px"], "px",
+                         CHAIN_NOTE if slack else None)
         if accent:
             report.check("harness-native", name, capture, subject, f"cap {index} accent fill (max channel)",
                          max(abs(a - b) for a, b in zip(measured["fill"], declared_fill[:3])) if measured else None,
@@ -1000,7 +1044,7 @@ def compare_key_group(report, name, capture, group, manifest, native, scale, ref
         else:
             report.check("harness-native", name, capture, subject, f"cap {index} fill alpha",
                          measured and measured["alpha"], declared_fill[3], LIMITS["flat_fill_levels"], "levels")
-            if lighter:
+            if lighter and not footer:
                 report.check("harness-native", name, capture, subject, f"cap {index} bottom line alpha",
                              measured and measured["bottom"], hex_rgba(colors["keycapBottom"])[3],
                              BOTTOM_LINE_LIMIT, "levels", BOTTOM_LINE_NOTE)
@@ -1034,7 +1078,8 @@ def compare_key_group(report, name, capture, group, manifest, native, scale, ref
             report.check("parity", name, capture, subject, f"cap {index} accent fill (max channel)",
                          max(abs(a - b) for a, b in zip(mine["fill"], theirs["fill"])), 0,
                          LIMITS["flat_fill_levels"], "levels",
-                         f"native {fmt_color(mine['fill'])} vs reference {fmt_color(theirs['fill'])}")
+                         f"native {fmt_color(mine['fill'])} vs reference {fmt_color(theirs['fill'])}",
+                         accepted=static)
         else:
             report.check("parity", name, capture, subject, f"cap {index} fill alpha", mine["alpha"], theirs["alpha"],
                          LIMITS["flat_fill_levels"], "levels")
@@ -1345,6 +1390,519 @@ def compare_sections(report, name, capture, declared, state, native, scale, refe
                          (n_right["box"][0] + n_right["box"][2]) / scale - n_rect[0],
                          r_right["box"][0] + r_right["box"][2] - r_rect[0], LIMITS["edge_px"] * 1.5, "px",
                          "right-aligned; a glyph's side bearing allowed")
+
+
+# ------------------------------------------------- the footer and Actions (#95)
+
+# Content the reference authors that Pane deliberately does not show: its
+# Actions lists operations Pane has no working contract for (#100), and its
+# static Actions board's footer carries a tip instead of the hint.
+ACTIONS_CONTENT = ("accepted (#95, #100): the reference lists Pin to Quick Slot (#101), Open New Window, Show in "
+                   "File Manager, Quit and Hide from Results; Pane lists only the operations it can perform - the "
+                   "primary action and an installed command's hotkey and alias")
+STATIC_ENTER = ("accepted (#95): the static Actions board draws its footer's Enter as a plain cap; the root "
+                "board, live, draws it in the accent, as Pane does (#93)")
+STATIC_HINT = ("accepted (#95): the static Actions board's footer shows a tip ('Every action keeps its shortcut - no "
+               "menu needed next time'); Pane's footer shows the hint the root board shows while Actions is open")
+
+# The dimmed list's sample: the list's left padding near its bottom, where
+# no row, wash or sheen reaches.
+UNDIMMED = {}
+
+
+def box_px(rect, scale=1.0, pad=0.0):
+    """A logical (x, y, w, h) as an image box (left, top, right, bottom),
+    grown by pad on every side."""
+    x, y, w, h = rect
+    return ((x - pad) * scale, (y - pad) * scale, (x + w + pad) * scale, (y + h + pad) * scale)
+
+
+def ink_extent(image, rect, background, color, scale=1.0, pad=0.0):
+    """The core ink of color inside rect (grown by pad): its box in logical
+    px (left, top, right, bottom) and its color, or None."""
+    found = ink(image, box_px(rect, scale, pad), background, color, exclude_accent=False)
+    if not found:
+        return None
+    left, top, width, height = found["box"]
+    return {"left": left / scale, "top": top / scale, "right": (left + width) / scale,
+            "bottom": (top + height) / scale, "color": found["color"]}
+
+
+def coverage_edges(image, rect, background, color, scale=1.0, enough=1.0):
+    """Where text's ink begins inside rect, by coverage: each pixel counts
+    how far it is from the background toward color (0 to 1), and the left
+    edge is the first column, the top the first row, whose pixels add up
+    to enough - a pixel's worth of ink. An anti-aliased stem tip or a thin
+    diagonal that one renderer leaves just under a core threshold and the
+    other just over moves this by a fraction, not a pixel. Logical px
+    (left, top), or None."""
+    left, top, right, bottom = clamp_box(image, box_px(rect, scale))
+    bg, fg = luma(background), luma(color)
+    if fg == bg:
+        return None
+    data = image.load()
+    # Below a fifth of the way to the ink, a pixel is the background's own
+    # variation (the glass's gradient, the wallpaper's shading), not ink.
+    def coverage(value):
+        amount = min(1.0, max(0.0, (luma(value) - bg) / (fg - bg)))
+        return amount if amount >= 0.2 else 0.0
+
+    cover = [[coverage(data[x, y]) for x in range(left, right)] for y in range(top, bottom)]
+    columns = [sum(row[i] for row in cover) for i in range(right - left)]
+    rows = [sum(row) for row in cover]
+    first_column = next((i for i, total in enumerate(columns) if total >= enough), None)
+    first_row = next((i for i, total in enumerate(rows) if total >= enough), None)
+    if first_column is None or first_row is None:
+        return None
+    return {"left": (left + first_column) / scale, "top": (top + first_row) / scale}
+
+
+def composite(fill_hex, background):
+    """The color fill (#RRGGBBAA) paints over background."""
+    r, g, b, a = hex_rgba(fill_hex)
+    a /= 255
+    return tuple(bg * (1 - a) + c * a for c, bg in zip((r, g, b), background))
+
+
+def color_delta(a, b):
+    return max(abs(x - y) for x, y in zip(a, b)) if a and b else None
+
+
+def footer_strip_background(image, footer, scale=1.0):
+    """The footer's own fill: its left padding, which no part reaches."""
+    x, y, w, h = footer
+    return median_color(image, box_px((x + 2, y + 6, 6, 8), scale))
+
+
+def measure_footer_parts(image, footer, parts, scale=1.0, pal=DARK, mark_color=(218, 218, 220),
+                         divider_color=None):
+    """The footer's mark, hint parts, rule and Actions button, measured near
+    where parts (the declaration, or the reference's DOM) puts them."""
+    background = footer_strip_background(image, footer, scale)
+    out = {"background": background}
+    if parts.get("mark"):
+        out["mark"] = ink_extent(image, as_tuple(parts["mark"]), background, mark_color, scale, pad=2)
+    line_top = footer[1] + 1
+    line = footer[3] - 1
+    hint = []
+    for part in parts.get("hint", []):
+        x, _, w, _ = as_tuple(part["rect"])
+        if part["keys"]:
+            cap = (x, line_top + (line - 20) / 2, w, 20)
+            measured = measure_cap(image, cap, scale, pal["lighter"])
+            edges = measured and measured["edges"]
+            hint.append({"text": part["text"], "keys": True, "left": edges[0] if edges else None,
+                         "top": edges[1] if edges else None})
+        else:
+            found = coverage_edges(image, (x - 2, line_top, w + 4, line), background, pal["muted"], scale)
+            # The top from the text's interior, clear of a cap's label beside it.
+            inner = coverage_edges(image, (x + 3, line_top, max(1, w - 6), line), background, pal["muted"], scale)
+            hint.append({"text": part["text"], "keys": False, "left": found and found["left"],
+                         "top": inner and inner["top"]})
+    out["hint"] = hint
+    if parts.get("divider"):
+        x, y, w, h = as_tuple(parts["divider"])
+        # The column that stands out most from the strip, within 4px of
+        # where the rule is declared.
+        # The rule lights one column, or two when it falls between them:
+        # the strongest neighbouring pair within 3px of its declared place
+        # holds it, the nearer pair winning a tie (the open Actions
+        # button's wash begins 5px to its right).
+        # Against the strip just left of it (the gap before it holds no
+        # button): the open panel's shadow darkens the strip unevenly.
+        local = median_color(image, box_px((x - 5, y + 3, 2, h - 6), scale)) or background
+        columns = []
+        for column_x in range(int((x - 3) * scale), int((x + 4) * scale)):
+            color = median_color(image, (column_x, (y + 3) * scale, column_x + 1, (y + h - 3) * scale))
+            alpha = overlay_alpha(color, local, pal["lighter"]) if color and local else None
+            columns.append((max(alpha or 0, 0), column_x / scale))
+        pairs = [(a[0] + b[0], -abs(a[1] - x), a[1] if a[0] >= b[0] else b[1])
+                 for a, b in zip(columns, columns[1:])]
+        alpha, _, found = max(pairs) if pairs else (None, None, None)
+        out["divider"] = {"alpha": alpha, "x": found}
+    button = parts.get("actionsButton")
+    if button:
+        rect = as_tuple(button if "x" in button else button["rect"])
+        # Against the button's own fill (its open wash, while open).
+        inside = median_color(image, box_px((rect[0] + 2, rect[1] + 8, 3, rect[3] - 16), scale)) or background
+        text = coverage_edges(image, (rect[0] + 3, rect[1], rect[2] * 0.6, rect[3]), inside,
+                              (217, 218, 221), scale)
+        measured = measure_cap(image, rect, scale, pal["lighter"])
+        out["actionsButton"] = {"labelLeft": text and text["left"], "labelTop": text and text["top"],
+                                "alpha": measured and measured["alpha"], "edges": measured and measured["edges"]}
+    return out
+
+
+def harness_footer(report, name, capture, declared, manifest, native, scale, pal, crops):
+    """The native footer against its declaration: the mark where it is
+    declared, each hint part starting where declared, the rule's alpha and
+    the Actions button's label and wash."""
+    parts = declared.get("footer")
+    if not parts:
+        return
+    colors = manifest["declared"]["colors"]
+    footer = as_tuple(manifest["footer"])
+    measured = measure_footer_parts(native, footer, parts, scale, pal, hex_rgba(colors["footerMark"])[:3])
+    mark = as_tuple(parts["mark"])
+    found = measured.get("mark")
+    # The filled square's top and right (y 3.5 and x 21 of the mark's 24
+    # units: 2.6 and 15.75 of 18px), which the stroked square never
+    # reaches: its thin stroke clears the core threshold on one renderer
+    # and not on the other, so it decides no edge here.
+    report.check("harness-native", name, capture, "footer-mark", "ink top", found and found["top"],
+                 mark[1] + 3, LIMITS["edge_px"], "px")
+    report.check("harness-native", name, capture, "footer-mark", "ink right", found and found["right"],
+                 mark[0] + 15.75, LIMITS["edge_px"], "px")
+    crops.append(("footer-mark", mark, None))
+    for index, (part, found) in enumerate(zip(parts["hint"], measured["hint"])):
+        if part.get("clipped"):
+            continue
+        subject = f"footer-hint:{index}:{part['text']}"
+        x = as_tuple(part["rect"])[0]
+        report.check("harness-native", name, capture, subject, "cap left" if part["keys"] else "ink left",
+                     found["left"], x, CHAIN_SLACK_PX + (0 if part["keys"] else 0.5), "px",
+                     CHAIN_NOTE + ("" if part["keys"] else "; a glyph's side bearing allowed"))
+    report.check("harness-native", name, capture, "footer-divider", "x", measured.get("divider", {}).get("x"),
+                 as_tuple(parts["divider"])[0], CHAIN_SLACK_PX, "px", CHAIN_NOTE)
+    report.check("harness-native", name, capture, "footer-divider", "alpha",
+                 measured.get("divider", {}).get("alpha"), hex_rgba(colors["footerDivider"])[3],
+                 LIMITS["flat_fill_levels"], "levels")
+    button = as_tuple(parts["actionsButton"])
+    found = measured["actionsButton"]
+    report.check("harness-native", name, capture, "footer-actions", "label ink left", found["labelLeft"],
+                 button[0] + manifest["declared"]["geometry"].get("actionPaddingX", 8), LIMITS["edge_px"] * 1.5, "px",
+                 "a glyph's side bearing allowed")
+    expected = hex_rgba(colors["footerButtonOpen"])[3] if parts["actionsPressed"] else 0
+    report.check("harness-native", name, capture, "footer-actions",
+                 f"wash alpha ({'open' if parts['actionsPressed'] else 'rest'})", found["alpha"], expected,
+                 LIMITS["flat_fill_levels"], "levels")
+    crops.append(("footer-actions", button, None))
+
+
+def parity_footer(report, name, capture, declared, manifest, native, scale, state, reference_image, pal, crops):
+    """The footer's left side and Actions button, native against reference."""
+    parts, ref_parts = declared.get("footer"), state.get("footerParts")
+    if not parts or not ref_parts:
+        return
+    colors = manifest["declared"]["colors"]
+    footer = as_tuple(manifest["footer"])
+    ref_footer = as_tuple(state["footer"])
+    mine = measure_footer_parts(native, footer, parts, scale, pal, hex_rgba(colors["footerMark"])[:3])
+    theirs = measure_footer_parts(reference_image, ref_footer, ref_parts)
+    if mine.get("mark") and theirs.get("mark"):
+        for prop in ("top", "right"):
+            report.check("parity", name, capture, "footer-mark", f"ink {prop}", mine["mark"][prop],
+                         theirs["mark"][prop], LIMITS["edge_px"], "px")
+        crops.append(("parity-footer-mark", as_tuple(parts["mark"]), as_tuple(ref_parts["mark"])))
+    # The static Actions board's footer carries one tip where the hint is.
+    static = len(ref_parts["hint"]) == 1
+    native_text = " ".join(part["text"] for part in parts["hint"])
+    ref_text = " ".join(part["text"] for part in ref_parts["hint"])
+    report.check("parity", name, capture, "footer-hint", "text", native_text, ref_text, 0, "",
+                 accepted=STATIC_HINT if static else None)
+    if not static:
+        for index, (a, b) in enumerate(zip(mine["hint"], theirs["hint"])):
+            subject = f"footer-hint:{index}:{a['text']}"
+            for prop in ("left", "top"):
+                report.check("parity", name, capture, subject, f"{'cap' if a['keys'] else 'ink'} {prop}",
+                             a.get(prop), b.get(prop), LIMITS["edge_px"], "px",
+                             "the reference's subset has no ↵: its cap label comes from a fallback face (#93)"
+                             if "↵" in a["text"] and prop == "top" else None)
+    if ref_parts.get("divider") and parts.get("divider"):
+        report.check("parity", name, capture, "footer-divider", "x", mine["divider"]["x"],
+                     theirs["divider"]["x"], LIMITS["edge_px"], "px")
+        report.check("parity", name, capture, "footer-divider", "alpha", mine["divider"]["alpha"],
+                     theirs["divider"]["alpha"], LIMITS["flat_fill_levels"], "levels")
+    ref_button = ref_parts.get("actionsButton")
+    if ref_button:
+        a, b = mine["actionsButton"], theirs["actionsButton"]
+        for prop in ("labelLeft", "labelTop"):
+            report.check("parity", name, capture, "footer-actions", f"label ink {prop[5:].lower()}", a[prop], b[prop],
+                         LIMITS["edge_px"], "px")
+        report.check("parity", name, capture, "footer-actions", "pressed", "yes" if parts["actionsPressed"] else "no",
+                     "yes" if ref_button["pressed"] else "no", 0, "")
+        report.check("parity", name, capture, "footer-actions", "wash alpha", a["alpha"], b["alpha"],
+                     LIMITS["flat_fill_levels"], "levels")
+        crops.append(("parity-footer-actions", as_tuple(parts["actionsButton"]), as_tuple(ref_button["rect"])))
+
+
+def action_of(label, index):
+    """The kind of an Actions entry, by what the reference names it: the
+    first is the primary action."""
+    if index == 0:
+        return "invoke"
+    if "Hotkey" in label:
+        return "hotkey"
+    if "Alias" in label:
+        return "alias"
+    return None
+
+
+def measure_panel(image, panel, scale=1.0, pal=DARK, colors=None):
+    """The open Actions panel near panel (the declaration, or the
+    reference's DOM, in the same shape): its box, its fill, the header's
+    tile and title, each entry's wash, glyph and label, the group labels,
+    the rules, the search row's rule and text, and the empty note."""
+    rect = as_tuple(panel["rect"])
+    x, y, w, h = rect
+    background = median_color(image, box_px((x - 8, y + h * 0.5 - 2, 5, 4), scale))
+    fill = median_color(image, box_px((x + 1.5, y + h * 0.5 - 2, 2, 4), scale))
+    out = {"background": background, "fill": fill}
+    out["edges"] = box_edges(image, rect, background, fill, scale) if background and fill else None
+    title_color = (142, 143, 148)
+    text_color = (228, 228, 231)
+    icon_color = (163, 164, 169)
+    if colors:
+        text_color = hex_rgba(colors["actionText"])[:3]
+        icon_color = hex_rgba(colors["actionIcon"])[:3]
+        title_color = hex_rgba(colors["textMuted"])[:3]
+    header = panel.get("header")
+    if header and header.get("tile"):
+        tile = as_tuple(header["tile"])
+        tile_fill = median_color(image, box_px((tile[0] + 1.5, tile[1] + 7, 2, 4), scale))
+        tile_bg = median_color(image, box_px((tile[0] - 6, tile[1] + 7, 3, 4), scale))
+        edges = box_edges(image, tile, tile_bg, tile_fill, scale) if tile_fill and tile_bg else None
+        hrect = as_tuple(header["rect"])
+        title = ink_extent(image, (tile[0] + tile[2] + 2, hrect[1], hrect[2] / 2, hrect[3]), tile_bg, title_color, scale)
+        out["header"] = {"tile": edges, "title": title}
+    rows = []
+    for index, row in enumerate(panel.get("rows", [])):
+        r = as_tuple(row["rect"])
+        side = median_color(image, box_px((r[0] - 4, r[1] + r[3] * 0.3, 2, r[3] * 0.4), scale))
+        wash = median_color(image, box_px((r[0] + 2, r[1] + r[3] * 0.3, 2, r[3] * 0.4), scale))
+        alpha = overlay_alpha(wash, side, pal["lighter"]) if wash and side else None
+        glyph_box = as_tuple(row["glyph"]) if "glyph" in row else (r[0] + 8, r[1] + 10, 16, 16)
+        glyph = ink_extent(image, glyph_box, wash, icon_color, scale, pad=1)
+        label = ink_extent(image, (glyph_box[0] + glyph_box[2] + 4, r[1], r[2] * 0.55, r[3]), wash, text_color, scale)
+        rows.append({"label": row["label"], "action": row.get("action") or action_of(row["label"], index),
+                     "rect": r, "alpha": alpha, "glyph": glyph, "text": label})
+    out["rows"] = rows
+    out["groups"] = [
+        {"text": group["text"], "rect": as_tuple(group["rect"]),
+         "ink": ink_extent(image, as_tuple(group["rect"]), fill, title_color, scale)}
+        for group in panel.get("groups", [])
+    ]
+    rules = []
+    for rule in panel.get("rules", []):
+        rx, ry, rw, rh = as_tuple(rule)
+        found = hline(image, (int((rx + 20) * scale), int((rx + rw - 20) * scale)),
+                      (int((ry - 3) * scale), int((ry + 4) * scale)), fill, pal["lighter"])
+        line = median_color(image, box_px((rx + 20, found / scale if found else ry, rw - 40, 1), scale)) if found else None
+        # Against the panel just above it: the popover's sheen fades over
+        # its top 40%, so its middle is darker than the rule's surround.
+        above = median_color(image, box_px((rx + 20, (found / scale if found else ry) - 3, rw - 40, 1), scale))
+        rules.append({"y": found / scale if found else None,
+                      "alpha": overlay_alpha(line, above, pal["lighter"]) if line and above else None})
+    out["rules"] = rules
+    search = as_tuple(panel["search"])
+    sx, sy, sw, sh = search
+    found = hline(image, (int((sx + 60) * scale), int((sx + sw - 20) * scale)),
+                  (int((sy - 3) * scale), int((sy + 4) * scale)), fill, pal["lighter"])
+    below = median_color(image, box_px((sx + 60, sy + 4, sw - 80, 4), scale))
+    # The field's text, the caret (the accent) apart.
+    field_box = box_px((sx + 32, sy + 4, sw - 40, sh - 8), scale)
+    field = ink(image, field_box, below, pal["placeholder"]) or ink(image, field_box, below, pal["query"])
+    if field:
+        left, top, width, height = field["box"]
+        field = {"left": left / scale, "top": top / scale, "right": (left + width) / scale,
+                 "bottom": (top + height) / scale, "color": field["color"]}
+    glass = ink_extent(image, (sx + 8, sy + 8, 24, sh - 16), below, title_color, scale)
+    out["search"] = {"rule": found / scale if found else None, "text": field, "glyph": glass}
+    empty = panel.get("empty")
+    if empty:
+        out["empty"] = ink_extent(image, as_tuple(empty["rect"]), fill, title_color, scale)
+    return out
+
+
+def dimmer_sample(image, list_rect, scale=1.0):
+    x, y, w, h = list_rect
+    return median_color(image, box_px((x + 3, y + h - 12, 5, 6), scale))
+
+
+def harness_actions(report, name, capture, declared, manifest, native, scale, pal, crops):
+    """The native Actions panel against its declaration."""
+    panel = declared.get("actions")
+    list_rect = as_tuple(manifest["list"])
+    sample = dimmer_sample(native, list_rect, scale)
+    colors = manifest["declared"]["colors"]
+    if not panel:
+        if sample:
+            UNDIMMED[("native", name)] = sample
+        return
+    measured = measure_panel(native, panel, scale, pal, colors)
+    rect = as_tuple(panel["rect"])
+    edges = measured["edges"]
+    for prop, index in (("left", 0), ("top", 1), ("width", 2), ("height", 3)):
+        report.check("harness-native", name, capture, "actions-panel", prop, edges[index] if edges else None,
+                     rect[index], LIMITS["edge_px"], "px")
+    crops.append(("actions-panel", rect, None))
+    header = panel.get("header")
+    if header:
+        tile, edges = as_tuple(header["tile"]), measured["header"]["tile"]
+        for prop, index in (("left", 0), ("top", 1), ("width", 2), ("height", 3)):
+            report.check("harness-native", name, capture, "actions-header", f"tile {prop}",
+                         edges[index] if edges else None, tile[index], LIMITS["edge_px"], "px")
+        title = measured["header"]["title"]
+        report.check("harness-native", name, capture, "actions-header", "title ink left", title and title["left"],
+                     tile[0] + tile[2] + 8, LIMITS["edge_px"] * 1.5, "px", "a glyph's side bearing allowed")
+    selected_alpha = hex_rgba(colors["actionSelected"])[3]
+    for row, found in zip(panel["rows"], measured["rows"]):
+        subject = f"action:{row['label']}"
+        report.check("harness-native", name, capture, subject, f"wash alpha ({'selected' if row['selected'] else 'rest'})",
+                     found["alpha"], selected_alpha if row["selected"] else 0, LIMITS["flat_fill_levels"], "levels")
+        glyph = as_tuple(row["glyph"])
+        ink_box = found["glyph"]
+        report.check("harness-native", name, capture, subject, "glyph ink inside its box",
+                     "yes" if ink_box and ink_box["left"] >= glyph[0] - 0.5 and ink_box["right"] <= glyph[0] + glyph[2] + 0.5
+                     and ink_box["top"] >= glyph[1] - 0.5 and ink_box["bottom"] <= glyph[1] + glyph[3] + 0.5 else "no",
+                     "yes", 0, "")
+        report.check("harness-native", name, capture, subject, "label ink left", found["text"] and found["text"]["left"],
+                     glyph[0] + glyph[2] + 10, LIMITS["edge_px"] * 1.5, "px", "a glyph's side bearing allowed")
+    for group, found in zip(panel["groups"], measured["groups"]):
+        rect = as_tuple(group["rect"])
+        report.check("harness-native", name, capture, f"action-group:{group['text']}", "ink left",
+                     found["ink"] and found["ink"]["left"], rect[0] + 8, LIMITS["edge_px"] * 1.5, "px",
+                     "a glyph's side bearing allowed")
+    rule_alpha = hex_rgba(colors["actionRule"])[3]
+    for rule, found in zip(panel["rules"], measured["rules"]):
+        report.check("harness-native", name, capture, "action-rule", "y", found["y"], as_tuple(rule)[1],
+                     LIMITS["edge_px"], "px")
+        report.check("harness-native", name, capture, "action-rule", "alpha", found["alpha"], rule_alpha,
+                     LIMITS["flat_fill_levels"], "levels")
+    search = as_tuple(panel["search"])
+    report.check("harness-native", name, capture, "actions-search", "rule y", measured["search"]["rule"], search[1],
+                 LIMITS["edge_px"], "px")
+    text = measured["search"]["text"]
+    report.check("harness-native", name, capture, "actions-search", "field ink left", text and text["left"],
+                 search[0] + 14 + 15 + 10 + 2, LIMITS["edge_px"] * 2, "px",
+                 "after the field's 2px inset; the first glyph's side bearing allowed")
+    if panel.get("empty"):
+        rect = as_tuple(panel["empty"]["rect"])
+        found = measured.get("empty")
+        report.check("harness-native", name, capture, "actions-empty", "ink left", found and found["left"],
+                     rect[0] + 10, LIMITS["edge_px"] * 1.5, "px", "a glyph's side bearing allowed")
+    # The dimmer: the list's padding against the same spot with the panel
+    # closed (an earlier capture), or the panel's own color.
+    undimmed = UNDIMMED.get(("native", name)) or hex_rgba(colors["panelSolid"])[:3]
+    expected = composite(colors["actionsDimmer"], undimmed)
+    report.check("harness-native", name, capture, "actions-dimmer", "dimmed list (max channel)",
+                 color_delta(sample, expected), 0, LIMITS["flat_fill_levels"], "levels")
+
+
+def parity_actions(report, name, capture, declared, manifest, native, scale, state, reference_image, pal, crops):
+    """The Actions panel, native against reference: placed the same over
+    the footer, and each part's anatomy the same. The reference lists more
+    entries (see ACTIONS_CONTENT), so its panel is taller: its top and the
+    entries are compared relative to the panel's top, entries by what they
+    do, and its bottom and right edges where they are."""
+    panel, ref_panel = declared.get("actions"), state.get("panel")
+    list_rect = as_tuple(state["list"])
+    ref_sample = dimmer_sample(reference_image, list_rect)
+    if not ref_panel:
+        if ref_sample:
+            UNDIMMED[("reference", name)] = ref_sample
+    report.check("parity", name, capture, "actions-panel", "open", "yes" if panel else "no",
+                 "yes" if ref_panel else "no", 0, "")
+    if not (panel and ref_panel):
+        return
+    colors = manifest["declared"]["colors"]
+    mine = measure_panel(native, panel, scale, pal, colors)
+    theirs = measure_panel(reference_image, ref_panel)
+    crops.append(("parity-actions-panel", as_tuple(panel["rect"]), as_tuple(ref_panel["rect"])))
+    a, b = mine["edges"], theirs["edges"]
+    if a and b:
+        report.check("parity", name, capture, "actions-panel", "left", a[0], b[0], LIMITS["edge_px"], "px")
+        report.check("parity", name, capture, "actions-panel", "width", a[2], b[2], LIMITS["edge_px"], "px")
+        report.check("parity", name, capture, "actions-panel", "bottom", a[1] + a[3], b[1] + b[3], LIMITS["edge_px"], "px")
+    native_labels = [row["label"] for row in panel["rows"]]
+    ref_labels = [row["label"] for row in ref_panel["rows"]]
+    same = native_labels == ref_labels
+    report.check("parity", name, capture, "actions-panel", "entries", " | ".join(native_labels),
+                 " | ".join(ref_labels), 0, "", accepted=None if same else ACTIONS_CONTENT)
+    top, ref_top = as_tuple(panel["rect"])[1], as_tuple(ref_panel["rect"])[1]
+    if mine.get("header") and theirs.get("header"):
+        ta, tb = mine["header"]["tile"], theirs["header"]["tile"]
+        if ta and tb:
+            for prop, index in (("left", 0), ("width", 2), ("height", 3)):
+                report.check("parity", name, capture, "actions-header", f"tile {prop}", ta[index], tb[index],
+                             LIMITS["edge_px"], "px")
+            report.check("parity", name, capture, "actions-header", "tile top in panel", ta[1] - top, tb[1] - ref_top,
+                         LIMITS["edge_px"], "px")
+        na, nb = mine["header"]["title"], theirs["header"]["title"]
+        report.check("parity", name, capture, "actions-header", "title", panel["header"]["title"],
+                     ref_panel["header"]["title"], 0, "")
+        if na and nb:
+            report.check("parity", name, capture, "actions-header", "title ink left", na["left"], nb["left"],
+                         LIMITS["edge_px"], "px")
+            report.check("parity", name, capture, "actions-header", "title ink top in panel", na["top"] - top,
+                         nb["top"] - ref_top, LIMITS["edge_px"], "px")
+    ref_by_action = {}
+    for row in theirs["rows"]:
+        if row["action"] and row["action"] not in ref_by_action:
+            ref_by_action[row["action"]] = row
+    for row in mine["rows"]:
+        ref_row = ref_by_action.get(row["action"])
+        if not ref_row:
+            continue
+        subject = f"action:{row['action']}"
+        report.check("parity", name, capture, subject, "height", row["rect"][3], ref_row["rect"][3], LIMITS["edge_px"], "px")
+        report.check("parity", name, capture, subject, "left", row["rect"][0], ref_row["rect"][0], LIMITS["edge_px"], "px")
+        report.check("parity", name, capture, subject, "wash alpha", row["alpha"], ref_row["alpha"],
+                     LIMITS["flat_fill_levels"], "levels")
+        if row["action"] == "invoke":
+            report.check("parity", name, capture, subject, "top in panel", row["rect"][1] - top,
+                         ref_row["rect"][1] - ref_top, LIMITS["edge_px"], "px")
+        for part in ("glyph", "text"):
+            pa, pb = row[part], ref_row[part]
+            if pa and pb:
+                report.check("parity", name, capture, subject, f"{part} ink left", pa["left"], pb["left"],
+                             LIMITS["edge_px"], "px")
+                report.check("parity", name, capture, subject, f"{part} ink top in row", pa["top"] - row["rect"][1],
+                             pb["top"] - ref_row["rect"][1], LIMITS["edge_px"], "px")
+        crops.append((f"parity-action-{row['action']}", row["rect"], ref_row["rect"]))
+    for ga, gb in zip(mine["groups"], theirs["groups"]):
+        report.check("parity", name, capture, "action-group", "text", ga["text"], gb["text"], 0, "")
+        if ga["ink"] and gb["ink"]:
+            report.check("parity", name, capture, "action-group", "ink left", ga["ink"]["left"], gb["ink"]["left"],
+                         LIMITS["edge_px"], "px")
+            report.check("parity", name, capture, "action-group", "ink top in panel", ga["ink"]["top"] - top,
+                         gb["ink"]["top"] - ref_top, LIMITS["edge_px"], "px")
+    if mine["rules"] and theirs["rules"]:
+        ra, rb = mine["rules"][0], theirs["rules"][0]
+        if ra["y"] is not None and rb["y"] is not None:
+            report.check("parity", name, capture, "action-rule", "y in panel", ra["y"] - top, rb["y"] - ref_top,
+                         LIMITS["edge_px"], "px")
+        report.check("parity", name, capture, "action-rule", "alpha", ra["alpha"], rb["alpha"],
+                     LIMITS["flat_fill_levels"], "levels")
+    sa, sb = mine["search"], theirs["search"]
+    bottom, ref_bottom = top + as_tuple(panel["rect"])[3], ref_top + as_tuple(ref_panel["rect"])[3]
+    if sa["rule"] is not None and sb["rule"] is not None:
+        report.check("parity", name, capture, "actions-search", "rule above the bottom", bottom - sa["rule"],
+                     ref_bottom - sb["rule"], LIMITS["edge_px"], "px")
+    for part in ("text", "glyph"):
+        if sa[part] and sb[part]:
+            report.check("parity", name, capture, "actions-search", f"{part} ink left", sa[part]["left"],
+                         sb[part]["left"], LIMITS["edge_px"], "px")
+            if sa["rule"] is not None and sb["rule"] is not None:
+                report.check("parity", name, capture, "actions-search", f"{part} ink top below the rule",
+                             sa[part]["top"] - sa["rule"], sb[part]["top"] - sb["rule"], LIMITS["edge_px"], "px")
+    if mine.get("empty") or theirs.get("empty"):
+        ea, eb = mine.get("empty"), theirs.get("empty")
+        report.check("parity", name, capture, "actions-empty", "shown", "yes" if ea else "no", "yes" if eb else "no", 0, "")
+        if ea and eb:
+            report.check("parity", name, capture, "actions-empty", "ink left", ea["left"], eb["left"],
+                         LIMITS["edge_px"], "px")
+            report.check("parity", name, capture, "actions-empty", "ink top in panel", ea["top"] - top,
+                         eb["top"] - ref_top, LIMITS["edge_px"], "px")
+    # The dimmer, as each side darkens its own list.
+    mine_sample = dimmer_sample(native, as_tuple(manifest["list"]), scale)
+    native_undimmed, ref_undimmed = UNDIMMED.get(("native", name)), UNDIMMED.get(("reference", name))
+    if native_undimmed and ref_undimmed and mine_sample and ref_sample:
+        dimmer = manifest["declared"]["colors"]["actionsDimmer"]
+        report.check("parity", name, capture, "actions-dimmer", "dimmed list off its own composite (max channel)",
+                     color_delta(mine_sample, composite(dimmer, native_undimmed)),
+                     color_delta(ref_sample, composite(dimmer, ref_undimmed)), LIMITS["flat_fill_levels"], "levels",
+                     "each side's dimmed list against rgba(6,7,8,.34) over its own undimmed list")
 
 
 def native_wash_fill(image, row, scale):

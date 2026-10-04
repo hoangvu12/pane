@@ -14,8 +14,7 @@
 //!
 //! The reference's set has no menu, window-control, appearance, download,
 //! copy, keyboard, disclosure or display glyph, so those are Pane's own
-//! authoring in the same stroke style: the ellipsis (the launcher's
-//! menu), the gear (the Settings rows), the Windows titlebar's close,
+//! authoring in the same stroke style: the gear (the Settings rows), the Windows titlebar's close,
 //! minimize and maximize marks (see the Settings window's custom
 //! titlebar), the half-and-half circle (the Appearance page), the down
 //! arrow, the two squares, the keyboard, the chevron and the monitor.
@@ -64,8 +63,6 @@ pub(crate) enum Glyph {
     /// A padlock: locking the screen.
     Lock,
 
-    /// Three dots: the launcher footer's menu button.
-    Ellipsis,
     /// A cog: the Settings root row and the Settings window's sidebar.
     Gear,
     /// A globe: the web, and Settings' documentation entry.
@@ -92,6 +89,17 @@ pub(crate) enum Glyph {
     /// General page's sidebar entry (the choices that govern Pane as a
     /// whole).
     Sliders,
+    /// An arrow out to the upper right: the Actions panel's primary
+    /// action on an application (the reference's `A.open`).
+    ActionOpen,
+    /// A play triangle: the Actions panel's primary action on anything
+    /// else (`A.run`).
+    ActionRun,
+    /// A keyboard: the Actions panel's hotkey entry (`A.kb`; the Settings
+    /// window's Keyboard section keeps Pane's own [`Glyph::Keyboard`]).
+    ActionHotkey,
+    /// A tag: the Actions panel's alias entry (`A.tag`).
+    ActionAlias,
     /// The Windows titlebar's close mark.
     #[cfg(target_os = "windows")]
     WindowClose,
@@ -119,7 +127,6 @@ impl Glyph {
         Glyph::Layout,
         Glyph::Moon,
         Glyph::Lock,
-        Glyph::Ellipsis,
         Glyph::Gear,
         Glyph::Globe,
         Glyph::Download,
@@ -129,6 +136,10 @@ impl Glyph {
         Glyph::Theme,
         Glyph::Monitor,
         Glyph::Sliders,
+        Glyph::ActionOpen,
+        Glyph::ActionRun,
+        Glyph::ActionHotkey,
+        Glyph::ActionAlias,
     ];
 
     /// The embedded SVG bytes for this glyph.
@@ -146,7 +157,6 @@ impl Glyph {
             Glyph::Layout => include_bytes!("../../assets/icons/layout.svg"),
             Glyph::Moon => include_bytes!("../../assets/icons/moon.svg"),
             Glyph::Lock => include_bytes!("../../assets/icons/lock.svg"),
-            Glyph::Ellipsis => include_bytes!("../../assets/icons/ellipsis.svg"),
             Glyph::Gear => include_bytes!("../../assets/icons/gear.svg"),
             Glyph::Globe => include_bytes!("../../assets/icons/globe.svg"),
             Glyph::Download => include_bytes!("../../assets/icons/download.svg"),
@@ -156,6 +166,10 @@ impl Glyph {
             Glyph::Theme => include_bytes!("../../assets/icons/theme.svg"),
             Glyph::Monitor => include_bytes!("../../assets/icons/monitor.svg"),
             Glyph::Sliders => include_bytes!("../../assets/icons/sliders.svg"),
+            Glyph::ActionOpen => include_bytes!("../../assets/icons/action-open.svg"),
+            Glyph::ActionRun => include_bytes!("../../assets/icons/action-run.svg"),
+            Glyph::ActionHotkey => include_bytes!("../../assets/icons/action-hotkey.svg"),
+            Glyph::ActionAlias => include_bytes!("../../assets/icons/action-alias.svg"),
             #[cfg(target_os = "windows")]
             Glyph::WindowClose => include_bytes!("../../assets/icons/window-close.svg"),
             #[cfg(target_os = "windows")]
@@ -218,6 +232,30 @@ fn app_tone(tone: IconTone) -> Option<(Hsla, Hsla, Hsla)> {
 /// without a tile, like the search header's magnifier.
 pub(crate) fn glyph(glyph: Glyph, size: gpui::Pixels, color: Hsla) -> Svg {
     svg().data(glyph.svg_bytes()).size(size).text_color(color)
+}
+
+/// The footer's Pane mark, as the reference draws it: a stroked square
+/// in `back` behind a filled one in `front` (the reference's #EDEDEF at
+/// .92), at `size`. Two masks, since an SVG mask takes one tint.
+pub(crate) fn pane_mark(size: gpui::Pixels, back: Hsla, front: Hsla) -> Div {
+    div()
+        .relative()
+        .flex_none()
+        .size(size)
+        .child(
+            svg()
+                .data(include_bytes!("../../assets/icons/mark-back.svg"))
+                .absolute()
+                .size(size)
+                .text_color(back),
+        )
+        .child(
+            svg()
+                .data(include_bytes!("../../assets/icons/mark-front.svg"))
+                .absolute()
+                .size(size)
+                .text_color(front),
+        )
 }
 
 /// A bare glyph at `size`, tinted `color`, rotated clockwise by `angle`

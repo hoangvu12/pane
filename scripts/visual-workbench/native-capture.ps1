@@ -13,7 +13,8 @@
 # window asked to open off every display), where the operator's pointer
 # cannot reach it and it covers nothing; the real pointer never moves and
 # no global key is sent. Steps are delivered as window messages posted to the fixture's
-# own HWND - WM_MOUSEMOVE at the step's client point, WM_KEYDOWN/WM_KEYUP
+# own HWND - WM_MOUSEMOVE at the step's client point (WM_LBUTTONDOWN/UP
+# there for a click), WM_KEYDOWN/WM_KEYUP
 # for keys (GPUI's message loop turns them into its own key events, as it
 # does for typed keys), WM_CHAR for typed text - and each capture is the
 # client area rendered by PrintWindow(PW_CLIENTONLY | PW_RENDERFULLCONTENT),
@@ -102,6 +103,7 @@ public static class PaneFixtureWin {
 [void][PaneFixtureWin]::SetProcessDPIAware()
 
 $WM_MOUSEMOVE = 0x0200; $WM_KEYDOWN = 0x0100; $WM_KEYUP = 0x0101; $WM_CHAR = 0x0102
+$WM_LBUTTONDOWN = 0x0201; $WM_LBUTTONUP = 0x0202; $MK_LBUTTON = 0x0001
 $VK = @{ down = 0x28; up = 0x26; escape = 0x1B }
 $fixtureSha = (Get-FileHash -LiteralPath $Fixture -Algorithm SHA256).Hash
 # Past the right edge of every display, in physical pixels.
@@ -143,6 +145,16 @@ function Send-Pointer([IntPtr]$hwnd, [double]$x, [double]$y, [double]$scale) {
     [void][PaneFixtureWin]::PostMessage($hwnd, $WM_MOUSEMOVE, [IntPtr]::Zero, [IntPtr](($py -shl 16) -bor ($px -band 0xFFFF)))
 }
 
+# A left click at the client point: the button pressed and released there,
+# as posted messages (the real pointer never moves).
+function Send-Click([IntPtr]$hwnd, [double]$x, [double]$y, [double]$scale) {
+    $px = [int][Math]::Floor($x * $scale); $py = [int][Math]::Floor($y * $scale)
+    $at = [IntPtr](($py -shl 16) -bor ($px -band 0xFFFF))
+    [void][PaneFixtureWin]::PostMessage($hwnd, $WM_LBUTTONDOWN, [IntPtr]$MK_LBUTTON, $at)
+    Start-Sleep -Milliseconds 40
+    [void][PaneFixtureWin]::PostMessage($hwnd, $WM_LBUTTONUP, [IntPtr]::Zero, $at)
+}
+
 $summary = [ordered]@{
     script = 'native-capture.ps1'
     fixture = $Fixture
@@ -155,7 +167,7 @@ $summary = [ordered]@{
     theme = $Theme
     material = $Material
     perturbation = $Perturb
-    inputMethod = 'window messages posted to the fixture HWND (WM_MOUSEMOVE / WM_KEYDOWN+WM_KEYUP / WM_CHAR); the window is off-screen and inactive, and the real pointer, keyboard and foreground window are never touched'
+    inputMethod = 'window messages posted to the fixture HWND (WM_MOUSEMOVE / WM_LBUTTONDOWN+WM_LBUTTONUP / WM_KEYDOWN+WM_KEYUP / WM_CHAR); the window is off-screen and inactive, and the real pointer, keyboard and foreground window are never touched'
     captureMethod = 'PrintWindow(PW_CLIENTONLY | PW_RENDERFULLCONTENT) of the client area; no rescaling'
     startedUtc = (Get-Date).ToUniversalTime().ToString('o')
     scenarios = @()
@@ -262,6 +274,17 @@ foreach ($entry in $selected) {
                 'key' {
                     if (-not $VK.ContainsKey($step.key)) { throw "unknown key $($step.key)" }
                     Send-Key $hwnd $VK[$step.key]
+                }
+                'click' {
+                    # The pointer arrives at the element (from a pixel to
+                    # its left, as a pointer step does), then presses.
+                    if ($null -eq $step.point) { throw "the click on $($step.target) has no point" }
+                    $pointer = @($step.point[0], $step.point[1])
+                    Send-Pointer $hwnd ($pointer[0] - 1) $pointer[1] $scale
+                    Start-Sleep -Milliseconds 40
+                    Send-Pointer $hwnd $pointer[0] $pointer[1] $scale
+                    Start-Sleep -Milliseconds 40
+                    Send-Click $hwnd $pointer[0] $pointer[1] $scale
                 }
                 'type' {
                     foreach ($character in $step.text.ToCharArray()) {

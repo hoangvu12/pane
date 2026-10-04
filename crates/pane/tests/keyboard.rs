@@ -421,6 +421,33 @@ fn the_footers_keycap_follows_the_invoke_binding(cx: &mut TestAppContext) {
 /// modifier its own cap beside the return key, the button's shortcut the
 /// full chord — and the chord, not the bare key, is what opens the
 /// selection. Shift+Enter is never shown or read as Enter.
+/// Open actions follows the Keyboard page: a recorded key opens the
+/// panel, and the Actions button and the footer's hint show and announce
+/// it.
+#[gpui::test]
+fn the_actions_binding_follows_the_keyboard_page(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let (window, cx) = open_sample(cx, Some(data.path()));
+    let nodes = accessible_nodes(cx);
+    let button = node(&nodes, "Button", "Actions");
+    assert_eq!(button["keyboard_shortcut"].as_str(), Some("Ctrl+K"));
+
+    let (_settings, mut settings_cx) = keyboard_page(cx);
+    record(&mut settings_cx, "keyboard-open-actions", "ctrl-j");
+    until_record(&mut settings_cx, data.path(), "open-actions", "ctrl-j");
+
+    let nodes = accessible_nodes(cx);
+    let button = node(&nodes, "Button", "Actions");
+    assert_eq!(button["keyboard_shortcut"].as_str(), Some("Ctrl+J"));
+    node(&nodes, "Image", "Ctrl+J");
+    cx.simulate_keystrokes("ctrl-j");
+    settle(&window, cx);
+    assert!(cx.read_entity(&window, |window, _| window.actions_open()));
+    cx.simulate_keystrokes("ctrl-j");
+    settle(&window, cx);
+    assert!(!cx.read_entity(&window, |window, _| window.actions_open()));
+}
+
 #[gpui::test]
 fn a_chord_on_the_invoke_action_is_shown_announced_and_pressed_whole(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
@@ -489,7 +516,9 @@ fn a_long_invoke_chord_stays_inside_a_narrow_footer(cx: &mut TestAppContext) {
     let button = cx
         .debug_bounds("primary-action")
         .expect("the action is drawn");
-    let caps = cx.debug_bounds("keycap").expect("the chord is drawn");
+    let caps = cx
+        .debug_bounds("primary-action-keys")
+        .expect("the chord is drawn");
     assert!(
         button.right() <= footer.right() && caps.right() <= button.right(),
         "the chord stays inside the footer: {button:?} {caps:?} in {footer:?}"

@@ -294,3 +294,18 @@ impl Material {
             .child(content)
     }
 }
+
+/// A popover's outer shadows (the reference's `.pop`), for the element
+/// that carries the popover: its 0.5px dark outline and its long soft
+/// drop. GPUI paints them outside the popover's own clip, so they belong
+/// to a wrapper around it (the Pane menu's, the Actions panel's).
+pub(crate) fn popover_shadows(theme: &Theme) -> Vec<BoxShadow> {
+    let geometry = &theme.geometry;
+    vec![
+        BoxShadow::new(px(0.), px(0.), theme.popover_outline)
+            .spread_radius(geometry.popover_outline_width),
+        BoxShadow::new(px(0.), geometry.popover_drop_offset, theme.popover_drop)
+            .blur_radius(geometry.popover_drop_blur)
+            .spread_radius(geometry.popover_drop_spread),
+    ]
+}
