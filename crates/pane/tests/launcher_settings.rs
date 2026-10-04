@@ -1896,6 +1896,26 @@ fn the_selects_trigger_fades_its_pointer_washes(cx: &mut TestAppContext) {
         "a settled wash requests no frame"
     );
 
+    // The pointer leaves, and the wash that settled at hover fades back
+    // out to rest — leaving the reversal below to enter on a trigger at
+    // rest, so the fade-in it interrupts part-way through is a fresh
+    // one.
+    sc.simulate_mouse_move(
+        gpui::point(px(-100.), px(-100.)),
+        None::<MouseButton>,
+        Modifiers::none(),
+    );
+    sc.run_until_parked();
+    assert!(
+        frame(&mut sc, Duration::from_millis(160)) >= 1,
+        "the wash faded back out"
+    );
+    assert_eq!(
+        settle_frames(&mut sc),
+        0,
+        "the window went idle with the pointer away"
+    );
+
     // A fast reversal: the pointer leaves part-way through the fade-in,
     // and the wash fades back out to rest.
     sc.simulate_mouse_move(trigger.center(), None::<MouseButton>, Modifiers::none());
