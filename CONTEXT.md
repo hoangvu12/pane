@@ -72,6 +72,14 @@ _Avoid_: Every integration's internal search
 One entry root search lists for a query and can invoke, such as an extension command; it is matched by its title, subtitle and, for an installed command, its package's title, and ranked by the core.
 _Avoid_: Item (an item belongs to a command's own list), search hit
 
+**Result kind**:
+What invoking a root result reaches, shown on its row: Command, Application, File, Link or Fallback. The core derives it from the result's action, never from its title.
+_Avoid_: Type, category
+
+**Result section**:
+A labelled run of root results: "Commands" over a blank query's results, "Results" with their count over a query's, then "Fallbacks". Sections only label the list; they never reorder or filter it, and none claims recent use.
+_Avoid_: Group (a shortcut group is a Settings term), suggestions
+
 **Computed result**:
 A root result an extension command computes from the query itself, such as the calculator's answer to "6*7", rather than one found by matching titles; it is listed above those (a file result below them), and invoking it performs its action, such as copying the answer. The search it answers owns the call asking for it: a newer query, or leaving root search, cancels a call still pending.
 _Avoid_: Suggestion, answer card, inline result

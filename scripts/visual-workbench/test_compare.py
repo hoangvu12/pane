@@ -108,6 +108,27 @@ class Ink(unittest.TestCase):
         self.assertEqual(found["box"], (20, 10, 10, 16))
         self.assertEqual(found["color"], (237, 237, 239))
 
+    def test_a_stem_split_across_two_columns_still_marks_the_ink_top(self):
+        # A 'b': its ascender's stem falls half in each of two columns, so
+        # neither pixel is core; its bowl below is.
+        background, text = (22, 23, 26), (185, 186, 190)
+        half = tuple(round((b + t) / 2) for b, t in zip(background, text))
+        image = Image.new("RGB", (40, 30), background)
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((10, 5, 11, 6), fill=half)   # the split stem
+        draw.rectangle((10, 7, 16, 12), fill=text)  # the bowl
+        self.assertEqual(compare.ink(image, (0, 0, 40, 30), background, text)["box"][1], 7)
+        self.assertEqual(compare.ink_top(image, (0, 0, 40, 30), background, text), 5)
+
+    def test_a_faint_ring_is_not_ink(self):
+        background, text = (22, 23, 26), (185, 186, 190)
+        image = Image.new("RGB", (40, 30), background)
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((4, 2, 30, 20), outline=over_white(background, 0.14))  # the chip's ring
+        draw.rectangle((10, 8, 16, 12), fill=text)
+        self.assertEqual(compare.ink_top(image, (0, 0, 40, 30), background, text), 8)
+        self.assertIsNone(compare.ink_top(image, (0, 0, 40, 6), background, text))
+
 
 class Frame(unittest.TestCase):
     def panel(self, radius=0):

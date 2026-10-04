@@ -130,6 +130,12 @@ impl Bindings {
             .map(|(command, _)| command.as_str())
     }
 
+    /// The hotkey registered with the system for `command`: the one that
+    /// actually opens it now, which root search shows beside its row.
+    pub(super) fn registered_of(&self, command: &str) -> Option<Shortcut> {
+        self.registered.get(command).cloned()
+    }
+
     /// The hotkey recorded for `command`, for the Shortcuts catalog.
     pub(super) fn hotkey_of(&self, command: &str) -> Option<Shortcut> {
         self.chosen().get(command).cloned()

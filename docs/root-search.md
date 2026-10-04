@@ -102,8 +102,18 @@ state and maps input to those calls.
 | --- | --- |
 | Typing, editing keys, clipboard, undo, input-method composition | Edit the query (GPUI CE's single-line editable text element); every change searches again |
 | Up / Down | Previous / next result (not the caret) |
-| Enter, or a click on a result | Invoke the selected result: open the command, explain an unavailable or unreadable one, open Pane's own screen, copy a computed result's text to the clipboard ("Copied 42 to the clipboard"; root search stays as it was), open an application ("Opened Firefox"; root search stays as it was), or send the text to a command that takes a query, through its alias or as a fallback, and show its answer (root search stays as it was) |
+| Moving the pointer over a result | Select it, so the footer's action and Enter act on it; a pointer resting on a result never undoes the keys' selection, and while the selection is frozen (a layer over the list owns the target, as the contextual Actions panel will, #95) the pointer selects nothing. The first pointer event after the window shows only records where the pointer is |
+| A click on a result | The selected result: invoke it, as Enter does. An unselected one (the keys moved the selection away while the pointer rested on it): select it; a second click invokes it |
+| Enter | Invoke the selected result: open the command, explain an unavailable or unreadable one, open Pane's own screen, copy a computed result's text to the clipboard ("Copied 42 to the clipboard"; root search stays as it was), open an application ("Opened Firefox"; root search stays as it was), or send the text to a command that takes a query, through its alias or as a fallback, and show its answer (root search stays as it was) |
 | Escape | Clear the query; with an empty query, nothing |
+
+Each row shows what the launcher knows beyond its title and subtitle, from a read-only presentation (`Launcher::presentation`). That is:
+
+- the row's kind (Command, Application, File, Link or Fallback), taken from what activating it does;
+- the alias and the registered global hotkey the user gave its command;
+- the part of its title the query matched, in the accent.
+
+Rows sit under section labels: "Commands" over a blank query's list (root search's own order, with no claim of recent use), "Results" with their count over a query's, and the fallbacks under "Fallbacks" (below the "No results for “…”" notice when nothing else matched). The presentation changes nothing about what is listed, its order, or what a row does.
 
 The query field has keyboard focus whenever root search is on screen: when
 Pane starts and whenever the user returns to root search. Returning to root

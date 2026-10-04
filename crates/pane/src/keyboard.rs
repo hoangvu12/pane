@@ -35,6 +35,7 @@
 //! rebound.
 
 use gpui::{App, KeyBinding, Keystroke};
+use pane_core::hotkeys::Shortcut;
 use pane_core::{Binding, Keyboard, KeyboardAction};
 
 use crate::app::KEY_CONTEXT;
@@ -170,6 +171,27 @@ pub(crate) fn binding_keys(binding: &Binding) -> KeySequence {
     KeySequence { keys }
 }
 
+/// The keys a command's global hotkey is pressed with, shown as
+/// [`binding_keys`] shows a binding: a hotkey's keys are a binding's.
+/// (Core's type for a global hotkey is `Shortcut`.)
+pub(crate) fn hotkey_keys(shortcut: &Shortcut) -> KeySequence {
+    match Binding::new(
+        shortcut.control(),
+        shortcut.alt(),
+        shortcut.shift(),
+        shortcut.super_key(),
+        false,
+        shortcut.key(),
+    ) {
+        Ok(binding) => binding_keys(&binding),
+        // Every hotkey key is a binding key; a future one that is not is
+        // still shown, by its own text.
+        Err(_) => KeySequence {
+            keys: vec![Key::new(shortcut.to_string(), shortcut.to_string())],
+        },
+    }
+}
+
 /// The key's own name, as the binding's text names it ("Enter", "Page
 /// Down", "V"): the binding of the key alone, written out.
 fn key_name(key: &str) -> String {
@@ -222,6 +244,17 @@ mod tests {
                 "Win+Alt+Left".into()
             )
         );
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn a_hotkey_shows_its_keys_as_a_binding_does() {
+        let keys = hotkey_keys(&Shortcut::parse("ctrl+shift+v").unwrap());
+        let caps: Vec<_> = keys.keys.iter().map(|key| key.cap.to_string()).collect();
+        assert_eq!(caps, ["Ctrl", "Shift", "V"]);
+        assert_eq!(keys.name(), "Ctrl+Shift+V");
+        let keys = hotkey_keys(&Shortcut::parse("super+alt+space").unwrap());
+        assert_eq!(keys.name(), "Win+Alt+Space");
     }
 
     #[test]

@@ -526,3 +526,95 @@ fn an_unavailable_command_matches_and_explains_why_it_does_not_run() {
     assert_eq!(launcher.view().status, Status::Error(reason));
     assert_eq!(block_on(runtime.running()), Vec::<PathBuf>::new());
 }
+
+/// The presentation root search hands the window: every row a command,
+/// under one "Commands" label for a blank query — root search's own
+/// order, claiming no recent use — and under "Results" with their count
+/// for a query, each title's match where the query matched it.
+#[test]
+fn root_search_presents_its_rows_with_kinds_sections_and_title_matches() {
+    let launcher = downloads();
+    let presentation = launcher.presentation();
+    let rows = launcher.view().rows;
+    assert_eq!(presentation.rows.len(), rows.len());
+    assert_eq!(
+        presentation.sections,
+        [pane_core::Section {
+            label: "Commands".into(),
+            note: None,
+            first: 0
+        }]
+    );
+    assert!(
+        presentation
+            .rows
+            .iter()
+            .all(|row| row.kind == Some(pane_core::RowKind::Command)),
+        "{presentation:?}"
+    );
+    assert!(presentation.rows.iter().all(|row| row.matched.is_empty()));
+
+    block_on(launcher.set_query("down"));
+    let view = launcher.view();
+    let presentation = launcher.presentation();
+    assert_eq!(
+        presentation.sections,
+        [pane_core::Section {
+            label: "Results".into(),
+            note: Some(format!("{} matches", view.rows.len())),
+            first: 0
+        }]
+    );
+    for (row, shown) in view.rows.iter().zip(&presentation.rows) {
+        let matched: Vec<&str> = shown
+            .matched
+            .iter()
+            .map(|range| &row.title[range.clone()])
+            .collect();
+        if row.title.to_lowercase().contains("down") {
+            assert_eq!(matched.len(), 1, "{}", row.title);
+            assert_eq!(matched[0].to_lowercase(), "down", "{}", row.title);
+        }
+    }
+
+    let (view, presented) = launcher.presented_view();
+    assert_eq!(presented, launcher.presentation());
+    assert_eq!(view.selected, launcher.selected());
+
+    block_on(launcher.set_query("download"));
+    let presentation = launcher.presentation();
+    assert_eq!(
+        presentation.sections[0].note.as_deref(),
+        Some(format!("{} matches", launcher.view().rows.len()).as_str())
+    );
+}
+
+/// Off root search nothing is projected: Manage extensions' rows show as
+/// they always did.
+#[test]
+fn rows_off_root_search_carry_no_presentation() {
+    let dirs = Dirs::new();
+    let launcher = Launcher::with_packages(Ok(dirs.runtime()), vec![], dirs.packages_dir());
+    install(
+        &launcher,
+        &dirs.package("weather", &manifest("Weather", "Forecast", None)),
+    );
+    block_on(launcher.set_query("manage"));
+    assert_eq!(selected_title(&launcher).as_deref(), Some(MANAGE_ROW));
+    assert_eq!(
+        launcher.presentation().rows[0].kind,
+        Some(pane_core::RowKind::Command),
+        "Pane's own rows are its commands"
+    );
+    block_on(launcher.activate_selected());
+    assert!(matches!(launcher.view().screen, Screen::Extensions { .. }));
+    let presentation = launcher.presentation();
+    assert!(presentation.sections.is_empty());
+    assert_eq!(presentation.rows.len(), launcher.view().rows.len());
+    assert!(
+        presentation
+            .rows
+            .iter()
+            .all(|row| *row == pane_core::RowPresentation::default())
+    );
+}

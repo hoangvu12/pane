@@ -15,13 +15,15 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     App, BoxShadow, ClipboardItem, Context, Div, EntityInputHandler, FocusHandle, Hsla,
-    KeyDownEvent, PathPromptOptions, Pixels, Role, ScrollHandle, SharedString, Size, Stateful,
-    Window, WindowControlArea, div, prelude::*, px, relative,
+    KeyDownEvent, MouseMoveEvent, PathPromptOptions, Pixels, Point, Role, ScrollHandle,
+    SharedString, Size, Stateful, Window, WindowControlArea, div, prelude::*, px, relative,
 };
 use pane_core::changes::Changes;
 use pane_core::hotkeys::Shortcut;
 use pane_core::tray::TrayAction;
-use pane_core::{Launcher, LauncherView, Row, Screen, SelectedAction, Status};
+use pane_core::{
+    Launcher, LauncherView, Presentation, Row, RowPresentation, Screen, SelectedAction, Status,
+};
 
 use crate::extension_views::{custom_view, form};
 use crate::features::footer_menu;
@@ -31,7 +33,7 @@ use crate::ui::icon::{Glyph, IconTone};
 use crate::ui::keycap::{self, CapStyle};
 use crate::ui::material::Material;
 use crate::ui::motion::{self, Direction};
-use crate::ui::result_row::{RowContent, result_row};
+use crate::ui::result_row::{RowContent, RowMeta, result_row_with};
 use crate::ui::shell;
 use crate::ui::theme::Theme;
 use crate::{
@@ -88,6 +90,19 @@ pub struct LauncherWindow {
     drawn_menu_popup: Option<(f32, f32)>,
     /// The list's scroll position.
     scroll: ScrollHandle,
+    /// Where the pointer last moved in the window, as the last pointer
+    /// event reported it: a row selects on root search only when the
+    /// pointer really moves over it, never on an event that repeats the
+    /// position (see [`LauncherWindow::pointer_moved_over`]). `None` until
+    /// the first event since the window was last shown, which only
+    /// records where the pointer is: a window appearing under a resting
+    /// pointer gets a move from the system, and that is not the user's.
+    pointer: Option<Point<Pixels>>,
+    /// Whether pointer movement and clicks leave root search's selection
+    /// alone: while a layer over the list owns the selected target (the
+    /// contextual Actions panel, #95), the target stays put under the
+    /// moving pointer.
+    pointer_selection_frozen: bool,
     /// What the list was last scrolled for.
     scrolled_for: Option<ScrolledFor>,
     /// Whether the next frame scrolls to the selected row again, once the
@@ -178,6 +193,8 @@ impl LauncherWindow {
             query,
             form: None,
             scroll: ScrollHandle::new(),
+            pointer: None,
+            pointer_selection_frozen: false,
             scrolled_for: None,
             scroll_again: false,
             custom_view: None,
@@ -515,6 +532,8 @@ impl LauncherWindow {
         if self.hidden {
             window.set_visible(true);
             self.hidden = false;
+            // The pointer is wherever it is now: the next event records it.
+            self.pointer = None;
             // The launcher is opening: it is placed on the display the
             // Launcher page's choice resolves to, wherever the window was
             // left. Only this window is moved — the Settings window, which
@@ -532,6 +551,7 @@ impl LauncherWindow {
     fn hide(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.set_visible(false);
         self.hidden = true;
+        self.pointer = None;
         cx.notify();
     }
 
@@ -796,7 +816,12 @@ impl LauncherWindow {
 
     /// Scrolls the list to the selected row when what it shows or its size
     /// changed since it was last scrolled for (see [`ScrolledFor`]).
-    fn keep_selected_visible(&mut self, view: &LauncherView, window: &mut Window) {
+    fn keep_selected_visible(
+        &mut self,
+        view: &LauncherView,
+        presentation: &Presentation,
+        window: &mut Window,
+    ) {
         let shown = ScrolledFor {
             screen: discriminant(&view.screen),
             title: view.title.clone(),
@@ -826,7 +851,11 @@ impl LauncherWindow {
             window.request_animation_frame();
         }
         if let Some(selected) = view.selected {
-            self.scroll.scroll_to_item(selected);
+            // The list's children are its rows with the section labels
+            // between them. (The empty notice above the rows shows only
+            // while nothing is selected, when nothing is scrolled to.)
+            self.scroll
+                .scroll_to_item(shell::child_of_row(&section_labels(presentation), selected));
         }
         self.scrolled_for = Some(shown);
     }
@@ -852,11 +881,82 @@ impl LauncherWindow {
         cx.refresh_windows();
     }
 
+    /// Freezes root search's selection against the pointer, or lets it
+    /// follow the pointer again: while frozen, moving over a row or
+    /// clicking one changes no selection, so the target a layer over the
+    /// list acts on (the contextual Actions panel, #95) stays the one it
+    /// opened for. The keys still move the selection. Test support too.
+    #[doc(hidden)]
+    pub fn freeze_pointer_selection(&mut self, frozen: bool, cx: &mut Context<Self>) {
+        self.pointer_selection_frozen = frozen;
+        cx.notify();
+    }
+
+    /// Whether the pointer may not move root search's selection now: it
+    /// is frozen, or the footer menu is open over the row it acts on.
+    fn pointer_selection_held(&self) -> bool {
+        self.pointer_selection_frozen || self.menu.is_some()
+    }
+
+    /// The pointer moved over root search's row `index` to `position`:
+    /// real movement selects the row, as the reference's root does, so
+    /// the footer and Enter act on what the pointer is on. An event that
+    /// repeats the last position is not movement — a pointer resting on a
+    /// row never undoes the keys' selection — and nothing moves while the
+    /// selection is held (see `pointer_selection_held`).
+    fn pointer_moved_over(
+        &mut self,
+        index: usize,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        let moved = self.pointer.is_some_and(|last| last != position);
+        if !moved || self.pointer_selection_held() {
+            return;
+        }
+        if self.launcher.selected() != Some(index) {
+            self.select_under_pointer(index);
+            cx.notify();
+        }
+    }
+
+    /// Selects root search's row `index` for the pointer, without
+    /// scrolling the list: the row is where the pointer is, and scrolling
+    /// a half-shown row into view under a still pointer would put another
+    /// row under it, which the next small movement would select and
+    /// scroll in turn. Only the keys' selection scrolls, as the
+    /// reference's does.
+    fn select_under_pointer(&mut self, index: usize) {
+        self.launcher.select(index);
+        if let Some(scrolled_for) = self.scrolled_for.as_mut() {
+            scrolled_for.selected = Some(index);
+        }
+    }
+
+    /// A click on root search's row `index`: the selected row runs; an
+    /// unselected one — clicked where the pointer has not moved since the
+    /// keys moved the selection — is selected first, as the reference's
+    /// does. A pointer that moved onto the row selected it already, so an
+    /// ordinary click runs it, once.
+    fn click_root_row(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pointer_selection_held() {
+            return;
+        }
+        if self.launcher.selected() == Some(index) {
+            self.activate_selected(window, cx);
+        } else {
+            self.select_under_pointer(index);
+            cx.notify();
+        }
+    }
+
     fn render_row(
         &self,
         index: usize,
         row: Row,
         selected: bool,
+        shown: RowPresentation,
+        root: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let visuals = crate::settings::visuals(cx);
@@ -868,9 +968,29 @@ impl LauncherWindow {
             (Some(subtitle), Some(reason)) => Some(format!("{subtitle}. {reason}")),
             (subtitle, reason) => subtitle.clone().or(reason.clone()),
         };
+        // Root search's rows carry what the launcher knows beyond the
+        // title: where the query matched, the alias and the hotkey the
+        // user gave the command, and its kind.
+        let keys = shown.hotkey.as_ref().map(crate::keyboard::hotkey_keys);
+        // The command's hotkey is the row's shortcut for assistive
+        // technology too.
+        let shortcut = keys.as_ref().map(|keys| keys.name());
+        let meta = RowMeta {
+            matched: shown.matched,
+            alias: shown.alias.map(SharedString::from),
+            keys,
+            // Root search's rows always keep the kind's column, empty
+            // where the launcher names no kind, so the alias and keys of
+            // every row line up against it, as the reference's do.
+            kind: if root {
+                Some(shown.kind.map_or("", |kind| kind.label()).into())
+            } else {
+                None
+            },
+        };
         // Presentation only: the shared row paints the chrome, and the
         // identity, accessibility and click behavior are attached here.
-        result_row(
+        result_row_with(
             RowContent {
                 title: row.title.clone().into(),
                 subtitle: row.subtitle.clone().map(SharedString::from),
@@ -879,19 +999,24 @@ impl LauncherWindow {
                 unavailable_id: ("unavailable", index).into(),
                 icon: row_icon(&row.id),
             },
+            meta,
             theme,
         )
         .id(("row", index))
-        // Pressed: the selected wash — the wash the row keeps once the
-        // click selects it, so the press hands over to the selection
-        // without a jump — fading on the shared pointer span beside the
-        // row's own hover wash. The fade attaches only while the row is
-        // unselected, so the selected wash both arrives and leaves at
-        // once: the keyboard's selection is immediately legible, as the
-        // motion policy requires.
-        .when(!selected, |row| {
+        // Off root search a row keeps its pressed feedback: the selected
+        // wash — the wash the row keeps once the click selects it, so the
+        // press hands over to the selection without a jump — fading on
+        // the shared pointer span beside the row's own hover wash. Root
+        // search's rows follow the reference instead: the pointer's
+        // movement selects them, and their washes change at once.
+        .when(!selected && !root, |row| {
             row.active(|row| row.bg(theme.row_selected))
                 .transitions(|fades| fades.bg(motion::pointer_fade()))
+        })
+        .when(root, |row| {
+            row.on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {
+                this.pointer_moved_over(index, event.position, cx);
+            }))
         })
         .debug_selector(|| format!("row-{}", row.title))
         .role(Role::ListBoxOption)
@@ -904,9 +1029,14 @@ impl LauncherWindow {
         .when_some(description, |row, description| {
             row.aria_description(description)
         })
+        .when_some(shortcut, |row, shortcut| row.aria_keyshortcuts(shortcut))
         .on_click(cx.listener(move |this, _, window, cx| {
-            this.launcher.select(index);
-            this.activate_selected(window, cx);
+            if root {
+                this.click_root_row(index, window, cx);
+            } else {
+                this.launcher.select(index);
+                this.activate_selected(window, cx);
+            }
         }))
     }
 
@@ -983,12 +1113,12 @@ impl LauncherWindow {
 
 impl Render for LauncherWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let view = self.launcher.view();
+        let (view, presentation) = self.launcher.presented_view();
         #[cfg(any(test, debug_assertions))]
         {
             self.drawn = Some(view.clone());
         }
-        self.keep_selected_visible(&view, window);
+        self.keep_selected_visible(&view, &presentation, window);
         // A view transition runs when the screen *kind* changed — root
         // search to a command, a command back to root, a form or custom
         // view opening or closing — and moves only the content that
@@ -1093,15 +1223,20 @@ impl Render for LauncherWindow {
         // that drives the idle strip's button — its label, its
         // availability — and the dispatch both the button and Enter take.
         let action = self.launcher.selected_action();
-        let rows: Vec<_> = view
+        let root = matches!(view.screen, Screen::Root { .. });
+        // The rows, with each section's label ahead of its first row.
+        let rows: Vec<gpui::AnyElement> = view
             .rows
             .into_iter()
             .enumerate()
             .map(|(index, row)| {
                 let selected = view.selected == Some(index);
-                self.render_row(index, row, selected, cx)
+                let shown = presentation.rows.get(index).cloned().unwrap_or_default();
+                self.render_row(index, row, selected, shown, root, cx)
+                    .into_any_element()
             })
             .collect();
+        let rows = shell::with_section_labels(rows, &section_labels(&presentation), &theme);
         let empty = match &view.screen {
             Screen::CommandSearch { .. } if search_failed => div().id("empty"),
             Screen::Root { query } | Screen::CommandSearch { query }
@@ -1201,6 +1336,11 @@ impl Render for LauncherWindow {
             .on_action(cx.listener(Self::focus_next))
             .on_action(cx.listener(Self::focus_previous))
             .on_key_down(cx.listener(Self::key_down))
+            // Bubbling after the rows' own handlers, so a row compares the
+            // event against the position before it.
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, _| {
+                this.pointer = Some(event.position);
+            }))
             .flex_1()
             .min_h(px(0.))
             .flex()
@@ -1425,6 +1565,16 @@ pub(crate) fn action_button(
                 .child(action.label.clone()),
         )
         .child(keycap::key_sequence(&keys, CapStyle::Accent, theme))
+}
+
+/// The launcher presentation's section labels, as the shared list draws
+/// them.
+fn section_labels(presentation: &Presentation) -> Vec<shell::SectionLabel> {
+    presentation
+        .sections
+        .iter()
+        .map(shell::SectionLabel::from)
+        .collect()
 }
 
 /// The icon presentation for a row, chosen by the row's stable id: the

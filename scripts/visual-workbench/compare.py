@@ -53,7 +53,8 @@ MUTED = (142, 143, 148)
 # rules are lighter than the panel (the dark palette's white overlays) or
 # darker (the derived light palette's black ones), and the text colors ink
 # is looked for in. The reference is always the dark one.
-DARK = {"lighter": True, "muted": MUTED, "query": (243, 243, 245), "placeholder": (134, 135, 140)}
+DARK = {"lighter": True, "muted": MUTED, "query": (243, 243, 245), "placeholder": (134, 135, 140),
+        "alias": (185, 186, 190)}
 
 
 def palette(manifest):
@@ -64,6 +65,7 @@ def palette(manifest):
         "muted": hex_rgba(colors["textMuted"])[:3],
         "query": hex_rgba(colors.get("textQuery", "#F3F3F5FF"))[:3],
         "placeholder": hex_rgba(colors["textPlaceholder"])[:3],
+        "alias": hex_rgba(colors.get("aliasText", "#B9BABEFF"))[:3],
     }
 CORE_FRACTION = 0.6
 # Below this overlay alpha (levels) a row counts as having no wash: the
@@ -217,6 +219,26 @@ def ink(image, box, background, text_color, exclude_accent=True):
         "color": tuple(statistics.median(channel) for channel in zip(*core)),
         "count": len(xs),
     }
+
+
+def ink_top(image, box, background, text_color):
+    """The first row inside box that glyph ink covers: where two
+    neighboring pixels' coverage (how far each is from the background
+    toward text_color) adds up past CORE_FRACTION. A thin stem straddling
+    two columns covers neither pixel fully, so ink() alone misses it, and
+    where it falls depends on the renderer's subpixel phase, not on where
+    the glyph sits. Returns the row in image pixels, or None."""
+    left, top, right, bottom = clamp_box(image, box)
+    bg, fg = luma(background), luma(text_color)
+    if fg == bg:
+        return None
+    data = image.load()
+    for row in range(top, bottom):
+        cover = [min(1.0, max(0.0, (luma(data[column, row]) - bg) / (fg - bg)))
+                 for column in range(left, right)]
+        if any(a + b >= CORE_FRACTION for a, b in zip(cover, cover[1:])):
+            return row
+    return None
 
 
 def hline(image, x_range, y_range, background=None, lighter=True):
@@ -585,6 +607,9 @@ def compare_root(report, name, capture, declared, manifest, native, scale, ref_c
     crops.append(("search-header", search, None))
     if manifest["scenario"].get("frame"):
         compare_frame(report, name, capture, declared, manifest, native, scale, ref_capture, reference_image, crops)
+    for row in declared["rows"]:
+        if row.get("visible", True) and not row["heightIsFloor"]:
+            harness_row_trailing(report, name, capture, row, manifest, native, scale, crops)
 
     if ref_capture is None:
         return
@@ -621,7 +646,7 @@ def compare_root(report, name, capture, declared, manifest, native, scale, ref_c
     native_selected = sorted(t for t, (r, _) in native_rows.items() if r["selected"])
     ref_selected = sorted(r["title"] for r in state["rows"] if r["selected"])
     report.check("parity", name, capture, "selection", "selected rows", ", ".join(native_selected),
-                 ", ".join(ref_selected), 0, "", "the reference selects the row the pointer moves over; production only washes it")
+                 ", ".join(ref_selected), 0, "", "the pointer's movement selects the row it moves over, on both sides (#94)")
     native_hovered = sorted(t for t, (r, _) in native_rows.items() if r["hovered"] and not r["selected"])
     ref_hover_only = sorted(r["title"] for r in state["rows"] if r["hovered"] and not r["selected"])
     report.check("parity", name, capture, "selection", "hover-only rows", ", ".join(native_hovered),
@@ -636,7 +661,10 @@ def compare_root(report, name, capture, declared, manifest, native, scale, ref_c
         report.check("parity", name, capture, subject, "wash alpha", measured.get("alpha"),
                      ref_measured.get("alpha"), LIMITS["flat_fill_levels"], "levels")
         n_edges, r_edges = measured.get("edges"), ref_measured.get("edges")
-        if n_edges and r_edges:
+        # A hover-only wash is too faint to edge on the reference's glass,
+        # whose blurred wallpaper shades across the row: its alpha is
+        # compared, its edges only where the row is selected.
+        if n_edges and r_edges and row["selected"]:
             for prop, index in (("left", 0), ("width", 2), ("height", 3)):
                 report.check("parity", name, capture, subject, f"wash {prop}", n_edges[index], r_edges[index],
                              LIMITS["edge_px"], "px")
@@ -659,6 +687,8 @@ def compare_root(report, name, capture, declared, manifest, native, scale, ref_c
                          ref_measured["subtitleGap"], LIMITS["edge_px"], "px")
         compare_row_tile(report, name, capture, subject, row, ref_row, manifest, native, scale, reference_image,
                          measured, ref_measured, crops)
+        compare_row_trailing(report, name, capture, subject, row, ref_row, manifest, native, scale,
+                             reference_image, measured, ref_measured, crops)
         if state["query"]:
             report.check("parity", name, capture, subject, "title match highlighted",
                          "yes" if measured.get("accent") else "no", "yes" if ref_measured.get("accent") else "no", 0, "",
@@ -690,6 +720,7 @@ def compare_root(report, name, capture, declared, manifest, native, scale, ref_c
     for group in manifest.get("keycaps", []):
         compare_key_group(report, name, capture, group, manifest, native, scale,
                           ref_groups.get(group.get("group")), reference_image, crops)
+    compare_sections(report, name, capture, declared, state, native, scale, reference_image, crops)
 
 
 # The launcher frame (#92). Windows rounds the launcher's window itself,
@@ -906,7 +937,7 @@ def bottom_line_alpha(image, rect, fill, scale=1.0):
     return black_alpha(under, row_color(bottom_row - 2))
 
 
-def measure_key(image, rect, accent, text_color, scale=1.0):
+def measure_key(image, rect, accent, text_color, scale=1.0, lighter=True):
     """One keycap: its edges, its fill (as a white overlay's alpha, or its
     color for an accent cap), the line along its bottom, and its label's
     ink box relative to the cap."""
@@ -925,17 +956,22 @@ def measure_key(image, rect, accent, text_color, scale=1.0):
     return {
         "edges": edges,
         "fill": fill,
-        "alpha": None if accent else white_alpha(fill, background),
-        "bottom": None if accent else bottom_line_alpha(image, rect, fill, scale),
+        "alpha": None if accent else overlay_alpha(fill, background, lighter),
+        # The estimate assumes a lightening ring over the darkening line,
+        # the dark palette's caps.
+        "bottom": None if accent or not lighter else bottom_line_alpha(image, rect, fill, scale),
+        # The label's place relative to the cap as drawn: its measured left
+        # edge, where a cap's fractional declared left snapped.
         "label": None if label is None else {
-            "left": (label["box"][0] - x) / scale,
+            "left": label["box"][0] / scale - (edges[0] if edges else x / scale),
             "top": (label["box"][1] - y) / scale,
             "height": label["box"][3] / scale,
         },
     }
 
 
-def compare_key_group(report, name, capture, group, manifest, native, scale, ref_group, reference_image, crops):
+def compare_key_group(report, name, capture, group, manifest, native, scale, ref_group, reference_image, crops,
+                      harness=True):
     """One key sequence: each cap against its declaration, then - when the
     reference shows the same effective binding - against the reference's
     caps: labels, sizes, fills, the bottom line and the label's place."""
@@ -944,11 +980,14 @@ def compare_key_group(report, name, capture, group, manifest, native, scale, ref
     text = hex_rgba(colors["accentInk"] if accent else colors["keycapText"])[:3]
     subject = f"keys:{group['binding']}"
     declared_fill = hex_rgba(colors["accent"] if accent else colors["keycapBackground"])
+    lighter = palette(manifest)["lighter"]
     native_caps = []
     for index, cap in enumerate(group["caps"]):
         rect = as_tuple(cap["rect"])
-        measured = measure_key(native, rect, accent, text, scale)
+        measured = measure_key(native, rect, accent, text, scale, lighter)
         native_caps.append(measured)
+        if not harness:
+            continue
         edges = measured and measured["edges"]
         props = (("left", 0), ("top", 1), ("width", 2)) + ((("height", 3),) if accent else ())
         for prop, i in props:
@@ -961,9 +1000,10 @@ def compare_key_group(report, name, capture, group, manifest, native, scale, ref
         else:
             report.check("harness-native", name, capture, subject, f"cap {index} fill alpha",
                          measured and measured["alpha"], declared_fill[3], LIMITS["flat_fill_levels"], "levels")
-            report.check("harness-native", name, capture, subject, f"cap {index} bottom line alpha",
-                         measured and measured["bottom"], hex_rgba(colors["keycapBottom"])[3],
-                         BOTTOM_LINE_LIMIT, "levels", BOTTOM_LINE_NOTE)
+            if lighter:
+                report.check("harness-native", name, capture, subject, f"cap {index} bottom line alpha",
+                             measured and measured["bottom"], hex_rgba(colors["keycapBottom"])[3],
+                             BOTTOM_LINE_LIMIT, "levels", BOTTOM_LINE_NOTE)
     crops.append((subject, as_tuple(group["rect"]), None))
     if not ref_group or reference_image is None:
         return
@@ -1114,6 +1154,197 @@ def compare_row_tile(report, name, capture, subject, row, ref_row, manifest, nat
         report.check("parity", name, capture, sub, "glyph core pixels (stroke weight)",
                      100 * (mine["glyph"]["count"] / max(1, theirs["glyph"]["count"]) - 1), 0, STROKE_LIMIT, "%",
                      f"{mine['glyph']['count']:.0f} vs {theirs['glyph']['count']:.0f} core pixels")
+
+
+def kind_ink(image, rect, fill, scale=1.0, pal=DARK):
+    """A row's kind text: its core ink box, read in the row's right part."""
+    x, y, w, h = scaled(rect, scale)
+    found = ink(image, (x, y + 4 * scale, x + w + 2 * scale, y + h - 4 * scale), fill, pal["muted"],
+                exclude_accent=False)
+    if not found:
+        return None
+    bx, by, bw, bh = found["box"]
+    return {"right": (bx + bw) / scale, "top": by / scale, "height": bh / scale}
+
+
+def measure_alias(image, rect, fill, scale=1.0, pal=DARK):
+    """An alias chip: its ring's box (the chip's own edges) and its
+    label's ink, near its declared place in the row."""
+    x, y, w, h = scaled(rect, scale)
+    middle = y + h / 2
+    chip_rect = (x / scale, (middle - 9 * scale) / scale, w / scale, 18)
+    background = median_color(image, (x - 6 * scale, middle - 2 * scale, x - 3 * scale, middle + 2 * scale)) or fill
+    # The chip's ring is its only fill: the column near its declared left
+    # that stands out most from the row is the ring's.
+    columns = [median_color(image, (column, middle - 3 * scale, column + 1, middle + 3 * scale))
+               for column in range(int(x - 3 * scale), int(x + 3 * scale) + 1)]
+    columns = [color for color in columns if color]
+    ring = max(columns, key=lambda color: abs(luma(color) - luma(background))) if columns else None
+    edges = box_edges(image, chip_rect, background, ring, scale, margin=3) if ring else None
+    label_box = (x + 2 * scale, middle - 8 * scale, x + w - 2 * scale, middle + 8 * scale)
+    label = ink(image, label_box, background, pal["alias"], exclude_accent=False)
+    # The label's top from ink_top: a thin ascender (the 'b' of "cb") lands
+    # on a renderer's own subpixel phase, which ink()'s core alone misreads
+    # as the label sitting lower.
+    if label is None:
+        return {"edges": edges, "label": None}
+    lx, ly, _, lh = label["box"]
+    top = min(ly, ink_top(image, label_box, background, pal["alias"]) or ly)
+    return {
+        "edges": edges,
+        "label": {"left": lx / scale, "top": top / scale, "height": (ly + lh - top) / scale},
+    }
+
+
+def harness_row_trailing(report, name, capture, row, manifest, native, scale, crops):
+    """A native row's trailing parts against their declaration: the kind's
+    text ends at the row's right padding, the alias chip lies where it is
+    declared, and the key sequence's caps (see compare_key_group)."""
+    subject = f"row:{row['title']}"
+    fill = native_wash_fill(native, row, scale)
+    if fill is None:
+        return
+    if row.get("kindRect"):
+        rect = as_tuple(row["kindRect"])
+        found = kind_ink(native, rect, fill, scale, palette(manifest))
+        # Text is right-aligned in its box: its ink ends within a pixel of
+        # the box's right (a glyph's right side bearing).
+        report.check("harness-native", name, capture, subject, "kind ink right",
+                     found and found["right"], rect[0] + rect[2], LIMITS["edge_px"] * 1.5, "px",
+                     "right-aligned at the row's padding; a glyph's side bearing allowed")
+    if row.get("aliasRect"):
+        rect = as_tuple(row["aliasRect"])
+        measured = measure_alias(native, rect, fill, scale, palette(manifest))
+        edges = measured["edges"]
+        report.check("harness-native", name, capture, subject, "alias chip width",
+                     edges[2] if edges else None, rect[2], LIMITS["edge_px"], "px")
+        # Its place: the row's gap before what follows it - the key
+        # sequence's first cap, measured, or the kind's declared box. (The
+        # caps' widths round to whole pixels in layout, so declared
+        # positions drift by fractions of a pixel per cap.)
+        following = row["kindRect"]["x"] if row.get("kindRect") else None
+        if row.get("keyGroup"):
+            first = as_tuple(row["keyGroup"]["caps"][0]["rect"])
+            x, y, w, h = scaled(first, scale)
+            key_fill = median_color(native, (x + 1.5 * scale, y + 2 * scale, x + 3 * scale, y + h - 3 * scale))
+            key_edges = box_edges(native, first, fill, key_fill, scale) if key_fill else None
+            following = key_edges[0] if key_edges else None
+        gap = manifest["declared"]["geometry"].get("rowGap", 12)
+        report.check("harness-native", name, capture, subject, "alias chip gap to what follows",
+                     following - (edges[0] + edges[2]) if edges and following is not None else None, gap,
+                     LIMITS["edge_px"], "px")
+        # What comes before it - a title or reason however long - truncates
+        # or wraps short of the gap: no text ink in the gap before the chip.
+        if edges:
+            _, ry, _, rh = scaled(as_tuple(row["rect"]), scale)
+            left = (edges[0] - gap + 1) * scale
+            stray = ink(native, (left, ry, edges[0] * scale - 1, ry + rh), fill, palette(manifest)["muted"],
+                        exclude_accent=False)
+            report.check("harness-native", name, capture, subject, "text ink in the gap before the alias chip",
+                         0 if stray is None else stray["count"], 0, 0, "px")
+    if row.get("keyGroup"):
+        compare_key_group(report, name, capture, row["keyGroup"], manifest, native, scale, None, None, crops)
+
+
+def compare_row_trailing(report, name, capture, subject, row, ref_row, manifest, native, scale, reference_image,
+                         measured, ref_measured, crops):
+    """A row's trailing parts, native against reference: the kind's text,
+    the alias chip and the key sequence."""
+    n_fill = native_wash_fill(native, row, scale)
+    r_fill = native_wash_fill(reference_image, ref_row, 1.0)
+    if n_fill is None or r_fill is None:
+        return
+    n_row, r_row = as_tuple(row["rect"]), as_tuple(ref_row["rect"])
+    if row.get("kindRect") and ref_row.get("kind"):
+        # Each side's kind box across the row's own height: the reference's
+        # element is only its text's height.
+        kx, _, kw, _ = as_tuple(row["kindRect"])
+        rx, _, rw, _ = as_tuple(ref_row["kind"]["rect"])
+        mine = kind_ink(native, (kx, n_row[1], kw, n_row[3]), n_fill, scale, palette(manifest))
+        theirs = kind_ink(reference_image, (rx, r_row[1], rw, r_row[3]), r_fill)
+        report.check("parity", name, capture, subject, "kind", row["kind"], ref_row["kind"]["text"], 0, "")
+        if mine and theirs:
+            report.check("parity", name, capture, subject, "kind ink right in row", mine["right"] - n_row[0],
+                         theirs["right"] - r_row[0], LIMITS["edge_px"], "px")
+            report.check("parity", name, capture, subject, "kind ink top in row", mine["top"] - n_row[1],
+                         theirs["top"] - r_row[1], LIMITS["edge_px"], "px")
+            report.check("parity", name, capture, subject, "kind ink height", mine["height"], theirs["height"],
+                         LIMITS["edge_px"], "px")
+    if row.get("aliasRect") and ref_row.get("alias"):
+        ax, _, aw, _ = as_tuple(row["aliasRect"])
+        bx, _, bw, _ = as_tuple(ref_row["alias"]["rect"])
+        mine = measure_alias(native, (ax, n_row[1], aw, n_row[3]), n_fill, scale, palette(manifest))
+        theirs = measure_alias(reference_image, (bx, r_row[1], bw, r_row[3]), r_fill)
+        report.check("parity", name, capture, subject, "alias", row["alias"], ref_row["alias"]["text"], 0, "")
+        if mine["edges"] and theirs["edges"]:
+            for prop, index, origin in (("left in row", 0, 0), ("top in row", 1, 1), ("width", 2, None),
+                                        ("height", 3, None)):
+                n_value = mine["edges"][index] - (n_row[origin] if origin is not None else 0)
+                r_value = theirs["edges"][index] - (r_row[origin] if origin is not None else 0)
+                report.check("parity", name, capture, subject, f"alias chip {prop}", n_value, r_value,
+                             LIMITS["edge_px"], "px")
+        if mine["label"] and theirs["label"]:
+            report.check("parity", name, capture, subject, "alias label ink top in row",
+                         mine["label"]["top"] - n_row[1], theirs["label"]["top"] - r_row[1], LIMITS["edge_px"], "px")
+        crops.append(("parity-alias-" + row["title"], as_tuple(row["aliasRect"]), as_tuple(ref_row["alias"]["rect"])))
+    if row.get("keyGroup") and ref_row.get("keyGroup"):
+        compare_key_group(report, name, capture, row["keyGroup"], manifest, native, scale, ref_row["keyGroup"],
+                          reference_image, crops, harness=False)
+
+
+# The reference's blank-query list, labelled with its fixture's own story:
+# a pinned strip (#101) and "Suggested · From your recent use" above its
+# commands. Pane labels a blank query's list as what it is - its commands,
+# in root search's order - and claims no recent use (#100).
+SECTION_DISPOSITION = ("accepted (#94, #100): Pane labels a blank query's rows \"Commands\" and claims no recent "
+                       "use, so the reference's \"Suggested · From your recent use\" is not shown; the reference's "
+                       "pinned strip and its label are #101's")
+
+
+def section_ink(image, rect, scale=1.0, pal=DARK):
+    x, y, w, h = scaled(rect, scale)
+    background = median_color(image, (x + w * 0.4, y + 2 * scale, x + w * 0.5, y + 5 * scale))
+    if background is None:
+        return None, None
+    left = ink(image, (x, y + 6 * scale, x + w * 0.5, y + h), background, pal["muted"], exclude_accent=False)
+    right = ink(image, (x + w * 0.5, y + 6 * scale, x + w + 2 * scale, y + h), background, pal["muted"],
+                exclude_accent=False)
+    return left, right
+
+
+def compare_sections(report, name, capture, declared, state, native, scale, reference_image, crops):
+    """The section labels: which labels show over the rows, and the
+    typography of a label both sides show."""
+    native_labels = declared.get("sections") or []
+    ref_labels = [label for label in state.get("labels", []) if label.get("visible", True)]
+    report.check("parity", name, capture, "sections", "labels",
+                 " | ".join(label["label"] for label in native_labels),
+                 " | ".join(label["text"] for label in ref_labels), 0, "",
+                 accepted=SECTION_DISPOSITION if not state["query"] else None)
+    by_text = {label["text"]: label for label in ref_labels}
+    for label in native_labels:
+        ref = by_text.get(label["label"])
+        if not ref:
+            continue
+        subject = f"section:{label['label']}"
+        n_rect, r_rect = as_tuple(label["rect"]), as_tuple(ref["rect"])
+        crops.append(("parity-" + subject, n_rect, r_rect))
+        n_left, n_right = section_ink(native, n_rect, scale)
+        r_left, r_right = section_ink(reference_image, r_rect)
+        report.check("parity", name, capture, subject, "note", label.get("note") or "", ref.get("note") or "", 0, "")
+        report.check("parity", name, capture, subject, "label height", n_rect[3], r_rect[3], LIMITS["edge_px"], "px")
+        if n_left and r_left:
+            for prop, index in (("left", 0), ("top", 1)):
+                report.check("parity", name, capture, subject, f"title ink {prop} in label",
+                             n_left["box"][index] / scale - n_rect[index], r_left["box"][index] - r_rect[index],
+                             LIMITS["edge_px"], "px")
+            report.check("parity", name, capture, subject, "title ink height", n_left["box"][3] / scale,
+                         r_left["box"][3], LIMITS["edge_px"], "px")
+        if n_right and r_right and (label.get("note") or ""):
+            report.check("parity", name, capture, subject, "note ink right in label",
+                         (n_right["box"][0] + n_right["box"][2]) / scale - n_rect[0],
+                         r_right["box"][0] + r_right["box"][2] - r_rect[0], LIMITS["edge_px"] * 1.5, "px",
+                         "right-aligned; a glyph's side bearing allowed")
 
 
 def native_wash_fill(image, row, scale):
