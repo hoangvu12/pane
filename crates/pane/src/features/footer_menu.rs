@@ -36,7 +36,7 @@ use crate::app::LauncherWindow;
 use crate::features::settings;
 use crate::ui::icon::{Glyph, glyph};
 use crate::ui::keycap::binding_keycap;
-use crate::ui::{self, motion};
+use crate::ui::{self};
 
 actions!(
     footer_menu,
