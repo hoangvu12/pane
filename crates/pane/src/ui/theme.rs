@@ -149,6 +149,10 @@ pub(crate) struct Theme {
     pub(crate) accent: Hsla,
     /// Ink on an accent fill (#111210).
     pub(crate) accent_ink: Hsla,
+    /// A row's alias chip text (reference `.alias`: #B9BABE).
+    pub(crate) alias_text: Hsla,
+    /// The alias chip's 1px inset ring (rgba(255,255,255,.14)).
+    pub(crate) alias_edge: Hsla,
 
     // -- Type and geometry --------------------------------------------------
     /// Families, sizes and weights.
@@ -179,8 +183,20 @@ pub(crate) struct Typography {
     pub(crate) keycap_size: Pixels,
     /// A compact keycap's label: 10.
     pub(crate) keycap_compact_size: Pixels,
+    /// A row's alias chip: Geist Mono 11.
+    pub(crate) alias_size: Pixels,
+    /// Geist Mono's natural line height, as a multiple of its size: its
+    /// ascent and descent (1005 + 295 per 1000), what CSS's `normal`
+    /// gives text the reference sets no line height for.
+    pub(crate) mono_line_height: f32,
+    /// A section label's 12px.
+    pub(crate) section_size: Pixels,
+    /// A section label's tracking, in em (.01).
+    pub(crate) section_tracking: f32,
     /// Title and label weight (500).
     pub(crate) medium: FontWeight,
+    /// Body weight (400): a section label's note.
+    pub(crate) regular: FontWeight,
 }
 
 /// The reference's geometry: the launcher panel is 760px wide, the search
@@ -226,6 +242,19 @@ pub(crate) struct Geometry {
     pub(crate) row_gap: Pixels,
     /// The gap between rows in the list.
     pub(crate) row_list_gap: Pixels,
+    /// A row's kind label's least width, right-aligned in it (88).
+    pub(crate) row_kind_min_width: Pixels,
+    /// The alias chip's padding: 2 above and below, 6 either side.
+    pub(crate) alias_padding_y: Pixels,
+    pub(crate) alias_padding_x: Pixels,
+    /// The alias chip's corner radius (5).
+    pub(crate) alias_radius: Pixels,
+    /// A section label's height (30), its padding above (8) and either
+    /// side (10), and the gap between its title and note (8).
+    pub(crate) section_height: Pixels,
+    pub(crate) section_padding_top: Pixels,
+    pub(crate) section_padding_x: Pixels,
+    pub(crate) section_gap: Pixels,
     /// A result row's icon tile: 28, radius 7, a 16px glyph.
     pub(crate) tile: TileMetrics,
     /// A pinned slot's icon tile: 42, radius 11, a 22px glyph.
@@ -334,6 +363,8 @@ impl Theme {
             keycap_text: color(0xC9CACEFF),
             accent: color(0xC9EE6AFF),
             accent_ink: color(0x111210FF),
+            alias_text: color(0xB9BABEFF),
+            alias_edge: color(0xFFFFFF24),
 
             typography: Typography::shared(),
             geometry: Geometry::shared(),
@@ -397,6 +428,8 @@ impl Theme {
             keycap_text: color(0x3B3D44FF),
             accent: color(0xC9EE6AFF),
             accent_ink: color(0x111210FF),
+            alias_text: color(0x3B3D44FF),
+            alias_edge: color(0x00000024),
 
             typography: Typography::shared(),
             geometry: Geometry::shared(),
@@ -416,7 +449,12 @@ impl Typography {
             footer_size: px(12.5),
             keycap_size: px(11.),
             keycap_compact_size: px(10.),
+            alias_size: px(11.),
+            mono_line_height: 1.3,
+            section_size: px(12.),
+            section_tracking: 0.01,
             medium: FontWeight::MEDIUM,
+            regular: FontWeight::NORMAL,
         }
     }
 }
@@ -455,6 +493,14 @@ impl Geometry {
             row_padding_x: px(10.),
             row_gap: px(12.),
             row_list_gap: px(2.),
+            row_kind_min_width: px(88.),
+            alias_padding_y: px(2.),
+            alias_padding_x: px(6.),
+            alias_radius: px(5.),
+            section_height: px(30.),
+            section_padding_top: px(8.),
+            section_padding_x: px(10.),
+            section_gap: px(8.),
             tile: TileMetrics {
                 size: px(28.),
                 radius: px(7.),

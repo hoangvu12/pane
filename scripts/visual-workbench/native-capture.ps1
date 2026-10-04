@@ -251,7 +251,12 @@ foreach ($entry in $selected) {
                     Write-Host "native $($entry.name): $($step.name) ($($size -join 'x'))"
                 }
                 'pointer' {
+                    # Arrive from a pixel to the left, as a real pointer
+                    # reports two moves: the window's first event only
+                    # records where the pointer is (#94).
                     $pointer = @($step.point[0], $step.point[1])
+                    Send-Pointer $hwnd ($pointer[0] - 1) $pointer[1] $scale
+                    Start-Sleep -Milliseconds 40
                     Send-Pointer $hwnd $pointer[0] $pointer[1] $scale
                 }
                 'key' {

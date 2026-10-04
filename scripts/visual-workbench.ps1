@@ -143,7 +143,10 @@ if (-not $SkipSensitivity) {
     $perturbedScenarios = @{
         'row-padding-plus-4' = @('root-rest', 'root-selected')
         'selected-fill' = @('root-rest', 'root-selected')
-        'hover-fill' = @('root-hover')
+        # Movement selects the row under the pointer (#94): a hover wash
+        # shows only where the keys moved the selection off the row the
+        # pointer rests on.
+        'hover-fill' = @('root-pointer-keys')
     }
     $run.sensitivity = [ordered]@{}
     foreach ($perturb in 'row-padding-plus-4', 'selected-fill', 'hover-fill') {

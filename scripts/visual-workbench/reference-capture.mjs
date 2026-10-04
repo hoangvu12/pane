@@ -205,6 +205,23 @@ window.__wb = {
         titleRect: this.rel(index, title),
         background: getComputedStyle(row).backgroundColor,
         keys: Array.from(row.querySelectorAll('.keys .kbd')).map((k) => ({ label: k.textContent, rect: this.rel(index, k) })),
+        keyGroup: this.group(index, row.querySelector('.keys')),
+        kind: (() => { const k = row.querySelector('.row-kind'); return k ? { text: k.textContent, rect: this.rel(index, k) } : null; })(),
+        alias: (() => { const a = row.querySelector('.alias'); return a ? { text: a.textContent, rect: this.rel(index, a) } : null; })(),
+      };
+    });
+  },
+  labels(index) {
+    const doc = this.frame(index).contentDocument;
+    const list = doc.querySelector('.list').getBoundingClientRect();
+    return Array.from(doc.querySelectorAll('.list .label')).map((label) => {
+      const spans = label.querySelectorAll(':scope > span');
+      const r = label.getBoundingClientRect();
+      return {
+        text: spans[0] ? spans[0].textContent : label.textContent,
+        note: spans[1] ? spans[1].textContent.trim() : '',
+        rect: this.rel(index, label),
+        visible: r.top >= list.top && r.bottom <= list.bottom,
       };
     });
   },
@@ -254,6 +271,7 @@ window.__wb = {
         return el ? this.rel(index, el) : null;
       })(),
       rows: this.rows(index),
+      labels: this.labels(index),
       keycaps: this.keycapGroups(index),
     };
   },
@@ -330,7 +348,11 @@ async function runScenario(scenario, rootIndex, frames) {
       const titles = (await evaluate(`__wb.state(${rootIndex})`)).rows.map((row) => row.title);
       const title = titles[step.row];
       const point = await evaluate(`__wb.outer(${rootIndex}, __wb.rowFor(${rootIndex}, ${JSON.stringify(title)}))`);
-      await pointerTo(point.x, point.y);
+      // A nudge lands a second move over the same row somewhere else, so
+      // it is movement.
+      // From a pixel to the left, as the native side arrives.
+      await pointerTo(point.x + (step.nudge ?? 0) - 1, point.y);
+      await pointerTo(point.x + (step.nudge ?? 0), point.y);
     } else if (step.action === 'key') {
       const key = KEYS[step.key];
       if (!key) throw new Error(`unknown key ${step.key}`);

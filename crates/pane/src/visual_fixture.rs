@@ -64,8 +64,8 @@ use crate::ui::icon::{Glyph, IconTone, TileSize, tile_at};
 use crate::ui::input::bind_text_editing;
 use crate::ui::keycap::{self, CapMetrics, CapStyle};
 use crate::ui::material::Material;
-use crate::ui::result_row::{RowContent, result_row};
-use crate::ui::shell::{self, LAUNCHER_CLIENT};
+use crate::ui::result_row::{RowContent, RowMeta, result_row_with};
+use crate::ui::shell::{self, LAUNCHER_CLIENT, SectionLabel};
 use crate::ui::theme::Theme;
 use crate::{Back, SelectNext, SelectPrevious};
 
@@ -113,6 +113,30 @@ pub(crate) struct FixtureRow {
     /// The primary action's label the footer shows while the row is
     /// selected, as the reference board names it for the row's kind.
     pub(crate) action: &'static str,
+    /// The row's kind, right-aligned ("Application", "Command").
+    pub(crate) kind: &'static str,
+    /// The alias the reference gives the row, if any.
+    pub(crate) alias: Option<&'static str>,
+    /// The hotkey the reference shows on the row, as a binding, if any.
+    pub(crate) keys: Option<&'static str>,
+}
+
+impl FixtureRow {
+    /// This row with the alias `alias`.
+    const fn aliased(self, alias: &'static str) -> FixtureRow {
+        FixtureRow {
+            alias: Some(alias),
+            ..self
+        }
+    }
+
+    /// This row with the hotkey `binding`.
+    const fn keyed(self, binding: &'static str) -> FixtureRow {
+        FixtureRow {
+            keys: Some(binding),
+            ..self
+        }
+    }
 }
 
 /// An application row: the reference's `app()`, opened by "Open
@@ -124,6 +148,9 @@ const fn app(title: &'static str, icon: (IconTone, Glyph)) -> FixtureRow {
         unavailable: None,
         icon,
         action: "Open Application",
+        kind: "Application",
+        alias: None,
+        keys: None,
     }
 }
 
@@ -139,48 +166,60 @@ const fn command(
         unavailable: None,
         icon,
         action: "Run Command",
+        kind: "Command",
+        alias: None,
+        keys: None,
     }
 }
 
-/// The reference root board's rows, in its order: the Suggested section's
-/// four (Figma, Clipboard History, Left Half, Search Files) then the
-/// Commands section's four (Plugin Store, Toggle Dark Mode, Lock Screen,
-/// Settings). The pinned strip above them, the section labels between
-/// them, and the kind/alias/key metadata each row carries are reference
-/// content the production components do not render yet.
+/// The reference root board's rows, in its order, with the kind, alias
+/// and hotkey each carries there: its Suggested section's four (Figma,
+/// Clipboard History, Left Half, Search Files) then its Commands
+/// section's four (Plugin Store, Toggle Dark Mode, Lock Screen,
+/// Settings). The fixture labels them as production does — one
+/// "Commands" section for a blank query, never a claim of recent use
+/// (#100) — so the reference's second label is a content difference the
+/// comparison reports; its pinned strip above them is #101's.
 pub(crate) const ROOT_ROWS: &[FixtureRow] = &[
     app("Figma", (IconTone::Pen, Glyph::Pen)),
     command(
         "Clipboard History",
         "Clipboard",
         (IconTone::Command, Glyph::Clipboard),
-    ),
+    )
+    .aliased("cb")
+    .keyed("ctrl-shift-v"),
     command(
         "Left Half",
         "Window Manager",
         (IconTone::Command, Glyph::Layout),
-    ),
-    command("Search Files", "Files", (IconTone::Command, Glyph::File)),
-    command("Plugin Store", "Pane", (IconTone::Command, Glyph::Blocks)),
+    )
+    .keyed("win-alt-left"),
+    command("Search Files", "Files", (IconTone::Command, Glyph::File)).aliased("f"),
+    command("Plugin Store", "Pane", (IconTone::Command, Glyph::Blocks)).aliased("store"),
     command(
         "Toggle Dark Mode",
         "System",
         (IconTone::Command, Glyph::Moon),
     ),
     command("Lock Screen", "System", (IconTone::Command, Glyph::Lock)),
-    command("Settings", "Pane", (IconTone::Command, Glyph::Sliders)),
+    command("Settings", "Pane", (IconTone::Command, Glyph::Sliders)).keyed("ctrl-,"),
 ];
 
 /// A long-content row: the title and subtitle the production row's
 /// truncation policy has to handle. The reference authors no long-content
 /// row, so this state has no reference counterpart — it is a native-only
-/// crop, recorded honestly as an adaptation rather than compared.
+/// crop, recorded honestly as an adaptation rather than compared. The long
+/// row carries an alias and keys too: the text truncates, its right-hand
+/// parts never shrink.
 pub(crate) const LONG_ROWS: &[FixtureRow] = &[
     command(
         "A result whose title runs far past the reference's own fixture rows and keeps going",
         "and whose subtitle is long enough to need the ellipsis the row owns",
         (IconTone::Command, Glyph::Prompt),
-    ),
+    )
+    .aliased("long")
+    .keyed("ctrl-shift-v"),
     command(
         "Left Half",
         "Window Manager",
@@ -190,7 +229,8 @@ pub(crate) const LONG_ROWS: &[FixtureRow] = &[
 
 /// A row that cannot run here, with the reason the production row shows.
 /// The reference authors no unavailable state either: another native-only
-/// adaptation, cropped and recorded as such.
+/// adaptation, cropped and recorded as such. Its alias and keys stay
+/// beside a reason long enough to wrap.
 pub(crate) const UNAVAILABLE_ROWS: &[FixtureRow] = &[
     command(
         "Left Half",
@@ -198,12 +238,16 @@ pub(crate) const UNAVAILABLE_ROWS: &[FixtureRow] = &[
         (IconTone::Command, Glyph::Layout),
     ),
     FixtureRow {
-        unavailable: Some("The extension is disabled"),
+        unavailable: Some(
+            "The extension that provides this command is disabled; turn it back on in Settings to run it here",
+        ),
         ..command(
             "Clipboard History",
             "Clipboard",
             (IconTone::Command, Glyph::Clipboard),
         )
+        .aliased("cb")
+        .keyed("ctrl-shift-v")
     },
 ];
 
@@ -230,8 +274,11 @@ pub(crate) enum Family {
 pub(crate) enum Step {
     /// Save a capture of the client, named.
     Capture { name: &'static str },
-    /// Move the real pointer to the center of the shown row at `row`.
-    Pointer { row: usize },
+    /// Move the pointer onto the center of the shown row at `row`, `nudge`
+    /// pixels to the right of it, arriving from a pixel to its left (two
+    /// moves, as a real pointer reports): a second move over the same row
+    /// is movement only if it lands somewhere else.
+    Pointer { row: usize, nudge: i16 },
     /// Press a key.
     Key { key: NamedKey },
     /// Type text into the focused query field.
@@ -249,6 +296,11 @@ pub(crate) enum NamedKey {
 
 const fn capture(name: &'static str) -> Step {
     Step::Capture { name }
+}
+
+/// The pointer onto the center of row `row`.
+const fn pointer(row: usize) -> Step {
+    Step::Pointer { row, nudge: 0 }
 }
 
 /// The selection key that moves to the next row.
@@ -297,7 +349,7 @@ pub(crate) fn scenarios() -> &'static [Scenario] {
 }
 
 const SCENARIOS: &[Scenario] = {
-    use Step::{Key, Pointer, Type};
+    use Step::{Key, Type};
     &[
         Scenario {
             name: "root-rest",
@@ -312,14 +364,14 @@ const SCENARIOS: &[Scenario] = {
         },
         Scenario {
             name: "root-hover",
-            description: "Rest, then the pointer arrives on unselected row 1",
+            description: "Rest, then the pointer moves onto unselected row 1, which selects it",
             family: Family::Root,
             client: ROOT_CLIENT,
             reference: true,
             theme: None,
             frame: false,
             rows: ROOT_ROWS,
-            steps: &[capture("rest"), Pointer { row: 1 }, capture("hover")],
+            steps: &[capture("rest"), pointer(1), capture("hover")],
         },
         Scenario {
             name: "root-selected",
@@ -343,6 +395,24 @@ const SCENARIOS: &[Scenario] = {
             ],
         },
         Scenario {
+            name: "root-pointer-keys",
+            description: "The pointer selects row 1; Down moves the selection to row 2 with the pointer resting on row 1, which keeps its hover wash; moving again over row 1 selects it",
+            family: Family::Root,
+            client: ROOT_CLIENT,
+            reference: true,
+            theme: None,
+            frame: false,
+            rows: ROOT_ROWS,
+            steps: &[
+                pointer(1),
+                capture("pointed"),
+                DOWN,
+                capture("down-under-pointer"),
+                Step::Pointer { row: 1, nudge: 6 },
+                capture("moved-again"),
+            ],
+        },
+        Scenario {
             name: "root-selected-hover",
             description: "Row 2 selected by the keys, then the pointer arrives on that selected row",
             family: Family::Root,
@@ -359,7 +429,7 @@ const SCENARIOS: &[Scenario] = {
                     key: NamedKey::Down,
                 },
                 capture("selected"),
-                Pointer { row: 2 },
+                pointer(2),
                 capture("selected-hover"),
             ],
         },
@@ -878,6 +948,24 @@ impl FixtureState {
     fn back(&mut self) {
         self.set_query("");
     }
+
+    /// The pointer moved over the shown row `row`: root search's rows
+    /// select under the moving pointer (#94).
+    fn pointer_over(&mut self, row: usize) {
+        if row < self.rows.len() {
+            self.selected = row;
+        }
+    }
+
+    /// The section labels over the shown rows, by root search's own rule
+    /// (`pane_core::root_sections`). The fixture lists no fallbacks.
+    fn sections(&self) -> Vec<SectionLabel> {
+        let rows = self.rows.len();
+        pane_core::root_sections(&self.query, rows, rows)
+            .iter()
+            .map(SectionLabel::from)
+            .collect()
+    }
 }
 
 /// A rectangle in logical client coordinates.
@@ -957,6 +1045,29 @@ pub(crate) struct DeclaredRow {
     /// list's scroll offset; a row scrolled out of view, or partly out,
     /// is declared but not measured.
     visible: bool,
+    kind: &'static str,
+    alias: Option<&'static str>,
+    keys: Option<&'static str>,
+    /// Where the query matched the title (byte ranges), by the launcher's
+    /// own rule (`pane_core::title_matches`).
+    matched: Vec<std::ops::Range<usize>>,
+    /// Where the row's trailing parts lie, filled in from shaped text
+    /// when the manifest is written.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kind_rect: Option<Rect>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    alias_rect: Option<Rect>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    key_group: Option<KeyGroupRecord>,
+}
+
+/// A section label as a capture declares it.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeclaredSection {
+    label: String,
+    note: Option<String>,
+    rect: Rect,
 }
 
 /// The rows `state` shows, laid out in the list of `frame` scrolled by
@@ -969,17 +1080,45 @@ fn declared_rows(
     offset: f32,
     pointer: Option<(f32, f32)>,
 ) -> Vec<DeclaredRow> {
+    declared_list(state, theme, frame, offset, pointer).0
+}
+
+/// The rows and the section labels `state` shows, laid out down the list
+/// (see [`declared_rows`]): each label ahead of its first row, a label's
+/// height and the list's gap before it.
+fn declared_list(
+    state: &FixtureState,
+    theme: &Theme,
+    frame: &Frame,
+    offset: f32,
+    pointer: Option<(f32, f32)>,
+) -> (Vec<DeclaredRow>, Vec<DeclaredSection>) {
     let geometry = &theme.geometry;
     let x = frame.list.x + f32::from(geometry.list_padding_x);
     let width = frame.list.width - 2. * f32::from(geometry.list_padding_x);
     let mut y = frame.list.y + f32::from(geometry.list_padding_top) + offset;
     let list = frame.list;
     let mut floor = false;
-    state
+    let sections = state.sections();
+    let mut labels = Vec::new();
+    let rows = state
         .rows
         .iter()
         .enumerate()
         .map(|(index, row)| {
+            for section in sections.iter().filter(|section| section.first == index) {
+                labels.push(DeclaredSection {
+                    label: section.label.to_string(),
+                    note: section.note.as_ref().map(ToString::to_string),
+                    rect: Rect {
+                        x,
+                        y,
+                        width,
+                        height: f32::from(geometry.section_height),
+                    },
+                });
+                y += f32::from(geometry.section_height) + f32::from(geometry.row_list_gap);
+            }
             floor |= row.unavailable.is_some();
             let rect = Rect {
                 x,
@@ -1002,9 +1141,17 @@ fn declared_rows(
                 rect,
                 height_is_floor: floor,
                 visible: rect.y >= list.y && rect.y + rect.height <= list.y + list.height,
+                kind: row.kind,
+                alias: row.alias,
+                keys: row.keys,
+                matched: pane_core::title_matches(row.title, &state.query),
+                kind_rect: None,
+                alias_rect: None,
+                key_group: None,
             }
         })
-        .collect()
+        .collect();
+    (rows, labels)
 }
 
 /// One capture a scenario takes, as the fixture declares it.
@@ -1021,6 +1168,8 @@ pub(crate) struct DeclaredCapture {
     /// under test, which it measures beside the cursor).
     pointer: Option<(f32, f32)>,
     rows: Vec<DeclaredRow>,
+    /// The section labels over the rows.
+    sections: Vec<DeclaredSection>,
     /// The footer's primary action label: the selected row's.
     action: Option<&'static str>,
     /// The footer action button's rect, filled in from the shaped label
@@ -1079,18 +1228,34 @@ pub(crate) fn replay(scenario: &Scenario, theme: &Theme) -> Replay {
     for step in scenario.steps {
         let mut point = None;
         match *step {
-            Step::Capture { name } => captures.push(DeclaredCapture {
-                name,
-                after: after.clone(),
-                query: state.query.clone(),
-                pointer,
-                rows: declared_rows(&state, theme, &frame, offset, pointer),
-                action: state.rows.get(state.selected).map(|row| row.action),
-                action_button: None,
-            }),
-            Step::Pointer { row } => {
+            Step::Capture { name } => {
+                let (rows, sections) = declared_list(&state, theme, &frame, offset, pointer);
+                captures.push(DeclaredCapture {
+                    name,
+                    after: after.clone(),
+                    query: state.query.clone(),
+                    pointer,
+                    rows,
+                    sections,
+                    action: state.rows.get(state.selected).map(|row| row.action),
+                    action_button: None,
+                })
+            }
+            Step::Pointer { row, nudge } => {
                 let rows = declared_rows(&state, theme, &frame, offset, None);
-                pointer = rows.get(row).map(|row| row.rect.center());
+                let moved_to = rows.get(row).map(|shown| {
+                    let (x, y) = shown.rect.center();
+                    (x + f32::from(nudge), y)
+                });
+                // The capture helpers move the pointer onto the row from a
+                // pixel to its left, as a real pointer arrives: the first
+                // event records where it is, the second is movement and
+                // selects the row. A step that lands where the pointer
+                // already is moves nothing.
+                if moved_to.is_some() && moved_to != pointer {
+                    state.pointer_over(row);
+                }
+                pointer = moved_to;
                 point = pointer;
             }
             Step::Key {
@@ -1104,7 +1269,10 @@ pub(crate) fn replay(scenario: &Scenario, theme: &Theme) -> Replay {
                 state.set_query(&query);
             }
         }
-        if matches!(step, Step::Key { .. } | Step::Type { .. }) {
+        if matches!(
+            step,
+            Step::Key { .. } | Step::Type { .. } | Step::Pointer { .. }
+        ) {
             offset = scrolled_to_selected(&state, theme, &frame, offset);
         }
         if !matches!(step, Step::Capture { .. }) {
@@ -1129,6 +1297,9 @@ pub(crate) struct FixtureWindow {
     /// The result list's scroll, kept on the selected row as the
     /// launcher keeps its own (see [`scrolled_to_selected`]).
     scroll: ScrollHandle,
+    /// Where the pointer last moved, as the launcher keeps it: only real
+    /// movement over a row selects it.
+    pointer: Option<gpui::Point<Pixels>>,
 }
 
 impl FixtureWindow {
@@ -1153,13 +1324,33 @@ impl FixtureWindow {
             state: FixtureState::new(scenario.rows),
             query,
             scroll: ScrollHandle::new(),
+            pointer: None,
+        }
+    }
+
+    /// The pointer moved over row `index` to `position`: real movement
+    /// selects it, as the launcher's root search does, without scrolling
+    /// the list (only the keys' selection scrolls).
+    fn pointer_moved_over(
+        &mut self,
+        index: usize,
+        position: gpui::Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        let moved = self.pointer.is_some_and(|last| last != position);
+        if moved && self.state.selected != index {
+            self.state.pointer_over(index);
+            cx.notify();
         }
     }
 
     /// After the selection may have moved: the list keeps the selected
     /// row in view, as the launcher's does, and the window redraws.
     fn selection_moved(&mut self, cx: &mut Context<Self>) {
-        self.scroll.scroll_to_item(self.state.selected);
+        self.scroll.scroll_to_item(shell::child_of_row(
+            &self.state.sections(),
+            self.state.selected,
+        ));
         cx.notify();
     }
 
@@ -1231,7 +1422,7 @@ impl FixtureWindow {
     fn render_root(&self, theme: &Theme, cx: &mut Context<Self>) -> gpui::Div {
         let rows = self.state.rows.iter().enumerate().map(|(index, row)| {
             let selected = index == self.state.selected;
-            result_row(
+            result_row_with(
                 RowContent {
                     title: row.title.into(),
                     subtitle: row.subtitle.map(Into::into),
@@ -1240,24 +1431,42 @@ impl FixtureWindow {
                     selected,
                     icon: Some(row.icon),
                 },
+                RowMeta {
+                    matched: pane_core::title_matches(row.title, &self.state.query),
+                    alias: row.alias.map(Into::into),
+                    keys: row
+                        .keys
+                        .map(|binding| crate::keyboard::binding_keys(&parse_binding(binding))),
+                    kind: Some(row.kind.into()),
+                },
                 theme,
             )
             .id(("row", index))
             .role(Role::ListBoxOption)
             .aria_label(row.title)
             .aria_selected(selected)
+            .on_mouse_move(
+                cx.listener(move |this, event: &gpui::MouseMoveEvent, _, cx| {
+                    this.pointer_moved_over(index, event.position, cx);
+                }),
+            )
             .on_click(cx.listener(move |this, _, _, cx| {
                 // A click selects the row it lands on; the fixture opens
                 // nothing — there is no command behind fixture data.
                 this.state.selected = index;
                 cx.notify();
             }))
+            .into_any_element()
         });
         // The launcher's own result list.
         let list = shell::result_list(theme)
             .aria_label("Results")
             .track_scroll(&self.scroll)
-            .children(rows);
+            .children(shell::with_section_labels(
+                rows,
+                &self.state.sections(),
+                theme,
+            ));
         let focus = self.query.focus_handle(cx);
         let search = div()
             .id("search")
@@ -1313,6 +1522,11 @@ impl FixtureWindow {
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::back))
+            // After the rows' own handlers: a row compares the event with
+            // the position before it.
+            .on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, _, _| {
+                this.pointer = Some(event.position);
+            }))
             .size_full()
             .flex()
             .flex_col()
@@ -1430,6 +1644,7 @@ struct ColorRecord {
     panel_solid: Hex,
     keycap_background: Hex,
     keycap_bottom: Hex,
+    alias_text: Hex,
     keycap_text: Hex,
     accent: Hex,
     accent_ink: Hex,
@@ -1471,7 +1686,7 @@ fn hex(color: Hsla) -> String {
 
 /// One key sequence as the manifest declares it: its caps, where each
 /// lies, and the type they are set in.
-#[derive(Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct KeyGroupRecord {
     /// The binding the sequence shows, in the record's grammar.
@@ -1487,7 +1702,7 @@ struct KeyGroupRecord {
     caps: Vec<CapRecord>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CapRecord {
     /// The cap's label, as both sides are controlled to show it.
@@ -1579,6 +1794,67 @@ fn shaped_width_in(
         .shape_line(SharedString::from(text.to_owned()), size, &[run], None)
         .width()
         .into()
+}
+
+/// Where `row`'s trailing parts lie, right-aligned inside its padding
+/// with the row's gap between them, as the shared row lays them out: the
+/// kind (at least its least width, its text right-aligned), the key
+/// sequence, then the alias chip.
+fn declare_trailing(window: &Window, theme: &Theme, row: &mut DeclaredRow) {
+    let geometry = &theme.geometry;
+    let typography = &theme.typography;
+    let gap = f32::from(geometry.row_gap);
+    let center = row.rect.y + row.rect.height / 2.;
+    let mut right = row.rect.x + row.rect.width - f32::from(geometry.row_padding_x);
+    let kind_width = shaped_width(
+        window,
+        theme,
+        row.kind,
+        typography.row_kind_size,
+        typography.regular,
+    )
+    .max(f32::from(geometry.row_kind_min_width));
+    row.kind_rect = Some(Rect {
+        x: right - kind_width,
+        y: row.rect.y,
+        width: kind_width,
+        height: row.rect.height,
+    });
+    right -= kind_width + gap;
+    if let Some(binding) = row.keys {
+        let height = f32::from(geometry.keycap_height);
+        let mut group = declared_group(
+            window,
+            theme,
+            (binding, &parse_binding(binding)),
+            None,
+            CapStyle::Regular,
+            (0., center - height / 2.),
+        );
+        let shift = right - group.rect.width;
+        group.rect.x += shift;
+        for cap in &mut group.caps {
+            cap.rect.x += shift;
+        }
+        right -= group.rect.width + gap;
+        row.key_group = Some(group);
+    }
+    if let Some(alias) = row.alias {
+        let width = shaped_width_in(
+            window,
+            typography.mono_family.clone(),
+            theme,
+            alias,
+            typography.alias_size,
+            FontWeight::NORMAL,
+        ) + 2. * f32::from(geometry.alias_padding_x);
+        row.alias_rect = Some(Rect {
+            x: right - width,
+            y: row.rect.y,
+            width,
+            height: row.rect.height,
+        });
+    }
 }
 
 fn parse_binding(binding: &str) -> Binding {
@@ -1802,6 +2078,11 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
                 cap.rect.x += shift;
             }
             keycaps.push(primary);
+            for capture in &mut captures {
+                for row in &mut capture.rows {
+                    declare_trailing(window, &theme, row);
+                }
+            }
         }
     }
 
@@ -1866,6 +2147,7 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
                 panel_solid: Hex(theme.panel_solid),
                 keycap_background: Hex(theme.keycap_background),
                 keycap_bottom: Hex(theme.keycap_bottom),
+                alias_text: Hex(theme.alias_text),
                 keycap_text: Hex(theme.keycap_text),
                 accent: Hex(theme.accent),
                 accent_ink: Hex(theme.accent_ink),
@@ -2131,9 +2413,10 @@ mod tests {
         let rows = &capture(&captures, "rest").rows;
         assert_eq!(rows.len(), ROOT_ROWS.len());
         for (index, row) in rows.iter().enumerate() {
-            // Row i below the header and the list's top padding, then one
-            // row height and one list gap per row before it.
-            let y = 64. + 4. + index as f32 * (44. + 2.);
+            // Row i below the header, the list's top padding and the
+            // "Commands" label (30 and the list's gap), then one row height
+            // and one list gap per row before it.
+            let y = 64. + 4. + (30. + 2.) + index as f32 * (44. + 2.);
             assert_eq!(
                 row.rect,
                 Rect {
@@ -2143,11 +2426,16 @@ mod tests {
                     height: 44.
                 }
             );
-            assert!(row.visible);
         }
-        // Everything fits above the list's bottom padding: nothing scrolls.
+        // With the label above them the eight rows still show whole: only
+        // the list's bottom padding runs past its 404px.
+        assert!(rows.iter().all(|row| row.visible));
         let last = rows.last().unwrap().rect;
-        assert!(last.y + last.height + 10. <= 64. + 404.);
+        assert_eq!(last.y + last.height, 64. + 402.);
+        let sections = &capture(&captures, "rest").sections;
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].label, "Commands");
+        assert_eq!(sections[0].rect.y, 64. + 4.);
     }
 
     #[test]
@@ -2162,18 +2450,38 @@ mod tests {
     }
 
     #[test]
-    fn hovering_marks_the_row_under_the_pointer_without_selecting_it() {
+    fn moving_the_pointer_onto_a_row_selects_it() {
         let captures = declared_captures(scenario("root-hover"), &theme());
         let hover = capture(&captures, "hover");
         let (x, y) = hover.pointer.expect("the pointer is in the window");
         assert!(hover.rows[1].rect.contains((x, y)));
-        assert!(hover.rows[1].hovered && !hover.rows[1].selected);
-        assert!(hover.rows[0].selected && !hover.rows[0].hovered);
+        assert!(hover.rows[1].hovered && hover.rows[1].selected);
+        assert!(!hover.rows[0].selected && !hover.rows[0].hovered);
+        assert_eq!(hover.action, Some("Run Command"));
         assert!(capture(&captures, "rest").pointer.is_none());
 
         let captures = declared_captures(scenario("root-selected-hover"), &theme());
         let both = capture(&captures, "selected-hover");
         assert!(both.rows[2].hovered && both.rows[2].selected);
+    }
+
+    #[test]
+    fn a_resting_pointer_keeps_its_wash_while_the_keys_move_the_selection() {
+        let captures = declared_captures(scenario("root-pointer-keys"), &theme());
+        let selected = |name: &str| {
+            capture(&captures, name)
+                .rows
+                .iter()
+                .position(|row| row.selected)
+        };
+        assert_eq!(selected("pointed"), Some(1));
+        // Down with the pointer resting on row 1: row 2 is selected, row
+        // 1 keeps the hover wash.
+        let down = capture(&captures, "down-under-pointer");
+        assert_eq!(selected("down-under-pointer"), Some(2));
+        assert!(down.rows[1].hovered && !down.rows[1].selected);
+        // Moving again over row 1, a few pixels on, selects it again.
+        assert_eq!(selected("moved-again"), Some(1));
     }
 
     #[test]
@@ -2298,7 +2606,7 @@ mod tests {
         assert_eq!(hover["name"], "root-hover");
         assert_eq!(
             hover["steps"][1],
-            serde_json::json!({ "action": "pointer", "row": 1 })
+            serde_json::json!({ "action": "pointer", "row": 1, "nudge": 0 })
         );
         assert_eq!(hover["client"], serde_json::json!([760.0, 518.0]));
     }

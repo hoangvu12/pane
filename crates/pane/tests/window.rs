@@ -594,6 +594,49 @@ fn the_launcher_divides_its_reference_client_edge_to_edge(cx: &mut TestAppContex
     assert_eq!(footer.size, gpui::size(px(760.), px(50.)));
 }
 
+/// Selecting a half-shown row with the pointer does not scroll the list:
+/// scrolling it into view under a still pointer would put another row
+/// under the pointer, which the next small movement would select and
+/// scroll in turn. The keys' selection still scrolls.
+#[gpui::test]
+fn the_pointer_selects_a_half_shown_row_without_scrolling(cx: &mut TestAppContext) {
+    let titles: Vec<String> = (1..=12).map(|n| format!("Row {n}")).collect();
+    let commands = titles
+        .iter()
+        .map(|title| command(title, "sample_rust"))
+        .collect();
+    let (window, cx) = open_with(cx, commands);
+    cx.simulate_resize(gpui::size(gpui::px(640.), gpui::px(420.)));
+    cx.run_until_parked();
+    let list = cx.debug_bounds("rows").expect("the list is rendered");
+    let (index, half) = titles
+        .iter()
+        .enumerate()
+        .find_map(|(index, title)| {
+            let row = cx.debug_bounds(selector(&format!("row-{title}")))?;
+            (row.top() < list.bottom() && row.bottom() > list.bottom()).then_some((index, row))
+        })
+        .expect("a row the list's bottom edge cuts");
+    let at = gpui::point(half.center().x, list.bottom() - px(3.));
+    arrive(cx, at - gpui::point(px(1.), px(0.)));
+    cx.simulate_mouse_move(at, None::<MouseButton>, Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(settle(&window, cx).selected, Some(index));
+    assert!(row_is_visible(cx, "row-Row 1"), "the list did not scroll");
+    assert!(!row_is_visible(
+        cx,
+        selector(&format!("row-{}", titles[index]))
+    ));
+
+    cx.simulate_keystrokes("down");
+    cx.run_until_parked();
+    assert_eq!(settle(&window, cx).selected, Some(index + 1));
+    assert!(
+        row_is_visible(cx, selector(&format!("row-{}", titles[index + 1]))),
+        "the keys' selection scrolls into view"
+    );
+}
+
 #[gpui::test]
 fn the_list_scrolls_to_keep_the_selected_row_visible(cx: &mut TestAppContext) {
     const TITLES: [&str; 12] = [
@@ -1801,6 +1844,10 @@ fn the_footer_button_labels_the_action_from_identity_not_the_row_title(cx: &mut 
     let manage = cx
         .debug_bounds("row-Manage extensions…")
         .expect("the row is rendered");
+    // The pointer moves onto the row, which selects it, and the click
+    // runs it.
+    arrive(cx, manage.center() - gpui::point(px(1.), px(0.)));
+    cx.simulate_mouse_move(manage.center(), None::<MouseButton>, Modifiers::none());
     cx.simulate_click(manage.center(), Modifiers::none());
     settle(&window, cx);
 
@@ -1824,6 +1871,11 @@ fn the_footer_button_labels_the_action_from_identity_not_the_row_title(cx: &mut 
     let manage = cx
         .debug_bounds("row-Manage extensions…")
         .expect("the row is rendered");
+    cx.simulate_mouse_move(
+        manage.center() + gpui::point(px(3.), px(0.)),
+        None::<MouseButton>,
+        Modifiers::none(),
+    );
     cx.simulate_click(manage.center(), Modifiers::none());
     settle(&window, cx);
 
@@ -2205,14 +2257,14 @@ fn typing_selection_and_row_changes_never_transition(cx: &mut TestAppContext) {
 /// under it starts no arrival, and reducing motion mid-arrival ends it on
 /// the next drawn frame. Either way the window schedules no frame for
 /// presentation.
-/// The launcher's result rows take the pointer feedback: the hover wash
-/// fades in over the shared pointer span, the press takes the stronger
-/// wash and hands it to the selection when the click lands, and a fast
-/// reversal settles with the window idle. The keyboard's selection still
-/// moves at once — nothing of the wash fades for it — and reduced motion
-/// snaps the wash with no frame at all.
+/// Root search's rows follow the reference's pointer (#94): movement onto
+/// a row selects it at once — the selected wash arrives with no fade, and
+/// the window asks for no frame — and the footer and Enter act on it,
+/// once. Off root search, an opened command's items keep the shared
+/// pointer fade: their hover wash fades in and settles with the window
+/// idle.
 #[gpui::test]
-fn a_result_row_fades_its_pointer_washes(cx: &mut TestAppContext) {
+fn root_rows_select_under_the_moving_pointer_at_once(cx: &mut TestAppContext) {
     let (window, cx) = open_with(
         cx,
         vec![
@@ -2224,87 +2276,276 @@ fn a_result_row_fades_its_pointer_washes(cx: &mut TestAppContext) {
     settle_frames(cx);
     assert_eq!(view.selected, Some(0));
 
-    // The pointer arrives on an unselected row: the hover wash fades in,
-    // so the window asks for frames while it runs and none once it has.
     let row = cx
         .debug_bounds("row-JavaScript sample")
         .expect("an unselected row");
+    // The first event after the window shows only records where the
+    // pointer is (a window appearing under a resting pointer gets one).
+    arrive(cx, row.center());
+    assert_eq!(
+        settle(&window, cx).selected,
+        Some(0),
+        "the first event selected nothing"
+    );
+    cx.simulate_mouse_move(
+        row.center() + gpui::point(px(1.), px(0.)),
+        None::<MouseButton>,
+        Modifiers::none(),
+    );
+    let view = settle(&window, cx);
+    assert_eq!(view.selected, Some(1), "the pointer's movement selected it");
+    assert_eq!(settle_frames(cx), 0, "the root wash does not fade");
+
+    // The footer's action follows what the pointer selected: Pane's own
+    // rows name their actions differently from a command's.
+    let own = view
+        .rows
+        .iter()
+        .position(|row| !["Rust sample", "JavaScript sample"].contains(&row.title.as_str()))
+        .expect("Pane lists its own rows after the commands");
+    let own_row = cx
+        .debug_bounds(selector(&format!("row-{}", view.rows[own].title)))
+        .expect("Pane's own row is drawn");
+    cx.simulate_mouse_move(own_row.center(), None::<MouseButton>, Modifiers::none());
+    assert_eq!(settle(&window, cx).selected, Some(own));
+    let nodes = accessible_nodes(cx);
+    assert!(
+        !nodes
+            .iter()
+            .any(|node| node["role"] == "Button" && node["label"] == "Open command"),
+        "the footer names the selected row's own action"
+    );
     cx.simulate_mouse_move(row.center(), None::<MouseButton>, Modifiers::none());
+    assert_eq!(settle(&window, cx).selected, Some(1));
+    node(&accessible_nodes(cx), "Button", "Open command");
+
+    // Enter opens what the pointer selected.
+    cx.simulate_keystrokes("enter");
+    let view = settle(&window, cx);
+    assert!(matches!(view.screen, Screen::Command));
+    assert_eq!(view.title, "JavaScript sample");
+    settle_frames(cx);
+
+    // The opened command's items keep the pointer fade.
+    let item = view
+        .rows
+        .get(1)
+        .map(|row| format!("row-{}", row.title))
+        .expect("the sample lists more than one item");
+    let item = cx
+        .debug_bounds(selector(&item))
+        .expect("an unselected item");
+    cx.simulate_mouse_move(item.center(), None::<MouseButton>, Modifiers::none());
     cx.run_until_parked();
     assert!(
         frame(cx, Duration::from_millis(40)) >= 1,
-        "the hover wash is fading"
+        "the item's hover wash is fading"
     );
-    assert!(
-        frame(cx, Duration::from_millis(160)) >= 1,
-        "the hover wash finished fading"
-    );
+    assert!(frame(cx, Duration::from_millis(160)) >= 1);
     assert_eq!(settle_frames(cx), 0, "a settled wash requests no frame");
-
-    // Pressed: the wash strengthens, and the activation is immediate —
-    // the release's click selects and opens the row without waiting on
-    // any fade. The pointer leaves the row it opened, and the wash it
-    // held there settles with it, so the frames this test counts are
-    // the view's own — none of the pointer's.
-    cx.simulate_click(row.center(), Modifiers::none());
-    let view = settle(&window, cx);
-    // The click selected the row it was on and opened it: the settled view
-    // is the opened command's own screen, whose `selected` is its first
-    // item, so the command that opened — its title — is what proves which
-    // row the click selected.
-    assert!(
-        matches!(view.screen, Screen::Command),
-        "the click opened the row"
-    );
     assert_eq!(
-        view.title, "JavaScript sample",
-        "the click selected the row"
+        settle(&window, cx).selected,
+        Some(0),
+        "an item's hover selects nothing"
     );
+}
+
+/// Root search's rows sit under section labels from the launcher's
+/// presentation: "Commands" over a blank query's list — no claim of
+/// recent use — and "Results" with their count over a query's, each row
+/// a label's height below it. (Scrolling to the selection past a label is
+/// `the_list_scrolls_to_keep_the_selected_row_visible`'s.)
+#[gpui::test]
+fn root_rows_sit_under_their_section_labels(cx: &mut TestAppContext) {
+    let (window, cx) = three_rows(cx);
+    let label = cx
+        .debug_bounds("section-Commands")
+        .expect("a blank query's rows are its commands");
+    let first = cx.debug_bounds("row-Alpha").expect("the first row");
+    assert_eq!(label.size.height, px(30.));
+    assert_eq!(first.top(), label.bottom() + px(2.), "the list's 2px gap");
+    assert!(cx.debug_bounds("section-Results").is_none());
+
+    cx.simulate_input("char");
+    let view = settle(&window, cx);
+    assert_eq!(view.rows[0].title, "Charlie");
+    let label = cx
+        .debug_bounds("section-Results")
+        .expect("a query's rows are its results");
+    let first = cx.debug_bounds("row-Charlie").expect("the match");
+    assert_eq!(first.top(), label.bottom() + px(2.));
+    assert!(cx.debug_bounds("section-Commands").is_none());
+}
+
+/// Three root rows — Alpha, Bravo and Charlie, which open the Rust,
+/// JavaScript and TypeScript samples — the pointer outside the window.
+fn three_rows(cx: &mut TestAppContext) -> (gpui::Entity<LauncherWindow>, &mut VisualTestContext) {
+    let (window, cx) = open_with(
+        cx,
+        vec![
+            command("Alpha", RUST.component),
+            command("Bravo", JAVASCRIPT.component),
+            command("Charlie", TYPESCRIPT.component),
+        ],
+    );
+    settle(&window, cx);
+    (window, cx)
+}
+
+/// The pointer's first event in the window, at `at`: it only records
+/// where the pointer is.
+fn arrive(cx: &mut VisualTestContext, at: gpui::Point<gpui::Pixels>) {
+    cx.simulate_mouse_move(at, None::<MouseButton>, Modifiers::none());
+}
+
+fn center_of(cx: &mut VisualTestContext, row: &'static str) -> gpui::Point<gpui::Pixels> {
+    cx.debug_bounds(row)
+        .unwrap_or_else(|| panic!("{row} is drawn"))
+        .center()
+}
+
+/// Move to B, then Down with the pointer resting on B: C stays selected —
+/// a resting pointer never undoes the keys, even when the platform repeats
+/// its position — and moving again over B selects B.
+#[gpui::test]
+fn a_resting_pointer_leaves_the_keys_selection_alone(cx: &mut TestAppContext) {
+    let (window, cx) = three_rows(cx);
+    let bravo = center_of(cx, "row-Bravo");
+    arrive(cx, bravo - gpui::point(px(1.), px(0.)));
+    cx.simulate_mouse_move(bravo, None::<MouseButton>, Modifiers::none());
+    assert_eq!(settle(&window, cx).selected, Some(1));
+    cx.simulate_keystrokes("down");
+    assert_eq!(settle(&window, cx).selected, Some(2));
+    // The same position again is not movement.
+    cx.simulate_mouse_move(bravo, None::<MouseButton>, Modifiers::none());
+    assert_eq!(
+        settle(&window, cx).selected,
+        Some(2),
+        "the keys' selection stays"
+    );
+    // Real movement over B selects it again.
     cx.simulate_mouse_move(
-        gpui::point(px(-100.), px(-100.)),
+        bravo + gpui::point(px(6.), px(0.)),
         None::<MouseButton>,
         Modifiers::none(),
     );
-    settle_frames(cx);
+    assert_eq!(settle(&window, cx).selected, Some(1));
+    // The keys stay in range at the ends.
+    cx.simulate_keystrokes("up up up");
+    assert_eq!(settle(&window, cx).selected, Some(0));
+    let last = settle(&window, cx).rows.len() - 1;
+    for _ in 0..=last {
+        cx.simulate_keystrokes("down");
+    }
+    assert_eq!(settle(&window, cx).selected, Some(last));
+}
 
-    // Back at root, a fast reversal: the pointer enters part-way
-    // through the fade-in and leaves again, and the wash settles back
-    // to rest with the window idle.
+/// A click on an unselected row with no movement before it selects it;
+/// a click on the selected row runs it. A pointer that moved onto a row
+/// selected it already, so an ordinary click runs it, once.
+#[gpui::test]
+fn a_click_selects_an_unselected_row_and_runs_the_selected_one(cx: &mut TestAppContext) {
+    let (window, cx) = three_rows(cx);
+    let bravo = center_of(cx, "row-Bravo");
+    cx.simulate_click(bravo, Modifiers::none());
+    let view = settle(&window, cx);
+    assert!(matches!(view.screen, Screen::Root { .. }), "nothing ran");
+    assert_eq!(view.selected, Some(1), "the click selected Bravo");
+    cx.simulate_click(bravo, Modifiers::none());
+    let view = settle(&window, cx);
+    assert_eq!(
+        (view.screen, view.title.as_str()),
+        (Screen::Command, "JavaScript sample"),
+        "the second click ran Bravo"
+    );
+
     cx.simulate_keystrokes("escape");
+    settle(&window, cx);
+    let charlie = center_of(cx, "row-Charlie");
+    arrive(cx, charlie - gpui::point(px(1.), px(0.)));
+    cx.simulate_mouse_move(charlie, None::<MouseButton>, Modifiers::none());
+    cx.simulate_click(charlie, Modifiers::none());
+    let view = settle(&window, cx);
+    assert_eq!(
+        (view.screen, view.title.as_str()),
+        (Screen::Command, "TypeScript sample"),
+        "moving then clicking ran Charlie"
+    );
+    assert!(
+        !matches!(view.status, Status::Error(_)),
+        "{:?}",
+        view.status
+    );
+}
+
+/// The selection-freeze input at the root interaction boundary: while a
+/// layer owns the selected target (the contextual Actions panel, #95),
+/// moving over or clicking another row changes nothing; the keys still
+/// move the selection. Thawed, movement selects again.
+#[gpui::test]
+fn a_frozen_selection_ignores_the_pointer(cx: &mut TestAppContext) {
+    let (window, cx) = three_rows(cx);
+    window.update(cx, |this, cx| this.freeze_pointer_selection(true, cx));
+    let bravo = center_of(cx, "row-Bravo");
+    arrive(cx, bravo - gpui::point(px(1.), px(0.)));
+    cx.simulate_mouse_move(bravo, None::<MouseButton>, Modifiers::none());
+    cx.simulate_click(bravo, Modifiers::none());
     let view = settle(&window, cx);
     assert!(matches!(view.screen, Screen::Root { .. }));
-    let row = cx
-        .debug_bounds("row-JavaScript sample")
-        .expect("an unselected row");
-    cx.simulate_mouse_move(row.center(), None::<MouseButton>, Modifiers::none());
-    cx.run_until_parked();
-    assert!(frame(cx, Duration::from_millis(40)) >= 1);
+    assert_eq!(view.selected, Some(0), "the frozen target stayed");
+    cx.simulate_keystrokes("down down");
+    assert_eq!(
+        settle(&window, cx).selected,
+        Some(2),
+        "the keys still move it"
+    );
+
+    window.update(cx, |this, cx| this.freeze_pointer_selection(false, cx));
     cx.simulate_mouse_move(
-        gpui::point(px(-100.), px(-100.)),
+        bravo + gpui::point(px(4.), px(0.)),
         None::<MouseButton>,
         Modifiers::none(),
     );
-    cx.run_until_parked();
-    assert!(frame(cx, Duration::from_millis(40)) >= 1);
-    assert!(frame(cx, Duration::from_millis(160)) >= 1);
-    assert_eq!(settle_frames(cx), 0, "the reversal settled the wash");
-
-    // The keyboard's selection still moves at once: nothing of the wash
-    // fades for it, and no frame is asked.
-    cx.simulate_keystrokes("down");
-    let view = settle(&window, cx);
-    assert_eq!(view.selected, Some(1));
     assert_eq!(
-        settle_frames(cx),
-        0,
-        "the selection's move requested no frame"
+        settle(&window, cx).selected,
+        Some(1),
+        "thawed, movement selects"
+    );
+}
+
+/// The footer menu acts on the row it opened for: while it is open,
+/// moving over another row leaves the selection where it was; once it
+/// closes, movement selects again.
+#[gpui::test]
+fn an_open_footer_menu_holds_the_selection_against_the_pointer(cx: &mut TestAppContext) {
+    let (window, cx) = three_rows(cx);
+    let menu = center_of(cx, "footer-menu");
+    arrive(cx, menu - gpui::point(px(1.), px(0.)));
+    cx.simulate_click(menu, Modifiers::none());
+    settle(&window, cx);
+    assert!(cx.debug_bounds("menu").is_some(), "the menu is open");
+
+    let bravo = center_of(cx, "row-Bravo");
+    cx.simulate_mouse_move(bravo, None::<MouseButton>, Modifiers::none());
+    assert_eq!(
+        settle(&window, cx).selected,
+        Some(0),
+        "the menu's target stayed"
     );
 
-    // Reduced motion: the wash snaps, and no frame is asked for at all.
-    cx.update(|_, cx| cx.set_reduce_motion(true));
-    cx.simulate_mouse_move(row.center(), None::<MouseButton>, Modifiers::none());
-    cx.run_until_parked();
-    assert_eq!(settle_frames(cx), 0, "the wash snapped in");
+    cx.simulate_keystrokes("escape");
+    settle(&window, cx);
+    assert!(cx.debug_bounds("menu").is_none(), "the menu closed");
+    cx.simulate_mouse_move(
+        bravo + gpui::point(px(4.), px(0.)),
+        None::<MouseButton>,
+        Modifiers::none(),
+    );
+    assert_eq!(
+        settle(&window, cx).selected,
+        Some(1),
+        "closed, movement selects"
+    );
 }
 
 /// The footer's primary action takes the pointer feedback: the wash

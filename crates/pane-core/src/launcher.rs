@@ -43,6 +43,7 @@ mod command_search;
 mod hotkeys;
 mod indexed;
 mod network;
+mod presentation;
 
 use crate::clipboard::{Capture, ClipboardSystem};
 use crate::dependencies;
@@ -90,6 +91,7 @@ pub use developing::{BuildFailure, Development};
 pub use hotkeys::HotkeyOutcome;
 use hotkeys::{Bindings, OpenPane};
 use pausing::{Pauses, Recorder};
+pub use presentation::{Presentation, RowKind, RowPresentation, Section, root_sections};
 use schedules::Schedules;
 use services::Services;
 pub use shortcuts::{ShortcutCatalog, ShortcutCommand, ShortcutGroup};
@@ -1833,6 +1835,27 @@ impl Launcher {
         ));
         relist_root(state, query);
         Some(listed)
+    }
+
+    /// How the window presents the rows of the view: each row's kind,
+    /// alias, hotkey and title matches, and the section labels over them
+    /// (see [`Presentation`]). Read-only; root search alone is projected.
+    pub fn presentation(&self) -> Presentation {
+        presentation::presentation(&self.lock())
+    }
+
+    /// The view and its presentation, read together: the same rows, row
+    /// for row, however the launcher changes in the background — what a
+    /// frame draws from.
+    pub fn presented_view(&self) -> (LauncherView, Presentation) {
+        let state = self.lock();
+        (state.view.clone(), presentation::presentation(&state))
+    }
+
+    /// The selected row's index; `None` when nothing is selected. Cheaper
+    /// than reading the whole view, for input that only asks this.
+    pub fn selected(&self) -> Option<usize> {
+        self.lock().view.selected
     }
 
     /// Selects the row at `index`, if there is one.
