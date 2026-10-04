@@ -891,11 +891,14 @@ impl Select {
         // choice reads as the focused field's active descendant, and
         // assistive technology follows the highlight as the arrows move
         // it. The editable text element itself has no node of its own.
+        // While the exit paints, the content takes no focus either — the
+        // keyboard has already returned to the trigger, and a click on
+        // the fading overlay must not hand it back into what is closing
+        // (the same inertness the footer menu's exit gives its list).
         let debug = format!("{}-query", self.debug);
         let content = div()
             .id("query")
             .debug_selector(move || debug.clone())
-            .track_focus(&input.focus_handle(cx))
             .role(Role::EditableComboBox)
             .aria_label(PLACEHOLDER)
             .aria_value(query.clone())
@@ -903,6 +906,9 @@ impl Select {
             .flex()
             .flex_col()
             .p(px(6.))
+            .when(self.open, |content| {
+                content.track_focus(&input.focus_handle(cx))
+            })
             .child(self.query_field(model, field_focused, &query, !self.open))
             .child(list);
         // The popup's motion wrapper: always in the tree while the popup
@@ -921,7 +927,6 @@ impl Select {
         let debug = format!("{}-popup", self.debug);
         let popup = div()
             .id("popup")
-            .key_context(POPUP)
             .w_full()
             .flex()
             .flex_col()
@@ -937,38 +942,47 @@ impl Select {
             .occlude()
             // The exit's visuals are not in the accessibility tree: a
             // closed popup has nothing active to announce.
-            .when(exiting, |popup| popup.aria_hidden())
-            .on_action(cx.listener(Self::next_choice))
-            .on_action(cx.listener(Self::previous_choice))
-            .on_action(cx.listener(Self::first_choice))
-            .on_action(cx.listener(Self::last_choice))
-            .on_action(cx.listener(Self::commit_action))
-            .on_action(cx.listener(Self::cancel_action))
-            .on_action(cx.listener(Self::leave_forward))
-            .on_action(cx.listener(Self::leave_backward))
-            // A mouse-down outside the popup cancels the draft and is
-            // left to land, so the clicked target keeps its focus (see
-            // [`Select::outside_down`]). The trigger's own press was
-            // already settled in the capture phase before this. While
-            // the exit runs this listener is a no-op (the popup is
-            // already closed), so the outside click lands as it would
-            // without the popup.
-            .on_mouse_down_out(cx.listener(Self::outside_down))
-            .child(
-                div()
-                    .relative()
-                    .top(px(offset))
-                    .when(opacity < 1., |wrapper| wrapper.opacity(opacity))
-                    .shadow(vec![
-                        BoxShadow::new(px(0.), px(0.), gpui::rgba(0x000000CC))
-                            .spread_radius(px(0.5)),
-                        BoxShadow::new(px(0.), px(28.), gpui::rgba(0x000000BF))
-                            .blur_radius(px(70.))
-                            .spread_radius(px(-14.)),
-                    ])
-                    .debug_selector(move || debug.clone())
-                    .child(model.material.popover(theme, content)),
-            );
+            .when(exiting, |popup| popup.aria_hidden());
+        // The interactive popup: the open popup's key context over the
+        // window's own keys, its handlers — the arrows, Enter, Escape
+        // and Tab — and the outside dismissal that cancels the draft
+        // while leaving the click to land. An exit carries none of
+        // them: the fading visuals expose nothing active, exactly as
+        // the footer menu's exit does for its list.
+        let popup = if exiting {
+            popup
+        } else {
+            popup
+                .key_context(POPUP)
+                .on_action(cx.listener(Self::next_choice))
+                .on_action(cx.listener(Self::previous_choice))
+                .on_action(cx.listener(Self::first_choice))
+                .on_action(cx.listener(Self::last_choice))
+                .on_action(cx.listener(Self::commit_action))
+                .on_action(cx.listener(Self::cancel_action))
+                .on_action(cx.listener(Self::leave_forward))
+                .on_action(cx.listener(Self::leave_backward))
+                // A mouse-down outside the popup cancels the draft and
+                // is left to land, so the clicked target keeps its
+                // focus (see [`Select::outside_down`]). The trigger's
+                // own press was already settled in the capture phase
+                // before this.
+                .on_mouse_down_out(cx.listener(Self::outside_down))
+        }
+        .child(
+            div()
+                .relative()
+                .top(px(offset))
+                .when(opacity < 1., |wrapper| wrapper.opacity(opacity))
+                .shadow(vec![
+                    BoxShadow::new(px(0.), px(0.), gpui::rgba(0x000000CC)).spread_radius(px(0.5)),
+                    BoxShadow::new(px(0.), px(28.), gpui::rgba(0x000000BF))
+                        .blur_radius(px(70.))
+                        .spread_radius(px(-14.)),
+                ])
+                .debug_selector(move || debug.clone())
+                .child(model.material.popover(theme, content)),
+        );
         deferred(
             anchored()
                 .anchor(gpui::Anchor::TopLeft)
