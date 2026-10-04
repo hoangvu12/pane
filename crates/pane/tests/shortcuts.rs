@@ -20,8 +20,8 @@ use std::time::{Duration, Instant};
 
 use futures::executor::block_on;
 use gpui::{
-    AnyWindowHandle, Entity, Modifiers, TestAppContext, VisualTestContext, WindowHandle,
-    prelude::*, px,
+    AnyWindowHandle, Entity, Modifiers, MouseButton, TestAppContext, VisualTestContext,
+    WindowHandle, prelude::*, px,
 };
 use pane::{LauncherWindow, SettingsWindow};
 use pane_core::hotkeys::{HotkeyError, Hotkeys, Shortcut};
@@ -473,13 +473,30 @@ fn focused_label_eventually(cx: &mut VisualTestContext, check: impl Fn(&str) -> 
     }
 }
 
-/// Clicks the group with `key`'s header, toggling it.
+/// Clicks the group with `key`'s header, toggling it. The pointer moves
+/// onto the header first, as a user's does: a click's landing alone does
+/// not tell a row it is hovered, and the wash the header keeps would
+/// never settle with the layout saying the pointer is gone and the paint
+/// saying it is there.
 fn click_group(cx: &mut VisualTestContext, key: &str) {
     let header = cx
         .debug_bounds(selector(format!("shortcut-group-{key}")))
         .expect("the group header");
+    cx.simulate_mouse_move(header.center(), None::<MouseButton>, Modifiers::none());
     cx.simulate_click(header.center(), Modifiers::none());
     cx.run_until_parked();
+}
+
+/// Moves the pointer off the window, as a user's does when it leaves —
+/// for the reason [`click_group`] gives, from the leaving side: content
+/// that changes under a parked pointer leaves the wash it implied
+/// running until the pointer's next real move.
+fn pointer_leaves(cx: &mut VisualTestContext) {
+    cx.simulate_mouse_move(
+        gpui::point(px(-100.), px(-100.)),
+        None::<MouseButton>,
+        Modifiers::none(),
+    );
 }
 
 /// Starts the inline hotkey recorder for the command `id` by clicking
@@ -1806,6 +1823,10 @@ fn the_arriving_commands_are_interactive_from_the_first_frame(cx: &mut TestAppCo
     let cell = settings_cx
         .debug_bounds(selector(format!("shortcut-alias-{}", command_id(&query))))
         .expect("the alias cell, mid-arrival");
+    // The pointer moves onto the cell before pressing it, as a user's
+    // does, so the wash it starts settles instead of stranding between
+    // the layout's and the paint's say on the hover.
+    settings_cx.simulate_mouse_move(cell.center(), None::<MouseButton>, Modifiers::none());
     settings_cx.simulate_click(cell.center(), Modifiers::none());
     settings_cx.run_until_parked();
     assert!(
@@ -1996,6 +2017,7 @@ fn returning_to_the_shortcuts_page_keeps_its_state(cx: &mut TestAppContext) {
     let appearance = settings_cx
         .debug_bounds("section-Appearance")
         .expect("the Appearance section");
+    settings_cx.simulate_mouse_move(appearance.center(), None::<MouseButton>, Modifiers::none());
     settings_cx.simulate_click(appearance.center(), Modifiers::none());
     settings_cx.run_until_parked();
     assert!(
@@ -2005,6 +2027,7 @@ fn returning_to_the_shortcuts_page_keeps_its_state(cx: &mut TestAppContext) {
     let shortcuts = settings_cx
         .debug_bounds("section-Shortcuts")
         .expect("the Shortcuts section");
+    settings_cx.simulate_mouse_move(shortcuts.center(), None::<MouseButton>, Modifiers::none());
     settings_cx.simulate_click(shortcuts.center(), Modifiers::none());
     settings_cx.run_until_parked();
     assert!(
@@ -2030,6 +2053,11 @@ fn returning_to_the_shortcuts_page_keeps_its_state(cx: &mut TestAppContext) {
         disclosure(&settings, &hello_key, &mut settings_cx).is_none(),
         "no group replayed its arrival"
     );
+    settle_frames(&mut settings_cx);
+    // The pointer leaves the sidebar row it came home with, and the wash
+    // it held settles with it: the frames the clearing phase counts are
+    // the page's own, none of the pointer's.
+    pointer_leaves(&mut settings_cx);
     settle_frames(&mut settings_cx);
 
     // Clearing the filter is a content update: the rows come back with

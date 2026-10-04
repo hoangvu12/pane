@@ -563,6 +563,14 @@ pub(super) fn result_rows(
                 theme,
             )
             .id(("settings-search-result", index))
+            // Pressed: the selected wash, one rung above the hover one,
+            // fading on the shared pointer span — and only while the
+            // result is unselected, so the search's selected wash lands
+            // at once.
+            .when(!selected, |row| {
+                row.active(|row| row.bg(theme.row_selected))
+                    .transitions(|fades| fades.bg(crate::ui::motion::pointer_fade()))
+            })
             .debug_selector(move || format!("settings-search-result-{title}"))
             .role(Role::ListBoxOption)
             .aria_label(hit.entry.title.clone())

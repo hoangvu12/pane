@@ -307,6 +307,14 @@ impl SettingsWindow {
                         theme,
                     )
                     .id(("section", index))
+                    // Pressed: the selected wash, one rung above the
+                    // hover one, fading on the shared pointer span — and
+                    // only while the section is unselected, so the
+                    // sidebar's selected wash lands at once.
+                    .when(!selected, |row| {
+                        row.active(|row| row.bg(theme.row_selected))
+                            .transitions(|fades| fades.bg(crate::ui::motion::pointer_fade()))
+                    })
                     .debug_selector(move || format!("section-{}", page.title))
                     .role(Role::ListBoxOption)
                     .aria_label(page.title)
@@ -585,13 +593,21 @@ fn control_button(
         .on_click(move |_: &gpui::ClickEvent, window, _| activate(window))
         .hover(|button| {
             // The close button's hover is the danger tone, as Windows
-            // paints it; the others take the row hover wash.
+            // paints it; the others take the row hover wash. The wash
+            // fades in and out over the shared pointer span, and the
+            // press takes the selected wash below it — a window control
+            // closes or maximizes the frame the click lands, so the
+            // press is a flicker at most, but it is never a delay.
             if area == WindowControlArea::Close {
                 button.bg(theme.danger)
             } else {
                 button.bg(theme.row_hover)
             }
         })
+        .when(area != WindowControlArea::Close, |button| {
+            button.active(|button| button.bg(theme.row_selected))
+        })
+        .transitions(|fades| fades.bg(crate::ui::motion::pointer_fade()))
         .child(glyph(mark, px(16.), theme.text_title))
 }
 

@@ -238,6 +238,10 @@ fn render(
                 &theme,
             )
             .id("about-check-update")
+            // Pressed: the selected wash, one rung above the hover one,
+            // fading on the shared pointer span.
+            .active(|row| row.bg(theme.row_selected))
+            .transitions(|fades| fades.bg(crate::ui::motion::pointer_fade()))
             .debug_selector(|| "about-check-update".into())
             .role(Role::Button)
             .aria_label("Check for updates")
@@ -269,6 +273,10 @@ fn render(
                     &theme,
                 )
                 .id("about-update")
+                // Pressed: the selected wash, one rung above the hover
+                // one, fading on the shared pointer span.
+                .active(|row| row.bg(theme.row_selected))
+                .transitions(|fades| fades.bg(crate::ui::motion::pointer_fade()))
                 .debug_selector(|| "about-update".into())
                 .role(Role::Button)
                 .aria_label(row_title)
@@ -360,6 +368,10 @@ fn render(
                 &theme,
             )
             .id("about-documentation")
+            // Pressed: the selected wash, one rung above the hover one,
+            // fading on the shared pointer span.
+            .active(|row| row.bg(theme.row_selected))
+            .transitions(|fades| fades.bg(crate::ui::motion::pointer_fade()))
             .debug_selector(|| "about-documentation".into())
             .anchor_scroll(Some(this.search_anchor(DOCUMENTATION_ROW)))
             .role(Role::Link)
@@ -421,6 +433,10 @@ fn render(
                 &theme,
             )
             .id("about-diagnostics")
+            // Pressed: the selected wash, one rung above the hover one,
+            // fading on the shared pointer span.
+            .active(|row| row.bg(theme.row_selected))
+            .transitions(|fades| fades.bg(crate::ui::motion::pointer_fade()))
             .debug_selector(|| "about-diagnostics".into())
             .role(Role::Button)
             .aria_label("Copy diagnostics")

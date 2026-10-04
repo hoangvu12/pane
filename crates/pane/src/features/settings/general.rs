@@ -456,6 +456,9 @@ fn recorder_row(
         .rounded(geometry.row_radius)
         .cursor_pointer()
         .hover(|row| row.bg(theme.row_hover))
+        // Pressed: the selected wash, one rung above the hover one.
+        .active(|row| row.bg(theme.row_selected))
+        .transitions(|fades| fades.bg(crate::ui::motion::pointer_fade()))
         .child(
             div()
                 .flex_1()
@@ -560,9 +563,7 @@ fn reset_row(
         .min_h(geometry.row_min_height)
         .px(geometry.row_padding_x)
         .rounded(geometry.row_radius)
-        .when(resettable, |row| {
-            row.cursor_pointer().hover(|row| row.bg(theme.row_hover))
-        })
+        .when(resettable, |row| row.cursor_pointer())
         .when(!resettable, |row| row.opacity(0.5).cursor_default())
         .child(
             div()
@@ -586,6 +587,14 @@ fn reset_row(
                 ),
         );
     row.id("open-pane-reset")
+        // The pointer feedback, on the named row: the hover wash fades
+        // over the shared pointer span, and the press takes the selected
+        // wash, one rung above the hover one.
+        .when(resettable, |row| {
+            row.hover(|row| row.bg(theme.row_hover))
+                .active(|row| row.bg(theme.row_selected))
+                .transitions(|fades| fades.bg(crate::ui::motion::pointer_fade()))
+        })
         .debug_selector(|| "open-pane-reset".into())
         .anchor_scroll(Some(anchor))
         .role(Role::Button)
@@ -628,9 +637,7 @@ fn switch(
         .min_h(geometry.row_min_height)
         .px(geometry.row_padding_x)
         .rounded(geometry.row_radius)
-        .when(offered, |row| {
-            row.cursor_pointer().hover(|row| row.bg(theme.row_hover))
-        })
+        .when(offered, |row| row.cursor_pointer())
         .when(!offered, |row| row.opacity(0.5).cursor_default())
         .child(
             div()
@@ -655,6 +662,14 @@ fn switch(
         )
         .child(track(preference, theme))
         .id(id)
+        // The pointer feedback, on the named row: the hover wash fades
+        // over the shared pointer span, and the press takes the selected
+        // wash, one rung above the hover one.
+        .when(offered, |row| {
+            row.hover(|row| row.bg(theme.row_hover))
+                .active(|row| row.bg(theme.row_selected))
+                .transitions(|fades| fades.bg(crate::ui::motion::pointer_fade()))
+        })
         .debug_selector(move || selector.into())
         .anchor_scroll(Some(anchor))
         .role(Role::Switch)

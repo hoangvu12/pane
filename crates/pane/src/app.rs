@@ -64,6 +64,26 @@ pub struct LauncherWindow {
     pub(crate) menu_button: FocusHandle,
     /// The open footer menu, if any; see [`features::footer_menu`].
     pub(crate) menu: Option<footer_menu::FooterMenu>,
+    /// The footer menu popup's entrance or exit in flight, if any: the
+    /// popup's look (0 closed, 1 open), presentation only — see
+    /// [`crate::ui::motion`]. One tween serves both the open menu and
+    /// the exit after it, so a reopen during the exit reverses from the
+    /// presentation on screen.
+    menu_transition: Option<motion::Tween>,
+    /// The menu item the popup's exit still shows, captured when the
+    /// menu closed; the frame that completes the exit clears it, along
+    /// with the popup it was painting. Read by the popup layer the
+    /// footer menu module renders.
+    pub(crate) menu_exit: Option<usize>,
+    /// Whether the last drawn frame drew the menu popup open — the one
+    /// thing that starts or retargets the popup's transition.
+    drawn_menu: bool,
+    /// The footer menu popup's presentation (offset from rest toward the
+    /// strip in px, opacity) as the last frame drew it; `None` when the
+    /// last frame drew the popup settled — at rest while open, absent
+    /// while closed. Test and debug builds only.
+    #[cfg(any(test, debug_assertions))]
+    drawn_menu_popup: Option<(f32, f32)>,
     /// The list's scroll position.
     scroll: ScrollHandle,
     /// What the list was last scrolled for.
@@ -166,6 +186,11 @@ impl LauncherWindow {
             arriving: None,
             menu_button,
             menu: None,
+            menu_transition: None,
+            menu_exit: None,
+            drawn_menu: false,
+            #[cfg(any(test, debug_assertions))]
+            drawn_menu_popup: None,
             open_pane_press: None,
             hidden: false,
             #[cfg(any(test, debug_assertions))]
@@ -211,6 +236,17 @@ impl LauncherWindow {
     #[doc(hidden)]
     pub fn hidden(&self) -> bool {
         self.hidden
+    }
+
+    /// Test support: the footer menu popup's presentation as the last
+    /// frame drew it — the offset from rest toward the strip in px and
+    /// the opacity; `None` when the last frame drew the popup settled
+    /// (at rest while open, absent while closed), which is also all
+    /// reduced motion ever reports. Test and debug builds only.
+    #[cfg(any(test, debug_assertions))]
+    #[doc(hidden)]
+    pub fn menu_popup_presentation(&self) -> Option<(f32, f32)> {
+        self.drawn_menu_popup
     }
 
     /// Redraws whenever the launcher changes in the background, as
@@ -844,6 +880,17 @@ impl LauncherWindow {
             theme,
         )
         .id(("row", index))
+        // Pressed: the selected wash — the wash the row keeps once the
+        // click selects it, so the press hands over to the selection
+        // without a jump — fading on the shared pointer span beside the
+        // row's own hover wash. The fade attaches only while the row is
+        // unselected, so the selected wash both arrives and leaves at
+        // once: the keyboard's selection is immediately legible, as the
+        // motion policy requires.
+        .when(!selected, |row| {
+            row.active(|row| row.bg(theme.row_selected))
+                .transitions(|fades| fades.bg(motion::pointer_fade()))
+        })
         .debug_selector(|| format!("row-{}", row.title))
         .role(Role::ListBoxOption)
         .aria_label(row.title.clone())
@@ -943,7 +990,20 @@ impl LauncherWindow {
             .text_size(theme.typography.footer_size)
             .font_weight(theme.typography.medium)
             .text_color(theme.text_title)
-            .when(action.available, |button| button.cursor_pointer())
+            .when(action.available, |button| {
+                button.cursor_pointer().active(|button| {
+                    // Pressed: the wash relaxes one rung while the button
+                    // is held — the hover wash over the selected one,
+                    // which reads as pressed in without inventing a
+                    // color. The button's rest is the selected chrome and
+                    // keeps it while hovered, as a selected row keeps its
+                    // wash: the pointer's feedback here is the press.
+                    // Activation itself never waits on the fade — the
+                    // click acts when it happens.
+                    button.bg(theme.row_hover)
+                })
+            })
+            .transitions(|fades| fades.bg(motion::pointer_fade()))
             // Unavailable: dimmed, and the pointer says nothing to click.
             // What explains it stays where it was — the row's reason, the
             // empty state — not the button.
@@ -1009,6 +1069,30 @@ impl Render for LauncherWindow {
         #[cfg(any(test, debug_assertions))]
         {
             self.arriving = arriving;
+        }
+        // The footer menu popup's entrance or exit, on the same tween
+        // machinery: only the menu's own open state flipping starts or
+        // retargets it, so a reopen during the exit reverses from the
+        // presentation on screen, and the closed menu's exit paints
+        // inert (see [`features::footer_menu`]). While the exit runs the
+        // popup snapshot below is what it paints; the frame that settles
+        // the exit clears it.
+        let menu_open = self.menu.is_some();
+        let menu_in_flight = motion::advance_popup(
+            &mut self.menu_transition,
+            menu_open,
+            motion::VIEW_SHIFT,
+            self.drawn_menu != menu_open,
+            cx.reduce_motion(),
+            now,
+        );
+        self.drawn_menu = menu_open;
+        #[cfg(any(test, debug_assertions))]
+        {
+            self.drawn_menu_popup = menu_in_flight;
+        }
+        if menu_open || menu_in_flight.is_none() {
+            self.menu_exit = None;
         }
         let visuals = crate::settings::visuals(cx);
         let theme = visuals.theme;
@@ -1241,9 +1325,7 @@ impl Render for LauncherWindow {
                     // scrolls.
                     .relative()
                     .when_some(
-                        self.menu
-                            .as_ref()
-                            .map(|menu| self.render_menu_popup(menu, cx)),
+                        self.render_menu_popup_layer(menu_in_flight, cx),
                         |strip, popup| strip.child(popup),
                     )
                     // The strip is the live region: it carries the
@@ -1304,8 +1386,9 @@ impl Render for LauncherWindow {
         // While the arriving content is still in flight, keep frames
         // coming; the frame that completes the transition requests none,
         // so a settled window is idle. The scroll relayout above keeps its
-        // own separate request, for the frame after the rows change.
-        if arriving.is_some() {
+        // own separate request, for the frame after the rows change, and
+        // so does the footer menu popup's entrance or exit.
+        if arriving.is_some() || menu_in_flight.is_some() {
             window.request_animation_frame();
         }
         // The panel surface: the frost material's L1 glass around the
