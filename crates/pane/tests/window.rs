@@ -571,6 +571,29 @@ fn row_is_visible(cx: &mut VisualTestContext, element: &str) -> bool {
     element.top() >= list.top() && element.bottom() <= list.bottom()
 }
 
+/// The launcher's frame is the reference's: at its 760×518 client the
+/// search header, the list and the footer divide the whole panel — 64,
+/// 404 and 50 — edge to edge, with no border taking a pixel from any side
+/// (the panel's inner edge is an inset ring that takes no layout space).
+#[gpui::test]
+fn the_launcher_divides_its_reference_client_edge_to_edge(cx: &mut TestAppContext) {
+    let (window, cx) = open_with(cx, pane::sample_commands());
+    cx.simulate_resize(pane::launcher_client_size());
+    let view = settle(&window, cx);
+    assert_eq!(view.status, Status::Idle);
+    let search = cx.debug_bounds("search").expect("root search is rendered");
+    let list = cx.debug_bounds("rows").expect("the list is rendered");
+    let footer = cx
+        .debug_bounds("status-idle")
+        .expect("the footer is rendered");
+    assert_eq!(search.origin, gpui::point(px(0.), px(0.)));
+    assert_eq!(search.size.width, px(760.));
+    assert_eq!((list.left(), list.top()), (px(0.), px(64.)));
+    assert_eq!(list.size, gpui::size(px(760.), px(404.)));
+    assert_eq!((footer.left(), footer.top()), (px(0.), px(468.)));
+    assert_eq!(footer.size, gpui::size(px(760.), px(50.)));
+}
+
 #[gpui::test]
 fn the_list_scrolls_to_keep_the_selected_row_visible(cx: &mut TestAppContext) {
     const TITLES: [&str; 12] = [
@@ -1170,7 +1193,7 @@ fn assistive_technology_sees_the_search_field_and_the_selected_result(cx: &mut T
     let search = node(&nodes, "EditableComboBox", "Search");
     assert_eq!(
         (&search["value"], &search["placeholder"]),
-        (&"script".into(), &"Search commands".into())
+        (&"script".into(), &"Search apps and commands…".into())
     );
     node(&nodes, "ListBox", "Results");
     node(&nodes, "ListBoxOption", "TypeScript sample");

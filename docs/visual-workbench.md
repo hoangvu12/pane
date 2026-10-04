@@ -63,29 +63,35 @@ A scenario lives in `crates/pane/src/visual_fixture.rs`. It is a name, its clien
 | `root-focus` | rest → type `clip` → Escape | yes |
 | `root-unavailable` | rest → Down (a row with its reason) | native-only |
 | `root-long-content` | truncation | native-only |
+| `launcher-frame` | the frame at rest: panel size, inset edges, corner, header/list/footer boundaries, footer padding (#92) | yes |
+| `launcher-frame-light` | the same frame in the derived light palette | native-only |
+| `launcher-frame-narrow` | 480×360: rest → Down ×7 (the last row scrolled into view above the footer) | native-only |
 | `keycap-windows` | Ctrl+K, Win+Alt+Left, Ctrl+Shift+V, Enter | yes (the root board's key groups) |
 
-To add a scenario, append it to `SCENARIOS`. Use only production components in the fixture's render, and add a branch to the comparison for any new component family. If the reference board already exists but the native component doesn't, the board is listed in `pending_scenarios()` with the ticket that registers it: launcher frame #92, Actions #95, calculator and empty #96, Settings shell #97, Appearance #98, pinned strip #101, clipboard #102. Asking for a pending scenario fails with that ticket's URL, so it can never pass silently. Store and the snap HUD are source-only references this milestone.
+To add a scenario, append it to `SCENARIOS`. A scenario can name its own appearance (`theme`), which overrides the run's `-Theme` for it alone, and can ask for the frame checks (`frame`). Use only production components in the fixture's render, and add a branch to the comparison for any new component family. If the reference board already exists but the native component doesn't, the board is listed in `pending_scenarios()` with the ticket that registers it: Actions #95, calculator and empty #96, Settings shell #97, Appearance #98, pinned strip #101, clipboard #102. Asking for a pending scenario fails with that ticket's URL, so it can never pass silently. Store and the snap HUD are source-only references this milestone.
 
 The fixture's data matches the reference root board: Suggested then Commands, with the footer action following the selected row's kind. The fixture is not the launcher's wiring. That is covered by `the_production_scenario_edits_searches_selects_opens_and_back_navigates` in `crates/pane/tests/window.rs`, plus the real-app smoke.
 
 ## Reading the report
 
-`compare/summary.md` has three sections:
+`compare/summary.md` has three sections, and a list of accepted discrepancies:
 
 - **harness-native** — the fixture's declared layout and colors against what its capture measures. It validates the harness and should pass completely. A failure means the fixture didn't reach the declared state or the measurement is wrong.
 - **harness-reference** — the reference DOM's rects, classes and computed colors against what its capture measures. It should also pass completely.
 - **parity** — native against reference for the same component in the same state. Today this fails broadly; #92–#99 close the gap. Each failure names the property, both values, the delta and the limit.
 
+- **Accepted discrepancies** — parity checks that still fail, each carrying the disposition its ticket recorded for a measured platform limit (the first: Windows' launcher corner, #92). They are counted apart from the failures and listed with their reason; they never count as passed.
+
 Limits are the ticket's proposed ones: 1 logical px for edges and baselines, and 2 channel levels for deterministic flat fills. Translucent washes are compared as backdrop-relative overlay alpha, measured column by column against the gaps beside the row. That survives the opaque native panel versus the reference's glass over a blurred wallpaper. Glyph checks use only core pixels (60% of the way from background to text color), so antialiased edges never decide a result. Glyph core colors have their own 4-level limit, and the accent caret is excluded from header ink.
 
 ## Limitations
 
-- **Glass is reviewed separately.** Strict color checks run in the opaque material (`-Material opaque`, the default). A glass run can be captured with `-Material glass`, but its colors depend on the desktop behind it, so it belongs to a matched-backdrop review, never a strict check.
+- **Glass is reviewed separately.** Strict color checks run in the opaque material (`-Material opaque`, the default). A glass run can be captured with `-Material glass`, but its colors depend on the desktop behind it, so it belongs to a matched-backdrop review, never a strict check. That review needs the window *on screen*: Windows applies the acrylic blur, the window's rounded corners and its shadow while composing the desktop, and `PrintWindow` reads the window's own content before that. So it cannot run off-screen like every other capture here, and it is not run without the operator's agreement (see [#92's evidence](evidence/ui-92/README.md)).
+- **Corners.** Windows rounds the launcher window itself (the DWM corner preference; Microsoft documents 8px for it), so the fixture's captures show square corners where the reference's panel curves at 18px. The comparison measures that and lists it as an accepted discrepancy.
 - **Labels are controlled, not equal.** Both sides show the same effective bindings with `platform: 'Windows'` set on every board; default macOS captures are never used as Windows goldens. Production draws a chord as one cap of text (`Ctrl+K`, Geist 14). The reference draws one cap per key (`Ctrl` `K`, Geist Mono 11). The report records the labels and group widths as mismatches.
 - **Selection policy.** In the reference, pointer movement selects the row. In production it only washes it. Each capture's selected and hover-only rows are compared by name, and that difference shows up as a parity failure.
 - **No reference counterpart.** The unavailable and long-content states are native-only: captured and cropped, never compared.
 - **A row that can grow.** A row holding an unavailable reason declares only a height floor. The rows after it declare no exact position.
 - **Input path.** Pointer and keys are posted window messages (see above), not `SendInput`. The real pointer path is the smoke's job.
-- **Fixture composition.** The leaf components are production code: `result_row`, `search_header`, `action_button`, `binding_keycap` and the panel and footer materials. The arrangement around them is the fixture's own: the list, the search wrapper and the footer strip. It shares the launcher's layout constants (list padding, footer padding), but a layout change made directly in `LauncherWindow::render` would not reach the fixture. Perturbations change rendering values, so they cannot show that either. Keep shared layout in shared functions and constants as the port proceeds.
+- **Fixture composition.** The leaf components are production code: `result_row`, `search_header`, `action_button`, `binding_keycap`, the panel and footer materials, and the result list (`ui::shell::result_list`, which the launcher's screens lay their rows out in too). The arrangement around them is the fixture's own: the search wrapper and the footer strip. They share the launcher's layout tokens, but a layout change made directly in `LauncherWindow::render` would not reach the fixture. Perturbations change rendering values, so they cannot show that either. Keep shared layout in shared functions and constants as the port proceeds.
 - **Fixture data.** The rows, their order and their actions match the reference root board. Its pinned strip and section labels are not production content yet (#101), and neither is its placeholder copy. Those differences show up as parity failures (row `top in client`, placeholder ink), not as matched data.

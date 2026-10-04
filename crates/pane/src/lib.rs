@@ -212,6 +212,14 @@ pub fn observe_reduced_motion(cx: &mut App) {
     ui::motion::observe_reduced_motion(cx)
 }
 
+/// The launcher window's client size: the reference root panel's 760×518
+/// logical pixels (64 search header + 404 results + 50 footer), which the
+/// binary opens the window at.
+pub fn launcher_client_size() -> gpui::Size<gpui::Pixels> {
+    let (width, height) = ui::shell::LAUNCHER_CLIENT;
+    gpui::size(gpui::px(width), gpui::px(height))
+}
+
 /// The window background appearance the host settings' material asks for,
 /// for the binary to pass into `WindowOptions::window_background`: blurred
 /// behind a glass panel on the frost-capable platforms, opaque otherwise

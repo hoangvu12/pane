@@ -11,6 +11,9 @@ native-run.json and the capture PNGs) and a reference capture run
                      measures (validates the reference side; should pass),
   parity             native vs reference for the same component in the same
                      state (expected to fail broadly until #92-#99 land);
+  a failed check that carries a recorded disposition (a measured platform
+  limit a ticket explicitly accepted, with its reason) is counted as
+  "accepted" rather than "failed" - it still fails, visibly, with its note;
   plus native-only captures (states the reference never authors) and, with
   --baseline, the sensitivity section: checks that passed in the baseline
   run and fail in this one, with both values.
@@ -46,6 +49,22 @@ from PIL import Image, ImageChops, ImageDraw
 LIMITS = {"edge_px": 1.0, "flat_fill_levels": 2.0, "glyph_core_levels": 4.0}
 # The muted subtitle text both sides author (#8E8F94).
 MUTED = (142, 143, 148)
+# What the measuring needs to know about a palette: whether its washes and
+# rules are lighter than the panel (the dark palette's white overlays) or
+# darker (the derived light palette's black ones), and the text colors ink
+# is looked for in. The reference is always the dark one.
+DARK = {"lighter": True, "muted": MUTED, "query": (243, 243, 245), "placeholder": (134, 135, 140)}
+
+
+def palette(manifest):
+    """The native capture's palette, from its manifest's declared colors."""
+    colors = manifest["declared"]["colors"]
+    return {
+        "lighter": manifest.get("appearance", "dark") == "dark",
+        "muted": hex_rgba(colors["textMuted"])[:3],
+        "query": hex_rgba(colors.get("textQuery", "#F3F3F5FF"))[:3],
+        "placeholder": hex_rgba(colors["textPlaceholder"])[:3],
+    }
 CORE_FRACTION = 0.6
 # Below this overlay alpha (levels) a row counts as having no wash: the
 # hover wash is 3.5% (~9 levels), so half of it separates the two.
@@ -125,11 +144,12 @@ def lit_run(lit, center, gap=1):
     return start, end + 1
 
 
-def wash_edges(image, approx, background, min_delta, margin=8):
+def wash_edges(image, approx, background, min_delta, margin=8, lighter=True):
     """The rect of a lighter wash around approx = (x, y, w, h).
 
     Left and right: along rows through its middle, the outermost pixels
-    brighter than the background by min_delta - nothing else sits in the
+    brighter than the background by min_delta (darker, for a darkening
+    wash: lighter=False) - nothing else sits in the
     list's side padding, while inside the wash a tile's drop shadow can be
     darker than the wash. Top and bottom: along columns through its
     interior, the run of such pixels that holds the approximate center - a
@@ -138,13 +158,14 @@ def wash_edges(image, approx, background, min_delta, margin=8):
     or None."""
     x, y, w, h = approx
     bg = luma(background)
+    sign = 1 if lighter else -1
     data = image.load()
     lefts, rights, tops, bottoms = [], [], [], []
     xs = range(max(0, int(x - margin)), min(image.width, int(x + w + margin)))
     ys = range(max(0, int(y - margin)), min(image.height, int(y + h + margin)))
     for row in range(int(y + h * 0.35), int(y + h * 0.65) + 1):
         if 0 <= row < image.height:
-            lit = [luma(data[c, row]) - bg >= min_delta for c in xs]
+            lit = [sign * (luma(data[c, row]) - bg) >= min_delta for c in xs]
             if any(lit):
                 lefts.append(xs.start + lit.index(True))
                 rights.append(xs.start + len(lit) - lit[::-1].index(True))
@@ -152,7 +173,7 @@ def wash_edges(image, approx, background, min_delta, margin=8):
     step = max(1, int((w - 2 * inset) / 24))
     for column in range(int(x + inset), int(x + w - inset), step):
         if 0 <= column < image.width:
-            run = lit_run([luma(data[column, r]) - bg >= min_delta for r in ys], (y + h / 2) - ys.start)
+            run = lit_run([sign * (luma(data[column, r]) - bg) >= min_delta for r in ys], (y + h / 2) - ys.start)
             if run:
                 tops.append(ys.start + run[0])
                 bottoms.append(ys.start + run[1])
@@ -197,22 +218,26 @@ def ink(image, box, background, text_color, exclude_accent=True):
     }
 
 
-def hline(image, x_range, y_range, background=None):
+def hline(image, x_range, y_range, background=None, lighter=True):
     """The y of the most distinct horizontal line across x_range within
     y_range (a hairline rule): the row whose median luma stands out most
     from the rows two pixels above and below it - a line, not a gradient
     or a step. The caller keeps y_range to a few pixels around where the
     rule belongs, so a wash's edge nearby is never taken for it."""
     data = image.load()
+    # A narrow client is narrower than the usual stretch.
+    columns = range(max(0, x_range[0]), min(image.width, x_range[1]), 3)
 
     def level(row):
-        return statistics.median(luma(data[c, row]) for c in range(x_range[0], x_range[1], 3))
+        return statistics.median(luma(data[c, row]) for c in columns)
 
-    # A hairline rule is lighter than the panel on both of its sides; the
-    # edge of a wash below it is lighter on one side only.
+    # A hairline rule is lighter than the panel on both of its sides (darker,
+    # in the light palette); the edge of a wash below it is lighter on one
+    # side only.
     best, best_y = 0.0, None
     for row in range(max(2, y_range[0]), min(image.height - 2, y_range[1])):
-        contrast = min(level(row) - level(row - 2), level(row) - level(row + 2))
+        above, here, below = level(row - 2), level(row), level(row + 2)
+        contrast = min(here - above, here - below) if lighter else min(above - here, below - here)
         if contrast > best:
             best, best_y = contrast, row
     return best_y
@@ -225,7 +250,8 @@ class Report:
     def __init__(self):
         self.checks = []
 
-    def check(self, section, scenario, capture, subject, prop, measured, expected, limit, unit, note=None):
+    def check(self, section, scenario, capture, subject, prop, measured, expected, limit, unit, note=None,
+              accepted=None):
         delta = None
         passed = False
         if measured is None or expected is None:
@@ -251,6 +277,8 @@ class Report:
         }
         if note:
             entry["note"] = note
+        if accepted and not passed:
+            entry["accepted"] = accepted
         self.checks.append(entry)
         return entry
 
@@ -297,7 +325,7 @@ def panel_background(image, y, scale=1.0):
     return median_color(image, (3 * scale, y - 3 * scale, 8 * scale, y + 3 * scale))
 
 
-def row_wash(image, rect, scale=1.0, floor=False):
+def row_wash(image, rect, scale=1.0, floor=False, lighter=True):
     """A row's wash, measured column by column: the strip just under its
     top edge (above the tile and the text) against the list gaps just above
     and below the row, interpolated to the strip's height. The panels'
@@ -322,7 +350,7 @@ def row_wash(image, rect, scale=1.0, floor=False):
         below = above if floor else data[column, bottom]
         background = tuple(a + (b - a) * weight for a, b in zip(above, below))
         fill = tuple(statistics.mean(data[column, r][i] for r in (strip - 1, strip, strip + 1)) for i in range(3))
-        alpha = white_alpha(fill, background)
+        alpha = overlay_alpha(fill, background, lighter)
         if alpha is not None:
             alphas.append(alpha)
             fills.append(fill)
@@ -336,16 +364,18 @@ def row_wash(image, rect, scale=1.0, floor=False):
     }
 
 
-def measure_row(image, rect, washed, text_color, scale=1.0, floor=False):
+def measure_row(image, rect, washed, text_color, scale=1.0, floor=False, pal=DARK):
     """What the image shows for a row at the given rect."""
     result = {}
-    wash = row_wash(image, rect, scale, floor)
+    lighter = pal["lighter"]
+    wash = row_wash(image, rect, scale, floor, lighter)
     if wash is None:
         return result
     result["alpha"] = wash["alpha"]
     if washed:
-        delta = max(3.0, (luma(wash["fill"]) - luma(wash["background"])) / 2)
-        edges = wash_edges(image, scaled(rect, scale), wash["background"], delta)
+        sign = 1 if lighter else -1
+        delta = max(3.0, sign * (luma(wash["fill"]) - luma(wash["background"])) / 2)
+        edges = wash_edges(image, scaled(rect, scale), wash["background"], delta, lighter=lighter)
         if edges:
             result["edges"] = tuple(v / scale for v in edges)
     x, y, w, h = scaled(rect, scale)
@@ -363,23 +393,23 @@ def measure_row(image, rect, washed, text_color, scale=1.0, floor=False):
         }
         # The subtitle: muted ink after the title's last core column (the
         # title's own pixels are brighter, so they are left out by position).
-        sub = ink(image, (bx + bw + scale, y + 4 * scale, x + w * 0.7, y + h - 4 * scale), wash["fill"], MUTED,
-                  exclude_accent=False)
+        sub = ink(image, (bx + bw + scale, y + 4 * scale, x + w * 0.7, y + h - 4 * scale), wash["fill"],
+                  pal["muted"], exclude_accent=False)
         if sub:
             result["subtitleGap"] = (sub["box"][0] - (bx + bw)) / scale
     result["accent"] = accent_pixels(image, title_box)
     return result
 
 
-def measure_header(image, rule_y, scale=1.0):
+def measure_header(image, rule_y, scale=1.0, pal=DARK):
     """The search header: its rule (searched within 4 px of rule_y) and
     the query's or placeholder's ink (the caret excluded)."""
     background = median_color(image, (300 * scale, 4 * scale, 700 * scale, 8 * scale))
     rule = hline(image, (int(200 * scale), int(600 * scale)),
-                 (int((rule_y - 4) * scale), int((rule_y + 5) * scale)), background)
-    text = ink(image, (44 * scale, 8 * scale, 500 * scale, 56 * scale), background, (243, 243, 245))
+                 (int((rule_y - 4) * scale), int((rule_y + 5) * scale)), background, pal["lighter"])
+    text = ink(image, (44 * scale, 8 * scale, 500 * scale, 56 * scale), background, pal["query"])
     if text is None:  # the placeholder's muted grey
-        text = ink(image, (44 * scale, 8 * scale, 500 * scale, 56 * scale), background, (134, 135, 140))
+        text = ink(image, (44 * scale, 8 * scale, 500 * scale, 56 * scale), background, pal["placeholder"])
     return {
         "rule": rule / scale if rule is not None else None,
         "text": {
@@ -392,19 +422,22 @@ def measure_header(image, rule_y, scale=1.0):
     }
 
 
-def measure_footer(image, rule_y, scale=1.0):
+def measure_footer(image, rule_y, scale=1.0, lighter=True):
     """The footer: its top rule (searched within 4 px of rule_y) and its
-    tint, as a black overlay over the panel just above the rule."""
-    background = median_color(image, (300 * scale, (rule_y - 4) * scale, 420 * scale, (rule_y - 2) * scale))
+    tint, as a black overlay over the panel just above the rule. Both are
+    read in the list's left padding (x 3-8), which no row, wash or footer
+    control reaches - a selected row scrolled flush with the list's bottom
+    edge would otherwise be taken for the panel above the rule."""
+    background = median_color(image, (3 * scale, (rule_y - 4) * scale, 8 * scale, (rule_y - 2) * scale))
     rule = hline(image, (int(40 * scale), int(300 * scale)),
-                 (int((rule_y - 4) * scale), int((rule_y + 5) * scale)), background)
+                 (int((rule_y - 4) * scale), int((rule_y + 5) * scale)), background, lighter)
     if rule is None:
         return {"rule": None, "alpha": None}
-    fill = median_color(image, (300 * scale, rule + 4 * scale, 420 * scale, rule + 6 * scale))
+    fill = median_color(image, (3 * scale, rule + 4 * scale, 8 * scale, rule + 6 * scale))
     return {"rule": rule / scale, "alpha": black_alpha(fill, background), "fill": fill, "background": background}
 
 
-def measure_cap(image, rect, scale=1.0):
+def measure_cap(image, rect, scale=1.0, lighter=True):
     """A keycap's measured box and fill alpha near its declared rect."""
     x, y, w, h = scaled(rect, scale)
     background = median_color(image, (x - 8 * scale, y + h * 0.3, x - 3 * scale, y + h * 0.7))
@@ -413,11 +446,12 @@ def measure_cap(image, rect, scale=1.0):
     fill = median_color(image, (x + 1.5 * scale, y + 2 * scale, x + 3 * scale, y + h - 2 * scale))
     if fill is None:
         return None
-    delta = max(3.0, (luma(fill) - luma(background)) / 2)
-    edges = wash_edges(image, (x, y, w, h), background, delta, margin=5)
+    sign = 1 if lighter else -1
+    delta = max(3.0, sign * (luma(fill) - luma(background)) / 2)
+    edges = wash_edges(image, (x, y, w, h), background, delta, margin=5, lighter=lighter)
     return {
         "edges": tuple(v / scale for v in edges) if edges else None,
-        "alpha": white_alpha(fill, background) if fill else None,
+        "alpha": overlay_alpha(fill, background, lighter) if fill else None,
     }
 
 
@@ -485,8 +519,8 @@ def compare(native_dir, reference_dir, out_dir, label):
 
     sections = {}
     for check in report.checks:
-        section = sections.setdefault(check["section"], {"passed": 0, "failed": 0})
-        section["passed" if check["passed"] else "failed"] += 1
+        section = sections.setdefault(check["section"], {"passed": 0, "failed": 0, "accepted": 0})
+        section["passed" if check["passed"] else "accepted" if check.get("accepted") else "failed"] += 1
     return {"meta": meta, "totals": sections, "checks": report.checks, "nativeOnly": native_only,
             "images": images, "pending": pending(native_dir)}
 
@@ -501,13 +535,16 @@ def pending(native_dir):
 def compare_root(report, name, capture, declared, manifest, native, scale, ref_capture, reference_image,
                  text_title, selected_alpha, hover_alpha, crops):
     # ---- the native side against its declaration
+    pal = palette(manifest)
     native_rows = {}
     for row in declared["rows"]:
         if row["heightIsFloor"] and row["unavailable"] is None:
             continue
+        if not row.get("visible", True):
+            continue
         rect = as_tuple(row["rect"])
         washed = row["selected"] or row["hovered"]
-        measured = measure_row(native, rect, washed, text_title, scale, floor=row["heightIsFloor"])
+        measured = measure_row(native, rect, washed, text_title, scale, floor=row["heightIsFloor"], pal=pal)
         native_rows[row["title"]] = (row, measured)
         subject = f"row:{row['title']}"
         if row["selected"]:
@@ -525,23 +562,25 @@ def compare_root(report, name, capture, declared, manifest, native, scale, ref_c
                              edges[index] if edges else None, rect[index], LIMITS["edge_px"], "px")
         crops.append(("row-" + row["title"], rect, None))
     search = as_tuple(manifest["searchHeader"])
-    header = measure_header(native, search[1] + search[3] - 1, scale)
+    header = measure_header(native, search[1] + search[3] - 1, scale, pal)
     report.check("harness-native", name, capture, "search-header", "rule y",
                  header["rule"], search[1] + search[3] - 1, LIMITS["edge_px"], "px")
     footer_rect = as_tuple(manifest["footer"])
-    footer = measure_footer(native, footer_rect[1], scale)
+    footer = measure_footer(native, footer_rect[1], scale, pal["lighter"])
     report.check("harness-native", name, capture, "footer", "rule y", footer["rule"], footer_rect[1], LIMITS["edge_px"], "px")
     report.check("harness-native", name, capture, "footer", "tint alpha", footer["alpha"],
                  hex_rgba(manifest["declared"]["colors"]["footerTint"])[3], LIMITS["flat_fill_levels"], "levels")
     if declared.get("actionButton"):
         button = as_tuple(declared["actionButton"])
-        measured = measure_cap(native, button, scale)
+        measured = measure_cap(native, button, scale, pal["lighter"])
         edges = measured and measured["edges"]
         for prop, index in (("left", 0), ("top", 1), ("width", 2), ("height", 3)):
             report.check("harness-native", name, capture, "footer-primary", f"button {prop}",
                          edges[index] if edges else None, button[index], LIMITS["edge_px"], "px")
         crops.append(("footer-primary", button, None))
     crops.append(("search-header", search, None))
+    if manifest["scenario"].get("frame"):
+        compare_frame(report, name, capture, declared, manifest, native, scale, ref_capture, reference_image, crops)
 
     if ref_capture is None:
         return
@@ -623,7 +662,7 @@ def compare_root(report, name, capture, declared, manifest, native, scale, ref_c
         for prop in ("left", "top", "height"):
             report.check("parity", name, capture, "search-header", f"query/placeholder ink {prop}",
                          header["text"][prop], ref_header["text"][prop], LIMITS["edge_px"], "px",
-                         None if state["query"] else "placeholder copy differs: 'Search commands' vs 'Search apps, commands, plugins…'")
+                         None if state["query"] else "placeholder copy is adapted: 'Search apps and commands…' vs 'Search apps, commands, plugins…' (#92)")
     report.check("parity", name, capture, "footer", "rule y", footer["rule"], ref_footer["rule"], LIMITS["edge_px"], "px")
     report.check("parity", name, capture, "footer", "tint alpha", footer["alpha"], ref_footer["alpha"],
                  LIMITS["flat_fill_levels"], "levels")
@@ -641,6 +680,123 @@ def compare_root(report, name, capture, declared, manifest, native, scale, ref_c
                      native_cap and native_cap["alpha"], ref_cap and ref_cap["alpha"], LIMITS["flat_fill_levels"], "levels",
                      "the reference's footer buttons are transparent at rest")
         crops.append(("parity-footer-primary", button, ref_button))
+
+
+# The launcher frame (#92). Windows rounds the launcher's window itself,
+# through the Desktop Window Manager; a painted 18px radius would show the
+# window's acrylic (which covers the whole window rectangle) as a plate
+# behind the curve. PrintWindow reads the client before that clip, so the
+# capture's corners are square.
+CORNER_DISPOSITION = ("accepted (#92): the panel paints no radius on Windows - the acrylic backdrop covers the "
+                      "whole window rectangle, so a painted 18px curve would show it as a plate - and the DWM's "
+                      "corner preference (DWMWCP_ROUND, Microsoft's documented 8px) rounds the window instead. "
+                      "This capture is PrintWindow's, taken before the DWM clip, so it shows the panel's square "
+                      "corner, not the 8px the screen shows; the on-screen corner is documented, not measured here")
+
+
+def overlay_alpha(fill, background, lighter):
+    """A wash's alpha: a white overlay's when it lightens the panel, a black
+    one's when it darkens it."""
+    return white_alpha(fill, background) if lighter else black_alpha(fill, background)
+
+
+def edge_alpha(image, edge, scale=1.0, lighter=True):
+    """The panel's inset ring on one edge of the client, as an overlay alpha
+    (levels): the outermost pixel line against the line two pixels in,
+    median over a stretch of the edge clear of content - the list's side
+    padding for the left and right edges, the header's top for the top,
+    the footer's empty middle for the bottom."""
+    width, height = image.width, image.height
+    data = image.load()
+    if edge in ("left", "right"):
+        x_out = 0 if edge == "left" else width - 1
+        x_in = 2 if edge == "left" else width - 3
+        pairs = [(data[x_out, y], data[x_in, y]) for y in range(int(100 * scale), min(height, int(400 * scale)), 2)]
+    else:
+        y_out = 0 if edge == "top" else height - 1
+        y_in = 2 if edge == "top" else height - 3
+        lo, hi = ((100, 700) if edge == "top" else (320, 460))
+        hi = min(hi, width / scale - 20)
+        pairs = [(data[x, y_out], data[x, y_in]) for x in range(int(lo * scale), int(hi * scale), 3)]
+    alphas = [a for a in (overlay_alpha(f, b, lighter) for f, b in pairs) if a is not None]
+    return statistics.median(alphas) if alphas else None
+
+
+def corner_inset(image, scale=1.0):
+    """How far along the top-left corner's diagonal the panel begins, in
+    logical px: 0 for a square corner; about r(1 - 1/sqrt 2) for a corner
+    rounded at radius r (18px -> ~5.3). A diagonal pixel belongs to the
+    panel once its luma is nearer the panel's (beside the left edge, below
+    the curve) than the corner pixel's (outside any curve). A corner pixel
+    as bright as the left edge's ring (or brighter: the ring under the top
+    highlight) is the panel's own: a square corner."""
+    data = image.load()
+    inside = statistics.median(luma(data[x, y]) for x in range(int(3 * scale), int(8 * scale))
+                               for y in range(int(30 * scale), int(34 * scale)))
+    ring = statistics.median(luma(data[0, y]) for y in range(int(100 * scale), int(300 * scale)))
+    outside = luma(data[0, 0])
+    if abs(inside - outside) < 2 or outside >= ring - 3:
+        return 0.0
+    for t in range(0, int(20 * scale)):
+        level = luma(data[t, t])
+        if abs(level - inside) < abs(level - outside) or level > max(inside, outside):
+            return t / scale
+    return None
+
+
+def compare_frame(report, name, capture, declared, manifest, native, scale, ref_capture, reference_image, crops):
+    """The launcher frame: the panel's inset edges, its corner, and where
+    the header, the list and the footer begin and end."""
+    colors = manifest["declared"]["colors"]
+    ring = hex_rgba(colors["hairline"])
+    top = hex_rgba(colors.get("panelTopHighlight", "#00000000"))
+    lighter = palette(manifest)["lighter"]
+    for edge in ("left", "right"):
+        report.check("harness-native", name, capture, "frame", f"{edge} edge ring alpha",
+                     edge_alpha(native, edge, scale, lighter), ring[3], LIMITS["flat_fill_levels"], "levels",
+                     "the panel's inset 1px ring")
+    # The top edge is one overlay over another only where both lighten (the
+    # light palette's ring darkens under a lightening highlight).
+    if lighter and sum(top[:3]) > 384:
+        combined = 255 * (1 - (1 - ring[3] / 255) * (1 - top[3] / 255))
+        report.check("harness-native", name, capture, "frame", "top edge alpha", edge_alpha(native, "top", scale),
+                     combined, LIMITS["flat_fill_levels"], "levels", "the ring under the top inset highlight")
+    width, height = manifest["scenario"]["client"]
+    search, list_rect, footer = (as_tuple(manifest[k]) for k in ("searchHeader", "list", "footer"))
+    report.check("harness-native", name, capture, "frame", "header + list + footer height",
+                 search[3] + list_rect[3] + footer[3], height, 0, "px",
+                 f"{search[3]:g} + {list_rect[3]:g} + {footer[3]:g}: no border consumes the panel's layout")
+    for label, rect in (("search header", search), ("list", list_rect), ("footer", footer)):
+        report.check("harness-native", name, capture, "frame", f"{label} spans the width",
+                     rect[2] if rect[0] == 0 else None, width, 0, "px")
+    crops.append(("frame-corner", (0, 0, 40, 40), None))
+    if ref_capture is None:
+        return
+    state = ref_capture["state"]
+    for edge in ("left", "right", "top", "bottom"):
+        report.check("parity", name, capture, "frame", f"{edge} edge alpha", edge_alpha(native, edge, scale),
+                     edge_alpha(reference_image, edge), LIMITS["flat_fill_levels"], "levels",
+                     "inset ring (and top highlight); the footer's wash covers the ring at the bottom")
+    n_corner, r_corner = corner_inset(native, scale), corner_inset(reference_image)
+    report.check("parity", name, capture, "frame", "top-left corner diagonal inset", n_corner, r_corner,
+                 LIMITS["edge_px"], "px", "radius ~ inset x 3.41", accepted=CORNER_DISPOSITION)
+    crops.append(("parity-frame-corner", (0, 0, 40, 40), (0, 0, 40, 40)))
+    glass = as_tuple(state["glass"])
+    report.check("parity", name, capture, "frame", "panel size", f"{width:g}x{height:g}", f"{glass[2]:g}x{glass[3]:g}", 0, "")
+    for label, n_rect, key in (("search header", search, "searchHeader"), ("list", list_rect, "list"),
+                               ("footer", footer, "footer")):
+        r_rect = as_tuple(state[key])
+        for prop, index in (("top", 1), ("height", 3), ("left", 0), ("width", 2)):
+            report.check("parity", name, capture, "frame", f"{label} {prop}", n_rect[index], r_rect[index],
+                         LIMITS["edge_px"], "px")
+    buttons = state.get("footerButtons") or []
+    if declared.get("actionButton") and buttons:
+        n_button = as_tuple(declared["actionButton"])
+        measured = measure_cap(native, n_button, scale)
+        n_right = measured["edges"][0] + measured["edges"][2] if measured and measured["edges"] else None
+        r_last = as_tuple(buttons[-1]["rect"])
+        report.check("parity", name, capture, "frame", "footer content right edge", n_right, r_last[0] + r_last[2],
+                     LIMITS["edge_px"], "px", "the footer's 8px right padding: native's rightmost button against the reference's")
 
 
 def fmt_color(color):
@@ -767,10 +923,10 @@ def summary_markdown(result):
         lines.append(f"- `{scenario['name']}`: {scenario['dpi']} DPI, client {scenario['client']}, "
                      f"{scenario['material']}, perturbation {scenario['perturbation']}")
     lines.append("")
-    lines.append("| Section | Passed | Failed |")
-    lines.append("|---|---|---|")
+    lines.append("| Section | Passed | Failed | Accepted discrepancies |")
+    lines.append("|---|---|---|---|")
     for section, totals in result["totals"].items():
-        lines.append(f"| {section} | {totals['passed']} | {totals['failed']} |")
+        lines.append(f"| {section} | {totals['passed']} | {totals['failed']} | {totals.get('accepted', 0)} |")
     if "sensitivity" in result:
         lines += ["", "## Sensitivity: passed in the baseline, failing now", ""]
         lines.append("| Check | Baseline | Now | Expected | Delta | Limit |")
@@ -779,7 +935,7 @@ def summary_markdown(result):
             lines.append(f"| `{flip['id']}` | {flip['baseline']} | {flip['now']} | {flip['expected']} | "
                          f"{flip['delta']} | {flip['limit']} {flip['unit']} |")
     for section in ("harness-native", "harness-reference", "parity"):
-        failed = [c for c in result["checks"] if c["section"] == section and not c["passed"]]
+        failed = [c for c in result["checks"] if c["section"] == section and not c["passed"] and not c.get("accepted")]
         lines += ["", f"## {section}: {len(failed)} failed", ""]
         if failed:
             lines.append("| Check | Native/measured | Reference/expected | Delta | Limit | Note |")
@@ -789,6 +945,16 @@ def summary_markdown(result):
                 right = check.get("reference", check.get("expected"))
                 lines.append(f"| `{check['scenario']}/{check['capture']}/{check['subject']}/{check['property']}` | {left} | "
                              f"{right} | {check['delta']} | {check['limit']} {check['unit']} | {check.get('note', '')} |")
+    accepted = [c for c in result["checks"] if c.get("accepted")]
+    if accepted:
+        lines += ["", f"## Accepted discrepancies: {len(accepted)} (failing, with a recorded disposition)", ""]
+        lines.append("| Check | Native/measured | Reference/expected | Delta | Limit | Disposition |")
+        lines.append("|---|---|---|---|---|---|")
+        for check in accepted:
+            left = check.get("native", check.get("measured"))
+            right = check.get("reference", check.get("expected"))
+            lines.append(f"| `{check['scenario']}/{check['capture']}/{check['subject']}/{check['property']}` | {left} | "
+                         f"{right} | {check['delta']} | {check['limit']} {check['unit']} | {check['accepted']} |")
     if result["nativeOnly"]:
         lines += ["", "## Native-only captures (no reference counterpart; not compared)", ""]
         for entry in result["nativeOnly"]:
@@ -815,7 +981,7 @@ def main():
     Path(args.out, "report.json").write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
     Path(args.out, "summary.md").write_text(summary_markdown(result), encoding="utf-8")
     for section, totals in result["totals"].items():
-        print(f"{section}: {totals['passed']} passed, {totals['failed']} failed")
+        print(f"{section}: {totals['passed']} passed, {totals['failed']} failed, {totals.get('accepted', 0)} accepted")
     if "sensitivity" in result:
         print(f"sensitivity: {len(result['sensitivity'])} checks flipped from passed to failed")
 

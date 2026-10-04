@@ -325,7 +325,7 @@ Checked through GPUI's accessibility tree
 (`Window::debug_a11y_tree_json`) in the window tests:
 
 - The query field and the results form one `EditableComboBox` node labelled
-  "Search", with the query as its value and "Search commands" as its
+  "Search", with the query as its value and "Search apps and commands…" as its
   placeholder. It tracks the field's keyboard focus.
 - The results are a `ListBox` labelled "Results" inside it, of
   `ListBoxOption`s with label, description (subtitle, and the reason when

@@ -49,30 +49,38 @@ use std::path::{Path, PathBuf};
 
 use gpui::{
     App, Bounds, Context, Entity, FocusHandle, Focusable, FontWeight, Hsla, Pixels, Role,
-    SharedString, TextRun, TitlebarOptions, Window, WindowBounds, WindowOptions, div, prelude::*,
-    px, size,
+    ScrollHandle, SharedString, TextRun, TitlebarOptions, Window, WindowBounds, WindowOptions, div,
+    prelude::*, px, size,
 };
 use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged};
 use pane_core::{Binding, KeyboardAction, SelectedAction};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::app::{KEY_CONTEXT, LIST_PADDING_BOTTOM, LIST_PADDING_TOP, action_button};
+use crate::app::{KEY_CONTEXT, action_button};
 use crate::features::root_search::{self, search_header};
 use crate::settings;
 use crate::ui::icon::{Glyph, IconTone};
 use crate::ui::input::bind_text_editing;
 use crate::ui::keycap;
-use crate::ui::material::{FOOTER_PADDING_X, Material};
+use crate::ui::material::Material;
 use crate::ui::result_row::{RowContent, result_row};
+use crate::ui::shell::{self, LAUNCHER_CLIENT};
 use crate::ui::theme::Theme;
 use crate::{Back, SelectNext, SelectPrevious};
 
 /// The root reference board's client size, in logical pixels: the authored
 /// 760×518 (64 search header + 404 list + 50 footer). Every root-family
-/// fixture renders at exactly this client size; the comparison never
-/// rescales an image to hide a mismatch.
-pub(crate) const ROOT_CLIENT: (f32, f32) = (760., 518.);
+/// fixture renders at exactly this client size — the launcher window's own
+/// ([`LAUNCHER_CLIENT`]); the comparison never rescales an image to hide a
+/// mismatch.
+pub(crate) const ROOT_CLIENT: (f32, f32) = LAUNCHER_CLIENT;
+
+/// A narrow launcher client: no reference board is this size. The launcher
+/// window can be resized this small, and the narrow scenario shows that
+/// the selected row and the footer stay visible and reachable there — an
+/// adaptation, captured but never compared.
+pub(crate) const NARROW_CLIENT: (f32, f32) = (480., 360.);
 
 /// The Settings reference board's client size, for the fixture that
 /// ticket #97 registers.
@@ -81,11 +89,6 @@ pub(crate) const SETTINGS_CLIENT: (f32, f32) = (1120., 720.);
 /// The clipboard reference board's client size, for the fixture that
 /// ticket #102 registers.
 pub(crate) const CLIPBOARD_CLIENT: (f32, f32) = (940., 600.);
-
-/// The panel's 1px inner edge ([`Material::panel`]'s border): the
-/// composition inside it starts one pixel in from every side of the
-/// client.
-const PANEL_EDGE: f32 = 1.;
 
 /// The keycap scenario's inset from the panel edge and the gap between
 /// its caps — the harness's own layout, chosen so each cap stands alone
@@ -251,6 +254,11 @@ const fn capture(name: &'static str) -> Step {
     Step::Capture { name }
 }
 
+/// The selection key that moves to the next row.
+const DOWN: Step = Step::Key {
+    key: NamedKey::Down,
+};
+
 /// A scenario the workbench renders now, with production components.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -265,6 +273,16 @@ pub(crate) struct Scenario {
     /// scenario (an adaptation the reference never authors) is captured
     /// and kept as evidence, never compared and never counted as parity.
     pub(crate) reference: bool,
+    /// The appearance the scenario renders in, when it is not the run's
+    /// own (`--theme`): the light frame is captured in the same run as
+    /// the dark ones. Light is a derived palette, so a light scenario is
+    /// always native-only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) theme: Option<&'static str>,
+    /// Whether the comparison measures the launcher's frame in this
+    /// scenario's captures — the panel's inset edges, its corners, and
+    /// where the header, list and footer begin and end (#92).
+    pub(crate) frame: bool,
     #[serde(skip)]
     pub(crate) rows: &'static [FixtureRow],
     /// What the capture helpers do, in order, from the scenario's rest.
@@ -290,6 +308,8 @@ const SCENARIOS: &[Scenario] = {
             family: Family::Root,
             client: ROOT_CLIENT,
             reference: true,
+            theme: None,
+            frame: false,
             rows: ROOT_ROWS,
             steps: &[capture("rest")],
         },
@@ -299,6 +319,8 @@ const SCENARIOS: &[Scenario] = {
             family: Family::Root,
             client: ROOT_CLIENT,
             reference: true,
+            theme: None,
+            frame: false,
             rows: ROOT_ROWS,
             steps: &[capture("rest"), Pointer { row: 1 }, capture("hover")],
         },
@@ -308,6 +330,8 @@ const SCENARIOS: &[Scenario] = {
             family: Family::Root,
             client: ROOT_CLIENT,
             reference: true,
+            theme: None,
+            frame: false,
             rows: ROOT_ROWS,
             steps: &[
                 capture("rest"),
@@ -327,6 +351,8 @@ const SCENARIOS: &[Scenario] = {
             family: Family::Root,
             client: ROOT_CLIENT,
             reference: true,
+            theme: None,
+            frame: false,
             rows: ROOT_ROWS,
             steps: &[
                 Key {
@@ -346,6 +372,8 @@ const SCENARIOS: &[Scenario] = {
             family: Family::Root,
             client: ROOT_CLIENT,
             reference: true,
+            theme: None,
+            frame: false,
             rows: ROOT_ROWS,
             steps: &[
                 capture("rest"),
@@ -363,6 +391,8 @@ const SCENARIOS: &[Scenario] = {
             family: Family::Root,
             client: ROOT_CLIENT,
             reference: false,
+            theme: None,
+            frame: false,
             rows: UNAVAILABLE_ROWS,
             steps: &[
                 capture("rest"),
@@ -378,8 +408,53 @@ const SCENARIOS: &[Scenario] = {
             family: Family::Root,
             client: ROOT_CLIENT,
             reference: false,
+            theme: None,
+            frame: false,
             rows: LONG_ROWS,
             steps: &[capture("long-content")],
+        },
+        Scenario {
+            name: "launcher-frame",
+            description: "The launcher's frame at rest: the 760x518 panel, its inset edges and corners, and the header, list and footer boundaries",
+            family: Family::Root,
+            client: ROOT_CLIENT,
+            reference: true,
+            theme: None,
+            frame: true,
+            rows: ROOT_ROWS,
+            steps: &[capture("frame")],
+        },
+        Scenario {
+            name: "launcher-frame-light",
+            description: "The same frame in the derived light appearance, at the same dimensions (no reference counterpart)",
+            family: Family::Root,
+            client: ROOT_CLIENT,
+            reference: false,
+            theme: Some("light"),
+            frame: true,
+            rows: ROOT_ROWS,
+            steps: &[capture("frame-light")],
+        },
+        Scenario {
+            name: "launcher-frame-narrow",
+            description: "A narrow launcher: the keys select the last row, which the list scrolls into view above the footer (no reference counterpart)",
+            family: Family::Root,
+            client: NARROW_CLIENT,
+            reference: false,
+            theme: None,
+            frame: true,
+            rows: ROOT_ROWS,
+            steps: &[
+                capture("narrow-rest"),
+                DOWN,
+                DOWN,
+                DOWN,
+                DOWN,
+                DOWN,
+                DOWN,
+                DOWN,
+                capture("narrow-last-selected"),
+            ],
         },
         Scenario {
             name: "keycap-windows",
@@ -387,6 +462,8 @@ const SCENARIOS: &[Scenario] = {
             family: Family::Keycap,
             client: ROOT_CLIENT,
             reference: true,
+            theme: None,
+            frame: false,
             rows: &[],
             steps: &[capture("keycaps")],
         },
@@ -413,13 +490,6 @@ pub(crate) struct PendingScenario {
 /// this milestone (see the #90 specification's deferred capabilities).
 pub(crate) fn pending_scenarios() -> &'static [PendingScenario] {
     &[
-        PendingScenario {
-            name: "launcher-frame",
-            board: "root",
-            ticket: "https://github.com/hoangvu12/pane/issues/92",
-            description: "The launcher frame's material treatment, measured against the board",
-            client: ROOT_CLIENT,
-        },
         PendingScenario {
             name: "actions-panel",
             board: "actions",
@@ -495,8 +565,10 @@ pub(crate) const KEYCAP_BINDINGS: &[(&str, &str)] = &[
 /// in the rendering, not a change of intent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Perturbation {
-    /// The result row's horizontal padding grows by 4 logical pixels —
-    /// an edge error every wash, tile and text position shifts by.
+    /// The rows' horizontal inset grows by 4 logical pixels — the result
+    /// list's side padding, an edge error every wash, tile and text
+    /// position shifts by. (The name predates the list's own padding
+    /// token; the runner keeps passing it.)
     RowPaddingPlus4,
     /// The selected row's wash is filled with a wrong color — a regional
     /// fill error the wash's measured color reports.
@@ -544,7 +616,7 @@ impl Perturbation {
     /// wrong value through the same production components.
     fn apply(self, theme: &mut Theme) {
         match self {
-            Perturbation::RowPaddingPlus4 => theme.geometry.row_padding_x += px(4.),
+            Perturbation::RowPaddingPlus4 => theme.geometry.list_padding_x += px(4.),
             // A selected wash at white 25%: clearly wrong against the
             // authored 8.5%, and flat, so the measured fill is
             // deterministic in the opaque material.
@@ -757,8 +829,8 @@ impl Rect {
 }
 
 /// The geometry the root composition declares in a client of `client`
-/// size: the search header, the list's viewport and the footer, inset by
-/// the panel's edge.
+/// size: the search header, the list's viewport and the footer, edge to
+/// edge — the panel's inset ring takes no layout space.
 struct Frame {
     search: Rect,
     list: Rect,
@@ -768,23 +840,22 @@ struct Frame {
 fn frame(theme: &Theme, client: (f32, f32)) -> Frame {
     let geometry = &theme.geometry;
     let (width, height) = client;
-    let inner = width - 2. * PANEL_EDGE;
     let search = Rect {
-        x: PANEL_EDGE,
-        y: PANEL_EDGE,
-        width: inner,
+        x: 0.,
+        y: 0.,
+        width,
         height: f32::from(geometry.search_height),
     };
     let footer = Rect {
-        x: PANEL_EDGE,
-        y: height - PANEL_EDGE - f32::from(geometry.footer_height),
-        width: inner,
+        x: 0.,
+        y: height - f32::from(geometry.footer_height),
+        width,
         height: f32::from(geometry.footer_height),
     };
     let list = Rect {
-        x: PANEL_EDGE,
+        x: 0.,
         y: search.y + search.height,
-        width: inner,
+        width,
         height: footer.y - (search.y + search.height),
     };
     Frame {
@@ -809,20 +880,27 @@ pub(crate) struct DeclaredRow {
     /// `heightIsFloor` and only the first such row's top is exact.
     rect: Rect,
     height_is_floor: bool,
+    /// Whether the whole row lies inside the list's viewport at the
+    /// list's scroll offset; a row scrolled out of view, or partly out,
+    /// is declared but not measured.
+    visible: bool,
 }
 
-/// The rows `state` shows, laid out in the list of `frame`, with the
-/// pointer at `pointer` (client coordinates) if it is in the window.
+/// The rows `state` shows, laid out in the list of `frame` scrolled by
+/// `offset` (0 or negative, as GPUI's scroll offset is), with the pointer
+/// at `pointer` (client coordinates) if it is in the window.
 fn declared_rows(
     state: &FixtureState,
     theme: &Theme,
     frame: &Frame,
+    offset: f32,
     pointer: Option<(f32, f32)>,
 ) -> Vec<DeclaredRow> {
     let geometry = &theme.geometry;
-    let x = frame.list.x + f32::from(geometry.row_padding_x);
-    let width = frame.list.width - 2. * f32::from(geometry.row_padding_x);
-    let mut y = frame.list.y + f32::from(LIST_PADDING_TOP);
+    let x = frame.list.x + f32::from(geometry.list_padding_x);
+    let width = frame.list.width - 2. * f32::from(geometry.list_padding_x);
+    let mut y = frame.list.y + f32::from(geometry.list_padding_top) + offset;
+    let list = frame.list;
     let mut floor = false;
     state
         .rows
@@ -845,6 +923,7 @@ fn declared_rows(
                 hovered: !floor && pointer.is_some_and(|point| rect.contains(point)),
                 rect,
                 height_is_floor: floor,
+                visible: rect.y >= list.y && rect.y + rect.height <= list.y + list.height,
             }
         })
         .collect()
@@ -889,11 +968,32 @@ pub(crate) struct Replay {
     pub(crate) steps: Vec<ResolvedStep>,
 }
 
+/// The list's scroll offset after it scrolls the selected row into view
+/// from `offset`, by the rule GPUI's `ScrollHandle::scroll_to_item`
+/// applies (the least scroll that shows the whole row; the list's own
+/// padding may scroll out of view), which both the launcher and the
+/// fixture ask for whenever the selection moves.
+fn scrolled_to_selected(state: &FixtureState, theme: &Theme, frame: &Frame, offset: f32) -> f32 {
+    let rows = declared_rows(state, theme, frame, 0., None);
+    let Some(row) = rows.get(state.selected) else {
+        return offset;
+    };
+    let (top, bottom) = (frame.list.y, frame.list.y + frame.list.height);
+    if row.rect.y + offset < top {
+        top - row.rect.y
+    } else if row.rect.y + row.rect.height + offset > bottom {
+        bottom - (row.rect.y + row.rect.height)
+    } else {
+        offset
+    }
+}
+
 /// Replays `scenario`'s steps over the fixture's state model: declares
 /// every capture they take, and resolves where each pointer step points.
 pub(crate) fn replay(scenario: &Scenario, theme: &Theme) -> Replay {
     let frame = frame(theme, scenario.client);
     let mut state = FixtureState::new(scenario.rows);
+    let mut offset = 0.;
     let mut pointer = None;
     let mut after = Vec::new();
     let mut captures = Vec::new();
@@ -906,12 +1006,12 @@ pub(crate) fn replay(scenario: &Scenario, theme: &Theme) -> Replay {
                 after: after.clone(),
                 query: state.query.clone(),
                 pointer,
-                rows: declared_rows(&state, theme, &frame, pointer),
+                rows: declared_rows(&state, theme, &frame, offset, pointer),
                 action: state.rows.get(state.selected).map(|row| row.action),
                 action_button: None,
             }),
             Step::Pointer { row } => {
-                let rows = declared_rows(&state, theme, &frame, None);
+                let rows = declared_rows(&state, theme, &frame, offset, None);
                 pointer = rows.get(row).map(|row| row.rect.center());
                 point = pointer;
             }
@@ -925,6 +1025,9 @@ pub(crate) fn replay(scenario: &Scenario, theme: &Theme) -> Replay {
                 let query = format!("{}{text}", state.query);
                 state.set_query(&query);
             }
+        }
+        if matches!(step, Step::Key { .. } | Step::Type { .. }) {
+            offset = scrolled_to_selected(&state, theme, &frame, offset);
         }
         if !matches!(step, Step::Capture { .. }) {
             after.push(*step);
@@ -945,6 +1048,9 @@ pub(crate) struct FixtureWindow {
     perturbation: Option<Perturbation>,
     state: FixtureState,
     query: Entity<EditableTextState>,
+    /// The result list's scroll, kept on the selected row as the
+    /// launcher keeps its own (see [`scrolled_to_selected`]).
+    scroll: ScrollHandle,
 }
 
 impl FixtureWindow {
@@ -959,7 +1065,7 @@ impl FixtureWindow {
             let text = input.read(cx).as_str().to_owned();
             if text != this.state.query {
                 this.state.set_query(&text);
-                cx.notify();
+                this.selection_moved(cx);
             }
         })
         .detach();
@@ -968,17 +1074,25 @@ impl FixtureWindow {
             perturbation,
             state: FixtureState::new(scenario.rows),
             query,
+            scroll: ScrollHandle::new(),
         }
+    }
+
+    /// After the selection may have moved: the list keeps the selected
+    /// row in view, as the launcher's does, and the window redraws.
+    fn selection_moved(&mut self, cx: &mut Context<Self>) {
+        self.scroll.scroll_to_item(self.state.selected);
+        cx.notify();
     }
 
     fn select_next(&mut self, _: &SelectNext, _: &mut Window, cx: &mut Context<Self>) {
         self.state.select_next();
-        cx.notify();
+        self.selection_moved(cx);
     }
 
     fn select_previous(&mut self, _: &SelectPrevious, _: &mut Window, cx: &mut Context<Self>) {
         self.state.select_previous();
-        cx.notify();
+        self.selection_moved(cx);
     }
 
     /// The launcher's Back, under its effective binding: the query clears
@@ -987,7 +1101,7 @@ impl FixtureWindow {
         self.state.back();
         let query = self.query.clone();
         query.update(cx, |query, cx| query.emplace("", cx));
-        cx.notify();
+        self.selection_moved(cx);
     }
 
     /// The theme this frame renders with: the settings' theme, with the
@@ -1016,7 +1130,7 @@ impl FixtureWindow {
             .flex()
             .flex_col()
             .items_start()
-            .p(px(KEYCAP_INSET - PANEL_EDGE))
+            .p(px(KEYCAP_INSET))
             .gap(px(KEYCAP_GAP))
             .font_family(theme.typography.family.clone())
             .text_color(theme.text_title)
@@ -1024,7 +1138,6 @@ impl FixtureWindow {
     }
 
     fn render_root(&self, theme: &Theme, cx: &mut Context<Self>) -> gpui::Div {
-        let geometry = &theme.geometry;
         let rows = self.state.rows.iter().enumerate().map(|(index, row)| {
             let selected = index == self.state.selected;
             result_row(
@@ -1049,19 +1162,10 @@ impl FixtureWindow {
                 cx.notify();
             }))
         });
-        // The launcher's result list, at its own paddings and gap.
-        let list = div()
-            .id("rows")
-            .role(Role::ListBox)
+        // The launcher's own result list.
+        let list = shell::result_list(theme)
             .aria_label("Results")
-            .flex_1()
-            .flex()
-            .flex_col()
-            .gap(geometry.row_list_gap)
-            .px(geometry.row_padding_x)
-            .pt(LIST_PADDING_TOP)
-            .pb(LIST_PADDING_BOTTOM)
-            .overflow_y_scroll()
+            .track_scroll(&self.scroll)
             .children(rows);
         let focus = self.query.focus_handle(cx);
         let search = div()
@@ -1193,7 +1297,6 @@ struct DeclaredTokens {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct GeometryRecord {
-    panel_edge: f32,
     search_height: f32,
     search_padding_x: f32,
     search_gap: f32,
@@ -1207,10 +1310,12 @@ struct GeometryRecord {
     row_subtitle_size: f32,
     list_padding_top: f32,
     list_padding_bottom: f32,
+    list_padding_x: f32,
     tile_size: f32,
     tile_radius: f32,
     footer_height: f32,
-    footer_padding_x: f32,
+    footer_padding_left: f32,
+    footer_padding_right: f32,
     action_height: f32,
     action_radius: f32,
     action_padding_x: f32,
@@ -1225,6 +1330,7 @@ struct GeometryRecord {
 #[serde(rename_all = "camelCase")]
 struct ColorRecord {
     panel_solid: Hex,
+    panel_top_highlight: Hex,
     row_hover: Hex,
     row_selected: Hex,
     row_selected_border: Hex,
@@ -1235,6 +1341,7 @@ struct ColorRecord {
     tile_foreground: Hex,
     text_title: Hex,
     text_muted: Hex,
+    text_query: Hex,
     text_placeholder: Hex,
 }
 
@@ -1382,7 +1489,8 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
                 .binding(KeyboardAction::InvokeSelectedAction)
                 .clone();
             let (label, glyph, label_width, cap_width) = keycap_label(window, &theme, &invoke);
-            let right = frame.footer.x + frame.footer.width - f32::from(FOOTER_PADDING_X);
+            let right =
+                frame.footer.x + frame.footer.width - f32::from(geometry.footer_padding_right);
             let rule = 1.;
             let top = frame.footer.y
                 + rule
@@ -1453,7 +1561,6 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
         },
         declared: DeclaredTokens {
             geometry: GeometryRecord {
-                panel_edge: PANEL_EDGE,
                 search_height: f32::from(geometry.search_height),
                 search_padding_x: f32::from(geometry.search_padding_x),
                 search_gap: f32::from(geometry.search_gap),
@@ -1465,12 +1572,14 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
                 row_list_gap: f32::from(geometry.row_list_gap),
                 row_title_size: f32::from(theme.typography.row_title_size),
                 row_subtitle_size: f32::from(theme.typography.row_subtitle_size),
-                list_padding_top: f32::from(LIST_PADDING_TOP),
-                list_padding_bottom: f32::from(LIST_PADDING_BOTTOM),
+                list_padding_top: f32::from(geometry.list_padding_top),
+                list_padding_bottom: f32::from(geometry.list_padding_bottom),
+                list_padding_x: f32::from(geometry.list_padding_x),
                 tile_size: f32::from(geometry.tile_size),
                 tile_radius: f32::from(geometry.tile_radius),
                 footer_height: f32::from(geometry.footer_height),
-                footer_padding_x: f32::from(FOOTER_PADDING_X),
+                footer_padding_left: f32::from(geometry.footer_padding_left),
+                footer_padding_right: f32::from(geometry.footer_padding_right),
                 action_height: f32::from(geometry.action_height),
                 action_radius: f32::from(geometry.action_radius),
                 action_padding_x: f32::from(geometry.action_padding_x),
@@ -1482,6 +1591,7 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
             },
             colors: ColorRecord {
                 panel_solid: Hex(theme.panel_solid),
+                panel_top_highlight: Hex(theme.panel_top_highlight),
                 row_hover: Hex(theme.row_hover),
                 row_selected: Hex(theme.row_selected),
                 row_selected_border: Hex(theme.row_selected_border),
@@ -1492,6 +1602,7 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
                 tile_foreground: Hex(theme.tile_foreground),
                 text_title: Hex(theme.text_title),
                 text_muted: Hex(theme.text_muted),
+                text_query: Hex(theme.text_query),
                 text_placeholder: Hex(theme.text_placeholder),
             },
         },
@@ -1527,6 +1638,9 @@ pub fn run(options: FixtureOptions) -> Result<(), String> {
         manifest: manifest_path,
         ..
     } = options;
+    // A scenario that names its own appearance renders in it, whatever the
+    // run's theme.
+    let theme = scenario.theme.map(str::to_owned).or(theme);
     gpui_platform::application().run(move |cx: &mut App| {
         settings::init_with_overrides(
             data_dir.clone(),
@@ -1638,20 +1752,52 @@ mod tests {
     }
 
     #[test]
-    fn every_scenario_renders_at_the_reference_root_client() {
-        for scenario in scenarios() {
+    fn every_reference_scenario_renders_at_the_reference_root_client() {
+        for scenario in scenarios().iter().filter(|scenario| scenario.reference) {
             assert_eq!(scenario.client, (760., 518.), "{}", scenario.name);
         }
+        // The launcher window opens at the same client.
+        assert_eq!(ROOT_CLIENT, crate::ui::shell::LAUNCHER_CLIENT);
     }
 
     #[test]
     fn the_root_frame_divides_the_client_as_the_reference_does() {
-        // 64 search + 404 list + 50 footer = 518, inside the panel's edge.
+        // 64 search + 404 list + 50 footer = 518, edge to edge: the
+        // panel's inset ring takes no layout space.
         let frame = frame(&theme(), ROOT_CLIENT);
+        assert_eq!((frame.search.x, frame.search.y), (0., 0.));
+        assert_eq!(frame.search.width, 760.);
         assert_eq!(frame.search.y + frame.search.height, frame.list.y);
         assert_eq!(frame.list.y + frame.list.height, frame.footer.y);
-        assert_eq!(frame.footer.y + frame.footer.height + PANEL_EDGE, 518.);
-        assert_eq!(frame.list.height, 518. - 2. * PANEL_EDGE - 64. - 50.);
+        assert_eq!(frame.footer.y + frame.footer.height, 518.);
+        assert_eq!(frame.list.height, 404.);
+    }
+
+    #[test]
+    fn light_and_narrow_frames_are_native_only_adaptations() {
+        let light = scenario("launcher-frame-light");
+        assert_eq!(light.theme, Some("light"));
+        assert!(!light.reference && light.frame);
+        let narrow = scenario("launcher-frame-narrow");
+        assert_eq!(narrow.client, NARROW_CLIENT);
+        assert!(!narrow.reference && narrow.frame);
+        assert!(scenario("launcher-frame").reference);
+    }
+
+    #[test]
+    fn the_narrow_list_scrolls_the_last_row_into_view_above_the_footer() {
+        let captures = declared_captures(scenario("launcher-frame-narrow"), &theme());
+        let rest = capture(&captures, "narrow-rest");
+        // At rest the first rows show and the rest are below the fold.
+        assert!(rest.rows[0].visible && rest.rows[0].selected);
+        assert!(!rest.rows.last().unwrap().visible);
+        let last = capture(&captures, "narrow-last-selected");
+        let selected = last.rows.last().unwrap();
+        assert!(selected.selected && selected.visible);
+        // Scrolled by the least that shows it: its bottom on the list's.
+        let list_bottom = NARROW_CLIENT.1 - 50.;
+        assert_eq!(selected.rect.y + selected.rect.height, list_bottom);
+        assert!(!last.rows[0].visible);
     }
 
     #[test]
@@ -1705,22 +1851,23 @@ mod tests {
         let rows = &capture(&captures, "rest").rows;
         assert_eq!(rows.len(), ROOT_ROWS.len());
         for (index, row) in rows.iter().enumerate() {
-            // Row i at the panel edge + header + list top padding, then
-            // one row height and one list gap per row before it.
-            let y = 1. + 64. + 4. + index as f32 * (44. + 2.);
+            // Row i below the header and the list's top padding, then one
+            // row height and one list gap per row before it.
+            let y = 64. + 4. + index as f32 * (44. + 2.);
             assert_eq!(
                 row.rect,
                 Rect {
-                    x: 1. + 10.,
+                    x: 10.,
                     y,
-                    width: 758. - 20.,
+                    width: 760. - 20.,
                     height: 44.
                 }
             );
+            assert!(row.visible);
         }
         // Everything fits above the list's bottom padding: nothing scrolls.
         let last = rows.last().unwrap().rect;
-        assert!(last.y + last.height + 10. <= 1. + 64. + 402.);
+        assert!(last.y + last.height + 10. <= 64. + 404.);
     }
 
     #[test]
@@ -1813,8 +1960,8 @@ mod tests {
         let mut padded = theme();
         Perturbation::RowPaddingPlus4.apply(&mut padded);
         assert_eq!(
-            padded.geometry.row_padding_x,
-            base.geometry.row_padding_x + px(4.)
+            padded.geometry.list_padding_x,
+            base.geometry.list_padding_x + px(4.)
         );
         assert_eq!(hex(padded.row_selected), hex(base.row_selected));
 
@@ -1822,7 +1969,7 @@ mod tests {
         Perturbation::SelectedFill.apply(&mut filled);
         assert_eq!(hex(filled.row_selected), "#FFFFFF40");
         assert_ne!(hex(base.row_selected), "#FFFFFF40");
-        assert_eq!(filled.geometry.row_padding_x, base.geometry.row_padding_x);
+        assert_eq!(filled.geometry.list_padding_x, base.geometry.list_padding_x);
 
         let mut hovered = theme();
         Perturbation::HoverFill.apply(&mut hovered);

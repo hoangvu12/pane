@@ -181,6 +181,17 @@ pub(crate) struct Geometry {
     pub(crate) search_padding_x: Pixels,
     /// The search header's icon-to-field gap.
     pub(crate) search_gap: Pixels,
+    /// The search header's magnifier glyph.
+    pub(crate) search_glyph_size: Pixels,
+    /// The result list's padding above its first row (the reference's
+    /// root body: 4).
+    pub(crate) list_padding_top: Pixels,
+    /// The result list's padding below its last row (10).
+    pub(crate) list_padding_bottom: Pixels,
+    /// The result list's side padding: the rows' inset from the panel
+    /// (10). A separate token from a row's own [`Self::row_padding_x`],
+    /// which the reference also authors as 10.
+    pub(crate) list_padding_x: Pixels,
     /// A row's height — a floor: a row holding a wrapped unavailable
     /// reason grows taller rather than clipping it.
     pub(crate) row_min_height: Pixels,
@@ -200,6 +211,11 @@ pub(crate) struct Geometry {
     pub(crate) tile_glyph_size: Pixels,
     /// The footer's height.
     pub(crate) footer_height: Pixels,
+    /// The footer's left padding (the reference's 16).
+    pub(crate) footer_padding_left: Pixels,
+    /// The footer's right padding (8: the right-hand buttons carry their
+    /// own 8px padding, so their labels end 16px from the edge).
+    pub(crate) footer_padding_right: Pixels,
     /// The footer action button's height.
     pub(crate) action_height: Pixels,
     /// The footer action button's corner radius.
@@ -375,6 +391,10 @@ impl Geometry {
             search_height: px(64.),
             search_padding_x: px(20.),
             search_gap: px(14.),
+            search_glyph_size: px(20.),
+            list_padding_top: px(4.),
+            list_padding_bottom: px(10.),
+            list_padding_x: px(10.),
             row_min_height: px(44.),
             row_radius: px(10.),
             row_padding_x: px(10.),
@@ -384,6 +404,8 @@ impl Geometry {
             tile_radius: px(7.),
             tile_glyph_size: px(16.),
             footer_height: px(50.),
+            footer_padding_left: px(16.),
+            footer_padding_right: px(8.),
             action_height: px(28.),
             action_radius: px(7.),
             action_padding_x: px(10.),
