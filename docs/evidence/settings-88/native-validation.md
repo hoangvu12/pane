@@ -126,3 +126,14 @@ settled control schedules no cosmetic frame (nothing animates while the
 window sits still), and a popup's exit ends with the popup fully
 unmounted — nothing of it remains to intercept a click. Keep
 `PANE_MOTION_SCALE` out of any clip that measures timing.
+
+One known non-idle to expect and not misread as a leak: a pointer parked
+over content that reflowed under it — a popup unmounting over where the
+pointer rests, a list scrolling beneath it. The renderer's style
+transitions read the hover for the layout pass from the hover state a
+real mouse move set, so until the pointer moves again a wash there can
+sit mid-fade and keep the window asking for frames; the first real move
+settles it. The test harness sends the pointer away before counting
+frames for exactly this reason, and the fix for it belongs to the
+renderer (the pinned fork's hover tracking), not to Pane's motion
+policy — worth an observation in this pass, nothing more.

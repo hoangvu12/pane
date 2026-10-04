@@ -232,12 +232,30 @@ fn dismiss(
     before
 }
 
-/// Clicks the element whose debug selector is `selector` in `cx`.
+/// Clicks the element whose debug selector is `selector` in `cx`. The
+/// pointer moves to the element first, as a real one does: the move is
+/// what tells an element it is hovered, and a click's landing alone does
+/// not — without the move the pointer-feedback fade would see a hover in
+/// the paint's style pass and not in the layout's, and never settle.
 fn click(cx: &mut VisualTestContext, selector: &'static str) {
     let bounds = cx
         .debug_bounds(selector)
         .unwrap_or_else(|| panic!("{selector} is not drawn"));
+    cx.simulate_mouse_move(bounds.center(), None::<MouseButton>, Modifiers::none());
     cx.simulate_click(bounds.center(), Modifiers::none());
+}
+
+/// Moves the pointer off the window, as a user's does when it leaves.
+/// The test platform parks the pointer wherever a move or click last
+/// put it, and a wash a parked pointer implies keeps running — so the
+/// tests that count the window's frames send the pointer away first,
+/// leaving the window to the keyboard's modality.
+fn pointer_leaves(cx: &mut VisualTestContext) {
+    cx.simulate_mouse_move(
+        gpui::point(px(-100.), px(-100.)),
+        None::<MouseButton>,
+        Modifiers::none(),
+    );
 }
 
 /// Chooses the opening monitor whose choice row's debug selector is
@@ -1588,6 +1606,11 @@ fn the_popup_exits_toward_the_trigger_inert_and_unmounts(cx: &mut TestAppContext
     click(&mut sc, "launcher-monitor");
     sc.run_until_parked();
     settle_frames(&mut sc);
+    // The pointer leaves the trigger it opened the popup with, and the
+    // wash it held settles with it, so the frames that follow are the
+    // popup's own — none of the pointer's.
+    pointer_leaves(&mut sc);
+    settle_frames(&mut sc);
     sc.simulate_input("poi");
     sc.run_until_parked();
     assert!(
@@ -1630,15 +1653,16 @@ fn the_popup_exits_toward_the_trigger_inert_and_unmounts(cx: &mut TestAppContext
     // The exit's visuals are inert: a click on the row that would commit
     // lands on the fading overlay and does nothing — the draft is not
     // saved by the popup's own afterimage.
-    let row = sc
-        .debug_bounds("launcher-monitor-Pointer")
-        .expect("the row is still painted");
-    sc.simulate_click(row.center(), Modifiers::none());
+    click(&mut sc, "launcher-monitor-Pointer");
     sc.run_until_parked();
     assert!(
         !data.path().join("settings.json").exists(),
         "the exiting popup's rows cannot commit"
     );
+    // The pointer leaves the fading popup before it unmounts: the page
+    // rows it covers are revealed as it goes, and a control the pointer
+    // never moved onto takes no wash for its paint's say-so alone.
+    pointer_leaves(&mut sc);
 
     // Past the exit's span the popup unmounts invisible and the window
     // asks for no further frame: nothing of the closed popup is left.
@@ -1736,6 +1760,10 @@ fn a_popup_reopened_during_its_exit_retargets_and_blocks_nothing(cx: &mut TestAp
 #[gpui::test]
 fn reduced_motion_lands_the_select_popup_at_once(cx: &mut TestAppContext) {
     let (_window, settings, mut sc, _data) = open_select(cx);
+    // The page's own opening arrivals began under full motion; let them
+    // settle before the preference is flipped, so what follows is the
+    // preference's own behavior and nothing pending.
+    settle_frames(&mut sc);
     sc.update(|_, cx| cx.set_reduce_motion(true));
 
     // Opening under reduced motion: no entrance starts — the frame that
@@ -1789,23 +1817,39 @@ fn filtering_never_animates_the_popup_contents(cx: &mut TestAppContext) {
     click(&mut sc, "launcher-monitor");
     sc.run_until_parked();
     settle_frames(&mut sc);
+    // The pointer leaves the trigger it opened the popup with, and the
+    // wash it held settles with it: the frames this test counts are the
+    // popup's own, none of the pointer's.
+    pointer_leaves(&mut sc);
+    settle_frames(&mut sc);
     // Typing narrows the list to the choices the query matches: the rows
     // change at once, and the window asks for no cosmetic frame for them.
-    sc.simulate_input("p");
+    // ("poi" matches only the pointer's display; a plain "p" would match
+    // every label, whose names all carry the word "display".)
+    sc.simulate_input("poi");
     sc.run_until_parked();
     assert!(
-        sc.debug_bounds("launcher-monitor-Pointer").is_some()
-            && sc.debug_bounds("launcher-monitor-Primary").is_some(),
+        sc.debug_bounds("launcher-monitor-Pointer").is_some(),
         "the narrowed list is drawn"
     );
     assert!(
-        sc.debug_bounds("launcher-monitor-ActiveWindow").is_none(),
+        sc.debug_bounds("launcher-monitor-Primary").is_none()
+            && sc.debug_bounds("launcher-monitor-ActiveWindow").is_none(),
         "the narrowed list dropped the rest"
     );
     assert_eq!(
         settle_frames(&mut sc),
         0,
         "a content update requested no frame"
+    );
+    // The draft clears back to every choice — also a content update.
+    for _ in 0..3 {
+        sc.simulate_keystrokes("backspace");
+        sc.run_until_parked();
+    }
+    assert!(
+        sc.debug_bounds("launcher-monitor-ActiveWindow").is_some(),
+        "the cleared draft lists every choice"
     );
     // So does the keyboard's own navigation of the highlight: it moves
     // at once, and nothing fades for it.

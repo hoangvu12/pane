@@ -36,7 +36,7 @@ use crate::app::LauncherWindow;
 use crate::features::settings;
 use crate::ui::icon::{Glyph, glyph};
 use crate::ui::keycap::binding_keycap;
-use crate::ui::{self};
+use crate::ui::{self, motion};
 
 actions!(
     footer_menu,
@@ -259,6 +259,7 @@ impl LauncherWindow {
             .hover(|button| button.bg(theme.row_hover))
             // Pressed: the selected wash, one rung above the hover one.
             .active(|button| button.bg(theme.row_selected))
+            .transitions(|fades| fades.bg(motion::pointer_fade()))
             // Visible keyboard focus, the list's focus ring treatment.
             .focus(|button| {
                 button.shadow(vec![
@@ -388,6 +389,7 @@ fn menu_list(
                     // immediately legible, as the policy requires — and
                     // only the pointer's own wash fades.
                     .active(|item| item.bg(theme.row_selected))
+                    .transitions(|fades| fades.bg(motion::pointer_fade()))
             })
             .when(item_selected, |item| {
                 item.bg(theme.row_selected)

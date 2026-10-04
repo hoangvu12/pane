@@ -247,6 +247,7 @@ fn render(
             // Pressed: the selected wash, one rung above the hover one,
             // fading on the shared pointer span.
             .active(|row| row.bg(theme.row_selected))
+            .transitions(|fades| fades.bg(crate::ui::motion::pointer_fade()))
             .debug_selector(|| format!("extension-row-{}", row.title))
             .anchor_scroll(Some(anchor))
             .role(Role::Button)
@@ -283,6 +284,7 @@ fn render(
             // Pressed: the selected wash, one rung above the hover one,
             // fading on the shared pointer span.
             .active(|row| row.bg(theme.row_selected))
+            .transitions(|fades| fades.bg(crate::ui::motion::pointer_fade()))
             .debug_selector(|| format!("extension-command-{title}"))
             .role(Role::Button)
             .aria_label(title)
@@ -314,6 +316,7 @@ fn render(
             // Pressed: the selected wash, one rung above the hover one,
             // fading on the shared pointer span.
             .active(|row| row.bg(theme.row_selected))
+            .transitions(|fades| fades.bg(crate::ui::motion::pointer_fade()))
             .debug_selector(move || format!("extension-install-{title}"))
             .anchor_scroll(Some(anchor))
             .role(Role::Button)
@@ -392,6 +395,7 @@ fn render(
                 // Pressed: the selected wash, one rung above the hover
                 // one, fading on the shared pointer span.
                 .active(|row| row.bg(theme.row_selected))
+                .transitions(|fades| fades.bg(crate::ui::motion::pointer_fade()))
                 .debug_selector(|| "extension-back".into())
                 .role(Role::Button)
                 .aria_label("Back")

@@ -16,7 +16,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    AnyWindowHandle, Modifiers, TestAppContext, VisualTestContext, WindowHandle, prelude::*, px,
+    AnyWindowHandle, Modifiers, MouseButton, TestAppContext, VisualTestContext, WindowHandle,
+    prelude::*, px,
 };
 use pane::{APP_VERSION, LauncherWindow, SettingsWindow};
 use pane_core::autostart::{Autostart, Registration};
@@ -285,11 +286,13 @@ fn open_extensions(
 }
 
 /// Clicks the row whose debug selector is `row` on the Extensions page,
-/// as its user would.
+/// as its user would — the pointer moving onto it first, for the reason
+/// [`click_section`] gives.
 fn click_row(settings_cx: &mut VisualTestContext, row: &'static str) {
     let bounds = settings_cx
         .debug_bounds(row)
         .unwrap_or_else(|| panic!("no {row} on the Extensions page"));
+    settings_cx.simulate_mouse_move(bounds.center(), None::<MouseButton>, Modifiers::none());
     settings_cx.simulate_click(bounds.center(), Modifiers::none());
     settings_cx.run_until_parked();
 }
@@ -419,13 +422,43 @@ fn settle_frames(cx: &mut VisualTestContext) -> usize {
 }
 
 /// Clicks the sidebar's section whose debug selector is `selector`
-/// ("section-<title>"), switching the window to it.
+/// ("section-<title>"), switching the window to it. The pointer moves
+/// onto the row first, as a user's does: a click's landing alone does
+/// not tell a row it is hovered, and the wash the row keeps would never
+/// settle with the layout saying the pointer is gone and the paint
+/// saying it is there.
 fn click_section(cx: &mut VisualTestContext, selector: &'static str) {
     let section = cx
         .debug_bounds(selector)
         .unwrap_or_else(|| panic!("{selector} is drawn"));
+    cx.simulate_mouse_move(section.center(), None::<MouseButton>, Modifiers::none());
     cx.simulate_click(section.center(), Modifiers::none());
     cx.run_until_parked();
+}
+
+/// Clicks the element whose debug selector is `selector`, as its user
+/// would — the pointer moving onto it first, for the reason
+/// [`click_section`] gives.
+fn click(cx: &mut VisualTestContext, selector: &'static str) {
+    let bounds = cx
+        .debug_bounds(selector)
+        .unwrap_or_else(|| panic!("{selector} is drawn"));
+    cx.simulate_mouse_move(bounds.center(), None::<MouseButton>, Modifiers::none());
+    cx.simulate_click(bounds.center(), Modifiers::none());
+}
+
+/// Moves the pointer off the window, as a user's does when it leaves.
+/// The test platform parks the pointer wherever a move or click last
+/// put it, and content that reflows under a parked pointer — a popup
+/// unmounting over it, a list scrolling beneath it — would leave a wash
+/// running that only a real move settles: the tests that count the
+/// window's frames send the pointer away first.
+fn pointer_leaves(cx: &mut VisualTestContext) {
+    cx.simulate_mouse_move(
+        gpui::point(px(-100.), px(-100.)),
+        None::<MouseButton>,
+        Modifiers::none(),
+    );
 }
 
 /// Waits until the sidebar's selected section is exactly `title`, as
@@ -850,8 +883,7 @@ fn the_footer_menu_opens_traverses_dismisses_and_restores_focus(cx: &mut TestApp
     cx.simulate_click(button.center(), Modifiers::none());
     cx.run_until_parked();
     assert!(cx.debug_bounds("menu").is_some());
-    let row = cx.debug_bounds("row-Rust sample").expect("a result row");
-    cx.simulate_click(row.center(), Modifiers::none());
+    click(cx, "row-Rust sample");
     cx.run_until_parked();
     settle_frames(cx);
     assert!(cx.debug_bounds("menu").is_none(), "the menu closed");
@@ -868,12 +900,13 @@ fn the_menu_button_toggles_and_assistive_technology_sees_it_named(cx: &mut TestA
 
     // Clicking the button opens; clicking it again with the menu open
     // closes it — the popup's outside-click dismissal consumes the second
-    // click before the button can reopen it.
-    let button = cx.debug_bounds("footer-menu").expect("the menu button");
-    cx.simulate_click(button.center(), Modifiers::none());
+    // click before the button can reopen it. The pointer stays on the
+    // button throughout, as a user's does, so the wash it keeps there
+    // stays settled.
+    click(cx, "footer-menu");
     cx.run_until_parked();
     assert!(cx.debug_bounds("menu").is_some());
-    cx.simulate_click(button.center(), Modifiers::none());
+    click(cx, "footer-menu");
     cx.run_until_parked();
     settle_frames(cx);
     assert!(
@@ -882,7 +915,7 @@ fn the_menu_button_toggles_and_assistive_technology_sees_it_named(cx: &mut TestA
     );
 
     // The button and its item are named controls, with the open state.
-    cx.simulate_click(button.center(), Modifiers::none());
+    click(cx, "footer-menu");
     cx.run_until_parked();
     let (_, json) = accessibility(cx);
     let tree: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -928,9 +961,12 @@ fn the_menu_popup_enters_from_the_strip_and_exits_back_into_it(cx: &mut TestAppC
     settle(&launcher, cx);
     settle_frames(cx);
 
-    let button = cx.debug_bounds("footer-menu").expect("the menu button");
-    cx.simulate_click(button.center(), Modifiers::none());
+    click(cx, "footer-menu");
     cx.run_until_parked();
+    // The pointer leaves the strip's button it opened the menu with, and
+    // the wash it held settles with it, so the frames that follow are
+    // the popup's own — none of the pointer's.
+    pointer_leaves(cx);
     // The entrance starts the full shift toward the strip (down, from
     // the popup's rest above it) and the fade's floor.
     let entering = menu_popup(&launcher, cx).expect("the popup is entering");
@@ -999,10 +1035,7 @@ fn the_menu_popup_enters_from_the_strip_and_exits_back_into_it(cx: &mut TestAppC
     // The exit's visuals are inert: the item's click does nothing — the
     // exit's list carries no handlers, and the overlay takes the clicks
     // that land on it, so nothing under or on it is invoked.
-    let item = cx
-        .debug_bounds("menu-item-Settings")
-        .expect("the item is still painted");
-    cx.simulate_click(item.center(), Modifiers::none());
+    click(cx, "menu-item-Settings");
     cx.run_until_parked();
     let view = settle(&launcher, cx);
     assert!(
@@ -1014,6 +1047,10 @@ fn the_menu_popup_enters_from_the_strip_and_exits_back_into_it(cx: &mut TestAppC
         0,
         "the exiting menu's item opened no Settings window"
     );
+    // The pointer leaves the fading menu before it unmounts: the
+    // results it covers are revealed as it goes, and a row the pointer
+    // never moved onto takes no wash for its paint's say-so alone.
+    pointer_leaves(cx);
 
     // Past the exit's span the popup unmounts — nothing of it is drawn,
     // visible or not, so no invisible overlay survives to intercept a
@@ -1037,21 +1074,20 @@ fn a_menu_reopened_during_its_exit_retargets(cx: &mut TestAppContext) {
     settle_frames(cx);
 
     // Open, and let the entrance settle.
-    let button = cx.debug_bounds("footer-menu").expect("the menu button");
-    cx.simulate_click(button.center(), Modifiers::none());
+    click(cx, "footer-menu");
     cx.run_until_parked();
     settle_frames(cx);
     assert!(menu_popup(&launcher, cx).is_none());
 
     // Close, let part of the exit run, and reopen — with the exit still
     // in flight.
-    cx.simulate_click(button.center(), Modifiers::none());
+    click(cx, "footer-menu");
     cx.run_until_parked();
     assert!(menu_popup(&launcher, cx).is_some());
     assert!(frame(cx, Duration::from_millis(25)) >= 1);
     let mid_exit = menu_popup(&launcher, cx).expect("the exit is painting");
 
-    cx.simulate_click(button.center(), Modifiers::none());
+    click(cx, "footer-menu");
     cx.run_until_parked();
     let reversing = menu_popup(&launcher, cx).expect("the popup is reopening");
     assert!(
@@ -1072,16 +1108,17 @@ fn a_menu_reopened_during_its_exit_retargets(cx: &mut TestAppContext) {
         "the reopened menu is drawn"
     );
     settle_frames(cx);
-    let item = cx
-        .debug_bounds("menu-item-Settings")
-        .expect("the item is drawn");
-    cx.simulate_click(item.center(), Modifiers::none());
+    click(cx, "menu-item-Settings");
     cx.run_until_parked();
     assert_eq!(
         settings_windows(cx).len(),
         1,
         "the reopened menu's item opened Settings"
     );
+    // The pointer leaves the closing menu before it unmounts, so the
+    // results it covered take no wash for a pointer that never moved
+    // onto them.
+    pointer_leaves(cx);
     settle_frames(cx);
     assert!(cx.debug_bounds("menu").is_none(), "the menu closed with it");
 }
@@ -2410,6 +2447,12 @@ fn reduced_motion_settles_section_switches_at_once_at_the_window_boundary(cx: &m
         touch_phase: gpui::TouchPhase::Moved,
     });
     settings_cx.run_until_parked();
+    // The wheel leaves the pointer over the list it scrolled, with rows
+    // slid under it that no move ever named as hovered — the pointer
+    // leaves, and the reflowed rows' washes settle, before the
+    // preference is flipped and the frames are counted.
+    pointer_leaves(&mut settings_cx);
+    settle_frames(&mut settings_cx);
 
     // A switch under reduced motion starts no arrival: the frame that
     // draws the new page is already settled.
@@ -2441,6 +2484,10 @@ fn reduced_motion_settles_section_switches_at_once_at_the_window_boundary(cx: &m
         touch_phase: gpui::TouchPhase::Moved,
     });
     settings_cx.run_until_parked();
+    // The wheel leaves the pointer over the list again; the pointer
+    // leaves before the section is clicked, for the reason it did
+    // above.
+    pointer_leaves(&mut settings_cx);
     click_section(&mut settings_cx, "section-Appearance");
     assert!(
         section_arrival(&settings, &mut settings_cx).is_some(),

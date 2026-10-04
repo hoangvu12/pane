@@ -757,10 +757,16 @@ impl Select {
     /// editable combo box whose list is the choices below it. The focus
     /// ring is drawn from the focus state read at render, since the box
     /// itself no longer tracks the handle.
-    fn query_field(&self, model: &Model, field_focused: bool) -> gpui::Div {
+    fn query_field(
+        &self,
+        model: &Model,
+        field_focused: bool,
+        draft: &str,
+        inert: bool,
+    ) -> gpui::Div {
         let theme = &model.theme;
         let input = &self.query;
-        div()
+        let field = div()
             .flex()
             .items_center()
             .gap(px(6.))
@@ -772,8 +778,32 @@ impl Select {
             .border_color(theme.hairline)
             .when(field_focused, |field| field.border_color(theme.focus_ring))
             .bg(theme.tile_background)
-            .child(glyph(Glyph::Search, px(14.), theme.text_muted))
-            .child(
+            .child(glyph(Glyph::Search, px(14.), theme.text_muted));
+        // While the popup's exit paints, the draft shows as plain text:
+        // an editable field takes focus on a click, and the exiting
+        // visuals expose nothing interactive — not even focus, which the
+        // closing frame has already returned to the trigger.
+        if inert {
+            let text = if draft.is_empty() {
+                SharedString::from(PLACEHOLDER)
+            } else {
+                SharedString::from(draft)
+            };
+            field.child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .truncate()
+                    .text_size(theme.typography.row_subtitle_size)
+                    .text_color(if draft.is_empty() {
+                        theme.text_placeholder
+                    } else {
+                        theme.text_body
+                    })
+                    .child(text),
+            )
+        } else {
+            field.child(
                 text_input("query")
                     .state(input.downgrade())
                     .placeholder(PLACEHOLDER)
@@ -788,6 +818,7 @@ impl Select {
                     .whitespace_nowrap()
                     .overflow_x_scroll(),
             )
+        }
     }
 
     /// The popup: the L2 popover surface with the search field above
@@ -872,7 +903,7 @@ impl Select {
             .flex()
             .flex_col()
             .p(px(6.))
-            .child(self.query_field(model, field_focused))
+            .child(self.query_field(model, field_focused, &query, !self.open))
             .child(list);
         // The popup's motion wrapper: always in the tree while the popup
         // paints, with the entrance/exit's shift and fade as no-op styles

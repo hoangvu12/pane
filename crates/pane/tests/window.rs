@@ -2169,13 +2169,20 @@ fn a_result_row_fades_its_pointer_washes(cx: &mut TestAppContext) {
 
     // Pressed: the wash strengthens, and the activation is immediate —
     // the release's click selects and opens the row without waiting on
-    // any fade.
+    // any fade. The pointer leaves the row it opened, and the wash it
+    // held there settles with it, so the frames this test counts are
+    // the view's own — none of the pointer's.
     cx.simulate_click(row.center(), Modifiers::none());
     let view = settle(&window, cx);
     assert_eq!(view.selected, Some(1), "the click selected the row");
     assert!(
         matches!(view.screen, Screen::Command),
         "the click opened the row"
+    );
+    cx.simulate_mouse_move(
+        gpui::point(px(-100.), px(-100.)),
+        None::<MouseButton>,
+        Modifiers::none(),
     );
     settle_frames(cx);
 
@@ -2236,6 +2243,12 @@ fn the_primary_action_fades_its_pressed_wash(cx: &mut TestAppContext) {
     // Press and hold: the wash relaxes one rung — the frames the fade
     // asks for are delivered while the button is held, and the button
     // stays exactly where it was (the press moves color, not geometry).
+    // The pointer moves onto the button before pressing it, as a user's
+    // does: a click's landing alone does not tell a control it is
+    // hovered, and the wash the button keeps would never settle with
+    // the layout saying the pointer is gone and the paint saying it is
+    // there.
+    cx.simulate_mouse_move(button.center(), None::<MouseButton>, Modifiers::none());
     cx.simulate_mouse_down(button.center(), MouseButton::Left, Modifiers::none());
     let held = cx
         .debug_bounds("primary-action")

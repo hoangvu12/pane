@@ -1030,6 +1030,7 @@ fn group_element(
         .hover(|header| header.bg(theme.row_hover))
         // Pressed: the selected wash, one rung above the hover one.
         .active(|header| header.bg(theme.row_selected))
+        .transitions(|fades| fades.bg(crate::ui::motion::pointer_fade()))
         .focus(|header| focus_ring(header, theme.focus_ring))
         .child(glyph_rotated(
             Glyph::ChevronRight,
@@ -1264,6 +1265,7 @@ fn alias_cell(
             .hover(|cell| cell.bg(theme.row_hover))
             // Pressed: the selected wash, one rung above the hover one.
             .active(|cell| cell.bg(theme.row_selected))
+            .transitions(|fades| fades.bg(crate::ui::motion::pointer_fade()))
             .focus(|cell| cell.border_color(theme.focus_ring))
             .text_size(theme.typography.row_subtitle_size)
             .text_color(if current.is_some() {
@@ -1538,6 +1540,7 @@ fn hotkey_cell(
             .hover(|cell| cell.bg(theme.row_hover))
             // Pressed: the selected wash, one rung above the hover one.
             .active(|cell| cell.bg(theme.row_selected))
+            .transitions(|fades| fades.bg(crate::ui::motion::pointer_fade()))
             .focus(|cell| focus_ring(cell, theme.focus_ring))
             .child(value)
             .into_any_element()
@@ -1592,6 +1595,7 @@ fn hotkey_cell(
             .hover(|button| button.bg(theme.row_hover))
             // Pressed: the selected wash, one rung above the hover one.
             .active(|button| button.bg(theme.row_selected))
+            .transitions(|fades| fades.bg(crate::ui::motion::pointer_fade()))
             .focus(|button| focus_ring(button, theme.focus_ring))
             .text_size(theme.typography.row_kind_size)
             .text_color(theme.text_muted)

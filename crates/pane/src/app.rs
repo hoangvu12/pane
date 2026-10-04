@@ -889,6 +889,7 @@ impl LauncherWindow {
         // motion policy requires.
         .when(!selected, |row| {
             row.active(|row| row.bg(theme.row_selected))
+                .transitions(|fades| fades.bg(motion::pointer_fade()))
         })
         .debug_selector(|| format!("row-{}", row.title))
         .role(Role::ListBoxOption)
@@ -1002,6 +1003,7 @@ impl LauncherWindow {
                     button.bg(theme.row_hover)
                 })
             })
+            .transitions(|fades| fades.bg(motion::pointer_fade()))
             // Unavailable: dimmed, and the pointer says nothing to click.
             // What explains it stays where it was — the row's reason, the
             // empty state — not the button.
