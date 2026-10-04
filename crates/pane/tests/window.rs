@@ -2174,7 +2174,7 @@ fn a_result_row_fades_its_pointer_washes(cx: &mut TestAppContext) {
     let view = settle(&window, cx);
     assert_eq!(view.selected, Some(1), "the click selected the row");
     assert!(
-        matches!(view.screen, Screen::Command { .. }),
+        matches!(view.screen, Screen::Command),
         "the click opened the row"
     );
     settle_frames(cx);
@@ -2254,7 +2254,7 @@ fn the_primary_action_fades_its_pressed_wash(cx: &mut TestAppContext) {
     cx.simulate_mouse_up(button.center(), MouseButton::Left, Modifiers::none());
     let view = settle(&window, cx);
     assert!(
-        matches!(view.screen, Screen::Command { .. }),
+        matches!(view.screen, Screen::Command),
         "the release activated the selected row at once"
     );
     assert!(frame(cx, Duration::from_millis(160)) >= 1);
