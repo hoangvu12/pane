@@ -487,6 +487,18 @@ fn click_group(cx: &mut VisualTestContext, key: &str) {
     cx.run_until_parked();
 }
 
+/// Moves the pointer off the window, as a user's does when it leaves —
+/// for the reason [`click_group`] gives, from the leaving side: content
+/// that changes under a parked pointer leaves the wash it implied
+/// running until the pointer's next real move.
+fn pointer_leaves(cx: &mut VisualTestContext) {
+    cx.simulate_mouse_move(
+        gpui::point(px(-100.), px(-100.)),
+        None::<MouseButton>,
+        Modifiers::none(),
+    );
+}
+
 /// Starts the inline hotkey recorder for the command `id` by clicking
 /// its cell, in a fresh Settings window's context.
 fn record_hotkey(
@@ -2005,6 +2017,7 @@ fn returning_to_the_shortcuts_page_keeps_its_state(cx: &mut TestAppContext) {
     let appearance = settings_cx
         .debug_bounds("section-Appearance")
         .expect("the Appearance section");
+    settings_cx.simulate_mouse_move(appearance.center(), None::<MouseButton>, Modifiers::none());
     settings_cx.simulate_click(appearance.center(), Modifiers::none());
     settings_cx.run_until_parked();
     assert!(
@@ -2014,6 +2027,7 @@ fn returning_to_the_shortcuts_page_keeps_its_state(cx: &mut TestAppContext) {
     let shortcuts = settings_cx
         .debug_bounds("section-Shortcuts")
         .expect("the Shortcuts section");
+    settings_cx.simulate_mouse_move(shortcuts.center(), None::<MouseButton>, Modifiers::none());
     settings_cx.simulate_click(shortcuts.center(), Modifiers::none());
     settings_cx.run_until_parked();
     assert!(
@@ -2039,6 +2053,11 @@ fn returning_to_the_shortcuts_page_keeps_its_state(cx: &mut TestAppContext) {
         disclosure(&settings, &hello_key, &mut settings_cx).is_none(),
         "no group replayed its arrival"
     );
+    settle_frames(&mut settings_cx);
+    // The pointer leaves the sidebar row it came home with, and the wash
+    // it held settles with it: the frames the clearing phase counts are
+    // the page's own, none of the pointer's.
+    pointer_leaves(&mut settings_cx);
     settle_frames(&mut settings_cx);
 
     // Clearing the filter is a content update: the rows come back with
