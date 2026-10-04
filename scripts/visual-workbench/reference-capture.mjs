@@ -184,9 +184,16 @@ window.__wb = {
     const doc = this.frame(index).contentDocument;
     return Array.from(doc.querySelectorAll('button.row')).find((row) => row.querySelector('.row-t').textContent === title);
   },
+  // The results' container: the root board's scrolling \`.list\`, or the
+  // column after the search header on a static board that has none (the
+  // Actions board).
+  listEl(index) {
+    const doc = this.frame(index).contentDocument;
+    return doc.querySelector('.list') || doc.querySelector('input.q').parentElement.nextElementSibling;
+  },
   rows(index) {
     const doc = this.frame(index).contentDocument;
-    const list = doc.querySelector('.list').getBoundingClientRect();
+    const list = this.listEl(index).getBoundingClientRect();
     return Array.from(doc.querySelectorAll('button.row')).map((row) => {
       const rect = this.rel(index, row);
       const r = row.getBoundingClientRect();
@@ -212,9 +219,9 @@ window.__wb = {
     });
   },
   labels(index) {
-    const doc = this.frame(index).contentDocument;
-    const list = doc.querySelector('.list').getBoundingClientRect();
-    return Array.from(doc.querySelectorAll('.list .label')).map((label) => {
+    const container = this.listEl(index);
+    const list = container.getBoundingClientRect();
+    return Array.from(container.querySelectorAll('.label')).map((label) => {
       const spans = label.querySelectorAll(':scope > span');
       const r = label.getBoundingClientRect();
       return {
@@ -249,6 +256,86 @@ window.__wb = {
       'pinned-1': this.group(index, doc.querySelector('.slot .slot-k')),
     };
   },
+  // The footer's parts: the mark (its svg), the hint's parts left to
+  // right (a cap or a sequence of caps, or text), the rule between the
+  // buttons and the Actions button.
+  footerParts(index) {
+    const doc = this.frame(index).contentDocument;
+    const buttons = Array.from(doc.querySelectorAll('.fbtn'));
+    let strip = buttons[0];
+    while (strip && strip.parentElement && !strip.parentElement.matches('section.glass')) strip = strip.parentElement;
+    if (!strip) return null;
+    const left = strip.children[0];
+    const mark = left && left.querySelector(':scope > svg');
+    const hintEl = left && Array.from(left.children).find((child) => child.tagName !== 'svg' && child.tagName !== 'SVG');
+    let hint = [];
+    if (hintEl && hintEl.children.length) {
+      hint = Array.from(hintEl.children).map((part) => ({
+        text: part.textContent.trim(),
+        keys: part.classList.contains('kbd') || part.classList.contains('keys'),
+        rect: this.rel(index, part),
+      }));
+    } else if (hintEl) {
+      hint = [{ text: hintEl.textContent.trim(), keys: false, rect: this.rel(index, hintEl) }];
+    }
+    const right = strip.children[1];
+    const divider = right && Array.from(right.children).find((child) => !child.classList.contains('fbtn'));
+    const actions = buttons.find((button) => button.textContent.trim().startsWith('Actions'));
+    return {
+      mark: mark ? this.rel(index, mark) : null,
+      hint,
+      divider: divider ? this.rel(index, divider) : null,
+      actionsButton: actions ? {
+        rect: this.rel(index, actions),
+        pressed: actions.getAttribute('aria-pressed') === 'true',
+        background: getComputedStyle(actions).backgroundColor,
+        keyGroup: this.group(index, actions.querySelector('.keys')),
+      } : null,
+    };
+  },
+  // The open Actions panel (\`.pop\`): its header, entries, group labels,
+  // rules, empty note and search row, and the dimmer over the results.
+  panel(index) {
+    const doc = this.frame(index).contentDocument;
+    const pop = doc.querySelector('.pop');
+    if (!pop) return null;
+    const parts = Array.from(pop.children);
+    const search = parts[parts.length - 1];
+    const body = parts[parts.length - 2];
+    const header = parts.length >= 3 ? parts[0] : null;
+    const label = (row) => Array.from(row.children).find((child) => child.tagName === 'SPAN' && !child.classList.contains('kbd') && !child.classList.contains('keys'));
+    const rows = Array.from(body.querySelectorAll('.arow')).map((row) => ({
+      label: label(row).textContent.trim(),
+      rect: this.rel(index, row),
+      selected: row.classList.contains('sel'),
+      glyph: this.rel(index, row.querySelector('svg')),
+      labelRect: this.rel(index, label(row)),
+      keyGroup: this.group(index, row.querySelector('.keys') || row.querySelector(':scope > .kbd')),
+      background: getComputedStyle(row).backgroundColor,
+    }));
+    const empty = Array.from(body.querySelectorAll('div')).find((div) => div.textContent.trim() === 'No actions match');
+    const input = search.querySelector('input');
+    const dimmer = Array.from(doc.querySelectorAll('section.glass > div[aria-hidden="true"]'))[0];
+    const tile = header && header.querySelector('.tile');
+    const title = header && Array.from(header.children).find((child) => !child.classList.contains('tile'));
+    return {
+      rect: this.rel(index, pop),
+      header: header ? {
+        rect: this.rel(index, header),
+        title: title ? title.textContent.trim() : '',
+        titleRect: title ? this.rel(index, title) : null,
+        tile: tile ? this.rel(index, tile) : null,
+        tileApp: tile ? tile.classList.contains('app') : null,
+      } : null,
+      rows,
+      groups: Array.from(body.querySelectorAll('.alabel')).map((group) => ({ text: group.textContent.trim(), rect: this.rel(index, group) })),
+      rules: Array.from(body.querySelectorAll('.sep')).map((rule) => this.rel(index, rule)),
+      empty: empty ? { text: empty.textContent.trim(), rect: this.rel(index, empty) } : null,
+      search: this.rel(index, search),
+      field: input ? { rect: this.rel(index, input), value: input.value, placeholder: input.placeholder, focused: doc.activeElement === input } : null,
+      dimmer: dimmer ? { rect: this.rel(index, dimmer), background: getComputedStyle(dimmer).backgroundColor } : null,
+    };
+  },
   state(index) {
     const doc = this.frame(index).contentDocument;
     const q = doc.querySelector('input.q');
@@ -258,8 +345,8 @@ window.__wb = {
       query: q.value,
       focused: doc.activeElement === q,
       searchHeader: this.rel(index, q.parentElement),
-      list: this.rel(index, doc.querySelector('.list')),
-      listScrollTop: doc.querySelector('.list').scrollTop,
+      list: this.rel(index, this.listEl(index)),
+      listScrollTop: this.listEl(index).scrollTop,
       footerPrimary: buttons[0] ? { label: buttons[0].textContent.trim(), rect: this.rel(index, buttons[0]) } : null,
       // Every footer button, left to right (the primary action, then
       // Actions): the last one's right edge is the footer's right padding.
@@ -273,6 +360,8 @@ window.__wb = {
       rows: this.rows(index),
       labels: this.labels(index),
       keycaps: this.keycapGroups(index),
+      footerParts: this.footerParts(index),
+      panel: this.panel(index),
     };
   },
   fonts() {
@@ -320,24 +409,43 @@ async function pointerTo(x, y) {
   await call('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none' });
 }
 
+// The elements a click step names, found on the board by what they show.
+const CLICK_TARGETS = {
+  'actions-button': (index) => `Array.from(__wb.frame(${index}).contentDocument.querySelectorAll('.fbtn')).find((b) => b.textContent.trim().startsWith('Actions'))`,
+};
+
 async function runScenario(scenario, rootIndex, frames) {
   const dir = join(out, scenario.name);
   mkdirSync(dir, { recursive: true });
-  // Rest: the query field focused by a real click, as the native fixture
-  // opens with its field focused; the pointer is then over the header,
-  // never over a row.
-  const field = await evaluate(`__wb.outer(${rootIndex}, __wb.frame(${rootIndex}).contentDocument.querySelector('input.q'))`);
-  await pointerTo(field.x, field.y);
-  await call('Input.dispatchMouseEvent', { type: 'mousePressed', x: field.x, y: field.y, button: 'left', clickCount: 1 });
-  await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: field.x, y: field.y, button: 'left', clickCount: 1 });
-  await sleep(300);
-  const record = { name: scenario.name, captures: [], steps: scenario.steps };
+  // A static board (any but the interactive root) authors its one state:
+  // it is captured as authored, and the scenario's steps — which bring the
+  // native fixture to that state — are not taken here.
+  const boardIndex = scenario.board
+    ? frames.findIndex((frame) => (BOARDS.find(([slug]) => slug === scenario.board) ?? [null, /^$/])[1].test(frame.title ?? ''))
+    : rootIndex;
+  if (boardIndex < 0) throw new Error(`the reference has no ${scenario.board} board`);
+  const authored = boardIndex !== rootIndex;
+  if (!authored) {
+    // Rest: the query field focused by a real click, as the native fixture
+    // opens with its field focused; the pointer is then over the header,
+    // never over a row.
+    const field = await evaluate(`__wb.outer(${rootIndex}, __wb.frame(${rootIndex}).contentDocument.querySelector('input.q'))`);
+    await pointerTo(field.x, field.y);
+    await call('Input.dispatchMouseEvent', { type: 'mousePressed', x: field.x, y: field.y, button: 'left', clickCount: 1 });
+    await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: field.x, y: field.y, button: 'left', clickCount: 1 });
+    await sleep(300);
+  }
+  const record = { name: scenario.name, board: scenario.board ?? 'root', authored, captures: [], steps: scenario.steps };
   const after = [];
   for (const step of scenario.steps) {
+    if (authored && step.action !== 'capture') {
+      after.push(step);
+      continue;
+    }
     if (step.action === 'capture') {
-      const state = await evaluate(`__wb.state(${rootIndex})`);
-      const frame = frames[rootIndex].frame;
-      const glass = (await evaluate('__wb.frames()'))[rootIndex].glass;
+      const state = await evaluate(`__wb.state(${boardIndex})`);
+      const frame = frames[boardIndex].frame;
+      const glass = (await evaluate('__wb.frames()'))[boardIndex].glass;
       const shot = await screenshot(join(dir, `${step.name}.png`), frame, glass);
       record.captures.push({ name: step.name, after: [...after], file: `${scenario.name}/${step.name}.png`, width: shot.width, height: shot.height, state });
       continue;
@@ -358,6 +466,21 @@ async function runScenario(scenario, rootIndex, frames) {
       if (!key) throw new Error(`unknown key ${step.key}`);
       await call('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...key });
       await call('Input.dispatchKeyEvent', { type: 'keyUp', ...key });
+    } else if (step.action === 'click') {
+      const target = CLICK_TARGETS[step.target];
+      if (!target) throw new Error(`unknown click target ${step.target}`);
+      const point = await evaluate(`__wb.outer(${rootIndex}, ${target(rootIndex)})`);
+      // From a pixel to the left, as the native side arrives; then pressed.
+      await pointerTo(point.x - 1, point.y);
+      await pointerTo(point.x, point.y);
+      await call('Input.dispatchMouseEvent', { type: 'mousePressed', x: point.x, y: point.y, button: 'left', clickCount: 1 });
+      await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: point.x, y: point.y, button: 'left', clickCount: 1 });
+      // The board's logic focuses the panel's search as the panel opens
+      // (componentDidUpdate, through a ref), which this board runtime never
+      // delivers: the capture focuses it as that logic does, so typing
+      // filters the actions, as on the native side.
+      await sleep(150);
+      await evaluate(`(() => { const field = __wb.frame(${rootIndex}).contentDocument.querySelector('.pop input'); if (field) field.focus({ preventScroll: true }); return !!field; })()`);
     } else if (step.action === 'type') {
       for (const character of step.text) {
         await call('Input.insertText', { text: character });

@@ -36,6 +36,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 mod acquire;
+mod actions;
 mod aliases;
 mod application_update;
 mod choices;
@@ -81,6 +82,7 @@ mod uninstall;
 mod updates;
 
 use acquire::{Acquisitions, Defaults};
+pub use actions::{ResultAction, ResultActionItem, ResultActions};
 use aliases::AliasChoices;
 pub use aliases::AliasOutcome;
 pub use application_update::ApplicationUpdate;
@@ -632,6 +634,9 @@ struct State {
     searching: Option<command_search::Searching>,
     /// The form on screen, if one is open.
     form: Option<OpenForm>,
+    /// The search an alias or hotkey flow returns to when the Actions
+    /// panel opened it; `None` when the flow came from Manage extensions.
+    actions_return: Option<actions::Return>,
     /// The custom view on screen, if one is open.
     custom_view: Option<OpenCustomView>,
     /// Incremented on every navigation, so a reply that arrives after the
@@ -1138,6 +1143,7 @@ impl Launcher {
             open: None,
             searching: None,
             form: None,
+            actions_return: None,
             custom_view: None,
             screen_epoch: 0,
             packages,
@@ -1918,17 +1924,18 @@ impl Launcher {
         match &state.view.screen {
             Screen::Form(_) => {
                 let form = state.form.take().expect("a form is open");
-                state.next_screen();
-                state.view = LauncherView {
-                    status: Status::Idle,
-                    ..form.return_to
-                };
+                if !self.return_from_actions_flow(&mut state) {
+                    state.next_screen();
+                    state.view = form.return_to;
+                }
+                state.view.status = Status::Idle;
             }
             Screen::CustomView(_) => self.return_from_custom_view(&mut state, Status::Idle),
             Screen::Confirm { .. } => self.leave_confirm(&mut state),
             Screen::Hotkey { command, .. } => {
                 let command = command.clone();
-                self.show_extensions_at_hotkey(&mut state, &command);
+                self.leave_hotkey(&mut state, &command);
+                state.view.status = Status::Idle;
             }
             Screen::PauseDetails { identity, .. } => {
                 let identity = identity.clone();

@@ -14,9 +14,9 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, BoxShadow, ClipboardItem, Context, Div, EntityInputHandler, FocusHandle, Hsla,
-    KeyDownEvent, MouseMoveEvent, PathPromptOptions, Pixels, Point, Role, ScrollHandle,
-    SharedString, Size, Stateful, Window, WindowControlArea, div, prelude::*, px, relative,
+    App, ClipboardItem, Context, Div, EntityInputHandler, FocusHandle, Hsla, KeyDownEvent,
+    MouseMoveEvent, PathPromptOptions, Pixels, Point, Role, ScrollHandle, SharedString, Size,
+    Stateful, Window, WindowControlArea, div, prelude::*, px, relative,
 };
 use pane_core::changes::Changes;
 use pane_core::hotkeys::Shortcut;
@@ -26,11 +26,13 @@ use pane_core::{
 };
 
 use crate::extension_views::{custom_view, form};
+use crate::features::actions_panel;
 use crate::features::footer_menu;
 use crate::features::root_search;
 use crate::features::settings;
+use crate::ui::footer;
 use crate::ui::icon::{Glyph, IconTone};
-use crate::ui::keycap::{self, CapStyle};
+use crate::ui::keycap::CapStyle;
 use crate::ui::material::Material;
 use crate::ui::motion::{self, Direction};
 use crate::ui::result_row::{RowContent, RowMeta, result_row_with};
@@ -68,6 +70,8 @@ pub struct LauncherWindow {
     pub(crate) menu_button: FocusHandle,
     /// The open footer menu, if any; see [`features::footer_menu`].
     pub(crate) menu: Option<footer_menu::FooterMenu>,
+    /// The open Actions panel, if any; see [`features::actions_panel`].
+    pub(crate) actions: Option<actions_panel::ActionsPanel>,
     /// The footer menu popup's entrance or exit in flight, if any: the
     /// popup's look (0 closed, 1 open), presentation only — see
     /// [`crate::ui::motion`]. One tween serves both the open menu and
@@ -205,6 +209,7 @@ impl LauncherWindow {
             arriving: None,
             menu_button,
             menu: None,
+            actions: None,
             menu_transition: None,
             menu_exit: None,
             drawn_menu: false,
@@ -319,7 +324,10 @@ impl LauncherWindow {
         // launcher when it is already empty. (The menu's own Escape is
         // bound deeper still, in the menu's context, so it never reaches
         // here; this arm is for whatever key back is rebound to.)
-        if self.cancel_composition(window, cx) || self.close_open_menu(window, cx) {
+        if self.cancel_composition(window, cx)
+            || self.close_open_menu(window, cx)
+            || self.close_actions(window, cx)
+        {
             return;
         }
         if let Screen::Root { query } = &self.launcher.view().screen
@@ -341,7 +349,7 @@ impl LauncherWindow {
     /// summoned launcher starts from — leaving every open screen at once,
     /// as the back key leaves them one at a time.
     fn return_to_root(&mut self, _: &ReturnToRoot, window: &mut Window, cx: &mut Context<Self>) {
-        if self.close_open_menu(window, cx) {
+        if self.close_open_menu(window, cx) || self.close_actions(window, cx) {
             return;
         }
         self.launcher.show_root_search();
@@ -385,7 +393,7 @@ impl LauncherWindow {
 
     /// Closes the footer menu if it is open, restoring the focus it took.
     /// Whether it was open.
-    fn close_open_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+    pub(crate) fn close_open_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if self.menu.is_some() {
             self.close_menu(window, cx);
             return true;
@@ -873,6 +881,12 @@ impl LauncherWindow {
     /// is safe wherever the launcher changed, including from another
     /// window's own flow.
     fn sync_screen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // The Actions panel belongs to root search: a screen that replaced
+        // it (a hotkey pressed, a change from Settings) takes the panel
+        // with it, and its own focus with it.
+        if !matches!(self.launcher.view().screen, Screen::Root { .. }) {
+            self.actions = None;
+        }
         self.sync_form(window, cx);
         self.sync_custom_view(window, cx);
         // Last: coming back to root search, even as a view closes, focuses
@@ -893,9 +907,10 @@ impl LauncherWindow {
     }
 
     /// Whether the pointer may not move root search's selection now: it
-    /// is frozen, or the footer menu is open over the row it acts on.
+    /// is frozen, or the footer menu or the Actions panel is open over the
+    /// row it acts on.
     fn pointer_selection_held(&self) -> bool {
-        self.pointer_selection_frozen || self.menu.is_some()
+        self.pointer_selection_frozen || self.menu.is_some() || self.actions.is_some()
     }
 
     /// The pointer moved over root search's row `index` to `position`:
@@ -1003,16 +1018,10 @@ impl LauncherWindow {
             theme,
         )
         .id(("row", index))
-        // Off root search a row keeps its pressed feedback: the selected
-        // wash — the wash the row keeps once the click selects it, so the
-        // press hands over to the selection without a jump — fading on
-        // the shared pointer span beside the row's own hover wash. Root
-        // search's rows follow the reference instead: the pointer's
-        // movement selects them, and their washes change at once.
-        .when(!selected && !root, |row| {
-            row.active(|row| row.bg(theme.row_selected))
-                .transitions(|fades| fades.bg(motion::pointer_fade()))
-        })
+        // Every row's washes change at once, as the reference's do (#100:
+        // a command's rows share root search's visuals). Root search's
+        // rows also select under the moving pointer; a command's rows keep
+        // their click-runs semantics.
         .when(root, |row| {
             row.on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {
                 this.pointer_moved_over(index, event.position, cx);
@@ -1040,58 +1049,69 @@ impl LauncherWindow {
         }))
     }
 
-    /// The idle footer's action strip: the selected action's button,
-    /// right-aligned in the strip, beside the menu button the footer
-    /// renders at the strip's far left (see [`Self::render_menu_button`]).
-    /// `action` is the launcher's one selected-action definition
-    /// ([`Launcher::selected_action`]); the screens with no primary action
-    /// (a custom view, the network details screen) show no button, only
-    /// the reserved space.
-    fn render_action_strip(&self, action: &SelectedAction, cx: &mut Context<Self>) -> Div {
-        div()
-            // The strip fills the footer's height (its 50px floor), so the
-            // button sits centered in it rather than at its top edge —
-            // the idle line is always one row tall, unlike a wrapped
-            // message, which keeps the footer's no-centering rule for its
-            // first line.
-            .flex()
-            .flex_1()
-            .min_h(px(0.))
-            .w_full()
-            .min_w(px(0.))
-            .items_center()
-            // Far left: the menu button's ellipsis, which the footer
-            // renders ahead of this strip, is the room's occupant now; the
-            // spacer keeps the action at the right.
-            .child(div().flex_1().min_w(px(0.)))
-            .when(!action.label.is_empty(), |strip| {
-                strip.child(self.render_action_button(action, cx))
-            })
-    }
-
-    /// The idle footer's button: the selected action's label with the keys
-    /// of its binding beside it — the return key's accent cap by default,
-    /// and the whole chord, cap by cap, for whatever the Keyboard page put
-    /// there. Its click takes the same path the binding's key
-    /// takes (see [`LauncherWindow::press_primary_action`]); its label,
-    /// availability and key come from the definition and the effective
-    /// binding, so what the button says, whether it can run, what it does
-    /// and what its keycap teaches cannot diverge. The selected row's
-    /// chrome marks it as the strip's primary control.
-    fn render_action_button(
+    /// The footer's right-hand buttons: the selected action's button,
+    /// when the screen has a primary action at all (a custom view, the
+    /// network details screen and a hotkey screen with nothing to remove
+    /// have none) and no status shows, and on root search the Actions
+    /// button. `action` is the launcher's one selected-action definition
+    /// ([`Launcher::selected_action`]).
+    fn footer_buttons(
         &self,
         action: &SelectedAction,
+        root: bool,
+        status: bool,
+        theme: &Theme,
         cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let theme = crate::settings::visuals(cx).theme;
-        let invoke = crate::settings::shared(cx)
-            .read(cx)
-            .keyboard()
-            .binding(pane_core::KeyboardAction::InvokeSelectedAction)
-            .clone();
-        action_button(action, &invoke, &theme).on_click(cx.listener(|this, _, window, cx| {
-            this.press_primary_action(window, cx);
-        }))
+    ) -> Vec<gpui::AnyElement> {
+        let keyboard = crate::settings::shared(cx).read(cx).keyboard().clone();
+        let primary = (!action.label.is_empty() && !status).then(|| {
+            let invoke = keyboard.binding(pane_core::KeyboardAction::InvokeSelectedAction);
+            action_button(action, invoke, theme)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.press_primary_action(window, cx);
+                }))
+                .into_any_element()
+        });
+        let actions = root.then(|| {
+            let open = crate::keyboard::binding_keys(
+                keyboard.binding(pane_core::KeyboardAction::OpenActions),
+            );
+            footer::actions_button(&open, self.actions.is_some(), theme)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.toggle_actions(&crate::OpenActions, window, cx);
+                }))
+                .into_any_element()
+        });
+        footer::buttons(primary, actions, theme)
+    }
+
+    /// The footer's hint while no status shows: on root search, the
+    /// reference's "↵ opens instantly · Ctrl K for more" in the bindings in
+    /// force, or "Type to filter actions · Esc goes back" while Actions is
+    /// open; nothing elsewhere.
+    fn footer_hint(&self, root: bool, theme: &Theme, cx: &mut Context<Self>) -> Option<Div> {
+        if !root {
+            return None;
+        }
+        let keyboard = crate::settings::shared(cx).read(cx).keyboard().clone();
+        let keys = |action| crate::keyboard::binding_keys(keyboard.binding(action));
+        Some(footer::hint_line(
+            footer::hint_parts(
+                self.actions.is_some(),
+                keys(pane_core::KeyboardAction::InvokeSelectedAction),
+                keys(pane_core::KeyboardAction::OpenActions),
+                crate::keyboard::escape_keys(),
+            ),
+            theme,
+        ))
+    }
+
+    /// Navigates forward to the screen the launcher now shows, as
+    /// activating a row does.
+    pub(crate) fn navigate_forward(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.navigation = Direction::Forward;
+        self.sync_screen(window, cx);
+        cx.notify();
     }
 
     /// Dispatches the footer button's click: the same
@@ -1104,7 +1124,7 @@ impl LauncherWindow {
     /// always had; this keeps the button from dispatching what cannot
     /// run (no selection, an unavailable result, an action already
     /// running).
-    fn press_primary_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn press_primary_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.launcher.selected_action().available {
             self.confirm(&Confirm, window, cx);
         }
@@ -1301,12 +1321,17 @@ impl Render for LauncherWindow {
                 motion::arriving(self.render_custom_view(custom_view, cx), arriving)
                     .into_any_element()
             }
-            Screen::Root { query } => self.render_search(
-                query,
-                root_search::ROOT_PLACEHOLDER,
-                motion::arriving(list, arriving),
-                cx,
-            ),
+            // While the Actions panel is open, its dimmer lies over the
+            // results — between the search header and the footer — and
+            // takes no input.
+            Screen::Root { query } => {
+                let results = actions_panel::dimmed(
+                    motion::arriving(list, arriving).into_any_element(),
+                    self.actions.is_some(),
+                    &theme,
+                );
+                self.render_search(query, root_search::ROOT_PLACEHOLDER, results, cx)
+            }
             // The opened command's own search field, the same control.
             Screen::CommandSearch { query } => self.render_search(
                 query,
@@ -1333,6 +1358,7 @@ impl Render for LauncherWindow {
             .on_action(cx.listener(Self::return_to_root))
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::open_settings))
+            .on_action(cx.listener(Self::toggle_actions))
             .on_action(cx.listener(Self::focus_next))
             .on_action(cx.listener(Self::focus_previous))
             .on_key_down(cx.listener(Self::key_down))
@@ -1346,6 +1372,7 @@ impl Render for LauncherWindow {
             .flex()
             .flex_col()
             .font_family(theme.typography.family.clone())
+            .font_features(theme.typography.features.clone())
             .text_color(theme.text_title)
             .when_some(heading, |content, heading| content.child(heading))
             // A confirmation's or preview's long details scroll within 40%
@@ -1370,88 +1397,85 @@ impl Render for LauncherWindow {
             })
             .child(body)
             .child(
-                // The footer: the launcher's status strip. While a status
-                // shows — running, progress, a result or an error — the
-                // strip is the message, wrapping, growing and scrolling
-                // exactly as before. While the launcher is idle, the strip
-                // is the selected action instead (see
-                // [`LauncherWindow::render_action_strip`]): the idle
-                // instruction text is gone, and the same strip keeps its
-                // identity (id, role, status-* debug selectors) in both
-                // shapes, so a test or a smoke can always find the
-                // launcher's footer where it was. The menu button is the
-                // strip's leftmost control, the action its rightmost, and
-                // the open menu's popup is the strip's first child: its
-                // capture-phase dismissal runs before the button's click
-                // tracking, while its own bounds stay above the strip
-                // (see `footer_menu`).
+                // The footer: the launcher's status strip (see
+                // [`crate::ui::footer`]). On the left, the Pane mark (the
+                // app menu's button) and the hint — or, while a status
+                // shows (running, progress, a result or an error), the
+                // message instead, wrapping, growing and scrolling as it
+                // always has; on the right, the selected result's primary
+                // action and, on root search, Actions. The strip keeps its
+                // identity (id, role, status-* debug selectors) in every
+                // shape, so a test or a smoke can always find the
+                // launcher's footer where it was. The open menu's popup and
+                // the open Actions panel are the strip's first children:
+                // their capture-phase dismissal runs before the buttons'
+                // click tracking, while their own bounds stay above the
+                // strip (see `footer_menu` and `actions_panel`).
                 Material::footer(&theme)
                     .id("status")
-                    // The popup is anchored to the strip (its bottom edge
-                    // on the strip's top edge, however tall the message
-                    // has grown it), and the strip never scrolls — the
-                    // message's viewport below does — so the button and
-                    // the popup above it stay put while the message
-                    // scrolls.
+                    // The popups are anchored to the strip (above its top
+                    // edge, however tall the message has grown it), and
+                    // the strip never scrolls — the message's viewport
+                    // below does — so the buttons and the popups above
+                    // them stay put while the message scrolls.
                     .relative()
                     .when_some(
                         self.render_menu_popup_layer(menu_in_flight, cx),
                         |strip, popup| strip.child(popup),
                     )
+                    .when_some(self.render_actions_layer(cx), |strip, panel| {
+                        strip.child(panel)
+                    })
                     // The strip is the live region: it carries the
                     // message as its name, so assistive technology
                     // announces it. While idle the strip carries no
-                    // message — the button is the announcement's content
-                    // — and stays silent.
+                    // message and stays silent.
                     .role(Role::Status)
                     .when_some(status.clone(), |footer, text| footer.aria_label(text))
                     .debug_selector(|| status_selector.into())
                     .text_size(theme.typography.footer_size)
                     .text_color(status_color)
-                    .child(
-                        div()
-                            .flex()
-                            .w_full()
-                            .min_w(px(0.))
-                            .flex_1()
-                            .min_h(px(0.))
-                            .gap(px(8.))
-                            // Far left: the menu button, the strip's
-                            // leftmost control.
-                            .child(self.render_menu_button(&theme, cx))
-                            .child(match status.clone() {
-                                Some(text) => div()
-                                    // The message's own scroll viewport:
-                                    // past the 35% cap the message scrolls
-                                    // here — inside the strip — instead of
-                                    // being cut, and the strip never
-                                    // scrolls, so the button and any popup
-                                    // above it stay put. The strip's bounds
-                                    // carry the status-* debug selectors;
-                                    // this one, the message's, lets tests
-                                    // see wrapping and scroll. The message
-                                    // fills the viewport's width and wraps
-                                    // there — a long error is several
-                                    // readable lines, never one clipped at
-                                    // the window's right edge — and the
-                                    // strip grows with it.
-                                    .id("status-scroll")
-                                    .flex_1()
-                                    .min_w(px(0.))
-                                    .overflow_y_scroll()
-                                    .child(
-                                        div()
-                                            .w_full()
-                                            .min_w(px(0.))
-                                            .flex_none()
-                                            .py(px(12.))
-                                            .debug_selector(|| "status-message".into())
-                                            .child(text),
-                                    )
-                                    .into_any_element(),
-                                None => self.render_action_strip(&action, cx).into_any_element(),
-                            }),
-                    ),
+                    .child(footer::footer_row(
+                        self.render_menu_button(&theme, cx).into_any_element(),
+                        match status.clone() {
+                            Some(text) => div()
+                                // The message's own scroll viewport: past
+                                // the 35% cap the message scrolls here —
+                                // inside the strip — instead of being cut,
+                                // and the strip never scrolls, so the
+                                // buttons and any popup above them stay
+                                // put. The strip's bounds carry the
+                                // status-* debug selectors; this one, the
+                                // message's, lets tests see wrapping and
+                                // scroll. The message fills the room the
+                                // buttons leave and wraps there — a long
+                                // error is several readable lines, never
+                                // one clipped — and the strip grows with
+                                // it.
+                                .id("status-scroll")
+                                .flex_1()
+                                .min_w(px(0.))
+                                .overflow_y_scroll()
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .min_w(px(0.))
+                                        .flex_none()
+                                        .py(px(12.))
+                                        .debug_selector(|| "status-message".into())
+                                        .child(text),
+                                )
+                                .into_any_element(),
+                            None => footer::hint_slot(self.footer_hint(root, &theme, cx), &theme)
+                                .into_any_element(),
+                        },
+                        // While a status shows, the primary action steps
+                        // aside — nothing is dispatched again from a frame
+                        // the status has already overtaken (a double click
+                        // on a quick open) — and Actions stays.
+                        self.footer_buttons(&action, root, status.is_some(), &theme, cx),
+                        &theme,
+                    )),
             );
         // While the arriving content is still in flight, keep frames
         // coming; the frame that completes the transition requests none,
@@ -1488,17 +1512,14 @@ pub(crate) fn launcher_changed_outside(cx: &mut App) {
     }
 }
 
-/// The footer's primary action button, as the launcher's idle footer and
-/// the visual workbench's root fixture (#91) both compose it: the selected
-/// row's chrome — its wash and 1px inset edge — at the footer button's own
-/// geometry, the action's label truncating beside the effective `invoke`
-/// binding's keycap. Presentation only: the caller attaches the click
-/// (the launcher's [`LauncherWindow::press_primary_action`] path).
-///
-/// The keycaps are the effective binding's whole key sequence in the
-/// reference's accent caps — the primary action's key — so a rebound
-/// Ctrl+Enter shows (and announces) Ctrl and the return key, never a
-/// bare Enter.
+/// The footer's primary action button, as the launcher's footer and the
+/// visual workbench's root fixture (#91) both compose it: the reference's
+/// `.fbtn` (see [`footer::footer_button`]), the action's label truncating
+/// beside the effective `invoke` binding's keys in the accent caps — the
+/// primary action's key — so a rebound Ctrl+Enter shows (and announces)
+/// Ctrl and the return key, never a bare Enter. Presentation only: the
+/// caller attaches the click (the launcher's
+/// [`LauncherWindow::press_primary_action`] path).
 ///
 /// A click never dispatches what the definition says cannot run now, so
 /// an unavailable button is dimmed, marked for assistive technology, and
@@ -1509,62 +1530,24 @@ pub(crate) fn action_button(
     invoke: &pane_core::Binding,
     theme: &Theme,
 ) -> Stateful<Div> {
-    let geometry = &theme.geometry;
     let keys = crate::keyboard::binding_keys(invoke);
-    div()
-        .id("primary-action")
-        .debug_selector(|| "primary-action".into())
-        .role(Role::Button)
-        .aria_label(action.label.clone())
-        // The key that presses this button from the keyboard: the keycap
-        // beside the label shows the same binding.
-        .aria_keyshortcuts(keys.name())
-        // The button shrinks under pressure (the label ellipsizes; the
-        // keycap does not) so a narrow window keeps it inside the strip
-        // instead of clipping at the window's right edge.
-        .flex_initial()
-        .min_w(px(0.))
-        .h(geometry.action_height)
-        .flex()
-        .items_center()
-        .gap(geometry.action_gap)
-        .px(geometry.action_padding_x)
-        .rounded(geometry.action_radius)
-        .bg(theme.row_selected)
-        // The selected row's 1px inset edge.
-        .shadow(vec![
-            BoxShadow::new(px(0.), px(0.), theme.row_selected_border)
-                .spread_radius(px(1.))
-                .inset(),
-        ])
-        .text_size(theme.typography.footer_size)
-        .font_weight(theme.typography.medium)
-        .text_color(theme.text_title)
-        .when(action.available, |button| {
-            button.cursor_pointer().active(|button| {
-                // Pressed: the wash relaxes one rung while the button is
-                // held — the hover wash over the selected one, which
-                // reads as pressed in without inventing a color. The
-                // button's rest is the selected chrome and keeps it while
-                // hovered, as a selected row keeps its wash: the
-                // pointer's feedback here is the press. Activation
-                // itself never waits on the fade — the click acts when it
-                // happens.
-                button.bg(theme.row_hover)
-            })
-        })
-        .transitions(|fades| fades.bg(motion::pointer_fade()))
-        .when(!action.available, |button| {
-            button.opacity(0.5).cursor_default().aria_disabled(true)
-        })
-        .child(
-            div()
-                .flex_initial()
-                .min_w(px(0.))
-                .truncate()
-                .child(action.label.clone()),
-        )
-        .child(keycap::key_sequence(&keys, CapStyle::Accent, theme))
+    footer::footer_button(
+        "primary-action",
+        action.label.clone(),
+        &keys,
+        CapStyle::Accent,
+        footer::ButtonWash::Hover,
+        theme,
+    )
+    .role(Role::Button)
+    .aria_label(action.label.clone())
+    // The key that presses this button from the keyboard: the keycaps
+    // beside the label show the same binding.
+    .aria_keyshortcuts(keys.name())
+    .when(action.available, |button| button.cursor_pointer())
+    .when(!action.available, |button| {
+        button.opacity(0.5).cursor_default().aria_disabled(true)
+    })
 }
 
 /// The launcher presentation's section labels, as the shared list draws

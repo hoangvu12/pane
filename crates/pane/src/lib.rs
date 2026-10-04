@@ -42,6 +42,7 @@ actions!(
         FocusNext,
         FocusPrevious,
         OpenSettings,
+        OpenActions,
         ReturnToRoot,
         DismissLauncher
     ]
@@ -70,6 +71,7 @@ pub(crate) fn bind_keys_with(cx: &mut App, keyboard: &Keyboard) {
     extension_views::form::bind_keys(cx, &text_editing);
     features::root_search::bind_keys(cx, &text_editing, keyboard);
     features::footer_menu::bind_keys(cx);
+    features::actions_panel::bind_keys(cx, &text_editing);
     features::settings::bind_keys(cx);
     ui::select::bind_keys(cx);
     extension_views::custom_view::bind_keys(cx);

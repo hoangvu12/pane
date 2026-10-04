@@ -80,6 +80,14 @@ _Avoid_: Type, category
 A labelled run of root results: "Commands" over a blank query's results, "Results" with their count over a query's, then "Fallbacks". Sections only label the list; they never reorder or filter it, and none claims recent use.
 _Avoid_: Group (a shortcut group is a Settings term), suggestions
 
+**Actions panel**:
+The panel, opened from the launcher's footer or its Open actions binding, that lists what can be done with root search's selected result: its primary action, then the alias and hotkey configuration of an installed command. It lists only operations Pane can perform, and holds the result it opened for.
+_Avoid_: Context menu, app menu (the Pane menu is separate)
+
+**Pane menu**:
+Pane's own menu, opened from the Pane mark at the left of the launcher's footer, holding Settings. It is not about any result.
+_Avoid_: App menu, footer menu, more actions
+
 **Computed result**:
 A root result an extension command computes from the query itself, such as the calculator's answer to "6*7", rather than one found by matching titles; it is listed above those (a file result below them), and invoking it performs its action, such as copying the answer. The search it answers owns the call asking for it: a newer query, or leaving root search, cancels a call still pending.
 _Avoid_: Suggestion, answer card, inline result

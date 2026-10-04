@@ -53,13 +53,17 @@ use gpui::{
     prelude::*, px, size,
 };
 use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged};
-use pane_core::{Binding, KeyboardAction, SelectedAction};
+use pane_core::{
+    Binding, KeyboardAction, ResultAction, ResultActionItem, ResultActions, SelectedAction,
+};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::app::{KEY_CONTEXT, action_button};
+use crate::features::actions_panel;
 use crate::features::root_search::{self, search_header};
 use crate::settings;
+use crate::ui::footer;
 use crate::ui::icon::{Glyph, IconTone, TileSize, tile_at};
 use crate::ui::input::bind_text_editing;
 use crate::ui::keycap::{self, CapMetrics, CapStyle};
@@ -122,6 +126,39 @@ pub(crate) struct FixtureRow {
 }
 
 impl FixtureRow {
+    /// What the launcher's Actions panel lists for this row (see
+    /// `pane_core::Launcher::result_actions`): its primary action, then,
+    /// for a command — the fixture's commands stand in for installed ones
+    /// — its hotkey and alias configuration, named by the core's rule for
+    /// whether it has them.
+    fn actions(&self) -> ResultActions {
+        let mut items = vec![ResultActionItem {
+            action: ResultAction::Invoke,
+            label: self.action.to_owned(),
+            available: self.unavailable.is_none(),
+        }];
+        if self.kind == "Command" {
+            for (action, configured) in [
+                (ResultAction::Hotkey, self.keys.is_some()),
+                (ResultAction::Alias, self.alias.is_some()),
+            ] {
+                items.push(ResultActionItem {
+                    action,
+                    label: action
+                        .configuration_label(configured)
+                        .expect("a configuration entry")
+                        .to_owned(),
+                    available: true,
+                });
+            }
+        }
+        ResultActions {
+            target: self.title.to_owned(),
+            title: self.title.to_owned(),
+            items,
+        }
+    }
+
     /// This row with the alias `alias`.
     const fn aliased(self, alias: &'static str) -> FixtureRow {
         FixtureRow {
@@ -251,6 +288,54 @@ pub(crate) const UNAVAILABLE_ROWS: &[FixtureRow] = &[
     },
 ];
 
+/// The launcher's kind of a fixture row's kind label: an application's
+/// primary action opens it (the Actions panel's arrow glyph).
+fn row_kind(kind: &str) -> Option<pane_core::RowKind> {
+    match kind {
+        "Application" => Some(pane_core::RowKind::Application),
+        "Command" => Some(pane_core::RowKind::Command),
+        "File" => Some(pane_core::RowKind::File),
+        "Fallback" => Some(pane_core::RowKind::Fallback),
+        _ => None,
+    }
+}
+
+/// The reference Actions board's rows: its "fig" query's four results
+/// and its fallback, in its order, with Figma selected. The file row has
+/// no tone of its own among the production tiles, so it shows the command
+/// tile with the file glyph — a difference the comparison reports.
+pub(crate) const ACTIONS_ROWS: &[FixtureRow] = &[
+    app("Figma", (IconTone::Pen, Glyph::Pen)),
+    command(
+        "Recent Figma Files",
+        "Design Files",
+        (IconTone::Command, Glyph::File),
+    ),
+    FixtureRow {
+        action: "Open File",
+        kind: "File",
+        ..command(
+            "figma-tokens.json",
+            "~/Design/tokens",
+            (IconTone::Command, Glyph::File),
+        )
+    },
+    command(
+        "Configure Pane",
+        "Settings",
+        (IconTone::Command, Glyph::Sliders),
+    ),
+    FixtureRow {
+        action: "Search Web",
+        kind: "Fallback",
+        ..command(
+            "Search the web for “fig”",
+            "Default browser",
+            (IconTone::Command, Glyph::Globe),
+        )
+    },
+];
+
 /// Which component family a scenario renders.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -281,8 +366,20 @@ pub(crate) enum Step {
     Pointer { row: usize, nudge: i16 },
     /// Press a key.
     Key { key: NamedKey },
-    /// Type text into the focused query field.
+    /// Type text into the focused field: the query, or the Actions
+    /// panel's search while the panel is open.
     Type { text: &'static str },
+    /// Click the element the fixture declares as `target` at its center
+    /// (the footer's Actions button), the pointer moving there first.
+    Click { target: &'static str },
+}
+
+/// The footer's Actions button, as a click step names it.
+pub(crate) const ACTIONS_BUTTON: &str = "actions-button";
+
+/// A click on `target`.
+const fn click(target: &'static str) -> Step {
+    Step::Click { target }
 }
 
 /// A key a step presses: the selection keys and Back under their default
@@ -322,6 +419,11 @@ pub(crate) struct Scenario {
     /// scenario (an adaptation the reference never authors) is captured
     /// and kept as evidence, never compared and never counted as parity.
     pub(crate) reference: bool,
+    /// The reference board the scenario pairs with, when it is not the
+    /// interactive root board: a static board authors its one state, so
+    /// the reference side captures it as authored and takes no steps.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) board: Option<&'static str>,
     /// The appearance the scenario renders in, when it is not the run's
     /// own (`--theme`): the light frame is captured in the same run as
     /// the dark ones. Light is a derived palette, so a light scenario is
@@ -357,6 +459,7 @@ const SCENARIOS: &[Scenario] = {
             family: Family::Root,
             client: ROOT_CLIENT,
             reference: true,
+            board: None,
             theme: None,
             frame: false,
             rows: ROOT_ROWS,
@@ -368,6 +471,7 @@ const SCENARIOS: &[Scenario] = {
             family: Family::Root,
             client: ROOT_CLIENT,
             reference: true,
+            board: None,
             theme: None,
             frame: false,
             rows: ROOT_ROWS,
@@ -379,6 +483,7 @@ const SCENARIOS: &[Scenario] = {
             family: Family::Root,
             client: ROOT_CLIENT,
             reference: true,
+            board: None,
             theme: None,
             frame: false,
             rows: ROOT_ROWS,
@@ -400,6 +505,7 @@ const SCENARIOS: &[Scenario] = {
             family: Family::Root,
             client: ROOT_CLIENT,
             reference: true,
+            board: None,
             theme: None,
             frame: false,
             rows: ROOT_ROWS,
@@ -418,6 +524,7 @@ const SCENARIOS: &[Scenario] = {
             family: Family::Root,
             client: ROOT_CLIENT,
             reference: true,
+            board: None,
             theme: None,
             frame: false,
             rows: ROOT_ROWS,
@@ -439,6 +546,7 @@ const SCENARIOS: &[Scenario] = {
             family: Family::Root,
             client: ROOT_CLIENT,
             reference: true,
+            board: None,
             theme: None,
             frame: false,
             rows: ROOT_ROWS,
@@ -453,11 +561,49 @@ const SCENARIOS: &[Scenario] = {
             ],
         },
         Scenario {
+            name: "root-actions",
+            description: "Down selects Clipboard History; the footer's Actions button opens its actions over the dimmed results; typing filters them to one, then to none; Escape closes the panel only",
+            family: Family::Root,
+            client: ROOT_CLIENT,
+            reference: true,
+            board: None,
+            theme: None,
+            frame: false,
+            rows: ROOT_ROWS,
+            steps: &[
+                DOWN,
+                capture("selected"),
+                click(ACTIONS_BUTTON),
+                capture("open"),
+                Type { text: "alias" },
+                capture("filtered"),
+                Type { text: "zz" },
+                capture("empty"),
+                Key {
+                    key: NamedKey::Escape,
+                },
+                capture("closed"),
+            ],
+        },
+        Scenario {
+            name: "actions-panel",
+            description: "The Actions board: the query 'fig' with Figma selected and its actions open over the dimmed results",
+            family: Family::Root,
+            client: ROOT_CLIENT,
+            reference: true,
+            board: Some("actions"),
+            theme: None,
+            frame: false,
+            rows: ACTIONS_ROWS,
+            steps: &[Type { text: "fig" }, click(ACTIONS_BUTTON), capture("open")],
+        },
+        Scenario {
             name: "root-unavailable",
             description: "A row that cannot run here, with its reason (no reference counterpart)",
             family: Family::Root,
             client: ROOT_CLIENT,
             reference: false,
+            board: None,
             theme: None,
             frame: false,
             rows: UNAVAILABLE_ROWS,
@@ -475,6 +621,7 @@ const SCENARIOS: &[Scenario] = {
             family: Family::Root,
             client: ROOT_CLIENT,
             reference: false,
+            board: None,
             theme: None,
             frame: false,
             rows: LONG_ROWS,
@@ -486,6 +633,7 @@ const SCENARIOS: &[Scenario] = {
             family: Family::Root,
             client: ROOT_CLIENT,
             reference: true,
+            board: None,
             theme: None,
             frame: true,
             rows: ROOT_ROWS,
@@ -497,6 +645,7 @@ const SCENARIOS: &[Scenario] = {
             family: Family::Root,
             client: ROOT_CLIENT,
             reference: false,
+            board: None,
             theme: Some("light"),
             frame: true,
             rows: ROOT_ROWS,
@@ -508,6 +657,7 @@ const SCENARIOS: &[Scenario] = {
             family: Family::Root,
             client: NARROW_CLIENT,
             reference: false,
+            board: None,
             theme: None,
             frame: true,
             rows: ROOT_ROWS,
@@ -529,6 +679,7 @@ const SCENARIOS: &[Scenario] = {
             family: Family::Tiles,
             client: ROOT_CLIENT,
             reference: false,
+            board: None,
             theme: None,
             frame: false,
             rows: &[],
@@ -540,6 +691,7 @@ const SCENARIOS: &[Scenario] = {
             family: Family::Keycap,
             client: ROOT_CLIENT,
             reference: true,
+            board: None,
             theme: None,
             frame: false,
             rows: &[],
@@ -568,13 +720,6 @@ pub(crate) struct PendingScenario {
 /// this milestone (see the #90 specification's deferred capabilities).
 pub(crate) fn pending_scenarios() -> &'static [PendingScenario] {
     &[
-        PendingScenario {
-            name: "actions-panel",
-            board: "actions",
-            ticket: "https://github.com/hoangvu12/pane/issues/95",
-            description: "The contextual Actions panel over the root board",
-            client: ROOT_CLIENT,
-        },
         PendingScenario {
             name: "calculator-card",
             board: "calculator",
@@ -907,6 +1052,15 @@ struct FixtureState {
     query: String,
     rows: Vec<&'static FixtureRow>,
     selected: usize,
+    /// The Actions panel while it is open.
+    actions: Option<PanelState>,
+}
+
+/// The open Actions panel's state: its filter and its selected entry.
+#[derive(Clone, Debug, Default)]
+struct PanelState {
+    query: String,
+    selected: usize,
 }
 
 impl FixtureState {
@@ -916,6 +1070,71 @@ impl FixtureState {
             query: String::new(),
             rows: all.iter().collect(),
             selected: 0,
+            actions: None,
+        }
+    }
+
+    /// The footer's Actions button, as the launcher's opens and closes
+    /// its panel.
+    fn toggle_actions(&mut self) {
+        self.actions = match self.actions {
+            Some(_) => None,
+            None => Some(PanelState::default()),
+        };
+    }
+
+    /// The selected row's actions, or `None` with nothing selected.
+    fn target_actions(&self) -> Option<ResultActions> {
+        self.rows.get(self.selected).map(|row| row.actions())
+    }
+
+    /// What the open panel lists now: the target's actions its filter
+    /// keeps, by the core's own rule.
+    fn listed_actions(&self) -> Vec<ResultActionItem> {
+        let (Some(panel), Some(actions)) = (&self.actions, self.target_actions()) else {
+            return Vec::new();
+        };
+        actions
+            .matching(&panel.query)
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
+    /// Text typed into the focused field: the panel's search while the
+    /// panel is open, else the query.
+    fn type_text(&mut self, text: &str) {
+        match self.actions.as_mut() {
+            Some(panel) => {
+                panel.query.push_str(text);
+                panel.selected = 0;
+            }
+            None => {
+                let query = format!("{}{text}", self.query);
+                self.set_query(&query);
+            }
+        }
+    }
+
+    /// Down: through the panel's entries that can run while it is open,
+    /// as the launcher's panel moves, else the results.
+    fn down(&mut self) {
+        let listed = self.listed_actions();
+        match self.actions.as_mut() {
+            Some(panel) => {
+                if let Some(next) = actions_panel::next_available(&listed, panel.selected, true) {
+                    panel.selected = next;
+                }
+            }
+            None => self.select_next(),
+        }
+    }
+
+    /// Escape: it closes the panel while the panel is open, and only
+    /// that; else the launcher's Back.
+    fn escape(&mut self) {
+        if self.actions.take().is_none() {
+            self.back();
         }
     }
 
@@ -961,7 +1180,12 @@ impl FixtureState {
     /// (`pane_core::root_sections`). The fixture lists no fallbacks.
     fn sections(&self) -> Vec<SectionLabel> {
         let rows = self.rows.len();
-        pane_core::root_sections(&self.query, rows, rows)
+        let fallbacks = self
+            .rows
+            .iter()
+            .position(|row| row.kind == "Fallback")
+            .unwrap_or(rows);
+        pane_core::root_sections(&self.query, rows, fallbacks)
             .iter()
             .map(SectionLabel::from)
             .collect()
@@ -1176,6 +1400,267 @@ pub(crate) struct DeclaredCapture {
     /// when the manifest is written (the replay itself shapes no text).
     #[serde(skip_serializing_if = "Option::is_none")]
     action_button: Option<Rect>,
+    /// Whether the Actions panel is open.
+    actions_open: bool,
+    /// The open Actions panel's layout.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actions: Option<DeclaredActions>,
+    /// The footer's mark, hint and buttons, filled in from shaped text
+    /// when the manifest is written.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    footer: Option<DeclaredFooter>,
+}
+
+/// The open Actions panel as a capture declares it, laid out from the
+/// panel's tokens (see [`declared_actions`]).
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeclaredActions {
+    /// The panel's own box.
+    rect: Rect,
+    /// The header, naming the target; none with nothing selected.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    header: Option<DeclaredActionsHeader>,
+    rows: Vec<DeclaredActionRow>,
+    /// The group labels ("Pane").
+    groups: Vec<DeclaredText>,
+    /// The separators' 1px rules.
+    rules: Vec<Rect>,
+    /// The note shown in place of entries, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    empty: Option<DeclaredText>,
+    /// The search row, its rule along its top edge.
+    search: Rect,
+    /// The dimmer over the results: the list's area.
+    dimmer: Rect,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeclaredActionsHeader {
+    title: String,
+    rect: Rect,
+    /// The target's 18px tile.
+    tile: Rect,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeclaredActionRow {
+    label: String,
+    /// "invoke", "hotkey" or "alias".
+    action: &'static str,
+    rect: Rect,
+    selected: bool,
+    /// The entry's 16px glyph box.
+    glyph: Rect,
+}
+
+/// A piece of text a capture declares: what it says and where its box is.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeclaredText {
+    text: String,
+    rect: Rect,
+}
+
+/// The footer as a capture declares it.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeclaredFooter {
+    /// The Pane mark's 18px box.
+    mark: Rect,
+    /// The hint's parts, left to right.
+    hint: Vec<DeclaredHintPart>,
+    /// The rule between the buttons.
+    divider: Rect,
+    /// The Actions button, and whether it shows its panel open.
+    actions_button: Rect,
+    actions_pressed: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeclaredHintPart {
+    /// The text, or the key sequence's caps' labels.
+    text: String,
+    keys: bool,
+    /// Its horizontal extent, across the strip's first line.
+    rect: Rect,
+    /// Whether the part runs past the room the buttons leave the hint (a
+    /// narrow window), where the hint is clipped.
+    clipped: bool,
+}
+
+/// The open Actions panel's layout over `state`, as the production panel
+/// draws it (see `crate::features::actions_panel`): its right edge 10px in
+/// from the window's and its bottom 8px above the footer; inside, the
+/// header, the list — entries, the group's rule and label unless the
+/// filter narrows them, or the note — and the search row.
+fn declared_actions(state: &FixtureState, theme: &Theme, frame: &Frame) -> Option<DeclaredActions> {
+    let panel = state.actions.as_ref()?;
+    let geometry = &theme.geometry.actions;
+    let f = f32::from;
+    let width = f(geometry.width);
+    let x = frame.footer.x + frame.footer.width - f(geometry.inset) - width;
+    let target = state.target_actions();
+    let listed = state.listed_actions();
+    let filtering = !panel.query.trim().is_empty();
+    // Laid out from the panel's top at 0, then moved into place.
+    let mut y = 0.;
+    let header = target.as_ref().map(|actions| {
+        let mini = f(theme.geometry.mini_tile.size);
+        let content = f(geometry.header_height) - f(geometry.header_padding_top);
+        DeclaredActionsHeader {
+            title: actions.title.clone(),
+            rect: Rect {
+                x,
+                y: 0.,
+                width,
+                height: f(geometry.header_height),
+            },
+            tile: Rect {
+                x: x + f(geometry.header_padding_x),
+                y: f(geometry.header_padding_top) + (content - mini) / 2.,
+                width: mini,
+                height: mini,
+            },
+        }
+    });
+    if header.is_some() {
+        y += f(geometry.header_height);
+    }
+    y += f(geometry.list_padding);
+    let inner_x = x + f(geometry.list_padding);
+    let inner_width = width - 2. * f(geometry.list_padding);
+    let gap = f(geometry.list_gap);
+    // The list's children, top to bottom, with the gap between them.
+    let mut children = 0;
+    let mut child = |y: &mut f32| {
+        if children > 0 {
+            *y += gap;
+        }
+        children += 1;
+    };
+    let (mut rows, mut groups, mut rules) = (Vec::new(), Vec::new(), Vec::new());
+    for panel_child in actions_panel::panel_children(&listed, filtering) {
+        child(&mut y);
+        match panel_child {
+            actions_panel::PanelChild::Rule => {
+                rules.push(Rect {
+                    x: inner_x + f(geometry.rule_margin_x),
+                    y: y + f(geometry.rule_margin_y),
+                    width: inner_width - 2. * f(geometry.rule_margin_x),
+                    height: 1.,
+                });
+                y += 1. + 2. * f(geometry.rule_margin_y);
+            }
+            actions_panel::PanelChild::Group => {
+                groups.push(DeclaredText {
+                    text: actions_panel::PANE_GROUP.to_owned(),
+                    rect: Rect {
+                        x: inner_x,
+                        y,
+                        width: inner_width,
+                        height: f(geometry.group_height),
+                    },
+                });
+                y += f(geometry.group_height);
+            }
+            actions_panel::PanelChild::Entry(index) => {
+                let item = &listed[index];
+                let glyph = f(geometry.glyph_size);
+                rows.push(DeclaredActionRow {
+                    label: item.label.clone(),
+                    action: item.action.id(),
+                    rect: Rect {
+                        x: inner_x,
+                        y,
+                        width: inner_width,
+                        height: f(geometry.row_height),
+                    },
+                    selected: index == panel.selected,
+                    glyph: Rect {
+                        x: inner_x + f(geometry.row_padding_x),
+                        y: y + (f(geometry.row_height) - glyph) / 2.,
+                        width: glyph,
+                        height: glyph,
+                    },
+                });
+                y += f(geometry.row_height);
+            }
+        }
+    }
+    let note = match (&target, listed.is_empty()) {
+        (None, _) => Some(actions_panel::NOTHING_SELECTED),
+        (Some(_), true) => Some(actions_panel::NO_MATCH),
+        (Some(_), false) => None,
+    };
+    let empty = note.map(|text| {
+        child(&mut y);
+        let height = 2. * f(geometry.empty_padding_y)
+            + f(theme.typography.action_size) * theme.typography.line_height;
+        let rect = Rect {
+            x: inner_x,
+            y,
+            width: inner_width,
+            height,
+        };
+        y += height;
+        DeclaredText {
+            text: text.to_owned(),
+            rect,
+        }
+    });
+    y += f(geometry.list_padding);
+    let search = Rect {
+        x,
+        y,
+        width,
+        height: f(geometry.search_height),
+    };
+    y += f(geometry.search_height);
+    // Into place: the panel's bottom above the footer.
+    let top = frame.footer.y - f(geometry.above_footer) - y;
+    let place = |rect: Rect| Rect {
+        y: rect.y + top,
+        ..rect
+    };
+    Some(DeclaredActions {
+        rect: place(Rect {
+            x,
+            y: 0.,
+            width,
+            height: y,
+        }),
+        header: header.map(|header| DeclaredActionsHeader {
+            rect: place(header.rect),
+            tile: place(header.tile),
+            ..header
+        }),
+        rows: rows
+            .into_iter()
+            .map(|row| DeclaredActionRow {
+                rect: place(row.rect),
+                glyph: place(row.glyph),
+                ..row
+            })
+            .collect(),
+        groups: groups
+            .into_iter()
+            .map(|group| DeclaredText {
+                rect: place(group.rect),
+                ..group
+            })
+            .collect(),
+        rules: rules.into_iter().map(place).collect(),
+        empty: empty.map(|empty| DeclaredText {
+            rect: place(empty.rect),
+            ..empty
+        }),
+        search: place(search),
+        dimmer: frame.list,
+    })
 }
 
 /// A step with the point it acts at, resolved: the client point a
@@ -1239,6 +1724,9 @@ pub(crate) fn replay(scenario: &Scenario, theme: &Theme) -> Replay {
                     sections,
                     action: state.rows.get(state.selected).map(|row| row.action),
                     action_button: None,
+                    actions_open: state.actions.is_some(),
+                    actions: declared_actions(&state, theme, &frame),
+                    footer: None,
                 })
             }
             Step::Pointer { row, nudge } => {
@@ -1260,13 +1748,17 @@ pub(crate) fn replay(scenario: &Scenario, theme: &Theme) -> Replay {
             }
             Step::Key {
                 key: NamedKey::Down,
-            } => state.select_next(),
+            } => state.down(),
             Step::Key {
                 key: NamedKey::Escape,
-            } => state.back(),
-            Step::Type { text } => {
-                let query = format!("{}{text}", state.query);
-                state.set_query(&query);
+            } => state.escape(),
+            Step::Type { text } => state.type_text(text),
+            // The point is the button's center, which shaping places: the
+            // manifest fills it in.
+            Step::Click { target } => {
+                if target == ACTIONS_BUTTON {
+                    state.toggle_actions();
+                }
             }
         }
         if matches!(
@@ -1300,6 +1792,9 @@ pub(crate) struct FixtureWindow {
     /// Where the pointer last moved, as the launcher keeps it: only real
     /// movement over a row selects it.
     pointer: Option<gpui::Point<Pixels>>,
+    /// The Actions panel's search field (the panel's state is the
+    /// fixture state's).
+    filter: Entity<EditableTextState>,
 }
 
 impl FixtureWindow {
@@ -1318,6 +1813,18 @@ impl FixtureWindow {
             }
         })
         .detach();
+        let filter = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
+        cx.subscribe(&filter, |this, input, _: &TextChanged, cx| {
+            let text = input.read(cx).as_str().to_owned();
+            if let Some(panel) = this.state.actions.as_mut()
+                && panel.query != text
+            {
+                panel.query = text;
+                panel.selected = 0;
+                cx.notify();
+            }
+        })
+        .detach();
         FixtureWindow {
             scenario,
             perturbation,
@@ -1325,7 +1832,63 @@ impl FixtureWindow {
             query,
             scroll: ScrollHandle::new(),
             pointer: None,
+            filter,
         }
+    }
+
+    /// The footer's Actions button: opens the panel with focus in its
+    /// search, or closes it and gives focus back to the query, as the
+    /// launcher's does.
+    fn toggle_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.state.toggle_actions();
+        let focus = if self.state.actions.is_some() {
+            self.filter.update(cx, |filter, cx| filter.emplace("", cx));
+            self.filter.focus_handle(cx)
+        } else {
+            self.query.focus_handle(cx)
+        };
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
+    fn close_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.state.actions.is_some() {
+            self.toggle_actions(window, cx);
+        }
+    }
+
+    fn actions_next(
+        &mut self,
+        _: &actions_panel::NextAction,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.state.down();
+        cx.notify();
+    }
+
+    fn actions_previous(
+        &mut self,
+        _: &actions_panel::PreviousAction,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let listed = self.state.listed_actions();
+        if let Some(panel) = self.state.actions.as_mut()
+            && let Some(previous) = actions_panel::next_available(&listed, panel.selected, false)
+        {
+            panel.selected = previous;
+            cx.notify();
+        }
+    }
+
+    fn actions_close(
+        &mut self,
+        _: &actions_panel::CloseActions,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.close_actions(window, cx);
     }
 
     /// The pointer moved over row `index` to `position`: real movement
@@ -1338,7 +1901,8 @@ impl FixtureWindow {
         cx: &mut Context<Self>,
     ) {
         let moved = self.pointer.is_some_and(|last| last != position);
-        if moved && self.state.selected != index {
+        // The open panel holds its target, as the launcher's does.
+        if moved && self.state.selected != index && self.state.actions.is_none() {
             self.state.pointer_over(index);
             cx.notify();
         }
@@ -1401,6 +1965,7 @@ impl FixtureWindow {
             .p(px(KEYCAP_INSET))
             .gap(px(KEYCAP_GAP))
             .font_family(theme.typography.family.clone())
+            .font_features(theme.typography.features.clone())
             .text_color(theme.text_title)
             .children(caps)
     }
@@ -1483,14 +2048,24 @@ impl FixtureWindow {
                 root_search::ROOT_PLACEHOLDER,
                 theme,
             ))
-            .child(list);
-        // The footer's idle strip, as the launcher lays it out: a spacer,
-        // then the production action button with the effective invoke
-        // binding. The launcher's menu button at the strip's left has no
-        // reference counterpart in this position and is left out.
-        let invoke = settings::keyboard_of(cx)
+            // The results, under the dimmer while the panel is open, as
+            // the launcher composes them.
+            .child(actions_panel::dimmed(
+                list.into_any_element(),
+                self.state.actions.is_some(),
+                theme,
+            ));
+        // The footer, composed as the launcher's (`ui::footer`): the mark
+        // (the launcher's app menu; the fixture opens no menu), the hint
+        // and the buttons — the selected row's primary action, the rule
+        // and Actions — and the open panel over the strip.
+        let keyboard = settings::keyboard_of(cx);
+        let invoke = keyboard
             .binding(KeyboardAction::InvokeSelectedAction)
             .clone();
+        let invoke_keys = crate::keyboard::binding_keys(&invoke);
+        let open_keys =
+            crate::keyboard::binding_keys(keyboard.binding(KeyboardAction::OpenActions));
         // The selected row's primary action, as the reference's footer
         // follows the selection; no row, no button.
         let action = self
@@ -1501,22 +2076,70 @@ impl FixtureWindow {
                 label: row.action.into(),
                 available: true,
             });
+        let open = self.state.actions.is_some();
+        let buttons = footer::buttons(
+            action.map(|action| action_button(&action, &invoke, theme).into_any_element()),
+            Some(
+                footer::actions_button(&open_keys, open, theme)
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_actions(window, cx)))
+                    .into_any_element(),
+            ),
+            theme,
+        );
+        let hint = footer::hint_line(
+            footer::hint_parts(
+                open,
+                invoke_keys.clone(),
+                open_keys,
+                crate::keyboard::escape_keys(),
+            ),
+            theme,
+        );
+        let panel = self.state.actions.as_ref().map(|panel| {
+            let target = self.state.target_actions();
+            let kind = self
+                .state
+                .rows
+                .get(self.state.selected)
+                .and_then(|row| row_kind(row.kind));
+            let listed = self.state.listed_actions();
+            let surface = actions_panel::compose(
+                actions_panel::PanelView {
+                    target: target.as_ref().map(|actions| (actions, kind)),
+                    icon: self.state.rows.get(self.state.selected).map(|row| row.icon),
+                    listed: &listed,
+                    filtering: !panel.query.trim().is_empty(),
+                    selected: panel.selected,
+                    invoke: &invoke_keys,
+                    filter: &self.filter,
+                },
+                theme,
+                settings::visuals(cx).material,
+                |row, _| row,
+            )
+            .key_context(actions_panel::CONTEXT)
+            .on_action(cx.listener(Self::actions_next))
+            .on_action(cx.listener(Self::actions_previous))
+            .on_action(cx.listener(Self::actions_close))
+            .on_mouse_down_out(cx.listener(
+                |this, _: &gpui::MouseDownEvent, window, cx| {
+                    this.close_actions(window, cx);
+                    cx.stop_propagation();
+                },
+            ));
+            actions_panel::anchored(surface, theme)
+        });
         let footer = Material::footer(theme)
             .id("status")
+            .relative()
+            .when_some(panel, |strip, panel| strip.child(panel))
             .text_size(theme.typography.footer_size)
-            .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .min_h(px(0.))
-                    .w_full()
-                    .min_w(px(0.))
-                    .items_center()
-                    .child(div().flex_1().min_w(px(0.)))
-                    .when_some(action, |strip, action| {
-                        strip.child(action_button(&action, &invoke, theme))
-                    }),
-            );
+            .child(footer::footer_row(
+                footer::mark_button(theme).into_any_element(),
+                footer::hint_slot(Some(hint), theme).into_any_element(),
+                buttons,
+                theme,
+            ));
         div()
             .key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::select_next))
@@ -1531,6 +2154,7 @@ impl FixtureWindow {
             .flex()
             .flex_col()
             .font_family(theme.typography.family.clone())
+            .font_features(theme.typography.features.clone())
             .text_color(theme.text_title)
             .child(search)
             .child(footer)
@@ -1661,6 +2285,18 @@ struct ColorRecord {
     text_muted: Hex,
     text_query: Hex,
     text_placeholder: Hex,
+    popover_solid: Hex,
+    popover_edge: Hex,
+    footer_mark: Hex,
+    footer_button_text: Hex,
+    control_hover: Hex,
+    footer_button_open: Hex,
+    footer_divider: Hex,
+    action_selected: Hex,
+    action_text: Hex,
+    action_icon: Hex,
+    action_rule: Hex,
+    actions_dimmer: Hex,
 }
 
 /// A color as the manifest writes it: `#RRGGBBAA`.
@@ -1780,6 +2416,8 @@ fn shaped_width_in(
 ) -> f32 {
     let mut font = gpui::font(family);
     font.weight = weight;
+    // The features every text run asks for (kerning), as rendered.
+    font.features = theme.typography.features.clone();
     let run = TextRun {
         len: text.len(),
         font,
@@ -1873,6 +2511,45 @@ fn style_name(style: CapStyle) -> &'static str {
 /// rules [`keycap::key_sequence`] draws it with: each cap its label's
 /// shaped width plus its padding, at least as wide as it is high, the
 /// caps `key_gap` apart.
+/// Each cap's label width and its own width, as the production keycap
+/// lays `keys` out in `style`: the label's shaped width in Geist Mono
+/// 500 and the cap's padding, at least as wide as the cap is tall.
+fn cap_widths(
+    window: &Window,
+    theme: &Theme,
+    keys: &keycap::KeySequence,
+    style: CapStyle,
+) -> Vec<(f32, f32)> {
+    let CapMetrics {
+        height,
+        padding_x: padding,
+        text_size: size,
+    } = style.metrics(theme);
+    keys.keys
+        .iter()
+        .map(|key| {
+            let label_width = shaped_width_in(
+                window,
+                theme.typography.mono_family.clone(),
+                theme,
+                &key.cap,
+                size,
+                theme.typography.medium,
+            );
+            let width = (label_width + 2. * f32::from(padding)).max(f32::from(height));
+            (label_width, width)
+        })
+        .collect()
+}
+
+/// The width `keys` lays out to in `style`: its caps and the gaps between
+/// them.
+fn keys_width(window: &Window, theme: &Theme, keys: &keycap::KeySequence, style: CapStyle) -> f32 {
+    let widths = cap_widths(window, theme, keys, style);
+    let gaps = widths.len().saturating_sub(1) as f32 * f32::from(theme.geometry.key_gap);
+    widths.iter().map(|(_, width)| width).sum::<f32>() + gaps
+}
+
 fn declared_group(
     window: &Window,
     theme: &Theme,
@@ -1885,22 +2562,17 @@ fn declared_group(
     let typography = &theme.typography;
     let CapMetrics {
         height,
-        padding_x: padding,
         text_size: size,
+        ..
     } = style.metrics(theme);
     let keys = crate::keyboard::binding_keys(binding);
     let mut left = x;
     let mut caps = Vec::new();
-    for key in &keys.keys {
-        let label_width = shaped_width_in(
-            window,
-            typography.mono_family.clone(),
-            theme,
-            &key.cap,
-            size,
-            typography.medium,
-        );
-        let width = (label_width + 2. * f32::from(padding)).max(f32::from(height));
+    for (key, (label_width, width)) in keys
+        .keys
+        .iter()
+        .zip(cap_widths(window, theme, &keys, style))
+    {
         caps.push(CapRecord {
             label: key.cap.to_string(),
             label_width,
@@ -1981,6 +2653,7 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
 
     let replay = replay(scenario, &theme);
     let mut captures = replay.captures;
+    let mut steps = replay.steps;
     let mut keycaps = Vec::new();
     let mut tiles = Vec::new();
     match scenario.family {
@@ -2027,19 +2700,68 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
             }
         }
         Family::Root => {
-            // The action button: padding, label, gap, key sequence;
-            // right-aligned inside the footer's right padding and centered
-            // in its height below the 1px rule.
+            // The footer, as `ui::footer` lays it out: the mark and the
+            // hint from the left padding; the Actions button at the right
+            // padding, the rule, and the primary action before it — each
+            // button centered in the strip's first line below the 1px rule.
             let rule = 1.;
-            let top = frame.footer.y
-                + rule
-                + (frame.footer.height - rule - f32::from(geometry.action_height)) / 2.;
+            let line = frame.footer.height - rule;
+            // Layout places the buttons on whole pixels: 7.5px of room
+            // above a 34px button in the 49px line rounds to 8.
+            let top =
+                (frame.footer.y + rule + (line - f32::from(geometry.action_height)) / 2.).round();
             let cap_top =
                 top + (f32::from(geometry.action_height) - f32::from(geometry.keycap_height)) / 2.;
-            // Laid out at 0 to measure it, then placed.
-            let invoke = settings::keyboard_of(cx)
+            let keyboard = settings::keyboard_of(cx);
+            let invoke = keyboard
                 .binding(KeyboardAction::InvokeSelectedAction)
                 .clone();
+            let open = keyboard.binding(KeyboardAction::OpenActions).clone();
+            let button_width = |label: &str, caps: f32| {
+                2. * f32::from(geometry.action_padding_x)
+                    + shaped_width(
+                        window,
+                        &theme,
+                        label,
+                        theme.typography.footer_size,
+                        theme.typography.medium,
+                    )
+                    + f32::from(geometry.action_gap)
+                    + caps
+            };
+            let right =
+                frame.footer.x + frame.footer.width - f32::from(geometry.footer_padding_right);
+            // The Actions button and its keys, then the rule before it.
+            let mut actions_keys = declared_group(
+                window,
+                &theme,
+                ("open-actions", &open),
+                Some("footer-actions"),
+                CapStyle::Regular,
+                (0., cap_top),
+            );
+            let actions_width = button_width("Actions", actions_keys.rect.width);
+            let actions_button = Rect {
+                x: right - actions_width,
+                y: top,
+                width: actions_width,
+                height: f32::from(geometry.action_height),
+            };
+            let shift = right - f32::from(geometry.action_padding_x) - actions_keys.rect.width;
+            actions_keys.rect.x += shift;
+            for cap in &mut actions_keys.caps {
+                cap.rect.x += shift;
+            }
+            keycaps.push(actions_keys);
+            let divider_height = f32::from(geometry.footer_divider_height);
+            let divider = Rect {
+                x: actions_button.x - f32::from(geometry.footer_buttons_gap) - 1.,
+                y: frame.footer.y + rule + (line - divider_height) / 2.,
+                width: 1.,
+                height: divider_height,
+            };
+            let primary_right = divider.x - f32::from(geometry.footer_buttons_gap);
+            // Laid out at 0 to measure it, then placed.
             let mut primary = declared_group(
                 window,
                 &theme,
@@ -2049,30 +2771,77 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
                 (0., cap_top),
             );
             let cap_width = primary.rect.width;
-            let right =
-                frame.footer.x + frame.footer.width - f32::from(geometry.footer_padding_right);
+            let mark_size = f32::from(geometry.footer_mark_size);
+            let mark = Rect {
+                x: frame.footer.x + f32::from(geometry.footer_padding_left),
+                y: frame.footer.y + rule + (line - mark_size) / 2.,
+                width: mark_size,
+                height: mark_size,
+            };
             for capture in &mut captures {
                 capture.action_button = capture.action.map(|action| {
-                    let text = shaped_width(
-                        window,
-                        &theme,
-                        action,
-                        theme.typography.footer_size,
-                        theme.typography.medium,
-                    );
-                    let width = 2. * f32::from(geometry.action_padding_x)
-                        + text
-                        + f32::from(geometry.action_gap)
-                        + cap_width;
+                    let width = button_width(action, cap_width);
                     Rect {
-                        x: right - width,
+                        x: primary_right - width,
                         y: top,
                         width,
                         height: f32::from(geometry.action_height),
                     }
                 });
+                // The hint: its parts from after the mark, 6px apart.
+                let parts = footer::hint_parts(
+                    capture.actions_open,
+                    crate::keyboard::binding_keys(&invoke),
+                    crate::keyboard::binding_keys(&open),
+                    crate::keyboard::escape_keys(),
+                );
+                let mut x = mark.x + mark_size + f32::from(geometry.footer_lead_gap);
+                // The hint's room: up to the gap before the first button.
+                let room = capture.action_button.map_or(divider.x, |button| button.x)
+                    - f32::from(geometry.footer_lead_gap);
+                let mut hint = Vec::new();
+                for part in parts {
+                    let (text, keys, width) = match part {
+                        footer::HintPart::Text(text) => {
+                            let width = shaped_width(
+                                window,
+                                &theme,
+                                &text,
+                                theme.typography.footer_size,
+                                theme.typography.regular,
+                            );
+                            (text.to_string(), false, width)
+                        }
+                        // A sequence by its caps' labels, as the
+                        // reference's DOM reads them ("CtrlK").
+                        footer::HintPart::Keys(keys) => {
+                            let width = keys_width(window, &theme, &keys, CapStyle::Regular);
+                            let labels = keys.keys.iter().map(|key| key.cap.as_ref()).collect();
+                            (labels, true, width)
+                        }
+                    };
+                    hint.push(DeclaredHintPart {
+                        text,
+                        keys,
+                        rect: Rect {
+                            x,
+                            y: frame.footer.y + rule,
+                            width,
+                            height: line,
+                        },
+                        clipped: x + width > room,
+                    });
+                    x += width + f32::from(geometry.footer_hint_gap);
+                }
+                capture.footer = Some(DeclaredFooter {
+                    mark,
+                    hint,
+                    divider,
+                    actions_button,
+                    actions_pressed: capture.actions_open,
+                });
             }
-            let shift = right - f32::from(geometry.action_padding_x) - cap_width;
+            let shift = primary_right - f32::from(geometry.action_padding_x) - cap_width;
             primary.rect.x += shift;
             for cap in &mut primary.caps {
                 cap.rect.x += shift;
@@ -2081,6 +2850,17 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
             for capture in &mut captures {
                 for row in &mut capture.rows {
                     declare_trailing(window, &theme, row);
+                }
+            }
+            // A click on the Actions button lands at its center.
+            let (x, y) = actions_button.center();
+            for step in &mut steps {
+                if step.step
+                    == (Step::Click {
+                        target: ACTIONS_BUTTON,
+                    })
+                {
+                    step.point = Some((x, y));
                 }
             }
         }
@@ -2164,13 +2944,25 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
                 text_muted: Hex(theme.text_muted),
                 text_query: Hex(theme.text_query),
                 text_placeholder: Hex(theme.text_placeholder),
+                popover_solid: Hex(theme.popover_solid),
+                popover_edge: Hex(theme.popover_edge),
+                footer_mark: Hex(theme.footer_mark),
+                footer_button_text: Hex(theme.footer_button_text),
+                control_hover: Hex(theme.control_hover),
+                footer_button_open: Hex(theme.footer_button_open),
+                footer_divider: Hex(theme.footer_divider),
+                action_selected: Hex(theme.action_selected),
+                action_text: Hex(theme.action_text),
+                action_icon: Hex(theme.action_icon),
+                action_rule: Hex(theme.action_rule),
+                actions_dimmer: Hex(theme.actions_dimmer),
             },
         },
         search_header: frame.search,
         list: frame.list,
         footer: frame.footer,
         captures,
-        steps: replay.steps,
+        steps,
         keycaps,
         tiles,
         font_resolution: font_resolution(window, &theme),
@@ -2218,6 +3010,7 @@ pub fn run(options: FixtureOptions) -> Result<(), String> {
         let keyboard = settings::keyboard_of(cx);
         let text_editing = bind_text_editing(cx);
         root_search::bind_keys(cx, &text_editing, &keyboard);
+        actions_panel::bind_keys(cx, &text_editing);
         crate::keyboard::bind_keys(cx, &keyboard);
 
         let (width, height) = scenario.client;
@@ -2498,6 +3291,74 @@ mod tests {
                 Some("Run Command")
             ]
         );
+    }
+
+    #[test]
+    fn the_actions_scenario_opens_filters_empties_and_closes_the_panel_only() {
+        let captures = declared_captures(scenario("root-actions"), &theme());
+        let names: Vec<_> = captures.iter().map(|capture| capture.name).collect();
+        assert_eq!(names, ["selected", "open", "filtered", "empty", "closed"]);
+        let labels = |capture: &DeclaredCapture| -> Vec<String> {
+            capture
+                .actions
+                .as_ref()
+                .map(|panel| panel.rows.iter().map(|row| row.label.clone()).collect())
+                .unwrap_or_default()
+        };
+        // Clipboard History has an alias and a hotkey: its configuration
+        // entries offer to change them, under the "Pane" label.
+        assert_eq!(
+            labels(&captures[1]),
+            ["Run Command", "Change Hotkey…", "Change Alias…"]
+        );
+        let open = captures[1].actions.as_ref().expect("the panel is open");
+        assert_eq!((open.groups.len(), open.rules.len()), (1, 1));
+        assert!(open.rows[0].selected);
+        // The filter narrows them, and drops the group's rule and label.
+        assert_eq!(labels(&captures[2]), ["Change Alias…"]);
+        let filtered = captures[2].actions.as_ref().expect("still open");
+        assert_eq!((filtered.groups.len(), filtered.rules.len()), (0, 0));
+        // Then to nothing, which the panel says.
+        let empty = captures[3].actions.as_ref().expect("still open");
+        assert!(empty.rows.is_empty());
+        assert_eq!(
+            empty.empty.as_ref().map(|note| note.text.as_str()),
+            Some(actions_panel::NO_MATCH)
+        );
+        // Escape closes the panel only: the query and the target stay.
+        assert!(captures[4].actions.is_none());
+        for capture in &captures {
+            assert_eq!(capture.query, "");
+            assert_eq!(capture.action, Some("Run Command"));
+        }
+    }
+
+    #[test]
+    fn the_declared_panel_sits_above_the_footer_at_the_right() {
+        let theme = theme();
+        let frame = frame(&theme, ROOT_CLIENT);
+        let captures = declared_captures(scenario("root-actions"), &theme);
+        let panel = captures[1].actions.as_ref().expect("the panel is open");
+        assert_eq!(panel.rect.x + panel.rect.width, ROOT_CLIENT.0 - 10.);
+        assert_eq!(panel.rect.width, 320.);
+        assert_eq!(panel.rect.y + panel.rect.height, frame.footer.y - 8.);
+        assert_eq!(
+            panel.search.y + panel.search.height,
+            panel.rect.y + panel.rect.height,
+            "the search row closes the panel"
+        );
+        let header = panel.header.as_ref().expect("the target is named");
+        assert_eq!(header.rect.y, panel.rect.y);
+        // Header 30, list padding 6: the first entry; then 36 and the 1px
+        // gap, the rule's 9 and the gap, the label's 26 and the gap.
+        assert_eq!(panel.rows[0].rect.y, panel.rect.y + 36.);
+        assert_eq!(panel.rules[0].y, panel.rows[0].rect.y + 36. + 1. + 4.);
+        assert_eq!(
+            panel.groups[0].rect.y,
+            panel.rows[0].rect.y + 36. + 1. + 9. + 1.
+        );
+        assert_eq!(panel.rows[1].rect.y, panel.groups[0].rect.y + 26. + 1.);
+        assert_eq!(panel.dimmer, frame.list);
     }
 
     #[test]

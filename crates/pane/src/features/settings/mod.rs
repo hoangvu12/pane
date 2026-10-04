@@ -464,6 +464,7 @@ impl Render for SettingsWindow {
             .flex()
             .flex_col()
             .font_family(theme.typography.family.clone())
+            .font_features(theme.typography.features.clone())
             .text_color(theme.text_title);
         // The titlebar exists only on the platforms whose own is hidden
         // (see [`titlebar`]), so the child is added under the same

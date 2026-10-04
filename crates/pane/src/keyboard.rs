@@ -42,7 +42,8 @@ use crate::app::KEY_CONTEXT;
 use crate::features::root_search;
 use crate::ui::keycap::{Key, KeySequence};
 use crate::{
-    Back, Confirm, DismissLauncher, OpenSettings, ReturnToRoot, SelectNext, SelectPrevious,
+    Back, Confirm, DismissLauncher, OpenActions, OpenSettings, ReturnToRoot, SelectNext,
+    SelectPrevious,
 };
 
 /// Registers the navigation actions under their effective bindings in
@@ -85,6 +86,7 @@ fn launcher_binding(id: &str, action: KeyboardAction) -> KeyBinding {
         KeyboardAction::ReturnToRoot => KeyBinding::new(id, ReturnToRoot, Some(KEY_CONTEXT)),
         KeyboardAction::DismissLauncher => KeyBinding::new(id, DismissLauncher, Some(KEY_CONTEXT)),
         KeyboardAction::OpenSettings => KeyBinding::new(id, OpenSettings, Some(KEY_CONTEXT)),
+        KeyboardAction::OpenActions => KeyBinding::new(id, OpenActions, Some(KEY_CONTEXT)),
     }
 }
 
@@ -124,6 +126,12 @@ pub(crate) fn binding_of(keystroke: &Keystroke) -> Result<Binding, String> {
         modifiers.function,
         &keystroke.key,
     )
+}
+
+/// The Escape key's cap: what closes the Actions panel and the footer
+/// menu, whatever back is bound to.
+pub(crate) fn escape_keys() -> KeySequence {
+    binding_keys(&Binding::parse("escape").expect("escape is a binding"))
 }
 
 /// The keys `binding` is pressed with, as keycaps show them on this

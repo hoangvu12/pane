@@ -32,6 +32,7 @@ use std::borrow::Cow;
 
 use gpui::App;
 
+pub(crate) mod footer;
 pub(crate) mod icon;
 pub(crate) mod input;
 pub(crate) mod keycap;

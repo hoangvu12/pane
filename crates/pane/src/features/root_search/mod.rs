@@ -264,6 +264,7 @@ pub(crate) fn search_header(
                 .text_size(typography.search_size)
                 .text_color(theme.text_query)
                 .font_family(typography.family.clone())
+                .font_features(typography.features.clone())
                 .pl(geometry.search_text_inset)
                 .w_full()
                 .min_w(px(0.))

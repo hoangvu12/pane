@@ -25,7 +25,9 @@
 //! neutrals are a legibility choice, not a certified ratio. Opaque mode is
 //! the explicit deterministic fallback.
 
-use gpui::{FontWeight, Hsla, Pixels, SharedString, px, rgb_to_hsla, rgba};
+use std::sync::Arc;
+
+use gpui::{FontFeatures, FontWeight, Hsla, Pixels, SharedString, px, rgb_to_hsla, rgba};
 
 /// Which palette a [`Theme`] carries. The host settings pick one — the
 /// user's preference, or the system's appearance where the preference
@@ -154,6 +156,42 @@ pub(crate) struct Theme {
     /// The alias chip's 1px inset ring (rgba(255,255,255,.14)).
     pub(crate) alias_edge: Hsla,
 
+    // -- The footer's buttons and the Actions panel ---------------------------
+    /// The footer mark's filled square (#EDEDEF at .92); its stroked one
+    /// is [`Theme::text_muted`].
+    pub(crate) footer_mark: Hsla,
+    /// A footer button's label (reference `.fbtn`: #D9DADD).
+    pub(crate) footer_button_text: Hsla,
+    /// A footer button's hover wash, and an Actions row's (white 6%).
+    pub(crate) control_hover: Hsla,
+    /// The Actions button while its panel is open (white 10%), with
+    /// [`Theme::footer_button_open_text`] on it.
+    pub(crate) footer_button_open: Hsla,
+    /// The open Actions button's label (#FFFFFF).
+    pub(crate) footer_button_open_text: Hsla,
+    /// The 1×16 rule between the footer's buttons (white 10%).
+    pub(crate) footer_divider: Hsla,
+    /// The selected Actions row's wash (reference `.arow.sel`: white 11%).
+    pub(crate) action_selected: Hsla,
+    /// An Actions row's label (#E4E4E7).
+    pub(crate) action_text: Hsla,
+    /// An Actions row's glyph (#A3A4A9).
+    pub(crate) action_icon: Hsla,
+    /// The Actions panel's rules: its separators and the line above its
+    /// search (white 7%).
+    pub(crate) action_rule: Hsla,
+    /// The dimmer over the results while the Actions panel is open
+    /// (rgba(6,7,8,.34)).
+    pub(crate) actions_dimmer: Hsla,
+    /// A popover's outer shadows (`.pop`): its 0.5px dark outline (black
+    /// 80%) and its long soft drop (black 75%).
+    pub(crate) popover_outline: Hsla,
+    pub(crate) popover_drop: Hsla,
+    /// The footer row's imperceptible fill (black at 1/255), which keeps
+    /// its content above a popup's drop shadow; see
+    /// `crate::ui::footer::footer_row`.
+    pub(crate) footer_order_fill: Hsla,
+
     // -- Type and geometry --------------------------------------------------
     /// Families, sizes and weights.
     pub(crate) typography: Typography,
@@ -167,6 +205,12 @@ pub(crate) struct Theme {
 pub(crate) struct Typography {
     /// The UI family (embedded Geist; see [`super::load_fonts`]).
     pub(crate) family: SharedString,
+    /// The OpenType features every text run asks for: kerning. Browsers
+    /// kern by default, and the reference's Geist is laid out kerned; GPUI
+    /// on Windows passes DirectWrite an explicit feature list without
+    /// `kern`, so unkerned Geist ran about 2% wider than the reference's
+    /// ("opens instantly ·" at 12.5px: 94.95px against 93, #95).
+    pub(crate) features: FontFeatures,
     /// The monospace family (embedded Geist Mono): keycaps and aliases.
     pub(crate) mono_family: SharedString,
     /// The search field's 19px.
@@ -193,6 +237,19 @@ pub(crate) struct Typography {
     pub(crate) section_size: Pixels,
     /// A section label's tracking, in em (.01).
     pub(crate) section_tracking: f32,
+    /// Geist's natural line height, as a multiple of its size: its
+    /// ascent and descent (1005 + 295 per 1000), CSS's `normal` for text
+    /// the reference sets no line height for.
+    pub(crate) line_height: f32,
+    /// An Actions row's 13px label, its search's 13px and its empty
+    /// note's.
+    pub(crate) action_size: Pixels,
+    /// An Actions row's label weight (450).
+    pub(crate) action_weight: FontWeight,
+    /// The Actions panel header's 12px.
+    pub(crate) actions_header_size: Pixels,
+    /// An Actions group label's 11.5px (`.alabel`).
+    pub(crate) action_group_size: Pixels,
     /// Title and label weight (500).
     pub(crate) medium: FontWeight,
     /// Body weight (400): a section label's note.
@@ -268,14 +325,35 @@ pub(crate) struct Geometry {
     /// The footer's right padding (8: the right-hand buttons carry their
     /// own 8px padding, so their labels end 16px from the edge).
     pub(crate) footer_padding_right: Pixels,
-    /// The footer action button's height.
+    /// A footer button's height (reference `.fbtn`).
     pub(crate) action_height: Pixels,
-    /// The footer action button's corner radius.
+    /// A footer button's corner radius.
     pub(crate) action_radius: Pixels,
-    /// The footer action button's horizontal padding.
+    /// A footer button's horizontal padding.
     pub(crate) action_padding_x: Pixels,
-    /// The gap between the action button's label and its keycap.
+    /// The gap between a footer button's label and its keycaps.
     pub(crate) action_gap: Pixels,
+    /// The gap between the footer's right-hand buttons and their rule.
+    pub(crate) footer_buttons_gap: Pixels,
+    /// The rule between the footer's buttons: 1 wide, this tall.
+    pub(crate) footer_divider_height: Pixels,
+    /// The gap between the footer's mark and its hint.
+    pub(crate) footer_lead_gap: Pixels,
+    /// The gap between the parts of the footer's hint.
+    pub(crate) footer_hint_gap: Pixels,
+    /// The footer's Pane mark.
+    pub(crate) footer_mark_size: Pixels,
+    /// How far the mark's button box bleeds past the mark on every side,
+    /// for its hover wash.
+    pub(crate) footer_mark_bleed: Pixels,
+    /// A popover's outline width and its drop: offset down, blur and
+    /// spread (`0 0 0 .5px`, `0 28px 70px -14px`).
+    pub(crate) popover_outline_width: Pixels,
+    pub(crate) popover_drop_offset: Pixels,
+    pub(crate) popover_drop_blur: Pixels,
+    pub(crate) popover_drop_spread: Pixels,
+    /// The Actions panel.
+    pub(crate) actions: ActionsGeometry,
     /// A keycap's height, and its least width.
     pub(crate) keycap_height: Pixels,
     /// A keycap's corner radius.
@@ -292,6 +370,50 @@ pub(crate) struct Geometry {
     /// on every platform, since a popover floats inside the window rather
     /// than at its edge).
     pub(crate) popover_radius: Pixels,
+}
+
+/// The Actions panel's geometry: the reference's `.pop` over the footer,
+/// its header, `.arow`, `.alabel`, `.sep` and search.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ActionsGeometry {
+    /// The panel's width.
+    pub(crate) width: Pixels,
+    /// Its inset from the window's nearer side edge: the Actions panel's
+    /// right, the Pane menu's left.
+    pub(crate) inset: Pixels,
+    /// The space between its bottom and the footer's top.
+    pub(crate) above_footer: Pixels,
+    /// The header: its height, its top and side padding, the gap after
+    /// its tile.
+    pub(crate) header_height: Pixels,
+    pub(crate) header_padding_top: Pixels,
+    pub(crate) header_padding_x: Pixels,
+    pub(crate) header_gap: Pixels,
+    /// The list's padding and the gap between its rows.
+    pub(crate) list_padding: Pixels,
+    pub(crate) list_gap: Pixels,
+    /// A row: its height, radius, side padding, the gap between its parts
+    /// and its glyph's size.
+    pub(crate) row_height: Pixels,
+    pub(crate) row_radius: Pixels,
+    pub(crate) row_padding_x: Pixels,
+    pub(crate) row_gap: Pixels,
+    pub(crate) glyph_size: Pixels,
+    /// A group label: its height, side padding and bottom padding.
+    pub(crate) group_height: Pixels,
+    pub(crate) group_padding_x: Pixels,
+    pub(crate) group_padding_bottom: Pixels,
+    /// A separator's margin, above and below, and either side.
+    pub(crate) rule_margin_y: Pixels,
+    pub(crate) rule_margin_x: Pixels,
+    /// The search row: its height, side padding, gap and glyph size.
+    pub(crate) search_height: Pixels,
+    pub(crate) search_padding_x: Pixels,
+    pub(crate) search_gap: Pixels,
+    pub(crate) search_glyph_size: Pixels,
+    /// The empty note's padding, above and below, and either side.
+    pub(crate) empty_padding_y: Pixels,
+    pub(crate) empty_padding_x: Pixels,
 }
 
 /// One icon tile size: the square's side, its corner radius and the
@@ -366,6 +488,21 @@ impl Theme {
             alias_text: color(0xB9BABEFF),
             alias_edge: color(0xFFFFFF24),
 
+            footer_mark: color(0xEDEDEFEB),
+            footer_button_text: color(0xD9DADDFF),
+            control_hover: color(0xFFFFFF0F),
+            footer_button_open: color(0xFFFFFF1A),
+            footer_button_open_text: color(0xFFFFFFFF),
+            footer_divider: color(0xFFFFFF1A),
+            action_selected: color(0xFFFFFF1C),
+            action_text: color(0xE4E4E7FF),
+            action_icon: color(0xA3A4A9FF),
+            action_rule: color(0xFFFFFF12),
+            actions_dimmer: color(0x06070857),
+            popover_outline: color(0x000000CC),
+            popover_drop: color(0x000000BF),
+            footer_order_fill: color(0x00000001),
+
             typography: Typography::shared(),
             geometry: Geometry::shared(),
         }
@@ -431,6 +568,21 @@ impl Theme {
             alias_text: color(0x3B3D44FF),
             alias_edge: color(0x00000024),
 
+            footer_mark: color(0x202126EB),
+            footer_button_text: color(0x2A2B31FF),
+            control_hover: color(0x0000000F),
+            footer_button_open: color(0x0000001A),
+            footer_button_open_text: color(0x111214FF),
+            footer_divider: color(0x0000001A),
+            action_selected: color(0x0000001C),
+            action_text: color(0x202126FF),
+            action_icon: color(0x575A63FF),
+            action_rule: color(0x00000012),
+            actions_dimmer: color(0x06070826),
+            popover_outline: color(0x00000033),
+            popover_drop: color(0x00000040),
+            footer_order_fill: color(0x00000001),
+
             typography: Typography::shared(),
             geometry: Geometry::shared(),
         }
@@ -441,6 +593,7 @@ impl Typography {
     fn shared() -> Typography {
         Typography {
             family: "Geist".into(),
+            features: FontFeatures(Arc::new(vec![("kern".into(), 1)])),
             mono_family: "Geist Mono".into(),
             search_size: px(19.),
             row_title_size: px(14.),
@@ -453,6 +606,11 @@ impl Typography {
             mono_line_height: 1.3,
             section_size: px(12.),
             section_tracking: 0.01,
+            line_height: 1.3,
+            action_size: px(13.),
+            action_weight: FontWeight(450.),
+            actions_header_size: px(12.),
+            action_group_size: px(11.5),
             medium: FontWeight::MEDIUM,
             regular: FontWeight::NORMAL,
         }
@@ -519,10 +677,47 @@ impl Geometry {
             footer_height: px(50.),
             footer_padding_left: px(16.),
             footer_padding_right: px(8.),
-            action_height: px(28.),
-            action_radius: px(7.),
-            action_padding_x: px(10.),
-            action_gap: px(8.),
+            action_height: px(34.),
+            action_radius: px(8.),
+            action_padding_x: px(8.),
+            action_gap: px(6.),
+            footer_buttons_gap: px(4.),
+            footer_divider_height: px(16.),
+            footer_lead_gap: px(12.),
+            footer_hint_gap: px(6.),
+            footer_mark_size: px(18.),
+            footer_mark_bleed: px(5.),
+            popover_outline_width: px(0.5),
+            popover_drop_offset: px(28.),
+            popover_drop_blur: px(70.),
+            popover_drop_spread: px(-14.),
+            actions: ActionsGeometry {
+                width: px(320.),
+                inset: px(10.),
+                above_footer: px(8.),
+                header_height: px(30.),
+                header_padding_top: px(8.),
+                header_padding_x: px(14.),
+                header_gap: px(8.),
+                list_padding: px(6.),
+                list_gap: px(1.),
+                row_height: px(36.),
+                row_radius: px(8.),
+                row_padding_x: px(8.),
+                row_gap: px(10.),
+                glyph_size: px(16.),
+                group_height: px(26.),
+                group_padding_x: px(8.),
+                group_padding_bottom: px(4.),
+                rule_margin_y: px(4.),
+                rule_margin_x: px(6.),
+                search_height: px(44.),
+                search_padding_x: px(14.),
+                search_gap: px(10.),
+                search_glyph_size: px(15.),
+                empty_padding_y: px(14.),
+                empty_padding_x: px(10.),
+            },
             keycap_height: px(20.),
             keycap_radius: px(5.),
             keycap_padding_x: px(5.),
