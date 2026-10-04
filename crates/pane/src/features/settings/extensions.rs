@@ -36,19 +36,35 @@ use pane_core::{Launcher, Screen, Status};
 
 use super::{Page, SettingsWindow, search};
 use crate::app::{LauncherWindow, launcher_changed_outside, row_icon};
-use crate::ui::icon::{Glyph, IconTone};
+use crate::ui::icon::Glyph;
 use crate::ui::result_row::{RowContent, result_row};
+use crate::ui::settings_shell;
 use crate::ui::theme::Theme;
+
+/// What the page is, in one line: its sidebar entry's description in
+/// the search, and its heading's subtitle.
+const ABOUT: &str = "Install, enable, disable, update and remove extensions";
+
+/// The page's title: its sidebar entry, and its own heading.
+const TITLE: &str = "Extensions";
+
+/// How many extensions are installed: the count the page's sidebar entry
+/// shows.
+fn installed(launcher: &Launcher) -> usize {
+    launcher.packages().len()
+}
 
 /// The Extensions page, first of the sections this milestone ships: the
 /// spec's order names Extensions sixth of seven and About last, and only
 /// About exists beside it.
 pub(crate) fn page() -> Page {
     Page {
-        title: "Extensions",
-        about: "Install, enable, disable, update and remove extensions",
-        // The blocks tile, as the launcher's own Manage extensions row.
-        icon: (IconTone::Command, Glyph::Blocks),
+        title: TITLE,
+        about: ABOUT,
+        // The blocks glyph, as the launcher's own Manage extensions row.
+        icon: Glyph::Blocks,
+        // The installed extensions, as the reference counts its plugins.
+        count: Some(installed),
         render,
         search: entries,
         focus,
@@ -174,6 +190,10 @@ fn render(
     };
     let leaving_details = details_screen(&list.screen);
     let title = list.title.clone();
+    // The page's subtitle under the list's own heading; a flow's other
+    // screens (a confirmation names what it asks about) take none.
+    let listing = matches!(list.screen, Screen::Extensions { .. });
+    let subtitle = listing.then(|| ABOUT.into());
     let details = list.details().to_vec();
     let rows = list.rows.clone();
     // The flow's status — an operation's progress or outcome, an error —
@@ -334,14 +354,9 @@ fn render(
         .flex_col()
         .gap(px(4.))
         .child(
-            div()
+            settings_shell::page_header(title, subtitle, &theme)
                 .id("extensions-title")
-                .debug_selector(|| "extensions-title".into())
-                .pb(px(8.))
-                .text_size(typography.search_size)
-                .font_weight(typography.medium)
-                .text_color(theme.text_title)
-                .child(title),
+                .debug_selector(|| "extensions-title".into()),
         )
         .when_some(status, |page, (text, color)| {
             page.child(

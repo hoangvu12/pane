@@ -30,11 +30,15 @@ use tempfile::TempDir;
 #[path = "support/settle.rs"]
 mod settle;
 
+#[path = "support/paint.rs"]
+mod paint;
+
 #[path = "../../pane-core/tests/support/artifacts.rs"]
 mod artifacts;
 
 use artifacts::Artifacts;
 
+use paint::paints_fill_at;
 use settle::settle;
 
 /// The keystroke that opens Settings on this platform: Cmd+, on macOS,
@@ -44,6 +48,16 @@ fn settings_shortcut() -> &'static str {
         "cmd-,"
     } else {
         "ctrl-,"
+    }
+}
+
+/// The keystroke that focuses the Settings search: Cmd+F on macOS,
+/// Ctrl+F on Windows and Linux.
+fn find_shortcut() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "cmd-f"
+    } else {
+        "ctrl-f"
     }
 }
 
@@ -2236,6 +2250,232 @@ fn the_settings_window_keeps_its_layout_at_small_sizes(cx: &mut TestAppContext) 
         version.right() <= page.right(),
         "the version stays within the page"
     );
+}
+
+/// The bounds the element with the debug selector `selector` drew at, as
+/// `[x, y, width, height]` in logical px.
+fn rect_of(cx: &mut VisualTestContext, selector: &'static str) -> [f32; 4] {
+    let bounds = cx
+        .debug_bounds(selector)
+        .unwrap_or_else(|| panic!("{selector} is drawn"));
+    let (origin, size) = (bounds.origin, bounds.size);
+    [
+        f32::from(origin.x),
+        f32::from(origin.y),
+        f32::from(size.width),
+        f32::from(size.height),
+    ]
+}
+
+/// A debug selector built at run time, for the selectors a test derives
+/// from a page's title.
+fn selector(text: String) -> &'static str {
+    Box::leak(text.into_boxed_str())
+}
+
+/// The Settings window opens at the reference board's 1120×720 client,
+/// and its shell lands where the board puts it (#97): the 48px titlebar
+/// with its label centered and the Windows caption buttons at its right
+/// edge, the 232px sidebar below it with the 34px search and the 36px
+/// sections 2px apart, and the page beside the sidebar with its 26px top
+/// and 32px side padding.
+#[cfg(target_os = "windows")]
+#[gpui::test]
+fn the_settings_window_opens_at_the_reference_shell_geometry(cx: &mut TestAppContext) {
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let (_settings, mut settings_cx) = opened_settings(cx);
+
+    let viewport = settings_cx.update(|window, _| window.viewport_size());
+    assert_eq!(
+        viewport,
+        gpui::size(px(1120.), px(720.)),
+        "the Settings board's client"
+    );
+    let sc = &mut settings_cx;
+    assert_eq!(rect_of(sc, "settings-titlebar"), [0., 0., 1120., 48.]);
+    assert_eq!(rect_of(sc, "settings-sidebar"), [0., 48., 232., 672.]);
+    assert_eq!(rect_of(sc, "settings-search-field"), [10., 60., 211., 34.]);
+    assert_eq!(rect_of(sc, "section-General"), [10., 104., 211., 36.]);
+    assert_eq!(rect_of(sc, "section-Launcher"), [10., 142., 211., 36.]);
+    assert_eq!(rect_of(sc, "settings-page"), [232., 48., 888., 672.]);
+    let heading = rect_of(sc, "general-title");
+    assert_eq!([heading[0], heading[1]], [264., 74.], "the page's padding");
+
+    // The label is centered over the whole window, as the reference's is;
+    // the caption buttons — the Windows adaptation of its lone close
+    // glyph — reach the window's right edge and fill the titlebar's
+    // height above its rule.
+    let label = rect_of(sc, "settings-title");
+    assert!(
+        (label[0] + label[2] / 2. - 560.).abs() <= 1.,
+        "the label is centered: {label:?}"
+    );
+    let close = rect_of(sc, "window-close");
+    assert_eq!(close[0] + close[2], 1120.);
+    assert_eq!([close[1], close[3]], [0., 47.]);
+
+    // At the window's floor the titlebar and its controls hold: the
+    // caption buttons still end at the window's edge, the label stays
+    // centered clear of them, and the sidebar keeps its width.
+    sc.simulate_resize(gpui::size(px(560.), px(400.)));
+    sc.run_until_parked();
+    let close = rect_of(sc, "window-close");
+    assert_eq!(close[0] + close[2], 560.);
+    let label = rect_of(sc, "settings-title");
+    assert!((label[0] + label[2] / 2. - 280.).abs() <= 1., "{label:?}");
+    assert_eq!(rect_of(sc, "settings-sidebar")[2], 232.);
+}
+
+/// The sidebar's sections are the reference's own item family (#97), not
+/// the launcher's result rows: 36px, the white 9% selected wash and the
+/// white 5% hover wash, which lands on the frame the pointer moves and
+/// never fades — the reference's `.nav` authors no transition — while the
+/// selected section keeps its wash under the pointer.
+#[gpui::test]
+fn the_sidebar_items_are_their_own_family_and_change_at_once(cx: &mut TestAppContext) {
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let (_settings, mut settings_cx) = opened_settings(cx);
+
+    let general = settings_cx
+        .debug_bounds("section-General")
+        .expect("the General section");
+    assert_eq!(general.size.height, px(36.), "the sidebar item's height");
+    assert!(
+        paints_fill_at(&mut settings_cx, general, 0xFFFFFF17),
+        "the selected section takes the sidebar's white 9% wash"
+    );
+
+    // The pointer onto an unselected section: the hover wash at once, and
+    // nothing left running.
+    let launcher_row = settings_cx
+        .debug_bounds("section-Launcher")
+        .expect("the Launcher section");
+    settings_cx.simulate_mouse_move(
+        launcher_row.center(),
+        None::<MouseButton>,
+        Modifiers::none(),
+    );
+    settings_cx.run_until_parked();
+    assert!(
+        paints_fill_at(&mut settings_cx, launcher_row, 0xFFFFFF0D),
+        "the hover wash is the sidebar's white 5%, drawn at once"
+    );
+    assert_eq!(
+        frame(&mut settings_cx, Duration::ZERO),
+        0,
+        "the hover wash asks for no animation frame"
+    );
+
+    // Over the selected section the selected wash stays.
+    settings_cx.simulate_mouse_move(general.center(), None::<MouseButton>, Modifiers::none());
+    settings_cx.run_until_parked();
+    assert!(paints_fill_at(&mut settings_cx, general, 0xFFFFFF17));
+    assert!(!paints_fill_at(&mut settings_cx, general, 0xFFFFFF0D));
+    assert!(
+        !paints_fill_at(&mut settings_cx, launcher_row, 0xFFFFFF0D),
+        "the section the pointer left lost its wash at once"
+    );
+
+    pointer_leaves(&mut settings_cx);
+    settings_cx.run_until_parked();
+    assert_eq!(settle_frames(&mut settings_cx), 0, "the window is idle");
+}
+
+/// The Appearance page is the reference's two-column page (#97): the
+/// controls in a 388px column from the page's padding, the preview in a
+/// 400px column 36px to its right. A window narrower than the two
+/// columns collapses them — the preview wraps below the controls, inside
+/// the page — so every control stays reachable.
+#[gpui::test]
+fn the_appearance_preview_sits_beside_the_controls_and_below_them_when_narrow(
+    cx: &mut TestAppContext,
+) {
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let mut settings_cx = open_settings(cx);
+    pointer_leaves(&mut settings_cx);
+    settle_frames(&mut settings_cx);
+
+    let choice = settings_cx
+        .debug_bounds("appearance-theme-System")
+        .expect("a choice");
+    let preview = settings_cx
+        .debug_bounds("appearance-preview")
+        .expect("the preview");
+    let page = settings_cx.debug_bounds("settings-page").expect("the page");
+    assert_eq!(choice.left(), page.left() + px(32.));
+    assert_eq!(choice.size.width, px(388.), "the controls column");
+    assert_eq!(preview.left(), choice.right() + px(36.));
+    assert_eq!(preview.size.width, px(400.), "the preview column");
+
+    settings_cx.simulate_resize(gpui::size(px(760.), px(720.)));
+    settings_cx.run_until_parked();
+    let choice = settings_cx
+        .debug_bounds("appearance-theme-System")
+        .expect("a choice");
+    let preview = settings_cx
+        .debug_bounds("appearance-preview")
+        .expect("the preview");
+    let page = settings_cx.debug_bounds("settings-page").expect("the page");
+    assert!(
+        preview.top() > choice.bottom(),
+        "the preview wrapped below the controls: {preview:?} under {choice:?}"
+    );
+    assert_eq!(preview.left(), page.left() + px(32.));
+    assert!(preview.right() <= page.right() - px(32.));
+}
+
+/// The seven real pages — and only those — are the sidebar's sections, in
+/// order: each opens its page, and the search finds each by its title.
+/// The reference's other labels (Window Manager, Clipboard, Privacy) add
+/// no page.
+#[gpui::test]
+fn all_seven_pages_are_listed_reachable_and_searchable(cx: &mut TestAppContext) {
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let (_settings, mut settings_cx) = opened_settings(cx);
+    let pages = [
+        "General",
+        "Launcher",
+        "Appearance",
+        "Shortcuts",
+        "Keyboard",
+        "Extensions",
+        "About",
+    ];
+    let mut above = None;
+    for title in pages {
+        let section = selector(format!("section-{title}"));
+        let top = settings_cx
+            .debug_bounds(section)
+            .unwrap_or_else(|| panic!("{section} is listed"))
+            .top();
+        assert!(above.is_none_or(|above| above < top), "{section} in order");
+        above = Some(top);
+        click_section(&mut settings_cx, section);
+        let page = selector(title.to_lowercase());
+        assert!(
+            settings_cx.debug_bounds(page).is_some(),
+            "{section} opens its page"
+        );
+    }
+    for absent in [
+        "section-Window Manager",
+        "section-Clipboard",
+        "section-Privacy",
+    ] {
+        assert!(settings_cx.debug_bounds(absent).is_none(), "{absent}");
+    }
+    for title in pages {
+        settings_cx.simulate_keystrokes(find_shortcut());
+        settings_cx.simulate_input(&title.to_lowercase());
+        settings_cx.run_until_parked();
+        let result = selector(format!("settings-search-result-{title}"));
+        assert!(
+            settings_cx.debug_bounds(result).is_some(),
+            "the search finds {title}"
+        );
+        settings_cx.simulate_keystrokes("escape");
+        settings_cx.run_until_parked();
+    }
 }
 
 /// A helper for the section-transition tests: the Settings window over

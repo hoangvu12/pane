@@ -539,6 +539,8 @@ def compare(native_dir, reference_dir, out_dir, label):
                              reference_image, text_title, selected_alpha, hover_alpha, crops)
             elif scenario["family"] == "tiles":
                 compare_tiles(report, name, capture, manifest, native, scale, crops)
+            elif scenario["family"] == "settings":
+                compare_settings(report, name, capture, manifest, native, scale, ref_capture, reference_image, crops)
             else:
                 compare_keycaps(report, name, capture, manifest, native, scale, ref_capture, reference_image, crops)
             images.append(write_images(out_dir, name, capture, native, reference_image, crops, scale))
@@ -1959,6 +1961,374 @@ def measured_cores(manifest, native, scale):
         background = median_color(native, (x - 6 * scale, y + h / 2 - 2 * scale, x - 3 * scale, y + h / 2 + 2 * scale))
         measured = measure_tile(native, rect, app, APP_GLYPH if app else COMMAND_GLYPH, background, scale)
         yield tile, measured and measured["glyph"] and measured["glyph"]["count"]
+
+
+# --------------------------------------------------- the Settings shell (#97)
+
+# The board's sections whose glyphs Pane has no counterpart for (its
+# palette, shield and info glyphs): the fixture draws a stand-in there, so
+# those glyphs are compared by place only.
+STAND_IN_GLYPH = "a stand-in for the board's own glyph, which Pane does not have: compared by place only"
+
+
+def vline(image, x_range, y_range, background=None, lighter=True):
+    """The x of the most distinct vertical line across y_range within
+    x_range (a hairline rule): the column whose median luma stands out most
+    from the columns two pixels left and right of it - hline turned on its
+    side. A rule between two fills is lighter (darker, in the light
+    palette) than both; the edge between the fills is a step, not a
+    line."""
+    data = image.load()
+    rows = range(max(0, y_range[0]), min(image.height, y_range[1]), 3)
+
+    def level(column):
+        return statistics.median(luma(data[column, r]) for r in rows)
+
+    best, best_x = 0.0, None
+    for column in range(max(2, x_range[0]), min(image.width - 2, x_range[1])):
+        left, here, right = level(column - 2), level(column), level(column + 2)
+        contrast = min(here - left, here - right) if lighter else min(left - here, right - here)
+        if contrast > best:
+            best, best_x = contrast, column
+    return best_x
+
+
+def ringed_box(image, rect, background, fill, scale=1.0):
+    """A box drawn as a fill under a 1px inset ring that differs from both
+    the fill and the background (the Settings search well: black 24% under
+    a white 6% ring): its fill's edges, as box_edges finds them, grown by
+    the ring's logical pixel on every side. Logical (x, y, w, h) or None."""
+    edges = box_edges(image, rect, background, fill, scale)
+    if edges is None:
+        return None
+    x, y, w, h = edges
+    return (x - 1, y - 1, w + 2, h + 2)
+
+
+def native_settings_layout(shell, capture):
+    """The fixture's declared Settings shell in one capture, in the shape
+    measure_settings reads."""
+    hovered = next((h["section"] for h in shell["hovered"] if h["capture"] == capture), None)
+    return {
+        "rule": shell["titlebar"]["y"] + shell["titlebar"]["height"] - 1,
+        "title": as_tuple(shell["title"]["rect"]),
+        "sidebar": as_tuple(shell["sidebar"]),
+        "search": as_tuple(shell["search"]),
+        "placeholder": as_tuple(shell["placeholder"]["rect"]),
+        "items": [{
+            "label": item["label"],
+            "rect": as_tuple(item["rect"]),
+            "selected": item["selected"],
+            "hovered": index == hovered,
+            "glyph": as_tuple(item["glyph"]),
+            "boardGlyph": item["boardGlyph"],
+            "labelLeft": item["labelBox"]["x"],
+            "count": as_tuple(item["count"]["rect"]) if item.get("count") else None,
+        } for index, item in enumerate(shell["sections"])],
+        "heading": as_tuple(shell["heading"]["rect"]),
+        "subtitle": as_tuple(shell["subtitle"]["rect"]),
+        "aside": as_tuple(shell["aside"]["rect"]) if shell.get("aside") else None,
+    }
+
+
+def reference_settings_layout(state):
+    """The reference Settings board's DOM state, in the same shape. The
+    subtitle's box is its first line (the board's wraps to two)."""
+    bar = as_tuple(state["titlebar"]["rect"])
+    sub = as_tuple(state["subtitle"]["rect"])
+    return {
+        "rule": bar[1] + bar[3] - 1,
+        "title": as_tuple(state["titlebar"]["title"]["rect"]),
+        "sidebar": as_tuple(state["sidebar"]["rect"]),
+        "search": as_tuple(state["search"]["rect"]),
+        "placeholder": as_tuple(state["search"]["input"]),
+        "items": [{
+            "label": item["label"],
+            "rect": as_tuple(item["rect"]),
+            "selected": item["selected"],
+            "hovered": item["hovered"],
+            "glyph": as_tuple(item["glyph"]),
+            "boardGlyph": True,
+            "labelLeft": item["labelRect"]["x"],
+            "count": as_tuple(item["count"]["rect"]) if item.get("count") else None,
+            "background": item["background"],
+        } for item in state["items"]],
+        "heading": as_tuple(state["heading"]["rect"]),
+        "subtitle": (sub[0], sub[1], sub[2], min(sub[3], 17)),
+        "aside": as_tuple(state["aside"]["rect"]) if state.get("aside") else None,
+    }
+
+
+def measure_settings(image, layout, inks, scale=1.0, lighter=True):
+    """What an image shows of the Settings shell laid out as layout says
+    (logical px): the titlebar's rule and label, the sidebar's rule and
+    fill, the search well and its placeholder, each section's wash, label,
+    glyph and count, and the page's heading, subtitle and column caption.
+    Fills are read as overlay alphas against the background right beside
+    them, which survives the reference's glass over its wallpaper."""
+    result = {}
+    sx, sy, sw, sh = layout["sidebar"]
+    right = sx + sw
+    rule = layout["rule"]
+    found = hline(image, (int((right + 40) * scale), int((right + 400) * scale)),
+                  (int((rule - 4) * scale), int((rule + 5) * scale)), None, lighter)
+    result["rule"] = found / scale if found is not None else None
+
+    # The sidebar's rule and fill, below its last section, where nothing
+    # else is drawn: the fill as a black overlay over the page just past the
+    # rule.
+    last = layout["items"][-1]["rect"]
+    y0 = last[1] + last[3] + 10
+    y1 = min(sy + sh - 10, y0 + 150)
+    found = vline(image, (int((right - 5) * scale), int((right + 4) * scale)), (int(y0 * scale), int(y1 * scale)),
+                  None, lighter)
+    result["separator"] = found / scale if found is not None else None
+    inside = median_color(image, box_px((right - 7, y0, 4, 20), scale))
+    beside = median_color(image, box_px((right + 3, y0, 4, 20), scale))
+    result["sidebarAlpha"] = black_alpha(inside, beside) if inside and beside else None
+
+    # The search well: its fill (between its ring and its magnifier) as a
+    # black overlay over the sidebar in the gap below it, its edges, and
+    # its placeholder's ink.
+    x, y, w, h = layout["search"]
+    below = median_color(image, box_px((x + 20, y + h + 3, 60, 3), scale))
+    fill = median_color(image, box_px((x + 2.5, y + 8, 4, h - 16), scale))
+    result["search"] = {
+        "edges": ringed_box(image, (x, y, w, h), below, fill, scale) if below and fill else None,
+        "alpha": black_alpha(fill, below) if below and fill else None,
+    }
+    px_left = layout["placeholder"][0]
+    result["placeholder"] = ink_extent(image, (px_left - 4, y + 4, 140, h - 8), fill, inks["placeholder"],
+                                       scale) if fill else None
+
+    items = []
+    for item in layout["items"]:
+        rect = item["rect"]
+        x, y, w, h = rect
+        measured = {"label": item["label"]}
+        wash = row_wash(image, rect, scale, lighter=lighter)
+        if wash:
+            measured["alpha"] = wash["alpha"]
+            if item["selected"] or item["hovered"]:
+                sign = 1 if lighter else -1
+                delta = max(3.0, sign * (luma(wash["fill"]) - luma(wash["background"])) / 2)
+                edges = wash_edges(image, scaled(rect, scale), wash["background"], delta, lighter=lighter)
+                measured["edges"] = tuple(v / scale for v in edges) if edges else None
+            color = inks["selected"] if item["selected"] else inks["hover"] if item["hovered"] else inks["rest"]
+            left = item["labelLeft"] - 4
+            text = ink(image, box_px((left, y + 4, x + w - 30 - left, h - 8), scale), wash["fill"], color,
+                       exclude_accent=False)
+            if text:
+                bx, by, bw, bh = text["box"]
+                measured["text"] = {"left": bx / scale - x, "top": by / scale - y, "height": bh / scale,
+                                    "color": text["color"]}
+            glyph = ink(image, box_px(item["glyph"], scale, pad=2), wash["fill"], inks["icon"], exclude_accent=False)
+            if glyph:
+                gx, gy, gw, gh = glyph["box"]
+                measured["glyph"] = (gx / scale - x, gy / scale - y, gw / scale, gh / scale)
+            if item["count"]:
+                count = ink(image, box_px(item["count"], scale, pad=3), wash["fill"], inks["icon"],
+                            exclude_accent=False)
+                if count:
+                    measured["countRight"] = (count["box"][0] + count["box"][2]) / scale - x
+        items.append(measured)
+    result["items"] = items
+
+    # The page: its heading, its subtitle's first line and its column
+    # caption, against the page's own padding above the heading.
+    hx, hy, hw, hh = layout["heading"]
+    page = median_color(image, box_px((right + 8, hy - 14, 16, 8), scale))
+    if page:
+        result["heading"] = ink_extent(image, (hx - 4, hy, min(hw, 300) + 4, hh), page, inks["heading"], scale)
+        bx, by, bw, bh = layout["subtitle"]
+        result["subtitle"] = ink_extent(image, (bx - 4, by, min(bw, 380) + 4, bh), page, inks["muted"], scale)
+        if layout["aside"]:
+            ax, ay, aw, ah = layout["aside"]
+            result["aside"] = ink_extent(image, (ax - 4, ay, 120, ah), page, inks["muted"], scale)
+    tx, ty, tw, th = layout["title"]
+    bar = median_color(image, box_px((tx - 60, ty, 40, th), scale))
+    result["title"] = ink_extent(image, (tx, ty, tw, th), bar, inks["title"], scale, pad=4) if bar else None
+    return result
+
+
+def compare_settings(report, name, capture, manifest, native, scale, ref_capture, reference_image, crops):
+    """The Settings shell (#97): the fixture's against its declaration, the
+    reference board's against its DOM, and the two against each other -
+    the titlebar's rule and label, the sidebar's rule and fill, the search
+    well, every section's wash, label, glyph and count by its label, and
+    the page's heading, subtitle and column caption."""
+    shell = manifest.get("settings")
+    if not shell:
+        report.check("harness-native", name, capture, "settings", "declared", "missing", "present", 0, "")
+        return
+    colors = {key: hex_rgba(value) for key, value in shell["colors"].items()}
+    lighter = palette(manifest)["lighter"]
+    inks = {
+        "rest": colors["navText"][:3], "hover": colors["navHoverText"][:3],
+        "selected": colors["navSelectedText"][:3], "icon": colors["navIcon"][:3],
+        "heading": colors["headingText"][:3], "muted": colors["textMuted"][:3],
+        "placeholder": colors["textPlaceholder"][:3], "title": colors["textBody"][:3],
+    }
+    edge, flat = LIMITS["edge_px"], LIMITS["flat_fill_levels"]
+    bearing = "a glyph's side bearing allowed"
+
+    # ---- the native side against its declaration
+    layout = native_settings_layout(shell, capture)
+    mine = measure_settings(native, layout, inks, scale, lighter)
+    sidebar = layout["sidebar"]
+    rule_x = sidebar[0] + sidebar[2] - 1
+    report.check("harness-native", name, capture, "titlebar", "rule y", mine["rule"], layout["rule"], edge, "px")
+    report.check("harness-native", name, capture, "sidebar", "rule x", mine["separator"], rule_x, edge, "px")
+    report.check("harness-native", name, capture, "sidebar", "fill alpha", mine["sidebarAlpha"],
+                 colors["sidebarFill"][3], flat, "levels", "a black overlay over the page beside it")
+    search = mine["search"]
+    for prop, index in (("left", 0), ("top", 1), ("width", 2), ("height", 3)):
+        report.check("harness-native", name, capture, "search", f"well {prop}",
+                     search["edges"][index] if search["edges"] else None, layout["search"][index], edge, "px")
+    report.check("harness-native", name, capture, "search", "fill alpha", search["alpha"], colors["fieldFill"][3],
+                 flat, "levels", "a black overlay over the sidebar below it")
+    report.check("harness-native", name, capture, "search", "placeholder ink left",
+                 mine["placeholder"] and mine["placeholder"]["left"], layout["placeholder"][0], edge * 1.5, "px",
+                 bearing)
+    crops.append(("search", layout["search"], None))
+    for item, measured in zip(layout["items"], mine["items"]):
+        rect = item["rect"]
+        subject = f"nav:{item['label']}"
+        if item["selected"]:
+            expected, state = colors["navSelected"][3], "selected"
+        elif item["hovered"]:
+            expected, state = colors["navHover"][3], "hovered"
+        else:
+            expected, state = 0, "rest"
+        report.check("harness-native", name, capture, subject, f"nav wash alpha ({state})", measured.get("alpha"),
+                     expected, flat, "levels")
+        if item["selected"] or item["hovered"]:
+            edges = measured.get("edges")
+            for prop, index in (("left", 0), ("top", 1), ("width", 2), ("height", 3)):
+                report.check("harness-native", name, capture, subject, f"nav wash {prop}",
+                             edges[index] if edges else None, rect[index], edge, "px")
+        text = measured.get("text")
+        report.check("harness-native", name, capture, subject, "label ink left in item", text and text["left"],
+                     item["labelLeft"] - rect[0], edge * 1.5, "px", bearing)
+        glyph = measured.get("glyph")
+        box = item["glyph"]
+        report.check("harness-native", name, capture, subject, "glyph ink center x in item",
+                     glyph and glyph[0] + glyph[2] / 2, box[0] - rect[0] + box[2] / 2, edge * 1.5, "px",
+                     "the glyph's ink, not its viewBox")
+        crops.append((subject, rect, None))
+    for label, key in (("heading", "heading"), ("aside caption", "aside")):
+        if layout[key]:
+            report.check("harness-native", name, capture, "page", f"{label} ink left",
+                         mine.get(key) and mine[key]["left"], layout[key][0], edge * 1.5, "px", bearing)
+    title = mine["title"]
+    report.check("harness-native", name, capture, "titlebar", "label ink center x",
+                 title and (title["left"] + title["right"]) / 2, layout["title"][0] + layout["title"][2] / 2,
+                 edge, "px")
+    crops.append(("titlebar", (0, 0, manifest["scenario"]["client"][0], layout["rule"] + 1), None))
+    crops.append(("heading", layout["heading"], None))
+
+    if ref_capture is None:
+        return
+    # ---- the reference side against its DOM
+    state = ref_capture["state"]
+    ref_layout = reference_settings_layout(state)
+    theirs = measure_settings(reference_image, ref_layout, inks)
+    ref_sidebar = ref_layout["sidebar"]
+    report.check("harness-reference", name, capture, "titlebar", "rule y", theirs["rule"], ref_layout["rule"], edge,
+                 "px")
+    report.check("harness-reference", name, capture, "sidebar", "rule x", theirs["separator"],
+                 ref_sidebar[0] + ref_sidebar[2] - 1, edge, "px")
+    for prop, index in (("left", 0), ("top", 1), ("width", 2), ("height", 3)):
+        edges = theirs["search"]["edges"]
+        report.check("harness-reference", name, capture, "search", f"well {prop}", edges[index] if edges else None,
+                     ref_layout["search"][index], edge, "px")
+    for item, measured in zip(ref_layout["items"], theirs["items"]):
+        subject = f"nav:{item['label']}"
+        report.check("harness-reference", name, capture, subject, "nav wash alpha vs DOM background",
+                     measured.get("alpha"), css_rgba(item["background"])[3], flat, "levels")
+        if item["selected"] or item["hovered"]:
+            edges = measured.get("edges")
+            for prop, index in (("left", 0), ("top", 1), ("width", 2), ("height", 3)):
+                report.check("harness-reference", name, capture, subject, f"nav wash {prop}",
+                             edges[index] if edges else None, item["rect"][index], edge, "px")
+
+    # ---- parity: the same component in the same state
+    selected = lambda items: ", ".join(i["label"] for i in items if i["selected"])  # noqa: E731
+    hovered = lambda items: ", ".join(i["label"] for i in items if i["hovered"] and not i["selected"])  # noqa: E731
+    report.check("parity", name, capture, "selection", "selected sections", selected(layout["items"]),
+                 selected(ref_layout["items"]), 0, "")
+    report.check("parity", name, capture, "selection", "hover-only sections", hovered(layout["items"]),
+                 hovered(ref_layout["items"]), 0, "", "the pointer washes the section it is over, at once")
+    report.check("parity", name, capture, "titlebar", "rule y", mine["rule"], theirs["rule"], edge, "px")
+    if mine["title"] and theirs["title"]:
+        for prop, value in (("center x", lambda t: (t["left"] + t["right"]) / 2), ("top", lambda t: t["top"])):
+            report.check("parity", name, capture, "titlebar", f"label ink {prop}", value(mine["title"]),
+                         value(theirs["title"]), edge, "px")
+    report.check("parity", name, capture, "sidebar", "rule x", mine["separator"], theirs["separator"], edge, "px")
+    report.check("parity", name, capture, "sidebar", "fill alpha", mine["sidebarAlpha"], theirs["sidebarAlpha"],
+                 flat, "levels")
+    n_edges, r_edges = mine["search"]["edges"], theirs["search"]["edges"]
+    for prop, index in (("left", 0), ("top", 1), ("width", 2), ("height", 3)):
+        report.check("parity", name, capture, "search", f"well {prop}", n_edges and n_edges[index],
+                     r_edges and r_edges[index], edge, "px")
+    report.check("parity", name, capture, "search", "fill alpha", mine["search"]["alpha"], theirs["search"]["alpha"],
+                 flat, "levels")
+    if mine["placeholder"] and theirs["placeholder"]:
+        for prop in ("left", "top"):
+            report.check("parity", name, capture, "search", f"placeholder ink {prop}", mine["placeholder"][prop],
+                         theirs["placeholder"][prop], edge, "px")
+    crops.append(("parity-search", layout["search"], ref_layout["search"]))
+    by_label = {item["label"]: (item, measured) for item, measured in zip(ref_layout["items"], theirs["items"])}
+    for item, measured in zip(layout["items"], mine["items"]):
+        if item["label"] not in by_label:
+            continue
+        ref_item, ref_measured = by_label[item["label"]]
+        subject = f"nav:{item['label']}"
+        crops.append(("parity-" + subject, item["rect"], ref_item["rect"]))
+        report.check("parity", name, capture, subject, "top in client", item["rect"][1], ref_item["rect"][1], edge,
+                     "px")
+        report.check("parity", name, capture, subject, "nav wash alpha", measured.get("alpha"),
+                     ref_measured.get("alpha"), flat, "levels")
+        n_edges, r_edges = measured.get("edges"), ref_measured.get("edges")
+        if n_edges and r_edges:
+            for prop, index in (("left", 0), ("top", 1), ("width", 2), ("height", 3)):
+                report.check("parity", name, capture, subject, f"nav wash {prop}", n_edges[index], r_edges[index],
+                             edge, "px")
+        n_text, r_text = measured.get("text"), ref_measured.get("text")
+        if n_text and r_text:
+            for prop in ("left", "top", "height"):
+                report.check("parity", name, capture, subject, f"label ink {prop} in item", n_text[prop],
+                             r_text[prop], edge, "px")
+            worst = max(abs(a - b) for a, b in zip(n_text["color"], r_text["color"]))
+            report.check("parity", name, capture, subject, "label glyph core color (max channel)", worst, 0,
+                         LIMITS["glyph_core_levels"], "levels",
+                         f"native {fmt_color(n_text['color'])} vs reference {fmt_color(r_text['color'])}")
+        n_glyph, r_glyph = measured.get("glyph"), ref_measured.get("glyph")
+        if n_glyph and r_glyph:
+            props = (("left", 0), ("top", 1), ("width", 2), ("height", 3)) if item["boardGlyph"] else ()
+            for prop, index in props:
+                report.check("parity", name, capture, subject, f"glyph ink {prop} in item", n_glyph[index],
+                             r_glyph[index], edge, "px")
+            if not item["boardGlyph"]:
+                report.check("parity", name, capture, subject, "glyph ink center x in item",
+                             n_glyph[0] + n_glyph[2] / 2, r_glyph[0] + r_glyph[2] / 2, edge * 1.5, "px",
+                             STAND_IN_GLYPH)
+        if measured.get("countRight") is not None and ref_measured.get("countRight") is not None:
+            report.check("parity", name, capture, subject, "count ink right in item", measured["countRight"],
+                         ref_measured["countRight"], edge, "px", "right-aligned at the item's padding")
+    for key in ("heading", "subtitle", "aside"):
+        n_ink, r_ink = mine.get(key), theirs.get(key)
+        if not (n_ink and r_ink):
+            continue
+        for prop in ("left", "top"):
+            report.check("parity", name, capture, "page", f"{key} ink {prop}", n_ink[prop], r_ink[prop], edge, "px")
+        if key == "heading":
+            report.check("parity", name, capture, "page", "heading ink height", n_ink["bottom"] - n_ink["top"],
+                         r_ink["bottom"] - r_ink["top"], edge, "px")
+            worst = max(abs(a - b) for a, b in zip(n_ink["color"], r_ink["color"]))
+            report.check("parity", name, capture, "page", "heading glyph core color (max channel)", worst, 0,
+                         LIMITS["glyph_core_levels"], "levels")
+    crops.append(("parity-heading", layout["heading"], ref_layout["heading"]))
 
 
 # ------------------------------------------------------------- evidence

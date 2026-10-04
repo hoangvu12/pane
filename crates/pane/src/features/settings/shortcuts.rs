@@ -60,13 +60,18 @@ use pane_core::{
 };
 
 use super::{Page, SettingsWindow, search};
-use crate::ui::icon::{Glyph, IconTone, glyph, glyph_rotated};
+use crate::ui::icon::{Glyph, glyph, glyph_rotated};
 use crate::ui::motion;
+use crate::ui::settings_shell;
 use crate::ui::theme::Theme;
 
 /// The page's sidebar title, its identity in the sidebar and the tests'
 /// selectors.
 pub(crate) const TITLE: &str = "Shortcuts";
+
+/// What the page is, in one line: its sidebar entry's description in
+/// the search, and its heading's subtitle.
+const ABOUT: &str = "Aliases and global hotkeys for installed commands";
 
 /// The target id of the page's filter field, the control the sidebar's
 /// search jumps to (see [`entries`]).
@@ -159,11 +164,12 @@ pub(crate) fn bind_keys(cx: &mut App) {
 pub(crate) fn page() -> Page {
     Page {
         title: TITLE,
-        about: "Aliases and global hotkeys for installed commands",
+        about: ABOUT,
         // The magnifier: the page is the searchable catalog of the
         // commands' aliases and hotkeys. (The Keyboard page takes the
         // keyboard glyph — the sidebar keeps its entries distinct.)
-        icon: (IconTone::Command, Glyph::Search),
+        icon: Glyph::Search,
+        count: None,
         render,
         search: entries,
         focus,
@@ -790,14 +796,9 @@ fn render(
         .flex_col()
         .gap(px(4.))
         .child(
-            div()
+            settings_shell::page_header(TITLE, Some(ABOUT.into()), &theme)
                 .id("shortcuts-title")
-                .debug_selector(|| "shortcuts-title".into())
-                .pb(px(8.))
-                .text_size(theme.typography.search_size)
-                .font_weight(theme.typography.medium)
-                .text_color(theme.text_title)
-                .child(TITLE),
+                .debug_selector(|| "shortcuts-title".into()),
         )
         .child(filter_field(this, &query, &theme, cx))
         .child(columns_header(

@@ -69,6 +69,7 @@ use crate::ui::input::bind_text_editing;
 use crate::ui::keycap::{self, CapMetrics, CapStyle};
 use crate::ui::material::Material;
 use crate::ui::result_row::{RowContent, RowMeta, result_row_with};
+use crate::ui::settings_shell::{self, SidebarItem};
 use crate::ui::shell::{self, LAUNCHER_CLIENT, SectionLabel};
 use crate::ui::theme::Theme;
 use crate::{Back, SelectNext, SelectPrevious};
@@ -86,9 +87,16 @@ pub(crate) const ROOT_CLIENT: (f32, f32) = LAUNCHER_CLIENT;
 /// adaptation, captured but never compared.
 pub(crate) const NARROW_CLIENT: (f32, f32) = (480., 360.);
 
-/// The Settings reference board's client size, for the fixture that
-/// ticket #97 registers.
-pub(crate) const SETTINGS_CLIENT: (f32, f32) = (1120., 720.);
+/// The Settings reference board's client size: the authored 1120×720 (48
+/// titlebar + 672 body) — the Settings window's own
+/// ([`settings_shell::SETTINGS_CLIENT`]).
+pub(crate) const SETTINGS_CLIENT: (f32, f32) = settings_shell::SETTINGS_CLIENT;
+
+/// A smaller Settings client: no reference board is this size. The
+/// Settings window can be this small, and the narrow scenario shows the
+/// smaller-window policy there (see `ui::settings_shell`) — an adaptation,
+/// captured but never compared.
+pub(crate) const SETTINGS_NARROW_CLIENT: (f32, f32) = (760., 520.);
 
 /// The clipboard reference board's client size, for the fixture that
 /// ticket #102 registers.
@@ -348,6 +356,10 @@ pub(crate) enum Family {
     Keycap,
     /// The icon tile family at each of its sizes.
     Tiles,
+    /// The Settings window's shell: its titlebar, its sidebar with the
+    /// search field and the section items, and its page's heading block
+    /// and columns (#97).
+    Settings,
 }
 
 /// One step a capture helper takes, on either side. The helpers act with
@@ -359,10 +371,11 @@ pub(crate) enum Family {
 pub(crate) enum Step {
     /// Save a capture of the client, named.
     Capture { name: &'static str },
-    /// Move the pointer onto the center of the shown row at `row`, `nudge`
-    /// pixels to the right of it, arriving from a pixel to its left (two
-    /// moves, as a real pointer reports): a second move over the same row
-    /// is movement only if it lands somewhere else.
+    /// Move the pointer onto the center of the shown row at `row` (in the
+    /// Settings family, the sidebar's section at `row`), `nudge` pixels to
+    /// the right of it, arriving from a pixel to its left (two moves, as a
+    /// real pointer reports): a second move over the same row is movement
+    /// only if it lands somewhere else.
     Pointer { row: usize, nudge: i16 },
     /// Press a key.
     Key { key: NamedKey },
@@ -697,6 +710,36 @@ const SCENARIOS: &[Scenario] = {
             rows: &[],
             steps: &[capture("keycaps")],
         },
+        Scenario {
+            name: "settings-shell",
+            description: "The Settings board's shell: the titlebar, the sidebar's search and sections with Appearance selected, the page's heading block and columns; then the pointer over an unselected section, and over the selected one",
+            family: Family::Settings,
+            client: SETTINGS_CLIENT,
+            reference: true,
+            board: Some("settings"),
+            theme: None,
+            frame: false,
+            rows: &[],
+            steps: &[
+                capture("rest"),
+                pointer(0),
+                capture("hover"),
+                pointer(SETTINGS_SELECTED),
+                capture("selected-hover"),
+            ],
+        },
+        Scenario {
+            name: "settings-shell-narrow",
+            description: "The same shell at 760x520: the titlebar and sidebar keep their size and the page's columns collapse into one (no reference counterpart)",
+            family: Family::Settings,
+            client: SETTINGS_NARROW_CLIENT,
+            reference: false,
+            board: None,
+            theme: None,
+            frame: false,
+            rows: &[],
+            steps: &[capture("narrow")],
+        },
     ]
 };
 
@@ -733,13 +776,6 @@ pub(crate) fn pending_scenarios() -> &'static [PendingScenario] {
             ticket: "https://github.com/hoangvu12/pane/issues/96",
             description: "The no-results notice and fallback rows from the empty board",
             client: ROOT_CLIENT,
-        },
-        PendingScenario {
-            name: "settings-shell",
-            board: "settings",
-            ticket: "https://github.com/hoangvu12/pane/issues/97",
-            description: "The Settings window shell and sidebar at the Settings board's size",
-            client: SETTINGS_CLIENT,
         },
         PendingScenario {
             name: "appearance-page",
@@ -843,6 +879,58 @@ const TILES: &[(TileSize, IconTone, Glyph)] = &[
 /// The gap between the tile scenario's tiles.
 const TILE_GAP: f32 = 24.;
 
+/// One sidebar section of the reference Settings board, as the Settings
+/// scenarios show it: the board's label and count, and the production
+/// glyph drawn for it. `board_glyph` says whether that glyph is the
+/// board's own path; the board's palette, shield and info glyphs have no
+/// production counterpart, so those sections show a stand-in, compared by
+/// place only.
+#[derive(Debug, PartialEq)]
+pub(crate) struct FixtureSection {
+    pub(crate) label: &'static str,
+    pub(crate) glyph: Glyph,
+    pub(crate) board_glyph: bool,
+    pub(crate) count: Option<&'static str>,
+}
+
+/// A section without a count.
+const fn section(label: &'static str, glyph: Glyph, board_glyph: bool) -> FixtureSection {
+    FixtureSection {
+        label,
+        glyph,
+        board_glyph,
+        count: None,
+    }
+}
+
+/// The reference Settings board's sections, in its order, with its own
+/// labels: the board is the reference's fixture data, not Pane's pages
+/// (the Settings window's seven real pages are checked by its window
+/// tests).
+pub(crate) const SETTINGS_SECTIONS: &[FixtureSection] = &[
+    section("General", Glyph::Sliders, true),
+    section("Appearance", Glyph::Theme, false),
+    section("Hotkeys & Aliases", Glyph::ActionHotkey, true),
+    FixtureSection {
+        count: Some("7"),
+        ..section("Plugins", Glyph::Blocks, true)
+    },
+    section("Window Manager", Glyph::Layout, true),
+    section("Clipboard", Glyph::Clipboard, true),
+    section("Privacy", Glyph::Lock, false),
+    section("About", Glyph::Gear, false),
+];
+
+/// The board's selected section: Appearance.
+const SETTINGS_SELECTED: usize = 1;
+
+/// The board's page: its heading, its subtitle and its preview column's
+/// caption.
+const SETTINGS_HEADING: &str = "Appearance";
+const SETTINGS_SUBTITLE: &str =
+    "Changes apply instantly. Themes from the Plugin Store show up here too.";
+const SETTINGS_ASIDE: &str = "Preview";
+
 /// A deliberate fault the workbench injects to prove its comparison is
 /// sensitive to exactly the errors the port cares about. The perturbed
 /// fixture renders with one visual value wrong; the comparison must fail,
@@ -862,6 +950,9 @@ pub enum Perturbation {
     /// The hover wash is filled with a wrong color, the same kind of fault
     /// on the pointer's state.
     HoverFill,
+    /// The selected sidebar section's wash is filled with a wrong color:
+    /// the Settings shell's own selection (#97).
+    NavSelectedFill,
 }
 
 /// Every perturbation, by the name the runner passes.
@@ -869,6 +960,7 @@ const PERTURBATIONS: &[(&str, Perturbation)] = &[
     ("row-padding-plus-4", Perturbation::RowPaddingPlus4),
     ("selected-fill", Perturbation::SelectedFill),
     ("hover-fill", Perturbation::HoverFill),
+    ("nav-selected-fill", Perturbation::NavSelectedFill),
 ];
 
 impl Perturbation {
@@ -911,6 +1003,10 @@ impl Perturbation {
             }
             // A hover wash at white 20% against the authored 3.5%.
             Perturbation::HoverFill => theme.row_hover = gpui::rgb_to_hsla(gpui::rgba(0xFFFFFF33)),
+            // A selected section at white 25% against the authored 9%.
+            Perturbation::NavSelectedFill => {
+                theme.nav_selected = gpui::rgb_to_hsla(gpui::rgba(0xFFFFFF40))
+            }
         }
     }
 }
@@ -941,7 +1037,7 @@ pub enum Command {
 
 const USAGE: &str = "usage: pane-visual-fixture --scenario <name> --manifest <file> \
     [--data-dir <dir>] [--theme dark|light] [--material glass|opaque] \
-    [--perturb none|row-padding-plus-4|selected-fill|hover-fill]\n       \
+    [--perturb none|row-padding-plus-4|selected-fill|hover-fill|nav-selected-fill]\n       \
     pane-visual-fixture --registry <file>";
 
 /// Parses the fixture binary's arguments (without the program name).
@@ -1984,6 +2080,43 @@ impl FixtureWindow {
             )
     }
 
+    /// The Settings board's shell over the board's own data, through the
+    /// Settings window's own composition (`features::settings::compose`):
+    /// the titlebar, the sidebar with its search field and section items,
+    /// and the page with its heading block and two columns
+    /// (`ui::settings_shell`), on the Settings panel. The page shows the
+    /// board's heading and its preview column's caption only: the
+    /// Appearance controls and preview are #98's.
+    fn render_settings(&self, theme: &Theme, material: Material) -> gpui::Div {
+        let sections = SETTINGS_SECTIONS
+            .iter()
+            .enumerate()
+            .map(|(index, section)| {
+                settings_shell::sidebar_item(
+                    SidebarItem {
+                        label: section.label.into(),
+                        glyph: section.glyph,
+                        detail: None,
+                        reason: None,
+                        count: section.count.map(Into::into),
+                        selected: index == SETTINGS_SELECTED,
+                    },
+                    theme,
+                )
+                .id(("section", index))
+            });
+        let search =
+            settings_shell::search_field(&self.query, settings_shell::SEARCH_PLACEHOLDER, theme);
+        let sections = settings_shell::section_list(theme).children(sections);
+        let sidebar = settings_shell::sidebar(search, sections, theme);
+        let header =
+            settings_shell::page_header(SETTINGS_HEADING, Some(SETTINGS_SUBTITLE.into()), theme);
+        let aside = settings_shell::aside(SETTINGS_ASIDE, theme);
+        let columns = settings_shell::page_columns(header, aside, theme);
+        let page = settings_shell::page_viewport(theme).child(columns);
+        crate::features::settings::compose(div(), sidebar, page, theme, material)
+    }
+
     fn render_root(&self, theme: &Theme, cx: &mut Context<Self>) -> gpui::Div {
         let rows = self.state.rows.iter().enumerate().map(|(index, row)| {
             let selected = index == self.state.selected;
@@ -2175,6 +2308,8 @@ impl Render for FixtureWindow {
             Family::Keycap => self.render_keycaps(&theme),
             Family::Tiles => self.render_tiles(&theme),
             Family::Root => self.render_root(&theme, cx),
+            // The Settings window's composition brings its own panel.
+            Family::Settings => return self.render_settings(&theme, material),
         };
         material.panel(&theme, content)
     }
@@ -2205,6 +2340,9 @@ struct Manifest {
     steps: Vec<ResolvedStep>,
     keycaps: Vec<KeyGroupRecord>,
     tiles: Vec<TileRecord>,
+    /// The Settings shell, for the Settings family's scenarios.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    settings: Option<DeclaredSettings>,
     fonts: Vec<FontRecord>,
     /// How the text system resolved each embedded face (see
     /// [`FontResolution`]).
@@ -2607,9 +2745,350 @@ fn declared_group(
     }
 }
 
+/// The Settings shell's layout in a client of `client` size, as
+/// `ui::settings_shell` lays it out (see [`settings_frame`]).
+struct SettingsFrame {
+    titlebar: Rect,
+    sidebar: Rect,
+    /// The search field's well.
+    search: Rect,
+    /// The section items, top to bottom.
+    sections: Vec<Rect>,
+    page: Rect,
+    /// The heading's line box, at the top of the controls column.
+    heading: Rect,
+    /// Where the subtitle's first line begins, under the heading.
+    subtitle_top: f32,
+    /// The preview column's caption's line box, where the page holds both
+    /// columns side by side; `None` where they collapse.
+    aside: Option<Rect>,
+}
+
+/// The Settings shell's layout in a client of `client` size, from the
+/// theme's tokens: the titlebar across the top, the sidebar below it with
+/// its search well and its sections inside its padding and its 1px rule,
+/// and the page beside it — its heading at its padding, and its two
+/// columns side by side where the page holds both.
+fn settings_frame(theme: &Theme, client: (f32, f32)) -> SettingsFrame {
+    let settings = &theme.geometry.settings;
+    let typography = &theme.typography;
+    let f = f32::from;
+    let (width, height) = client;
+    let titlebar = Rect {
+        x: 0.,
+        y: 0.,
+        width,
+        height: f(settings.titlebar_height),
+    };
+    let sidebar = Rect {
+        x: 0.,
+        y: titlebar.height,
+        width: f(settings.sidebar_width),
+        height: height - titlebar.height,
+    };
+    let inner_x = f(settings.sidebar_padding_x);
+    let inner_width = sidebar.width - 1. - 2. * inner_x;
+    let search = Rect {
+        x: inner_x,
+        y: sidebar.y + f(settings.sidebar_padding_y),
+        width: inner_width,
+        height: f(settings.search_height),
+    };
+    let below_search = search.y + search.height + f(settings.search_margin_bottom);
+    let first = below_search + f(settings.sidebar_gap);
+    let step = f(settings.item_height) + f(settings.sidebar_gap);
+    let sections = (0..SETTINGS_SECTIONS.len())
+        .map(|index| Rect {
+            x: inner_x,
+            y: first + index as f32 * step,
+            width: inner_width,
+            height: f(settings.item_height),
+        })
+        .collect();
+    let page = Rect {
+        x: sidebar.width,
+        y: sidebar.y,
+        width: width - sidebar.width,
+        height: sidebar.height,
+    };
+    let left = page.x + f(settings.page_padding_x);
+    let room = page.width - 2. * f(settings.page_padding_x);
+    let gap = f(settings.column_gap);
+    let aside_width = f(settings.aside_width);
+    let side_by_side = room >= f(settings.controls_width) + gap + aside_width;
+    let column = if side_by_side {
+        room - gap - aside_width
+    } else {
+        room
+    };
+    let top = page.y + f(settings.page_padding_top);
+    let heading = Rect {
+        x: left,
+        y: top,
+        width: column,
+        height: f(typography.heading_size) * typography.line_height,
+    };
+    let aside = side_by_side.then(|| Rect {
+        x: left + column + gap,
+        y: top,
+        width: aside_width,
+        height: f(typography.settings_caption_size) * typography.line_height,
+    });
+    SettingsFrame {
+        titlebar,
+        sidebar,
+        search,
+        sections,
+        page,
+        subtitle_top: heading.y + heading.height + f(settings.header_gap),
+        heading,
+        aside,
+    }
+}
+
+/// The Settings shell as the manifest declares it: where each part lies,
+/// which section the pointer is over in each capture, and the colors the
+/// shell paints with.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeclaredSettings {
+    titlebar: Rect,
+    /// The titlebar's label: centered over the window above its rule.
+    title: DeclaredText,
+    sidebar: Rect,
+    /// The search field's well.
+    search: Rect,
+    /// The placeholder's text box, after the magnifier and its gap.
+    placeholder: DeclaredText,
+    sections: Vec<DeclaredNavItem>,
+    page: Rect,
+    /// The heading's line box, and the subtitle's first line.
+    heading: DeclaredText,
+    subtitle: DeclaredText,
+    /// The preview column's caption, where the columns sit side by side.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    aside: Option<DeclaredText>,
+    hovered: Vec<DeclaredHover>,
+    colors: SettingsColors,
+}
+
+/// One section item as the manifest declares it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeclaredNavItem {
+    label: &'static str,
+    rect: Rect,
+    selected: bool,
+    /// The 16px glyph's box, and whether the glyph is the board's own path
+    /// (see [`FixtureSection`]).
+    glyph: Rect,
+    board_glyph: bool,
+    /// The label's text box: after the glyph and the gap, its shaped width.
+    label_box: Rect,
+    /// The count at the item's right end, if it has one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    count: Option<DeclaredText>,
+}
+
+/// Which section the pointer is over while a capture is taken.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeclaredHover {
+    capture: &'static str,
+    section: Option<usize>,
+}
+
+/// The colors the Settings shell paints with, as the theme in force holds
+/// them.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SettingsColors {
+    settings_tint: Hex,
+    sidebar_fill: Hex,
+    nav_text: Hex,
+    nav_hover: Hex,
+    nav_hover_text: Hex,
+    nav_selected: Hex,
+    nav_selected_text: Hex,
+    nav_icon: Hex,
+    field_fill: Hex,
+    field_edge: Hex,
+    heading_text: Hex,
+    text_body: Hex,
+    text_muted: Hex,
+    text_placeholder: Hex,
+    hairline_soft: Hex,
+}
+
+/// The Settings shell the scenario renders, declared: the layout of
+/// [`settings_frame`] with the widths the text system shapes, and each
+/// pointer step resolved to the center of the section it names — which
+/// `steps` and `captures` take on.
+fn declared_settings(
+    window: &Window,
+    theme: &Theme,
+    client: (f32, f32),
+    steps: &mut [ResolvedStep],
+    captures: &mut [DeclaredCapture],
+) -> DeclaredSettings {
+    let frame = settings_frame(theme, client);
+    let settings = &theme.geometry.settings;
+    let typography = &theme.typography;
+    let f = f32::from;
+    let text_size = typography.settings_text_size;
+    let caption_size = typography.settings_caption_size;
+    let line = |size: Pixels| f(size) * typography.line_height;
+    // The label, centered over the window in the titlebar above its rule.
+    let title_width = shaped_width(window, theme, "Settings", text_size, typography.medium);
+    let above_rule = frame.titlebar.height - 1.;
+    let title = DeclaredText {
+        text: "Settings".into(),
+        rect: Rect {
+            x: (client.0 - title_width) / 2.,
+            y: (above_rule - line(text_size)) / 2.,
+            width: title_width,
+            height: line(text_size),
+        },
+    };
+    let placeholder = DeclaredText {
+        text: settings_shell::SEARCH_PLACEHOLDER.into(),
+        rect: Rect {
+            x: frame.search.x
+                + f(settings.search_padding_x)
+                + f(settings.search_glyph)
+                + f(settings.search_gap),
+            y: frame.search.y,
+            width: shaped_width(
+                window,
+                theme,
+                settings_shell::SEARCH_PLACEHOLDER,
+                text_size,
+                typography.regular,
+            ),
+            height: frame.search.height,
+        },
+    };
+    let glyph = f(settings.item_glyph);
+    let sections = SETTINGS_SECTIONS
+        .iter()
+        .zip(&frame.sections)
+        .enumerate()
+        .map(|(index, (section, &rect))| {
+            let left = rect.x + f(settings.item_padding_x);
+            let label = section.label;
+            let label_width = shaped_width(window, theme, label, text_size, typography.medium);
+            let count = section.count.map(|count| {
+                let width = shaped_width(window, theme, count, caption_size, typography.medium);
+                DeclaredText {
+                    text: count.into(),
+                    rect: Rect {
+                        x: rect.x + rect.width - f(settings.item_padding_x) - width,
+                        y: rect.y,
+                        width,
+                        height: rect.height,
+                    },
+                }
+            });
+            DeclaredNavItem {
+                label,
+                rect,
+                selected: index == SETTINGS_SELECTED,
+                glyph: Rect {
+                    x: left,
+                    y: rect.y + (rect.height - glyph) / 2.,
+                    width: glyph,
+                    height: glyph,
+                },
+                board_glyph: section.board_glyph,
+                label_box: Rect {
+                    x: left + glyph + f(settings.item_gap),
+                    y: rect.y,
+                    width: label_width,
+                    height: rect.height,
+                },
+                count,
+            }
+        })
+        .collect();
+    let heading = DeclaredText {
+        text: SETTINGS_HEADING.into(),
+        rect: frame.heading,
+    };
+    let subtitle = DeclaredText {
+        text: SETTINGS_SUBTITLE.into(),
+        rect: Rect {
+            y: frame.subtitle_top,
+            height: line(typography.row_subtitle_size),
+            ..frame.heading
+        },
+    };
+    let aside = frame.aside.map(|rect| DeclaredText {
+        text: SETTINGS_ASIDE.into(),
+        rect,
+    });
+    // The pointer's steps land on the centers of the sections they name,
+    // and each capture records the section the pointer is over.
+    let mut pointer = None;
+    let mut over = None;
+    let mut hovered = Vec::new();
+    for step in steps.iter_mut() {
+        match step.step {
+            Step::Pointer { row, nudge } => {
+                pointer = frame.sections.get(row).map(|rect| {
+                    let (x, y) = rect.center();
+                    (x + f32::from(nudge), y)
+                });
+                over = pointer.map(|_| row);
+                step.point = pointer;
+            }
+            Step::Capture { name } => {
+                if let Some(capture) = captures.iter_mut().find(|capture| capture.name == name) {
+                    capture.pointer = pointer;
+                }
+                hovered.push(DeclaredHover {
+                    capture: name,
+                    section: over,
+                });
+            }
+            _ => {}
+        }
+    }
+    DeclaredSettings {
+        titlebar: frame.titlebar,
+        title,
+        sidebar: frame.sidebar,
+        search: frame.search,
+        placeholder,
+        sections,
+        page: frame.page,
+        heading,
+        subtitle,
+        aside,
+        hovered,
+        colors: SettingsColors {
+            settings_tint: Hex(theme.settings_tint),
+            sidebar_fill: Hex(theme.sidebar_fill),
+            nav_text: Hex(theme.nav_text),
+            nav_hover: Hex(theme.nav_hover),
+            nav_hover_text: Hex(theme.nav_hover_text),
+            nav_selected: Hex(theme.nav_selected),
+            nav_selected_text: Hex(theme.nav_selected_text),
+            nav_icon: Hex(theme.nav_icon),
+            field_fill: Hex(theme.field_fill),
+            field_edge: Hex(theme.field_edge),
+            heading_text: Hex(theme.heading_text),
+            text_body: Hex(theme.text_body),
+            text_muted: Hex(theme.text_muted),
+            text_placeholder: Hex(theme.text_placeholder),
+            hairline_soft: Hex(theme.hairline_soft),
+        },
+    }
+}
+
 /// Every embedded face the theme names — Geist and Geist Mono at 400 and
-/// 500 — as the text system resolves it, then a family no system has at
-/// both weights (the fallback, for comparison).
+/// 500, and Geist at 600 for the Settings headings — as the text system
+/// resolves it, then a family no system has at each weight (the fallback,
+/// for comparison).
 fn font_resolution(window: &Window, theme: &Theme) -> Vec<FontResolution> {
     let typography = &theme.typography;
     let faces = [
@@ -2617,8 +3096,10 @@ fn font_resolution(window: &Window, theme: &Theme) -> Vec<FontResolution> {
         (typography.family.clone(), typography.medium),
         (typography.mono_family.clone(), FontWeight::NORMAL),
         (typography.mono_family.clone(), typography.medium),
+        (typography.family.clone(), typography.heading_weight),
         (MISSING_FONT.into(), FontWeight::NORMAL),
         (MISSING_FONT.into(), typography.medium),
+        (MISSING_FONT.into(), typography.heading_weight),
     ];
     faces
         .into_iter()
@@ -2656,7 +3137,17 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
     let mut steps = replay.steps;
     let mut keycaps = Vec::new();
     let mut tiles = Vec::new();
+    let mut settings = None;
     match scenario.family {
+        Family::Settings => {
+            settings = Some(declared_settings(
+                window,
+                &theme,
+                scenario.client,
+                &mut steps,
+                &mut captures,
+            ));
+        }
         Family::Keycap => {
             let mut y = KEYCAP_INSET;
             for group in KEY_GROUPS {
@@ -2965,6 +3456,7 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
         steps,
         keycaps,
         tiles,
+        settings,
         font_resolution: font_resolution(window, &theme),
         fonts: crate::ui::FONTS
             .iter()
@@ -3037,8 +3529,13 @@ pub fn run(options: FixtureOptions) -> Result<(), String> {
                 let fixture = FixtureWindow::new(scenario, perturbation, cx);
                 // Root search opens with the query field focused; the
                 // fixture does the same, so typing reaches the field the
-                // moment the window appears.
-                window.focus(&fixture.query.focus_handle(cx), cx);
+                // moment the window appears. The Settings board's search
+                // field is not focused (it would draw a caret the board
+                // does not), and the Settings window opens with its
+                // sections focused, not the field.
+                if scenario.family != Family::Settings {
+                    window.focus(&fixture.query.focus_handle(cx), cx);
+                }
                 fixture
             })
         }) {
@@ -3107,12 +3604,98 @@ mod tests {
     }
 
     #[test]
-    fn every_reference_scenario_renders_at_the_reference_root_client() {
+    fn every_reference_scenario_renders_at_its_boards_client() {
         for scenario in scenarios().iter().filter(|scenario| scenario.reference) {
-            assert_eq!(scenario.client, (760., 518.), "{}", scenario.name);
+            let board = match scenario.family {
+                Family::Settings => (1120., 720.),
+                _ => (760., 518.),
+            };
+            assert_eq!(scenario.client, board, "{}", scenario.name);
         }
-        // The launcher window opens at the same client.
+        // The launcher and Settings windows open at the same clients.
         assert_eq!(ROOT_CLIENT, crate::ui::shell::LAUNCHER_CLIENT);
+        assert_eq!(SETTINGS_CLIENT, settings_shell::SETTINGS_CLIENT);
+    }
+
+    #[test]
+    fn the_settings_frame_lays_the_shell_out_where_the_board_measures_it() {
+        // The reference board's own measured boxes (its DOM, relative to
+        // its glass panel): the 48px titlebar, the 232px sidebar, the
+        // search well at 10,60 211x34, the sections from 104 every 38px,
+        // the page from 232 and its heading at 264,74; the preview column
+        // at 688.
+        let frame = settings_frame(&theme(), SETTINGS_CLIENT);
+        let rect = |x, y, width, height| Rect {
+            x,
+            y,
+            width,
+            height,
+        };
+        assert_eq!(frame.titlebar, rect(0., 0., 1120., 48.));
+        assert_eq!(frame.sidebar, rect(0., 48., 232., 672.));
+        assert_eq!(frame.search, rect(10., 60., 211., 34.));
+        assert_eq!(frame.sections.len(), SETTINGS_SECTIONS.len());
+        assert_eq!(frame.sections[0], rect(10., 104., 211., 36.));
+        assert_eq!(frame.sections[1], rect(10., 142., 211., 36.));
+        assert_eq!(frame.sections[7].y, 370.);
+        assert_eq!(frame.page, rect(232., 48., 888., 672.));
+        assert_eq!((frame.heading.x, frame.heading.y), (264., 74.));
+        assert_eq!(frame.heading.width, 388.);
+        let aside = frame.aside.expect("the columns sit side by side");
+        assert_eq!((aside.x, aside.y, aside.width), (688., 74., 400.));
+
+        // A narrower window keeps the titlebar and the sidebar, and the
+        // page's columns collapse into one.
+        let narrow = settings_frame(&theme(), SETTINGS_NARROW_CLIENT);
+        assert_eq!(narrow.sidebar, rect(0., 48., 232., 472.));
+        assert_eq!(narrow.sections[0], frame.sections[0]);
+        assert_eq!(narrow.heading.width, 760. - 232. - 64.);
+        assert!(narrow.aside.is_none());
+    }
+
+    #[test]
+    fn the_settings_scenario_points_at_its_sections_and_shows_the_boards_data() {
+        let scenario = scenario("settings-shell");
+        assert_eq!(scenario.board, Some("settings"));
+        assert_eq!(scenario.family, Family::Settings);
+        let labels: Vec<_> = SETTINGS_SECTIONS
+            .iter()
+            .map(|section| section.label)
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                "General",
+                "Appearance",
+                "Hotkeys & Aliases",
+                "Plugins",
+                "Window Manager",
+                "Clipboard",
+                "Privacy",
+                "About"
+            ]
+        );
+        assert_eq!(SETTINGS_SECTIONS[SETTINGS_SELECTED].label, "Appearance");
+        let rows: Vec<_> = scenario
+            .steps
+            .iter()
+            .filter_map(|step| match step {
+                Step::Pointer { row, .. } => Some(*row),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(rows, [0, SETTINGS_SELECTED]);
+        // Settings is not a pending board any more; Appearance still is.
+        assert!(
+            pending_scenarios()
+                .iter()
+                .all(|p| p.name != "settings-shell")
+        );
+        assert!(
+            pending_scenarios()
+                .iter()
+                .any(|p| p.name == "appearance-page")
+        );
     }
 
     #[test]
@@ -3424,6 +4007,12 @@ mod tests {
         Perturbation::HoverFill.apply(&mut hovered);
         assert_eq!(hex(hovered.row_hover), "#FFFFFF33");
         assert_eq!(hex(hovered.row_selected), hex(base.row_selected));
+
+        let mut section = theme();
+        Perturbation::NavSelectedFill.apply(&mut section);
+        assert_eq!(hex(section.nav_selected), "#FFFFFF40");
+        assert_ne!(hex(base.nav_selected), "#FFFFFF40");
+        assert_eq!(hex(section.row_selected), hex(base.row_selected));
         for &(name, perturbation) in PERTURBATIONS {
             assert_eq!(Perturbation::parse(name), Ok(Some(perturbation)));
             assert_eq!(perturbation.name(), name);

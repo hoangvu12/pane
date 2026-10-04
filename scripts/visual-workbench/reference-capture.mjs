@@ -364,6 +364,59 @@ window.__wb = {
       panel: this.panel(index),
     };
   },
+  // The Settings board (#97): its titlebar and label, the sidebar with its
+  // search well and its sections (each one's wash, label, glyph and count),
+  // and the page's heading, subtitle and preview column's caption.
+  settingsState(index) {
+    const doc = this.frame(index).contentDocument;
+    const glass = doc.querySelector('section.glass');
+    const bar = glass.children[0];
+    const title = bar.querySelector('span');
+    const body = glass.children[1];
+    const nav = body.querySelector('nav');
+    const label = nav.querySelector('label');
+    const input = label.querySelector('input');
+    const content = body.children[1];
+    const heading = content.querySelector('h1');
+    const subtitle = heading.nextElementSibling;
+    const columns = Array.from(content.children);
+    const caption = columns[1] ? columns[1].children[0] : null;
+    return {
+      glass: this.rel(index, glass),
+      titlebar: {
+        rect: this.rel(index, bar),
+        title: { text: title.textContent, rect: this.rel(index, title) },
+        close: this.rel(index, bar.querySelector('button')),
+      },
+      sidebar: { rect: this.rel(index, nav), background: getComputedStyle(nav).backgroundColor },
+      search: {
+        rect: this.rel(index, label),
+        background: getComputedStyle(label).backgroundColor,
+        icon: this.rel(index, label.querySelector('svg')),
+        input: this.rel(index, input),
+        placeholder: input.placeholder,
+        focused: doc.activeElement === input,
+      },
+      items: Array.from(nav.querySelectorAll('button.nav')).map((item) => {
+        const spans = item.querySelectorAll(':scope > span');
+        return {
+          label: spans[0].textContent,
+          rect: this.rel(index, item),
+          selected: item.classList.contains('on'),
+          hovered: item.matches(':hover'),
+          background: getComputedStyle(item).backgroundColor,
+          color: getComputedStyle(item).color,
+          glyph: this.rel(index, item.querySelector('svg')),
+          labelRect: this.rel(index, spans[0]),
+          count: spans[1] ? { text: spans[1].textContent, rect: this.rel(index, spans[1]) } : null,
+        };
+      }),
+      heading: { text: heading.textContent, rect: this.rel(index, heading) },
+      subtitle: { text: subtitle.textContent, rect: this.rel(index, subtitle) },
+      aside: caption ? { text: caption.textContent, rect: this.rel(index, caption) } : null,
+      columns: columns.map((column) => this.rel(index, column)),
+    };
+  },
   fonts() {
     const doc = this.frame(0).contentDocument;
     return Array.from(doc.fonts).map((f) => ({ family: f.family, weight: f.weight, style: f.style, status: f.status }));
@@ -414,6 +467,18 @@ const CLICK_TARGETS = {
   'actions-button': (index) => `Array.from(__wb.frame(${index}).contentDocument.querySelectorAll('.fbtn')).find((b) => b.textContent.trim().startsWith('Actions'))`,
 };
 
+// A static board's capture state, by board: the root family's state by
+// default, the Settings board's own (#97).
+const STATES = { settings: 'settingsState' };
+
+// The elements a pointer step names on a static board that takes them, by
+// board: the Settings board's sidebar sections, in their order (#97). Its
+// sections answer to the pointer through CSS alone (`.nav:hover`), so the
+// board's authored state is otherwise untouched.
+const POINTER_TARGETS = {
+  settings: (index, row) => `__wb.frame(${index}).contentDocument.querySelectorAll('nav button.nav')[${row}]`,
+};
+
 async function runScenario(scenario, rootIndex, frames) {
   const dir = join(out, scenario.name);
   mkdirSync(dir, { recursive: true });
@@ -437,20 +502,27 @@ async function runScenario(scenario, rootIndex, frames) {
   }
   const record = { name: scenario.name, board: scenario.board ?? 'root', authored, captures: [], steps: scenario.steps };
   const after = [];
+  const pointerTarget = POINTER_TARGETS[scenario.board];
   for (const step of scenario.steps) {
-    if (authored && step.action !== 'capture') {
+    if (authored && step.action !== 'capture' && !(step.action === 'pointer' && pointerTarget)) {
       after.push(step);
       continue;
     }
     if (step.action === 'capture') {
-      const state = await evaluate(`__wb.state(${boardIndex})`);
+      const state = await evaluate(`__wb.${STATES[scenario.board] ?? 'state'}(${boardIndex})`);
       const frame = frames[boardIndex].frame;
       const glass = (await evaluate('__wb.frames()'))[boardIndex].glass;
       const shot = await screenshot(join(dir, `${step.name}.png`), frame, glass);
       record.captures.push({ name: step.name, after: [...after], file: `${scenario.name}/${step.name}.png`, width: shot.width, height: shot.height, state });
       continue;
     }
-    if (step.action === 'pointer') {
+    if (step.action === 'pointer' && authored) {
+      // A static board's element at the step's index, from a pixel to its
+      // left, as the native side arrives.
+      const point = await evaluate(`__wb.outer(${boardIndex}, ${pointerTarget(boardIndex, step.row)})`);
+      await pointerTo(point.x + (step.nudge ?? 0) - 1, point.y);
+      await pointerTo(point.x + (step.nudge ?? 0), point.y);
+    } else if (step.action === 'pointer') {
       // The fixture's row index names a shown row; the reference row with
       // the same title is the same item (both lists hold the same data).
       const titles = (await evaluate(`__wb.state(${rootIndex})`)).rows.map((row) => row.title);

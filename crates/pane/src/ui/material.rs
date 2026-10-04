@@ -196,8 +196,21 @@ impl Material {
     /// here would show it as a plate behind the curve. The visual
     /// workbench records the corner as an accepted discrepancy (#92).
     pub(crate) fn panel(&self, theme: &Theme, content: impl IntoElement) -> Div {
+        self.tinted_panel(theme, theme.panel_tint, content)
+    }
+
+    /// The Settings window's L1 panel: [`Material::panel`]'s surface at
+    /// the Settings board's own glass tint, `.78` against the root's
+    /// `.70` ([`Theme::settings_tint`]). The solid fallback, the sheen and
+    /// the inset edges are the panel's.
+    pub(crate) fn settings_panel(&self, theme: &Theme, content: impl IntoElement) -> Div {
+        self.tinted_panel(theme, theme.settings_tint, content)
+    }
+
+    /// The L1 panel with `tint` as its glass (see [`Material::panel`]).
+    fn tinted_panel(&self, theme: &Theme, tint: Hsla, content: impl IntoElement) -> Div {
         let background = match self.mode {
-            MaterialMode::Glass => solid_background(theme.panel_tint),
+            MaterialMode::Glass => solid_background(tint),
             MaterialMode::Opaque => solid_background(theme.panel_solid),
         };
         let geometry = &theme.geometry;

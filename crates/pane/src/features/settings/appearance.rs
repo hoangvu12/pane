@@ -29,6 +29,7 @@ use crate::ui::icon::{Glyph, IconTone, glyph};
 use crate::ui::keycap;
 use crate::ui::material::Material;
 use crate::ui::result_row::{RowContent, result_row};
+use crate::ui::settings_shell;
 use crate::ui::theme::Theme;
 
 /// The theme choices the page offers, in row order: the preference, the
@@ -71,14 +72,19 @@ const MATERIALS: [(MaterialPreference, &str, &str, &str); 2] = [
     ),
 ];
 
+/// What the page is, in one line: its sidebar entry's description in
+/// the search, and its heading's subtitle.
+const ABOUT: &str = "Theme and material choices, with a live preview";
+
 /// The Appearance page, registered first in the window's page list: the
 /// one page of this milestone's Settings whose choices change both
 /// windows as they are made.
 pub(crate) fn page() -> Page {
     Page {
         title: "Appearance",
-        about: "Theme and material choices, with a live preview",
-        icon: (IconTone::Command, Glyph::Theme),
+        about: ABOUT,
+        icon: Glyph::Theme,
+        count: None,
         render,
         search: entries,
         focus,
@@ -157,21 +163,16 @@ fn render(
     // and the notice below says so.
     let overridden = !overrides.is_empty();
 
-    let page = div()
-        .id("appearance")
-        .debug_selector(|| "appearance".into())
+    // The controls column: the heading block, then the choices with their
+    // notes, and whatever the host settings report.
+    let controls = div()
         .flex()
         .flex_col()
         .gap(px(4.))
         .child(
-            div()
+            settings_shell::page_header("Appearance", Some(ABOUT.into()), theme)
                 .id("appearance-title")
-                .debug_selector(|| "appearance-title".into())
-                .pb(px(8.))
-                .text_size(typography.search_size)
-                .font_weight(typography.medium)
-                .text_color(theme.text_title)
-                .child("Appearance"),
+                .debug_selector(|| "appearance-title".into()),
         )
         .when_some(
             overridden.then(|| override_notice(&overrides, theme)),
@@ -233,31 +234,6 @@ fn render(
         .when_some(material_note(material_preference, theme), |page, note| {
             page.child(note)
         })
-        .child(
-            div()
-                .pt(px(6.))
-                .pb(px(2.))
-                .text_size(typography.row_kind_size)
-                .font_weight(typography.medium)
-                .text_color(theme.text_muted)
-                .child("Preview"),
-        )
-        .child(
-            div()
-                .id("appearance-preview")
-                .debug_selector(|| "appearance-preview".into())
-                .flex_none()
-                .w_full()
-                .h(px(170.))
-                .child(preview(
-                    theme,
-                    visuals.material,
-                    &crate::keyboard::binding_keys(
-                        crate::settings::keyboard_of(cx)
-                            .binding(pane_core::KeyboardAction::InvokeSelectedAction),
-                    ),
-                )),
-        )
         .when_some(status, |page, status| {
             page.child(
                 div()
@@ -271,7 +247,28 @@ fn render(
                     .child(status),
             )
         });
-    page.into_any_element()
+    // The preview column, beside the controls on the canonical page and
+    // below them in a narrower window (see `settings_shell::page_columns`).
+    let shown = div()
+        .id("appearance-preview")
+        .debug_selector(|| "appearance-preview".into())
+        .flex_none()
+        .w_full()
+        .h(px(170.))
+        .child(preview(
+            theme,
+            visuals.material,
+            &crate::keyboard::binding_keys(
+                crate::settings::keyboard_of(cx)
+                    .binding(pane_core::KeyboardAction::InvokeSelectedAction),
+            ),
+        ));
+    let aside = settings_shell::aside("Preview", theme).child(shown);
+    div()
+        .id("appearance")
+        .debug_selector(|| "appearance".into())
+        .child(settings_shell::page_columns(controls, aside, theme))
+        .into_any_element()
 }
 
 /// The notice that an override is in force: which environment variables

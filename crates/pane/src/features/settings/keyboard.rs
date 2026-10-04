@@ -36,7 +36,8 @@ use gpui::{
 use pane_core::{Binding, Keyboard, KeyboardAction, Launcher};
 
 use super::{Page, SettingsWindow, search};
-use crate::ui::icon::{Glyph, IconTone};
+use crate::ui::icon::Glyph;
+use crate::ui::settings_shell;
 use crate::ui::theme::Theme;
 
 /// The recorder rows' key context: while a recorder holds focus, its keys
@@ -84,13 +85,18 @@ pub(crate) fn bind_keys(cx: &mut App) {
     ]);
 }
 
+/// What the page is, in one line: its sidebar entry's description in
+/// the search, and its heading's subtitle.
+const ABOUT: &str = "The in-app navigation bindings of Pane's own windows";
+
 /// The Keyboard page, registered after Shortcuts in the window's page
 /// list, as the reference's sections order it.
 pub(crate) fn page() -> Page {
     Page {
         title: "Keyboard",
-        about: "The in-app navigation bindings of Pane's own windows",
-        icon: (IconTone::Command, Glyph::Keyboard),
+        about: ABOUT,
+        icon: Glyph::Keyboard,
+        count: None,
         render,
         search: entries,
         focus,
@@ -212,14 +218,9 @@ fn render(
         .flex_col()
         .gap(px(4.))
         .child(
-            div()
+            settings_shell::page_header("Keyboard", Some(ABOUT.into()), &theme)
                 .id("keyboard-title")
-                .debug_selector(|| "keyboard-title".into())
-                .pb(px(8.))
-                .text_size(typography.search_size)
-                .font_weight(typography.medium)
-                .text_color(theme.text_title)
-                .child("Keyboard"),
+                .debug_selector(|| "keyboard-title".into()),
         )
         .child(group("In-app navigation", rows, &theme))
         .child(

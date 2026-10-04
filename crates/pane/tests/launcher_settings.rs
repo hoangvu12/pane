@@ -185,6 +185,10 @@ fn open_launcher_page(
         settings_cx.debug_bounds("launcher-title").is_some(),
         "the Launcher page is drawn"
     );
+    // The page arrives over the section transition's span, shifted from
+    // its rest until the frames carry it there; the tests measure the
+    // page's controls at rest, so those frames are delivered first.
+    settle_frames(&mut settings_cx);
     (settings, settings_cx)
 }
 
@@ -1171,10 +1175,12 @@ fn the_select_opens_below_the_trigger_and_commits_the_highlighted_choice(cx: &mu
     );
     // The popup is as wide as its contents ask (the field, the rows),
     // bounded by the trigger's width — content-width dropdowns, as
-    // Raycast's are, with the trigger's as the ceiling.
+    // Raycast's are, with the trigger's as the ceiling. On the canonical
+    // page the trigger spans the page's 824px column (#97), wider than
+    // the contents ask.
     assert!(
-        (popup.size.width - trigger.size.width).abs() <= px(8.),
-        "the popup is about the trigger's width: {popup:?} vs {trigger:?}"
+        popup.size.width <= trigger.size.width,
+        "the popup stays within the trigger's width: {popup:?} vs {trigger:?}"
     );
     assert_eq!(
         moving.origin.y - popup.origin.y,
@@ -1402,6 +1408,10 @@ fn the_trigger_toggles_and_an_outside_click_respects_its_target(cx: &mut TestApp
     let field = sc
         .debug_bounds("settings-search-field")
         .expect("the sidebar's search field");
+    // The pointer travels there first, as a real one does (see [`click`]):
+    // a click's landing alone leaves the trigger it left believing it is
+    // still hovered, and its pointer fade would never settle.
+    sc.simulate_mouse_move(field.center(), None::<MouseButton>, Modifiers::none());
     sc.simulate_click(field.center(), Modifiers::none());
     sc.run_until_parked();
     settle_frames(&mut sc);

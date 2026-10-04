@@ -220,5 +220,51 @@ class Sensitivity(unittest.TestCase):
         self.assertEqual((flips[0]["baseline"], flips[0]["now"], flips[0]["delta"]), (11, 15, 4))
 
 
+class SettingsShell(unittest.TestCase):
+    """The Settings shell's measures (#97)."""
+
+    def sidebar(self):
+        # The sidebar's black 10% fill left of x 100, its 1px white rule at
+        # x 99, and the page to the right.
+        image = Image.new("RGB", (200, 120), (25, 26, 29))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((0, 0, 98, 119), fill=(22, 23, 26))
+        draw.line((99, 0, 99, 119), fill=over_white((22, 23, 26), 0.06))
+        return image
+
+    def test_vline_finds_the_rule_not_the_step_between_two_fills(self):
+        image = self.sidebar()
+        self.assertEqual(compare.vline(image, (90, 110), (10, 110)), 99)
+
+    def test_vline_finds_a_darker_rule_in_the_light_palette(self):
+        image = Image.new("RGB", (200, 120), (240, 240, 242))
+        ImageDraw.Draw(image).line((60, 0, 60, 119), fill=(225, 225, 227))
+        self.assertEqual(compare.vline(image, (50, 70), (10, 110), lighter=False), 60)
+
+    def test_a_ringed_box_is_its_fill_and_its_ring(self):
+        # The search well: black 24% under a white 6% ring at 10,60 211x34,
+        # with its magnifier and placeholder lighter than the fill inside.
+        background = (22, 23, 26)
+        fill = tuple(round(c * 0.76) for c in background)
+        image = Image.new("RGB", (240, 120), background)
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((10, 60, 220, 93), fill=over_white(fill, 0.06))
+        draw.rectangle((11, 61, 219, 92), fill=fill)
+        draw.rectangle((20, 70, 33, 83), fill=(142, 143, 148))   # the magnifier
+        draw.rectangle((42, 70, 140, 84), fill=(134, 135, 140))  # the placeholder
+        self.assertEqual(compare.ringed_box(image, (10, 60, 211, 34), background, fill), (10, 60, 211, 34))
+
+    def test_a_ringed_box_is_measured_where_it_is(self):
+        background = (22, 23, 26)
+        fill = tuple(round(c * 0.76) for c in background)
+        image = Image.new("RGB", (240, 120), background)
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((12, 61, 222, 94), fill=over_white(fill, 0.06))
+        draw.rectangle((13, 62, 221, 93), fill=fill)
+        # Looked for at its declared place, 2px left of and 1px above it.
+        edges = compare.ringed_box(image, (10, 60, 211, 34), background, fill)
+        self.assertEqual(edges, (12, 61, 211, 34))
+
+
 if __name__ == "__main__":
     unittest.main()

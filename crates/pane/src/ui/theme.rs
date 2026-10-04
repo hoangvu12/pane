@@ -156,6 +156,33 @@ pub(crate) struct Theme {
     /// The alias chip's 1px inset ring (rgba(255,255,255,.14)).
     pub(crate) alias_edge: Hsla,
 
+    // -- The Settings window (the reference's Settings board) ------------------
+    /// The Settings panel's tint: the board's `.glass` at .78, against the
+    /// root's .70 (see `Material::settings_panel`). The light value is the
+    /// light panel's own: the reference authors dark only.
+    pub(crate) settings_tint: Hsla,
+    /// The sidebar's fill (black 10%).
+    pub(crate) sidebar_fill: Hsla,
+    /// A sidebar item's label at rest (`.nav`: #B3B4B9).
+    pub(crate) nav_text: Hsla,
+    /// A sidebar item's wash under the pointer (white 5%), with
+    /// [`Theme::nav_hover_text`] on it.
+    pub(crate) nav_hover: Hsla,
+    pub(crate) nav_hover_text: Hsla,
+    /// The selected sidebar item's wash (`.nav.on`: white 9%), with
+    /// [`Theme::nav_selected_text`] on it; it stays under the pointer.
+    pub(crate) nav_selected: Hsla,
+    pub(crate) nav_selected_text: Hsla,
+    /// A sidebar item's glyph and count, and the search field's magnifier
+    /// (#8E8F94), whatever the item's state.
+    pub(crate) nav_icon: Hsla,
+    /// A Settings field's well — the sidebar's search — (black 24%) and
+    /// its 1px inset ring (white 6%).
+    pub(crate) field_fill: Hsla,
+    pub(crate) field_edge: Hsla,
+    /// A Settings page's heading (#FFFFFF).
+    pub(crate) heading_text: Hsla,
+
     // -- The footer's buttons and the Actions panel ---------------------------
     /// The footer mark's filled square (#EDEDEF at .92); its stroked one
     /// is [`Theme::text_muted`].
@@ -241,6 +268,16 @@ pub(crate) struct Typography {
     /// ascent and descent (1005 + 295 per 1000), CSS's `normal` for text
     /// the reference sets no line height for.
     pub(crate) line_height: f32,
+    /// The Settings window's 13px: its titlebar label, its sidebar items
+    /// and its search field.
+    pub(crate) settings_text_size: Pixels,
+    /// The Settings window's 12px captions: a sidebar item's count, a
+    /// page column's label ("Preview").
+    pub(crate) settings_caption_size: Pixels,
+    /// A Settings page's heading: 22px at 600 with -.01em of tracking.
+    pub(crate) heading_size: Pixels,
+    pub(crate) heading_weight: FontWeight,
+    pub(crate) heading_tracking: f32,
     /// An Actions row's 13px label, its search's 13px and its empty
     /// note's.
     pub(crate) action_size: Pixels,
@@ -318,6 +355,8 @@ pub(crate) struct Geometry {
     pub(crate) slot_tile: TileMetrics,
     /// The Actions panel header's icon tile: 18, radius 5, an 11px glyph.
     pub(crate) mini_tile: TileMetrics,
+    /// The Settings window's shell, sidebar and page composition.
+    pub(crate) settings: SettingsGeometry,
     /// The footer's height.
     pub(crate) footer_height: Pixels,
     /// The footer's left padding (the reference's 16).
@@ -416,6 +455,56 @@ pub(crate) struct ActionsGeometry {
     pub(crate) empty_padding_x: Pixels,
 }
 
+/// The Settings window's geometry: the reference Settings board's
+/// titlebar, its `nav` sidebar with the search field and the `.nav`
+/// items, and its page — the padding, the heading block and the two
+/// columns (see `crate::ui::settings_shell`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct SettingsGeometry {
+    /// The titlebar's height, its 1px rule included.
+    pub(crate) titlebar_height: Pixels,
+    /// A Windows caption button's width (the platform's own 46): the
+    /// adaptation of the reference's lone close glyph. Its glyph's size.
+    pub(crate) caption_width: Pixels,
+    pub(crate) caption_glyph: Pixels,
+    /// The sidebar: its width (its 1px right rule included), its padding
+    /// above and below, either side, and the gap between its children.
+    pub(crate) sidebar_width: Pixels,
+    pub(crate) sidebar_padding_y: Pixels,
+    pub(crate) sidebar_padding_x: Pixels,
+    pub(crate) sidebar_gap: Pixels,
+    /// The search field: its height, side padding, the gap after its
+    /// magnifier, the space below it, its radius and its magnifier.
+    pub(crate) search_height: Pixels,
+    pub(crate) search_padding_x: Pixels,
+    pub(crate) search_gap: Pixels,
+    pub(crate) search_margin_bottom: Pixels,
+    pub(crate) search_radius: Pixels,
+    pub(crate) search_glyph: Pixels,
+    /// A sidebar item (`.nav`): its height (a floor), radius, side
+    /// padding, the gap between its parts and its glyph.
+    pub(crate) item_height: Pixels,
+    pub(crate) item_radius: Pixels,
+    pub(crate) item_padding_x: Pixels,
+    pub(crate) item_gap: Pixels,
+    pub(crate) item_glyph: Pixels,
+    /// The page's padding: above, either side and below.
+    pub(crate) page_padding_top: Pixels,
+    pub(crate) page_padding_x: Pixels,
+    pub(crate) page_padding_bottom: Pixels,
+    /// The heading block: the gap between the heading and its subtitle,
+    /// and the space below the block.
+    pub(crate) header_gap: Pixels,
+    pub(crate) header_margin_bottom: Pixels,
+    /// The page's two columns: the gap between them, the controls
+    /// column's width and the aside's (the preview's).
+    pub(crate) column_gap: Pixels,
+    pub(crate) controls_width: Pixels,
+    pub(crate) aside_width: Pixels,
+    /// The gap between an aside's caption and its content.
+    pub(crate) aside_gap: Pixels,
+}
+
 /// One icon tile size: the square's side, its corner radius and the
 /// glyph inside it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -487,6 +576,18 @@ impl Theme {
             accent_ink: color(0x111210FF),
             alias_text: color(0xB9BABEFF),
             alias_edge: color(0xFFFFFF24),
+
+            settings_tint: color(0x16171AC7),
+            sidebar_fill: color(0x0000001A),
+            nav_text: color(0xB3B4B9FF),
+            nav_hover: color(0xFFFFFF0D),
+            nav_hover_text: color(0xEDEDEFFF),
+            nav_selected: color(0xFFFFFF17),
+            nav_selected_text: color(0xFFFFFFFF),
+            nav_icon: color(0x8E8F94FF),
+            field_fill: color(0x0000003D),
+            field_edge: color(0xFFFFFF0F),
+            heading_text: color(0xFFFFFFFF),
 
             footer_mark: color(0xEDEDEFEB),
             footer_button_text: color(0xD9DADDFF),
@@ -568,6 +669,21 @@ impl Theme {
             alias_text: color(0x3B3D44FF),
             alias_edge: color(0x00000024),
 
+            // Derived, like the rest of the light palette: the light
+            // panel's own tint, and dark washes in place of the dark
+            // board's white ones.
+            settings_tint: color(0xF6F6F8CC),
+            sidebar_fill: color(0x00000008),
+            nav_text: color(0x3B3D44FF),
+            nav_hover: color(0x0000000B),
+            nav_hover_text: color(0x202126FF),
+            nav_selected: color(0x00000016),
+            nav_selected_text: color(0x111214FF),
+            nav_icon: color(0x575A63FF),
+            field_fill: color(0x0000000A),
+            field_edge: color(0x00000014),
+            heading_text: color(0x111214FF),
+
             footer_mark: color(0x202126EB),
             footer_button_text: color(0x2A2B31FF),
             control_hover: color(0x0000000F),
@@ -607,6 +723,11 @@ impl Typography {
             section_size: px(12.),
             section_tracking: 0.01,
             line_height: 1.3,
+            settings_text_size: px(13.),
+            settings_caption_size: px(12.),
+            heading_size: px(22.),
+            heading_weight: FontWeight::SEMIBOLD,
+            heading_tracking: -0.01,
             action_size: px(13.),
             action_weight: FontWeight(450.),
             actions_header_size: px(12.),
@@ -673,6 +794,35 @@ impl Geometry {
                 size: px(18.),
                 radius: px(5.),
                 glyph: px(11.),
+            },
+            settings: SettingsGeometry {
+                titlebar_height: px(48.),
+                caption_width: px(46.),
+                caption_glyph: px(16.),
+                sidebar_width: px(232.),
+                sidebar_padding_y: px(12.),
+                sidebar_padding_x: px(10.),
+                sidebar_gap: px(2.),
+                search_height: px(34.),
+                search_padding_x: px(10.),
+                search_gap: px(8.),
+                search_margin_bottom: px(8.),
+                search_radius: px(8.),
+                search_glyph: px(14.),
+                item_height: px(36.),
+                item_radius: px(8.),
+                item_padding_x: px(10.),
+                item_gap: px(10.),
+                item_glyph: px(16.),
+                page_padding_top: px(26.),
+                page_padding_x: px(32.),
+                page_padding_bottom: px(24.),
+                header_gap: px(4.),
+                header_margin_bottom: px(4.),
+                column_gap: px(36.),
+                controls_width: px(388.),
+                aside_width: px(400.),
+                aside_gap: px(10.),
             },
             footer_height: px(50.),
             footer_padding_left: px(16.),
