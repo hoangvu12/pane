@@ -32,12 +32,18 @@ use crate::ui::keycap;
 use crate::ui::material::Material;
 use crate::ui::motion::{self, Direction};
 use crate::ui::result_row::{RowContent, result_row};
+use crate::ui::theme::Theme;
 use crate::{
     Back, Confirm, DismissLauncher, FocusNext, FocusPrevious, OpenSettings, ReturnToRoot,
     SelectNext, SelectPrevious,
 };
 
 pub(crate) const KEY_CONTEXT: &str = "Launcher";
+
+/// The result list's top and bottom padding (the reference's root body:
+/// 4 above the first row, 10 below the last).
+pub(crate) const LIST_PADDING_TOP: Pixels = px(4.);
+pub(crate) const LIST_PADDING_BOTTOM: Pixels = px(10.);
 
 /// How long after an accepted Open Pane press another press of the same
 /// binding is treated as the repeat of a key still held, not a new press.
@@ -952,75 +958,14 @@ impl LauncherWindow {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let theme = crate::settings::visuals(cx).theme;
-        let geometry = &theme.geometry;
         let invoke = crate::settings::shared(cx)
             .read(cx)
             .keyboard()
             .binding(pane_core::KeyboardAction::InvokeSelectedAction)
             .clone();
-        div()
-            .id("primary-action")
-            .debug_selector(|| "primary-action".into())
-            .role(Role::Button)
-            .aria_label(action.label.clone())
-            // The key that presses this button from the keyboard: the
-            // keycap beside the label shows the same binding.
-            .aria_keyshortcuts(invoke.to_string())
-            // A click never dispatches what the definition says cannot
-            // run now; assistive technology is told the same thing.
-            .when(!action.available, |button| button.aria_disabled(true))
-            // The button shrinks under pressure (the label ellipsizes; the
-            // keycap does not) so a narrow window keeps it inside the
-            // strip instead of clipping at the window's right edge.
-            .flex_initial()
-            .min_w(px(0.))
-            .h(geometry.action_height)
-            .flex()
-            .items_center()
-            .gap(geometry.action_gap)
-            .px(geometry.action_padding_x)
-            .rounded(geometry.action_radius)
-            .bg(theme.row_selected)
-            // The selected row's 1px inset edge.
-            .shadow(vec![
-                BoxShadow::new(px(0.), px(0.), theme.row_selected_border)
-                    .spread_radius(px(1.))
-                    .inset(),
-            ])
-            .text_size(theme.typography.footer_size)
-            .font_weight(theme.typography.medium)
-            .text_color(theme.text_title)
-            .when(action.available, |button| {
-                button.cursor_pointer().active(|button| {
-                    // Pressed: the wash relaxes one rung while the button
-                    // is held — the hover wash over the selected one,
-                    // which reads as pressed in without inventing a
-                    // color. The button's rest is the selected chrome and
-                    // keeps it while hovered, as a selected row keeps its
-                    // wash: the pointer's feedback here is the press.
-                    // Activation itself never waits on the fade — the
-                    // click acts when it happens.
-                    button.bg(theme.row_hover)
-                })
-            })
-            .transitions(|fades| fades.bg(motion::pointer_fade()))
-            // Unavailable: dimmed, and the pointer says nothing to click.
-            // What explains it stays where it was — the row's reason, the
-            // empty state — not the button.
-            .when(!action.available, |button| {
-                button.opacity(0.5).cursor_default()
-            })
-            .child(
-                div()
-                    .flex_initial()
-                    .min_w(px(0.))
-                    .truncate()
-                    .child(action.label.clone()),
-            )
-            .child(keycap::binding_keycap(&invoke, &theme))
-            .on_click(cx.listener(|this, _, window, cx| {
-                this.press_primary_action(window, cx);
-            }))
+        action_button(action, &invoke, &theme).on_click(cx.listener(|this, _, window, cx| {
+            this.press_primary_action(window, cx);
+        }))
     }
 
     /// Dispatches the footer button's click: the same
@@ -1187,8 +1132,8 @@ impl Render for LauncherWindow {
             .flex_col()
             .gap(theme.geometry.row_list_gap)
             .px(theme.geometry.row_padding_x)
-            .pt(px(4.))
-            .pb(px(10.))
+            .pt(LIST_PADDING_TOP)
+            .pb(LIST_PADDING_BOTTOM)
             .overflow_y_scroll()
             .track_scroll(&self.scroll)
             // Above the rows: with none selected, the only rows are root
@@ -1416,6 +1361,79 @@ pub(crate) fn launcher_changed_outside(cx: &mut App) {
             })
             .ok();
     }
+}
+
+/// The footer's primary action button, as the launcher's idle footer and
+/// the visual workbench's root fixture (#91) both compose it: the selected
+/// row's chrome — its wash and 1px inset edge — at the footer button's own
+/// geometry, the action's label truncating beside the effective `invoke`
+/// binding's keycap. Presentation only: the caller attaches the click
+/// (the launcher's [`LauncherWindow::press_primary_action`] path).
+///
+/// A click never dispatches what the definition says cannot run now, so
+/// an unavailable button is dimmed, marked for assistive technology, and
+/// the pointer says nothing to click; what explains it stays where it
+/// was — the row's reason, the empty state — not the button.
+pub(crate) fn action_button(
+    action: &SelectedAction,
+    invoke: &pane_core::Binding,
+    theme: &Theme,
+) -> Stateful<Div> {
+    let geometry = &theme.geometry;
+    div()
+        .id("primary-action")
+        .debug_selector(|| "primary-action".into())
+        .role(Role::Button)
+        .aria_label(action.label.clone())
+        // The key that presses this button from the keyboard: the keycap
+        // beside the label shows the same binding.
+        .aria_keyshortcuts(invoke.to_string())
+        // The button shrinks under pressure (the label ellipsizes; the
+        // keycap does not) so a narrow window keeps it inside the strip
+        // instead of clipping at the window's right edge.
+        .flex_initial()
+        .min_w(px(0.))
+        .h(geometry.action_height)
+        .flex()
+        .items_center()
+        .gap(geometry.action_gap)
+        .px(geometry.action_padding_x)
+        .rounded(geometry.action_radius)
+        .bg(theme.row_selected)
+        // The selected row's 1px inset edge.
+        .shadow(vec![
+            BoxShadow::new(px(0.), px(0.), theme.row_selected_border)
+                .spread_radius(px(1.))
+                .inset(),
+        ])
+        .text_size(theme.typography.footer_size)
+        .font_weight(theme.typography.medium)
+        .text_color(theme.text_title)
+        .when(action.available, |button| {
+            button.cursor_pointer().active(|button| {
+                // Pressed: the wash relaxes one rung while the button is
+                // held — the hover wash over the selected one, which
+                // reads as pressed in without inventing a color. The
+                // button's rest is the selected chrome and keeps it while
+                // hovered, as a selected row keeps its wash: the
+                // pointer's feedback here is the press. Activation
+                // itself never waits on the fade — the click acts when it
+                // happens.
+                button.bg(theme.row_hover)
+            })
+        })
+        .transitions(|fades| fades.bg(motion::pointer_fade()))
+        .when(!action.available, |button| {
+            button.opacity(0.5).cursor_default().aria_disabled(true)
+        })
+        .child(
+            div()
+                .flex_initial()
+                .min_w(px(0.))
+                .truncate()
+                .child(action.label.clone()),
+        )
+        .child(keycap::binding_keycap(invoke, theme))
 }
 
 /// The icon presentation for a row, chosen by the row's stable id: the

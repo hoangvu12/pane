@@ -60,12 +60,34 @@ pub(crate) struct Visuals {
 /// error; a caller that continues past it gets the system default font
 /// wherever the theme names `Geist`.
 pub(crate) fn load_fonts(cx: &App) -> gpui::Result<()> {
-    let fonts: Vec<Cow<'static, [u8]>> = vec![
-        Cow::Borrowed(include_bytes!("../../assets/fonts/Geist-Regular.ttf")),
-        Cow::Borrowed(include_bytes!("../../assets/fonts/Geist-Medium.ttf")),
-        Cow::Borrowed(include_bytes!("../../assets/fonts/Geist-SemiBold.ttf")),
-        Cow::Borrowed(include_bytes!("../../assets/fonts/GeistMono-Regular.ttf")),
-        Cow::Borrowed(include_bytes!("../../assets/fonts/GeistMono-Medium.ttf")),
-    ];
+    let fonts: Vec<Cow<'static, [u8]>> = FONTS
+        .iter()
+        .map(|&(_, bytes)| Cow::Borrowed(bytes))
+        .collect();
     cx.text_system().add_fonts(fonts)
 }
+
+/// The embedded font files, by name (the visual workbench's manifest
+/// records their hashes).
+pub(crate) const FONTS: &[(&str, &[u8])] = &[
+    (
+        "Geist-Regular.ttf",
+        include_bytes!("../../assets/fonts/Geist-Regular.ttf"),
+    ),
+    (
+        "Geist-Medium.ttf",
+        include_bytes!("../../assets/fonts/Geist-Medium.ttf"),
+    ),
+    (
+        "Geist-SemiBold.ttf",
+        include_bytes!("../../assets/fonts/Geist-SemiBold.ttf"),
+    ),
+    (
+        "GeistMono-Regular.ttf",
+        include_bytes!("../../assets/fonts/GeistMono-Regular.ttf"),
+    ),
+    (
+        "GeistMono-Medium.ttf",
+        include_bytes!("../../assets/fonts/GeistMono-Medium.ttf"),
+    ),
+];

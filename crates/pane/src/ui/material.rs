@@ -37,8 +37,8 @@
 
 use gpui::prelude::*;
 use gpui::{
-    BoxShadow, Div, WindowBackgroundAppearance, div, linear_color_stop, linear_gradient, px,
-    relative, solid_background, transparent_black,
+    BoxShadow, Div, Pixels, WindowBackgroundAppearance, div, linear_color_stop, linear_gradient,
+    px, relative, solid_background, transparent_black,
 };
 
 use crate::ui::theme::Theme;
@@ -127,6 +127,10 @@ impl MaterialMode {
     }
 }
 
+/// The footer strip's horizontal padding (the reference's left 16; see
+/// [`Material::footer`]).
+pub(crate) const FOOTER_PADDING_X: Pixels = px(16.);
+
 /// The launcher's surfaces. Construct once from the material mode and reuse
 /// across frames; it holds no state beyond the mode.
 #[derive(Clone, Copy, Debug)]
@@ -213,7 +217,7 @@ impl Material {
             .flex_col()
             .min_h(theme.geometry.footer_height)
             .max_h(relative(0.35))
-            .px(px(16.))
+            .px(FOOTER_PADDING_X)
             .bg(theme.footer_tint)
             .border_t_1()
             .border_color(theme.hairline_soft)
