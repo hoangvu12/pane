@@ -1,0 +1,1878 @@
+//! The Windows reference/native comparison workbench's native fixture (#91).
+//!
+//! This is the mechanism every visual ticket of the UI port (#90) uses: a
+//! window that renders Pane's **production** GPUI components — the result
+//! row, the keycap, the search header, the L1 panel and footer surfaces,
+//! the footer action button — at the authored reference's client size,
+//! with fixture data copied from the reference board, in named states a
+//! capture helper drives. It is not a second UI: every visual value comes
+//! from the same [`Theme`] tokens the launcher renders with, and the
+//! components are the same functions the launcher calls. The composition
+//! glue around them (which rows, which state, which keycaps) is this
+//! harness's own, because the workbench owns scenario state, not the
+//! launcher.
+//!
+//! The scenarios are the registration seam: a registry of [`Scenario`]s —
+//! each a name, the client size it renders at, the rows it shows and the
+//! [`Step`]s that drive it — that this ticket starts with the root/result
+//! and keycap families. Later tickets register their own scenarios (the
+//! contextual Actions panel, the calculator card, the clipboard split
+//! view, the Appearance controls) by appending to [`scenarios`];
+//! [`pending_scenarios`] records the reference boards whose native
+//! scenarios do not exist yet, each with the ticket that will add them, so
+//! the workbench reports them as pending rather than silently passing
+//! them by. Store and the snap HUD stay source-only fixture references:
+//! their boards are catalogued in the research, and no production or
+//! fixture implementation is planned for them in this milestone.
+//!
+//! The steps are the one description of a scenario both capture helpers
+//! follow — the native one against this window, the reference one against
+//! the authored board — and [`replay`] replays them over the
+//! fixture's own state model, so the manifest declares, for every capture,
+//! which rows show, which is selected, which the pointer is over and where
+//! each one lies. The comparison then validates each side against its own
+//! declaration before comparing the sides with each other.
+//!
+//! What the fixture is **not**: it is not a parity test by itself. The
+//! comparison that proves 1:1 fidelity lives in the workbench's scripts
+//! (`scripts/visual-workbench/`). The fixture also never touches the
+//! user's data: the runner gives it its own temporary data directory, it
+//! loads no extensions and reads no installed commands, and the fixture
+//! rows below are presentation values only — they never become the user's
+//! installed-app list. The real launcher's own wiring is guarded
+//! separately, by
+//! `the_production_scenario_edits_searches_selects_opens_and_back_navigates`
+//! in the window integration tests: fixture matching cannot hide a missing
+//! production path.
+
+use std::path::{Path, PathBuf};
+
+use gpui::{
+    App, Bounds, Context, Entity, FocusHandle, Focusable, FontWeight, Hsla, Pixels, Role,
+    SharedString, TextRun, TitlebarOptions, Window, WindowBounds, WindowOptions, div, prelude::*,
+    px, size,
+};
+use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged};
+use pane_core::{Binding, KeyboardAction, SelectedAction};
+use serde::Serialize;
+use sha2::{Digest, Sha256};
+
+use crate::app::{KEY_CONTEXT, LIST_PADDING_BOTTOM, LIST_PADDING_TOP, action_button};
+use crate::features::root_search::{self, search_header};
+use crate::settings;
+use crate::ui::icon::{Glyph, IconTone};
+use crate::ui::input::bind_text_editing;
+use crate::ui::keycap;
+use crate::ui::material::{FOOTER_PADDING_X, Material};
+use crate::ui::result_row::{RowContent, result_row};
+use crate::ui::theme::Theme;
+use crate::{Back, SelectNext, SelectPrevious};
+
+/// The root reference board's client size, in logical pixels: the authored
+/// 760×518 (64 search header + 404 list + 50 footer). Every root-family
+/// fixture renders at exactly this client size; the comparison never
+/// rescales an image to hide a mismatch.
+pub(crate) const ROOT_CLIENT: (f32, f32) = (760., 518.);
+
+/// The Settings reference board's client size, for the fixture that
+/// ticket #97 registers.
+pub(crate) const SETTINGS_CLIENT: (f32, f32) = (1120., 720.);
+
+/// The clipboard reference board's client size, for the fixture that
+/// ticket #102 registers.
+pub(crate) const CLIPBOARD_CLIENT: (f32, f32) = (940., 600.);
+
+/// The panel's 1px inner edge ([`Material::panel`]'s border): the
+/// composition inside it starts one pixel in from every side of the
+/// client.
+const PANEL_EDGE: f32 = 1.;
+
+/// The keycap scenario's inset from the panel edge and the gap between
+/// its caps — the harness's own layout, chosen so each cap stands alone
+/// on the panel for measuring.
+const KEYCAP_INSET: f32 = 20.;
+const KEYCAP_GAP: f32 = 12.;
+
+/// One fixture row: presentation values matching the authored reference
+/// root board's own fixture data (its `Suggested` and `Commands` sections
+/// at an empty query), so the native and reference captures show the
+/// same content wherever the production components can represent it.
+/// Kind, alias and shortcut metadata the reference also authors have no
+/// production presentation yet, and the icons are production's nearest
+/// tones and glyphs (production has no pen, clipboard, layout, file,
+/// moon or lock glyph and no pen tone) — mismatches the comparison
+/// reports, not ones this harness papers over.
+#[derive(Debug, PartialEq)]
+pub(crate) struct FixtureRow {
+    pub(crate) title: &'static str,
+    pub(crate) subtitle: Option<&'static str>,
+    pub(crate) unavailable: Option<&'static str>,
+    pub(crate) icon: (IconTone, Glyph),
+    /// The primary action's label the footer shows while the row is
+    /// selected, as the reference board names it for the row's kind.
+    pub(crate) action: &'static str,
+}
+
+/// An application row: the reference's `app()`, opened by "Open
+/// Application".
+const fn app(title: &'static str, icon: (IconTone, Glyph)) -> FixtureRow {
+    FixtureRow {
+        title,
+        subtitle: None,
+        unavailable: None,
+        icon,
+        action: "Open Application",
+    }
+}
+
+/// A command row: the reference's `cmd()`, run by "Run Command".
+const fn command(
+    title: &'static str,
+    subtitle: &'static str,
+    icon: (IconTone, Glyph),
+) -> FixtureRow {
+    FixtureRow {
+        title,
+        subtitle: Some(subtitle),
+        unavailable: None,
+        icon,
+        action: "Run Command",
+    }
+}
+
+/// The reference root board's rows, in its order: the Suggested section's
+/// four (Figma, Clipboard History, Left Half, Search Files) then the
+/// Commands section's four (Plugin Store, Toggle Dark Mode, Lock Screen,
+/// Settings). The pinned strip above them, the section labels between
+/// them, and the kind/alias/key metadata each row carries are reference
+/// content the production components do not render yet.
+pub(crate) const ROOT_ROWS: &[FixtureRow] = &[
+    app("Figma", (IconTone::Web, Glyph::Blocks)),
+    command(
+        "Clipboard History",
+        "Clipboard",
+        (IconTone::Command, Glyph::Copy),
+    ),
+    command(
+        "Left Half",
+        "Window Manager",
+        (IconTone::Command, Glyph::Monitor),
+    ),
+    command("Search Files", "Files", (IconTone::Command, Glyph::Folder)),
+    command("Plugin Store", "Pane", (IconTone::Command, Glyph::Blocks)),
+    command(
+        "Toggle Dark Mode",
+        "System",
+        (IconTone::Command, Glyph::Theme),
+    ),
+    command(
+        "Lock Screen",
+        "System",
+        (IconTone::Command, Glyph::Keyboard),
+    ),
+    command("Settings", "Pane", (IconTone::Command, Glyph::Sliders)),
+];
+
+/// A long-content row: the title and subtitle the production row's
+/// truncation policy has to handle. The reference authors no long-content
+/// row, so this state has no reference counterpart — it is a native-only
+/// crop, recorded honestly as an adaptation rather than compared.
+pub(crate) const LONG_ROWS: &[FixtureRow] = &[
+    command(
+        "A result whose title runs far past the reference's own fixture rows and keeps going",
+        "and whose subtitle is long enough to need the ellipsis the row owns",
+        (IconTone::Command, Glyph::Prompt),
+    ),
+    command(
+        "Left Half",
+        "Window Manager",
+        (IconTone::Command, Glyph::Monitor),
+    ),
+];
+
+/// A row that cannot run here, with the reason the production row shows.
+/// The reference authors no unavailable state either: another native-only
+/// adaptation, cropped and recorded as such.
+pub(crate) const UNAVAILABLE_ROWS: &[FixtureRow] = &[
+    command(
+        "Left Half",
+        "Window Manager",
+        (IconTone::Command, Glyph::Monitor),
+    ),
+    FixtureRow {
+        unavailable: Some("The extension is disabled"),
+        ..command(
+            "Clipboard History",
+            "Clipboard",
+            (IconTone::Command, Glyph::Copy),
+        )
+    },
+];
+
+/// Which component family a scenario renders.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum Family {
+    /// The root search composition: the search header, the result rows,
+    /// the footer with its action button.
+    Root,
+    /// The keycap family, as the reference's Windows key groups pair
+    /// against the production caps.
+    Keycap,
+}
+
+/// One step a capture helper takes, on either side. The helpers act with
+/// real input — the native one through Windows' own pointer and keyboard,
+/// the reference one through the browser's input events — never by
+/// setting state behind the window's back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "action", rename_all = "kebab-case")]
+pub(crate) enum Step {
+    /// Save a capture of the client, named.
+    Capture { name: &'static str },
+    /// Move the real pointer to the center of the shown row at `row`.
+    Pointer { row: usize },
+    /// Press a key.
+    Key { key: NamedKey },
+    /// Type text into the focused query field.
+    Type { text: &'static str },
+}
+
+/// A key a step presses: the selection keys and Back under their default
+/// bindings, which both capture helpers name the same way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum NamedKey {
+    Down,
+    Escape,
+}
+
+const fn capture(name: &'static str) -> Step {
+    Step::Capture { name }
+}
+
+/// A scenario the workbench renders now, with production components.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Scenario {
+    pub(crate) name: &'static str,
+    pub(crate) description: &'static str,
+    pub(crate) family: Family,
+    /// The logical client size the fixture window must have for this
+    /// scenario. The runner verifies the measured client against it.
+    pub(crate) client: (f32, f32),
+    /// Whether the authored reference has this state. A native-only
+    /// scenario (an adaptation the reference never authors) is captured
+    /// and kept as evidence, never compared and never counted as parity.
+    pub(crate) reference: bool,
+    #[serde(skip)]
+    pub(crate) rows: &'static [FixtureRow],
+    /// What the capture helpers do, in order, from the scenario's rest.
+    pub(crate) steps: &'static [Step],
+}
+
+/// The scenarios this ticket starts the registry with: the root/result
+/// family and the keycap family, over the production components that
+/// exist today. Downstream tickets append theirs here — that is the
+/// registration seam. Every scenario starts at rest (an empty, focused
+/// query; the first row selected; the pointer outside the window) and
+/// captures every state along its way, not only its endpoint.
+pub(crate) fn scenarios() -> &'static [Scenario] {
+    SCENARIOS
+}
+
+const SCENARIOS: &[Scenario] = {
+    use Step::{Key, Pointer, Type};
+    &[
+        Scenario {
+            name: "root-rest",
+            description: "The reference's empty query over its own fixture rows, row 0 selected",
+            family: Family::Root,
+            client: ROOT_CLIENT,
+            reference: true,
+            rows: ROOT_ROWS,
+            steps: &[capture("rest")],
+        },
+        Scenario {
+            name: "root-hover",
+            description: "Rest, then the pointer arrives on unselected row 1",
+            family: Family::Root,
+            client: ROOT_CLIENT,
+            reference: true,
+            rows: ROOT_ROWS,
+            steps: &[capture("rest"), Pointer { row: 1 }, capture("hover")],
+        },
+        Scenario {
+            name: "root-selected",
+            description: "Rest, then the selection keys move the selection to row 2, one step at a time",
+            family: Family::Root,
+            client: ROOT_CLIENT,
+            reference: true,
+            rows: ROOT_ROWS,
+            steps: &[
+                capture("rest"),
+                Key {
+                    key: NamedKey::Down,
+                },
+                capture("down-1"),
+                Key {
+                    key: NamedKey::Down,
+                },
+                capture("selected"),
+            ],
+        },
+        Scenario {
+            name: "root-selected-hover",
+            description: "Row 2 selected by the keys, then the pointer arrives on that selected row",
+            family: Family::Root,
+            client: ROOT_CLIENT,
+            reference: true,
+            rows: ROOT_ROWS,
+            steps: &[
+                Key {
+                    key: NamedKey::Down,
+                },
+                Key {
+                    key: NamedKey::Down,
+                },
+                capture("selected"),
+                Pointer { row: 2 },
+                capture("selected-hover"),
+            ],
+        },
+        Scenario {
+            name: "root-focus",
+            description: "Typing 'clip' into the focused field filters to the one matching row; Escape returns to rest",
+            family: Family::Root,
+            client: ROOT_CLIENT,
+            reference: true,
+            rows: ROOT_ROWS,
+            steps: &[
+                capture("rest"),
+                Type { text: "clip" },
+                capture("focus-typed"),
+                Key {
+                    key: NamedKey::Escape,
+                },
+                capture("back-to-rest"),
+            ],
+        },
+        Scenario {
+            name: "root-unavailable",
+            description: "A row that cannot run here, with its reason (no reference counterpart)",
+            family: Family::Root,
+            client: ROOT_CLIENT,
+            reference: false,
+            rows: UNAVAILABLE_ROWS,
+            steps: &[
+                capture("rest"),
+                Key {
+                    key: NamedKey::Down,
+                },
+                capture("unavailable-selected"),
+            ],
+        },
+        Scenario {
+            name: "root-long-content",
+            description: "A long title and subtitle under the row's truncation (no reference counterpart)",
+            family: Family::Root,
+            client: ROOT_CLIENT,
+            reference: false,
+            rows: LONG_ROWS,
+            steps: &[capture("long-content")],
+        },
+        Scenario {
+            name: "keycap-windows",
+            description: "The production keycaps for the reference's Windows chords and the Enter key",
+            family: Family::Keycap,
+            client: ROOT_CLIENT,
+            reference: true,
+            rows: &[],
+            steps: &[capture("keycaps")],
+        },
+    ]
+};
+
+/// A reference board whose native scenarios do not exist yet, with the
+/// ticket that will register them. Running one fails with this list, so
+/// a missing scenario is never mistaken for a passing comparison.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PendingScenario {
+    pub(crate) name: &'static str,
+    /// The reference board the scenario captures.
+    pub(crate) board: &'static str,
+    pub(crate) ticket: &'static str,
+    pub(crate) description: &'static str,
+    pub(crate) client: (f32, f32),
+}
+
+/// The registered-but-pending scenarios: saved reference boards whose
+/// native fixtures later tickets add. Store and the snap HUD are
+/// deliberately absent — they stay source-only fixture references for
+/// this milestone (see the #90 specification's deferred capabilities).
+pub(crate) fn pending_scenarios() -> &'static [PendingScenario] {
+    &[
+        PendingScenario {
+            name: "launcher-frame",
+            board: "root",
+            ticket: "https://github.com/hoangvu12/pane/issues/92",
+            description: "The launcher frame's material treatment, measured against the board",
+            client: ROOT_CLIENT,
+        },
+        PendingScenario {
+            name: "actions-panel",
+            board: "actions",
+            ticket: "https://github.com/hoangvu12/pane/issues/95",
+            description: "The contextual Actions panel over the root board",
+            client: ROOT_CLIENT,
+        },
+        PendingScenario {
+            name: "calculator-card",
+            board: "calculator",
+            ticket: "https://github.com/hoangvu12/pane/issues/96",
+            description: "The computed-result card from the calculator board",
+            client: ROOT_CLIENT,
+        },
+        PendingScenario {
+            name: "empty-state",
+            board: "empty",
+            ticket: "https://github.com/hoangvu12/pane/issues/96",
+            description: "The no-results notice and fallback rows from the empty board",
+            client: ROOT_CLIENT,
+        },
+        PendingScenario {
+            name: "settings-shell",
+            board: "settings",
+            ticket: "https://github.com/hoangvu12/pane/issues/97",
+            description: "The Settings window shell and sidebar at the Settings board's size",
+            client: SETTINGS_CLIENT,
+        },
+        PendingScenario {
+            name: "appearance-page",
+            board: "settings",
+            ticket: "https://github.com/hoangvu12/pane/issues/98",
+            description: "The Appearance page's controls and live preview",
+            client: SETTINGS_CLIENT,
+        },
+        PendingScenario {
+            name: "pinned-strip",
+            board: "root",
+            ticket: "https://github.com/hoangvu12/pane/issues/101",
+            description: "The five pinned quick slots above the root list",
+            client: ROOT_CLIENT,
+        },
+        PendingScenario {
+            name: "clipboard-split",
+            board: "clipboard",
+            ticket: "https://github.com/hoangvu12/pane/issues/102",
+            description: "The supported text clipboard history in the split view",
+            client: CLIPBOARD_CLIENT,
+        },
+    ]
+}
+
+/// The keycaps the keycap scenario renders: the reference board's own
+/// chords with its `platform` set to Windows (the footer's Actions
+/// Ctrl K, the Left Half row's Win Alt ←, the Clipboard History row's
+/// Ctrl Shift V) as production bindings, and the Enter key — each paired
+/// by name with the reference's key group, so the comparison sets the
+/// same effective binding beside each other. The reference shows a chord
+/// as one cap per key; production shows one cap with the whole chord's
+/// text: a mismatch the comparison reports, not one this list hides.
+pub(crate) const KEYCAP_BINDINGS: &[(&str, &str)] = &[
+    ("ctrl-k", "footer-actions"),
+    ("win-alt-left", "left-half"),
+    ("ctrl-shift-v", "clipboard-history"),
+    ("enter", "footer-primary"),
+];
+
+/// A deliberate fault the workbench injects to prove its comparison is
+/// sensitive to exactly the errors the port cares about. The perturbed
+/// fixture renders with one visual value wrong; the comparison must fail,
+/// on the check that value drives, by the amount injected. The manifest
+/// keeps declaring the unperturbed values — the perturbation is a fault
+/// in the rendering, not a change of intent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Perturbation {
+    /// The result row's horizontal padding grows by 4 logical pixels —
+    /// an edge error every wash, tile and text position shifts by.
+    RowPaddingPlus4,
+    /// The selected row's wash is filled with a wrong color — a regional
+    /// fill error the wash's measured color reports.
+    SelectedFill,
+    /// The hover wash is filled with a wrong color, the same kind of fault
+    /// on the pointer's state.
+    HoverFill,
+}
+
+/// Every perturbation, by the name the runner passes.
+const PERTURBATIONS: &[(&str, Perturbation)] = &[
+    ("row-padding-plus-4", Perturbation::RowPaddingPlus4),
+    ("selected-fill", Perturbation::SelectedFill),
+    ("hover-fill", Perturbation::HoverFill),
+];
+
+impl Perturbation {
+    /// The perturbation `name` names, as the runner passes it.
+    pub fn parse(name: &str) -> Result<Option<Perturbation>, String> {
+        if name.is_empty() || name == "none" {
+            return Ok(None);
+        }
+        PERTURBATIONS
+            .iter()
+            .find(|(known, _)| *known == name)
+            .map(|&(_, perturbation)| Some(perturbation))
+            .ok_or_else(|| {
+                let known: Vec<_> = PERTURBATIONS.iter().map(|(known, _)| *known).collect();
+                format!(
+                    "unknown perturbation {name:?}; expected none or one of {}",
+                    known.join(", ")
+                )
+            })
+    }
+
+    fn name(self) -> &'static str {
+        PERTURBATIONS
+            .iter()
+            .find(|(_, perturbation)| *perturbation == self)
+            .map(|(name, _)| *name)
+            .expect("every perturbation is named")
+    }
+
+    /// `theme` with this fault applied: the frame renders a deliberately
+    /// wrong value through the same production components.
+    fn apply(self, theme: &mut Theme) {
+        match self {
+            Perturbation::RowPaddingPlus4 => theme.geometry.row_padding_x += px(4.),
+            // A selected wash at white 25%: clearly wrong against the
+            // authored 8.5%, and flat, so the measured fill is
+            // deterministic in the opaque material.
+            Perturbation::SelectedFill => {
+                theme.row_selected = gpui::rgb_to_hsla(gpui::rgba(0xFFFFFF40))
+            }
+            // A hover wash at white 20% against the authored 3.5%.
+            Perturbation::HoverFill => theme.row_hover = gpui::rgb_to_hsla(gpui::rgba(0xFFFFFF33)),
+        }
+    }
+}
+
+/// How the fixture runs: the scenario to render, its isolated data
+/// directory (or [`None`] to keep settings in memory), the theme and
+/// material to render with (as `PANE_THEME`/`PANE_MATERIAL` name them),
+/// the perturbation to inject, and where the manifest is written.
+#[derive(Debug, PartialEq)]
+pub struct FixtureOptions {
+    pub scenario: String,
+    pub data_dir: Option<PathBuf>,
+    pub theme: Option<String>,
+    pub material: Option<String>,
+    pub perturbation: Option<Perturbation>,
+    pub manifest: PathBuf,
+}
+
+/// What the fixture binary was asked to do.
+#[derive(Debug, PartialEq)]
+pub enum Command {
+    /// Open the fixture window for a scenario.
+    Run(FixtureOptions),
+    /// Write the scenario registry (active and pending) as JSON to a
+    /// file and exit: the capture helpers read the steps from it.
+    Registry(PathBuf),
+}
+
+const USAGE: &str = "usage: pane-visual-fixture --scenario <name> --manifest <file> \
+    [--data-dir <dir>] [--theme dark|light] [--material glass|opaque] \
+    [--perturb none|row-padding-plus-4|selected-fill|hover-fill]\n       \
+    pane-visual-fixture --registry <file>";
+
+/// Parses the fixture binary's arguments (without the program name).
+pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, String> {
+    let mut args = args.into_iter();
+    let mut scenario = None;
+    let mut manifest = None;
+    let mut data_dir = None;
+    let mut theme = None;
+    let mut material = None;
+    let mut perturbation = None;
+    let mut registry = None;
+    while let Some(flag) = args.next() {
+        let mut value = || {
+            args.next()
+                .ok_or_else(|| format!("{flag} needs a value\n{USAGE}"))
+        };
+        match flag.as_str() {
+            "--scenario" => scenario = Some(value()?),
+            "--manifest" => manifest = Some(PathBuf::from(value()?)),
+            "--data-dir" => data_dir = Some(PathBuf::from(value()?)),
+            "--theme" => theme = Some(value()?),
+            "--material" => material = Some(value()?),
+            "--perturb" => perturbation = Perturbation::parse(&value()?)?,
+            "--registry" => registry = Some(PathBuf::from(value()?)),
+            other => return Err(format!("unknown argument {other:?}\n{USAGE}")),
+        }
+    }
+    if let Some(registry) = registry {
+        return Ok(Command::Registry(registry));
+    }
+    let scenario = scenario.ok_or_else(|| format!("--scenario is required\n{USAGE}"))?;
+    let manifest = manifest.ok_or_else(|| format!("--manifest is required\n{USAGE}"))?;
+    Ok(Command::Run(FixtureOptions {
+        scenario,
+        data_dir,
+        theme,
+        material,
+        perturbation,
+        manifest,
+    }))
+}
+
+/// Runs what `command` asks for.
+pub fn execute(command: Command) -> Result<(), String> {
+    match command {
+        Command::Registry(path) => write_registry(&path),
+        Command::Run(options) => run(options),
+    }
+}
+
+/// The scenario `name`, or why there is none: a pending scenario names
+/// the ticket that will register it.
+fn find_scenario(name: &str) -> Result<&'static Scenario, String> {
+    if let Some(scenario) = scenarios().iter().find(|scenario| scenario.name == name) {
+        return Ok(scenario);
+    }
+    if let Some(pending) = pending_scenarios()
+        .iter()
+        .find(|pending| pending.name == name)
+    {
+        return Err(format!(
+            "scenario {name:?} is pending: {} registers it ({})",
+            pending.ticket, pending.description
+        ));
+    }
+    Err(format!(
+        "unknown scenario {name:?}; the workbench renders one of: {}",
+        scenarios()
+            .iter()
+            .map(|scenario| scenario.name)
+            .collect::<Vec<_>>()
+            .join(", ")
+    ))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Registry {
+    kind: &'static str,
+    scenarios: &'static [Scenario],
+    pending: &'static [PendingScenario],
+}
+
+fn write_registry(path: &Path) -> Result<(), String> {
+    let registry = Registry {
+        kind: "pane-visual-fixture-registry",
+        scenarios: scenarios(),
+        pending: pending_scenarios(),
+    };
+    write_json(path, &registry)
+}
+
+fn write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(value)
+        .map_err(|error| format!("could not serialize {}: {error}", path.display()))?;
+    std::fs::write(path, json)
+        .map_err(|error| format!("could not write {}: {error}", path.display()))
+}
+
+/// The fixture's state: the rows the query shows and the selection. The
+/// window drives it from real input; [`replay`] drives it from
+/// a scenario's steps — the same transitions, so what the manifest
+/// declares for a capture is what the window shows when it is taken.
+#[derive(Clone, Debug)]
+struct FixtureState {
+    all: &'static [FixtureRow],
+    query: String,
+    rows: Vec<&'static FixtureRow>,
+    selected: usize,
+}
+
+impl FixtureState {
+    fn new(all: &'static [FixtureRow]) -> FixtureState {
+        FixtureState {
+            all,
+            query: String::new(),
+            rows: all.iter().collect(),
+            selected: 0,
+        }
+    }
+
+    /// The reference's own filtering rule, over the fixture's own data: a
+    /// row shows when its title contains the query, ignoring case; a new
+    /// query selects its first result, as the launcher's does.
+    fn set_query(&mut self, query: &str) {
+        let needle = query.to_lowercase();
+        self.query = query.to_owned();
+        self.rows = self
+            .all
+            .iter()
+            .filter(|row| row.title.to_lowercase().contains(&needle))
+            .collect();
+        self.selected = 0;
+    }
+
+    fn select_next(&mut self) {
+        if self.selected + 1 < self.rows.len() {
+            self.selected += 1;
+        }
+    }
+
+    fn select_previous(&mut self) {
+        self.selected = self.selected.saturating_sub(1);
+    }
+
+    /// Escape, as root search's own Back behaves on a query: the query
+    /// clears and the selection returns to the first row.
+    fn back(&mut self) {
+        self.set_query("");
+    }
+}
+
+/// A rectangle in logical client coordinates.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub(crate) struct Rect {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+
+impl Rect {
+    fn center(&self) -> (f32, f32) {
+        (self.x + self.width / 2., self.y + self.height / 2.)
+    }
+
+    fn contains(&self, (x, y): (f32, f32)) -> bool {
+        x >= self.x && x < self.x + self.width && y >= self.y && y < self.y + self.height
+    }
+}
+
+/// The geometry the root composition declares in a client of `client`
+/// size: the search header, the list's viewport and the footer, inset by
+/// the panel's edge.
+struct Frame {
+    search: Rect,
+    list: Rect,
+    footer: Rect,
+}
+
+fn frame(theme: &Theme, client: (f32, f32)) -> Frame {
+    let geometry = &theme.geometry;
+    let (width, height) = client;
+    let inner = width - 2. * PANEL_EDGE;
+    let search = Rect {
+        x: PANEL_EDGE,
+        y: PANEL_EDGE,
+        width: inner,
+        height: f32::from(geometry.search_height),
+    };
+    let footer = Rect {
+        x: PANEL_EDGE,
+        y: height - PANEL_EDGE - f32::from(geometry.footer_height),
+        width: inner,
+        height: f32::from(geometry.footer_height),
+    };
+    let list = Rect {
+        x: PANEL_EDGE,
+        y: search.y + search.height,
+        width: inner,
+        height: footer.y - (search.y + search.height),
+    };
+    Frame {
+        search,
+        list,
+        footer,
+    }
+}
+
+/// One row as a capture declares it.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeclaredRow {
+    title: &'static str,
+    subtitle: Option<&'static str>,
+    unavailable: Option<&'static str>,
+    selected: bool,
+    hovered: bool,
+    /// The row's rect. A row holding an unavailable reason grows past its
+    /// height floor by the wrapped reason, which the fixture cannot
+    /// declare without shaping text, so it and every row after it declare
+    /// `heightIsFloor` and only the first such row's top is exact.
+    rect: Rect,
+    height_is_floor: bool,
+}
+
+/// The rows `state` shows, laid out in the list of `frame`, with the
+/// pointer at `pointer` (client coordinates) if it is in the window.
+fn declared_rows(
+    state: &FixtureState,
+    theme: &Theme,
+    frame: &Frame,
+    pointer: Option<(f32, f32)>,
+) -> Vec<DeclaredRow> {
+    let geometry = &theme.geometry;
+    let x = frame.list.x + f32::from(geometry.row_padding_x);
+    let width = frame.list.width - 2. * f32::from(geometry.row_padding_x);
+    let mut y = frame.list.y + f32::from(LIST_PADDING_TOP);
+    let mut floor = false;
+    state
+        .rows
+        .iter()
+        .enumerate()
+        .map(|(index, row)| {
+            floor |= row.unavailable.is_some();
+            let rect = Rect {
+                x,
+                y,
+                width,
+                height: f32::from(geometry.row_min_height),
+            };
+            y += f32::from(geometry.row_min_height) + f32::from(geometry.row_list_gap);
+            DeclaredRow {
+                title: row.title,
+                subtitle: row.subtitle,
+                unavailable: row.unavailable,
+                selected: index == state.selected,
+                hovered: !floor && pointer.is_some_and(|point| rect.contains(point)),
+                rect,
+                height_is_floor: floor,
+            }
+        })
+        .collect()
+}
+
+/// One capture a scenario takes, as the fixture declares it.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeclaredCapture {
+    name: &'static str,
+    /// The steps taken since the scenario's rest, in order.
+    after: Vec<Step>,
+    query: String,
+    /// The pointer's point, in logical client coordinates, while the
+    /// capture is taken — the cursor's own glyph paints there, so the
+    /// comparison masks a small region around it (never the control
+    /// under test, which it measures beside the cursor).
+    pointer: Option<(f32, f32)>,
+    rows: Vec<DeclaredRow>,
+    /// The footer's primary action label: the selected row's.
+    action: Option<&'static str>,
+    /// The footer action button's rect, filled in from the shaped label
+    /// when the manifest is written (the replay itself shapes no text).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    action_button: Option<Rect>,
+}
+
+/// A step with the point it acts at, resolved: the client point a
+/// pointer step moves to, in logical client coordinates.
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct ResolvedStep {
+    #[serde(flatten)]
+    step: Step,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    point: Option<(f32, f32)>,
+}
+
+/// A scenario replayed over the fixture's state model: every capture it
+/// takes and every step it takes, resolved.
+pub(crate) struct Replay {
+    pub(crate) captures: Vec<DeclaredCapture>,
+    pub(crate) steps: Vec<ResolvedStep>,
+}
+
+/// Replays `scenario`'s steps over the fixture's state model: declares
+/// every capture they take, and resolves where each pointer step points.
+pub(crate) fn replay(scenario: &Scenario, theme: &Theme) -> Replay {
+    let frame = frame(theme, scenario.client);
+    let mut state = FixtureState::new(scenario.rows);
+    let mut pointer = None;
+    let mut after = Vec::new();
+    let mut captures = Vec::new();
+    let mut steps = Vec::new();
+    for step in scenario.steps {
+        let mut point = None;
+        match *step {
+            Step::Capture { name } => captures.push(DeclaredCapture {
+                name,
+                after: after.clone(),
+                query: state.query.clone(),
+                pointer,
+                rows: declared_rows(&state, theme, &frame, pointer),
+                action: state.rows.get(state.selected).map(|row| row.action),
+                action_button: None,
+            }),
+            Step::Pointer { row } => {
+                let rows = declared_rows(&state, theme, &frame, None);
+                pointer = rows.get(row).map(|row| row.rect.center());
+                point = pointer;
+            }
+            Step::Key {
+                key: NamedKey::Down,
+            } => state.select_next(),
+            Step::Key {
+                key: NamedKey::Escape,
+            } => state.back(),
+            Step::Type { text } => {
+                let query = format!("{}{text}", state.query);
+                state.set_query(&query);
+            }
+        }
+        if !matches!(step, Step::Capture { .. }) {
+            after.push(*step);
+        }
+        steps.push(ResolvedStep { step: *step, point });
+    }
+    Replay { captures, steps }
+}
+
+/// The fixture window: the scenario's state over the production
+/// components. It owns the query field's editable text entity (the same
+/// element the launcher's fields use) and the fixture's state; the
+/// selection keys, the typing and the pointer act on it exactly as the
+/// capture helper drives them, through the production bindings the
+/// launcher itself registers.
+pub(crate) struct FixtureWindow {
+    scenario: &'static Scenario,
+    perturbation: Option<Perturbation>,
+    state: FixtureState,
+    query: Entity<EditableTextState>,
+}
+
+impl FixtureWindow {
+    fn new(
+        scenario: &'static Scenario,
+        perturbation: Option<Perturbation>,
+        cx: &mut Context<Self>,
+    ) -> FixtureWindow {
+        let query = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
+        query.focus_handle(cx).tab_stop(true);
+        cx.subscribe(&query, |this, input, _: &TextChanged, cx| {
+            let text = input.read(cx).as_str().to_owned();
+            if text != this.state.query {
+                this.state.set_query(&text);
+                cx.notify();
+            }
+        })
+        .detach();
+        FixtureWindow {
+            scenario,
+            perturbation,
+            state: FixtureState::new(scenario.rows),
+            query,
+        }
+    }
+
+    fn select_next(&mut self, _: &SelectNext, _: &mut Window, cx: &mut Context<Self>) {
+        self.state.select_next();
+        cx.notify();
+    }
+
+    fn select_previous(&mut self, _: &SelectPrevious, _: &mut Window, cx: &mut Context<Self>) {
+        self.state.select_previous();
+        cx.notify();
+    }
+
+    /// The launcher's Back, under its effective binding: the query clears
+    /// and the selection returns to the first row.
+    fn back(&mut self, _: &Back, _: &mut Window, cx: &mut Context<Self>) {
+        self.state.back();
+        let query = self.query.clone();
+        query.update(cx, |query, cx| query.emplace("", cx));
+        cx.notify();
+    }
+
+    /// The theme this frame renders with: the settings' theme, with the
+    /// perturbation applied when the run injects one.
+    fn theme(&self, cx: &App) -> Theme {
+        let mut theme = settings::visuals(cx).theme;
+        if let Some(perturbation) = self.perturbation {
+            perturbation.apply(&mut theme);
+        }
+        theme
+    }
+
+    fn render_keycaps(&self, theme: &Theme) -> gpui::Div {
+        let caps = KEYCAP_BINDINGS.iter().map(|&(binding, _)| {
+            let binding = Binding::parse(binding)
+                .unwrap_or_else(|why| panic!("keycap fixture binding {binding}: {why}"));
+            // Each cap gets its own scope: the cap's id is fixed.
+            div()
+                .id(SharedString::from(format!("keys-{binding}")))
+                .flex()
+                .child(keycap::binding_keycap(&binding, theme))
+        });
+        div()
+            .key_context(KEY_CONTEXT)
+            .size_full()
+            .flex()
+            .flex_col()
+            .items_start()
+            .p(px(KEYCAP_INSET - PANEL_EDGE))
+            .gap(px(KEYCAP_GAP))
+            .font_family(theme.typography.family.clone())
+            .text_color(theme.text_title)
+            .children(caps)
+    }
+
+    fn render_root(&self, theme: &Theme, cx: &mut Context<Self>) -> gpui::Div {
+        let geometry = &theme.geometry;
+        let rows = self.state.rows.iter().enumerate().map(|(index, row)| {
+            let selected = index == self.state.selected;
+            result_row(
+                RowContent {
+                    title: row.title.into(),
+                    subtitle: row.subtitle.map(Into::into),
+                    unavailable_reason: row.unavailable.map(Into::into),
+                    unavailable_id: ("unavailable", index).into(),
+                    selected,
+                    icon: Some(row.icon),
+                },
+                theme,
+            )
+            .id(("row", index))
+            .role(Role::ListBoxOption)
+            .aria_label(row.title)
+            .aria_selected(selected)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                // A click selects the row it lands on; the fixture opens
+                // nothing — there is no command behind fixture data.
+                this.state.selected = index;
+                cx.notify();
+            }))
+        });
+        // The launcher's result list, at its own paddings and gap.
+        let list = div()
+            .id("rows")
+            .role(Role::ListBox)
+            .aria_label("Results")
+            .flex_1()
+            .flex()
+            .flex_col()
+            .gap(geometry.row_list_gap)
+            .px(geometry.row_padding_x)
+            .pt(LIST_PADDING_TOP)
+            .pb(LIST_PADDING_BOTTOM)
+            .overflow_y_scroll()
+            .children(rows);
+        let focus = self.query.focus_handle(cx);
+        let search = div()
+            .id("search")
+            .key_context(root_search::search_context())
+            .track_focus(&focus)
+            .role(Role::EditableComboBox)
+            .aria_label("Search")
+            .flex_1()
+            .min_h(px(0.))
+            .flex()
+            .flex_col()
+            .child(search_header(
+                &self.query,
+                root_search::ROOT_PLACEHOLDER,
+                theme,
+            ))
+            .child(list);
+        // The footer's idle strip, as the launcher lays it out: a spacer,
+        // then the production action button with the effective invoke
+        // binding. The launcher's menu button at the strip's left has no
+        // reference counterpart in this position and is left out.
+        let invoke = settings::keyboard_of(cx)
+            .binding(KeyboardAction::InvokeSelectedAction)
+            .clone();
+        // The selected row's primary action, as the reference's footer
+        // follows the selection; no row, no button.
+        let action = self
+            .state
+            .rows
+            .get(self.state.selected)
+            .map(|row| SelectedAction {
+                label: row.action.into(),
+                available: true,
+            });
+        let footer = Material::footer(theme)
+            .id("status")
+            .text_size(theme.typography.footer_size)
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h(px(0.))
+                    .w_full()
+                    .min_w(px(0.))
+                    .items_center()
+                    .child(div().flex_1().min_w(px(0.)))
+                    .when_some(action, |strip, action| {
+                        strip.child(action_button(&action, &invoke, theme))
+                    }),
+            );
+        div()
+            .key_context(KEY_CONTEXT)
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_previous))
+            .on_action(cx.listener(Self::back))
+            .size_full()
+            .flex()
+            .flex_col()
+            .font_family(theme.typography.family.clone())
+            .text_color(theme.text_title)
+            .child(search)
+            .child(footer)
+    }
+}
+
+impl Focusable for FixtureWindow {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.query.focus_handle(cx)
+    }
+}
+
+impl Render for FixtureWindow {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let material = settings::visuals(cx).material;
+        let theme = self.theme(cx);
+        let content = match self.scenario.family {
+            Family::Keycap => self.render_keycaps(&theme),
+            Family::Root => self.render_root(&theme, cx),
+        };
+        material.panel(&theme, content)
+    }
+}
+
+/// The fixture's manifest: the declared values the comparison measures
+/// against, from what the fixture actually rendered with — the theme the
+/// settings resolved, the layout the composition lays out, the bindings
+/// in force, the label widths the text system shaped — in logical client
+/// coordinates, with the window's own bounds and scale.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Manifest {
+    kind: &'static str,
+    scenario: &'static Scenario,
+    perturbation: Option<&'static str>,
+    /// The panel material and theme in force (the comparison reads
+    /// colors strictly only in the opaque material).
+    material: &'static str,
+    appearance: &'static str,
+    window: WindowRecord,
+    declared: DeclaredTokens,
+    search_header: Rect,
+    list: Rect,
+    footer: Rect,
+    captures: Vec<DeclaredCapture>,
+    /// The scenario's steps, with each pointer step's client point.
+    steps: Vec<ResolvedStep>,
+    keycaps: Vec<KeycapRecord>,
+    fonts: Vec<FontRecord>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WindowRecord {
+    /// [`Window::bounds`]: origin and logical size, as GPUI reports them.
+    bounds: [f32; 4],
+    /// [`Window::viewport_size`]: the logical client the fixture paints.
+    viewport: [f32; 2],
+    scale_factor: f32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeclaredTokens {
+    geometry: GeometryRecord,
+    colors: ColorRecord,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GeometryRecord {
+    panel_edge: f32,
+    search_height: f32,
+    search_padding_x: f32,
+    search_gap: f32,
+    search_size: f32,
+    row_min_height: f32,
+    row_radius: f32,
+    row_padding_x: f32,
+    row_gap: f32,
+    row_list_gap: f32,
+    row_title_size: f32,
+    row_subtitle_size: f32,
+    list_padding_top: f32,
+    list_padding_bottom: f32,
+    tile_size: f32,
+    tile_radius: f32,
+    footer_height: f32,
+    footer_padding_x: f32,
+    action_height: f32,
+    action_radius: f32,
+    action_padding_x: f32,
+    action_gap: f32,
+    keycap_height: f32,
+    keycap_radius: f32,
+    keycap_padding_x: f32,
+    keycap_glyph_size: f32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ColorRecord {
+    panel_solid: Hex,
+    row_hover: Hex,
+    row_selected: Hex,
+    row_selected_border: Hex,
+    footer_tint: Hex,
+    hairline: Hex,
+    hairline_soft: Hex,
+    tile_background: Hex,
+    tile_foreground: Hex,
+    text_title: Hex,
+    text_muted: Hex,
+    text_placeholder: Hex,
+}
+
+/// A color as the manifest writes it: `#RRGGBBAA`.
+struct Hex(Hsla);
+
+impl Serialize for Hex {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&hex(self.0))
+    }
+}
+
+fn hex(color: Hsla) -> String {
+    let rgba = gpui::hsla_to_rgba(color);
+    let channel = |value: f32| (value.clamp(0., 1.) * 255.).round() as u8;
+    format!(
+        "#{:02X}{:02X}{:02X}{:02X}",
+        channel(rgba.color.red),
+        channel(rgba.color.green),
+        channel(rgba.color.blue),
+        channel(rgba.alpha)
+    )
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct KeycapRecord {
+    /// The binding the cap shows, in the record's grammar.
+    binding: &'static str,
+    /// The reference key group the cap pairs with.
+    group: &'static str,
+    /// The label the cap paints: the binding's Windows display text, or
+    /// `Enter` for the Enter glyph. Controlled on both sides of the
+    /// comparison, so a width difference is attributed to its label and
+    /// typography, not to the chrome.
+    label: String,
+    glyph: bool,
+    /// The label's shaped width at the cap's font, size and weight.
+    label_width: f32,
+    rect: Rect,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FontRecord {
+    file: &'static str,
+    bytes: usize,
+    sha256: String,
+}
+
+/// The width `text` shapes to in `theme`'s family at `size` and `weight`.
+fn shaped_width(
+    window: &Window,
+    theme: &Theme,
+    text: &str,
+    size: Pixels,
+    weight: FontWeight,
+) -> f32 {
+    let mut font = gpui::font(theme.typography.family.clone());
+    font.weight = weight;
+    let run = TextRun {
+        len: text.len(),
+        font,
+        color: theme.text_title,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+        letter_spacing: None,
+    };
+    window
+        .text_system()
+        .shape_line(SharedString::from(text.to_owned()), size, &[run], None)
+        .width()
+        .into()
+}
+
+/// A keycap's declared label, width and whether it is a glyph cap — by
+/// the same rule [`keycap::binding_keycap`] draws it with.
+fn keycap_label(window: &Window, theme: &Theme, binding: &Binding) -> (String, bool, f32, f32) {
+    let geometry = &theme.geometry;
+    if keycap::is_plain_enter(binding) {
+        let width = f32::from(geometry.keycap_glyph_size);
+        return (
+            "Enter".into(),
+            true,
+            width,
+            width + 2. * f32::from(geometry.keycap_padding_x),
+        );
+    }
+    let label = binding.to_string();
+    let width = shaped_width(
+        window,
+        theme,
+        &label,
+        theme.typography.row_title_size,
+        theme.typography.medium,
+    );
+    (
+        label,
+        false,
+        width,
+        width + 2. * f32::from(geometry.keycap_padding_x),
+    )
+}
+
+fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
+    let visuals = settings::visuals(cx);
+    // The manifest declares the unperturbed intent; the perturbation is
+    // the rendering's fault the comparison must catch.
+    let theme = visuals.theme;
+    let geometry = &theme.geometry;
+    let scenario = fixture.scenario;
+    let frame = frame(&theme, scenario.client);
+
+    let replay = replay(scenario, &theme);
+    let mut captures = replay.captures;
+    let mut keycaps = Vec::new();
+    match scenario.family {
+        Family::Keycap => {
+            let mut y = KEYCAP_INSET;
+            for &(binding, group) in KEYCAP_BINDINGS {
+                let parsed = Binding::parse(binding).expect("the keycap fixture bindings parse");
+                let (label, glyph, label_width, width) = keycap_label(window, &theme, &parsed);
+                keycaps.push(KeycapRecord {
+                    binding,
+                    group,
+                    label,
+                    glyph,
+                    label_width,
+                    rect: Rect {
+                        x: KEYCAP_INSET,
+                        y,
+                        width,
+                        height: f32::from(geometry.keycap_height),
+                    },
+                });
+                y += f32::from(geometry.keycap_height) + KEYCAP_GAP;
+            }
+        }
+        Family::Root => {
+            // The action button: padding, label, gap, keycap; right-aligned
+            // inside the footer's horizontal padding and centered in its
+            // height below the 1px rule.
+            let invoke = settings::keyboard_of(cx)
+                .binding(KeyboardAction::InvokeSelectedAction)
+                .clone();
+            let (label, glyph, label_width, cap_width) = keycap_label(window, &theme, &invoke);
+            let right = frame.footer.x + frame.footer.width - f32::from(FOOTER_PADDING_X);
+            let rule = 1.;
+            let top = frame.footer.y
+                + rule
+                + (frame.footer.height - rule - f32::from(geometry.action_height)) / 2.;
+            for capture in &mut captures {
+                capture.action_button = capture.action.map(|action| {
+                    let text = shaped_width(
+                        window,
+                        &theme,
+                        action,
+                        theme.typography.footer_size,
+                        theme.typography.medium,
+                    );
+                    let width = 2. * f32::from(geometry.action_padding_x)
+                        + text
+                        + f32::from(geometry.action_gap)
+                        + cap_width;
+                    Rect {
+                        x: right - width,
+                        y: top,
+                        width,
+                        height: f32::from(geometry.action_height),
+                    }
+                });
+            }
+            let cap_top =
+                top + (f32::from(geometry.action_height) - f32::from(geometry.keycap_height)) / 2.;
+            keycaps.push(KeycapRecord {
+                binding: "invoke",
+                group: "footer-primary",
+                label,
+                glyph,
+                label_width,
+                rect: Rect {
+                    x: right - f32::from(geometry.action_padding_x) - cap_width,
+                    y: cap_top,
+                    width: cap_width,
+                    height: f32::from(geometry.keycap_height),
+                },
+            });
+        }
+    }
+
+    let bounds = window.bounds();
+    let viewport = window.viewport_size();
+    Manifest {
+        kind: "pane-visual-fixture-manifest",
+        scenario,
+        perturbation: fixture.perturbation.map(Perturbation::name),
+        material: match visuals.material.window_appearance() {
+            gpui::WindowBackgroundAppearance::Opaque => "opaque",
+            _ => "glass",
+        },
+        appearance: if theme.panel_solid.lightness < 0.5 {
+            "dark"
+        } else {
+            "light"
+        },
+        window: WindowRecord {
+            bounds: [
+                f32::from(bounds.origin.x),
+                f32::from(bounds.origin.y),
+                f32::from(bounds.size.width),
+                f32::from(bounds.size.height),
+            ],
+            viewport: [f32::from(viewport.width), f32::from(viewport.height)],
+            scale_factor: window.scale_factor(),
+        },
+        declared: DeclaredTokens {
+            geometry: GeometryRecord {
+                panel_edge: PANEL_EDGE,
+                search_height: f32::from(geometry.search_height),
+                search_padding_x: f32::from(geometry.search_padding_x),
+                search_gap: f32::from(geometry.search_gap),
+                search_size: f32::from(theme.typography.search_size),
+                row_min_height: f32::from(geometry.row_min_height),
+                row_radius: f32::from(geometry.row_radius),
+                row_padding_x: f32::from(geometry.row_padding_x),
+                row_gap: f32::from(geometry.row_gap),
+                row_list_gap: f32::from(geometry.row_list_gap),
+                row_title_size: f32::from(theme.typography.row_title_size),
+                row_subtitle_size: f32::from(theme.typography.row_subtitle_size),
+                list_padding_top: f32::from(LIST_PADDING_TOP),
+                list_padding_bottom: f32::from(LIST_PADDING_BOTTOM),
+                tile_size: f32::from(geometry.tile_size),
+                tile_radius: f32::from(geometry.tile_radius),
+                footer_height: f32::from(geometry.footer_height),
+                footer_padding_x: f32::from(FOOTER_PADDING_X),
+                action_height: f32::from(geometry.action_height),
+                action_radius: f32::from(geometry.action_radius),
+                action_padding_x: f32::from(geometry.action_padding_x),
+                action_gap: f32::from(geometry.action_gap),
+                keycap_height: f32::from(geometry.keycap_height),
+                keycap_radius: f32::from(geometry.keycap_radius),
+                keycap_padding_x: f32::from(geometry.keycap_padding_x),
+                keycap_glyph_size: f32::from(geometry.keycap_glyph_size),
+            },
+            colors: ColorRecord {
+                panel_solid: Hex(theme.panel_solid),
+                row_hover: Hex(theme.row_hover),
+                row_selected: Hex(theme.row_selected),
+                row_selected_border: Hex(theme.row_selected_border),
+                footer_tint: Hex(theme.footer_tint),
+                hairline: Hex(theme.hairline),
+                hairline_soft: Hex(theme.hairline_soft),
+                tile_background: Hex(theme.tile_background),
+                tile_foreground: Hex(theme.tile_foreground),
+                text_title: Hex(theme.text_title),
+                text_muted: Hex(theme.text_muted),
+                text_placeholder: Hex(theme.text_placeholder),
+            },
+        },
+        search_header: frame.search,
+        list: frame.list,
+        footer: frame.footer,
+        captures,
+        steps: replay.steps,
+        keycaps,
+        fonts: crate::ui::FONTS
+            .iter()
+            .map(|&(file, bytes)| FontRecord {
+                file,
+                bytes: bytes.len(),
+                sha256: format!("{:X}", Sha256::digest(bytes)),
+            })
+            .collect(),
+    }
+}
+
+/// Runs the fixture application: the production settings (in the
+/// isolated data directory, or in memory), the embedded fonts, the
+/// production key bindings, and the fixture window at the scenario's
+/// client size. Writes the manifest once the window has drawn its first
+/// frame, then runs until the window closes.
+pub fn run(options: FixtureOptions) -> Result<(), String> {
+    let scenario = find_scenario(&options.scenario)?;
+    let FixtureOptions {
+        data_dir,
+        theme,
+        material,
+        perturbation,
+        manifest: manifest_path,
+        ..
+    } = options;
+    gpui_platform::application().run(move |cx: &mut App| {
+        settings::init_with_overrides(
+            data_dir.clone(),
+            settings::Overrides::parse(theme.as_deref(), material.as_deref()),
+            cx,
+        );
+        if let Err(error) = crate::ui::load_fonts(cx) {
+            eprintln!("the fixture's fonts could not be loaded: {error:#}");
+        }
+        // The production bindings, as the launcher registers them: the
+        // text editing keys, then the selection keys in the query field,
+        // then the launcher's own (Back among them).
+        let keyboard = settings::keyboard_of(cx);
+        let text_editing = bind_text_editing(cx);
+        root_search::bind_keys(cx, &text_editing, &keyboard);
+        crate::keyboard::bind_keys(cx, &keyboard);
+
+        let (width, height) = scenario.client;
+        let bounds = Bounds::centered(None, size(px(width), px(height)), cx);
+        let window_options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            window_background: settings::window_background(cx),
+            // Shown without activation: a capture run never takes the
+            // foreground from whatever the operator is doing. The capture
+            // helper posts its input to this window and reads its client
+            // with PrintWindow, neither of which needs the foreground.
+            focus: false,
+            titlebar: Some(TitlebarOptions {
+                title: Some(format!("Pane visual fixture - {}", scenario.name).into()),
+                appears_transparent: true,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let window = match cx.open_window(window_options, |window, cx| {
+            #[cfg(target_os = "windows")]
+            crate::prefer_rounded_window_corners(window);
+            cx.new(|cx| {
+                let fixture = FixtureWindow::new(scenario, perturbation, cx);
+                // Root search opens with the query field focused; the
+                // fixture does the same, so typing reaches the field the
+                // moment the window appears.
+                window.focus(&fixture.query.focus_handle(cx), cx);
+                fixture
+            })
+        }) {
+            Ok(window) => window,
+            Err(error) => {
+                eprintln!("the fixture window could not open: {error:#}");
+                cx.quit();
+                return;
+            }
+        };
+        // The manifest is written after the first frame, from the view's
+        // own state and the window's own measurements; the capture helper
+        // waits for the file before it captures anything.
+        let written = window.update(cx, |_, window, cx| {
+            let path = manifest_path.clone();
+            window.on_next_frame(move |window, cx| {
+                let result = window
+                    .root::<FixtureWindow>()
+                    .flatten()
+                    .ok_or_else(|| "the fixture window has no fixture view".to_owned())
+                    .and_then(|fixture| write_json(&path, &manifest(fixture.read(cx), window, cx)));
+                if let Err(error) = result {
+                    eprintln!("{error}");
+                    cx.quit();
+                }
+            });
+            cx.notify();
+        });
+        if let Err(error) = written {
+            eprintln!("the fixture window closed before its first frame: {error:#}");
+            cx.quit();
+            return;
+        }
+        let fixture_window = window.window_id();
+        cx.on_window_closed(move |cx, closed| {
+            if closed == fixture_window {
+                cx.quit();
+            }
+        })
+        .detach();
+    });
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn theme() -> Theme {
+        Theme::dark()
+    }
+
+    fn declared_captures(scenario: &Scenario, theme: &Theme) -> Vec<DeclaredCapture> {
+        replay(scenario, theme).captures
+    }
+
+    fn scenario(name: &str) -> &'static Scenario {
+        find_scenario(name).expect("the scenario is registered")
+    }
+
+    fn capture<'a>(captures: &'a [DeclaredCapture], name: &str) -> &'a DeclaredCapture {
+        captures
+            .iter()
+            .find(|capture| capture.name == name)
+            .unwrap_or_else(|| panic!("no capture {name}"))
+    }
+
+    #[test]
+    fn every_scenario_renders_at_the_reference_root_client() {
+        for scenario in scenarios() {
+            assert_eq!(scenario.client, (760., 518.), "{}", scenario.name);
+        }
+    }
+
+    #[test]
+    fn the_root_frame_divides_the_client_as_the_reference_does() {
+        // 64 search + 404 list + 50 footer = 518, inside the panel's edge.
+        let frame = frame(&theme(), ROOT_CLIENT);
+        assert_eq!(frame.search.y + frame.search.height, frame.list.y);
+        assert_eq!(frame.list.y + frame.list.height, frame.footer.y);
+        assert_eq!(frame.footer.y + frame.footer.height + PANEL_EDGE, 518.);
+        assert_eq!(frame.list.height, 518. - 2. * PANEL_EDGE - 64. - 50.);
+    }
+
+    #[test]
+    fn pending_scenarios_name_their_tickets_and_cover_the_three_board_sizes() {
+        for pending in pending_scenarios() {
+            assert!(
+                pending
+                    .ticket
+                    .starts_with("https://github.com/hoangvu12/pane/issues/"),
+                "{}",
+                pending.name
+            );
+            assert!(
+                find_scenario(pending.name)
+                    .unwrap_err()
+                    .contains(pending.ticket)
+            );
+        }
+        for client in [ROOT_CLIENT, SETTINGS_CLIENT, CLIPBOARD_CLIENT] {
+            assert!(pending_scenarios().iter().any(|p| p.client == client));
+        }
+        // Store and the snap HUD stay source-only references.
+        assert!(
+            pending_scenarios()
+                .iter()
+                .all(|p| p.board != "store" && p.board != "window-manager")
+        );
+    }
+
+    #[test]
+    fn the_root_rows_are_the_reference_boards_suggested_then_commands() {
+        let titles: Vec<_> = ROOT_ROWS.iter().map(|row| row.title).collect();
+        assert_eq!(
+            titles,
+            [
+                "Figma",
+                "Clipboard History",
+                "Left Half",
+                "Search Files",
+                "Plugin Store",
+                "Toggle Dark Mode",
+                "Lock Screen",
+                "Settings"
+            ]
+        );
+    }
+
+    #[test]
+    fn rows_are_laid_out_down_the_list_from_its_top_padding() {
+        let captures = declared_captures(scenario("root-rest"), &theme());
+        let rows = &capture(&captures, "rest").rows;
+        assert_eq!(rows.len(), ROOT_ROWS.len());
+        for (index, row) in rows.iter().enumerate() {
+            // Row i at the panel edge + header + list top padding, then
+            // one row height and one list gap per row before it.
+            let y = 1. + 64. + 4. + index as f32 * (44. + 2.);
+            assert_eq!(
+                row.rect,
+                Rect {
+                    x: 1. + 10.,
+                    y,
+                    width: 758. - 20.,
+                    height: 44.
+                }
+            );
+        }
+        // Everything fits above the list's bottom padding: nothing scrolls.
+        let last = rows.last().unwrap().rect;
+        assert!(last.y + last.height + 10. <= 1. + 64. + 402.);
+    }
+
+    #[test]
+    fn the_selected_scenario_moves_one_row_per_key_and_records_each_step() {
+        let captures = declared_captures(scenario("root-selected"), &theme());
+        let selected: Vec<_> = captures
+            .iter()
+            .map(|capture| capture.rows.iter().position(|row| row.selected))
+            .collect();
+        assert_eq!(selected, [Some(0), Some(1), Some(2)]);
+        assert_eq!(captures[2].after.len(), 2);
+    }
+
+    #[test]
+    fn hovering_marks_the_row_under_the_pointer_without_selecting_it() {
+        let captures = declared_captures(scenario("root-hover"), &theme());
+        let hover = capture(&captures, "hover");
+        let (x, y) = hover.pointer.expect("the pointer is in the window");
+        assert!(hover.rows[1].rect.contains((x, y)));
+        assert!(hover.rows[1].hovered && !hover.rows[1].selected);
+        assert!(hover.rows[0].selected && !hover.rows[0].hovered);
+        assert!(capture(&captures, "rest").pointer.is_none());
+
+        let captures = declared_captures(scenario("root-selected-hover"), &theme());
+        let both = capture(&captures, "selected-hover");
+        assert!(both.rows[2].hovered && both.rows[2].selected);
+    }
+
+    #[test]
+    fn the_footer_action_follows_the_selected_rows_kind() {
+        // The reference names the primary action by the selected row's
+        // kind: Figma is an application, Clipboard History a command.
+        let captures = declared_captures(scenario("root-selected"), &theme());
+        let actions: Vec<_> = captures.iter().map(|capture| capture.action).collect();
+        assert_eq!(
+            actions,
+            [
+                Some("Open Application"),
+                Some("Run Command"),
+                Some("Run Command")
+            ]
+        );
+    }
+
+    #[test]
+    fn pointer_steps_resolve_to_the_center_of_their_row() {
+        let replay = replay(scenario("root-hover"), &theme());
+        let pointer = replay
+            .steps
+            .iter()
+            .find(|step| matches!(step.step, Step::Pointer { .. }))
+            .expect("the hover scenario moves the pointer");
+        let row = &replay.captures[1].rows[1].rect;
+        assert_eq!(pointer.point, Some(row.center()));
+        assert!(
+            replay
+                .steps
+                .iter()
+                .filter(|step| step.point.is_some())
+                .count()
+                == 1
+        );
+    }
+
+    #[test]
+    fn typing_filters_by_title_and_escape_returns_to_rest() {
+        let captures = declared_captures(scenario("root-focus"), &theme());
+        let typed = capture(&captures, "focus-typed");
+        assert_eq!(typed.query, "clip");
+        let titles: Vec<_> = typed.rows.iter().map(|row| row.title).collect();
+        assert_eq!(titles, ["Clipboard History"]);
+        assert!(typed.rows[0].selected);
+        let back = capture(&captures, "back-to-rest");
+        assert_eq!(back.query, "");
+        assert_eq!(back.rows.len(), ROOT_ROWS.len());
+        assert!(back.rows[0].selected);
+    }
+
+    #[test]
+    fn rows_after_an_unavailable_reason_declare_only_a_height_floor() {
+        let captures = declared_captures(scenario("root-unavailable"), &theme());
+        let rows = &capture(&captures, "rest").rows;
+        assert!(!rows[0].height_is_floor);
+        assert!(rows[1].height_is_floor && rows[1].unavailable.is_some());
+    }
+
+    #[test]
+    fn the_perturbations_change_exactly_the_value_they_name() {
+        let base = theme();
+        let mut padded = theme();
+        Perturbation::RowPaddingPlus4.apply(&mut padded);
+        assert_eq!(
+            padded.geometry.row_padding_x,
+            base.geometry.row_padding_x + px(4.)
+        );
+        assert_eq!(hex(padded.row_selected), hex(base.row_selected));
+
+        let mut filled = theme();
+        Perturbation::SelectedFill.apply(&mut filled);
+        assert_eq!(hex(filled.row_selected), "#FFFFFF40");
+        assert_ne!(hex(base.row_selected), "#FFFFFF40");
+        assert_eq!(filled.geometry.row_padding_x, base.geometry.row_padding_x);
+
+        let mut hovered = theme();
+        Perturbation::HoverFill.apply(&mut hovered);
+        assert_eq!(hex(hovered.row_hover), "#FFFFFF33");
+        assert_eq!(hex(hovered.row_selected), hex(base.row_selected));
+        for &(name, perturbation) in PERTURBATIONS {
+            assert_eq!(Perturbation::parse(name), Ok(Some(perturbation)));
+            assert_eq!(perturbation.name(), name);
+        }
+    }
+
+    #[test]
+    fn arguments_parse_into_a_run_or_a_registry() {
+        let args = |text: &str| text.split(' ').map(str::to_owned).collect::<Vec<_>>();
+        assert_eq!(
+            parse_args(args(
+                "--scenario root-rest --manifest m.json --perturb selected-fill --material opaque"
+            )),
+            Ok(Command::Run(FixtureOptions {
+                scenario: "root-rest".into(),
+                data_dir: None,
+                theme: None,
+                material: Some("opaque".into()),
+                perturbation: Some(Perturbation::SelectedFill),
+                manifest: "m.json".into(),
+            }))
+        );
+        assert_eq!(
+            parse_args(args("--registry r.json")),
+            Ok(Command::Registry("r.json".into()))
+        );
+        assert!(parse_args(args("--scenario root-rest")).is_err());
+        assert!(parse_args(args("--perturb sideways")).is_err());
+        assert!(parse_args(args("--manifest")).is_err());
+    }
+
+    #[test]
+    fn the_registry_serializes_steps_for_the_capture_helpers() {
+        let json = serde_json::to_value(Registry {
+            kind: "pane-visual-fixture-registry",
+            scenarios: scenarios(),
+            pending: pending_scenarios(),
+        })
+        .unwrap();
+        let hover = &json["scenarios"][1];
+        assert_eq!(hover["name"], "root-hover");
+        assert_eq!(
+            hover["steps"][1],
+            serde_json::json!({ "action": "pointer", "row": 1 })
+        );
+        assert_eq!(hover["client"], serde_json::json!([760.0, 518.0]));
+    }
+}

@@ -1030,6 +1030,57 @@ fn arrow_keys_move_through_the_matches_while_the_query_keeps_focus(cx: &mut Test
 }
 
 #[gpui::test]
+fn the_production_scenario_edits_searches_selects_opens_and_back_navigates(
+    cx: &mut TestAppContext,
+) {
+    // The visual workbench's fixture data (#91) can match the reference by
+    // rendering the production components directly, which says nothing
+    // about the launcher's own wiring. This smoke is that missing half:
+    // the real adapter — the real launcher, its query field, its search,
+    // its selection and its navigation — edits, searches, selects, opens
+    // and back-navigates through the real sample components, so a fixture
+    // that renders beautifully can never hide a broken production path.
+    let (window, cx) = open_with(cx, pane::sample_commands());
+    assert!(
+        query_has_focus(&window, cx),
+        "root search opens ready to type"
+    );
+
+    // Edits: typing reaches the query field the launcher owns.
+    cx.simulate_input("script");
+    let view = settle(&window, cx);
+    assert_eq!(view.query(), Some("script"));
+    // Searches: the real root adapter narrows the real commands.
+    assert_eq!(
+        row_titles(&window, cx),
+        ["JavaScript sample", "TypeScript sample"]
+    );
+
+    // Selects: the keyboard moves the real selection, rows rendered.
+    cx.simulate_keystrokes("down");
+    let view = settle(&window, cx);
+    assert_eq!(view.selected, Some(1));
+    assert!(cx.debug_bounds("row-TypeScript sample").is_some());
+
+    // Opens: Enter opens the selected command's own screen.
+    cx.simulate_keystrokes("enter");
+    let view = settle(&window, cx);
+    assert_eq!(
+        (view.screen, view.title.as_str()),
+        (Screen::Command, "TypeScript sample")
+    );
+
+    // Back-navigates: Escape returns to root search, ready to edit again.
+    cx.simulate_keystrokes("escape");
+    let view = settle(&window, cx);
+    assert!(matches!(view.screen, Screen::Root { .. }));
+    assert_eq!(view.query(), Some(""));
+    assert!(query_has_focus(&window, cx));
+    cx.simulate_input("rust");
+    assert_eq!(row_titles(&window, cx), ["Rust sample"]);
+}
+
+#[gpui::test]
 fn a_query_that_matches_nothing_says_so_and_escape_clears_it(cx: &mut TestAppContext) {
     let (window, cx) = open_with(cx, pane::sample_commands());
     cx.simulate_input("zzz");
@@ -2174,10 +2225,17 @@ fn a_result_row_fades_its_pointer_washes(cx: &mut TestAppContext) {
     // the view's own — none of the pointer's.
     cx.simulate_click(row.center(), Modifiers::none());
     let view = settle(&window, cx);
-    assert_eq!(view.selected, Some(1), "the click selected the row");
+    // The click selected the row it was on and opened it: the settled view
+    // is the opened command's own screen, whose `selected` is its first
+    // item, so the command that opened — its title — is what proves which
+    // row the click selected.
     assert!(
         matches!(view.screen, Screen::Command),
         "the click opened the row"
+    );
+    assert_eq!(
+        view.title, "JavaScript sample",
+        "the click selected the row"
     );
     cx.simulate_mouse_move(
         gpui::point(px(-100.), px(-100.)),

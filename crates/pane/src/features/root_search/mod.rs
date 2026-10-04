@@ -21,7 +21,7 @@
 //! is reported as focused, and with no result the combo box itself is.
 
 use gpui::{
-    AnyElement, App, Context, Entity, Focusable, KeyBinding, Role, Subscription, Window,
+    AnyElement, App, Context, Div, Entity, Focusable, KeyBinding, Role, Subscription, Window,
     WindowControlArea, div, prelude::*, px,
 };
 use gpui_elements::editable_text::actions::DEFAULT_INPUT_CONTEXT;
@@ -31,6 +31,7 @@ use pane_core::{Keyboard, KeyboardAction};
 use crate::app::LauncherWindow;
 use crate::ui::icon::{Glyph, glyph};
 use crate::ui::input::TextEditingKeys;
+use crate::ui::theme::Theme;
 use crate::{SelectNext, SelectPrevious};
 
 const CONTEXT: &str = "RootSearch";
@@ -38,6 +39,13 @@ const CONTEXT: &str = "RootSearch";
 pub(crate) const ROOT_PLACEHOLDER: &str = "Search commands";
 /// The query field's placeholder in an opened command that searches.
 pub(crate) const COMMAND_PLACEHOLDER: &str = "Search";
+
+/// The search area's key context: the query field's ancestor that the
+/// selection keys' field context names (the visual workbench's root
+/// fixture, #91, gives its search area the same context).
+pub(crate) fn search_context() -> &'static str {
+    CONTEXT
+}
 
 /// The context of the query field with focus, as a binding's context is
 /// written: the search field inside the window.
@@ -165,9 +173,6 @@ impl LauncherWindow {
     ) -> AnyElement {
         let input = &self.query.input;
         let visuals = crate::settings::visuals(cx);
-        let theme = &visuals.theme;
-        let geometry = &theme.geometry;
-        let typography = &theme.typography;
         div()
             .id("search")
             .debug_selector(|| "search".into())
@@ -184,54 +189,70 @@ impl LauncherWindow {
             .min_h(px(0.))
             .flex()
             .flex_col()
-            .child(
-                div()
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .gap(geometry.search_gap)
-                    .h(geometry.search_height)
-                    .px(geometry.search_padding_x)
-                    .border_b_1()
-                    .border_color(theme.hairline_soft)
-                    // The magnifier's wrapper is the search header's drag
-                    // region: with the native title bar hidden, the window
-                    // can be moved by grabbing the icon — the editable
-                    // field itself never drags. The hit target is a
-                    // 44×44 square, while −12px horizontal margins keep
-                    // its layout box at the glyph's 20px: the header's
-                    // alignment is unchanged, and the input keeps its
-                    // 14px gap minus the 12px bleed — 2px of clear space
-                    // before the editable field begins.
-                    .child(
-                        div()
-                            .window_control_area(WindowControlArea::Drag)
-                            .flex_none()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .size(px(44.))
-                            .mx(px(-12.))
-                            .child(glyph(Glyph::Search, px(20.), theme.text_muted)),
-                    )
-                    .child(
-                        text_input("query")
-                            .state(input.downgrade())
-                            .placeholder(placeholder)
-                            .placeholder_color(theme.text_placeholder)
-                            .caret_color(theme.accent_text)
-                            .selection_color(theme.row_selected)
-                            .marked_color(theme.accent_text)
-                            .text_size(typography.search_size)
-                            .text_color(theme.text_query)
-                            .font_family(typography.family.clone())
-                            .w_full()
-                            .min_w(px(0.))
-                            .whitespace_nowrap()
-                            .overflow_x_scroll(),
-                    ),
-            )
+            .child(search_header(input, placeholder, &visuals.theme))
             .child(list)
             .into_any_element()
     }
+}
+
+/// The search header's chrome: the reference's 64px row — the magnifier,
+/// the 20px horizontal padding, the 14px gap and the hairline below —
+/// around the editable text element `input`, which is the caller's own
+/// (the launcher's query field, or another search field built the same
+/// way).
+///
+/// The magnifier's wrapper is the search header's drag region: with the
+/// native title bar hidden, the window can be moved by grabbing the icon —
+/// the editable field itself never drags. The hit target is a 44×44
+/// square, while −12px horizontal margins keep its layout box at the
+/// glyph's 20px: the header's alignment is unchanged, and the input keeps
+/// its 14px gap minus the 12px bleed — 2px of clear space before the
+/// editable field begins.
+///
+/// Both the launcher's search screens ([`LauncherWindow::render_search`])
+/// and the visual workbench's root fixture (#91) compose this header, so
+/// the fixture measures the production chrome rather than a copy of it.
+pub(crate) fn search_header(
+    input: &Entity<EditableTextState>,
+    placeholder: &'static str,
+    theme: &Theme,
+) -> Div {
+    let geometry = &theme.geometry;
+    let typography = &theme.typography;
+    div()
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(geometry.search_gap)
+        .h(geometry.search_height)
+        .px(geometry.search_padding_x)
+        .border_b_1()
+        .border_color(theme.hairline_soft)
+        .child(
+            div()
+                .window_control_area(WindowControlArea::Drag)
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .size(px(44.))
+                .mx(px(-12.))
+                .child(glyph(Glyph::Search, px(20.), theme.text_muted)),
+        )
+        .child(
+            text_input("query")
+                .state(input.downgrade())
+                .placeholder(placeholder)
+                .placeholder_color(theme.text_placeholder)
+                .caret_color(theme.accent_text)
+                .selection_color(theme.row_selected)
+                .marked_color(theme.accent_text)
+                .text_size(typography.search_size)
+                .text_color(theme.text_query)
+                .font_family(typography.family.clone())
+                .w_full()
+                .min_w(px(0.))
+                .whitespace_nowrap()
+                .overflow_x_scroll(),
+        )
 }

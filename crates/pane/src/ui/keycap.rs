@@ -76,12 +76,17 @@ pub(crate) fn keycap(key: Key, theme: &Theme) -> Stateful<Div> {
 pub(crate) fn binding_keycap(binding: &Binding, theme: &Theme) -> Stateful<Div> {
     // A binding of the plain Enter key keeps the Enter glyph; anything
     // else — another key, or a modifier with it — is named in text.
-    let (control, alt, _shift, platform, function) = binding.modifiers();
-    let plain_enter = !control && !alt && !platform && !function && binding.key() == "enter";
-    if plain_enter {
+    if is_plain_enter(binding) {
         return keycap(Key::Enter, theme);
     }
     cap(binding.to_string(), theme, div().child(binding.to_string()))
+}
+
+/// Whether `binding` is the plain Enter key, which [`binding_keycap`]
+/// shows as the Enter glyph rather than in text.
+pub(crate) fn is_plain_enter(binding: &Binding) -> bool {
+    let (control, alt, _shift, platform, function) = binding.modifiers();
+    !control && !alt && !platform && !function && binding.key() == "enter"
 }
 
 /// One cap of the keycap chrome: `name` for assistive technology, the
