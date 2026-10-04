@@ -43,6 +43,7 @@ pub use host_settings::{
 #[doc(hidden)]
 pub use http::HttpLimits;
 pub use keyboard::{Binding, Keyboard, KeyboardAction};
+pub use launcher::clipboard_view;
 pub use launcher::{
     AliasOutcome, ApplicationUpdate, BuildFailure, CommandRegistration, ComputedAnswer,
     CustomViewSnapshot, Development, FormField, FormView, HotkeyOutcome, Launcher, LauncherView,

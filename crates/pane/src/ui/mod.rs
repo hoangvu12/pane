@@ -44,6 +44,7 @@ pub(crate) mod result_row;
 pub(crate) mod select;
 pub(crate) mod settings_shell;
 pub(crate) mod shell;
+pub(crate) mod split_view;
 pub(crate) mod theme;
 
 use material::Material;

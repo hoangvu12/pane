@@ -128,6 +128,10 @@ _Avoid_: Clipboard (the system's current contents, which deleting history never 
 How long Pane keeps each clipboard history item after it was copied (7 days unless the user chose otherwise), counted from the copy, so disabling or re-enabling the package or stopping Pane never extends it. Clearing history deletes the items and keeps history on; turning it off and deleting it (the specification's Disable and delete history) also stops keeping what is copied.
 _Avoid_: Expiry date (an item's deadline follows from its copy and the retention), TTL
 
+**Clipboard history view**:
+How Pane's launcher shows the Clipboard History default extension's command: its kept items, newest first under Today, Yesterday and Older in local time, beside a plain-text preview of the selected one. Pane reads the items itself from the package's clipboard history, only for its own registered default extension (never by a command's title), and copies, deletes, pauses and resumes through the history's existing operations after checking the item, the screen and the package's code are still the ones read. The extension's own list stays reachable for the rest of its controls (retention, exclusions, clearing, turning off and deleting); every other command keeps its list. The view's projection calls each item it reads a record, as the approved contract does; the reference's word is clip, which only its fixture shows to users.
+_Avoid_: Clipboard manager, paste history
+
 **Global hotkey**:
 A key combination the user assigns to an installed command in Pane, which opens that command in Pane's window while any application has focus; Pane keeps it as its own record and registers it with the system only while the command's extension is enabled.
 _Avoid_: Shortcut (any key combination, including Pane's own keys), keybinding, alias

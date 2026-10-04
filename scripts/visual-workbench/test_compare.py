@@ -262,6 +262,53 @@ class ResultBoards(unittest.TestCase):
         self.assertIsNone(compare.measure_text(image, (74, 56, 40, 40), None, (255, 255, 255)))
 
 
+class SplitView(unittest.TestCase):
+    """The clipboard split view's measures (#102)."""
+
+    panel = (22, 23, 26)
+
+    def test_a_vertical_rule_is_found_beside_a_dark_card(self):
+        image = Image.new("RGB", (200, 120), self.panel)
+        draw = ImageDraw.Draw(image)
+        draw.line((59, 0, 59, 119), fill=over_white(self.panel, 0.06))      # the list's rule
+        draw.rectangle((72, 10, 190, 110), fill=over_black(self.panel, 0.24))  # a card beyond it
+        self.assertEqual(compare.vline(image, (54, 66), (20, 100)), 59)
+
+    def test_a_cards_edges_are_found_inside_its_ring_past_its_content(self):
+        image = Image.new("RGB", (300, 200), self.panel)
+        draw = ImageDraw.Draw(image)
+        fill = over_black(self.panel, 0.24)
+        # The card at (40, 20, 220, 160): a lighter 1px ring, then the fill,
+        # with bright text across its upper part.
+        draw.rectangle((40, 20, 259, 179), fill=over_white(fill, 0.07))
+        draw.rectangle((41, 21, 258, 178), fill=fill)
+        draw.rectangle((60, 40, 240, 70), fill=(217, 218, 221))
+        found = compare.card_edges(image, (40, 20, 220, 160))
+        self.assertEqual(found["edges"], (41, 21, 218, 158))
+        self.assertAlmostEqual(compare.black_alpha(found["fill"], found["background"]), 0.24 * 255, delta=2)
+
+    def test_a_lighter_card_has_no_dark_edges(self):
+        image = Image.new("RGB", (300, 200), self.panel)
+        ImageDraw.Draw(image).rectangle((40, 20, 259, 179), fill=(201, 238, 106))  # a color preview
+        self.assertIsNone(compare.card_edges(image, (40, 20, 220, 160)))
+
+    def test_a_tabs_wash_is_read_against_the_strip_above_not_its_neighbour(self):
+        image = Image.new("RGB", (200, 60), self.panel)
+        draw = ImageDraw.Draw(image)
+        on = over_white(self.panel, 0.10)
+        # A chosen tab at (10, 15, 40, 30), its ring at 6%, its label; an
+        # unchosen neighbour 4px to its right.
+        draw.rounded_rectangle((10, 15, 49, 44), radius=8, fill=over_white(on, 0.06))
+        draw.rounded_rectangle((11, 16, 48, 43), radius=7, fill=on)
+        draw.rectangle((20, 24, 38, 34), fill=(255, 255, 255))
+        draw.rectangle((60, 24, 80, 34), fill=(154, 155, 160))
+        chosen = compare.tab_wash(image, (10, 15, 40, 30))
+        self.assertAlmostEqual(chosen["alpha"], 0.10 * 255, delta=1.5)
+        self.assertEqual((chosen["edges"][0], chosen["edges"][2]), (10, 40))
+        rest = compare.tab_wash(image, (53, 15, 34, 30))
+        self.assertAlmostEqual(rest["alpha"], 0, delta=0.5)
+
+
 class Accepted(unittest.TestCase):
     def test_a_failing_check_with_a_disposition_is_accepted_not_failed(self):
         report = compare.Report()

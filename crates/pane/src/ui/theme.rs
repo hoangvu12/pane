@@ -224,6 +224,10 @@ pub(crate) struct Theme {
     /// `crate::ui::footer::footer_row`.
     pub(crate) footer_order_fill: Hsla,
 
+    /// The split view's own tokens (the reference's clipboard board):
+    /// see [`SplitTokens`].
+    pub(crate) split: SplitTokens,
+
     // -- Type and geometry --------------------------------------------------
     /// Families, sizes and weights.
     pub(crate) typography: Typography,
@@ -857,6 +861,8 @@ impl Theme {
             popover_drop: color(0x000000BF),
             footer_order_fill: color(0x00000001),
 
+            split: SplitTokens::dark(),
+
             typography: Typography::shared(),
             geometry: Geometry::shared(),
         }
@@ -953,6 +959,8 @@ impl Theme {
             popover_outline: color(0x00000033),
             popover_drop: color(0x00000040),
             footer_order_fill: color(0x00000001),
+
+            split: SplitTokens::light(),
 
             typography: Typography::shared(),
             geometry: Geometry::shared(),
@@ -1132,6 +1140,311 @@ impl Geometry {
             keycap_compact_padding_x: px(4.),
             key_gap: px(3.),
             popover_radius: px(14.),
+        }
+    }
+}
+
+/// The split view's tokens: the reference's clipboard board (#102) — its
+/// 64px header with the back button, the command's chip and the capture
+/// button; the 46px tab strip; the 360px list of 44px rows beside the
+/// preview card; and the 52px footer. Rows, section labels, keycaps and
+/// footer buttons are the launcher's own families and take their tokens.
+///
+/// The tones and the code, color, link and image previews are the
+/// reference fixture's: Pane keeps text alone and guesses no kind of it,
+/// so only the visual workbench's fixture draws them (#100).
+#[derive(Clone, Debug)]
+pub(crate) struct SplitTokens {
+    /// The header: its height and its left and right padding (14, 12),
+    /// the gap between its parts (12).
+    pub(crate) header_height: Pixels,
+    pub(crate) header_padding_left: Pixels,
+    pub(crate) header_padding_right: Pixels,
+    pub(crate) header_gap: Pixels,
+    /// The back button: 32 square, radius 8, a 16px glyph, white 6% under
+    /// #C9CACE.
+    pub(crate) back_size: Pixels,
+    pub(crate) back_radius: Pixels,
+    pub(crate) back_glyph: Pixels,
+    pub(crate) back_fill: Hsla,
+    pub(crate) back_text: Hsla,
+    /// The command's chip: 30 high, padding 6 left and 10 right, gap 7,
+    /// radius 8, 13px/500, white 8% with a white 8% inset ring; its tile
+    /// 20 square, radius 5, white 10%, a 12px glyph.
+    pub(crate) chip_height: Pixels,
+    pub(crate) chip_padding_left: Pixels,
+    pub(crate) chip_padding_right: Pixels,
+    pub(crate) chip_gap: Pixels,
+    pub(crate) chip_radius: Pixels,
+    pub(crate) chip_size: Pixels,
+    pub(crate) chip_fill: Hsla,
+    pub(crate) chip_edge: Hsla,
+    pub(crate) chip_tile: Pixels,
+    pub(crate) chip_tile_radius: Pixels,
+    pub(crate) chip_tile_fill: Hsla,
+    pub(crate) chip_glyph: Pixels,
+    /// The capture button's glyph (15).
+    pub(crate) capture_glyph: Pixels,
+    /// The tab strip: 46 high, 14px either side, 4 between tabs.
+    pub(crate) tabs_height: Pixels,
+    pub(crate) tabs_padding_x: Pixels,
+    pub(crate) tabs_gap: Pixels,
+    /// A tab: 30 high, 12px either side, radius 8, 12.5px/500; #9A9BA0 at
+    /// rest, white 4% and #EDEDEF on hover, white 10% and white with a
+    /// white 6% inset ring while chosen.
+    pub(crate) tab_height: Pixels,
+    pub(crate) tab_padding_x: Pixels,
+    pub(crate) tab_radius: Pixels,
+    pub(crate) tab_size: Pixels,
+    pub(crate) tab_text: Hsla,
+    pub(crate) tab_hover: Hsla,
+    pub(crate) tab_hover_text: Hsla,
+    pub(crate) tab_on: Hsla,
+    pub(crate) tab_on_text: Hsla,
+    pub(crate) tab_on_edge: Hsla,
+    /// The strip's caption: 12px, a 14px glyph 6px before it.
+    pub(crate) caption_size: Pixels,
+    pub(crate) caption_glyph: Pixels,
+    pub(crate) caption_gap: Pixels,
+    /// The list: 360 wide with its 1px rule on the right, padded 2 above,
+    /// 8 either side and 10 below.
+    pub(crate) list_width: Pixels,
+    /// The most of a narrower window the list takes (half), so the
+    /// preview keeps room beside it.
+    pub(crate) list_max_share: f32,
+    pub(crate) list_padding_top: Pixels,
+    pub(crate) list_padding_x: Pixels,
+    pub(crate) list_padding_bottom: Pixels,
+    /// A row's title (13.5px/500) and its time (Geist Mono 11.5).
+    pub(crate) title_size: Pixels,
+    pub(crate) time_size: Pixels,
+    /// A color record's swatch ring (white 18%).
+    pub(crate) swatch_edge: Hsla,
+    /// The note in place of rows: 40 above and below, 16 either side, 13px.
+    pub(crate) empty_padding_y: Pixels,
+    pub(crate) empty_padding_x: Pixels,
+    pub(crate) empty_size: Pixels,
+    /// The preview pane's padding (12), and its card: radius 12, black 24%
+    /// with a white 7% inset ring.
+    pub(crate) preview_padding: Pixels,
+    pub(crate) preview_radius: Pixels,
+    pub(crate) preview_fill: Hsla,
+    pub(crate) preview_edge: Hsla,
+    /// Plain text, previewed: padding 28 by 30, 20px at line height 1.5
+    /// with -.005em of tracking.
+    pub(crate) text_padding_y: Pixels,
+    pub(crate) text_padding_x: Pixels,
+    pub(crate) text_size: Pixels,
+    pub(crate) text_line_height: f32,
+    pub(crate) text_tracking: f32,
+    /// The fixture's code preview: padding 26 by 28, Geist Mono 14.5 at
+    /// line height 1.8 in #D9DADD, line numbers 12 wide in #5F6066, 18
+    /// before the line; the reference's keyword, function, number and
+    /// string colors.
+    pub(crate) code_padding_y: Pixels,
+    pub(crate) code_padding_x: Pixels,
+    pub(crate) code_size: Pixels,
+    pub(crate) code_line_height: f32,
+    pub(crate) code_number_width: Pixels,
+    pub(crate) code_gap: Pixels,
+    pub(crate) code_text: Hsla,
+    pub(crate) code_number: Hsla,
+    pub(crate) code_keyword: Hsla,
+    pub(crate) code_function: Hsla,
+    pub(crate) code_value: Hsla,
+    pub(crate) code_string: Hsla,
+    /// The fixture's color preview: its hex (32px/500 Mono, -.02em) and
+    /// values (13px Mono) in black 80% and 66%, 6 apart, padded 24 by 26.
+    pub(crate) color_hex_size: Pixels,
+    pub(crate) color_hex_tracking: f32,
+    pub(crate) color_value_size: Pixels,
+    pub(crate) color_hex_text: Hsla,
+    pub(crate) color_value_text: Hsla,
+    pub(crate) color_gap: Pixels,
+    pub(crate) color_padding_y: Pixels,
+    pub(crate) color_padding_x: Pixels,
+    /// The fixture's link preview: a 44px tile (radius 11, a 22px glyph),
+    /// the domain at 22px/500 and the address in 13px Mono #A3A4A9, 10
+    /// apart.
+    pub(crate) link_tile: Pixels,
+    pub(crate) link_tile_radius: Pixels,
+    pub(crate) link_glyph: Pixels,
+    pub(crate) link_domain_size: Pixels,
+    pub(crate) link_url_size: Pixels,
+    pub(crate) link_url_text: Hsla,
+    pub(crate) link_gap: Pixels,
+    pub(crate) link_padding: Pixels,
+    /// The fixture's image placeholder: the hatch (white 5% over #15161A),
+    /// a 28px glyph, the label at 13px and the size at 12px Mono, 8 apart.
+    pub(crate) hatch_fill: Hsla,
+    pub(crate) hatch_stripe: Hsla,
+    pub(crate) image_glyph: Pixels,
+    pub(crate) image_text: Hsla,
+    pub(crate) image_size: Pixels,
+    pub(crate) image_dims_size: Pixels,
+    pub(crate) image_gap: Pixels,
+    /// The hatch drawing's side: one stripe pattern, 1:1, clipped by the
+    /// card (the reference's card is 556×414).
+    pub(crate) hatch_size: Pixels,
+    /// The footer: 52 high, padded 16 left and 8 right, its two sides 16
+    /// apart; the clock glyph (16) 10 before the copied line.
+    pub(crate) footer_height: Pixels,
+    pub(crate) footer_gap: Pixels,
+    pub(crate) footer_lead_gap: Pixels,
+    pub(crate) footer_glyph: Pixels,
+    /// The fixture tiles' tones: (fill, glyph) for the reference's
+    /// terminal, code, web, chat and folder sources.
+    pub(crate) tone_term: (Hsla, Hsla),
+    pub(crate) tone_code: (Hsla, Hsla),
+    pub(crate) tone_web: (Hsla, Hsla),
+    pub(crate) tone_chat: (Hsla, Hsla),
+    pub(crate) tone_folder: (Hsla, Hsla),
+}
+
+impl SplitTokens {
+    /// The derived light values: the white overlays become black ones and
+    /// the reference's light inks dark, as the light palette derives its
+    /// own; the geometry and the fixture tones are the dark ones. A
+    /// proposal, not reference truth.
+    fn light() -> SplitTokens {
+        SplitTokens {
+            back_fill: color(0x0000000F),
+            back_text: color(0x3B3D44FF),
+            chip_fill: color(0x00000012),
+            chip_edge: color(0x00000014),
+            chip_tile_fill: color(0x00000014),
+            tab_text: color(0x575A63FF),
+            tab_hover: color(0x0000000A),
+            tab_hover_text: color(0x202126FF),
+            tab_on: color(0x00000016),
+            tab_on_text: color(0x111214FF),
+            tab_on_edge: color(0x0000000F),
+            swatch_edge: color(0x0000002E),
+            preview_fill: color(0x0000000A),
+            preview_edge: color(0x00000012),
+            code_text: color(0x2A2B31FF),
+            code_number: color(0x8A8C93FF),
+            code_keyword: color(0x6A4FC4FF),
+            code_function: color(0x1D62C8FF),
+            code_value: color(0xA65A12FF),
+            code_string: color(0x1F7A4CFF),
+            color_hex_text: color(0x000000CC),
+            color_value_text: color(0x000000A8),
+            link_url_text: color(0x575A63FF),
+            hatch_fill: color(0xE6E7EBFF),
+            hatch_stripe: color(0x0000000D),
+            image_text: color(0x575A63FF),
+            ..SplitTokens::dark()
+        }
+    }
+
+    /// The reference's dark values, as authored: its geometry, its colors
+    /// and the fixture's tones.
+    fn dark() -> SplitTokens {
+        SplitTokens {
+            header_height: px(64.),
+            header_padding_left: px(14.),
+            header_padding_right: px(12.),
+            header_gap: px(12.),
+            back_size: px(32.),
+            back_radius: px(8.),
+            back_glyph: px(16.),
+            back_fill: color(0xFFFFFF0F),
+            back_text: color(0xC9CACEFF),
+            chip_height: px(30.),
+            chip_padding_left: px(6.),
+            chip_padding_right: px(10.),
+            chip_gap: px(7.),
+            chip_radius: px(8.),
+            chip_size: px(13.),
+            chip_fill: color(0xFFFFFF14),
+            chip_edge: color(0xFFFFFF14),
+            chip_tile: px(20.),
+            chip_tile_radius: px(5.),
+            chip_tile_fill: color(0xFFFFFF1A),
+            chip_glyph: px(12.),
+            capture_glyph: px(15.),
+            tabs_height: px(46.),
+            tabs_padding_x: px(14.),
+            tabs_gap: px(4.),
+            tab_height: px(30.),
+            tab_padding_x: px(12.),
+            tab_radius: px(8.),
+            tab_size: px(12.5),
+            tab_text: color(0x9A9BA0FF),
+            tab_hover: color(0xFFFFFF0A),
+            tab_hover_text: color(0xEDEDEFFF),
+            tab_on: color(0xFFFFFF1A),
+            tab_on_text: color(0xFFFFFFFF),
+            tab_on_edge: color(0xFFFFFF0F),
+            caption_size: px(12.),
+            caption_glyph: px(14.),
+            caption_gap: px(6.),
+            list_width: px(360.),
+            list_max_share: 0.5,
+            list_padding_top: px(2.),
+            list_padding_x: px(8.),
+            list_padding_bottom: px(10.),
+            title_size: px(13.5),
+            time_size: px(11.5),
+            swatch_edge: color(0xFFFFFF2E),
+            empty_padding_y: px(40.),
+            empty_padding_x: px(16.),
+            empty_size: px(13.),
+            preview_padding: px(12.),
+            preview_radius: px(12.),
+            preview_fill: color(0x0000003D),
+            preview_edge: color(0xFFFFFF12),
+            text_padding_y: px(28.),
+            text_padding_x: px(30.),
+            text_size: px(20.),
+            text_line_height: 1.5,
+            text_tracking: -0.005,
+            code_padding_y: px(26.),
+            code_padding_x: px(28.),
+            code_size: px(14.5),
+            code_line_height: 1.8,
+            code_number_width: px(12.),
+            code_gap: px(18.),
+            code_text: color(0xD9DADDFF),
+            code_number: color(0x5F6066FF),
+            code_keyword: color(0xC6B0FFFF),
+            code_function: color(0x8FC3FFFF),
+            code_value: color(0xFFC285FF),
+            code_string: color(0x86DEAFFF),
+            color_hex_size: px(32.),
+            color_hex_tracking: -0.02,
+            color_value_size: px(13.),
+            color_hex_text: color(0x000000CC),
+            color_value_text: color(0x000000A8),
+            color_gap: px(6.),
+            color_padding_y: px(24.),
+            color_padding_x: px(26.),
+            link_tile: px(44.),
+            link_tile_radius: px(11.),
+            link_glyph: px(22.),
+            link_domain_size: px(22.),
+            link_url_size: px(13.),
+            link_url_text: color(0xA3A4A9FF),
+            link_gap: px(10.),
+            link_padding: px(20.),
+            hatch_fill: color(0x15161AFF),
+            hatch_stripe: color(0xFFFFFF0D),
+            image_glyph: px(28.),
+            image_text: color(0xA3A4A9FF),
+            image_size: px(13.),
+            image_dims_size: px(12.),
+            image_gap: px(8.),
+            hatch_size: px(600.),
+            footer_height: px(52.),
+            footer_gap: px(16.),
+            footer_lead_gap: px(10.),
+            footer_glyph: px(16.),
+            tone_term: (color(0x2A2C30FF), color(0xE6E7EAFF)),
+            tone_code: (color(0x173352FF), color(0x8FC3FFFF)),
+            tone_web: (color(0x4A2E17FF), color(0xFFC285FF)),
+            tone_chat: (color(0x163B3FFF), color(0x86D9E0FF)),
+            tone_folder: (color(0x2B3542FF), color(0xA9C6E8FF)),
         }
     }
 }

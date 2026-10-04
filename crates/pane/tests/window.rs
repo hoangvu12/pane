@@ -13,6 +13,9 @@ mod platforms;
 #[path = "support/settle.rs"]
 mod settle;
 
+#[path = "../../pane-core/tests/support/artifacts.rs"]
+mod artifacts;
+
 use settle::{settle, until};
 
 /// A sample command: its component and the language it is written in.
@@ -2970,4 +2973,394 @@ fn a_window_that_stops_drawing_settles_its_arrival_on_the_next_frame_it_draws(
         "the arrival settled while the window did not draw"
     );
     assert_eq!(settle_frames(cx), 0, "the shown frame asked for nothing");
+}
+
+/// Pane's Clipboard History in the split view (#102), through the window:
+/// the real default extension from `cargo xtask guests`, acquired from an
+/// artifact source on 127.0.0.1, over a fake system clipboard that never
+/// touches the real one.
+mod clipboard_split {
+    use std::fs;
+    use std::sync::{Arc, Mutex};
+
+    use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, prelude::*};
+    use pane::LauncherWindow;
+    use pane_core::clipboard::{
+        CaptureState, ClipboardSystem, Content, ManualClock, Markers, Observation, Sink, Watch,
+    };
+    use pane_core::defaults::ArtifactSource;
+    use pane_core::{DefaultExtension, Launcher, PackageIdentity, Runtime, Screen};
+    use tempfile::TempDir;
+
+    use super::artifacts::Artifacts;
+    use super::{open_launcher, settle, until};
+
+    #[derive(Default)]
+    struct Kept {
+        sink: Option<Arc<dyn Sink>>,
+        written: Vec<String>,
+    }
+
+    /// A system clipboard that records what Pane writes and reports only
+    /// the copies a test makes.
+    #[derive(Clone, Default)]
+    struct FakeClipboard(Arc<Mutex<Kept>>);
+
+    struct FakeWatch(Arc<Mutex<Kept>>);
+
+    impl Drop for FakeWatch {
+        fn drop(&mut self) {
+            self.0.lock().unwrap().sink = None;
+        }
+    }
+
+    impl FakeClipboard {
+        /// `text` copied from `source`: whether Pane watched.
+        fn copy(&self, text: &str, source: Option<&str>) -> bool {
+            let Some(sink) = self.0.lock().unwrap().sink.clone() else {
+                return false;
+            };
+            let ticket = sink.reading();
+            sink.observed(
+                ticket,
+                Observation {
+                    content: Content::Text(text.into()),
+                    markers: Markers::default(),
+                    source: source.map(str::to_owned),
+                },
+            );
+            true
+        }
+
+        fn written(&self) -> Vec<String> {
+            self.0.lock().unwrap().written.clone()
+        }
+    }
+
+    impl ClipboardSystem for FakeClipboard {
+        fn unavailable(&self) -> Option<String> {
+            None
+        }
+
+        fn watch(&self, sink: Arc<dyn Sink>) -> Result<Watch, String> {
+            self.0.lock().unwrap().sink = Some(sink);
+            Ok(Watch::new(FakeWatch(self.0.clone())))
+        }
+
+        fn write_text(&self, text: &str) -> Result<(), String> {
+            self.0.lock().unwrap().written.push(text.into());
+            Ok(())
+        }
+    }
+
+    /// The assembled Clipboard History package's files.
+    fn package_files() -> Vec<(String, Vec<u8>)> {
+        let folder = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/guests/packages/clipboard-history");
+        assert!(
+            folder.is_dir(),
+            "{} is missing; run `cargo xtask guests`",
+            folder.display()
+        );
+        let mut files: Vec<(String, Vec<u8>)> = fs::read_dir(&folder)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.is_file())
+            .map(|path| {
+                let name = path.file_name().unwrap().to_str().unwrap().to_owned();
+                (name, fs::read(&path).unwrap())
+            })
+            .collect();
+        files.sort();
+        files
+    }
+
+    /// One test's Pane: its data, artifact source, clock and clipboard.
+    struct World {
+        data: TempDir,
+        artifacts: Artifacts,
+        clipboard: FakeClipboard,
+        clock: Arc<ManualClock>,
+    }
+
+    impl World {
+        fn new() -> World {
+            let world = World {
+                data: tempfile::tempdir().unwrap(),
+                artifacts: Artifacts::start(),
+                clipboard: FakeClipboard::default(),
+                clock: ManualClock::at(1_791_208_920_000),
+            };
+            let files = package_files();
+            let manifest: serde_json::Value = serde_json::from_slice(
+                &files
+                    .iter()
+                    .find(|(path, _)| path == "pane.json")
+                    .expect("the package has a pane.json")
+                    .1,
+            )
+            .unwrap();
+            let borrowed: Vec<(&str, Vec<u8>)> = files
+                .iter()
+                .map(|(path, contents)| (path.as_str(), contents.clone()))
+                .collect();
+            world.artifacts.publish(
+                "clipboard-history",
+                manifest["version"].as_str().unwrap(),
+                &borrowed,
+            );
+            world
+        }
+
+        /// Pane with Clipboard History acquired as its default extension,
+        /// history on and `texts` copied in order (the last newest).
+        fn launcher(&self, cx: &mut TestAppContext, texts: &[&str]) -> Launcher {
+            cx.executor().allow_parking();
+            let launcher = Launcher::with_packages(
+                Runtime::start(),
+                vec![],
+                self.data.path().join("extensions"),
+            )
+            .with_defaults(
+                ArtifactSource::local(self.artifacts.url()).unwrap(),
+                vec![DefaultExtension {
+                    id: "clipboard-history".into(),
+                    title: "Clipboard History".into(),
+                }],
+            )
+            .with_clock(self.clock.clone())
+            .with_clipboard(Arc::new(self.clipboard.clone()));
+            cx.foreground_executor()
+                .block_on(launcher.acquire_defaults());
+            open_command(cx, &launcher, COMMAND);
+            let view = launcher.clipboard_history().expect("the history is shown");
+            launcher
+                .set_clipboard_capture(&view, CaptureState::On)
+                .unwrap();
+            for text in texts {
+                assert!(self.clipboard.copy(text, Some("notepad.exe")));
+                self.clock.advance(std::time::Duration::from_secs(60));
+            }
+            launcher.show_root_search();
+            launcher
+        }
+    }
+
+    const COMMAND: &str = "default:clipboard-history#clipboard-history";
+
+    /// Opens the command whose root row has id `id`, through the launcher.
+    fn open_command(cx: &mut TestAppContext, launcher: &Launcher, id: &str) {
+        launcher.show_root_search();
+        cx.foreground_executor()
+            .block_on(launcher.set_query("clipboard"));
+        let index = launcher
+            .view()
+            .rows
+            .iter()
+            .position(|row| row.id == id)
+            .expect("the command's row");
+        launcher.select(index);
+        cx.foreground_executor()
+            .block_on(launcher.activate_selected());
+        assert_eq!(launcher.view().screen, Screen::Command);
+    }
+
+    /// Opens the window over `launcher` and the history in it, as a user
+    /// does: typing in root search, then Enter.
+    fn open_history(
+        cx: &mut TestAppContext,
+        launcher: Launcher,
+    ) -> (Entity<LauncherWindow>, &mut VisualTestContext) {
+        let (window, cx) = open_launcher(cx, launcher);
+        cx.simulate_input("clipboard history");
+        until(&window, cx, |view| {
+            view.rows.first().is_some_and(|row| row.id == COMMAND)
+        });
+        cx.simulate_keystrokes("enter");
+        until(&window, cx, |view| view.screen == Screen::Command);
+        assert!(split_shown(&window, cx), "the split view shows");
+        (window, cx)
+    }
+
+    fn split_shown(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) -> bool {
+        cx.read_entity(window, |window, _| window.clipboard_split_shown())
+    }
+
+    fn listed(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) -> Vec<String> {
+        cx.read_entity(window, |window, _| {
+            window
+                .launcher()
+                .clipboard_history()
+                .map(|view| view.records.into_iter().map(|record| record.text).collect())
+                .unwrap_or_default()
+        })
+    }
+
+    fn click(cx: &mut VisualTestContext, selector: &'static str) {
+        let bounds = cx
+            .debug_bounds(selector)
+            .unwrap_or_else(|| panic!("{selector} is drawn"));
+        cx.simulate_click(bounds.center(), Modifiers::none());
+    }
+
+    #[gpui::test]
+    fn a_click_selects_a_record_without_copying_it_and_enter_copies_it(cx: &mut TestAppContext) {
+        let world = World::new();
+        let launcher = world.launcher(cx, &["first", "second", "third"]);
+        let (window, cx) = open_history(cx, launcher);
+        // Newest first, the newest selected and previewed as text.
+        assert_eq!(listed(&window, cx), ["third", "second", "first"]);
+        for row in ["clip-third", "clip-second", "clip-first"] {
+            assert!(cx.debug_bounds(row).is_some(), "{row} is drawn");
+        }
+        assert!(cx.debug_bounds("clipboard-preview-text").is_some());
+        assert!(cx.debug_bounds("section-Today").is_some());
+
+        click(cx, "clip-first");
+        settle(&window, cx);
+        assert!(world.clipboard.written().is_empty(), "a click only selects");
+
+        cx.simulate_keystrokes("enter");
+        settle(&window, cx);
+        assert_eq!(world.clipboard.written(), ["first"]);
+        assert!(
+            cx.debug_bounds("status-result").is_some(),
+            "the outcome shows"
+        );
+        assert!(split_shown(&window, cx), "copying keeps the view");
+    }
+
+    #[gpui::test]
+    fn the_keys_move_the_selection_and_the_footer_copies_and_deletes(cx: &mut TestAppContext) {
+        let world = World::new();
+        let launcher = world.launcher(cx, &["first", "second", "third"]);
+        let (window, cx) = open_history(cx, launcher);
+
+        // Down past the end stays on the last record.
+        cx.simulate_keystrokes("down down down");
+        click(cx, "clipboard-copy");
+        settle(&window, cx);
+        assert_eq!(world.clipboard.written(), ["first"]);
+
+        // Ctrl+D deletes the selected record through the existing delete;
+        // the selection falls back to the first record left.
+        cx.simulate_keystrokes("up ctrl-d");
+        settle(&window, cx);
+        assert_eq!(listed(&window, cx), ["third", "first"]);
+        cx.simulate_keystrokes("enter");
+        settle(&window, cx);
+        assert_eq!(world.clipboard.written(), ["first", "third"]);
+
+        // The footer's Delete does the same.
+        click(cx, "clipboard-delete");
+        settle(&window, cx);
+        assert_eq!(listed(&window, cx), ["first"]);
+    }
+
+    #[gpui::test]
+    fn a_query_that_matches_nothing_previews_nothing_and_copies_nothing(cx: &mut TestAppContext) {
+        let world = World::new();
+        let launcher = world.launcher(cx, &["alpha", "beta"]);
+        let (window, cx) = open_history(cx, launcher);
+
+        // The search reaches the source program too.
+        cx.simulate_input("NOTEPAD");
+        settle(&window, cx);
+        assert!(cx.debug_bounds("clip-alpha").is_some());
+        cx.simulate_keystrokes("escape");
+        cx.simulate_input("zzz");
+        settle(&window, cx);
+        assert!(cx.debug_bounds("clipboard-empty").is_some());
+        assert!(cx.debug_bounds("clipboard-preview-text").is_none());
+        assert!(
+            cx.debug_bounds("clipboard-copy").is_none(),
+            "no primary action"
+        );
+        cx.simulate_keystrokes("enter");
+        settle(&window, cx);
+        assert!(world.clipboard.written().is_empty());
+
+        // Escape clears the query, then leaves for root search.
+        cx.simulate_keystrokes("escape");
+        settle(&window, cx);
+        assert!(cx.debug_bounds("clipboard-preview-text").is_some());
+        cx.simulate_keystrokes("escape");
+        let view = settle(&window, cx);
+        assert!(matches!(view.screen, Screen::Root { .. }));
+        assert!(!split_shown(&window, cx));
+    }
+
+    #[gpui::test]
+    fn the_capture_button_pauses_and_resumes_the_actual_history(cx: &mut TestAppContext) {
+        let world = World::new();
+        let launcher = world.launcher(cx, &["kept"]);
+        let (window, cx) = open_history(cx, launcher);
+        let capture = |window: &Entity<LauncherWindow>, cx: &mut VisualTestContext| {
+            cx.read_entity(window, |window, _| {
+                window
+                    .launcher()
+                    .clipboard_history()
+                    .map(|view| view.capture)
+            })
+        };
+
+        click(cx, "clipboard-capture");
+        settle(&window, cx);
+        assert_eq!(capture(&window, cx), Some(CaptureState::Paused));
+        assert!(
+            !world.clipboard.copy("while paused", None),
+            "nothing is watched"
+        );
+
+        click(cx, "clipboard-capture");
+        settle(&window, cx);
+        assert_eq!(capture(&window, cx), Some(CaptureState::On));
+        assert!(world.clipboard.copy("again", None));
+    }
+
+    #[gpui::test]
+    fn manage_routes_to_the_commands_own_controls_and_escape_comes_back(cx: &mut TestAppContext) {
+        let world = World::new();
+        let launcher = world.launcher(cx, &["kept"]);
+        let (window, cx) = open_history(cx, launcher);
+
+        cx.simulate_keystrokes("ctrl-k");
+        settle(&window, cx);
+        assert!(!split_shown(&window, cx));
+        // The extension's own rows: retention, exclusions, clearing.
+        for row in [
+            "row-Exclude a program",
+            "row-Clear clipboard history",
+            "row-Turn off and delete clipboard history",
+        ] {
+            assert!(cx.debug_bounds(row).is_some(), "{row} is drawn");
+        }
+
+        cx.simulate_keystrokes("escape");
+        settle(&window, cx);
+        assert!(split_shown(&window, cx), "Escape returns to the split view");
+        assert_eq!(
+            cx.read_entity(&window, |window, _| window.launcher().view().screen),
+            Screen::Command
+        );
+    }
+
+    #[gpui::test]
+    fn a_similarly_titled_package_keeps_its_generic_list(cx: &mut TestAppContext) {
+        let world = World::new();
+        let launcher = world.launcher(cx, &["kept"]);
+        let copy = tempfile::tempdir().unwrap();
+        for (path, contents) in package_files() {
+            fs::write(copy.path().join(path), contents).unwrap();
+        }
+        cx.foreground_executor()
+            .block_on(launcher.install_package(copy.path()));
+        let local = PackageIdentity::local(copy.path()).unwrap();
+        open_command(cx, &launcher, &format!("{}#clipboard-history", local.key()));
+        let (window, cx) = open_launcher(cx, launcher);
+        settle(&window, cx);
+        assert!(!split_shown(&window, cx));
+        assert!(cx.debug_bounds("row-Turn on clipboard history").is_some());
+        assert!(cx.debug_bounds("clipboard-list").is_none());
+    }
 }

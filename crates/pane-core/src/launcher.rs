@@ -40,6 +40,7 @@ mod actions;
 mod aliases;
 mod application_update;
 mod choices;
+pub mod clipboard_view;
 mod command_search;
 mod hotkeys;
 mod indexed;

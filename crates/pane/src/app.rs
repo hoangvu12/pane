@@ -28,6 +28,7 @@ use pane_core::{
 
 use crate::extension_views::{custom_view, form};
 use crate::features::actions_panel;
+use crate::features::clipboard_history;
 use crate::features::footer_menu;
 use crate::features::root_search;
 use crate::features::settings;
@@ -73,6 +74,9 @@ pub struct LauncherWindow {
     pub(crate) menu: Option<footer_menu::FooterMenu>,
     /// The open Actions panel, if any; see [`features::actions_panel`].
     pub(crate) actions: Option<actions_panel::ActionsPanel>,
+    /// Pane's Clipboard History in the split view, while its command is
+    /// open; see [`features::clipboard_history`].
+    pub(crate) clipboard: Option<clipboard_history::ClipboardHistory>,
     /// The footer menu popup's entrance or exit in flight, if any: the
     /// popup's look (0 closed, 1 open), presentation only — see
     /// [`crate::ui::motion`]. One tween serves both the open menu and
@@ -211,6 +215,7 @@ impl LauncherWindow {
             menu_button,
             menu: None,
             actions: None,
+            clipboard: None,
             menu_transition: None,
             menu_exit: None,
             drawn_menu: false,
@@ -316,7 +321,7 @@ impl LauncherWindow {
         }
     }
 
-    fn back(&mut self, _: &Back, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn back(&mut self, _: &Back, window: &mut Window, cx: &mut Context<Self>) {
         // The back key's order, as the specification states it: an active
         // IME composition in the focused field is cancelled first, then an
         // open footer menu is dismissed, and only then does the key leave
@@ -329,6 +334,11 @@ impl LauncherWindow {
             || self.close_open_menu(window, cx)
             || self.close_actions(window, cx)
         {
+            return;
+        }
+        // Clipboard History's own list, shown from its split view: back to
+        // the split view first.
+        if self.leave_clipboard_controls(window, cx) {
             return;
         }
         if let Screen::Root { query } = &self.launcher.view().screen
@@ -349,7 +359,12 @@ impl LauncherWindow {
     /// Returns to root search from wherever the launcher is — the state a
     /// summoned launcher starts from — leaving every open screen at once,
     /// as the back key leaves them one at a time.
-    fn return_to_root(&mut self, _: &ReturnToRoot, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn return_to_root(
+        &mut self,
+        _: &ReturnToRoot,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.close_open_menu(window, cx) || self.close_actions(window, cx) {
             return;
         }
@@ -366,7 +381,12 @@ impl LauncherWindow {
     /// registered, and the Open Pane hotkey shows the same window and the
     /// same launcher again. In the Settings window the platform's close
     /// shortcut closes only that window.
-    fn dismiss(&mut self, _: &DismissLauncher, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn dismiss(
+        &mut self,
+        _: &DismissLauncher,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.hide(window, cx);
     }
 
@@ -573,6 +593,20 @@ impl LauncherWindow {
     /// leaves it where it is, and the page explains that rather than
     /// pretending the choice applied.
     fn place(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let size = window.bounds().size;
+        self.place_sized(size, window, cx);
+    }
+
+    /// Places the launcher window as [`LauncherWindow::place`] does, for a
+    /// window of `size`: the size it is about to take (the Clipboard
+    /// History view's), which the window reports only once the system has
+    /// resized it.
+    pub(crate) fn place_sized(
+        &mut self,
+        size: Size<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let choice = crate::settings::shared(cx).read(cx).opening_monitor();
         let placement = crate::placement::shared(cx);
         let layout = placement.layout();
@@ -582,7 +616,6 @@ impl LauncherWindow {
         // The window's size in the layout's own units, so the placement is
         // computed in the space its displays are measured in; a window
         // keeps that size as it moves.
-        let size = window.bounds().size;
         let units = crate::placement::units_per_pixel(window);
         let bounds = resolved.display.window_bounds(pane_core::placement::Size {
             width: size.width.as_f32() * units,
@@ -714,11 +747,21 @@ impl LauncherWindow {
         }
     }
 
-    fn focus_next(&mut self, _: &FocusNext, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn focus_next(
+        &mut self,
+        _: &FocusNext,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         window.focus_next(cx);
     }
 
-    fn focus_previous(&mut self, _: &FocusPrevious, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn focus_previous(
+        &mut self,
+        _: &FocusPrevious,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         window.focus_prev(cx);
     }
 
@@ -726,7 +769,12 @@ impl LauncherWindow {
     /// default, rebindable on the Keyboard page): opens or focuses the
     /// Settings window, the same one the footer menu and the root result
     /// open.
-    fn open_settings(&mut self, _: &OpenSettings, _: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_settings(
+        &mut self,
+        _: &OpenSettings,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         settings::open(&self.launcher, cx);
     }
 
@@ -897,6 +945,8 @@ impl LauncherWindow {
         // Last: coming back to root search, even as a view closes, focuses
         // the query rather than the list.
         self.sync_root_search(window, cx);
+        // After it: the Clipboard History view focuses its own search.
+        self.sync_clipboard_history(window, cx);
         cx.refresh_windows();
     }
 
@@ -1174,6 +1224,10 @@ impl Render for LauncherWindow {
         #[cfg(any(test, debug_assertions))]
         {
             self.drawn = Some(view.clone());
+        }
+        // Pane's Clipboard History draws its own split view (#102).
+        if let Some(split) = self.render_clipboard_history(&view, cx) {
+            return split;
         }
         self.keep_selected_visible(&view, &presentation, window);
         // A view transition runs when the screen *kind* changed — root

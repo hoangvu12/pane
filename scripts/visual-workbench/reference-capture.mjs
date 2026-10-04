@@ -419,6 +419,90 @@ window.__wb = {
       columns: columns.map((column) => this.rel(index, column)),
     };
   },
+  // The clipboard board (#102): its header, tab strip, list (rows, day
+  // labels, the note in place of rows), preview card and footer, relative
+  // to its glass panel. The preview's branch is told by the card's first
+  // child: the code lines (.mono), the hatch (image), the 44px tile
+  // (link), a color's values (.mono spans), else plain text.
+  clipboardState(index) {
+    const doc = this.frame(index).contentDocument;
+    const glass = doc.querySelector('section.glass');
+    const [header, strip, body, footer] = Array.from(glass.children);
+    const q = doc.querySelector('input.q');
+    const list = body.children[0];
+    const pane = body.children[1];
+    const lr = list.getBoundingClientRect();
+    const rows = Array.from(list.querySelectorAll('button.row')).map((row) => {
+      const r = row.getBoundingClientRect();
+      const title = row.children[1];
+      const time = row.children[2];
+      return {
+        title: title ? title.textContent : '',
+        time: time ? time.textContent : '',
+        rect: this.rel(index, row),
+        selected: row.classList.contains('sel'),
+        hovered: row.matches(':hover'),
+        visible: r.top >= lr.top && r.bottom <= lr.bottom,
+        background: getComputedStyle(row).backgroundColor,
+        mark: this.rel(index, row.children[0]),
+        titleRect: title ? this.rel(index, title) : null,
+        timeRect: time ? this.rel(index, time) : null,
+      };
+    });
+    const labels = Array.from(list.querySelectorAll('.label')).map((label) => {
+      const r = label.getBoundingClientRect();
+      return { text: label.children[0].textContent, rect: this.rel(index, label), visible: r.top >= lr.top && r.bottom <= lr.bottom };
+    });
+    const emptyEl = Array.from(list.children).find((child) => child.tagName === 'DIV' && !child.classList.contains('label'));
+    const card = pane.children[0] || null;
+    let kind = null;
+    if (card) {
+      const first = card.children[0];
+      if (!first) kind = null;
+      else if (first.classList.contains('mono')) kind = 'code';
+      else if (first.classList.contains('hatch')) kind = 'image';
+      else if (first.querySelector('.tile')) kind = 'link';
+      else if (first.querySelector('.mono')) kind = 'color';
+      else kind = 'text';
+    }
+    const lead = footer.children[0];
+    const copiedText = lead && lead.children[lead.children.length - 1];
+    const right = footer.children[1];
+    const divider = right && Array.from(right.children).find((child) => !child.classList.contains('fbtn'));
+    const capture = header.querySelector('.fbtn');
+    const caption = strip.children[strip.children.length - 1];
+    return {
+      glass: this.rel(index, glass),
+      query: q.value,
+      focused: doc.activeElement === q,
+      header: this.rel(index, header),
+      strip: this.rel(index, strip),
+      list: this.rel(index, list),
+      listScrollTop: list.scrollTop,
+      pane: this.rel(index, pane),
+      card: card ? { rect: this.rel(index, card), background: getComputedStyle(card).backgroundColor, kind } : null,
+      rows,
+      labels,
+      empty: emptyEl ? { text: emptyEl.textContent.trim(), rect: this.rel(index, emptyEl) } : null,
+      back: { rect: this.rel(index, header.children[0]), background: getComputedStyle(header.children[0]).backgroundColor },
+      chip: { rect: this.rel(index, header.children[1]), background: getComputedStyle(header.children[1]).backgroundColor },
+      capture: capture ? { label: capture.textContent.trim(), rect: this.rel(index, capture) } : null,
+      tabs: Array.from(strip.querySelectorAll('button.tab')).map((tab) => ({
+        label: tab.textContent.trim(),
+        on: tab.classList.contains('on'),
+        rect: this.rel(index, tab),
+        background: getComputedStyle(tab).backgroundColor,
+      })),
+      caption: caption ? { text: caption.textContent.trim(), rect: this.rel(index, caption) } : null,
+      footer: this.rel(index, footer),
+      copied: copiedText ? { text: copiedText.textContent.trim(), rect: this.rel(index, copiedText) } : null,
+      buttons: Array.from(footer.querySelectorAll('.fbtn')).map((button) => ({
+        label: button.children[0] ? button.children[0].textContent.trim() : button.textContent.trim(),
+        rect: this.rel(index, button),
+      })),
+      divider: divider ? this.rel(index, divider) : null,
+    };
+  },
   fonts() {
     const doc = this.frame(0).contentDocument;
     return Array.from(doc.fonts).map((f) => ({ family: f.family, weight: f.weight, style: f.style, status: f.status }));
@@ -537,13 +621,23 @@ async function pointerTo(x, y) {
 }
 
 // The elements a click step names, found on the board by what they show.
+const clipRow = (title) => (index) =>
+  `Array.from(__wb.frame(${index}).contentDocument.querySelectorAll('.list button.row')).find((b) => b.children[1].textContent === ${JSON.stringify(title)})`;
+const clipTab = (label) => (index) =>
+  `Array.from(__wb.frame(${index}).contentDocument.querySelectorAll('button.tab')).find((b) => b.textContent.trim() === ${JSON.stringify(label)})`;
 const CLICK_TARGETS = {
   'actions-button': (index) => `Array.from(__wb.frame(${index}).contentDocument.querySelectorAll('.fbtn')).find((b) => b.textContent.trim().startsWith('Actions'))`,
+  // The clipboard board's clips and tabs (#102), by the fixture's ids.
+  'clip-standup': clipRow('Standup moved to 10:30 tomorrow'),
+  'clip-lime': clipRow('#C9EE6A'),
+  'clip-link': clipRow('example.com/plugins/manifest'),
+  'clip-shot': clipRow('Screenshot 2880 × 1800'),
+  'clip-tab-text': clipTab('Text'),
 };
 
-// A static board's capture state, by board: the root family's state by
-// default, the Settings board's own (#97).
-const STATES = { settings: 'settingsState' };
+// A board's capture state, by board: the root family's state by default,
+// the Settings board's own (#97) and the clipboard board's own (#102).
+const STATES = { settings: 'settingsState', clipboard: 'clipboardState' };
 
 // The elements a pointer step names on a static board that takes them, by
 // board: the Settings board's sidebar sections, in their order (#97). Its
@@ -552,6 +646,10 @@ const STATES = { settings: 'settingsState' };
 const POINTER_TARGETS = {
   settings: (index, row) => `__wb.frame(${index}).contentDocument.querySelectorAll('nav button.nav')[${row}]`,
 };
+
+// The boards a scenario drives with its steps, as the native fixture is
+// driven; any other board authors its one state, captured as it is.
+const INTERACTIVE = new Set(['root', 'clipboard']);
 
 async function runScenario(scenario, rootIndex, frames) {
   const dir = join(out, scenario.name);
@@ -563,12 +661,12 @@ async function runScenario(scenario, rootIndex, frames) {
     ? frames.findIndex((frame) => (BOARDS.find(([slug]) => slug === scenario.board) ?? [null, /^$/])[1].test(frame.title ?? ''))
     : rootIndex;
   if (boardIndex < 0) throw new Error(`the reference has no ${scenario.board} board`);
-  const authored = boardIndex !== rootIndex;
+  const authored = boardIndex !== rootIndex && !INTERACTIVE.has(scenario.board);
   if (!authored) {
     // Rest: the query field focused by a real click, as the native fixture
     // opens with its field focused; the pointer is then over the header,
     // never over a row.
-    const field = await evaluate(`__wb.outer(${rootIndex}, __wb.frame(${rootIndex}).contentDocument.querySelector('input.q'))`);
+    const field = await evaluate(`__wb.outer(${boardIndex}, __wb.frame(${boardIndex}).contentDocument.querySelector('input.q'))`);
     await pointerTo(field.x, field.y);
     await call('Input.dispatchMouseEvent', { type: 'mousePressed', x: field.x, y: field.y, button: 'left', clickCount: 1 });
     await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: field.x, y: field.y, button: 'left', clickCount: 1 });
@@ -615,7 +713,7 @@ async function runScenario(scenario, rootIndex, frames) {
     } else if (step.action === 'click') {
       const target = CLICK_TARGETS[step.target];
       if (!target) throw new Error(`unknown click target ${step.target}`);
-      const point = await evaluate(`__wb.outer(${rootIndex}, ${target(rootIndex)})`);
+      const point = await evaluate(`__wb.outer(${boardIndex}, ${target(boardIndex)})`);
       // From a pixel to the left, as the native side arrives; then pressed.
       await pointerTo(point.x - 1, point.y);
       await pointerTo(point.x, point.y);
@@ -626,7 +724,7 @@ async function runScenario(scenario, rootIndex, frames) {
       // delivers: the capture focuses it as that logic does, so typing
       // filters the actions, as on the native side.
       await sleep(150);
-      await evaluate(`(() => { const field = __wb.frame(${rootIndex}).contentDocument.querySelector('.pop input'); if (field) field.focus({ preventScroll: true }); return !!field; })()`);
+      await evaluate(`(() => { const field = __wb.frame(${boardIndex}).contentDocument.querySelector('.pop input'); if (field) field.focus({ preventScroll: true }); return !!field; })()`);
     } else if (step.action === 'type') {
       for (const character of step.text) {
         await call('Input.insertText', { text: character });

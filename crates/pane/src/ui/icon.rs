@@ -113,6 +113,20 @@ pub(crate) enum Glyph {
     ActionHotkey,
     /// A tag: the Actions panel's alias entry (`A.tag`).
     ActionAlias,
+    /// An arrow pointing left: the split view's back button.
+    ArrowLeft,
+    /// Two bars: the split view's Pause.
+    Pause,
+    /// A shield with a check: the split view's caption on what is kept.
+    Shield,
+    /// Lines of text: a clipboard history record, which is text.
+    Lines,
+    /// Two links of a chain: the fixture's link records.
+    Link,
+    /// A framed landscape: the fixture's image records.
+    Image,
+    /// An envelope: the fixture's mail record.
+    Mail,
     /// The Windows titlebar's close mark.
     #[cfg(target_os = "windows")]
     WindowClose,
@@ -159,6 +173,13 @@ impl Glyph {
         Glyph::ActionRun,
         Glyph::ActionHotkey,
         Glyph::ActionAlias,
+        Glyph::ArrowLeft,
+        Glyph::Pause,
+        Glyph::Shield,
+        Glyph::Lines,
+        Glyph::Link,
+        Glyph::Image,
+        Glyph::Mail,
     ];
 
     /// The embedded SVG bytes for this glyph.
@@ -195,6 +216,13 @@ impl Glyph {
             Glyph::ActionRun => include_bytes!("../../assets/icons/action-run.svg"),
             Glyph::ActionHotkey => include_bytes!("../../assets/icons/action-hotkey.svg"),
             Glyph::ActionAlias => include_bytes!("../../assets/icons/action-alias.svg"),
+            Glyph::ArrowLeft => include_bytes!("../../assets/icons/arrow-left.svg"),
+            Glyph::Pause => include_bytes!("../../assets/icons/pause.svg"),
+            Glyph::Shield => include_bytes!("../../assets/icons/shield.svg"),
+            Glyph::Lines => include_bytes!("../../assets/icons/lines.svg"),
+            Glyph::Link => include_bytes!("../../assets/icons/link.svg"),
+            Glyph::Image => include_bytes!("../../assets/icons/image.svg"),
+            Glyph::Mail => include_bytes!("../../assets/icons/mail.svg"),
             #[cfg(target_os = "windows")]
             Glyph::WindowClose => include_bytes!("../../assets/icons/window-close.svg"),
             #[cfg(target_os = "windows")]

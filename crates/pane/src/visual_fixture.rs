@@ -53,6 +53,8 @@ use gpui::{
     prelude::*, px, size,
 };
 use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged};
+use pane_core::clipboard::CaptureState;
+use pane_core::clipboard_view::{ClipboardFilter, capture_summary};
 use pane_core::{
     Binding, ComputedAnswer, KeyboardAction, ResultAction, ResultActionItem, ResultActions,
     SelectedAction,
@@ -62,6 +64,7 @@ use sha2::{Digest, Sha256};
 
 use crate::app::{KEY_CONTEXT, action_button};
 use crate::features::actions_panel;
+use crate::features::clipboard_history;
 use crate::features::root_search::{self, search_header};
 use crate::settings;
 use crate::ui::footer;
@@ -73,6 +76,7 @@ use crate::ui::result_layouts::{self, AnswerCard, AnswerSide, HistoryRow, Notice
 use crate::ui::result_row::{RowContent, RowMeta, result_row_with};
 use crate::ui::settings_shell::{self, SidebarItem};
 use crate::ui::shell::{self, LAUNCHER_CLIENT, SectionLabel};
+use crate::ui::split_view::{self, ClipMark, ClipRow, ClipTone};
 use crate::ui::theme::{Theme, TypeLine};
 use crate::{Back, SelectNext, SelectPrevious};
 
@@ -670,6 +674,8 @@ pub(crate) enum Family {
     /// search field and the section items, and its page's heading block
     /// and columns (#97).
     Settings,
+    /// The split view: Clipboard History's list beside its preview (#102).
+    Clipboard,
 }
 
 /// One step a capture helper takes, on either side. The helpers act with
@@ -1110,6 +1116,124 @@ const SCENARIOS: &[Scenario] = {
             rows: &[],
             steps: &[capture("notice")],
         },
+        Scenario {
+            name: "clipboard-rest",
+            description: "The clipboard board at rest: its fixture clips under Pinned, Today and Yesterday, the code clip selected and previewed (#102)",
+            family: Family::Clipboard,
+            client: CLIPBOARD_CLIENT,
+            reference: true,
+            board: Some("clipboard"),
+            theme: None,
+            frame: false,
+            rows: &[],
+            steps: &[capture("rest")],
+        },
+        Scenario {
+            name: "clipboard-previews",
+            description: "A click selects a clip without copying it: the text, color, link and image previews in turn",
+            family: Family::Clipboard,
+            client: CLIPBOARD_CLIENT,
+            reference: true,
+            board: Some("clipboard"),
+            theme: None,
+            frame: false,
+            rows: &[],
+            steps: &[
+                click("clip-standup"),
+                capture("text"),
+                click("clip-lime"),
+                capture("color"),
+                click("clip-link"),
+                capture("link"),
+                click("clip-shot"),
+                capture("image"),
+            ],
+        },
+        Scenario {
+            name: "clipboard-keys",
+            description: "Down moves the selection from the code clip; five more reach the last clip, which the list scrolls into view",
+            family: Family::Clipboard,
+            client: CLIPBOARD_CLIENT,
+            reference: true,
+            board: Some("clipboard"),
+            theme: None,
+            frame: false,
+            rows: &[],
+            steps: &[
+                DOWN,
+                capture("down"),
+                DOWN,
+                DOWN,
+                DOWN,
+                DOWN,
+                DOWN,
+                capture("last"),
+            ],
+        },
+        Scenario {
+            name: "clipboard-filter",
+            description: "A query no clip matches: no preview and nothing selected; Escape clears it; the Text tab keeps the text clips",
+            family: Family::Clipboard,
+            client: CLIPBOARD_CLIENT,
+            reference: true,
+            board: Some("clipboard"),
+            theme: None,
+            frame: false,
+            rows: &[],
+            steps: &[
+                Type { text: "zzz" },
+                capture("no-match"),
+                Key {
+                    key: NamedKey::Escape,
+                },
+                capture("cleared"),
+                click("clip-tab-text"),
+                capture("text-tab"),
+            ],
+        },
+        Scenario {
+            name: "clipboard-production",
+            description: "Production's own content: text records under Today, Yesterday and Older, the All and Text tabs, what is kept, Copy, Delete and Manage (no reference counterpart)",
+            family: Family::Clipboard,
+            client: CLIPBOARD_CLIENT,
+            reference: false,
+            board: None,
+            theme: None,
+            frame: false,
+            rows: &[],
+            steps: &[capture("rest"), DOWN, DOWN, DOWN, capture("long-text")],
+        },
+        Scenario {
+            name: "clipboard-off",
+            description: "No records with history off: the note saying so, Turn on, no preview and no primary action (no reference counterpart)",
+            family: Family::Clipboard,
+            client: CLIPBOARD_CLIENT,
+            reference: false,
+            board: None,
+            theme: None,
+            frame: false,
+            rows: &[],
+            steps: &[capture("off")],
+        },
+        Scenario {
+            name: "clipboard-narrow",
+            description: "The split view in the launcher's own 760x518: the list keeps its width, the preview takes the rest, the keys reach the last record (no reference counterpart)",
+            family: Family::Clipboard,
+            client: ROOT_CLIENT,
+            reference: false,
+            board: None,
+            theme: None,
+            frame: false,
+            rows: &[],
+            steps: &[
+                capture("narrow"),
+                DOWN,
+                DOWN,
+                DOWN,
+                DOWN,
+                capture("narrow-last"),
+            ],
+        },
     ]
 };
 
@@ -1146,13 +1270,6 @@ pub(crate) fn pending_scenarios() -> &'static [PendingScenario] {
             ticket: "https://github.com/hoangvu12/pane/issues/101",
             description: "The five pinned quick slots above the root list",
             client: ROOT_CLIENT,
-        },
-        PendingScenario {
-            name: "clipboard-split",
-            board: "clipboard",
-            ticket: "https://github.com/hoangvu12/pane/issues/102",
-            description: "The supported text clipboard history in the split view",
-            client: CLIPBOARD_CLIENT,
         },
     ]
 }
@@ -1968,6 +2085,9 @@ pub(crate) struct DeclaredCapture {
     /// the manifest is written.
     #[serde(skip_serializing_if = "Option::is_none")]
     board: Option<DeclaredBoard>,
+    /// The split view, in a clipboard scenario's captures (#102).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    clipboard: Option<DeclaredClipboard>,
 }
 
 /// A result board's own parts as a capture declares them (#96): the
@@ -2335,6 +2455,9 @@ fn scrolled_to_selected(state: &FixtureState, theme: &Theme, frame: &Frame, offs
 /// Replays `scenario`'s steps over the fixture's state model: declares
 /// every capture they take, and resolves where each pointer step points.
 pub(crate) fn replay(scenario: &Scenario, theme: &Theme) -> Replay {
+    if scenario.family == Family::Clipboard {
+        return replay_clipboard(scenario, theme);
+    }
     let frame = frame(theme, scenario.client);
     let mut state = FixtureState::of(scenario);
     let mut offset = 0.;
@@ -2360,6 +2483,7 @@ pub(crate) fn replay(scenario: &Scenario, theme: &Theme) -> Replay {
                     actions: declared_actions(&state, theme, &frame),
                     footer: None,
                     board: None,
+                    clipboard: None,
                 })
             }
             Step::Pointer { row, nudge } => {
@@ -2428,6 +2552,9 @@ pub(crate) struct FixtureWindow {
     /// The Actions panel's search field (the panel's state is the
     /// fixture state's).
     filter: Entity<EditableTextState>,
+    /// A clipboard scenario's split view (#102): its records, query, tab
+    /// and selection; the query field above is its search.
+    clip: Option<ClipState>,
 }
 
 impl FixtureWindow {
@@ -2443,6 +2570,11 @@ impl FixtureWindow {
         query.focus_handle(cx).tab_stop(true);
         cx.subscribe(&query, |this, input, _: &TextChanged, cx| {
             let text = input.read(cx).as_str().to_owned();
+            if let Some(clip) = this.clip.as_mut() {
+                clip.set_query(&text);
+                cx.notify();
+                return;
+            }
             if text != this.state.query {
                 this.state.set_query(&text);
                 this.selection_moved(cx);
@@ -2469,6 +2601,7 @@ impl FixtureWindow {
             scroll: ScrollHandle::new(),
             pointer: None,
             filter,
+            clip: (scenario.family == Family::Clipboard).then(|| ClipState::new(scenario)),
         }
     }
 
@@ -2901,6 +3034,7 @@ impl Render for FixtureWindow {
             Family::Keycap => self.render_keycaps(&theme),
             Family::Tiles => self.render_tiles(&theme),
             Family::Root => self.render_root(&theme, cx),
+            Family::Clipboard => self.render_clipboard(&theme, cx),
             // The Settings window's composition brings its own panel.
             Family::Settings => return self.render_settings(&theme, material),
         };
@@ -4315,6 +4449,10 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
                 }
             }
         }
+        Family::Clipboard => {
+            let keyboard = settings::keyboard_of(cx);
+            declare_clipboard(window, &theme, &keyboard, &mut captures, &mut steps);
+        }
     }
 
     let bounds = window.bounds();
@@ -4462,6 +4600,7 @@ pub fn run(options: FixtureOptions) -> Result<(), String> {
         let keyboard = settings::keyboard_of(cx);
         let text_editing = bind_text_editing(cx);
         root_search::bind_keys(cx, &text_editing, &keyboard);
+        clipboard_history::bind_keys(cx, &text_editing, &keyboard);
         actions_panel::bind_keys(cx, &text_editing);
         crate::keyboard::bind_keys(cx, &keyboard);
 
@@ -4540,6 +4679,1237 @@ pub fn run(options: FixtureOptions) -> Result<(), String> {
     Ok(())
 }
 
+// ------------------------------------------------- the clipboard split view
+
+/// What a fixture clip's row leads with: a tile, or a color's swatch
+/// (`0xRRGGBBAA`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FixtureMark {
+    Tile(ClipTone, Glyph),
+    Swatch(u32),
+}
+
+/// Which preview a fixture clip opens: the reference template's branches.
+/// Production previews every record as plain text; the others are the
+/// reference fixture's, drawn only here (#100).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FixturePreview {
+    Code,
+    Text,
+    Color {
+        fill: u32,
+        hex: &'static str,
+        values: [&'static str; 2],
+    },
+    Link {
+        domain: &'static str,
+        url: &'static str,
+    },
+    Image {
+        dims: &'static str,
+    },
+}
+
+impl FixturePreview {
+    /// The template branch's name, as the reference's state names it.
+    fn kind(self) -> &'static str {
+        match self {
+            FixturePreview::Code => "code",
+            FixturePreview::Text => "text",
+            FixturePreview::Color { .. } => "color",
+            FixturePreview::Link { .. } => "link",
+            FixturePreview::Image { .. } => "image",
+        }
+    }
+}
+
+/// One clip of the fixture: the reference board's `all[]`, or a
+/// production record's presentation values.
+#[derive(Debug, PartialEq)]
+pub(crate) struct FixtureClip {
+    id: &'static str,
+    /// The section it is listed under.
+    group: &'static str,
+    /// Its kind as a tab keeps it: "Text", "Link", "Image" or "Color".
+    kind: &'static str,
+    title: &'static str,
+    body: &'static str,
+    /// The source application, as the copied line names it ("" for none).
+    app: &'static str,
+    /// The row's time.
+    time: &'static str,
+    /// When it was copied, as the copied line says it ("Today, 14:02").
+    when: &'static str,
+    mark: FixtureMark,
+    preview: FixturePreview,
+}
+
+impl FixtureClip {
+    /// The footer's line for this clip, by the reference's `copiedLine`
+    /// (which production's `copied_line` words the same way).
+    fn copied(&self) -> String {
+        let when = match self.when.split_once(", ") {
+            Some((day @ ("Today" | "Yesterday"), time)) => {
+                format!("{}, {time}", day.to_lowercase())
+            }
+            _ => format!("on {}", self.when),
+        };
+        if self.app.is_empty() {
+            format!("Copied {when}")
+        } else {
+            format!("Copied {when} from {}", self.app)
+        }
+    }
+}
+
+const CODE: &str =
+    "const pane = createPane({\n  blur: 44,\n  tint: 0.7,\n  accent: \"#C9EE6A\",\n})";
+
+/// The reference clipboard board's clips, in its order (`clipboard.js`).
+pub(crate) const REFERENCE_CLIPS: &[FixtureClip] = &[
+    FixtureClip {
+        id: "ssh",
+        group: "Pinned",
+        kind: "Text",
+        title: "ssh deploy@10.0.4.12",
+        body: "ssh deploy@10.0.4.12",
+        app: "Terminal",
+        time: "Mon",
+        when: "Monday, 09:12",
+        mark: FixtureMark::Tile(ClipTone::Term, Glyph::Terminal),
+        preview: FixturePreview::Text,
+    },
+    FixtureClip {
+        id: "code",
+        group: "Today",
+        kind: "Text",
+        title: "const pane = createPane({",
+        body: CODE,
+        app: "Visual Studio Code",
+        time: "14:02",
+        when: "Today, 14:02",
+        mark: FixtureMark::Tile(ClipTone::Code, Glyph::Code),
+        preview: FixturePreview::Code,
+    },
+    FixtureClip {
+        id: "lime",
+        group: "Today",
+        kind: "Color",
+        title: "#C9EE6A",
+        body: "",
+        app: "Color Picker",
+        time: "13:48",
+        when: "Today, 13:48",
+        mark: FixtureMark::Swatch(0xC9EE6AFF),
+        preview: FixturePreview::Color {
+            fill: 0xC9EE6AFF,
+            hex: "#C9EE6A",
+            values: ["rgb(201 238 106)", "hsl(77 79% 67%)"],
+        },
+    },
+    FixtureClip {
+        id: "link",
+        group: "Today",
+        kind: "Link",
+        title: "example.com/plugins/manifest",
+        body: "",
+        app: "Firefox",
+        time: "13:31",
+        when: "Today, 13:31",
+        mark: FixtureMark::Tile(ClipTone::Web, Glyph::Link),
+        preview: FixturePreview::Link {
+            domain: "example.com",
+            url: "https://example.com/plugins/manifest",
+        },
+    },
+    FixtureClip {
+        id: "shot",
+        group: "Today",
+        kind: "Image",
+        title: "Screenshot 2880 × 1800",
+        body: "",
+        app: "Screenshot",
+        time: "12:10",
+        when: "Today, 12:10",
+        mark: FixtureMark::Tile(ClipTone::Folder, Glyph::Image),
+        preview: FixturePreview::Image {
+            dims: "2880 × 1800",
+        },
+    },
+    FixtureClip {
+        id: "standup",
+        group: "Today",
+        kind: "Text",
+        title: "Standup moved to 10:30 tomorrow",
+        body: "Standup moved to 10:30 tomorrow — same room, bring the launcher demo.",
+        app: "Slack",
+        time: "11:04",
+        when: "Today, 11:04",
+        mark: FixtureMark::Tile(ClipTone::Chat, Glyph::Lines),
+        preview: FixturePreview::Text,
+    },
+    FixtureClip {
+        id: "mail",
+        group: "Yesterday",
+        kind: "Text",
+        title: "hello@example.com",
+        body: "hello@example.com",
+        app: "Mail",
+        time: "17:22",
+        when: "Yesterday, 17:22",
+        mark: FixtureMark::Tile(ClipTone::Plain, Glyph::Mail),
+        preview: FixturePreview::Text,
+    },
+    FixtureClip {
+        id: "ice",
+        group: "Yesterday",
+        kind: "Color",
+        title: "#8FD3FF",
+        body: "",
+        app: "Figma",
+        time: "16:40",
+        when: "Yesterday, 16:40",
+        mark: FixtureMark::Swatch(0x8FD3FFFF),
+        preview: FixturePreview::Color {
+            fill: 0x8FD3FFFF,
+            hex: "#8FD3FF",
+            values: ["rgb(143 211 255)", "hsl(204 100% 78%)"],
+        },
+    },
+];
+
+const RELEASE_NOTES: &str = "Release notes, draft\n\nThe launcher now shows clipboard history as a list beside a preview. \
+Search finds text you copied and the program you copied it from; Enter copies a record again, and Ctrl+D \
+deletes it.\n\nNothing about what is kept changed: history stays off until you turn it on, a copy an \
+application marks as private is skipped, programs you exclude are never read, and every record is \
+deleted once it is older than the time you keep them for.\n\nThe list keeps the newest first, under \
+Today, Yesterday and Older, in your own time zone. A long record like this one scrolls in its preview \
+rather than being cut short, so the whole of what you copied can always be read before you copy it \
+again.";
+
+/// Production's own content, for the native-only scenarios: text
+/// records, each previewed as text, under Today, Yesterday and Older, with
+/// the source program Windows names (or none).
+pub(crate) const PRODUCTION_CLIPS: &[FixtureClip] = &[
+    FixtureClip {
+        id: "9",
+        group: "Today",
+        kind: "Text",
+        title: "git commit -m \"Port the split view\"",
+        body: "git commit -m \"Port the split view\"",
+        app: "WindowsTerminal.exe",
+        time: "14:02",
+        when: "Today, 14:02",
+        mark: FixtureMark::Tile(ClipTone::Plain, Glyph::Lines),
+        preview: FixturePreview::Text,
+    },
+    FixtureClip {
+        id: "8",
+        group: "Today",
+        kind: "Text",
+        title: "Standup moved to 10:30 tomorrow — same room",
+        body: "Standup moved to 10:30 tomorrow — same room, bring the launcher demo.",
+        app: "Slack.exe",
+        time: "11:04",
+        when: "Today, 11:04",
+        mark: FixtureMark::Tile(ClipTone::Plain, Glyph::Lines),
+        preview: FixturePreview::Text,
+    },
+    FixtureClip {
+        id: "7",
+        group: "Yesterday",
+        kind: "Text",
+        title: "hello@example.com",
+        body: "hello@example.com",
+        app: "OUTLOOK.EXE",
+        time: "17:22",
+        when: "Yesterday, 17:22",
+        mark: FixtureMark::Tile(ClipTone::Plain, Glyph::Lines),
+        preview: FixturePreview::Text,
+    },
+    FixtureClip {
+        id: "5",
+        group: "Older",
+        kind: "Text",
+        title: "Release notes, draft",
+        body: RELEASE_NOTES,
+        app: "notepad.exe",
+        time: "Thu",
+        when: "Thursday, 09:00",
+        mark: FixtureMark::Tile(ClipTone::Plain, Glyph::Lines),
+        preview: FixturePreview::Text,
+    },
+    FixtureClip {
+        id: "4",
+        group: "Older",
+        kind: "Text",
+        title: "ssh deploy@10.0.4.12",
+        body: "ssh deploy@10.0.4.12",
+        app: "",
+        time: "Sep 28",
+        when: "Sep 28, 16:12",
+        mark: FixtureMark::Tile(ClipTone::Plain, Glyph::Lines),
+        preview: FixturePreview::Text,
+    },
+];
+
+/// Whose content a clipboard scenario shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ClipVariant {
+    /// The reference board's own clips, labels and buttons, for parity.
+    Reference,
+    /// Production's: text records, All and Text, Copy, Delete and Manage,
+    /// history on.
+    Production,
+    /// Production's with nothing kept and history off.
+    Off,
+}
+
+impl ClipVariant {
+    fn of(scenario: &Scenario) -> ClipVariant {
+        match scenario.name {
+            "clipboard-off" => ClipVariant::Off,
+            "clipboard-production" | "clipboard-narrow" => ClipVariant::Production,
+            _ => ClipVariant::Reference,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            ClipVariant::Reference => "reference",
+            ClipVariant::Production => "production",
+            ClipVariant::Off => "off",
+        }
+    }
+
+    fn clips(self) -> &'static [FixtureClip] {
+        match self {
+            ClipVariant::Reference => REFERENCE_CLIPS,
+            ClipVariant::Production => PRODUCTION_CLIPS,
+            ClipVariant::Off => &[],
+        }
+    }
+
+    /// Production's capture state for the variant.
+    fn capture(self) -> CaptureState {
+        match self {
+            ClipVariant::Off => CaptureState::Off,
+            ClipVariant::Reference | ClipVariant::Production => CaptureState::On,
+        }
+    }
+
+    /// The command's chip.
+    fn chip(self) -> &'static str {
+        match self {
+            ClipVariant::Reference => "Clipboard",
+            ClipVariant::Production | ClipVariant::Off => "Clipboard History",
+        }
+    }
+
+    fn placeholder(self) -> String {
+        match self {
+            ClipVariant::Reference => format!("Search {} clips…", REFERENCE_CLIPS.len()),
+            ClipVariant::Production | ClipVariant::Off => {
+                clipboard_history::placeholder(self.clips().len())
+            }
+        }
+    }
+
+    /// The capture button: its label, glyph and whether it shows pressed.
+    fn capture_button(self) -> (&'static str, Glyph, bool) {
+        match self {
+            // The reference's Pause, not pressed.
+            ClipVariant::Reference => ("Pause", Glyph::Pause, false),
+            ClipVariant::Production | ClipVariant::Off => {
+                clipboard_history::capture_control(self.capture())
+            }
+        }
+    }
+
+    /// The tabs' labels.
+    fn tabs(self) -> Vec<&'static str> {
+        match self {
+            ClipVariant::Reference => vec!["All", "Text", "Links", "Images", "Colors"],
+            ClipVariant::Production | ClipVariant::Off => {
+                ClipboardFilter::ALL.map(ClipboardFilter::label).to_vec()
+            }
+        }
+    }
+
+    /// The caption on the tab strip's right.
+    fn caption(self) -> String {
+        match self {
+            ClipVariant::Reference => "Password managers are never recorded".into(),
+            ClipVariant::Production | ClipVariant::Off => {
+                capture_summary(self.capture(), None, 7 * 86_400, 0)
+            }
+        }
+    }
+
+    /// The note in place of rows, with clips there are (`kept`) or not.
+    fn empty_note(self, kept: bool) -> String {
+        match self {
+            ClipVariant::Reference => "No clips match. Try another filter.".into(),
+            ClipVariant::Production | ClipVariant::Off => {
+                clipboard_history::empty_note(None, kept, self.capture())
+            }
+        }
+    }
+
+    /// The footer's buttons: (label, binding, cap style) for the primary,
+    /// the secondary (both only with a clip selected) and the last.
+    fn buttons(self) -> [(&'static str, &'static str, CapStyle); 3] {
+        match self {
+            ClipVariant::Reference => [
+                ("Paste to Obsidian", "enter", CapStyle::Accent),
+                ("Copy", "ctrl-c", CapStyle::Regular),
+                ("Actions", "ctrl-k", CapStyle::Regular),
+            ],
+            ClipVariant::Production | ClipVariant::Off => [
+                ("Copy", "enter", CapStyle::Accent),
+                (
+                    "Delete",
+                    clipboard_history::DELETE_BINDING,
+                    CapStyle::Regular,
+                ),
+                ("Manage", "ctrl-k", CapStyle::Regular),
+            ],
+        }
+    }
+}
+
+/// The fixture's split view state: the reference's `state` (query, tab,
+/// selected id), over the variant's clips, by the reference's own rules —
+/// which production's [`pane_core::clipboard_view::ClipboardBrowse`]
+/// follows too.
+#[derive(Clone, Debug)]
+pub(crate) struct ClipState {
+    variant: ClipVariant,
+    query: String,
+    tab: &'static str,
+    selected: &'static str,
+}
+
+impl ClipState {
+    fn new(scenario: &Scenario) -> ClipState {
+        let variant = ClipVariant::of(scenario);
+        ClipState {
+            variant,
+            query: String::new(),
+            tab: "All",
+            // The reference selects its code clip; production the first.
+            selected: match variant {
+                ClipVariant::Reference => "code",
+                ClipVariant::Production | ClipVariant::Off => {
+                    variant.clips().first().map_or("", |clip| clip.id)
+                }
+            },
+        }
+    }
+
+    /// The clips the tab and the query keep, in order.
+    fn visible(&self) -> Vec<&'static FixtureClip> {
+        let kind = match self.tab {
+            "Links" => Some("Link"),
+            "Images" => Some("Image"),
+            "Colors" => Some("Color"),
+            "Text" if self.variant == ClipVariant::Reference => Some("Text"),
+            _ => None,
+        };
+        let needle = self.query.trim().to_lowercase();
+        self.variant
+            .clips()
+            .iter()
+            .filter(|clip| kind.is_none_or(|kind| clip.kind == kind))
+            .filter(|clip| {
+                needle.is_empty()
+                    || format!("{} {} {}", clip.title, clip.body, clip.app)
+                        .to_lowercase()
+                        .contains(&needle)
+            })
+            .collect()
+    }
+
+    /// The selected clip's index among `visible`: the chosen one while it
+    /// shows, else the first; none with none shown.
+    fn selected_index(&self, visible: &[&FixtureClip]) -> Option<usize> {
+        if visible.is_empty() {
+            return None;
+        }
+        Some(
+            visible
+                .iter()
+                .position(|clip| clip.id == self.selected)
+                .unwrap_or(0),
+        )
+    }
+
+    /// The section labels over `visible`: one per run of a group.
+    fn sections(visible: &[&FixtureClip]) -> Vec<SectionLabel> {
+        let mut labels: Vec<SectionLabel> = Vec::new();
+        for (index, clip) in visible.iter().enumerate() {
+            if labels.last().is_none_or(|label| label.label != clip.group) {
+                labels.push(SectionLabel {
+                    first: index,
+                    label: clip.group.into(),
+                    note: None,
+                });
+            }
+        }
+        labels
+    }
+
+    /// Up or Down: within what is shown, stopping at its ends.
+    fn step(&mut self, delta: isize) {
+        let visible = self.visible();
+        if let Some(index) = self.selected_index(&visible) {
+            let next = index.saturating_add_signed(delta).min(visible.len() - 1);
+            self.selected = visible[next].id;
+        }
+    }
+
+    fn set_query(&mut self, query: &str) {
+        self.query = query.to_owned();
+    }
+
+    /// A click on `target`: a tab ("clip-tab-text") or a clip
+    /// ("clip-standup").
+    fn click(&mut self, target: &str) {
+        let tabs = self.variant.tabs();
+        if let Some(tab) = target.strip_prefix("clip-tab-")
+            && let Some(&label) = tabs.iter().find(|label| label.to_lowercase() == tab)
+        {
+            self.tab = label;
+        } else if let Some(id) = target.strip_prefix("clip-")
+            && let Some(clip) = self.variant.clips().iter().find(|clip| clip.id == id)
+        {
+            self.selected = clip.id;
+        }
+    }
+}
+
+/// The split view's frame in a client of `client` size, as
+/// [`split_view::compose`] lays it out: the header, the tab strip, the
+/// list beside the preview pane, the card inside it, and the footer.
+#[derive(Clone, Copy, Debug)]
+struct ClipFrame {
+    header: Rect,
+    tabs: Rect,
+    list: Rect,
+    pane: Rect,
+    card: Rect,
+    footer: Rect,
+}
+
+fn clip_frame(theme: &Theme, client: (f32, f32)) -> ClipFrame {
+    let split = &theme.split;
+    let f = f32::from;
+    let (width, height) = client;
+    let header = Rect {
+        x: 0.,
+        y: 0.,
+        width,
+        height: f(split.header_height),
+    };
+    let tabs = Rect {
+        x: 0.,
+        y: header.height,
+        width,
+        height: f(split.tabs_height),
+    };
+    let footer = Rect {
+        x: 0.,
+        y: height - f(split.footer_height),
+        width,
+        height: f(split.footer_height),
+    };
+    let top = tabs.y + tabs.height;
+    let list_width = f(split.list_width).min(width * split.list_max_share);
+    let list = Rect {
+        x: 0.,
+        y: top,
+        width: list_width,
+        height: footer.y - top,
+    };
+    let pane = Rect {
+        x: list_width,
+        y: top,
+        width: width - list_width,
+        height: list.height,
+    };
+    let padding = f(split.preview_padding);
+    let card = Rect {
+        x: pane.x + padding,
+        y: pane.y + padding,
+        width: pane.width - 2. * padding,
+        height: pane.height - 2. * padding,
+    };
+    ClipFrame {
+        header,
+        tabs,
+        list,
+        pane,
+        card,
+        footer,
+    }
+}
+
+/// A clip's row as a capture declares it.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeclaredClip {
+    id: &'static str,
+    title: &'static str,
+    time: &'static str,
+    rect: Rect,
+    selected: bool,
+    hovered: bool,
+    visible: bool,
+    /// "tile" or "swatch".
+    mark: &'static str,
+}
+
+/// The split view as a capture declares it.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeclaredClipboard {
+    variant: &'static str,
+    header: Rect,
+    tabs_strip: Rect,
+    list: Rect,
+    pane: Rect,
+    footer: Rect,
+    query: String,
+    tab: &'static str,
+    rows: Vec<DeclaredClip>,
+    sections: Vec<DeclaredSection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    empty: Option<DeclaredText>,
+    /// The preview card and its branch, with a clip selected.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preview: Option<DeclaredPreview>,
+    /// The footer's copied line (or "Nothing selected").
+    copied: DeclaredText,
+    caption: String,
+    /// The back button and the capture button's rect and label.
+    back: Rect,
+    capture: DeclaredText,
+    /// The tabs, filled in from shaped labels when the manifest is
+    /// written.
+    tabs: Vec<DeclaredTab>,
+    /// The footer's buttons, left to right, filled in likewise.
+    buttons: Vec<DeclaredText>,
+    /// The rule between the footer's buttons, with a clip selected.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    divider: Option<Rect>,
+    /// The split view's own colors, as `#RRGGBBAA`.
+    colors: ClipColors,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeclaredPreview {
+    kind: &'static str,
+    rect: Rect,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeclaredTab {
+    label: &'static str,
+    on: bool,
+    rect: Rect,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ClipColors {
+    back_fill: String,
+    chip_fill: String,
+    tab_on: String,
+    tab_text: String,
+    preview_fill: String,
+    preview_edge: String,
+}
+
+/// The rows and labels `state` shows down the list of `frame`, scrolled
+/// by `offset` (0 or negative), with the pointer at `pointer`.
+fn declared_clips(
+    state: &ClipState,
+    theme: &Theme,
+    frame: &ClipFrame,
+    offset: f32,
+    pointer: Option<(f32, f32)>,
+) -> (Vec<DeclaredClip>, Vec<DeclaredSection>) {
+    let split = &theme.split;
+    let geometry = &theme.geometry;
+    let f = f32::from;
+    let visible = state.visible();
+    let selected = state.selected_index(&visible);
+    let sections = ClipState::sections(&visible);
+    let x = frame.list.x + f(split.list_padding_x);
+    // The list's rule takes its last pixel.
+    let width = frame.list.width - 2. * f(split.list_padding_x) - 1.;
+    let mut y = frame.list.y + f(split.list_padding_top) + offset;
+    let gap = f(geometry.row_list_gap);
+    let list = frame.list;
+    let mut labels = Vec::new();
+    let mut rows = Vec::new();
+    for (index, clip) in visible.iter().enumerate() {
+        for section in sections.iter().filter(|section| section.first == index) {
+            labels.push(DeclaredSection {
+                label: section.label.to_string(),
+                note: None,
+                rect: Rect {
+                    x,
+                    y,
+                    width,
+                    height: f(geometry.section_height),
+                },
+            });
+            y += f(geometry.section_height) + gap;
+        }
+        let rect = Rect {
+            x,
+            y,
+            width,
+            height: f(geometry.row_min_height),
+        };
+        y += rect.height + gap;
+        rows.push(DeclaredClip {
+            id: clip.id,
+            title: clip.title,
+            time: clip.time,
+            rect,
+            selected: selected == Some(index),
+            hovered: pointer.is_some_and(|point| rect.contains(point)),
+            visible: rect.y >= list.y && rect.y + rect.height <= list.y + list.height,
+            mark: match clip.mark {
+                FixtureMark::Tile(..) => "tile",
+                FixtureMark::Swatch(_) => "swatch",
+            },
+        });
+    }
+    (rows, labels)
+}
+
+/// The list's offset after the keys move the selection, by the rule GPUI's
+/// `ScrollHandle::scroll_to_item` applies (the least scroll that shows
+/// the whole row), as the launcher's split view asks for it.
+fn clip_scrolled(state: &ClipState, theme: &Theme, frame: &ClipFrame, offset: f32) -> f32 {
+    let (rows, _) = declared_clips(state, theme, frame, 0., None);
+    let Some(row) = rows.iter().find(|row| row.selected) else {
+        return offset;
+    };
+    let (top, bottom) = (frame.list.y, frame.list.y + frame.list.height);
+    if row.rect.y + offset < top {
+        top - row.rect.y
+    } else if row.rect.y + row.rect.height + offset > bottom {
+        bottom - (row.rect.y + row.rect.height)
+    } else {
+        offset
+    }
+}
+
+/// Replays a clipboard scenario's steps over the split view's state:
+/// declares each capture and resolves each click on a clip.
+fn replay_clipboard(scenario: &Scenario, theme: &Theme) -> Replay {
+    let frame = clip_frame(theme, scenario.client);
+    let split = &theme.split;
+    let f = f32::from;
+    let mut state = ClipState::new(scenario);
+    let mut offset = 0.;
+    let mut pointer = None;
+    let mut after = Vec::new();
+    let mut captures = Vec::new();
+    let mut steps = Vec::new();
+    for step in scenario.steps {
+        let mut point = None;
+        match *step {
+            Step::Capture { name } => {
+                let (rows, sections) = declared_clips(&state, theme, &frame, offset, pointer);
+                let visible = state.visible();
+                let selected = state.selected_index(&visible).map(|index| visible[index]);
+                let empty = visible.is_empty().then(|| DeclaredText {
+                    text: state.variant.empty_note(!state.variant.clips().is_empty()),
+                    rect: Rect {
+                        x: frame.list.x + f(split.list_padding_x),
+                        y: frame.list.y + f(split.list_padding_top),
+                        width: frame.list.width - 2. * f(split.list_padding_x) - 1.,
+                        height: 2. * f(split.empty_padding_y)
+                            + f(split.empty_size) * theme.typography.line_height,
+                    },
+                });
+                let lead = f(theme.geometry.footer_padding_left)
+                    + f(split.footer_glyph)
+                    + f(split.footer_lead_gap);
+                let button = f(theme.geometry.action_height);
+                captures.push(DeclaredCapture {
+                    name,
+                    after: after.clone(),
+                    query: state.query.clone(),
+                    pointer,
+                    rows: Vec::new(),
+                    sections: Vec::new(),
+                    action: None,
+                    action_button: None,
+                    actions_open: false,
+                    actions: None,
+                    footer: None,
+                    board: None,
+                    clipboard: Some(DeclaredClipboard {
+                        variant: state.variant.name(),
+                        header: frame.header,
+                        tabs_strip: frame.tabs,
+                        list: frame.list,
+                        pane: frame.pane,
+                        footer: frame.footer,
+                        query: state.query.clone(),
+                        tab: state.tab,
+                        rows,
+                        sections,
+                        empty,
+                        preview: selected.map(|clip| DeclaredPreview {
+                            kind: clip.preview.kind(),
+                            rect: frame.card,
+                        }),
+                        copied: DeclaredText {
+                            text: selected.map_or_else(
+                                || "Nothing selected".to_owned(),
+                                |clip| clip.copied(),
+                            ),
+                            rect: Rect {
+                                x: lead,
+                                y: frame.footer.y,
+                                width: 0.,
+                                height: frame.footer.height,
+                            },
+                        },
+                        caption: state.variant.caption(),
+                        back: Rect {
+                            x: f(split.header_padding_left),
+                            y: (frame.header.height - 1. - f(split.back_size)) / 2.,
+                            width: f(split.back_size),
+                            height: f(split.back_size),
+                        },
+                        capture: DeclaredText {
+                            text: state.variant.capture_button().0.to_owned(),
+                            rect: Rect {
+                                x: 0.,
+                                y: (frame.header.height - 1. - button) / 2.,
+                                width: 0.,
+                                height: button,
+                            },
+                        },
+                        tabs: Vec::new(),
+                        buttons: Vec::new(),
+                        divider: None,
+                        colors: ClipColors {
+                            back_fill: hex(split.back_fill),
+                            chip_fill: hex(split.chip_fill),
+                            tab_on: hex(split.tab_on),
+                            tab_text: hex(split.tab_text),
+                            preview_fill: hex(split.preview_fill),
+                            preview_edge: hex(split.preview_edge),
+                        },
+                    }),
+                });
+            }
+            Step::Key {
+                key: NamedKey::Down,
+            } => state.step(1),
+            Step::Key {
+                key: NamedKey::Escape,
+            } => state.set_query(""),
+            Step::Type { text } => {
+                let query = format!("{}{text}", state.query);
+                state.set_query(&query);
+            }
+            Step::Click { target } => {
+                // A clip's click lands at its row's center; a tab's is
+                // placed once its label is shaped (the manifest fills it).
+                if !target.starts_with("clip-tab-") {
+                    let (rows, _) = declared_clips(&state, theme, &frame, offset, None);
+                    let id = target.strip_prefix("clip-").unwrap_or(target);
+                    point = rows
+                        .iter()
+                        .find(|row| row.id == id)
+                        .map(|row| row.rect.center());
+                }
+                state.click(target);
+                if point.is_some() {
+                    pointer = point;
+                }
+            }
+            // The clipboard scenarios move the pointer only by clicking.
+            Step::Pointer { .. } => {}
+        }
+        if matches!(step, Step::Key { .. }) {
+            offset = clip_scrolled(&state, theme, &frame, offset);
+        }
+        if !matches!(step, Step::Capture { .. }) {
+            after.push(*step);
+        }
+        steps.push(ResolvedStep { step: *step, point });
+    }
+    Replay { captures, steps }
+}
+
+/// The parts of the split view only shaping places, for a clipboard
+/// scenario's manifest: the chip, the capture button, the tabs and the
+/// footer's buttons; and the clicks on a tab.
+fn declare_clipboard(
+    window: &Window,
+    theme: &Theme,
+    keyboard: &pane_core::Keyboard,
+    captures: &mut [DeclaredCapture],
+    steps: &mut [ResolvedStep],
+) {
+    let split = &theme.split;
+    let geometry = &theme.geometry;
+    let typography = &theme.typography;
+    let f = f32::from;
+    let label_width =
+        |text: &str, size: Pixels| shaped_width(window, theme, text, size, typography.medium);
+    for capture in captures.iter_mut() {
+        let Some(clip) = capture.clipboard.as_mut() else {
+            continue;
+        };
+        let variant = match clip.variant {
+            "production" => ClipVariant::Production,
+            "off" => ClipVariant::Off,
+            _ => ClipVariant::Reference,
+        };
+        // The tabs, from the strip's left padding, 4 apart.
+        let mut x = f(split.tabs_padding_x);
+        let top = clip.tabs_strip.y + (clip.tabs_strip.height - 1. - f(split.tab_height)) / 2.;
+        clip.tabs = variant
+            .tabs()
+            .into_iter()
+            .map(|label| {
+                let width = 2. * f(split.tab_padding_x) + label_width(label, split.tab_size);
+                let tab = DeclaredTab {
+                    label,
+                    on: label == clip.tab,
+                    rect: Rect {
+                        x,
+                        y: top,
+                        width,
+                        height: f(split.tab_height),
+                    },
+                };
+                x += width + f(split.tabs_gap);
+                tab
+            })
+            .collect();
+        // The capture button, at the header's right padding.
+        let (capture_label, _, _) = variant.capture_button();
+        let capture_width = 2. * f(geometry.action_padding_x)
+            + f(split.capture_glyph)
+            + f(geometry.action_gap)
+            + label_width(capture_label, typography.footer_size);
+        clip.capture.rect.x = clip.header.width - f(split.header_padding_right) - capture_width;
+        clip.capture.rect.width = capture_width;
+        // The footer's buttons, right to left from its right padding.
+        let selected = clip.preview.is_some();
+        let button_top =
+            clip.footer.y + 1. + (clip.footer.height - 1. - f(geometry.action_height)) / 2.;
+        let mut right = clip.footer.width - f(geometry.footer_padding_right);
+        let mut buttons = Vec::new();
+        let [primary, secondary, more] = variant.buttons();
+        let shown: Vec<_> = if selected {
+            vec![Some(more), None, Some(secondary), Some(primary)]
+        } else {
+            vec![Some(more)]
+        };
+        for entry in shown {
+            match entry {
+                Some((label, binding, style)) => {
+                    let keys = crate::keyboard::binding_keys(&effective(keyboard, binding));
+                    let width = 2. * f(geometry.action_padding_x)
+                        + label_width(label, typography.footer_size)
+                        + f(geometry.action_gap)
+                        + keys_width(window, theme, &keys, style);
+                    buttons.push(DeclaredText {
+                        text: label.to_owned(),
+                        rect: Rect {
+                            x: right - width,
+                            y: button_top,
+                            width,
+                            height: f(geometry.action_height),
+                        },
+                    });
+                    right -= width + f(geometry.footer_buttons_gap);
+                }
+                // The rule between the selected clip's buttons and the last.
+                None => {
+                    let height = f(geometry.footer_divider_height);
+                    clip.divider = Some(Rect {
+                        x: right - 1.,
+                        y: clip.footer.y + 1. + (clip.footer.height - 1. - height) / 2.,
+                        width: 1.,
+                        height,
+                    });
+                    right -= 1. + f(geometry.footer_buttons_gap);
+                }
+            }
+        }
+        buttons.reverse();
+        clip.buttons = buttons;
+    }
+    // A click on a tab lands at its center.
+    let Some(first) = captures
+        .iter()
+        .find_map(|capture| capture.clipboard.as_ref())
+    else {
+        return;
+    };
+    let tabs = first.tabs.clone();
+    for step in steps.iter_mut() {
+        if let Step::Click { target } = step.step
+            && let Some(name) = target.strip_prefix("clip-tab-")
+            && let Some(tab) = tabs.iter().find(|tab| tab.label.to_lowercase() == name)
+        {
+            step.point = Some(tab.rect.center());
+        }
+    }
+}
+
+/// The binding a fixture button shows: the effective one for the keys the
+/// launcher rebinds (Enter, Ctrl+K), else the fixed one it names.
+fn effective(keyboard: &pane_core::Keyboard, binding: &str) -> Binding {
+    match binding {
+        "enter" => keyboard
+            .binding(KeyboardAction::InvokeSelectedAction)
+            .clone(),
+        "ctrl-k" => keyboard.binding(KeyboardAction::OpenActions).clone(),
+        other => parse_binding(other),
+    }
+}
+
+impl FixtureWindow {
+    fn clip_next(&mut self, _: &SelectNext, _: &mut Window, cx: &mut Context<Self>) {
+        self.clip_step(1, cx);
+    }
+
+    fn clip_previous(&mut self, _: &SelectPrevious, _: &mut Window, cx: &mut Context<Self>) {
+        self.clip_step(-1, cx);
+    }
+
+    /// The keys' selection, kept in view as the launcher's split view
+    /// keeps it.
+    fn clip_step(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let Some(clip) = self.clip.as_mut() else {
+            return;
+        };
+        clip.step(delta);
+        let visible = clip.visible();
+        if let Some(selected) = clip.selected_index(&visible) {
+            let labels = ClipState::sections(&visible);
+            self.scroll
+                .scroll_to_item(shell::child_of_row(&labels, selected));
+        }
+        cx.notify();
+    }
+
+    /// Escape: the reference's clears the query.
+    fn clip_back(&mut self, _: &Back, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(clip) = self.clip.as_mut() {
+            clip.set_query("");
+        }
+        let query = self.query.clone();
+        query.update(cx, |query, cx| query.emplace("", cx));
+        cx.notify();
+    }
+
+    /// The split view over the scenario's clips, composed by the
+    /// production parts the launcher's Clipboard History composes
+    /// (`crate::ui::split_view`, `crate::ui::footer`).
+    fn render_clipboard(&self, theme: &Theme, cx: &mut Context<Self>) -> gpui::Div {
+        let Some(clip) = self.clip.as_ref() else {
+            return div();
+        };
+        let variant = clip.variant;
+        let visible = clip.visible();
+        let selected = clip.selected_index(&visible);
+        let labels = ClipState::sections(&visible);
+        let (capture_label, capture_glyph, pressed) = variant.capture_button();
+        let header = split_view::header(
+            split_view::back_button(theme).into_any_element(),
+            split_view::chip(variant.chip(), theme),
+            split_view::search_field(&self.query, variant.placeholder(), theme).into_any_element(),
+            Some(
+                split_view::capture_button(capture_label, capture_glyph, pressed, theme)
+                    .into_any_element(),
+            ),
+            theme,
+        );
+        let tabs = variant
+            .tabs()
+            .into_iter()
+            .map(|label| {
+                let target = format!("clip-tab-{}", label.to_lowercase());
+                split_view::tab(label, label == clip.tab, theme)
+                    .id(SharedString::from(target.clone()))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(clip) = this.clip.as_mut() {
+                            clip.click(&target);
+                            cx.notify();
+                        }
+                    }))
+                    .into_any_element()
+            })
+            .collect();
+        let tabs = split_view::tabs(
+            tabs,
+            Some((variant.caption().into(), theme.text_muted)),
+            theme,
+        );
+        let rows: Vec<gpui::AnyElement> = visible
+            .iter()
+            .enumerate()
+            .map(|(index, record)| {
+                let target = format!("clip-{}", record.id);
+                split_view::clip_row(
+                    ClipRow {
+                        title: record.title.into(),
+                        time: record.time.into(),
+                        selected: selected == Some(index),
+                        mark: match record.mark {
+                            FixtureMark::Tile(tone, glyph) => ClipMark::Tile(tone, glyph),
+                            FixtureMark::Swatch(color) => {
+                                ClipMark::Swatch(gpui::rgb_to_hsla(gpui::rgba(color)))
+                            }
+                        },
+                    },
+                    theme,
+                )
+                .id(("clip", index))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if let Some(clip) = this.clip.as_mut() {
+                        clip.click(&target);
+                        cx.notify();
+                    }
+                }))
+                .into_any_element()
+            })
+            .collect();
+        let list = split_view::list(theme).track_scroll(&self.scroll);
+        let list = if visible.is_empty() {
+            let note = variant.empty_note(!variant.clips().is_empty());
+            list.child(split_view::empty_note(note, theme))
+        } else {
+            list.children(shell::with_section_labels(rows, &labels, theme))
+        };
+        let preview = selected.map(|index| {
+            let record = visible[index];
+            let content = match record.preview {
+                FixturePreview::Code => {
+                    let split = &theme.split;
+                    let lines = code_lines(split);
+                    let lines: Vec<&[(&str, Option<gpui::Hsla>)]> =
+                        lines.iter().map(Vec::as_slice).collect();
+                    split_view::code_preview(&lines, theme)
+                }
+                FixturePreview::Text => split_view::text_preview(record.body, theme),
+                FixturePreview::Color { fill, hex, values } => split_view::color_preview(
+                    gpui::rgb_to_hsla(gpui::rgba(fill)),
+                    hex,
+                    &values,
+                    theme,
+                ),
+                FixturePreview::Link { domain, url } => {
+                    split_view::link_preview(domain, url, theme)
+                }
+                FixturePreview::Image { dims } => {
+                    split_view::image_preview("[Screenshot preview]", dims, theme)
+                }
+            };
+            split_view::preview_card(
+                SharedString::from(format!("clipboard-preview-{}", record.id)).into(),
+                content.into_any_element(),
+                theme,
+            )
+            .into_any_element()
+        });
+        let keyboard = settings::keyboard_of(cx);
+        let [primary, secondary, more] = variant.buttons();
+        let button = |(label, binding, style): (&'static str, &'static str, CapStyle),
+                      id: &'static str| {
+            let keys = crate::keyboard::binding_keys(&effective(&keyboard, binding));
+            footer::footer_button(id, label, &keys, style, footer::ButtonWash::Hover, theme)
+                .into_any_element()
+        };
+        let buttons = split_view::footer_buttons(
+            selected.map(|_| button(primary, "clipboard-primary")),
+            selected.map(|_| button(secondary, "clipboard-secondary")),
+            button(more, "clipboard-more"),
+            theme,
+        );
+        let copied = selected.map_or_else(
+            || "Nothing selected".to_owned(),
+            |index| visible[index].copied(),
+        );
+        let footer = split_view::footer(
+            split_view::footer_lead(copied, theme.text_muted, theme),
+            buttons,
+            theme,
+        );
+        let content = split_view::compose(
+            header,
+            tabs,
+            list.into_any_element(),
+            preview,
+            footer.into_any_element(),
+            theme,
+        )
+        .key_context(clipboard_history::CONTEXT);
+        div()
+            .key_context(KEY_CONTEXT)
+            .on_action(cx.listener(Self::clip_next))
+            .on_action(cx.listener(Self::clip_previous))
+            .on_action(cx.listener(Self::clip_back))
+            .size_full()
+            .flex()
+            .flex_col()
+            .font_family(theme.typography.family.clone())
+            .font_features(theme.typography.features.clone())
+            .text_color(theme.text_title)
+            .child(content)
+    }
+}
+
+/// The reference's default preview: `CODE`'s lines, each a run of spans
+/// in the reference's keyword, function, number and string colors.
+fn code_lines(
+    split: &crate::ui::theme::SplitTokens,
+) -> Vec<Vec<(&'static str, Option<gpui::Hsla>)>> {
+    vec![
+        vec![
+            ("const", Some(split.code_keyword)),
+            (" pane = ", None),
+            ("createPane", Some(split.code_function)),
+            ("({", None),
+        ],
+        vec![
+            ("  blur: ", None),
+            ("44", Some(split.code_value)),
+            (",", None),
+        ],
+        vec![
+            ("  tint: ", None),
+            ("0.7", Some(split.code_value)),
+            (",", None),
+        ],
+        vec![
+            ("  accent: ", None),
+            ("\"#C9EE6A\"", Some(split.code_string)),
+            (",", None),
+        ],
+        vec![("})", None)],
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4566,8 +5936,11 @@ mod tests {
     #[test]
     fn every_reference_scenario_renders_at_its_boards_client() {
         for scenario in scenarios().iter().filter(|scenario| scenario.reference) {
+            // The Settings and clipboard boards are panels of their own
+            // sizes (#97, #102).
             let board = match scenario.family {
                 Family::Settings => (1120., 720.),
+                Family::Clipboard => (940., 600.),
                 _ => (760., 518.),
             };
             assert_eq!(scenario.client, board, "{}", scenario.name);
@@ -4714,9 +6087,16 @@ mod tests {
                     .contains(pending.ticket)
             );
         }
-        for client in [ROOT_CLIENT, SETTINGS_CLIENT, CLIPBOARD_CLIENT] {
+        for client in [ROOT_CLIENT, SETTINGS_CLIENT] {
             assert!(pending_scenarios().iter().any(|p| p.client == client));
         }
+        // The clipboard board's scenarios are registered (#102).
+        assert!(
+            scenarios()
+                .iter()
+                .any(|scenario| scenario.reference && scenario.client == CLIPBOARD_CLIENT)
+        );
+        assert!(pending_scenarios().iter().all(|p| p.board != "clipboard"));
         // Store and the snap HUD stay source-only references.
         assert!(
             pending_scenarios()
@@ -5002,6 +6382,175 @@ mod tests {
         assert!(parse_args(args("--scenario root-rest")).is_err());
         assert!(parse_args(args("--perturb sideways")).is_err());
         assert!(parse_args(args("--manifest")).is_err());
+    }
+
+    fn clipboard_of(capture: &DeclaredCapture) -> &DeclaredClipboard {
+        capture.clipboard.as_ref().expect("a clipboard capture")
+    }
+
+    fn clip_titles(clipboard: &DeclaredClipboard) -> Vec<&'static str> {
+        clipboard.rows.iter().map(|row| row.title).collect()
+    }
+
+    fn selected_clip(clipboard: &DeclaredClipboard) -> Option<&'static str> {
+        clipboard
+            .rows
+            .iter()
+            .find(|row| row.selected)
+            .map(|row| row.id)
+    }
+
+    #[test]
+    fn the_split_view_divides_the_clipboard_board_as_the_reference_does() {
+        let frame = clip_frame(&theme(), CLIPBOARD_CLIENT);
+        // 64 header + 46 tabs + 438 body + 52 footer = 600.
+        assert_eq!(frame.tabs.y, 64.);
+        assert_eq!(
+            frame.list,
+            Rect {
+                x: 0.,
+                y: 110.,
+                width: 360.,
+                height: 438.
+            }
+        );
+        assert_eq!(frame.footer.y, 548.);
+        // The preview card: the pane's 12px padding around 556x414.
+        assert_eq!(
+            frame.card,
+            Rect {
+                x: 372.,
+                y: 122.,
+                width: 556.,
+                height: 414.
+            }
+        );
+        // A narrower window keeps the list at most half its width.
+        let narrow = clip_frame(&theme(), (600., 518.));
+        assert_eq!(narrow.list.width, 300.);
+    }
+
+    #[test]
+    fn clipboard_rows_and_labels_lie_where_the_reference_board_puts_them() {
+        let captures = declared_captures(scenario("clipboard-rest"), &theme());
+        let clipboard = clipboard_of(&captures[0]);
+        // The reference's DOM, relative to its glass: the Pinned label at
+        // y 112, ssh at 144, Today at 190, the code clip at 222 — 343 wide
+        // from x 8 — and the Yesterday label at 452.
+        let tops: Vec<f32> = clipboard
+            .sections
+            .iter()
+            .map(|label| label.rect.y)
+            .collect();
+        assert_eq!(tops, [112., 190., 452.]);
+        let rows: Vec<(f32, f32, f32)> = clipboard
+            .rows
+            .iter()
+            .map(|row| (row.rect.x, row.rect.y, row.rect.width))
+            .collect();
+        assert_eq!(rows[0], (8., 144., 343.));
+        assert_eq!(rows[1], (8., 222., 343.));
+        assert_eq!(rows[6].1, 484.);
+        assert_eq!(selected_clip(clipboard), Some("code"));
+        // The last clip runs past the list's bottom, as the reference's.
+        assert!(!clipboard.rows[7].visible && clipboard.rows[6].visible);
+        assert_eq!(
+            clipboard.preview.as_ref().map(|preview| preview.kind),
+            Some("code")
+        );
+        assert_eq!(
+            clipboard.copied.text,
+            "Copied today, 14:02 from Visual Studio Code"
+        );
+    }
+
+    #[test]
+    fn a_click_selects_a_clip_and_the_preview_follows_it() {
+        let replay = replay(scenario("clipboard-previews"), &theme());
+        let kinds: Vec<_> = replay
+            .captures
+            .iter()
+            .map(|capture| clipboard_of(capture).preview.as_ref().map(|p| p.kind))
+            .collect();
+        assert_eq!(
+            kinds,
+            [Some("text"), Some("color"), Some("link"), Some("image")]
+        );
+        let text = clipboard_of(&replay.captures[0]);
+        assert_eq!(selected_clip(text), Some("standup"));
+        assert_eq!(text.copied.text, "Copied today, 11:04 from Slack");
+        // Each click lands on its row's center.
+        let click = &replay.steps[0];
+        let standup = text.rows.iter().find(|row| row.id == "standup").unwrap();
+        assert_eq!(click.point, Some(standup.rect.center()));
+    }
+
+    #[test]
+    fn the_keys_reach_the_last_clip_and_scroll_it_into_view() {
+        let captures = declared_captures(scenario("clipboard-keys"), &theme());
+        assert_eq!(selected_clip(clipboard_of(&captures[0])), Some("lime"));
+        let last = clipboard_of(&captures[1]);
+        let ice = last.rows.last().unwrap();
+        assert_eq!(selected_clip(last), Some("ice"));
+        assert!(ice.visible);
+        // Scrolled by the least that shows it: its bottom on the list's.
+        assert_eq!(ice.rect.y + ice.rect.height, 548.);
+    }
+
+    #[test]
+    fn a_query_no_clip_matches_lists_nothing_and_previews_nothing() {
+        let captures = declared_captures(scenario("clipboard-filter"), &theme());
+        let none = clipboard_of(&captures[0]);
+        assert!(none.rows.is_empty() && none.preview.is_none());
+        assert_eq!(
+            none.empty.as_ref().map(|note| note.text.as_str()),
+            Some("No clips match. Try another filter.")
+        );
+        assert_eq!(none.copied.text, "Nothing selected");
+        assert_eq!(clipboard_of(&captures[1]).rows.len(), 8);
+        let text = clipboard_of(&captures[2]);
+        assert_eq!(text.tab, "Text");
+        assert_eq!(
+            clip_titles(text),
+            [
+                "ssh deploy@10.0.4.12",
+                "const pane = createPane({",
+                "Standup moved to 10:30 tomorrow",
+                "hello@example.com"
+            ]
+        );
+        assert_eq!(selected_clip(text), Some("code"));
+    }
+
+    #[test]
+    fn production_scenarios_show_production_content_only() {
+        let captures = declared_captures(scenario("clipboard-production"), &theme());
+        let rest = clipboard_of(&captures[0]);
+        assert_eq!(rest.variant, "production");
+        let labels: Vec<_> = rest
+            .sections
+            .iter()
+            .map(|label| label.label.as_str())
+            .collect();
+        assert_eq!(labels, ["Today", "Yesterday", "Older"]);
+        assert!(rest.caption.starts_with("Text is kept for 7 days"));
+        assert_eq!(
+            selected_clip(clipboard_of(&captures[1])),
+            Some("5"),
+            "the long record"
+        );
+        let off = declared_captures(scenario("clipboard-off"), &theme());
+        let off = clipboard_of(&off[0]);
+        assert!(off.rows.is_empty() && off.preview.is_none());
+        assert_eq!(off.capture.text, "Turn on");
+        assert!(
+            off.empty
+                .as_ref()
+                .unwrap()
+                .text
+                .starts_with("Clipboard history is off")
+        );
+        assert_eq!(ClipVariant::Production.tabs(), ["All", "Text"]);
     }
 
     #[test]
