@@ -35,8 +35,12 @@ use crate::ui::theme::Theme;
 use crate::{SelectNext, SelectPrevious};
 
 const CONTEXT: &str = "RootSearch";
-/// The query field's placeholder on root search.
-pub(crate) const ROOT_PLACEHOLDER: &str = "Search commands";
+/// The query field's placeholder on root search: the reference's "Search
+/// apps, commands, plugins…" in Pane's own terms — root search finds
+/// installed applications and commands, and Pane has extensions, not
+/// plugins, whose results arrive as commands — so the adaptation drops the
+/// third noun rather than rename it to a search Pane does not offer.
+pub(crate) const ROOT_PLACEHOLDER: &str = "Search apps and commands…";
 /// The query field's placeholder in an opened command that searches.
 pub(crate) const COMMAND_PLACEHOLDER: &str = "Search";
 
@@ -237,7 +241,11 @@ pub(crate) fn search_header(
                 .justify_center()
                 .size(px(44.))
                 .mx(px(-12.))
-                .child(glyph(Glyph::Search, px(20.), theme.text_muted)),
+                .child(glyph(
+                    Glyph::Search,
+                    geometry.search_glyph_size,
+                    theme.text_muted,
+                )),
         )
         .child(
             text_input("query")

@@ -109,6 +109,48 @@ class Ink(unittest.TestCase):
         self.assertEqual(found["color"], (237, 237, 239))
 
 
+class Frame(unittest.TestCase):
+    def panel(self, radius=0):
+        """A 760x518 dark panel with a 1px inset ring at 7.5%, a top
+        highlight at 10%, optionally rounded over a darker backdrop."""
+        backdrop, base = (8, 9, 10), (22, 23, 26)
+        image = Image.new("RGB", (760, 518), backdrop if radius else base)
+        draw = ImageDraw.Draw(image)
+        ring = over_white(base, 0.075)
+        draw.rounded_rectangle((0, 0, 759, 517), radius=radius, fill=ring)
+        draw.rounded_rectangle((1, 1, 758, 516), radius=max(0, radius - 1), fill=base)
+        top = over_white(ring, 0.10)
+        draw.line((radius, 0, 759 - radius, 0), fill=top)
+        return image
+
+    def test_the_inset_ring_measures_its_alpha_on_each_side(self):
+        image = self.panel()
+        for edge in ("left", "right", "bottom"):
+            self.assertAlmostEqual(compare.edge_alpha(image, edge), 0.075 * 255, delta=1.5, msg=edge)
+        combined = 255 * (1 - 0.925 * 0.9)
+        self.assertAlmostEqual(compare.edge_alpha(image, "top"), combined, delta=1.5)
+
+    def test_a_missing_ring_measures_none(self):
+        image = Image.new("RGB", (760, 518), (22, 23, 26))
+        self.assertAlmostEqual(compare.edge_alpha(image, "left"), 0, delta=0.5)
+
+    def test_a_square_corner_has_no_inset_and_a_rounded_one_its_radius(self):
+        self.assertEqual(compare.corner_inset(self.panel()), 0)
+        inset = compare.corner_inset(self.panel(radius=18))
+        # r(1 - 1/sqrt 2) = 5.3 for 18px, within the diagonal's pixel steps.
+        self.assertTrue(4 <= inset <= 6, inset)
+
+
+class Accepted(unittest.TestCase):
+    def test_a_failing_check_with_a_disposition_is_accepted_not_failed(self):
+        report = compare.Report()
+        report.check("parity", "s", "c", "frame", "corner", 0, 5, 1, "px", accepted="platform limit")
+        report.check("parity", "s", "c", "frame", "edge", 0, 5, 1, "px")
+        report.check("parity", "s", "c", "frame", "ok", 5, 5, 1, "px", accepted="unused")
+        self.assertEqual([c.get("accepted") for c in report.checks], ["platform limit", None, None])
+        self.assertEqual([c["passed"] for c in report.checks], [False, False, True])
+
+
 class Sensitivity(unittest.TestCase):
     def test_only_checks_that_passed_before_and_fail_now_flip(self):
         def check(identifier, passed, value):

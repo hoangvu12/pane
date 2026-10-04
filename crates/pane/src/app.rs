@@ -32,6 +32,7 @@ use crate::ui::keycap;
 use crate::ui::material::Material;
 use crate::ui::motion::{self, Direction};
 use crate::ui::result_row::{RowContent, result_row};
+use crate::ui::shell;
 use crate::ui::theme::Theme;
 use crate::{
     Back, Confirm, DismissLauncher, FocusNext, FocusPrevious, OpenSettings, ReturnToRoot,
@@ -39,11 +40,6 @@ use crate::{
 };
 
 pub(crate) const KEY_CONTEXT: &str = "Launcher";
-
-/// The result list's top and bottom padding (the reference's root body:
-/// 4 above the first row, 10 below the last).
-pub(crate) const LIST_PADDING_TOP: Pixels = px(4.);
-pub(crate) const LIST_PADDING_BOTTOM: Pixels = px(10.);
 
 /// How long after an accepted Open Pane press another press of the same
 /// binding is treated as the repeat of a key still held, not a new press.
@@ -1118,23 +1114,12 @@ impl Render for LauncherWindow {
             }
             _ => div().id("empty").child(empty),
         };
-        let list = div()
-            .id("rows")
-            .debug_selector(|| "rows".into())
-            .role(Role::ListBox)
+        let list = shell::result_list(&theme)
             .aria_label(match view.screen {
                 Screen::Root { .. } => "Results".into(),
                 Screen::CommandSearch { .. } => format!("{} results", view.title),
                 _ => view.title.clone(),
             })
-            .flex_1()
-            .flex()
-            .flex_col()
-            .gap(theme.geometry.row_list_gap)
-            .px(theme.geometry.row_padding_x)
-            .pt(LIST_PADDING_TOP)
-            .pb(LIST_PADDING_BOTTOM)
-            .overflow_y_scroll()
             .track_scroll(&self.scroll)
             // Above the rows: with none selected, the only rows are root
             // search's fallbacks, listed below "No results".

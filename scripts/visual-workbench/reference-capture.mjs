@@ -241,6 +241,9 @@ window.__wb = {
       list: this.rel(index, doc.querySelector('.list')),
       listScrollTop: doc.querySelector('.list').scrollTop,
       footerPrimary: buttons[0] ? { label: buttons[0].textContent.trim(), rect: this.rel(index, buttons[0]) } : null,
+      // Every footer button, left to right (the primary action, then
+      // Actions): the last one's right edge is the footer's right padding.
+      footerButtons: Array.from(buttons).map((b) => ({ label: b.textContent.trim(), rect: this.rel(index, b) })),
       // The footer strip: the glass panel's child that holds the buttons.
       footer: (() => {
         let el = buttons[0];
