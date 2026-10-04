@@ -34,6 +34,8 @@ use crate::ui::input::TextEditingKeys;
 use crate::ui::theme::Theme;
 use crate::{SelectNext, SelectPrevious};
 
+pub(crate) mod layouts;
+
 const CONTEXT: &str = "RootSearch";
 /// The query field's placeholder on root search: the reference's "Search
 /// apps, commands, plugins…" in Pane's own terms — root search finds

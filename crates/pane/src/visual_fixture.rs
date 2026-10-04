@@ -54,7 +54,8 @@ use gpui::{
 };
 use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged};
 use pane_core::{
-    Binding, KeyboardAction, ResultAction, ResultActionItem, ResultActions, SelectedAction,
+    Binding, ComputedAnswer, KeyboardAction, ResultAction, ResultActionItem, ResultActions,
+    SelectedAction,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -68,10 +69,11 @@ use crate::ui::icon::{Glyph, IconTone, TileSize, tile_at};
 use crate::ui::input::bind_text_editing;
 use crate::ui::keycap::{self, CapMetrics, CapStyle};
 use crate::ui::material::Material;
+use crate::ui::result_layouts::{self, AnswerCard, AnswerSide, HistoryRow, NoticeCopy, Suggestion};
 use crate::ui::result_row::{RowContent, RowMeta, result_row_with};
 use crate::ui::settings_shell::{self, SidebarItem};
 use crate::ui::shell::{self, LAUNCHER_CLIENT, SectionLabel};
-use crate::ui::theme::Theme;
+use crate::ui::theme::{Theme, TypeLine};
 use crate::{Back, SelectNext, SelectPrevious};
 
 /// The root reference board's client size, in logical pixels: the authored
@@ -343,6 +345,314 @@ pub(crate) const ACTIONS_ROWS: &[FixtureRow] = &[
         )
     },
 ];
+
+/// A fallback row: the reference's `Fallback` rows, which send the text
+/// typed to what they name, with the board's label for that action.
+const fn fallback(
+    title: &'static str,
+    subtitle: &'static str,
+    glyph: Glyph,
+    action: &'static str,
+) -> FixtureRow {
+    FixtureRow {
+        action,
+        kind: "Fallback",
+        ..command(title, subtitle, (IconTone::Command, glyph))
+    }
+}
+
+/// The row a computed answer is: drawn as the answer card, with no kind
+/// and no subtitle, copied by `action`.
+const fn answer_row(title: &'static str, action: &'static str) -> FixtureRow {
+    FixtureRow {
+        subtitle: None,
+        action,
+        kind: "",
+        ..command(title, "", (IconTone::Command, Glyph::Calculator))
+    }
+}
+
+/// A calculation-history row: `expression` and `answer`, under `kind`.
+const fn history(
+    expression: &'static str,
+    answer: &'static str,
+    kind: &'static str,
+    glyph: Glyph,
+) -> FixtureRow {
+    FixtureRow {
+        action: "Copy Answer",
+        kind,
+        ..command(expression, answer, (IconTone::Command, glyph))
+    }
+}
+
+/// The reference empty board's fallbacks for "kubectx", in its order:
+/// fixture content standing in for the fallbacks a user chose (Pane's own
+/// rows are titled with the command they send the text to).
+pub(crate) const EMPTY_ROWS: &[FixtureRow] = &[
+    fallback(
+        "Search the web for “kubectx”",
+        "Default browser",
+        Glyph::Globe,
+        "Search Web",
+    ),
+    fallback(
+        "Search files for “kubectx”",
+        "Files",
+        Glyph::File,
+        "Search Files",
+    ),
+    fallback(
+        "Create Script Command “kubectx”",
+        "Scripts",
+        Glyph::Terminal,
+        "Create Command",
+    ),
+];
+
+/// The reference calculator board's rows: the answer its card shows, then
+/// its recent calculations — fixture content: Pane's calculator answers
+/// arithmetic, converts no units and keeps no history (#100).
+pub(crate) const CALCULATOR_ROWS: &[FixtureRow] = &[
+    answer_row("182.88 cm", "Copy Answer"),
+    history("1920 / 16 × 9", "= 1,080", "Math", Glyph::Calculator),
+    history("15% of 2,400", "= 360", "Math", Glyph::Calculator),
+    history(
+        "3 pm Stockholm in Tokyo",
+        "= 22:00",
+        "Time zone",
+        Glyph::Clock,
+    ),
+];
+
+/// A computed answer as production presents it: the calculator's answer
+/// to "6*7", copied by the launcher's own "Copy answer".
+pub(crate) const ANSWER_ROWS: &[FixtureRow] = &[answer_row("42", "Copy answer")];
+
+/// A computed answer whose expression is too long for the authored size.
+pub(crate) const LONG_ANSWER_ROWS: &[FixtureRow] = &[answer_row("123456887764", "Copy answer")];
+
+/// A static result board's composition around its rows (#96): the
+/// reference's empty and calculator boards, and the production shapes of
+/// the same parts. Every part is drawn by the shared result layouts
+/// (`crate::ui::result_layouts`); what a board holds beyond what Pane's
+/// launcher holds — units, conversions, history, suggestions — is fixture
+/// content, never production data (#100).
+#[derive(Debug)]
+pub(crate) struct ResultBoard {
+    /// The query the board shows: its search field holds it from the
+    /// start, and its rows are listed for it as authored, unfiltered.
+    pub(crate) query: &'static str,
+    /// Whether the no-results notice heads the list.
+    pub(crate) notice: bool,
+    /// The answer card, which the board's first row is drawn as.
+    pub(crate) answer: Option<FixtureAnswer>,
+    /// Whether the rows after the card are its calculation history.
+    pub(crate) history: bool,
+    /// The section labels the board authors over its rows (first row,
+    /// label, note), where they are its content, not root search's own.
+    pub(crate) sections: Option<&'static [(usize, &'static str, &'static str)]>,
+    /// The extension suggestions after the rows, under their label.
+    pub(crate) suggestions: Option<FixtureSuggestions>,
+}
+
+/// An answer card's values, each with its caption where the board
+/// authors one, its "Also" chips, and the command that computed it.
+#[derive(Debug)]
+pub(crate) struct FixtureAnswer {
+    /// The command whose title labels the card in root search's sections.
+    pub(crate) command: &'static str,
+    pub(crate) source: (&'static str, Option<&'static str>),
+    pub(crate) answer: (&'static str, Option<&'static str>),
+    pub(crate) also: &'static [&'static str],
+}
+
+impl FixtureAnswer {
+    /// The computed answer this is, when it holds only what a computed
+    /// answer does: no captions and no chips (the production shapes).
+    fn computed(&self) -> Option<ComputedAnswer> {
+        let plain = self.source.1.is_none() && self.answer.1.is_none() && self.also.is_empty();
+        plain.then(|| ComputedAnswer {
+            query: self.source.0.to_owned(),
+            answer: self.answer.0.to_owned(),
+            command: self.command.to_owned(),
+        })
+    }
+
+    /// The card as drawn: a production-shaped answer through the
+    /// launcher's own composition from its computed answer, an authored
+    /// one through the shared card with the board's content.
+    fn draw(&self, selected: bool, theme: &Theme) -> gpui::Div {
+        match self.computed() {
+            Some(computed) => root_search::layouts::answer_card(&computed, selected, theme),
+            None => result_layouts::answer_card(&self.card(selected), theme),
+        }
+    }
+
+    /// The card's accessible name: the launcher's own for a computed
+    /// answer ("6*7 = 42"), else the row's `title`.
+    fn label(&self, title: &str) -> String {
+        match self.computed() {
+            Some(computed) => root_search::layouts::answer_label(&computed),
+            None => title.to_owned(),
+        }
+    }
+
+    /// The shared card's values for this answer.
+    fn card(&self, selected: bool) -> AnswerCard {
+        let side = |(value, caption): (&'static str, Option<&'static str>)| AnswerSide {
+            value: value.into(),
+            caption: caption.map(Into::into),
+        };
+        AnswerCard {
+            source: side(self.source),
+            answer: side(self.answer),
+            also: self.also.iter().map(|&chip| chip.into()).collect(),
+            selected,
+        }
+    }
+}
+
+/// A board's extension suggestions: their label, the label's note and the
+/// keys ending it (as a binding), and the suggestions.
+#[derive(Debug)]
+pub(crate) struct FixtureSuggestions {
+    pub(crate) label: &'static str,
+    pub(crate) note: &'static str,
+    pub(crate) keys: &'static str,
+    pub(crate) items: &'static [FixtureSuggestion],
+}
+
+/// One extension suggestion, as the board authors it.
+#[derive(Debug)]
+pub(crate) struct FixtureSuggestion {
+    pub(crate) title: &'static str,
+    pub(crate) meta: &'static str,
+    pub(crate) glyph: Glyph,
+    /// The tile's inline colors on the board (`0xRRGGBBAA`): its fill and
+    /// its glyph's — per extension, data rather than a theme role.
+    pub(crate) tile: (u32, u32),
+    pub(crate) action: &'static str,
+}
+
+impl FixtureSuggestion {
+    /// The shared suggestion row's values.
+    fn suggestion(&self) -> Suggestion {
+        let color = |hex: u32| gpui::rgb_to_hsla(gpui::rgba(hex));
+        Suggestion {
+            title: self.title.into(),
+            meta: self.meta.into(),
+            glyph: self.glyph,
+            tile: (color(self.tile.0), color(self.tile.1)),
+            action: self.action.into(),
+        }
+    }
+}
+
+/// The empty board: "kubectx" matches nothing; the notice heads the three
+/// fallbacks, then two extensions "From the Plugin Store".
+static EMPTY_BOARD: ResultBoard = ResultBoard {
+    query: "kubectx",
+    notice: true,
+    answer: None,
+    history: false,
+    sections: None,
+    suggestions: Some(FixtureSuggestions {
+        label: "From the Plugin Store",
+        note: "See all",
+        keys: "ctrl-enter",
+        items: &[
+            FixtureSuggestion {
+                title: "Kube Context",
+                meta: "@tamsin · 31 KB · Reads your kubeconfig",
+                glyph: Glyph::Package,
+                tile: (0x173352FF, 0x8FC3FFFF),
+                action: "Install",
+            },
+            FixtureSuggestion {
+                title: "Kubernetes Clusters",
+                meta: "@okoro · 58 KB · Runs kubectl locally",
+                glyph: Glyph::Target,
+                tile: (0x163B3FFF, 0x86D9E0FF),
+                action: "Install",
+            },
+        ],
+    }),
+};
+
+/// The notice with no fallback under it: what production shows a user who
+/// chose none.
+static NO_FALLBACKS_BOARD: ResultBoard = ResultBoard {
+    query: "kubectx",
+    notice: true,
+    answer: None,
+    history: false,
+    sections: None,
+    suggestions: None,
+};
+
+/// The calculator board: "72 in to cm" answered by the card, with its
+/// units, conversions and recent calculations under the board's labels.
+static CALCULATOR_BOARD: ResultBoard = ResultBoard {
+    query: "72 in to cm",
+    notice: false,
+    answer: Some(FixtureAnswer {
+        command: "Calculator",
+        source: ("72 in", Some("Inches")),
+        answer: ("182.88 cm", Some("Centimeters")),
+        also: &["1.8288 m", "6 ft", "2 yd"],
+    }),
+    history: true,
+    sections: Some(&[
+        (0, "Calculator", "Units"),
+        (1, "Recent calculations", "Stays on this device"),
+    ]),
+    suggestions: None,
+};
+
+/// A computed answer as production presents it: what was typed and the
+/// answer, no captions or chips, under the command's title.
+static PLAIN_ANSWER_BOARD: ResultBoard = ResultBoard {
+    query: "6*7",
+    notice: false,
+    answer: Some(FixtureAnswer {
+        command: "Calculator",
+        source: ("6*7", None),
+        answer: ("42", None),
+        also: &[],
+    }),
+    history: false,
+    sections: None,
+    suggestions: None,
+};
+
+/// A computed answer whose expression is too long for the authored 34px:
+/// its values step down to fit their columns.
+static LONG_ANSWER_BOARD: ResultBoard = ResultBoard {
+    query: "123456789 * 1000 + 98765 - 1",
+    notice: false,
+    answer: Some(FixtureAnswer {
+        command: "Calculator",
+        source: ("123456789 * 1000 + 98765 - 1", None),
+        answer: ("123456887764", None),
+        also: &[],
+    }),
+    history: false,
+    sections: None,
+    suggestions: None,
+};
+
+/// The result board the scenario `name` renders, if it renders one (#96).
+fn result_board(name: &str) -> Option<&'static ResultBoard> {
+    match name {
+        "empty-state" => Some(&EMPTY_BOARD),
+        "empty-no-fallbacks" => Some(&NO_FALLBACKS_BOARD),
+        "calculator-card" => Some(&CALCULATOR_BOARD),
+        "answer-plain" => Some(&PLAIN_ANSWER_BOARD),
+        "answer-long" => Some(&LONG_ANSWER_BOARD),
+        _ => None,
+    }
+}
 
 /// Which component family a scenario renders.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -740,6 +1050,66 @@ const SCENARIOS: &[Scenario] = {
             rows: &[],
             steps: &[capture("narrow")],
         },
+        Scenario {
+            name: "empty-state",
+            description: "The empty board: 'kubectx' matches nothing, so the notice heads the fallbacks, none selected — the board preselects the first, which Pane never does (#100) — until Down selects it; the board's store suggestions are fixture content",
+            family: Family::Root,
+            client: ROOT_CLIENT,
+            reference: true,
+            board: Some("empty"),
+            theme: None,
+            frame: false,
+            rows: EMPTY_ROWS,
+            steps: &[capture("notice"), DOWN, capture("fallback-selected")],
+        },
+        Scenario {
+            name: "calculator-card",
+            description: "The calculator board: '72 in to cm' answered by the selected card, with the board's units, conversions and recent calculations as fixture content (Pane's calculator answers arithmetic only, #100)",
+            family: Family::Root,
+            client: ROOT_CLIENT,
+            reference: true,
+            board: Some("calculator"),
+            theme: None,
+            frame: false,
+            rows: CALCULATOR_ROWS,
+            steps: &[capture("card")],
+        },
+        Scenario {
+            name: "answer-plain",
+            description: "A computed answer as production presents it: '6*7' and 42 on the card under 'Calculator', no captions or chips (no reference counterpart)",
+            family: Family::Root,
+            client: ROOT_CLIENT,
+            reference: false,
+            board: None,
+            theme: None,
+            frame: false,
+            rows: ANSWER_ROWS,
+            steps: &[capture("answer")],
+        },
+        Scenario {
+            name: "answer-long",
+            description: "A computed answer whose expression is too long for the authored 34px: the values step down to fit their columns (no reference counterpart)",
+            family: Family::Root,
+            client: ROOT_CLIENT,
+            reference: false,
+            board: None,
+            theme: None,
+            frame: false,
+            rows: LONG_ANSWER_ROWS,
+            steps: &[capture("long-answer")],
+        },
+        Scenario {
+            name: "empty-no-fallbacks",
+            description: "The notice with no fallback under it, as production shows it to a user who chose none (no reference counterpart)",
+            family: Family::Root,
+            client: ROOT_CLIENT,
+            reference: false,
+            board: None,
+            theme: None,
+            frame: false,
+            rows: &[],
+            steps: &[capture("notice")],
+        },
     ]
 };
 
@@ -763,20 +1133,6 @@ pub(crate) struct PendingScenario {
 /// this milestone (see the #90 specification's deferred capabilities).
 pub(crate) fn pending_scenarios() -> &'static [PendingScenario] {
     &[
-        PendingScenario {
-            name: "calculator-card",
-            board: "calculator",
-            ticket: "https://github.com/hoangvu12/pane/issues/96",
-            description: "The computed-result card from the calculator board",
-            client: ROOT_CLIENT,
-        },
-        PendingScenario {
-            name: "empty-state",
-            board: "empty",
-            ticket: "https://github.com/hoangvu12/pane/issues/96",
-            description: "The no-results notice and fallback rows from the empty board",
-            client: ROOT_CLIENT,
-        },
         PendingScenario {
             name: "appearance-page",
             board: "settings",
@@ -1147,9 +1503,14 @@ struct FixtureState {
     all: &'static [FixtureRow],
     query: String,
     rows: Vec<&'static FixtureRow>,
+    /// The selected row's index; past the last row while none is: a list
+    /// of fallbacks alone selects none until the user does, as root
+    /// search's (#100).
     selected: usize,
     /// The Actions panel while it is open.
     actions: Option<PanelState>,
+    /// The result board the scenario renders, if any (#96).
+    board: Option<&'static ResultBoard>,
 }
 
 /// The open Actions panel's state: its filter and its selected entry.
@@ -1167,7 +1528,54 @@ impl FixtureState {
             rows: all.iter().collect(),
             selected: 0,
             actions: None,
+            board: None,
         }
+    }
+
+    /// `scenario`'s state at its rest: a result board's query is typed and
+    /// its rows listed for it as authored, the first that is not a
+    /// fallback selected (#96).
+    fn of(scenario: &Scenario) -> FixtureState {
+        let mut state = FixtureState::new(scenario.rows);
+        if let Some(board) = result_board(scenario.name) {
+            state.board = Some(board);
+            state.query = board.query.to_owned();
+            state.selected = first_choice(&state.rows);
+        }
+        state
+    }
+
+    /// The board's answer, when the shown row `index` is drawn as its
+    /// card: the board's first row.
+    fn answer_at(&self, index: usize) -> Option<&'static FixtureAnswer> {
+        let answer = self.board.and_then(|board| board.answer.as_ref());
+        answer.filter(|_| index == 0)
+    }
+
+    /// Whether the shown row `index` is one of the board's calculation
+    /// history rows: those after its card.
+    fn history_at(&self, index: usize) -> bool {
+        index > 0 && self.board.is_some_and(|board| board.history)
+    }
+
+    /// The board's extension suggestions, if it has any.
+    fn suggestions(&self) -> Option<&'static FixtureSuggestions> {
+        self.board.and_then(|board| board.suggestions.as_ref())
+    }
+
+    /// What the board's notice says for its query, if it has one: root
+    /// search's own copy.
+    fn notice(&self) -> Option<NoticeCopy> {
+        let board = self.board.filter(|board| board.notice)?;
+        let fallbacks = !self.rows.is_empty();
+        Some(root_search::layouts::notice_copy(board.query, fallbacks))
+    }
+
+    /// The list child that shows the selected row (for scrolling to it):
+    /// after the board's notice, when it has one, and the labels.
+    fn selected_child(&self) -> usize {
+        let notice = self.board.is_some_and(|board| board.notice);
+        root_search::layouts::child_of_row(notice, &self.sections(), self.selected)
     }
 
     /// The footer's Actions button, as the launcher's opens and closes
@@ -1236,7 +1644,8 @@ impl FixtureState {
 
     /// The reference's own filtering rule, over the fixture's own data: a
     /// row shows when its title contains the query, ignoring case; a new
-    /// query selects its first result, as the launcher's does.
+    /// query selects its first result that is not a fallback, as the
+    /// launcher's does.
     fn set_query(&mut self, query: &str) {
         let needle = query.to_lowercase();
         self.query = query.to_owned();
@@ -1245,11 +1654,17 @@ impl FixtureState {
             .iter()
             .filter(|row| row.title.to_lowercase().contains(&needle))
             .collect();
-        self.selected = 0;
+        self.selected = first_choice(&self.rows);
     }
 
     fn select_next(&mut self) {
-        if self.selected + 1 < self.rows.len() {
+        if self.selected >= self.rows.len() {
+            // Nothing is selected (fallbacks alone): Down chooses the
+            // first, as root search's does.
+            if !self.rows.is_empty() {
+                self.selected = 0;
+            }
+        } else if self.selected + 1 < self.rows.len() {
             self.selected += 1;
         }
     }
@@ -1273,19 +1688,43 @@ impl FixtureState {
     }
 
     /// The section labels over the shown rows, by root search's own rule
-    /// (`pane_core::root_sections`). The fixture lists no fallbacks.
+    /// (`pane_core::answer_sections`: a board's answer under its command's
+    /// title, the fallbacks under "Fallbacks"), or the labels a result
+    /// board authors where they are its content (#96).
     fn sections(&self) -> Vec<SectionLabel> {
+        if let Some(sections) = self.board.and_then(|board| board.sections) {
+            return sections
+                .iter()
+                .map(|&(first, label, note)| SectionLabel {
+                    first,
+                    label: label.into(),
+                    note: Some(note.into()),
+                })
+                .collect();
+        }
         let rows = self.rows.len();
         let fallbacks = self
             .rows
             .iter()
             .position(|row| row.kind == "Fallback")
             .unwrap_or(rows);
-        pane_core::root_sections(&self.query, rows, fallbacks)
+        let answers: Vec<Option<&str>> = (0..rows)
+            .map(|index| self.answer_at(index).map(|answer| answer.command))
+            .collect();
+        pane_core::answer_sections(&self.query, &answers, fallbacks)
             .iter()
             .map(SectionLabel::from)
             .collect()
     }
+}
+
+/// The row a list selects by itself: its first that is not a fallback, as
+/// root search's (`pane_core`'s first choice); past the last row when it
+/// lists fallbacks alone, which wait for the user (#100).
+fn first_choice(rows: &[&FixtureRow]) -> usize {
+    rows.iter()
+        .position(|row| row.kind != "Fallback")
+        .unwrap_or(rows.len())
 }
 
 /// A rectangle in logical client coordinates.
@@ -1379,6 +1818,10 @@ pub(crate) struct DeclaredRow {
     alias_rect: Option<Rect>,
     #[serde(skip_serializing_if = "Option::is_none")]
     key_group: Option<KeyGroupRecord>,
+    /// Whether the row is drawn as the board's answer card (#96): its
+    /// rect is the card's, and the rows' own checks pass it by.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    answer: bool,
 }
 
 /// A section label as a capture declares it.
@@ -1417,6 +1860,10 @@ fn declared_list(
     let x = frame.list.x + f32::from(geometry.list_padding_x);
     let width = frame.list.width - 2. * f32::from(geometry.list_padding_x);
     let mut y = frame.list.y + f32::from(geometry.list_padding_top) + offset;
+    // A result board's notice heads the list (#96).
+    if state.board.is_some_and(|board| board.notice) {
+        y += f32::from(geometry.results.notice_height) + f32::from(geometry.row_list_gap);
+    }
     let list = frame.list;
     let mut floor = false;
     let sections = state.sections();
@@ -1440,13 +1887,24 @@ fn declared_list(
                 y += f32::from(geometry.section_height) + f32::from(geometry.row_list_gap);
             }
             floor |= row.unavailable.is_some();
+            // A row drawn as the board's answer card is the card, between
+            // its margins (#96).
+            let answer = state.answer_at(index);
+            let (above, height, below) = match answer {
+                Some(answer) => (
+                    f32::from(geometry.results.card_margin_top),
+                    answer_card_height(&answer.card(false), theme),
+                    f32::from(geometry.results.card_margin_bottom),
+                ),
+                None => (0., f32::from(geometry.row_min_height), 0.),
+            };
             let rect = Rect {
                 x,
-                y,
+                y: y + above,
                 width,
-                height: f32::from(geometry.row_min_height),
+                height,
             };
-            y += f32::from(geometry.row_min_height) + f32::from(geometry.row_list_gap);
+            y += above + height + below + f32::from(geometry.row_list_gap);
             DeclaredRow {
                 title: row.title,
                 tone: if row.icon.0 == IconTone::Command {
@@ -1468,6 +1926,7 @@ fn declared_list(
                 kind_rect: None,
                 alias_rect: None,
                 key_group: None,
+                answer: answer.is_some(),
             }
         })
         .collect();
@@ -1505,6 +1964,83 @@ pub(crate) struct DeclaredCapture {
     /// when the manifest is written.
     #[serde(skip_serializing_if = "Option::is_none")]
     footer: Option<DeclaredFooter>,
+    /// A result board's own parts (#96), filled in from shaped text when
+    /// the manifest is written.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    board: Option<DeclaredBoard>,
+}
+
+/// A result board's own parts as a capture declares them (#96): the
+/// notice, the answer card and the suggestions, each where the shared
+/// result layouts lay it out, with the colors it is drawn in.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeclaredBoard {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    notice: Option<DeclaredNotice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    answer: Option<DeclaredAnswer>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    suggestions: Vec<DeclaredSuggestion>,
+}
+
+/// The no-results notice: its box, its disc and the disc's fill, and its
+/// title's and description's line boxes.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeclaredNotice {
+    rect: Rect,
+    disc: Rect,
+    disc_fill: String,
+    title: DeclaredText,
+    description: DeclaredText,
+}
+
+/// The answer card: its box, whether its accent ring shows, its fill, the
+/// values' type, each side, the arrow's disc, and the "Also" line — its
+/// label, its chips and the rule above them — where it has one.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeclaredAnswer {
+    rect: Rect,
+    selected: bool,
+    fill: String,
+    ring: String,
+    /// The values' type: "34px Geist Mono 500".
+    font: String,
+    source: DeclaredSide,
+    answer: DeclaredSide,
+    arrow: Rect,
+    arrow_fill: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    also: Option<DeclaredText>,
+    chips: Vec<DeclaredText>,
+    chip_fill: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rule: Option<Rect>,
+}
+
+/// One side of the answer card: its value's box (shaped, centered in its
+/// column) and color, and its caption's box.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeclaredSide {
+    value: DeclaredText,
+    color: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    caption: Option<DeclaredText>,
+}
+
+/// An extension suggestion row: its box, its tile and its pill, and the
+/// pill's fill.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeclaredSuggestion {
+    title: String,
+    rect: Rect,
+    tile: Rect,
+    pill: Rect,
+    pill_fill: String,
 }
 
 /// The open Actions panel as a capture declares it, laid out from the
@@ -1800,7 +2336,7 @@ fn scrolled_to_selected(state: &FixtureState, theme: &Theme, frame: &Frame, offs
 /// every capture they take, and resolves where each pointer step points.
 pub(crate) fn replay(scenario: &Scenario, theme: &Theme) -> Replay {
     let frame = frame(theme, scenario.client);
-    let mut state = FixtureState::new(scenario.rows);
+    let mut state = FixtureState::of(scenario);
     let mut offset = 0.;
     let mut pointer = None;
     let mut after = Vec::new();
@@ -1823,6 +2359,7 @@ pub(crate) fn replay(scenario: &Scenario, theme: &Theme) -> Replay {
                     actions_open: state.actions.is_some(),
                     actions: declared_actions(&state, theme, &frame),
                     footer: None,
+                    board: None,
                 })
             }
             Step::Pointer { row, nudge } => {
@@ -1899,7 +2436,10 @@ impl FixtureWindow {
         perturbation: Option<Perturbation>,
         cx: &mut Context<Self>,
     ) -> FixtureWindow {
-        let query = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
+        // A result board's query is in the field from the start (#96).
+        let state = FixtureState::of(scenario);
+        let text = StringStorage::from(state.query.clone());
+        let query = cx.new(|cx| EditableTextState::new(text, cx));
         query.focus_handle(cx).tab_stop(true);
         cx.subscribe(&query, |this, input, _: &TextChanged, cx| {
             let text = input.read(cx).as_str().to_owned();
@@ -1924,7 +2464,7 @@ impl FixtureWindow {
         FixtureWindow {
             scenario,
             perturbation,
-            state: FixtureState::new(scenario.rows),
+            state,
             query,
             scroll: ScrollHandle::new(),
             pointer: None,
@@ -2007,10 +2547,7 @@ impl FixtureWindow {
     /// After the selection may have moved: the list keeps the selected
     /// row in view, as the launcher's does, and the window redraws.
     fn selection_moved(&mut self, cx: &mut Context<Self>) {
-        self.scroll.scroll_to_item(shell::child_of_row(
-            &self.state.sections(),
-            self.state.selected,
-        ));
+        self.scroll.scroll_to_item(self.state.selected_child());
         cx.notify();
     }
 
@@ -2117,9 +2654,56 @@ impl FixtureWindow {
         crate::features::settings::compose(div(), sidebar, page, theme, material)
     }
 
+    /// A result board's extension suggestions under their label (#96),
+    /// through the shared result layouts: fixture content only.
+    fn render_suggestions(&self, theme: &Theme) -> Vec<gpui::AnyElement> {
+        let Some(suggestions) = self.state.suggestions() else {
+            return Vec::new();
+        };
+        let keys = crate::keyboard::binding_keys(&parse_binding(suggestions.keys));
+        let label = result_layouts::keyed_section_label(
+            suggestions.label.into(),
+            suggestions.note.into(),
+            &keys,
+            theme,
+        );
+        let rows = suggestions.items.iter().map(|item| {
+            result_layouts::suggestion_row(&item.suggestion(), theme).into_any_element()
+        });
+        std::iter::once(label.into_any_element())
+            .chain(rows)
+            .collect()
+    }
+
     fn render_root(&self, theme: &Theme, cx: &mut Context<Self>) -> gpui::Div {
         let rows = self.state.rows.iter().enumerate().map(|(index, row)| {
             let selected = index == self.state.selected;
+            // A result board's card and history rows (#96), through the
+            // shared result layouts.
+            if let Some(answer) = self.state.answer_at(index) {
+                return answer
+                    .draw(selected, theme)
+                    .id(("row", index))
+                    .role(Role::ListBoxOption)
+                    .aria_label(answer.label(row.title))
+                    .aria_selected(selected)
+                    .into_any_element();
+            }
+            if self.state.history_at(index) {
+                let history = HistoryRow {
+                    expression: row.title.into(),
+                    answer: row.subtitle.unwrap_or_default().into(),
+                    kind: row.kind.into(),
+                    icon: row.icon,
+                    selected,
+                };
+                return result_layouts::history_row(&history, theme)
+                    .id(("row", index))
+                    .role(Role::ListBoxOption)
+                    .aria_label(row.title)
+                    .aria_selected(selected)
+                    .into_any_element();
+            }
             result_row_with(
                 RowContent {
                     title: row.title.into(),
@@ -2156,15 +2740,24 @@ impl FixtureWindow {
             }))
             .into_any_element()
         });
-        // The launcher's own result list.
+        // A result board's notice for its query (#96), as root search
+        // composes it.
+        let notice = self
+            .state
+            .notice()
+            .map(|copy| root_search::layouts::notice(&copy, theme).into_any_element());
+        // The launcher's own result list, after the notice when it shows,
+        // then a board's suggestions.
         let list = shell::result_list(theme)
             .aria_label("Results")
             .track_scroll(&self.scroll)
-            .children(shell::with_section_labels(
+            .children(root_search::layouts::list_children(
+                notice,
                 rows,
                 &self.state.sections(),
                 theme,
-            ));
+            ))
+            .children(self.render_suggestions(theme));
         let focus = self.query.focus_handle(cx);
         let search = div()
             .id("search")
@@ -2552,24 +3145,7 @@ fn shaped_width_in(
     size: Pixels,
     weight: FontWeight,
 ) -> f32 {
-    let mut font = gpui::font(family);
-    font.weight = weight;
-    // The features every text run asks for (kerning), as rendered.
-    font.features = theme.typography.features.clone();
-    let run = TextRun {
-        len: text.len(),
-        font,
-        color: theme.text_title,
-        background_color: None,
-        underline: None,
-        strikethrough: None,
-        letter_spacing: None,
-    };
-    window
-        .text_system()
-        .shape_line(SharedString::from(text.to_owned()), size, &[run], None)
-        .width()
-        .into()
+    shaped_width_tracked(window, family, theme, text, size, weight, None)
 }
 
 /// Where `row`'s trailing parts lie, right-aligned inside its padding
@@ -2631,6 +3207,384 @@ fn declare_trailing(window: &Window, theme: &Theme, row: &mut DeclaredRow) {
             height: row.rect.height,
         });
     }
+}
+
+/// The width `text` shapes to in `family` at `size` and `weight`, with
+/// `spacing` added after each character where it has some, as a tracked
+/// run is laid out (the answer card's values, #96).
+fn shaped_width_tracked(
+    window: &Window,
+    family: SharedString,
+    theme: &Theme,
+    text: &str,
+    size: Pixels,
+    weight: FontWeight,
+    spacing: Option<Pixels>,
+) -> f32 {
+    let mut font = gpui::font(family);
+    font.weight = weight;
+    // The features every text run asks for (kerning), as rendered.
+    font.features = theme.typography.features.clone();
+    let run = TextRun {
+        len: text.len(),
+        font,
+        color: theme.text_title,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+        letter_spacing: spacing,
+    };
+    window
+        .text_system()
+        .shape_line(SharedString::from(text.to_owned()), size, &[run], None)
+        .width()
+        .into()
+}
+
+/// A value column's height on the answer card: the value's line box, over
+/// its caption's 4 below it where it has one (#96).
+fn answer_column_height(side: &AnswerSide, value: TypeLine, theme: &Theme) -> f32 {
+    let f = f32::from;
+    let caption = side.caption.as_ref().map_or(0., |_| {
+        f(theme.geometry.results.card_value_gap)
+            + f(theme.typography.results.answer_caption.line_height)
+    });
+    f(value.line_height) + caption
+}
+
+/// The card's values line's height: its taller column, or the arrow's
+/// disc where that is taller (#96).
+fn answer_values_height(card: &AnswerCard, theme: &Theme) -> f32 {
+    let value = result_layouts::answer_value_type(card, theme);
+    answer_column_height(&card.source, value, theme)
+        .max(answer_column_height(&card.answer, value, theme))
+        .max(f32::from(theme.geometry.results.card_arrow_disc))
+}
+
+/// The answer card's height as the shared layout lays `card` out (#96):
+/// its paddings around its values line and, where it has chips, the gap,
+/// the 1px rule and the padding above the chips' line.
+fn answer_card_height(card: &AnswerCard, theme: &Theme) -> f32 {
+    let results = &theme.geometry.results;
+    let f = f32::from;
+    let values = answer_values_height(card, theme);
+    let also = if card.also.is_empty() {
+        0.
+    } else {
+        f(results.card_gap) + 1. + f(results.also_padding_top) + f(results.chip_height)
+    };
+    f(results.card_padding_top) + values + also + f(results.card_padding_bottom)
+}
+
+/// Where a result board's own parts lie in `capture` (#96), as the shared
+/// result layouts lay them out: the notice heading the list, the answer
+/// card in its row's place, and the suggestions after the rows, under
+/// their label, which joins the capture's sections.
+fn declare_board(
+    window: &Window,
+    theme: &Theme,
+    frame: &Frame,
+    board: &ResultBoard,
+    capture: &mut DeclaredCapture,
+) {
+    let geometry = &theme.geometry;
+    let f = f32::from;
+    let x = frame.list.x + f(geometry.list_padding_x);
+    let width = frame.list.width - 2. * f(geometry.list_padding_x);
+    let top = frame.list.y + f(geometry.list_padding_top);
+    let notice = board.notice.then(|| {
+        let copy = root_search::layouts::notice_copy(board.query, !capture.rows.is_empty());
+        let rect = Rect {
+            x,
+            y: top,
+            width,
+            height: f(geometry.results.notice_height),
+        };
+        declared_notice(theme, &copy, rect)
+    });
+    let answer = board.answer.as_ref().and_then(|answer| {
+        let row = capture.rows.iter().find(|row| row.answer)?;
+        Some(declared_answer(window, theme, answer, row))
+    });
+    let mut suggestions = Vec::new();
+    if let Some(items) = &board.suggestions {
+        // After the last row and the list's gap, or the notice's.
+        let gap = f(geometry.row_list_gap);
+        let after = match (capture.rows.last(), &notice) {
+            (Some(row), _) => row.rect.y + row.rect.height + gap,
+            (None, Some(notice)) => notice.rect.y + notice.rect.height + gap,
+            (None, None) => top,
+        };
+        let (label, rows) = declared_suggestions(window, theme, items, (x, after, width));
+        capture.sections.push(label);
+        suggestions = rows;
+    }
+    capture.board = Some(DeclaredBoard {
+        notice,
+        answer,
+        suggestions,
+    });
+}
+
+/// The notice in `rect`, saying `copy`: its disc 12 in and centered in the
+/// notice's padded height, its text 16 after the disc, the title's line
+/// over the description's, 4 apart, centered beside it (#96).
+fn declared_notice(theme: &Theme, copy: &NoticeCopy, rect: Rect) -> DeclaredNotice {
+    let results = &theme.geometry.results;
+    let types = &theme.typography.results;
+    let f = f32::from;
+    let content_top = rect.y + f(results.notice_padding_top);
+    let content = rect.height - f(results.notice_padding_top) - f(results.notice_padding_bottom);
+    let side = f(results.notice_disc);
+    let disc = Rect {
+        x: rect.x + f(results.notice_padding_x),
+        y: content_top + (content - side) / 2.,
+        width: side,
+        height: side,
+    };
+    let (title_line, description_line) = (
+        f(types.notice_title.line_height),
+        f(types.notice_description.line_height),
+    );
+    let text_height = title_line + f(results.notice_text_gap) + description_line;
+    let text_x = disc.x + side + f(results.notice_gap);
+    let text_top = content_top + (content - text_height) / 2.;
+    let text_width = rect.x + rect.width - f(results.notice_padding_x) - text_x;
+    let line = |text: &SharedString, y: f32, height: f32| DeclaredText {
+        text: text.to_string(),
+        rect: Rect {
+            x: text_x,
+            y,
+            width: text_width,
+            height,
+        },
+    };
+    let description_top = text_top + title_line + f(results.notice_text_gap);
+    DeclaredNotice {
+        rect,
+        disc,
+        disc_fill: hex(theme.results.notice_disc),
+        title: line(&copy.title, text_top, title_line),
+        description: line(&copy.description, description_top, description_line),
+    }
+}
+
+/// The answer card in `row`'s place (#96): its values centered in their
+/// columns either side of the arrow's disc, each over its caption, the
+/// values line centered in its height; then, where it has chips, the rule
+/// and the "Also" line, its label and chips centered across the card.
+fn declared_answer(
+    window: &Window,
+    theme: &Theme,
+    answer: &FixtureAnswer,
+    row: &DeclaredRow,
+) -> DeclaredAnswer {
+    let results = &theme.geometry.results;
+    let types = &theme.typography.results;
+    let colors = &theme.results;
+    let f = f32::from;
+    let card = answer.card(row.selected);
+    let value = result_layouts::answer_value_type(&card, theme);
+    let rect = row.rect;
+    let inner_x = rect.x + f(results.card_padding_x);
+    let inner_width = rect.width - 2. * f(results.card_padding_x);
+    let (arrow, gap) = (f(results.card_arrow_disc), f(results.card_column_gap));
+    let column = (inner_width - arrow - 2. * gap) / 2.;
+    let values_height = answer_values_height(&card, theme);
+    let values_top = rect.y + f(results.card_padding_top);
+    let mono = theme.typography.mono_family.clone();
+    let spacing = value.size * types.answer_tracking;
+    let side = |part: &AnswerSide, left: f32, color: Hsla| {
+        let top = values_top + (values_height - answer_column_height(part, value, theme)) / 2.;
+        let width = shaped_width_tracked(
+            window,
+            mono.clone(),
+            theme,
+            &part.value,
+            value.size,
+            theme.typography.medium,
+            Some(spacing),
+        );
+        let caption = part.caption.as_ref().map(|caption| {
+            let size = types.answer_caption.size;
+            let width = shaped_width(window, theme, caption, size, theme.typography.regular);
+            DeclaredText {
+                text: caption.to_string(),
+                rect: Rect {
+                    x: left + (column - width) / 2.,
+                    y: top + f(value.line_height) + f(results.card_value_gap),
+                    width,
+                    height: f(types.answer_caption.line_height),
+                },
+            }
+        });
+        DeclaredSide {
+            value: DeclaredText {
+                text: part.value.to_string(),
+                rect: Rect {
+                    x: left + (column - width) / 2.,
+                    y: top,
+                    width,
+                    height: f(value.line_height),
+                },
+            },
+            color: hex(color),
+            caption,
+        }
+    };
+    let source = side(&card.source, inner_x, colors.card_source);
+    let answered = side(
+        &card.answer,
+        inner_x + column + gap + arrow + gap,
+        colors.card_answer,
+    );
+    let arrow_rect = Rect {
+        x: inner_x + column + gap,
+        y: values_top + (values_height - arrow) / 2.,
+        width: arrow,
+        height: arrow,
+    };
+    let (mut also, mut chips, mut rule) = (None, Vec::new(), None);
+    if !card.also.is_empty() {
+        let rule_y = values_top + values_height + f(results.card_gap);
+        let line_top = rule_y + 1. + f(results.also_padding_top);
+        let chip_height = f(results.chip_height);
+        let label_line = f(types.answer_also.line_height);
+        let label_width = shaped_width(
+            window,
+            theme,
+            "Also",
+            types.answer_also.size,
+            theme.typography.regular,
+        );
+        let widths: Vec<f32> = card
+            .also
+            .iter()
+            .map(|chip| {
+                let regular = theme.typography.regular;
+                shaped_width_in(window, mono.clone(), theme, chip, types.chip.size, regular)
+                    + 2. * f(results.chip_padding_x)
+            })
+            .collect();
+        let also_gap = f(results.also_gap);
+        let total = label_width + widths.iter().map(|width| also_gap + width).sum::<f32>();
+        let mut left = inner_x + (inner_width - total) / 2.;
+        also = Some(DeclaredText {
+            text: "Also".into(),
+            rect: Rect {
+                x: left,
+                y: line_top + (chip_height - label_line) / 2.,
+                width: label_width,
+                height: label_line,
+            },
+        });
+        left += label_width;
+        for (chip, width) in card.also.iter().zip(widths) {
+            left += also_gap;
+            chips.push(DeclaredText {
+                text: chip.to_string(),
+                rect: Rect {
+                    x: left,
+                    y: line_top,
+                    width,
+                    height: chip_height,
+                },
+            });
+            left += width;
+        }
+        rule = Some(Rect {
+            x: inner_x,
+            y: rule_y,
+            width: inner_width,
+            height: 1.,
+        });
+    }
+    DeclaredAnswer {
+        rect,
+        selected: card.selected,
+        fill: hex(colors.card_fill),
+        ring: hex(theme.accent_text),
+        font: format!(
+            "{}px {} {}",
+            f(value.size),
+            theme.typography.mono_family,
+            theme.typography.medium.0
+        ),
+        source,
+        answer: answered,
+        arrow: arrow_rect,
+        arrow_fill: hex(colors.card_arrow_disc),
+        also,
+        chips,
+        chip_fill: hex(colors.chip_fill),
+        rule,
+    }
+}
+
+/// The suggestions' label at `(x, y)` across `width`, then each
+/// suggestion's row, 54 high, the list's gap apart: its tile 10 in and
+/// centered, its pill at the row's right padding, centered (#96).
+fn declared_suggestions(
+    window: &Window,
+    theme: &Theme,
+    suggestions: &FixtureSuggestions,
+    (x, y, width): (f32, f32, f32),
+) -> (DeclaredSection, Vec<DeclaredSuggestion>) {
+    let geometry = &theme.geometry;
+    let results = &geometry.results;
+    let f = f32::from;
+    let gap = f(geometry.row_list_gap);
+    let keys = crate::keyboard::binding_keys(&parse_binding(suggestions.keys));
+    let caps: String = keys.keys.iter().map(|key| key.cap.as_ref()).collect();
+    let label = DeclaredSection {
+        label: suggestions.label.to_owned(),
+        // As the reference's DOM reads the note: its text, then its caps.
+        note: Some(format!("{}{caps}", suggestions.note)),
+        rect: Rect {
+            x,
+            y,
+            width,
+            height: f(geometry.section_height),
+        },
+    };
+    let mut top = y + f(geometry.section_height) + gap;
+    let height = f(results.suggestion_height);
+    let tile = f(results.suggestion_tile.size);
+    let pill_height = f(results.pill_height);
+    let rows = suggestions
+        .items
+        .iter()
+        .map(|item| {
+            let size = theme.typography.results.pill.size;
+            let label = shaped_width(window, theme, item.action, size, theme.typography.medium);
+            let pill = label + 2. * f(results.pill_padding_x);
+            let row = DeclaredSuggestion {
+                title: item.title.to_owned(),
+                rect: Rect {
+                    x,
+                    y: top,
+                    width,
+                    height,
+                },
+                tile: Rect {
+                    x: x + f(geometry.row_padding_x),
+                    y: top + (height - tile) / 2.,
+                    width: tile,
+                    height: tile,
+                },
+                pill: Rect {
+                    x: x + width - f(geometry.row_padding_x) - pill,
+                    y: top + (height - pill_height) / 2.,
+                    width: pill,
+                    height: pill_height,
+                },
+                pill_fill: hex(theme.results.pill_fill),
+            };
+            top += height + gap;
+            row
+        })
+        .collect();
+    (label, rows)
 }
 
 fn parse_binding(binding: &str) -> Binding {
@@ -3339,8 +4293,14 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
             }
             keycaps.push(primary);
             for capture in &mut captures {
-                for row in &mut capture.rows {
+                // An answer card has no trailing parts (#96).
+                for row in capture.rows.iter_mut().filter(|row| !row.answer) {
                     declare_trailing(window, &theme, row);
+                }
+            }
+            if let Some(board) = result_board(scenario.name) {
+                for capture in &mut captures {
+                    declare_board(window, &theme, &frame, board, capture);
                 }
             }
             // A click on the Actions button lands at its center.
@@ -4059,5 +5019,69 @@ mod tests {
             serde_json::json!({ "action": "pointer", "row": 1, "nudge": 0 })
         );
         assert_eq!(hover["client"], serde_json::json!([760.0, 518.0]));
+    }
+
+    /// The empty board (#96): its query typed, the notice (84) heads the
+    /// list, the fallbacks follow under their label, none selected until
+    /// Down selects the first, whose action the footer then names.
+    #[test]
+    fn the_empty_board_heads_its_unselected_fallbacks_with_the_notice() {
+        let captures = declared_captures(scenario("empty-state"), &theme());
+        let notice = capture(&captures, "notice");
+        assert_eq!(notice.query, "kubectx");
+        assert_eq!(notice.rows.len(), EMPTY_ROWS.len());
+        assert!(notice.rows.iter().all(|row| !row.selected));
+        assert_eq!(notice.action, None);
+        assert_eq!(notice.sections[0].label, "Fallbacks");
+        assert_eq!(notice.sections[0].rect.y, 64. + 4. + 84. + 2.);
+        assert_eq!(notice.rows[0].rect.y, 64. + 4. + 84. + 2. + 30. + 2.);
+        let selected = capture(&captures, "fallback-selected");
+        assert!(selected.rows[0].selected);
+        assert_eq!(selected.action, Some("Search Web"));
+    }
+
+    /// The calculator board (#96): its labels over its rows, the first
+    /// drawn as the selected card at the reference's 740x160 at (10, 102),
+    /// the history rows under the second label.
+    #[test]
+    fn the_calculator_board_lays_its_card_out_in_its_first_rows_place() {
+        let captures = declared_captures(scenario("calculator-card"), &theme());
+        let card = capture(&captures, "card");
+        assert_eq!(card.query, "72 in to cm");
+        let labels: Vec<_> = card
+            .sections
+            .iter()
+            .map(|section| section.label.as_str())
+            .collect();
+        assert_eq!(labels, ["Calculator", "Recent calculations"]);
+        assert!(card.rows[0].answer && card.rows[0].selected);
+        assert_eq!(
+            card.rows[0].rect,
+            Rect {
+                x: 10.,
+                y: 102.,
+                width: 740.,
+                height: 160.
+            }
+        );
+        // The card's 4 below it and the list's gap, then the label.
+        assert_eq!(card.sections[1].rect.y, 102. + 160. + 4. + 2.);
+        assert_eq!(card.rows[1].rect.y, 268. + 30. + 2.);
+        assert_eq!(card.rows.iter().filter(|row| row.answer).count(), 1);
+        assert_eq!(card.rows[3].rect.height, 44.);
+        assert_eq!(card.action, Some("Copy Answer"));
+    }
+
+    /// A computed answer as production presents it (#96) sits under its
+    /// command's title, by root search's own rule, on a card with no
+    /// captions or chips: its paddings around one 44px line.
+    #[test]
+    fn a_production_answer_sits_under_its_commands_title() {
+        let captures = declared_captures(scenario("answer-plain"), &theme());
+        let answer = capture(&captures, "answer");
+        assert_eq!(answer.query, "6*7");
+        assert_eq!(answer.sections.len(), 1);
+        assert_eq!(answer.sections[0].label, "Calculator");
+        assert_eq!(answer.rows[0].rect.height, 20. + 44. + 16.);
     }
 }

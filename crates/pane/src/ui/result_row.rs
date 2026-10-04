@@ -86,30 +86,7 @@ pub(crate) fn result_row(content: RowContent, theme: &Theme) -> Div {
 pub(crate) fn result_row_with(content: RowContent, meta: RowMeta, theme: &Theme) -> Div {
     let geometry = &theme.geometry;
     let typography = &theme.typography;
-    let row = div()
-        .flex_none()
-        .w_full()
-        .flex()
-        .items_center()
-        .gap(geometry.row_gap)
-        .min_h(geometry.row_min_height)
-        .px(geometry.row_padding_x)
-        .rounded(geometry.row_radius)
-        .cursor_pointer()
-        .font_family(typography.family.clone())
-        // A row under the pointer (unselected only: selection stays
-        // visible while hovering) takes the pale hover wash.
-        .when(!content.selected, |row| {
-            row.hover(|row| row.bg(theme.row_hover))
-        })
-        // The selected row: its wash and its 1px inset edge.
-        .when(content.selected, |row| {
-            row.bg(theme.row_selected).shadow(vec![
-                BoxShadow::new(px(0.), px(0.), theme.row_selected_border)
-                    .spread_radius(px(1.))
-                    .inset(),
-            ])
-        });
+    let row = row_surface(content.selected, theme).font_family(typography.family.clone());
 
     let row = match content.icon {
         Some((tone, glyph)) => row.child(icon::tile(tone, glyph, theme)),
@@ -204,6 +181,36 @@ pub(crate) fn result_row_with(content: RowContent, meta: RowMeta, theme: &Theme)
                     .text_color(theme.text_muted)
                     .child(kind),
             )
+        })
+}
+
+/// A row's surface (`.row`): at least 44 high, radius 10, 10px either side
+/// and 12 between its parts, with the pale hover wash while unselected,
+/// and the selected wash and its 1px inset edge while `selected` (a
+/// selected row keeps them under the pointer). The result row and the
+/// calculator board's history row (`crate::ui::result_layouts`) share it.
+pub(crate) fn row_surface(selected: bool, theme: &Theme) -> Div {
+    let geometry = &theme.geometry;
+    div()
+        .flex_none()
+        .w_full()
+        .flex()
+        .items_center()
+        .gap(geometry.row_gap)
+        .min_h(geometry.row_min_height)
+        .px(geometry.row_padding_x)
+        .rounded(geometry.row_radius)
+        .cursor_pointer()
+        // A row under the pointer (unselected only: selection stays
+        // visible while hovering) takes the pale hover wash.
+        .when(!selected, |row| row.hover(|row| row.bg(theme.row_hover)))
+        // The selected row: its wash and its 1px inset edge.
+        .when(selected, |row| {
+            row.bg(theme.row_selected).shadow(vec![
+                BoxShadow::new(px(0.), px(0.), theme.row_selected_border)
+                    .spread_radius(px(1.))
+                    .inset(),
+            ])
         })
 }
 

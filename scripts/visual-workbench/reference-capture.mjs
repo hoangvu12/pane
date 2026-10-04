@@ -182,7 +182,7 @@ window.__wb = {
   },
   rowFor(index, title) {
     const doc = this.frame(index).contentDocument;
-    return Array.from(doc.querySelectorAll('button.row')).find((row) => row.querySelector('.row-t').textContent === title);
+    return Array.from(doc.querySelectorAll('button.row')).find((row) => row.querySelector('.row-t')?.textContent === title);
   },
   // The results' container: the root board's scrolling \`.list\`, or the
   // column after the search header on a static board that has none (the
@@ -198,7 +198,9 @@ window.__wb = {
       const rect = this.rel(index, row);
       const r = row.getBoundingClientRect();
       const tile = row.querySelector('.tile');
-      const title = row.querySelector('.row-t');
+      // A calculator board's history row titles its expression in a
+      // .mono span, with no .row-t (#96).
+      const title = row.querySelector('.row-t') || row.querySelector('.mono');
       const sub = row.querySelector('.row-s');
       return {
         title: title.textContent,
@@ -424,6 +426,77 @@ window.__wb = {
 };
 true`;
 
+// The result boards' own parts (#96), added to every capture's DOM state:
+// the empty board's no-results notice heading the list, the calculator
+// board's answer card, and the empty board's extension suggestions after
+// the rows - each null or empty on a board without it.
+const RESULT_HELPERS = `
+Object.assign(window.__wb, {
+  notice(index) {
+    const list = this.listEl(index);
+    const el = Array.from(list.children).find((child) => child.tagName === 'DIV' && !child.className && getComputedStyle(child).height === '84px');
+    if (!el || el.children.length < 2) return null;
+    const [disc, text] = el.children;
+    const [title, description] = text.children;
+    return {
+      rect: this.rel(index, el),
+      disc: this.rel(index, disc),
+      discBackground: getComputedStyle(disc).backgroundColor,
+      title: { text: title.textContent, rect: this.rel(index, title) },
+      description: { text: description.textContent, rect: this.rel(index, description) },
+    };
+  },
+  answer(index) {
+    const list = this.listEl(index);
+    const card = Array.from(list.children).find((child) => child.tagName === 'BUTTON' && !child.classList.contains('row') && child.children[0] && getComputedStyle(child.children[0]).display === 'grid');
+    if (!card) return null;
+    const [grid, also] = card.children;
+    const [left, arrow, right] = grid.children;
+    const side = (column) => {
+      const [value, caption] = column.children;
+      return {
+        value: { text: value.textContent, rect: this.rel(index, value) },
+        caption: caption ? { text: caption.textContent, rect: this.rel(index, caption) } : null,
+      };
+    };
+    const style = getComputedStyle(card);
+    return {
+      rect: this.rel(index, card),
+      selected: style.boxShadow.includes('201, 238, 106'),
+      background: style.backgroundColor,
+      source: side(left),
+      answer: side(right),
+      arrow: this.rel(index, arrow),
+      arrowBackground: getComputedStyle(arrow).backgroundColor,
+      also: also ? { text: also.children[0].textContent, rect: this.rel(index, also.children[0]) } : null,
+      chips: also ? Array.from(also.querySelectorAll('.chip')).map((chip) => ({ text: chip.textContent, rect: this.rel(index, chip) })) : [],
+      rule: also ? this.rel(index, also) : null,
+    };
+  },
+  suggestions(index) {
+    const list = this.listEl(index);
+    return Array.from(list.querySelectorAll(':scope > .prow')).map((row) => {
+      const pill = row.querySelector('.pill');
+      return {
+        title: row.querySelector(':scope > div').children[0].textContent,
+        rect: this.rel(index, row),
+        tile: this.rel(index, row.querySelector('.tile')),
+        pill: this.rel(index, pill),
+        pillBackground: getComputedStyle(pill).backgroundColor,
+      };
+    });
+  },
+});
+const rootState = window.__wb.state;
+window.__wb.state = function (index) {
+  return Object.assign(rootState.call(this, index), {
+    notice: this.notice(index),
+    answer: this.answer(index),
+    suggestions: this.suggestions(index),
+  });
+};
+true`;
+
 async function load() {
   await call('Page.navigate', { url: pageUrl });
   for (let attempt = 0; attempt < 120; attempt++) {
@@ -434,6 +507,7 @@ async function load() {
     if (ready) break;
   }
   await evaluate(HELPERS);
+  await evaluate(RESULT_HELPERS);
   if (!(await evaluate('__wb.snap()'))) throw new Error('the board frames could not be snapped to whole pixels');
   const frames = await evaluate('__wb.frames()');
   for (let index = 0; index < frames.length; index++) {

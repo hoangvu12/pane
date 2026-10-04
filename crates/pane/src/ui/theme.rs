@@ -105,6 +105,11 @@ pub(crate) struct Theme {
     /// The selected row's inset edge (reference: rgba(255,255,255,.05)).
     pub(crate) row_selected_border: Hsla,
 
+    // -- Root search's result layouts (#96) ----------------------------------
+    /// The no-results notice, the computed answer's card and the authored
+    /// boards' history and suggestion rows.
+    pub(crate) results: ResultColors,
+
     // -- Focus --------------------------------------------------------------
     /// The keyboard focus ring (reference focus-visible: white 50%).
     pub(crate) focus_ring: Hsla,
@@ -278,6 +283,8 @@ pub(crate) struct Typography {
     pub(crate) heading_size: Pixels,
     pub(crate) heading_weight: FontWeight,
     pub(crate) heading_tracking: f32,
+    /// Root search's result layouts' type (#96).
+    pub(crate) results: ResultType,
     /// An Actions row's 13px label, its search's 13px and its empty
     /// note's.
     pub(crate) action_size: Pixels,
@@ -338,6 +345,8 @@ pub(crate) struct Geometry {
     pub(crate) row_list_gap: Pixels,
     /// A row's kind label's least width, right-aligned in it (88).
     pub(crate) row_kind_min_width: Pixels,
+    /// Root search's result layouts (#96).
+    pub(crate) results: ResultGeometry,
     /// The alias chip's padding: 2 above and below, 6 either side.
     pub(crate) alias_padding_y: Pixels,
     pub(crate) alias_padding_x: Pixels,
@@ -517,6 +526,248 @@ pub(crate) struct TileMetrics {
     pub(crate) glyph: Pixels,
 }
 
+/// The colors of root search's result layouts (#96): the reference's
+/// empty and calculator boards. Text roles the launcher already has (a
+/// title's, a muted label's) are the theme's own.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ResultColors {
+    /// The notice's disc (white 6%), its 1px inset ring (white 8%) and its
+    /// glyph (#A3A4A9).
+    pub(crate) notice_disc: Hsla,
+    pub(crate) notice_disc_edge: Hsla,
+    pub(crate) notice_glyph: Hsla,
+    /// The answer card's fill (white 6%); its 1px ring while selected is
+    /// the accent stroke ([`Theme::accent_text`]).
+    pub(crate) card_fill: Hsla,
+    /// The value typed (#D9DADD) and the answer (#FFFFFF).
+    pub(crate) card_source: Hsla,
+    pub(crate) card_answer: Hsla,
+    /// The disc behind the card's arrow (white 7%) and the arrow (#A3A4A9).
+    pub(crate) card_arrow_disc: Hsla,
+    pub(crate) card_arrow: Hsla,
+    /// The rule above the card's "Also" line (white 7%).
+    pub(crate) card_rule: Hsla,
+    /// A chip on that line: its fill (white 6%), ring (white 7%), hover
+    /// fill (white 10%) and label (#D9DADD).
+    pub(crate) chip_fill: Hsla,
+    pub(crate) chip_edge: Hsla,
+    pub(crate) chip_hover: Hsla,
+    pub(crate) chip_text: Hsla,
+    /// A history row's answer (#A3A4A9).
+    pub(crate) history_answer: Hsla,
+    /// A suggestion's Install pill: its fill (white 8%), ring (white 8%)
+    /// and hover fill (white 13%).
+    pub(crate) pill_fill: Hsla,
+    pub(crate) pill_edge: Hsla,
+    pub(crate) pill_hover: Hsla,
+}
+
+impl ResultColors {
+    /// The reference's dark values, exactly as authored.
+    fn dark() -> ResultColors {
+        ResultColors {
+            notice_disc: color(0xFFFFFF0F),
+            notice_disc_edge: color(0xFFFFFF14),
+            notice_glyph: color(0xA3A4A9FF),
+            card_fill: color(0xFFFFFF0F),
+            card_source: color(0xD9DADDFF),
+            card_answer: color(0xFFFFFFFF),
+            card_arrow_disc: color(0xFFFFFF12),
+            card_arrow: color(0xA3A4A9FF),
+            card_rule: color(0xFFFFFF12),
+            chip_fill: color(0xFFFFFF0F),
+            chip_edge: color(0xFFFFFF12),
+            chip_hover: color(0xFFFFFF1A),
+            chip_text: color(0xD9DADDFF),
+            history_answer: color(0xA3A4A9FF),
+            pill_fill: color(0xFFFFFF14),
+            pill_edge: color(0xFFFFFF14),
+            pill_hover: color(0xFFFFFF21),
+        }
+    }
+
+    /// Derived light counterparts, as the light palette derives the rest:
+    /// black washes for white ones and dark inks, a proposal for review.
+    fn light() -> ResultColors {
+        ResultColors {
+            notice_disc: color(0x0000000F),
+            notice_disc_edge: color(0x00000014),
+            notice_glyph: color(0x575A63FF),
+            card_fill: color(0x0000000F),
+            card_source: color(0x2A2B31FF),
+            card_answer: color(0x111214FF),
+            card_arrow_disc: color(0x00000012),
+            card_arrow: color(0x575A63FF),
+            card_rule: color(0x00000012),
+            chip_fill: color(0x0000000F),
+            chip_edge: color(0x00000012),
+            chip_hover: color(0x0000001A),
+            chip_text: color(0x2A2B31FF),
+            history_answer: color(0x575A63FF),
+            pill_fill: color(0x00000014),
+            pill_edge: color(0x00000014),
+            pill_hover: color(0x00000021),
+        }
+    }
+}
+
+/// A text role's size and its line box: CSS's `normal` line height for
+/// Geist and Geist Mono (their ascent and descent, 1005 + 295 per 1000)
+/// as Chrome lays it out, rounding the ascent and the descent each to a
+/// whole pixel — so a line box here is the reference's own height.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct TypeLine {
+    pub(crate) size: Pixels,
+    pub(crate) line_height: Pixels,
+}
+
+/// The type of root search's result layouts (#96).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ResultType {
+    /// The notice's title (15/500) and description (13).
+    pub(crate) notice_title: TypeLine,
+    pub(crate) notice_description: TypeLine,
+    /// The card's values: Geist Mono 34/500 as authored, then the smaller
+    /// steps a value too long for its column takes (24, then 18).
+    pub(crate) answer_value: TypeLine,
+    pub(crate) answer_value_compact: TypeLine,
+    pub(crate) answer_value_small: TypeLine,
+    /// The values' tracking, in em (−.03).
+    pub(crate) answer_tracking: f32,
+    /// Geist Mono's advance, in em: every glyph's is the same (600 units).
+    pub(crate) mono_advance: f32,
+    /// A value's caption (12.5), the "Also" label (12) and a chip's label
+    /// (Geist Mono 12.5).
+    pub(crate) answer_caption: TypeLine,
+    pub(crate) answer_also: TypeLine,
+    pub(crate) chip: TypeLine,
+    /// A history row's expression and answer (Geist Mono 13.5).
+    pub(crate) history: TypeLine,
+    /// A suggestion's title (14/500), its line of metadata (12.5) and its
+    /// pill's label (12.5/500).
+    pub(crate) suggestion_title: TypeLine,
+    pub(crate) suggestion_meta: TypeLine,
+    pub(crate) pill: TypeLine,
+}
+
+impl ResultType {
+    fn shared() -> ResultType {
+        let line = |size: f32, line_height: f32| TypeLine {
+            size: px(size),
+            line_height: px(line_height),
+        };
+        ResultType {
+            notice_title: line(15., 19.),
+            notice_description: line(13., 17.),
+            answer_value: line(34., 44.),
+            answer_value_compact: line(24., 31.),
+            answer_value_small: line(18., 23.),
+            answer_tracking: -0.03,
+            mono_advance: 0.6,
+            answer_caption: line(12.5, 17.),
+            answer_also: line(12., 16.),
+            chip: line(12.5, 17.),
+            history: line(13.5, 18.),
+            suggestion_title: line(14., 18.),
+            suggestion_meta: line(12.5, 17.),
+            pill: line(12.5, 17.),
+        }
+    }
+}
+
+/// The geometry of root search's result layouts (#96): the reference's
+/// empty board's notice and suggestions, and its calculator board's card.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ResultGeometry {
+    /// The notice: 84 high, padded 8 above, 4 below and 12 either side,
+    /// 16 between its disc and its text, and 4 between the text's lines.
+    pub(crate) notice_height: Pixels,
+    pub(crate) notice_padding_top: Pixels,
+    pub(crate) notice_padding_bottom: Pixels,
+    pub(crate) notice_padding_x: Pixels,
+    pub(crate) notice_gap: Pixels,
+    pub(crate) notice_text_gap: Pixels,
+    /// The notice's 44px disc and its 20px glyph.
+    pub(crate) notice_disc: Pixels,
+    pub(crate) notice_glyph: Pixels,
+    /// The card: 2 above it and 4 below, padded 20 above and either side
+    /// and 16 below, 14 between its values and its "Also" line, radius 14.
+    pub(crate) card_margin_top: Pixels,
+    pub(crate) card_margin_bottom: Pixels,
+    pub(crate) card_padding_top: Pixels,
+    pub(crate) card_padding_x: Pixels,
+    pub(crate) card_padding_bottom: Pixels,
+    pub(crate) card_gap: Pixels,
+    pub(crate) card_radius: Pixels,
+    /// The 16 between the card's columns, and the 4 between a value and its
+    /// caption.
+    pub(crate) card_column_gap: Pixels,
+    pub(crate) card_value_gap: Pixels,
+    /// The arrow's 40px disc and its 18px glyph.
+    pub(crate) card_arrow_disc: Pixels,
+    pub(crate) card_arrow: Pixels,
+    /// The "Also" line: 14 below its rule, 8 between its parts.
+    pub(crate) also_padding_top: Pixels,
+    pub(crate) also_gap: Pixels,
+    /// A chip: 30 high, 10 either side, radius 8.
+    pub(crate) chip_height: Pixels,
+    pub(crate) chip_padding_x: Pixels,
+    pub(crate) chip_radius: Pixels,
+    /// A section label's note and its keys, 6 apart.
+    pub(crate) label_keys_gap: Pixels,
+    /// A suggestion row: 54 high, 2 between its title and its metadata,
+    /// its 32px tile (radius 8, a 17px glyph).
+    pub(crate) suggestion_height: Pixels,
+    pub(crate) suggestion_text_gap: Pixels,
+    pub(crate) suggestion_tile: TileMetrics,
+    /// The Install pill: 30 high, 12 either side, radius 8.
+    pub(crate) pill_height: Pixels,
+    pub(crate) pill_padding_x: Pixels,
+    pub(crate) pill_radius: Pixels,
+}
+
+impl ResultGeometry {
+    fn shared() -> ResultGeometry {
+        ResultGeometry {
+            notice_height: px(84.),
+            notice_padding_top: px(8.),
+            notice_padding_bottom: px(4.),
+            notice_padding_x: px(12.),
+            notice_gap: px(16.),
+            notice_text_gap: px(4.),
+            notice_disc: px(44.),
+            notice_glyph: px(20.),
+            card_margin_top: px(2.),
+            card_margin_bottom: px(4.),
+            card_padding_top: px(20.),
+            card_padding_x: px(20.),
+            card_padding_bottom: px(16.),
+            card_gap: px(14.),
+            card_radius: px(14.),
+            card_column_gap: px(16.),
+            card_value_gap: px(4.),
+            card_arrow_disc: px(40.),
+            card_arrow: px(18.),
+            also_padding_top: px(14.),
+            also_gap: px(8.),
+            chip_height: px(30.),
+            chip_padding_x: px(10.),
+            chip_radius: px(8.),
+            label_keys_gap: px(6.),
+            suggestion_height: px(54.),
+            suggestion_text_gap: px(2.),
+            suggestion_tile: TileMetrics {
+                size: px(32.),
+                radius: px(8.),
+                glyph: px(17.),
+            },
+            pill_height: px(30.),
+            pill_padding_x: px(12.),
+            pill_radius: px(8.),
+        }
+    }
+}
+
 impl Theme {
     /// The theme for `appearance`.
     pub(crate) fn new(appearance: Appearance) -> Theme {
@@ -553,6 +804,8 @@ impl Theme {
             row_hover: color(0xFFFFFF09),
             row_selected: color(0xFFFFFF16),
             row_selected_border: color(0xFFFFFF0D),
+
+            results: ResultColors::dark(),
 
             focus_ring: color(0xFFFFFF80),
 
@@ -646,6 +899,8 @@ impl Theme {
             row_selected: color(0x00000016),
             row_selected_border: color(0x0000000D),
 
+            results: ResultColors::light(),
+
             focus_ring: color(0x00000073),
 
             accent_text: color(0x5C7A17FF),
@@ -728,6 +983,7 @@ impl Typography {
             heading_size: px(22.),
             heading_weight: FontWeight::SEMIBOLD,
             heading_tracking: -0.01,
+            results: ResultType::shared(),
             action_size: px(13.),
             action_weight: FontWeight(450.),
             actions_header_size: px(12.),
@@ -773,6 +1029,7 @@ impl Geometry {
             row_gap: px(12.),
             row_list_gap: px(2.),
             row_kind_min_width: px(88.),
+            results: ResultGeometry::shared(),
             alias_padding_y: px(2.),
             alias_padding_x: px(6.),
             alias_radius: px(5.),

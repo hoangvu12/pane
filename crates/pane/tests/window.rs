@@ -1156,6 +1156,12 @@ fn a_query_that_matches_nothing_says_so_and_escape_clears_it(cx: &mut TestAppCon
         cx.debug_bounds("no-results").is_some(),
         "the empty state is shown"
     );
+    // The notice names the query and, with no fallback, says where one is
+    // offered (#96).
+    let nodes = accessible_nodes(cx);
+    let notice = node(&nodes, "Note", "Nothing matches “zzz”");
+    let description = notice["description"].as_str().unwrap_or_default();
+    assert!(description.contains("Manage extensions"), "{description}");
     cx.simulate_keystrokes("enter");
     assert_eq!(settle(&window, cx).status, Status::Idle);
     assert!(cx.debug_bounds("status-idle").is_some(), "nothing failed");
@@ -1312,6 +1318,63 @@ fn typing_an_expression_shows_its_answer_and_enter_copies_it(cx: &mut TestAppCon
     cx.simulate_input("*");
     wait_for_rows(&window, cx, &[]);
     assert!(cx.debug_bounds("no-results").is_some());
+}
+
+/// A computed answer is drawn as the answer card (#96): under its
+/// command's title, named for what was typed and its answer, the selected
+/// result, whose primary action copies the answer. An expression with no
+/// answer shows the notice in its place and the field keeps focus; the
+/// expression completed brings the card back, selected.
+#[gpui::test]
+fn a_computed_answer_shows_as_the_card_under_its_commands_title(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let launcher = with_calculator(cx, data.path());
+    let (window, cx) = open_launcher(cx, launcher);
+
+    cx.simulate_input("6*7");
+    wait_for_rows(&window, cx, &["42"]);
+    let label = cx
+        .debug_bounds("section-Calculator")
+        .expect("the card is labelled with its command's title");
+    let card = cx.debug_bounds("row-42").expect("the answer is drawn");
+    assert!(cx.debug_bounds("answer-value").is_some(), "as the card");
+    assert_eq!(
+        card.top(),
+        label.bottom() + px(4.),
+        "the list's gap and the card's margin"
+    );
+    assert_eq!(card.size.height, px(20. + 44. + 16.));
+    let nodes = accessible_nodes(cx);
+    node(&nodes, "ListBoxOption", "6*7 = 42");
+    // The footer's primary button gives way to the install's status
+    // ("Installed Calculator") here; Enter below is the primary action.
+    assert_eq!(focused_label(cx).as_deref(), Some("6*7 = 42"));
+    assert!(query_has_focus(&window, cx));
+
+    cx.simulate_keystrokes("enter");
+    let view = settle(&window, cx);
+    assert_eq!(
+        view.status,
+        Status::Result("Copied 42 to the clipboard".into())
+    );
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("42".into())
+    );
+
+    // No answer: the notice for the query, no card, the field focused.
+    cx.simulate_input("*");
+    wait_for_rows(&window, cx, &[]);
+    assert!(cx.debug_bounds("no-results").is_some());
+    assert!(cx.debug_bounds("answer-value").is_none());
+    assert!(query_has_focus(&window, cx));
+    node(&accessible_nodes(cx), "Note", "Nothing matches “6*7*”");
+
+    // Completed, the card is back, selected.
+    cx.simulate_input("2");
+    wait_for_rows(&window, cx, &["84"]);
+    assert!(cx.debug_bounds("no-results").is_none());
+    assert_eq!(focused_label(cx).as_deref(), Some("6*7*2 = 84"));
 }
 
 /// A system with two applications, recording which one Pane opens.

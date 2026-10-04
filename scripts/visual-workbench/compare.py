@@ -560,16 +560,23 @@ def pending(native_dir):
     return []
 
 
+def listed_rows(declared):
+    """The declared rows the rows' own checks measure: an answer card in a
+    row's place is measured as the card (#96)."""
+    return [row for row in declared["rows"] if not row.get("answer")]
+
+
 def compare_root(report, name, capture, declared, manifest, native, scale, ref_capture, reference_image,
                  text_title, selected_alpha, hover_alpha, crops):
     # ---- the native side against its declaration
     pal = palette(manifest)
+    board = manifest["scenario"].get("board")
     # While the Actions panel is open, the results lie under its dimmer and
     # their right ends under the panel: the rows' own checks belong to the
     # captures with it closed.
     covered = bool(declared.get("actions"))
     native_rows = {}
-    for row in declared["rows"]:
+    for row in listed_rows(declared):
         if covered:
             break
         if row["heightIsFloor"] and row["unavailable"] is None:
@@ -627,9 +634,10 @@ def compare_root(report, name, capture, declared, manifest, native, scale, ref_c
     crops.append(("search-header", search, None))
     if manifest["scenario"].get("frame"):
         compare_frame(report, name, capture, declared, manifest, native, scale, ref_capture, reference_image, crops)
-    for row in declared["rows"]:
+    for row in listed_rows(declared):
         if row.get("visible", True) and not row["heightIsFloor"] and not covered:
             harness_row_trailing(report, name, capture, row, manifest, native, scale, crops)
+    harness_board(report, name, capture, declared, manifest, native, scale, pal, crops)
 
     if ref_capture is None:
         return
@@ -664,11 +672,14 @@ def compare_root(report, name, capture, declared, manifest, native, scale, ref_c
                  LIMITS["edge_px"], "px")
 
     # ---- parity: the same component in the same state
-    native_selected = sorted(r["title"] for r in declared["rows"] if r["selected"] and r.get("visible", True))
+    native_selected = sorted(r["title"] for r in listed_rows(declared) if r["selected"] and r.get("visible", True))
     ref_selected = sorted(r["title"] for r in state["rows"] if r["selected"])
+    # The static empty board preselects a fallback; Pane's wait (#96, #100).
+    unselected_fallbacks = board in STATIC_FALLBACK_BOARDS and not native_selected and bool(ref_selected)
     report.check("parity", name, capture, "selection", "selected rows", ", ".join(native_selected),
-                 ", ".join(ref_selected), 0, "", "the pointer's movement selects the row it moves over, on both sides (#94)")
-    native_hovered = sorted(r["title"] for r in declared["rows"]
+                 ", ".join(ref_selected), 0, "", "the pointer's movement selects the row it moves over, on both sides (#94)",
+                 accepted=FALLBACK_SELECTION if unselected_fallbacks else None)
+    native_hovered = sorted(r["title"] for r in listed_rows(declared)
                             if r["hovered"] and not r["selected"] and r.get("visible", True))
     ref_hover_only = sorted(r["title"] for r in state["rows"] if r["hovered"] and not r["selected"])
     report.check("parity", name, capture, "selection", "hover-only rows", ", ".join(native_hovered),
@@ -681,7 +692,8 @@ def compare_root(report, name, capture, declared, manifest, native, scale, ref_c
         n_rect, r_rect = as_tuple(row["rect"]), as_tuple(ref_row["rect"])
         crops.append(("parity-row-" + title, n_rect, r_rect))
         report.check("parity", name, capture, subject, "wash alpha", measured.get("alpha"),
-                     ref_measured.get("alpha"), LIMITS["flat_fill_levels"], "levels")
+                     ref_measured.get("alpha"), LIMITS["flat_fill_levels"], "levels",
+                     accepted=FALLBACK_SELECTION if unselected_fallbacks and ref_row["selected"] else None)
         n_edges, r_edges = measured.get("edges"), ref_measured.get("edges")
         # A hover-only wash is too faint to edge on the reference's glass,
         # whose blurred wallpaper shades across the row: its alpha is
@@ -714,7 +726,8 @@ def compare_root(report, name, capture, declared, manifest, native, scale, ref_c
         if state["query"]:
             report.check("parity", name, capture, subject, "title match highlighted",
                          "yes" if measured.get("accent") else "no", "yes" if ref_measured.get("accent") else "no", 0, "",
-                         "the reference paints the matched part of a title in the accent")
+                         "the reference paints the matched part of a title in the accent",
+                         accepted=FALLBACK_TITLES if board in STATIC_FALLBACK_BOARDS else None)
     report.check("parity", name, capture, "search-header", "rule y", header["rule"], ref_header["rule"], LIMITS["edge_px"], "px")
     if header["text"] and ref_header["text"]:
         for prop in ("left", "top", "height"):
@@ -751,6 +764,7 @@ def compare_root(report, name, capture, declared, manifest, native, scale, ref_c
         compare_sections(report, name, capture, declared, state, native, scale, reference_image, crops)
     parity_footer(report, name, capture, declared, manifest, native, scale, state, reference_image, pal, crops)
     parity_actions(report, name, capture, declared, manifest, native, scale, state, reference_image, pal, crops)
+    parity_board(report, name, capture, declared, manifest, native, scale, state, reference_image, pal, crops)
 
 
 # The launcher frame (#92). Windows rounds the launcher's window itself,
@@ -1378,7 +1392,8 @@ def compare_sections(report, name, capture, declared, state, native, scale, refe
         crops.append(("parity-" + subject, n_rect, r_rect))
         n_left, n_right = section_ink(native, n_rect, scale)
         r_left, r_right = section_ink(reference_image, r_rect)
-        report.check("parity", name, capture, subject, "note", label.get("note") or "", ref.get("note") or "", 0, "")
+        report.check("parity", name, capture, subject, "note", label.get("note") or "", ref.get("note") or "", 0, "",
+                     accepted=SECTION_NOTES.get(label["label"]))
         report.check("parity", name, capture, subject, "label height", n_rect[3], r_rect[3], LIMITS["edge_px"], "px")
         if n_left and r_left:
             for prop, index in (("left", 0), ("top", 1)):
@@ -1564,11 +1579,14 @@ def harness_footer(report, name, capture, declared, manifest, native, scale, pal
         report.check("harness-native", name, capture, subject, "cap left" if part["keys"] else "ink left",
                      found["left"], x, CHAIN_SLACK_PX + (0 if part["keys"] else 0.5), "px",
                      CHAIN_NOTE + ("" if part["keys"] else "; a glyph's side bearing allowed"))
-    report.check("harness-native", name, capture, "footer-divider", "x", measured.get("divider", {}).get("x"),
-                 as_tuple(parts["divider"])[0], CHAIN_SLACK_PX, "px", CHAIN_NOTE)
-    report.check("harness-native", name, capture, "footer-divider", "alpha",
-                 measured.get("divider", {}).get("alpha"), hex_rgba(colors["footerDivider"])[3],
-                 LIMITS["flat_fill_levels"], "levels")
+    # The rule stands between two buttons: with nothing selected (fallbacks
+    # alone, #96) the fixture shows no primary action, and no rule.
+    if declared.get("actionButton"):
+        report.check("harness-native", name, capture, "footer-divider", "x", measured.get("divider", {}).get("x"),
+                     as_tuple(parts["divider"])[0], CHAIN_SLACK_PX, "px", CHAIN_NOTE)
+        report.check("harness-native", name, capture, "footer-divider", "alpha",
+                     measured.get("divider", {}).get("alpha"), hex_rgba(colors["footerDivider"])[3],
+                     LIMITS["flat_fill_levels"], "levels")
     button = as_tuple(parts["actionsButton"])
     found = measured["actionsButton"]
     report.check("harness-native", name, capture, "footer-actions", "label ink left", found["labelLeft"],
@@ -1596,12 +1614,14 @@ def parity_footer(report, name, capture, declared, manifest, native, scale, stat
             report.check("parity", name, capture, "footer-mark", f"ink {prop}", mine["mark"][prop],
                          theirs["mark"][prop], LIMITS["edge_px"], "px")
         crops.append(("parity-footer-mark", as_tuple(parts["mark"]), as_tuple(ref_parts["mark"])))
-    # The static Actions board's footer carries one tip where the hint is.
-    static = len(ref_parts["hint"]) == 1
+    # The static Actions board's footer carries one tip where the hint is;
+    # the result boards' footers advertise what Pane does not do (#96).
+    board_hint = BOARD_HINTS.get(manifest["scenario"].get("board"))
+    static = len(ref_parts["hint"]) == 1 or board_hint is not None
     native_text = " ".join(part["text"] for part in parts["hint"])
     ref_text = " ".join(part["text"] for part in ref_parts["hint"])
     report.check("parity", name, capture, "footer-hint", "text", native_text, ref_text, 0, "",
-                 accepted=STATIC_HINT if static else None)
+                 accepted=board_hint or (STATIC_HINT if static else None))
     if not static:
         for index, (a, b) in enumerate(zip(mine["hint"], theirs["hint"])):
             subject = f"footer-hint:{index}:{a['text']}"
@@ -1610,7 +1630,7 @@ def parity_footer(report, name, capture, declared, manifest, native, scale, stat
                              a.get(prop), b.get(prop), LIMITS["edge_px"], "px",
                              "the reference's subset has no ↵: its cap label comes from a fallback face (#93)"
                              if "↵" in a["text"] and prop == "top" else None)
-    if ref_parts.get("divider") and parts.get("divider"):
+    if ref_parts.get("divider") and parts.get("divider") and declared.get("actionButton"):
         report.check("parity", name, capture, "footer-divider", "x", mine["divider"]["x"],
                      theirs["divider"]["x"], LIMITS["edge_px"], "px")
         report.check("parity", name, capture, "footer-divider", "alpha", mine["divider"]["alpha"],
@@ -2329,6 +2349,348 @@ def compare_settings(report, name, capture, manifest, native, scale, ref_capture
             report.check("parity", name, capture, "page", "heading glyph core color (max channel)", worst, 0,
                          LIMITS["glyph_core_levels"], "levels")
     crops.append(("parity-heading", layout["heading"], ref_layout["heading"]))
+
+
+# ------------------------------------------------- result boards (#96)
+
+# The boards whose fallbacks are drawn static: the first preselected, the
+# query plain in their titles.
+STATIC_FALLBACK_BOARDS = {"empty"}
+FALLBACK_SELECTION = ("accepted (#96, #100): the static empty board preselects its first fallback; Pane's fallbacks "
+                      "wait for a deliberate selection, so they show unselected until Down selects the first")
+FALLBACK_TITLES = ("accepted (#96): the static empty board draws its fallbacks' titles plain; Pane, like the live "
+                   "root board, paints the query's match in a title in the accent")
+NOTICE_COPY = ("accepted (#96): Pane's notice says what root search found - 'Nothing matches', not 'Nothing on this "
+               "computer matches', since it looks at commands, applications and a granted folder - and offers "
+               "installing an extension, with no plugin store to suggest one from")
+SECTION_NOTES = {
+    "Fallbacks": ("accepted (#96): Pane offers fallbacks in Manage extensions, with no order to change in Settings, "
+                  "so its Fallbacks label carries no 'Reorder in Settings' note"),
+}
+BOARD_HINTS = {
+    "calculator": ("accepted (#96, #100): the calculator board's footer advertises pasting the answer into the "
+                   "previous app, which Pane does not do; Pane's footer keeps its hint"),
+    "empty": ("accepted (#96, #100): the empty board's footer advertises installing from a plugin store, which Pane "
+              "does not have; Pane's footer keeps its hint"),
+}
+TITLE = (237, 237, 239)
+SOURCE_VALUE, ANSWER_VALUE = (217, 218, 221), (255, 255, 255)
+
+
+def measure_box(image, rect, scale=1.0, lighter=True):
+    """A filled box near its declared rect - the notice's disc, the answer
+    card, its arrow's disc, a chip, a pill, a tile: its edges against what
+    lies just left of it, and its fill, sampled 3px inside its left edge at
+    mid height (clear of a ring along the edge, and of the glyph or text in
+    its middle), as an overlay alpha over that. None off the image."""
+    x, y, w, h = rect
+    background = median_color(image, box_px((x - 6, y + h / 2 - 2, 3, 4), scale))
+    fill = median_color(image, box_px((x + 3, y + h / 2 - 2, 2, 4), scale))
+    if background is None or fill is None:
+        return None
+    return {"edges": box_edges(image, rect, background, fill, scale), "fill": fill,
+            "alpha": overlay_alpha(fill, background, lighter)}
+
+
+def accent_ring(image, rect, scale=1.0):
+    """Whether a 1px accent ring runs along a box's top edge (the selected
+    answer card's): accent pixels across at least 80% of the edge clear of
+    its rounded corners, in its top row or the one below it."""
+    x, y, w, h = rect
+    for row in (y, y + 1):
+        across = box_px((x + 16, row, w - 32, 1), scale)
+        if accent_pixels(image, across) >= (across[2] - across[0]) * 0.8:
+            return True
+    return False
+
+
+def measure_text(image, rect, background, color, scale=1.0, slack=8):
+    """A line of text near its declared line box, widened by slack either
+    side (shaping drifts; a box's text may be narrower than the box): where
+    its ink begins by coverage (left, top) and its core ink's extent."""
+    x, y, w, h = rect
+    box = (x - slack, y, w + 2 * slack, h)
+    if background is None:
+        return None
+    edges = coverage_edges(image, box, background, color, scale)
+    extent = ink_extent(image, box, background, color, scale)
+    if not edges or not extent:
+        return None
+    return {"left": edges["left"], "top": edges["top"], "right": extent["right"],
+            "height": extent["bottom"] - extent["top"],
+            "center": (extent["left"] + extent["right"]) / 2}
+
+
+def measure_notice(image, notice, scale=1.0, lighter=True, title=TITLE, muted=MUTED):
+    """The no-results notice near where notice (the declaration, or the
+    reference's DOM) puts it: its disc, and its two lines' ink against the
+    panel between the disc and the text."""
+    disc = as_tuple(notice["disc"])
+    background = median_color(image, box_px((disc[0] + disc[2] + 5, disc[1] + disc[3] / 2 - 2, 4, 4), scale))
+    return {
+        "disc": measure_box(image, disc, scale, lighter),
+        "title": measure_text(image, as_tuple(notice["title"]["rect"]), background, title, scale),
+        "description": measure_text(image, as_tuple(notice["description"]["rect"]), background, muted, scale),
+    }
+
+
+def measure_answer(image, answer, scale=1.0, lighter=True, colors=(SOURCE_VALUE, ANSWER_VALUE), muted=MUTED):
+    """The answer card near where answer puts it: its box, fill and ring,
+    each value's and caption's ink against the card's fill, the arrow's
+    disc, the chips and the rule above them."""
+    rect = as_tuple(answer["rect"])
+    card = measure_box(image, rect, scale, lighter)
+    out = {"card": card, "ring": accent_ring(image, rect, scale)}
+    fill = card and card["fill"]
+    for key, color in zip(("source", "answer"), colors):
+        side = answer[key]
+        caption = side.get("caption")
+        out[key] = {
+            "value": measure_text(image, as_tuple(side["value"]["rect"]), fill, color, scale),
+            "caption": caption and measure_text(image, as_tuple(caption["rect"]), fill, muted, scale),
+        }
+    out["arrow"] = measure_box(image, as_tuple(answer["arrow"]), scale, lighter)
+    out["chips"] = [measure_box(image, as_tuple(chip["rect"]), scale, lighter) for chip in answer.get("chips", [])]
+    also = answer.get("also")
+    out["also"] = also and measure_text(image, as_tuple(also["rect"]), fill, muted, scale)
+    rule = answer.get("rule")
+    if rule and fill:
+        rx, ry, rw, _ = as_tuple(rule)
+        found = hline(image, (int((rx + 20) * scale), int((rx + rw - 20) * scale)),
+                      (int((ry - 3) * scale), int((ry + 4) * scale)), fill, lighter)
+        out["rule"] = found / scale if found is not None else None
+    return out
+
+
+def measure_suggestion(image, row, scale=1.0, lighter=True, title=TITLE):
+    """An extension suggestion near where row puts it: its tile, its pill,
+    and its title's ink beside the tile."""
+    r, tile = as_tuple(row["rect"]), as_tuple(row["tile"])
+    background = median_color(image, box_px((tile[0] + tile[2] + 3, r[1] + 4, 4, 4), scale))
+    text = (tile[0] + tile[2] + 4, r[1] + 4, r[2] * 0.5, r[3] / 2)
+    return {
+        "tile": measure_box(image, tile, scale, lighter),
+        "pill": measure_box(image, as_tuple(row["pill"]), scale, lighter),
+        "title": measure_text(image, text, background, title, scale, slack=0),
+    }
+
+
+def ink_inside(found, rect):
+    """Whether text's measured ink lies inside its line box, to half a
+    pixel either way."""
+    if not found:
+        return False
+    return rect[1] - 0.5 <= found["top"] and found["top"] + found["height"] <= rect[1] + rect[3] + 0.5
+
+
+def check_edges(report, section, name, capture, subject, edges, rect, limit=LIMITS["edge_px"], note=None):
+    """A box's measured edges against rect (declared, or measured on the
+    other side), left, top, width and height."""
+    for prop, index in (("left", 0), ("top", 1), ("width", 2), ("height", 3)):
+        report.check(section, name, capture, subject, prop, edges[index] if edges else None,
+                     rect[index] if rect else None, limit, "px", note)
+
+
+def harness_board(report, name, capture, declared, manifest, native, scale, pal, crops):
+    """A result board's own parts against their declaration (#96)."""
+    board = declared.get("board")
+    if not board:
+        return
+    lighter = pal["lighter"]
+    title = hex_rgba(manifest["declared"]["colors"]["textTitle"])[:3]
+    notice = board.get("notice")
+    if notice:
+        found = measure_notice(native, notice, scale, lighter, title, pal["muted"])
+        disc = as_tuple(notice["disc"])
+        check_edges(report, "harness-native", name, capture, "notice-disc", found["disc"] and found["disc"]["edges"],
+                    disc)
+        report.check("harness-native", name, capture, "notice-disc", "fill alpha",
+                     found["disc"] and found["disc"]["alpha"], hex_rgba(notice["discFill"])[3],
+                     LIMITS["flat_fill_levels"], "levels")
+        for key in ("title", "description"):
+            rect = as_tuple(notice[key]["rect"])
+            ink_found = found[key]
+            report.check("harness-native", name, capture, f"notice-{key}", "ink left", ink_found and ink_found["left"],
+                         rect[0], LIMITS["edge_px"] * 1.5, "px", "a glyph's side bearing allowed")
+            report.check("harness-native", name, capture, f"notice-{key}", "ink inside its line box",
+                         "yes" if ink_inside(ink_found, rect) else "no", "yes", 0, "")
+        crops.append(("notice", as_tuple(notice["rect"]), None))
+    answer = board.get("answer")
+    if answer:
+        colors = (hex_rgba(answer["source"]["color"])[:3], hex_rgba(answer["answer"]["color"])[:3])
+        found = measure_answer(native, answer, scale, lighter, colors, pal["muted"])
+        rect = as_tuple(answer["rect"])
+        check_edges(report, "harness-native", name, capture, "answer-card", found["card"] and found["card"]["edges"],
+                    rect)
+        report.check("harness-native", name, capture, "answer-card", "fill alpha", found["card"] and found["card"]["alpha"],
+                     hex_rgba(answer["fill"])[3], LIMITS["flat_fill_levels"], "levels")
+        report.check("harness-native", name, capture, "answer-card", "accent ring", "yes" if found["ring"] else "no",
+                     "yes" if answer["selected"] else "no", 0, "", "the selected card's 1px accent ring")
+        for key in ("source", "answer"):
+            value = as_tuple(answer[key]["value"]["rect"])
+            ink_found = found[key]["value"]
+            report.check("harness-native", name, capture, f"answer-{key}", "value ink center",
+                         ink_found and ink_found["center"], value[0] + value[2] / 2, LIMITS["edge_px"] * 1.5, "px",
+                         "centered in its column; shaped with the values' tracking")
+            report.check("harness-native", name, capture, f"answer-{key}", "value ink inside its line box",
+                         "yes" if ink_inside(ink_found, value) else "no", "yes", 0, "")
+            caption = answer[key].get("caption")
+            if caption:
+                crect = as_tuple(caption["rect"])
+                cfound = found[key]["caption"]
+                report.check("harness-native", name, capture, f"answer-{key}", "caption ink center",
+                             cfound and cfound["center"], crect[0] + crect[2] / 2, LIMITS["edge_px"] * 1.5, "px")
+        arrow = as_tuple(answer["arrow"])
+        check_edges(report, "harness-native", name, capture, "answer-arrow", found["arrow"] and found["arrow"]["edges"],
+                    arrow)
+        report.check("harness-native", name, capture, "answer-arrow", "fill alpha",
+                     found["arrow"] and found["arrow"]["alpha"], hex_rgba(answer["arrowFill"])[3],
+                     LIMITS["flat_fill_levels"], "levels")
+        for index, (chip, chip_found) in enumerate(zip(answer.get("chips", []), found["chips"])):
+            crect = as_tuple(chip["rect"])
+            subject = f"answer-chip:{index}:{chip['text']}"
+            check_edges(report, "harness-native", name, capture, subject, chip_found and chip_found["edges"], crect,
+                        CHAIN_SLACK_PX, CHAIN_NOTE)
+            report.check("harness-native", name, capture, subject, "fill alpha", chip_found and chip_found["alpha"],
+                         hex_rgba(answer["chipFill"])[3], LIMITS["flat_fill_levels"], "levels")
+        if answer.get("also"):
+            arect = as_tuple(answer["also"]["rect"])
+            report.check("harness-native", name, capture, "answer-also", "ink left",
+                         found["also"] and found["also"]["left"], arect[0], CHAIN_SLACK_PX + 0.5, "px",
+                         CHAIN_NOTE + "; a glyph's side bearing allowed")
+        if answer.get("rule"):
+            report.check("harness-native", name, capture, "answer-rule", "y", found.get("rule"),
+                         as_tuple(answer["rule"])[1], LIMITS["edge_px"], "px")
+        crops.append(("answer-card", rect, None))
+    for index, row in enumerate(board.get("suggestions", [])):
+        found = measure_suggestion(native, row, scale, lighter, title)
+        subject = f"suggestion:{index}:{row['title']}"
+        check_edges(report, "harness-native", name, capture, subject + "/tile", found["tile"] and found["tile"]["edges"],
+                    as_tuple(row["tile"]))
+        check_edges(report, "harness-native", name, capture, subject + "/pill", found["pill"] and found["pill"]["edges"],
+                    as_tuple(row["pill"]), CHAIN_SLACK_PX, CHAIN_NOTE)
+        report.check("harness-native", name, capture, subject + "/pill", "fill alpha",
+                     found["pill"] and found["pill"]["alpha"], hex_rgba(row["pillFill"])[3], LIMITS["flat_fill_levels"],
+                     "levels")
+        tile = as_tuple(row["tile"])
+        report.check("harness-native", name, capture, subject, "title ink left", found["title"] and found["title"]["left"],
+                     tile[0] + tile[2] + 12, LIMITS["edge_px"] * 1.5, "px", "a glyph's side bearing allowed")
+        crops.append((subject, as_tuple(row["rect"]), None))
+
+
+def parity_board(report, name, capture, declared, manifest, native, scale, state, reference_image, pal, crops):
+    """A result board's own parts, native against reference (#96), and the
+    reference's measured against its DOM."""
+    board = declared.get("board") or {}
+    lighter = pal["lighter"]
+    title = hex_rgba(manifest["declared"]["colors"]["textTitle"])[:3]
+    notice, ref_notice = board.get("notice"), state.get("notice")
+    if notice or ref_notice:
+        report.check("parity", name, capture, "notice", "shown", "yes" if notice else "no",
+                     "yes" if ref_notice else "no", 0, "")
+    if notice and ref_notice:
+        mine = measure_notice(native, notice, scale, lighter, title, pal["muted"])
+        theirs = measure_notice(reference_image, ref_notice)
+        dom_disc = as_tuple(ref_notice["disc"])
+        check_edges(report, "harness-reference", name, capture, "notice-disc",
+                    theirs["disc"] and theirs["disc"]["edges"], dom_disc)
+        report.check("harness-reference", name, capture, "notice-disc", "fill alpha vs DOM background",
+                     theirs["disc"] and theirs["disc"]["alpha"], css_rgba(ref_notice["discBackground"])[3],
+                     LIMITS["flat_fill_levels"], "levels")
+        for key in ("title", "description"):
+            report.check("parity", name, capture, f"notice-{key}", "text", notice[key]["text"],
+                         ref_notice[key]["text"], 0, "", accepted=NOTICE_COPY)
+        check_edges(report, "parity", name, capture, "notice-disc", mine["disc"] and mine["disc"]["edges"],
+                    theirs["disc"] and theirs["disc"]["edges"])
+        report.check("parity", name, capture, "notice-disc", "fill alpha", mine["disc"] and mine["disc"]["alpha"],
+                     theirs["disc"] and theirs["disc"]["alpha"], LIMITS["flat_fill_levels"], "levels")
+        for key in ("title", "description"):
+            a, b = mine[key], theirs[key]
+            for prop in ("left", "top", "height"):
+                report.check("parity", name, capture, f"notice-{key}", f"ink {prop}", a and a[prop], b and b[prop],
+                             LIMITS["edge_px"], "px")
+        crops.append(("parity-notice", as_tuple(notice["rect"]), as_tuple(ref_notice["rect"])))
+    answer, ref_answer = board.get("answer"), state.get("answer")
+    if answer or ref_answer:
+        report.check("parity", name, capture, "answer-card", "shown", "yes" if answer else "no",
+                     "yes" if ref_answer else "no", 0, "")
+    if answer and ref_answer:
+        colors = (hex_rgba(answer["source"]["color"])[:3], hex_rgba(answer["answer"]["color"])[:3])
+        mine = measure_answer(native, answer, scale, lighter, colors, pal["muted"])
+        theirs = measure_answer(reference_image, ref_answer)
+        dom = as_tuple(ref_answer["rect"])
+        check_edges(report, "harness-reference", name, capture, "answer-card",
+                    theirs["card"] and theirs["card"]["edges"], dom)
+        report.check("harness-reference", name, capture, "answer-card", "fill alpha vs DOM background",
+                     theirs["card"] and theirs["card"]["alpha"], css_rgba(ref_answer["background"])[3],
+                     LIMITS["flat_fill_levels"], "levels")
+        report.check("harness-reference", name, capture, "answer-card", "accent ring vs DOM",
+                     "yes" if theirs["ring"] else "no", "yes" if ref_answer["selected"] else "no", 0, "")
+        check_edges(report, "parity", name, capture, "answer-card", mine["card"] and mine["card"]["edges"],
+                    theirs["card"] and theirs["card"]["edges"])
+        report.check("parity", name, capture, "answer-card", "fill alpha", mine["card"] and mine["card"]["alpha"],
+                     theirs["card"] and theirs["card"]["alpha"], LIMITS["flat_fill_levels"], "levels")
+        report.check("parity", name, capture, "answer-card", "accent ring", "yes" if mine["ring"] else "no",
+                     "yes" if theirs["ring"] else "no", 0, "")
+        for key in ("source", "answer"):
+            side, ref_side = answer[key], ref_answer[key]
+            report.check("parity", name, capture, f"answer-{key}", "value", side["value"]["text"],
+                         ref_side["value"]["text"], 0, "")
+            a, b = mine[key]["value"], theirs[key]["value"]
+            for prop in ("left", "top", "right", "height"):
+                report.check("parity", name, capture, f"answer-{key}", f"value ink {prop}", a and a[prop],
+                             b and b[prop], LIMITS["edge_px"], "px")
+            if side.get("caption") and ref_side.get("caption"):
+                report.check("parity", name, capture, f"answer-{key}", "caption", side["caption"]["text"],
+                             ref_side["caption"]["text"], 0, "")
+                a, b = mine[key]["caption"], theirs[key]["caption"]
+                for prop in ("left", "top"):
+                    report.check("parity", name, capture, f"answer-{key}", f"caption ink {prop}", a and a[prop],
+                                 b and b[prop], LIMITS["edge_px"], "px")
+        check_edges(report, "parity", name, capture, "answer-arrow", mine["arrow"] and mine["arrow"]["edges"],
+                    theirs["arrow"] and theirs["arrow"]["edges"])
+        report.check("parity", name, capture, "answer-arrow", "fill alpha", mine["arrow"] and mine["arrow"]["alpha"],
+                     theirs["arrow"] and theirs["arrow"]["alpha"], LIMITS["flat_fill_levels"], "levels")
+        chips, ref_chips = answer.get("chips", []), ref_answer.get("chips", [])
+        report.check("parity", name, capture, "answer-chips", "labels", " | ".join(c["text"] for c in chips),
+                     " | ".join(c["text"] for c in ref_chips), 0, "")
+        for index, (a, b) in enumerate(zip(mine["chips"], theirs["chips"])):
+            subject = f"answer-chip:{index}:{chips[index]['text']}"
+            check_edges(report, "parity", name, capture, subject, a and a["edges"], b and b["edges"])
+            report.check("parity", name, capture, subject, "fill alpha", a and a["alpha"], b and b["alpha"],
+                         LIMITS["flat_fill_levels"], "levels")
+        if mine.get("also") or theirs.get("also"):
+            a, b = mine.get("also"), theirs.get("also")
+            for prop in ("left", "top"):
+                report.check("parity", name, capture, "answer-also", f"ink {prop}", a and a[prop], b and b[prop],
+                             LIMITS["edge_px"], "px")
+        if "rule" in mine or "rule" in theirs:
+            report.check("parity", name, capture, "answer-rule", "y", mine.get("rule"), theirs.get("rule"),
+                         LIMITS["edge_px"], "px")
+        crops.append(("parity-answer-card", as_tuple(answer["rect"]), dom))
+    rows, ref_rows = board.get("suggestions", []), state.get("suggestions") or []
+    if rows or ref_rows:
+        report.check("parity", name, capture, "suggestions", "titles", " | ".join(r["title"] for r in rows),
+                     " | ".join(r["title"] for r in ref_rows), 0, "")
+    for index, (row, ref_row) in enumerate(zip(rows, ref_rows)):
+        mine = measure_suggestion(native, row, scale, lighter, title)
+        theirs = measure_suggestion(reference_image, ref_row)
+        subject = f"suggestion:{index}:{row['title']}"
+        check_edges(report, "harness-reference", name, capture, subject + "/pill",
+                    theirs["pill"] and theirs["pill"]["edges"], as_tuple(ref_row["pill"]))
+        report.check("harness-reference", name, capture, subject + "/pill", "fill alpha vs DOM background",
+                     theirs["pill"] and theirs["pill"]["alpha"], css_rgba(ref_row["pillBackground"])[3],
+                     LIMITS["flat_fill_levels"], "levels")
+        for part in ("tile", "pill"):
+            check_edges(report, "parity", name, capture, f"{subject}/{part}", mine[part] and mine[part]["edges"],
+                        theirs[part] and theirs[part]["edges"])
+        report.check("parity", name, capture, subject + "/pill", "fill alpha", mine["pill"] and mine["pill"]["alpha"],
+                     theirs["pill"] and theirs["pill"]["alpha"], LIMITS["flat_fill_levels"], "levels")
+        a, b = mine["title"], theirs["title"]
+        for prop in ("left", "top"):
+            report.check("parity", name, capture, subject, f"title ink {prop}", a and a[prop], b and b[prop],
+                         LIMITS["edge_px"], "px")
+        crops.append(("parity-" + subject, as_tuple(row["rect"]), as_tuple(ref_row["rect"])))
 
 
 # ------------------------------------------------------------- evidence

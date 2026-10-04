@@ -137,7 +137,28 @@ Each row shows what the launcher knows beyond its title and subtitle, from a rea
 - the alias and the registered global hotkey the user gave its command;
 - the part of its title the query matched, in the accent.
 
-Rows sit under section labels: "Commands" over a blank query's list (root search's own order, with no claim of recent use), "Results" with their count over a query's, and the fallbacks under "Fallbacks" (below the "No results for “…”" notice when nothing else matched). The presentation changes nothing about what is listed, its order, or what a row does.
+Rows sit under section labels: "Commands" over a blank query's list (root search's own order, with no claim of recent use), "Results" with their count over a query's, a computed answer under the title of the command that computed it ("Calculator"), and the fallbacks under "Fallbacks" (below the no-results notice when nothing else matched). The presentation changes nothing about what is listed, its order, or what a row does.
+
+**A computed answer** (#96) — a computed result whose action copies
+text, such as the calculator's — is drawn as the reference calculator
+board's card: what was typed, an arrow, and the answer, in Geist Mono at
+the board's 34px, or at 24 or 18 when the longer of the two would not fit
+its column (past that it wraps). The card shows only what the launcher
+holds (`ComputedAnswer`: the query, the text Enter copies, the command):
+the board's units, "Also" conversions and recent calculations have no
+provider and stay in the visual workbench's fixture. It is a row like any
+other — selected first, moved to by the keys or the pointer, its primary
+action "Copy answer", named "6*7 = 42" for assistive technology — and its
+accent ring shows while it is selected.
+
+**The no-results notice** (#96) heads the list while nothing but
+fallbacks is listed for a query that is not blank: "Nothing matches
+“…”", then "Pick a fallback below, or install an extension that knows
+about it." (or, with no fallback, where one is offered: Manage
+extensions). It stays above the fallbacks whichever is selected; Pane
+searches commands, applications and a granted folder, so it claims no
+search of the whole computer, and it suggests no extensions, having no
+store to suggest them from.
 
 The query field has keyboard focus whenever root search is on screen: when
 Pane starts and whenever the user returns to root search. Returning to root
@@ -145,10 +166,11 @@ search (Escape from a command, after an install or update) starts with an
 empty query. Opening a command moves focus to its list.
 
 A **missing result is not a failed action**: a query that matches nothing
-shows "No results for “…”", selects nothing, and Enter then does nothing;
-the status line stays idle. The [fallbacks](aliases.md#making-a-command-a-fallback),
-if the user has any, are listed below it, unselected: Down selects the
-first. A result that matches but fails when invoked
+shows the no-results notice ("Nothing matches “…”"), selects nothing, and
+Enter then does nothing; the status line stays idle. The
+[fallbacks](aliases.md#making-a-command-a-fallback), if the user has any,
+are listed below it, unselected: Down selects the first, and the notice
+stays above it. A result that matches but fails when invoked
 (its component is missing, the runtime is unavailable, the guest reports an
 error) shows the failure as the status error, as before this slice.
 
@@ -284,7 +306,8 @@ double precision; the answer shows at most 15 significant digits and at most
 10 decimals, without trailing zeros (0.1 + 0.2 is 0.3, 1 / 3 is
 0.3333333333), and scientific notation from 10^15 up or below 10^-6
 (`1.00000000000001e15`, `1e-7`). The row shows the answer as its title and
-"<query> = <answer> · Enter copies the answer" as its subtitle.
+"<query> = <answer> · Enter copies the answer" as its subtitle; root search
+draws it as a computed answer's card (above).
 
 ## Activation
 

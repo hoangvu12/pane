@@ -62,6 +62,19 @@ pub(crate) enum Glyph {
     Moon,
     /// A padlock: locking the screen.
     Lock,
+    /// A magnifier over a minus: the no-results notice (#96).
+    SearchNone,
+    /// An arrow pointing right: the answer card's, from what was typed to
+    /// its answer.
+    ArrowRight,
+    /// A calculator: a calculation history row.
+    Calculator,
+    /// A clock: a time-zone history row.
+    Clock,
+    /// A box: an extension suggestion.
+    Package,
+    /// Concentric circles with cross hairs: an extension suggestion.
+    Target,
 
     /// A cog: the Settings root row and the Settings window's sidebar.
     Gear,
@@ -127,6 +140,12 @@ impl Glyph {
         Glyph::Layout,
         Glyph::Moon,
         Glyph::Lock,
+        Glyph::SearchNone,
+        Glyph::ArrowRight,
+        Glyph::Calculator,
+        Glyph::Clock,
+        Glyph::Package,
+        Glyph::Target,
         Glyph::Gear,
         Glyph::Globe,
         Glyph::Download,
@@ -157,6 +176,12 @@ impl Glyph {
             Glyph::Layout => include_bytes!("../../assets/icons/layout.svg"),
             Glyph::Moon => include_bytes!("../../assets/icons/moon.svg"),
             Glyph::Lock => include_bytes!("../../assets/icons/lock.svg"),
+            Glyph::SearchNone => include_bytes!("../../assets/icons/search-none.svg"),
+            Glyph::ArrowRight => include_bytes!("../../assets/icons/arrow-right.svg"),
+            Glyph::Calculator => include_bytes!("../../assets/icons/calculator.svg"),
+            Glyph::Clock => include_bytes!("../../assets/icons/clock.svg"),
+            Glyph::Package => include_bytes!("../../assets/icons/package.svg"),
+            Glyph::Target => include_bytes!("../../assets/icons/target.svg"),
             Glyph::Gear => include_bytes!("../../assets/icons/gear.svg"),
             Glyph::Globe => include_bytes!("../../assets/icons/globe.svg"),
             Glyph::Download => include_bytes!("../../assets/icons/download.svg"),

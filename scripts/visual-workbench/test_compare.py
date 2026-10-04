@@ -197,6 +197,71 @@ class Keycaps(unittest.TestCase):
         self.assertIsNone(compare.bottom_line_alpha(self.cap(), (20, 20.5, 36, 20), (40, 41, 44)))
 
 
+class ResultBoards(unittest.TestCase):
+    """The no-results notice's disc and the answer card (#96)."""
+
+    PANEL = (22, 23, 26)
+    ACCENT = (201, 238, 106)
+
+    def disc(self, x=20, y=20, size=44, ring=True, glyph=True):
+        """The notice's disc: white 6% under a white 8% ring, a lighter
+        glyph in its middle."""
+        image = Image.new("RGB", (120, 90), self.PANEL)
+        draw = ImageDraw.Draw(image)
+        fill = over_white(self.PANEL, 0.06)
+        box = (x, y, x + size - 1, y + size - 1)
+        draw.ellipse(box, fill=over_white(fill, 0.08) if ring else fill)
+        draw.ellipse((x + 1, y + 1, x + size - 2, y + size - 2), fill=fill)
+        if glyph:
+            draw.ellipse((x + 14, y + 14, x + 28, y + 28), outline=(163, 164, 169), width=2)
+        return image
+
+    def card(self, ring):
+        """A 300x120 card: white 6%, a 1px accent ring when selected, a
+        white value in the middle of its left half."""
+        image = Image.new("RGB", (340, 160), self.PANEL)
+        draw = ImageDraw.Draw(image)
+        fill = over_white(self.PANEL, 0.06)
+        draw.rounded_rectangle((20, 20, 319, 139), radius=14, fill=self.ACCENT if ring else fill)
+        draw.rounded_rectangle((21, 21, 318, 138), radius=13, fill=fill)
+        draw.rectangle((70, 60, 109, 89), fill=(255, 255, 255))  # the value's core
+        return image
+
+    def test_a_disc_with_a_glyph_measures_its_box_and_fill(self):
+        measured = compare.measure_box(self.disc(), (20, 20, 44, 44))
+        left, top, width, height = measured["edges"]
+        # The circle's chord across its middle rows is its diameter, or a
+        # pixel short of it on the rows either side.
+        self.assertTrue(19 <= left <= 21 and 43 <= width <= 45, measured["edges"])
+        self.assertEqual((top, height), (20, 44))
+        self.assertAlmostEqual(measured["alpha"], 0.06 * 255, delta=1.5)
+
+    def test_a_shifted_disc_is_measured_where_it_is(self):
+        measured = compare.measure_box(self.disc(x=24), (20, 20, 44, 44))
+        self.assertTrue(23 <= measured["edges"][0] <= 25, measured["edges"])
+
+    def test_the_accent_ring_marks_only_the_selected_card(self):
+        self.assertTrue(compare.accent_ring(self.card(ring=True), (20, 20, 300, 120)))
+        self.assertFalse(compare.accent_ring(self.card(ring=False), (20, 20, 300, 120)))
+        # Measured a row off, it is found in the row below.
+        self.assertTrue(compare.accent_ring(self.card(ring=True), (20, 19, 300, 120)))
+
+    def test_a_cards_edges_and_fill_hold_under_its_ring(self):
+        for ring in (True, False):
+            measured = compare.measure_box(self.card(ring), (20, 20, 300, 120))
+            self.assertEqual(measured["edges"], (20, 20, 300, 120), ring)
+            self.assertAlmostEqual(measured["alpha"], 0.06 * 255, delta=1.5)
+
+    def test_a_values_ink_is_found_inside_its_widened_line_box(self):
+        image = self.card(ring=True)
+        fill = over_white(self.PANEL, 0.06)
+        # Declared 4px off its ink, as shaping may leave it.
+        found = compare.measure_text(image, (74, 56, 40, 40), fill, (255, 255, 255))
+        self.assertEqual((found["left"], found["top"], found["right"]), (70, 60, 110))
+        self.assertEqual((found["height"], found["center"]), (30, 90))
+        self.assertIsNone(compare.measure_text(image, (74, 56, 40, 40), None, (255, 255, 255)))
+
+
 class Accepted(unittest.TestCase):
     def test_a_failing_check_with_a_disposition_is_accepted_not_failed(self):
         report = compare.Report()

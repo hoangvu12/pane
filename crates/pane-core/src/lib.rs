@@ -44,11 +44,11 @@ pub use host_settings::{
 pub use http::HttpLimits;
 pub use keyboard::{Binding, Keyboard, KeyboardAction};
 pub use launcher::{
-    AliasOutcome, ApplicationUpdate, BuildFailure, CommandRegistration, CustomViewSnapshot,
-    Development, FormField, FormView, HotkeyOutcome, Launcher, LauncherView, Presentation,
-    Question, ResultAction, ResultActionItem, ResultActions, Row, RowKind, RowPresentation, Screen,
-    Section, SelectedAction, ShortcutCatalog, ShortcutCommand, ShortcutGroup, Status, Unavailable,
-    root_sections,
+    AliasOutcome, ApplicationUpdate, BuildFailure, CommandRegistration, ComputedAnswer,
+    CustomViewSnapshot, Development, FormField, FormView, HotkeyOutcome, Launcher, LauncherView,
+    Presentation, Question, ResultAction, ResultActionItem, ResultActions, Row, RowKind,
+    RowPresentation, Screen, Section, SelectedAction, ShortcutCatalog, ShortcutCommand,
+    ShortcutGroup, Status, Unavailable, answer_sections, root_sections,
 };
 pub use links::LinkOpener;
 pub use operations::{MAX_CALL_DEPTH, MAX_OPERATION_JSON};

@@ -77,7 +77,7 @@ What invoking a root result reaches, shown on its row: Command, Application, Fil
 _Avoid_: Type, category
 
 **Result section**:
-A labelled run of root results: "Commands" over a blank query's results, "Results" with their count over a query's, then "Fallbacks". Sections only label the list; they never reorder or filter it, and none claims recent use.
+A labelled run of root results: "Commands" over a blank query's results, "Results" with their count over a query's, then "Fallbacks"; a run of computed answers sits under the title of the command that computed them ("Calculator"). Sections only label the list; they never reorder or filter it, and none claims recent use.
 _Avoid_: Group (a shortcut group is a Settings term), suggestions
 
 **Actions panel**:
@@ -91,6 +91,14 @@ _Avoid_: App menu, footer menu, more actions
 **Computed result**:
 A root result an extension command computes from the query itself, such as the calculator's answer to "6*7", rather than one found by matching titles; it is listed above those (a file result below them), and invoking it performs its action, such as copying the answer. The search it answers owns the call asking for it: a newer query, or leaving root search, cancels a call still pending.
 _Avoid_: Suggestion, answer card, inline result
+
+**Computed answer**:
+A computed result whose action copies text, such as the calculator's answer: root search draws it as a card showing the query it answers and the text invoking it copies, and nothing else — Pane has no unit conversion and keeps no calculation history. It stays a root result: selectable, with its own id and its copy action.
+_Avoid_: Calculation, conversion, answer card (the card is how it is drawn)
+
+**No-results notice**:
+What root search shows above its fallbacks when nothing else is listed for a query that is not blank: the query, and what the user can do — pick a fallback, install an extension, or offer a command as one in Manage extensions. It selects nothing: a fallback is chosen only by the user.
+_Avoid_: Empty state (a screen's own line when it has no rows), zero state
 
 **Granted folder**:
 The one folder the user grants a package through Pane's own "Choose folder…" row, which Pane records itself (not as extension data) and lists for that package's commands under the scan policy; they name its files only by the ids Pane gave them, and Pane opens one after checking it again. The Files default extension's root results come from it.

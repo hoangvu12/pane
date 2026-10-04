@@ -22,7 +22,8 @@ use pane_core::changes::Changes;
 use pane_core::hotkeys::Shortcut;
 use pane_core::tray::TrayAction;
 use pane_core::{
-    Launcher, LauncherView, Presentation, Row, RowPresentation, Screen, SelectedAction, Status,
+    ComputedAnswer, Launcher, LauncherView, Presentation, Row, RowPresentation, Screen,
+    SelectedAction, Status,
 };
 
 use crate::extension_views::{custom_view, form};
@@ -860,10 +861,14 @@ impl LauncherWindow {
         }
         if let Some(selected) = view.selected {
             // The list's children are its rows with the section labels
-            // between them. (The empty notice above the rows shows only
-            // while nothing is selected, when nothing is scrolled to.)
-            self.scroll
-                .scroll_to_item(shell::child_of_row(&section_labels(presentation), selected));
+            // between them, after root search's no-results notice while it
+            // shows (over the fallbacks, whichever is selected). (Another
+            // screen's empty line shows only while nothing is selected,
+            // when nothing is scrolled to.)
+            let notice = root_search::layouts::nothing_found(&view.screen, presentation);
+            let labels = section_labels(presentation);
+            let child = root_search::layouts::child_of_row(notice.is_some(), &labels, selected);
+            self.scroll.scroll_to_item(child);
         }
         self.scrolled_for = Some(shown);
     }
@@ -1047,6 +1052,38 @@ impl LauncherWindow {
                 this.activate_selected(window, cx);
             }
         }))
+    }
+
+    /// Root search's row `index`, a computed answer, drawn as the answer
+    /// card (#96): the row's identity, selection, pointer and click are
+    /// the result row's, and so are its accessibility — named for what
+    /// was typed and its answer ("6*7 = 42"), described by the row's
+    /// subtitle — and its dispatch, which copies the answer.
+    fn render_answer(
+        &self,
+        index: usize,
+        row: Row,
+        answer: &ComputedAnswer,
+        selected: bool,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let visuals = crate::settings::visuals(cx);
+        root_search::layouts::answer_card(answer, selected, &visuals.theme)
+            .id(("row", index))
+            .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {
+                this.pointer_moved_over(index, event.position, cx);
+            }))
+            .debug_selector(|| format!("row-{}", row.title))
+            .role(Role::ListBoxOption)
+            .aria_label(root_search::layouts::answer_label(answer))
+            .aria_selected(selected)
+            .when(selected, |card| card.aria_active_descendant())
+            .when_some(row.subtitle, |card, subtitle| {
+                card.aria_description(subtitle)
+            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.click_root_row(index, window, cx);
+            }))
     }
 
     /// The footer's right-hand buttons: the selected action's button,
@@ -1244,7 +1281,11 @@ impl Render for LauncherWindow {
         // availability — and the dispatch both the button and Enter take.
         let action = self.launcher.selected_action();
         let root = matches!(view.screen, Screen::Root { .. });
-        // The rows, with each section's label ahead of its first row.
+        // Root search's notice when nothing but fallbacks is listed for
+        // its query (#96).
+        let notice = root_search::layouts::nothing_found(&view.screen, &presentation);
+        // The rows — a computed answer as its card — with each section's
+        // label ahead of its first row, after the notice.
         let rows: Vec<gpui::AnyElement> = view
             .rows
             .into_iter()
@@ -1252,21 +1293,29 @@ impl Render for LauncherWindow {
             .map(|(index, row)| {
                 let selected = view.selected == Some(index);
                 let shown = presentation.rows.get(index).cloned().unwrap_or_default();
+                if let Some(answer) = &shown.answer {
+                    return self
+                        .render_answer(index, row, answer, selected, cx)
+                        .into_any_element();
+                }
                 self.render_row(index, row, selected, shown, root, cx)
                     .into_any_element()
             })
             .collect();
-        let rows = shell::with_section_labels(rows, &section_labels(&presentation), &theme);
+        let rows = root_search::layouts::list_children(
+            notice
+                .as_ref()
+                .map(|copy| root_search::layouts::notice(copy, &theme).into_any_element()),
+            rows,
+            &section_labels(&presentation),
+            &theme,
+        );
         let empty = match &view.screen {
             Screen::CommandSearch { .. } if search_failed => div().id("empty"),
-            Screen::Root { query } | Screen::CommandSearch { query }
-                if !query.trim().is_empty() =>
-            {
-                div()
-                    .id("no-results")
-                    .debug_selector(|| "no-results".into())
-                    .child(format!("No results for “{}”", query.trim()))
-            }
+            Screen::CommandSearch { query } if !query.trim().is_empty() => div()
+                .id("no-results")
+                .debug_selector(|| "no-results".into())
+                .child(format!("No results for “{}”", query.trim())),
             _ => div().id("empty").child(empty),
         };
         let list = shell::result_list(&theme)
@@ -1276,9 +1325,10 @@ impl Render for LauncherWindow {
                 _ => view.title.clone(),
             })
             .track_scroll(&self.scroll)
-            // Above the rows: with none selected, the only rows are root
-            // search's fallbacks, listed below "No results".
-            .when(view.selected.is_none(), |rows| {
+            // Above the rows, with none selected: a command's search found
+            // nothing, or a screen has no rows. (Root search's notice for a
+            // query is among the rows' children, above its fallbacks.)
+            .when(notice.is_none() && view.selected.is_none(), |rows| {
                 rows.child(empty.text_color(theme.text_muted))
             })
             .children(rows);

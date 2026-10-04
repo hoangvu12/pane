@@ -39,6 +39,7 @@ pub(crate) mod input;
 pub(crate) mod keycap;
 pub(crate) mod material;
 pub(crate) mod motion;
+pub(crate) mod result_layouts;
 pub(crate) mod result_row;
 pub(crate) mod select;
 pub(crate) mod settings_shell;

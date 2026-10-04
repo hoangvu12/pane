@@ -93,7 +93,9 @@ pub use developing::{BuildFailure, Development};
 pub use hotkeys::HotkeyOutcome;
 use hotkeys::{Bindings, OpenPane};
 use pausing::{Pauses, Recorder};
-pub use presentation::{Presentation, RowKind, RowPresentation, Section, root_sections};
+pub use presentation::{
+    ComputedAnswer, Presentation, RowKind, RowPresentation, Section, answer_sections, root_sections,
+};
 use schedules::Schedules;
 use services::Services;
 pub use shortcuts::{ShortcutCatalog, ShortcutCommand, ShortcutGroup};
@@ -901,6 +903,9 @@ struct RootResult {
 struct Computed {
     /// The component of the command that computed it.
     component: PathBuf,
+    /// The title of the command that computed it, which labels its
+    /// answers in root search ("Calculator").
+    command_title: String,
     row: Row,
     entry: Entry,
 }
@@ -4758,6 +4763,7 @@ fn computed_results(
 ) -> Vec<Computed> {
     let computed = |row: Row, entry: Entry| Computed {
         component: command.component.clone(),
+        command_title: command.title.clone(),
         row,
         entry,
     };
