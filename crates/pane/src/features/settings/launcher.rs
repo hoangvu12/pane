@@ -157,6 +157,16 @@ impl State {
     ) -> Entity<gpui_elements::editable_text::EditableTextState> {
         self.monitor.read(cx).query().clone()
     }
+
+    /// Test support: the opening-monitor select's popup presentation as
+    /// the last frame drew it — the offset from rest toward the trigger
+    /// in px and the opacity; `None` when the last frame drew the popup
+    /// settled (at rest while open, absent while closed). Test and debug
+    /// builds only.
+    #[cfg(any(test, debug_assertions))]
+    pub(crate) fn popup_presentation(&self, cx: &App) -> Option<(f32, f32)> {
+        self.monitor.read(cx).popup_presentation()
+    }
 }
 
 /// What the select's model reads: the choices the platform can answer,
@@ -215,6 +225,17 @@ impl SettingsWindow {
         cx: &App,
     ) -> Entity<gpui_elements::editable_text::EditableTextState> {
         self.launcher_page.field(cx)
+    }
+
+    /// Test support: the opening-monitor select's popup presentation as
+    /// the last frame drew it — the offset from rest toward the trigger
+    /// in px and the opacity; `None` when the last frame drew the popup
+    /// settled (at rest while open, absent while closed), which is also
+    /// what reduced motion ever reports. Test and debug builds only.
+    #[cfg(any(test, debug_assertions))]
+    #[doc(hidden)]
+    pub fn monitor_select_popup(&self, cx: &App) -> Option<(f32, f32)> {
+        self.launcher_page.popup_presentation(cx)
     }
 }
 
@@ -481,10 +502,7 @@ fn choice(
         .min_h(geometry.row_min_height)
         .px(geometry.row_padding_x)
         .rounded(geometry.row_radius)
-        .when(offered, |row| {
-            row.cursor_pointer()
-                .when(!chosen, |row| row.hover(|row| row.bg(theme.row_hover)))
-        })
+        .when(offered, |row| row.cursor_pointer())
         .when(!offered, |row| row.opacity(0.5).cursor_default())
         .when(chosen, |row| {
             row.bg(theme.row_selected).shadow(vec![
@@ -524,6 +542,17 @@ fn choice(
                 ),
         );
     row.id(name)
+        // The pointer feedback, on the named row: the hover wash fades
+        // over the shared pointer span, and the press takes the selected
+        // wash — the wash the row keeps once it is chosen, so the press
+        // hands over to the choice without a jump. The fade attaches only
+        // while the row is unchosen, so the chosen wash both arrives and
+        // leaves at once, and only the pointer's own wash fades.
+        .when(offered && !chosen, |row| {
+            row.hover(|row| row.bg(theme.row_hover))
+                .active(|row| row.bg(theme.row_selected))
+                .transitions(|fades| fades.bg(crate::ui::motion::pointer_fade()))
+        })
         .debug_selector(move || selector.into())
         .anchor_scroll(Some(anchor))
         .role(Role::RadioButton)
