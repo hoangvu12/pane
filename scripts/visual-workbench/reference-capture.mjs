@@ -201,6 +201,7 @@ window.__wb = {
         visible: r.top >= list.top && r.bottom <= list.bottom,
         rect,
         tile: tile ? this.rel(index, tile) : null,
+        tileApp: tile ? tile.classList.contains('app') : null,
         titleRect: this.rel(index, title),
         background: getComputedStyle(row).backgroundColor,
         keys: Array.from(row.querySelectorAll('.keys .kbd')).map((k) => ({ label: k.textContent, rect: this.rel(index, k) })),
@@ -227,6 +228,8 @@ window.__wb = {
       'left-half': this.group(index, rowKeys('Left Half')),
       'clipboard-history': this.group(index, rowKeys('Clipboard History')),
       'footer-primary': this.group(index, buttons[0] && buttons[0].querySelector('.kbd')),
+      // The first pinned slot's compact corner hint (Ctrl 1).
+      'pinned-1': this.group(index, doc.querySelector('.slot .slot-k')),
     };
   },
   state(index) {

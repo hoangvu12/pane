@@ -249,7 +249,14 @@ fn render(
                 .flex_none()
                 .w_full()
                 .h(px(170.))
-                .child(preview(theme, visuals.material)),
+                .child(preview(
+                    theme,
+                    visuals.material,
+                    &crate::keyboard::binding_keys(
+                        crate::settings::keyboard_of(cx)
+                            .binding(pane_core::KeyboardAction::InvokeSelectedAction),
+                    ),
+                )),
         )
         .when_some(status, |page, status| {
             page.child(
@@ -442,8 +449,9 @@ fn material_note(preference: MaterialPreference, theme: &Theme) -> Option<Statef
 /// drawn with the theme and material in effect — the panel surface, a
 /// search header, one selected row, and the footer strip with its action
 /// and keycap. No control in it does anything; it is a picture of what
-/// the windows will show.
-fn preview(theme: &Theme, material: Material) -> Div {
+/// the windows will show. `invoke` is the effective invoke binding's key
+/// sequence, which the launcher's own footer shows.
+fn preview(theme: &Theme, material: Material, invoke: &keycap::KeySequence) -> Div {
     let geometry = &theme.geometry;
     let content = div()
         .size_full()
@@ -488,8 +496,9 @@ fn preview(theme: &Theme, material: Material) -> Div {
                 )),
         )
         .child(
-            // The footer strip: the idle action — its label and Enter
-            // keycap — right-aligned, as the launcher's strip holds them.
+            // The footer strip: the idle action — its label and the invoke
+            // binding's accent caps — right-aligned, as the launcher's
+            // strip holds them.
             Material::footer(theme).child(
                 div()
                     .flex()
@@ -507,7 +516,11 @@ fn preview(theme: &Theme, material: Material) -> Div {
                             .text_color(theme.text_title)
                             .child("Open"),
                     )
-                    .child(keycap::keycap(keycap::Key::Enter, theme)),
+                    .child(keycap::key_sequence(
+                        invoke,
+                        keycap::CapStyle::Accent,
+                        theme,
+                    )),
             ),
         );
     material.panel(theme, content)

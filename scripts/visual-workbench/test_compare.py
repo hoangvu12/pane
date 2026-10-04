@@ -141,6 +141,41 @@ class Frame(unittest.TestCase):
         self.assertTrue(4 <= inset <= 6, inset)
 
 
+def over_black(background, alpha):
+    return tuple(round(b * (1 - alpha)) for b in background)
+
+
+class Keycaps(unittest.TestCase):
+    def cap(self, x=20, y=20, w=36, h=20, label=True):
+        """A reference .kbd on a dark panel: a white 7% fill, the black 35%
+        bottom line under a white 8% ring, a bright label in the middle."""
+        panel = (22, 23, 26)
+        image = Image.new("RGB", (120, 70), panel)
+        draw = ImageDraw.Draw(image)
+        fill = over_white(panel, 0.07)
+        draw.rounded_rectangle((x, y, x + w - 1, y + h - 1), radius=5, fill=over_white(fill, 0.08))
+        draw.rounded_rectangle((x + 1, y + 1, x + w - 2, y + h - 2), radius=4, fill=fill)
+        bottom = over_white(over_black(fill, 0.35), 0.08)
+        draw.line((x + 5, y + h - 1, x + w - 6, y + h - 1), fill=bottom)
+        if label:
+            draw.rectangle((x + 8, y + 6, x + w - 9, y + 13), fill=(201, 202, 206))
+        return image
+
+    def test_edges_of_a_rounded_cap_with_a_label(self):
+        image = self.cap()
+        measured = compare.measure_key(image, (20, 20, 36, 20), False, (201, 202, 206))
+        left, top, width, _ = measured["edges"]
+        self.assertEqual((left, top, width), (20, 20, 36))
+        self.assertAlmostEqual(measured["alpha"], 0.07 * 255, delta=1.5)
+
+    def test_the_bottom_line_is_recovered_from_under_the_ring(self):
+        measured = compare.measure_key(self.cap(), (20, 20, 36, 20), False, (201, 202, 206))
+        self.assertAlmostEqual(measured["bottom"], 0.35 * 255, delta=4)
+
+    def test_a_cap_off_whole_pixels_reports_no_bottom_line(self):
+        self.assertIsNone(compare.bottom_line_alpha(self.cap(), (20, 20.5, 36, 20), (40, 41, 44)))
+
+
 class Accepted(unittest.TestCase):
     def test_a_failing_check_with_a_disposition_is_accepted_not_failed(self):
         report = compare.Report()

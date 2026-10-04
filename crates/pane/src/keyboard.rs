@@ -23,6 +23,11 @@
 //!   Up and Down always did. The other actions bubble to the window's
 //!   context from the field, as Enter and Escape always did.
 //!
+//! It is also where a binding meets its presentation: [`binding_keys`]
+//! turns an effective [`Binding`] into the [`KeySequence`] the shared
+//! keycaps draw — so the shared visual layer never sees a core binding,
+//! and a hint always shows the binding in force.
+//!
 //! Text editing and text composition stay owned by the focused field:
 //! [`pane_core::Binding::protected`] refuses the keys that would swallow
 //! them, and the recorder's own cancellation keys are bound deeper than
@@ -34,6 +39,7 @@ use pane_core::{Binding, Keyboard, KeyboardAction};
 
 use crate::app::KEY_CONTEXT;
 use crate::features::root_search;
+use crate::ui::keycap::{Key, KeySequence};
 use crate::{
     Back, Confirm, DismissLauncher, OpenSettings, ReturnToRoot, SelectNext, SelectPrevious,
 };
@@ -117,4 +123,120 @@ pub(crate) fn binding_of(keystroke: &Keystroke) -> Result<Binding, String> {
         modifiers.function,
         &keystroke.key,
     )
+}
+
+/// The keys `binding` is pressed with, as keycaps show them on this
+/// platform: every modifier its own cap, then the key. On Windows (and
+/// Linux) the Windows key leads, as Windows writes its own shortcuts
+/// ("Win+Alt+Left"), then Ctrl, Alt, Shift and Fn; macOS keeps its
+/// Control, Option, Shift, Command order. Enter shows the return symbol
+/// and the arrows their arrows, under their names; Escape shows "Esc".
+/// The sequence's name — what a hint announces — is the full binding,
+/// modifiers included: Shift+Enter is never shown or read as Enter.
+pub(crate) fn binding_keys(binding: &Binding) -> KeySequence {
+    let (control, alt, shift, platform, function) = binding.modifiers();
+    let modifiers: [(bool, &str); 5] = if cfg!(target_os = "macos") {
+        [
+            (control, "Control"),
+            (alt, "Option"),
+            (shift, "Shift"),
+            (platform, "Command"),
+            (function, "Fn"),
+        ]
+    } else {
+        [
+            (platform, "Win"),
+            (control, "Ctrl"),
+            (alt, "Alt"),
+            (shift, "Shift"),
+            (function, "Fn"),
+        ]
+    };
+    let mut keys: Vec<Key> = modifiers
+        .into_iter()
+        .filter_map(|(held, name)| held.then(|| Key::new(name, name)))
+        .collect();
+    let name = key_name(binding.key());
+    let cap = match binding.key() {
+        "enter" => "↵".to_owned(),
+        "left" => "←".to_owned(),
+        "right" => "→".to_owned(),
+        "up" => "↑".to_owned(),
+        "down" => "↓".to_owned(),
+        "escape" => "Esc".to_owned(),
+        _ => name.clone(),
+    };
+    keys.push(Key::new(cap, name));
+    KeySequence { keys }
+}
+
+/// The key's own name, as the binding's text names it ("Enter", "Page
+/// Down", "V"): the binding of the key alone, written out.
+fn key_name(key: &str) -> String {
+    Binding::new(false, false, false, false, false, key)
+        .map(|alone| alone.to_string())
+        .unwrap_or_else(|_| key.to_uppercase())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sequence(binding: &str) -> (Vec<String>, String) {
+        let keys = binding_keys(&Binding::parse(binding).expect("the binding parses"));
+        let caps = keys.keys.iter().map(|key| key.cap.to_string()).collect();
+        (caps, keys.name())
+    }
+
+    #[test]
+    fn enter_alone_is_one_return_cap_named_enter() {
+        assert_eq!(sequence("enter"), (vec!["↵".into()], "Enter".into()));
+    }
+
+    #[test]
+    fn every_modifier_of_an_enter_chord_gets_its_own_cap_and_name() {
+        assert_eq!(
+            sequence("shift-enter"),
+            (vec!["Shift".into(), "↵".into()], "Shift+Enter".into())
+        );
+        assert_eq!(
+            sequence("ctrl-enter"),
+            (vec!["Ctrl".into(), "↵".into()], "Ctrl+Enter".into())
+        );
+        assert_eq!(
+            sequence("ctrl-shift-p"),
+            (
+                vec!["Ctrl".into(), "Shift".into(), "P".into()],
+                "Ctrl+Shift+P".into()
+            )
+        );
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn the_windows_key_leads_and_arrows_show_as_arrows() {
+        assert_eq!(
+            sequence("win-alt-left"),
+            (
+                vec!["Win".into(), "Alt".into(), "←".into()],
+                "Win+Alt+Left".into()
+            )
+        );
+    }
+
+    #[test]
+    fn named_keys_keep_their_names_for_assistive_technology() {
+        assert_eq!(sequence("escape"), (vec!["Esc".into()], "Escape".into()));
+        assert_eq!(
+            sequence("ctrl-k"),
+            (vec!["Ctrl".into(), "K".into()], "Ctrl+K".into())
+        );
+        assert_eq!(
+            sequence("ctrl-pagedown"),
+            (
+                vec!["Ctrl".into(), "Page Down".into()],
+                "Ctrl+Page Down".into()
+            )
+        );
+    }
 }

@@ -35,7 +35,7 @@ use pane_core::KeyboardAction;
 use crate::app::LauncherWindow;
 use crate::features::settings;
 use crate::ui::icon::{Glyph, glyph};
-use crate::ui::keycap::binding_keycap;
+use crate::ui::keycap::{CapStyle, key_sequence};
 use crate::ui::{self, motion};
 
 actions!(
@@ -409,8 +409,11 @@ fn menu_list(
             })
             .child(item.title)
             .when_some(hint, |item, hint| {
-                item.child(div().flex_1().min_w(px(0.)))
-                    .child(binding_keycap(&hint, theme))
+                item.child(div().flex_1().min_w(px(0.))).child(key_sequence(
+                    &crate::keyboard::binding_keys(&hint),
+                    CapStyle::Regular,
+                    theme,
+                ))
             })
     }))
 }

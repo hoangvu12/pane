@@ -60,9 +60,9 @@ use sha2::{Digest, Sha256};
 use crate::app::{KEY_CONTEXT, action_button};
 use crate::features::root_search::{self, search_header};
 use crate::settings;
-use crate::ui::icon::{Glyph, IconTone};
+use crate::ui::icon::{Glyph, IconTone, TileSize, tile_at};
 use crate::ui::input::bind_text_editing;
-use crate::ui::keycap;
+use crate::ui::keycap::{self, CapMetrics, CapStyle};
 use crate::ui::material::Material;
 use crate::ui::result_row::{RowContent, result_row};
 use crate::ui::shell::{self, LAUNCHER_CLIENT};
@@ -101,10 +101,9 @@ const KEYCAP_GAP: f32 = 12.;
 /// at an empty query), so the native and reference captures show the
 /// same content wherever the production components can represent it.
 /// Kind, alias and shortcut metadata the reference also authors have no
-/// production presentation yet, and the icons are production's nearest
-/// tones and glyphs (production has no pen, clipboard, layout, file,
-/// moon or lock glyph and no pen tone) — mismatches the comparison
-/// reports, not ones this harness papers over.
+/// production presentation yet — mismatches the comparison reports, not
+/// ones this harness papers over. The icons are the reference's own tones
+/// and glyphs, drawn by the production tile.
 #[derive(Debug, PartialEq)]
 pub(crate) struct FixtureRow {
     pub(crate) title: &'static str,
@@ -150,29 +149,25 @@ const fn command(
 /// them, and the kind/alias/key metadata each row carries are reference
 /// content the production components do not render yet.
 pub(crate) const ROOT_ROWS: &[FixtureRow] = &[
-    app("Figma", (IconTone::Web, Glyph::Blocks)),
+    app("Figma", (IconTone::Pen, Glyph::Pen)),
     command(
         "Clipboard History",
         "Clipboard",
-        (IconTone::Command, Glyph::Copy),
+        (IconTone::Command, Glyph::Clipboard),
     ),
     command(
         "Left Half",
         "Window Manager",
-        (IconTone::Command, Glyph::Monitor),
+        (IconTone::Command, Glyph::Layout),
     ),
-    command("Search Files", "Files", (IconTone::Command, Glyph::Folder)),
+    command("Search Files", "Files", (IconTone::Command, Glyph::File)),
     command("Plugin Store", "Pane", (IconTone::Command, Glyph::Blocks)),
     command(
         "Toggle Dark Mode",
         "System",
-        (IconTone::Command, Glyph::Theme),
+        (IconTone::Command, Glyph::Moon),
     ),
-    command(
-        "Lock Screen",
-        "System",
-        (IconTone::Command, Glyph::Keyboard),
-    ),
+    command("Lock Screen", "System", (IconTone::Command, Glyph::Lock)),
     command("Settings", "Pane", (IconTone::Command, Glyph::Sliders)),
 ];
 
@@ -189,7 +184,7 @@ pub(crate) const LONG_ROWS: &[FixtureRow] = &[
     command(
         "Left Half",
         "Window Manager",
-        (IconTone::Command, Glyph::Monitor),
+        (IconTone::Command, Glyph::Layout),
     ),
 ];
 
@@ -200,14 +195,14 @@ pub(crate) const UNAVAILABLE_ROWS: &[FixtureRow] = &[
     command(
         "Left Half",
         "Window Manager",
-        (IconTone::Command, Glyph::Monitor),
+        (IconTone::Command, Glyph::Layout),
     ),
     FixtureRow {
         unavailable: Some("The extension is disabled"),
         ..command(
             "Clipboard History",
             "Clipboard",
-            (IconTone::Command, Glyph::Copy),
+            (IconTone::Command, Glyph::Clipboard),
         )
     },
 ];
@@ -222,6 +217,8 @@ pub(crate) enum Family {
     /// The keycap family, as the reference's Windows key groups pair
     /// against the production caps.
     Keycap,
+    /// The icon tile family at each of its sizes.
+    Tiles,
 }
 
 /// One step a capture helper takes, on either side. The helpers act with
@@ -457,8 +454,19 @@ const SCENARIOS: &[Scenario] = {
             ],
         },
         Scenario {
+            name: "tile-sizes",
+            description: "The icon tile at the row's, a pinned slot's and the Actions header's size, as an application and as a command (no reference counterpart side by side)",
+            family: Family::Tiles,
+            client: ROOT_CLIENT,
+            reference: false,
+            theme: None,
+            frame: false,
+            rows: &[],
+            steps: &[capture("tiles")],
+        },
+        Scenario {
             name: "keycap-windows",
-            description: "The production keycaps for the reference's Windows chords and the Enter key",
+            description: "The production key sequences for the reference's Windows chords, its accent Enter and a compact pinned hint, and rebound chords the reference never shows",
             family: Family::Keycap,
             client: ROOT_CLIENT,
             reference: true,
@@ -542,20 +550,83 @@ pub(crate) fn pending_scenarios() -> &'static [PendingScenario] {
     ]
 }
 
-/// The keycaps the keycap scenario renders: the reference board's own
-/// chords with its `platform` set to Windows (the footer's Actions
-/// Ctrl K, the Left Half row's Win Alt ←, the Clipboard History row's
-/// Ctrl Shift V) as production bindings, and the Enter key — each paired
-/// by name with the reference's key group, so the comparison sets the
-/// same effective binding beside each other. The reference shows a chord
-/// as one cap per key; production shows one cap with the whole chord's
-/// text: a mismatch the comparison reports, not one this list hides.
-pub(crate) const KEYCAP_BINDINGS: &[(&str, &str)] = &[
-    ("ctrl-k", "footer-actions"),
-    ("win-alt-left", "left-half"),
-    ("ctrl-shift-v", "clipboard-history"),
-    ("enter", "footer-primary"),
+/// One key sequence the keycap scenario renders: a production binding,
+/// drawn through the launcher's own adapter
+/// ([`crate::keyboard::binding_keys`]) in a cap style, and the reference
+/// key group it pairs with, if the reference shows one.
+pub(crate) struct KeyGroup {
+    pub(crate) binding: &'static str,
+    pub(crate) group: Option<&'static str>,
+    pub(crate) style: CapStyle,
+}
+
+/// The keycap scenario's key sequences: the reference board's own chords
+/// with its `platform` set to Windows — the footer's Actions Ctrl K, the
+/// Left Half row's Win Alt ←, the Clipboard History row's Ctrl Shift V,
+/// the footer's accent Enter and the first pinned slot's compact Ctrl 1 —
+/// each paired by name with the reference's key group, so the comparison
+/// sets the same effective binding beside each other; then chords the
+/// reference never shows, which the primary action and a hint display
+/// once the Keyboard page rebinds them (Shift+Enter, Ctrl+Enter,
+/// Ctrl+Shift+P): captured, never compared.
+pub(crate) const KEY_GROUPS: &[KeyGroup] = &[
+    KeyGroup {
+        binding: "ctrl-k",
+        group: Some("footer-actions"),
+        style: CapStyle::Regular,
+    },
+    KeyGroup {
+        binding: "win-alt-left",
+        group: Some("left-half"),
+        style: CapStyle::Regular,
+    },
+    KeyGroup {
+        binding: "ctrl-shift-v",
+        group: Some("clipboard-history"),
+        style: CapStyle::Regular,
+    },
+    KeyGroup {
+        binding: "enter",
+        group: Some("footer-primary"),
+        style: CapStyle::Accent,
+    },
+    KeyGroup {
+        binding: "ctrl-1",
+        group: Some("pinned-1"),
+        style: CapStyle::Compact,
+    },
+    KeyGroup {
+        binding: "shift-enter",
+        group: None,
+        style: CapStyle::Accent,
+    },
+    KeyGroup {
+        binding: "ctrl-enter",
+        group: None,
+        style: CapStyle::Accent,
+    },
+    KeyGroup {
+        binding: "ctrl-shift-p",
+        group: None,
+        style: CapStyle::Regular,
+    },
 ];
+
+/// The tiles the tile scenario renders, left to right: each size as an
+/// application (the reference's pen tone) and as a command, both with the
+/// pen glyph — the same path at the application's 2px stroke and the
+/// command's 1.6, so the comparison can weigh one against the other.
+const TILES: &[(TileSize, IconTone, Glyph)] = &[
+    (TileSize::Row, IconTone::Pen, Glyph::Pen),
+    (TileSize::Row, IconTone::Command, Glyph::Pen),
+    (TileSize::Slot, IconTone::Pen, Glyph::Pen),
+    (TileSize::Slot, IconTone::Command, Glyph::Pen),
+    (TileSize::Mini, IconTone::Pen, Glyph::Pen),
+    (TileSize::Mini, IconTone::Command, Glyph::Pen),
+];
+
+/// The gap between the tile scenario's tiles.
+const TILE_GAP: f32 = 24.;
 
 /// A deliberate fault the workbench injects to prove its comparison is
 /// sensitive to exactly the errors the port cares about. The perturbed
@@ -870,6 +941,8 @@ fn frame(theme: &Theme, client: (f32, f32)) -> Frame {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DeclaredRow {
     title: &'static str,
+    /// "app" for a gradient tile, "command" for the neutral one.
+    tone: &'static str,
     subtitle: Option<&'static str>,
     unavailable: Option<&'static str>,
     selected: bool,
@@ -917,6 +990,11 @@ fn declared_rows(
             y += f32::from(geometry.row_min_height) + f32::from(geometry.row_list_gap);
             DeclaredRow {
                 title: row.title,
+                tone: if row.icon.0 == IconTone::Command {
+                    "command"
+                } else {
+                    "app"
+                },
                 subtitle: row.subtitle,
                 unavailable: row.unavailable,
                 selected: index == state.selected,
@@ -1115,14 +1193,13 @@ impl FixtureWindow {
     }
 
     fn render_keycaps(&self, theme: &Theme) -> gpui::Div {
-        let caps = KEYCAP_BINDINGS.iter().map(|&(binding, _)| {
-            let binding = Binding::parse(binding)
-                .unwrap_or_else(|why| panic!("keycap fixture binding {binding}: {why}"));
-            // Each cap gets its own scope: the cap's id is fixed.
+        let caps = KEY_GROUPS.iter().map(|group| {
+            let keys = crate::keyboard::binding_keys(&parse_binding(group.binding));
+            // Each group gets its own scope: the group's id is fixed.
             div()
-                .id(SharedString::from(format!("keys-{binding}")))
+                .id(SharedString::from(format!("keys-{}", group.binding)))
                 .flex()
-                .child(keycap::binding_keycap(&binding, theme))
+                .child(keycap::key_sequence(&keys, group.style, theme))
         });
         div()
             .key_context(KEY_CONTEXT)
@@ -1135,6 +1212,20 @@ impl FixtureWindow {
             .font_family(theme.typography.family.clone())
             .text_color(theme.text_title)
             .children(caps)
+    }
+
+    fn render_tiles(&self, theme: &Theme) -> gpui::Div {
+        div()
+            .size_full()
+            .flex()
+            .items_start()
+            .p(px(KEYCAP_INSET))
+            .gap(px(TILE_GAP))
+            .children(
+                TILES
+                    .iter()
+                    .map(|&(size, tone, glyph)| tile_at(size, tone, glyph, theme)),
+            )
     }
 
     fn render_root(&self, theme: &Theme, cx: &mut Context<Self>) -> gpui::Div {
@@ -1244,6 +1335,7 @@ impl Render for FixtureWindow {
         let theme = self.theme(cx);
         let content = match self.scenario.family {
             Family::Keycap => self.render_keycaps(&theme),
+            Family::Tiles => self.render_tiles(&theme),
             Family::Root => self.render_root(&theme, cx),
         };
         material.panel(&theme, content)
@@ -1273,8 +1365,12 @@ struct Manifest {
     captures: Vec<DeclaredCapture>,
     /// The scenario's steps, with each pointer step's client point.
     steps: Vec<ResolvedStep>,
-    keycaps: Vec<KeycapRecord>,
+    keycaps: Vec<KeyGroupRecord>,
+    tiles: Vec<TileRecord>,
     fonts: Vec<FontRecord>,
+    /// How the text system resolved each embedded face (see
+    /// [`FontResolution`]).
+    font_resolution: Vec<FontResolution>,
 }
 
 #[derive(Serialize)]
@@ -1323,13 +1419,20 @@ struct GeometryRecord {
     keycap_height: f32,
     keycap_radius: f32,
     keycap_padding_x: f32,
-    keycap_glyph_size: f32,
+    keycap_compact_height: f32,
+    keycap_compact_padding_x: f32,
+    key_gap: f32,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ColorRecord {
     panel_solid: Hex,
+    keycap_background: Hex,
+    keycap_bottom: Hex,
+    keycap_text: Hex,
+    accent: Hex,
+    accent_ink: Hex,
     panel_top_highlight: Hex,
     row_hover: Hex,
     row_selected: Hex,
@@ -1366,23 +1469,64 @@ fn hex(color: Hsla) -> String {
     )
 }
 
+/// One key sequence as the manifest declares it: its caps, where each
+/// lies, and the type they are set in.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct KeycapRecord {
-    /// The binding the cap shows, in the record's grammar.
+struct KeyGroupRecord {
+    /// The binding the sequence shows, in the record's grammar.
     binding: &'static str,
-    /// The reference key group the cap pairs with.
-    group: &'static str,
-    /// The label the cap paints: the binding's Windows display text, or
-    /// `Enter` for the Enter glyph. Controlled on both sides of the
-    /// comparison, so a width difference is attributed to its label and
-    /// typography, not to the chrome.
+    /// The reference key group it pairs with, if any.
+    group: Option<&'static str>,
+    style: &'static str,
+    /// The sequence's accessible name.
+    name: String,
+    /// The caps' type: "11px Geist Mono 500".
+    font: String,
+    rect: Rect,
+    caps: Vec<CapRecord>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CapRecord {
+    /// The cap's label, as both sides are controlled to show it.
     label: String,
-    glyph: bool,
     /// The label's shaped width at the cap's font, size and weight.
     label_width: f32,
     rect: Rect,
 }
+
+/// One tile of the tile scenario.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TileRecord {
+    size: &'static str,
+    /// "app" (a gradient tone, 2px glyph) or "command" (the neutral tile).
+    tone: &'static str,
+    rect: Rect,
+    glyph: f32,
+}
+
+/// How the text system resolved one of the embedded faces: a face the
+/// text system could not find resolves to its fallback — the same face as
+/// the probe for a family no system has — so a missing Geist is visible
+/// in the manifest rather than silently drawn in another font.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FontResolution {
+    family: SharedString,
+    weight: f32,
+    font_id: usize,
+    /// The shaped width of [`FONT_PROBE`] at 14px in the face.
+    probe_width: f32,
+}
+
+/// The text the font resolution check shapes in every face.
+const FONT_PROBE: &str = "Geist Ctrl+Shift+V";
+
+/// A family no system has: it resolves to the text system's fallback.
+const MISSING_FONT: &str = "Pane Missing Font Probe";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1400,7 +1544,26 @@ fn shaped_width(
     size: Pixels,
     weight: FontWeight,
 ) -> f32 {
-    let mut font = gpui::font(theme.typography.family.clone());
+    shaped_width_in(
+        window,
+        theme.typography.family.clone(),
+        theme,
+        text,
+        size,
+        weight,
+    )
+}
+
+/// The width `text` shapes to in `family` at `size` and `weight`.
+fn shaped_width_in(
+    window: &Window,
+    family: SharedString,
+    theme: &Theme,
+    text: &str,
+    size: Pixels,
+    weight: FontWeight,
+) -> f32 {
+    let mut font = gpui::font(family);
     font.weight = weight;
     let run = TextRun {
         len: text.len(),
@@ -1418,33 +1581,117 @@ fn shaped_width(
         .into()
 }
 
-/// A keycap's declared label, width and whether it is a glyph cap — by
-/// the same rule [`keycap::binding_keycap`] draws it with.
-fn keycap_label(window: &Window, theme: &Theme, binding: &Binding) -> (String, bool, f32, f32) {
-    let geometry = &theme.geometry;
-    if keycap::is_plain_enter(binding) {
-        let width = f32::from(geometry.keycap_glyph_size);
-        return (
-            "Enter".into(),
-            true,
-            width,
-            width + 2. * f32::from(geometry.keycap_padding_x),
-        );
+fn parse_binding(binding: &str) -> Binding {
+    Binding::parse(binding).unwrap_or_else(|why| panic!("keycap fixture binding {binding}: {why}"))
+}
+
+fn style_name(style: CapStyle) -> &'static str {
+    match style {
+        CapStyle::Regular => "regular",
+        CapStyle::Compact => "compact",
+        CapStyle::Accent => "accent",
     }
-    let label = binding.to_string();
-    let width = shaped_width(
-        window,
-        theme,
-        &label,
-        theme.typography.row_title_size,
-        theme.typography.medium,
-    );
-    (
-        label,
-        false,
-        width,
-        width + 2. * f32::from(geometry.keycap_padding_x),
-    )
+}
+
+/// `binding`'s key sequence in `style`, laid out from `(x, y)` by the
+/// rules [`keycap::key_sequence`] draws it with: each cap its label's
+/// shaped width plus its padding, at least as wide as it is high, the
+/// caps `key_gap` apart.
+fn declared_group(
+    window: &Window,
+    theme: &Theme,
+    (id, binding): (&'static str, &Binding),
+    group: Option<&'static str>,
+    style: CapStyle,
+    (x, y): (f32, f32),
+) -> KeyGroupRecord {
+    let geometry = &theme.geometry;
+    let typography = &theme.typography;
+    let CapMetrics {
+        height,
+        padding_x: padding,
+        text_size: size,
+    } = style.metrics(theme);
+    let keys = crate::keyboard::binding_keys(binding);
+    let mut left = x;
+    let mut caps = Vec::new();
+    for key in &keys.keys {
+        let label_width = shaped_width_in(
+            window,
+            typography.mono_family.clone(),
+            theme,
+            &key.cap,
+            size,
+            typography.medium,
+        );
+        let width = (label_width + 2. * f32::from(padding)).max(f32::from(height));
+        caps.push(CapRecord {
+            label: key.cap.to_string(),
+            label_width,
+            rect: Rect {
+                x: left,
+                y,
+                width,
+                height: f32::from(height),
+            },
+        });
+        left += width + f32::from(geometry.key_gap);
+    }
+    let width = left - f32::from(geometry.key_gap) - x;
+    KeyGroupRecord {
+        binding: id,
+        group,
+        style: style_name(style),
+        name: keys.name(),
+        font: format!(
+            "{}px {} {}",
+            f32::from(size),
+            typography.mono_family,
+            typography.medium.0
+        ),
+        rect: Rect {
+            x,
+            y,
+            width,
+            height: f32::from(height),
+        },
+        caps,
+    }
+}
+
+/// Every embedded face the theme names — Geist and Geist Mono at 400 and
+/// 500 — as the text system resolves it, then a family no system has at
+/// both weights (the fallback, for comparison).
+fn font_resolution(window: &Window, theme: &Theme) -> Vec<FontResolution> {
+    let typography = &theme.typography;
+    let faces = [
+        (typography.family.clone(), FontWeight::NORMAL),
+        (typography.family.clone(), typography.medium),
+        (typography.mono_family.clone(), FontWeight::NORMAL),
+        (typography.mono_family.clone(), typography.medium),
+        (MISSING_FONT.into(), FontWeight::NORMAL),
+        (MISSING_FONT.into(), typography.medium),
+    ];
+    faces
+        .into_iter()
+        .map(|(family, weight)| {
+            let mut font = gpui::font(family.clone());
+            font.weight = weight;
+            FontResolution {
+                font_id: window.text_system().resolve_font(&font).0,
+                probe_width: shaped_width_in(
+                    window,
+                    family.clone(),
+                    theme,
+                    FONT_PROBE,
+                    px(14.),
+                    weight,
+                ),
+                family,
+                weight: weight.0,
+            }
+        })
+        .collect()
 }
 
 fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
@@ -1459,42 +1706,75 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
     let replay = replay(scenario, &theme);
     let mut captures = replay.captures;
     let mut keycaps = Vec::new();
+    let mut tiles = Vec::new();
     match scenario.family {
         Family::Keycap => {
             let mut y = KEYCAP_INSET;
-            for &(binding, group) in KEYCAP_BINDINGS {
-                let parsed = Binding::parse(binding).expect("the keycap fixture bindings parse");
-                let (label, glyph, label_width, width) = keycap_label(window, &theme, &parsed);
-                keycaps.push(KeycapRecord {
-                    binding,
-                    group,
-                    label,
-                    glyph,
-                    label_width,
-                    rect: Rect {
-                        x: KEYCAP_INSET,
-                        y,
-                        width,
-                        height: f32::from(geometry.keycap_height),
+            for group in KEY_GROUPS {
+                let record = declared_group(
+                    window,
+                    &theme,
+                    (group.binding, &parse_binding(group.binding)),
+                    group.group,
+                    group.style,
+                    (KEYCAP_INSET, y),
+                );
+                y += record.rect.height + KEYCAP_GAP;
+                keycaps.push(record);
+            }
+        }
+        Family::Tiles => {
+            let mut x = KEYCAP_INSET;
+            for &(size, tone, _) in TILES {
+                let metrics = size.metrics(&theme);
+                let side = f32::from(metrics.size);
+                tiles.push(TileRecord {
+                    size: match size {
+                        TileSize::Row => "row",
+                        TileSize::Slot => "slot",
+                        TileSize::Mini => "mini",
                     },
+                    tone: if tone == IconTone::Command {
+                        "command"
+                    } else {
+                        "app"
+                    },
+                    rect: Rect {
+                        x,
+                        y: KEYCAP_INSET,
+                        width: side,
+                        height: side,
+                    },
+                    glyph: f32::from(metrics.glyph),
                 });
-                y += f32::from(geometry.keycap_height) + KEYCAP_GAP;
+                x += side + TILE_GAP;
             }
         }
         Family::Root => {
-            // The action button: padding, label, gap, keycap; right-aligned
-            // inside the footer's horizontal padding and centered in its
-            // height below the 1px rule.
-            let invoke = settings::keyboard_of(cx)
-                .binding(KeyboardAction::InvokeSelectedAction)
-                .clone();
-            let (label, glyph, label_width, cap_width) = keycap_label(window, &theme, &invoke);
-            let right =
-                frame.footer.x + frame.footer.width - f32::from(geometry.footer_padding_right);
+            // The action button: padding, label, gap, key sequence;
+            // right-aligned inside the footer's right padding and centered
+            // in its height below the 1px rule.
             let rule = 1.;
             let top = frame.footer.y
                 + rule
                 + (frame.footer.height - rule - f32::from(geometry.action_height)) / 2.;
+            let cap_top =
+                top + (f32::from(geometry.action_height) - f32::from(geometry.keycap_height)) / 2.;
+            // Laid out at 0 to measure it, then placed.
+            let invoke = settings::keyboard_of(cx)
+                .binding(KeyboardAction::InvokeSelectedAction)
+                .clone();
+            let mut primary = declared_group(
+                window,
+                &theme,
+                ("invoke", &invoke),
+                Some("footer-primary"),
+                CapStyle::Accent,
+                (0., cap_top),
+            );
+            let cap_width = primary.rect.width;
+            let right =
+                frame.footer.x + frame.footer.width - f32::from(geometry.footer_padding_right);
             for capture in &mut captures {
                 capture.action_button = capture.action.map(|action| {
                     let text = shaped_width(
@@ -1516,21 +1796,12 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
                     }
                 });
             }
-            let cap_top =
-                top + (f32::from(geometry.action_height) - f32::from(geometry.keycap_height)) / 2.;
-            keycaps.push(KeycapRecord {
-                binding: "invoke",
-                group: "footer-primary",
-                label,
-                glyph,
-                label_width,
-                rect: Rect {
-                    x: right - f32::from(geometry.action_padding_x) - cap_width,
-                    y: cap_top,
-                    width: cap_width,
-                    height: f32::from(geometry.keycap_height),
-                },
-            });
+            let shift = right - f32::from(geometry.action_padding_x) - cap_width;
+            primary.rect.x += shift;
+            for cap in &mut primary.caps {
+                cap.rect.x += shift;
+            }
+            keycaps.push(primary);
         }
     }
 
@@ -1575,8 +1846,8 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
                 list_padding_top: f32::from(geometry.list_padding_top),
                 list_padding_bottom: f32::from(geometry.list_padding_bottom),
                 list_padding_x: f32::from(geometry.list_padding_x),
-                tile_size: f32::from(geometry.tile_size),
-                tile_radius: f32::from(geometry.tile_radius),
+                tile_size: f32::from(geometry.tile.size),
+                tile_radius: f32::from(geometry.tile.radius),
                 footer_height: f32::from(geometry.footer_height),
                 footer_padding_left: f32::from(geometry.footer_padding_left),
                 footer_padding_right: f32::from(geometry.footer_padding_right),
@@ -1587,10 +1858,17 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
                 keycap_height: f32::from(geometry.keycap_height),
                 keycap_radius: f32::from(geometry.keycap_radius),
                 keycap_padding_x: f32::from(geometry.keycap_padding_x),
-                keycap_glyph_size: f32::from(geometry.keycap_glyph_size),
+                keycap_compact_height: f32::from(geometry.keycap_compact_height),
+                keycap_compact_padding_x: f32::from(geometry.keycap_compact_padding_x),
+                key_gap: f32::from(geometry.key_gap),
             },
             colors: ColorRecord {
                 panel_solid: Hex(theme.panel_solid),
+                keycap_background: Hex(theme.keycap_background),
+                keycap_bottom: Hex(theme.keycap_bottom),
+                keycap_text: Hex(theme.keycap_text),
+                accent: Hex(theme.accent),
+                accent_ink: Hex(theme.accent_ink),
                 panel_top_highlight: Hex(theme.panel_top_highlight),
                 row_hover: Hex(theme.row_hover),
                 row_selected: Hex(theme.row_selected),
@@ -1612,6 +1890,8 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
         captures,
         steps: replay.steps,
         keycaps,
+        tiles,
+        font_resolution: font_resolution(window, &theme),
         fonts: crate::ui::FONTS
             .iter()
             .map(|&(file, bytes)| FontRecord {

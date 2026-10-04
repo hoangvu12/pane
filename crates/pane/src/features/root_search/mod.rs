@@ -213,6 +213,12 @@ impl LauncherWindow {
 /// its 14px gap minus the 12px bleed — 2px of clear space before the
 /// editable field begins.
 ///
+/// The query is Geist 19/400, as the reference's `.q`. Its `letter-spacing:
+/// -.005em` (−0.095px a character) is not applied: GPUI's editable text
+/// element shapes its text with no letter spacing whatever its style says,
+/// so a typed query runs about 0.1px a character wider than the
+/// reference's — under a pixel for the authored queries (#93).
+///
 /// Both the launcher's search screens ([`LauncherWindow::render_search`])
 /// and the visual workbench's root fixture (#91) compose this header, so
 /// the fixture measures the production chrome rather than a copy of it.
@@ -258,6 +264,7 @@ pub(crate) fn search_header(
                 .text_size(typography.search_size)
                 .text_color(theme.text_query)
                 .font_family(typography.family.clone())
+                .pl(geometry.search_text_inset)
                 .w_full()
                 .min_w(px(0.))
                 .whitespace_nowrap()
