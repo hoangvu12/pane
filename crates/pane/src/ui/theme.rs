@@ -135,6 +135,20 @@ pub(crate) struct Theme {
     pub(crate) tile_app_highlight: Hsla,
     /// An app tile's short bottom shadow (reference: rgba(0,0,0,.45)).
     pub(crate) tile_drop: Hsla,
+    /// A keycap's fill (reference `.kbd`: rgba(255,255,255,.07)).
+    pub(crate) keycap_background: Hsla,
+    /// A keycap's 1px inset ring (rgba(255,255,255,.08)).
+    pub(crate) keycap_edge: Hsla,
+    /// The line inset along a keycap's bottom (rgba(0,0,0,.35)).
+    pub(crate) keycap_bottom: Hsla,
+    /// A keycap's label (#C9CACE).
+    pub(crate) keycap_text: Hsla,
+    /// The accent as a *fill*: the primary action's keycap (the
+    /// reference's lime, #C9EE6A, in both palettes — it carries its own
+    /// near-black ink, so it reads on either panel).
+    pub(crate) accent: Hsla,
+    /// Ink on an accent fill (#111210).
+    pub(crate) accent_ink: Hsla,
 
     // -- Type and geometry --------------------------------------------------
     /// Families, sizes and weights.
@@ -149,6 +163,8 @@ pub(crate) struct Theme {
 pub(crate) struct Typography {
     /// The UI family (embedded Geist; see [`super::load_fonts`]).
     pub(crate) family: SharedString,
+    /// The monospace family (embedded Geist Mono): keycaps and aliases.
+    pub(crate) mono_family: SharedString,
     /// The search field's 19px.
     pub(crate) search_size: Pixels,
     /// A row title's 14px.
@@ -159,6 +175,10 @@ pub(crate) struct Typography {
     pub(crate) row_kind_size: Pixels,
     /// The footer's 12.5px.
     pub(crate) footer_size: Pixels,
+    /// A keycap's label: Geist Mono 11.
+    pub(crate) keycap_size: Pixels,
+    /// A compact keycap's label: 10.
+    pub(crate) keycap_compact_size: Pixels,
     /// Title and label weight (500).
     pub(crate) medium: FontWeight,
 }
@@ -166,9 +186,8 @@ pub(crate) struct Typography {
 /// The reference's geometry: the launcher panel is 760px wide, the search
 /// field 64px tall, rows 44px, the panel radius 18px where the platform
 /// shows it (none on Windows, whose window the Desktop Window Manager
-/// rounds; see [`panel_radius`]). The reference authors no footer button
-/// and no keycap — those two control's dimensions are Pane's own, at the
-/// reference's control scale, so restyling stays a one-file edit here.
+/// rounds; see [`panel_radius`]), and the keycaps are the reference's
+/// `.kbd` family.
 #[derive(Clone, Debug)]
 pub(crate) struct Geometry {
     /// The panel's corner radius: [`panel_radius`] — 18px where the
@@ -183,6 +202,10 @@ pub(crate) struct Geometry {
     pub(crate) search_gap: Pixels,
     /// The search header's magnifier glyph.
     pub(crate) search_glyph_size: Pixels,
+    /// The query text's inset inside its field: the reference's `<input>`
+    /// keeps the browser's own 2px inline padding, so its text begins 2px
+    /// after the field does.
+    pub(crate) search_text_inset: Pixels,
     /// The result list's padding above its first row (the reference's
     /// root body: 4).
     pub(crate) list_padding_top: Pixels,
@@ -203,12 +226,12 @@ pub(crate) struct Geometry {
     pub(crate) row_gap: Pixels,
     /// The gap between rows in the list.
     pub(crate) row_list_gap: Pixels,
-    /// An icon tile's size.
-    pub(crate) tile_size: Pixels,
-    /// An icon tile's corner radius.
-    pub(crate) tile_radius: Pixels,
-    /// The glyph inside an icon tile.
-    pub(crate) tile_glyph_size: Pixels,
+    /// A result row's icon tile: 28, radius 7, a 16px glyph.
+    pub(crate) tile: TileMetrics,
+    /// A pinned slot's icon tile: 42, radius 11, a 22px glyph.
+    pub(crate) slot_tile: TileMetrics,
+    /// The Actions panel header's icon tile: 18, radius 5, an 11px glyph.
+    pub(crate) mini_tile: TileMetrics,
     /// The footer's height.
     pub(crate) footer_height: Pixels,
     /// The footer's left padding (the reference's 16).
@@ -224,18 +247,34 @@ pub(crate) struct Geometry {
     pub(crate) action_padding_x: Pixels,
     /// The gap between the action button's label and its keycap.
     pub(crate) action_gap: Pixels,
-    /// A keycap's height.
+    /// A keycap's height, and its least width.
     pub(crate) keycap_height: Pixels,
     /// A keycap's corner radius.
     pub(crate) keycap_radius: Pixels,
     /// A keycap's horizontal padding.
     pub(crate) keycap_padding_x: Pixels,
-    /// The glyph inside a keycap.
-    pub(crate) keycap_glyph_size: Pixels,
+    /// A compact keycap's height, and its least width.
+    pub(crate) keycap_compact_height: Pixels,
+    /// A compact keycap's horizontal padding.
+    pub(crate) keycap_compact_padding_x: Pixels,
+    /// The gap between the caps of one key sequence.
+    pub(crate) key_gap: Pixels,
     /// A popover's corner radius (the reference's L2 `.pop`: 14px, shown
     /// on every platform, since a popover floats inside the window rather
     /// than at its edge).
     pub(crate) popover_radius: Pixels,
+}
+
+/// One icon tile size: the square's side, its corner radius and the
+/// glyph inside it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct TileMetrics {
+    /// The square's side.
+    pub(crate) size: Pixels,
+    /// Its corner radius.
+    pub(crate) radius: Pixels,
+    /// The glyph's side inside it.
+    pub(crate) glyph: Pixels,
 }
 
 impl Theme {
@@ -289,6 +328,12 @@ impl Theme {
             tile_app_edge: color(0xFFFFFF47),
             tile_app_highlight: color(0xFFFFFF59),
             tile_drop: color(0x00000073),
+            keycap_background: color(0xFFFFFF12),
+            keycap_edge: color(0xFFFFFF14),
+            keycap_bottom: color(0x00000059),
+            keycap_text: color(0xC9CACEFF),
+            accent: color(0xC9EE6AFF),
+            accent_ink: color(0x111210FF),
 
             typography: Typography::shared(),
             geometry: Geometry::shared(),
@@ -346,6 +391,12 @@ impl Theme {
             tile_app_edge: color(0xFFFFFF47),
             tile_app_highlight: color(0xFFFFFF59),
             tile_drop: color(0x00000073),
+            keycap_background: color(0x0000000D),
+            keycap_edge: color(0x00000014),
+            keycap_bottom: color(0x00000026),
+            keycap_text: color(0x3B3D44FF),
+            accent: color(0xC9EE6AFF),
+            accent_ink: color(0x111210FF),
 
             typography: Typography::shared(),
             geometry: Geometry::shared(),
@@ -357,11 +408,14 @@ impl Typography {
     fn shared() -> Typography {
         Typography {
             family: "Geist".into(),
+            mono_family: "Geist Mono".into(),
             search_size: px(19.),
             row_title_size: px(14.),
             row_subtitle_size: px(13.),
             row_kind_size: px(12.5),
             footer_size: px(12.5),
+            keycap_size: px(11.),
+            keycap_compact_size: px(10.),
             medium: FontWeight::MEDIUM,
         }
     }
@@ -392,6 +446,7 @@ impl Geometry {
             search_padding_x: px(20.),
             search_gap: px(14.),
             search_glyph_size: px(20.),
+            search_text_inset: px(2.),
             list_padding_top: px(4.),
             list_padding_bottom: px(10.),
             list_padding_x: px(10.),
@@ -400,9 +455,21 @@ impl Geometry {
             row_padding_x: px(10.),
             row_gap: px(12.),
             row_list_gap: px(2.),
-            tile_size: px(28.),
-            tile_radius: px(7.),
-            tile_glyph_size: px(16.),
+            tile: TileMetrics {
+                size: px(28.),
+                radius: px(7.),
+                glyph: px(16.),
+            },
+            slot_tile: TileMetrics {
+                size: px(42.),
+                radius: px(11.),
+                glyph: px(22.),
+            },
+            mini_tile: TileMetrics {
+                size: px(18.),
+                radius: px(5.),
+                glyph: px(11.),
+            },
             footer_height: px(50.),
             footer_padding_left: px(16.),
             footer_padding_right: px(8.),
@@ -413,7 +480,9 @@ impl Geometry {
             keycap_height: px(20.),
             keycap_radius: px(5.),
             keycap_padding_x: px(5.),
-            keycap_glyph_size: px(12.),
+            keycap_compact_height: px(17.),
+            keycap_compact_padding_x: px(4.),
+            key_gap: px(3.),
             popover_radius: px(14.),
         }
     }

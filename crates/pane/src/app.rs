@@ -28,7 +28,7 @@ use crate::features::footer_menu;
 use crate::features::root_search;
 use crate::features::settings;
 use crate::ui::icon::{Glyph, IconTone};
-use crate::ui::keycap;
+use crate::ui::keycap::{self, CapStyle};
 use crate::ui::material::Material;
 use crate::ui::motion::{self, Direction};
 use crate::ui::result_row::{RowContent, result_row};
@@ -939,10 +939,10 @@ impl LauncherWindow {
             })
     }
 
-    /// The idle footer's button: the selected action's label with the key
-    /// of its binding beside it — the Enter keycap for the Enter key, the
-    /// binding's name in the same chrome for any other key the Keyboard
-    /// page put there. Its click takes the same path the binding's key
+    /// The idle footer's button: the selected action's label with the keys
+    /// of its binding beside it — the return key's accent cap by default,
+    /// and the whole chord, cap by cap, for whatever the Keyboard page put
+    /// there. Its click takes the same path the binding's key
     /// takes (see [`LauncherWindow::press_primary_action`]); its label,
     /// availability and key come from the definition and the effective
     /// binding, so what the button says, whether it can run, what it does
@@ -1355,6 +1355,11 @@ pub(crate) fn launcher_changed_outside(cx: &mut App) {
 /// binding's keycap. Presentation only: the caller attaches the click
 /// (the launcher's [`LauncherWindow::press_primary_action`] path).
 ///
+/// The keycaps are the effective binding's whole key sequence in the
+/// reference's accent caps — the primary action's key — so a rebound
+/// Ctrl+Enter shows (and announces) Ctrl and the return key, never a
+/// bare Enter.
+///
 /// A click never dispatches what the definition says cannot run now, so
 /// an unavailable button is dimmed, marked for assistive technology, and
 /// the pointer says nothing to click; what explains it stays where it
@@ -1365,6 +1370,7 @@ pub(crate) fn action_button(
     theme: &Theme,
 ) -> Stateful<Div> {
     let geometry = &theme.geometry;
+    let keys = crate::keyboard::binding_keys(invoke);
     div()
         .id("primary-action")
         .debug_selector(|| "primary-action".into())
@@ -1372,7 +1378,7 @@ pub(crate) fn action_button(
         .aria_label(action.label.clone())
         // The key that presses this button from the keyboard: the keycap
         // beside the label shows the same binding.
-        .aria_keyshortcuts(invoke.to_string())
+        .aria_keyshortcuts(keys.name())
         // The button shrinks under pressure (the label ellipsizes; the
         // keycap does not) so a narrow window keeps it inside the strip
         // instead of clipping at the window's right edge.
@@ -1418,7 +1424,7 @@ pub(crate) fn action_button(
                 .truncate()
                 .child(action.label.clone()),
         )
-        .child(keycap::binding_keycap(invoke, theme))
+        .child(keycap::key_sequence(&keys, CapStyle::Accent, theme))
 }
 
 /// The icon presentation for a row, chosen by the row's stable id: the
