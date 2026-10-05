@@ -33,8 +33,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, Context, Div, Entity, Role, SharedString, Stateful, Toggled,
-    Window, div, prelude::*,
+    AnyElement, App, Context, Div, Entity, Role, SharedString, Stateful, Toggled, Window, div,
+    prelude::*,
 };
 use pane_core::placement::{DisplayLayout, resolve};
 use pane_core::{Launcher, OpeningMonitor, PinnedLayout, Reopening, WindowMode};
@@ -118,7 +118,11 @@ pub(crate) const PINNED_LAYOUTS: [(PinnedLayout, &str, &str); 2] = [
         "Horizontal",
         "launcher-pinned-Horizontal",
     ),
-    (PinnedLayout::Vertical, "Vertical", "launcher-pinned-Vertical"),
+    (
+        PinnedLayout::Vertical,
+        "Vertical",
+        "launcher-pinned-Vertical",
+    ),
 ];
 /// The switch that shows the pins under the compact window's search
 /// field: its name, and its id and selector.

@@ -81,7 +81,10 @@ pub(crate) mod launcher;
 mod search;
 mod shortcuts;
 
-actions!(settings, [NextSection, PreviousSection, CloseSettings, EscapeSettings]);
+actions!(
+    settings,
+    [NextSection, PreviousSection, CloseSettings, EscapeSettings]
+);
 
 /// The id of the window's key context, which the sidebar's keys are bound
 /// to.
@@ -320,7 +323,10 @@ impl SettingsWindow {
     /// Escape, where no control took it: closes this window if the
     /// Keyboard page's choice says Escape closes Settings.
     fn escape_settings(&mut self, _: &EscapeSettings, window: &mut Window, cx: &mut Context<Self>) {
-        if crate::settings::shared(cx).read(cx).escape_closes_settings() {
+        if crate::settings::shared(cx)
+            .read(cx)
+            .escape_closes_settings()
+        {
             window.remove_window();
         }
     }

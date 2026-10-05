@@ -229,10 +229,10 @@ pub(crate) fn row_surface(selected: bool, theme: &Theme) -> Div {
             row.when_some(theme.frost, |row, frost| row.backdrop_blur(frost.blur))
                 .bg(theme.row_selected)
                 .shadow(vec![
-                BoxShadow::new(px(0.), px(0.), theme.row_selected_border)
-                    .spread_radius(px(1.))
-                    .inset(),
-            ])
+                    BoxShadow::new(px(0.), px(0.), theme.row_selected_border)
+                        .spread_radius(px(1.))
+                        .inset(),
+                ])
         })
 }
 

@@ -396,8 +396,8 @@ pub(crate) fn compose(
     documentation_lines.extend(view.opened.as_ref().map(|(text, color)| {
         status_note("about-status", text.clone(), *color, theme).into_any_element()
     }));
-    let documentation = controls::setting_row("Documentation", documentation_lines, theme).child(
-        attach(
+    let documentation =
+        controls::setting_row("Documentation", documentation_lines, theme).child(attach(
             AboutControl::Documentation,
             controls::button(DOCUMENTATION_LABEL, true, theme)
                 .id("about-documentation")
@@ -405,8 +405,7 @@ pub(crate) fn compose(
                 .role(Role::Link)
                 .aria_label("Open documentation")
                 .aria_description(DOCUMENTATION_NOTE),
-        ),
-    );
+        ));
     // The diagnostics: what Pane already knows of this installation,
     // copied to this computer's clipboard by the user's explicit choice
     // (see the module docs).
@@ -418,17 +417,15 @@ pub(crate) fn compose(
     diagnostics_lines.extend(view.copied.then(|| {
         status_note("about-diagnostics-status", COPIED, theme.success, theme).into_any_element()
     }));
-    let diagnostics = controls::setting_row("Diagnostics", diagnostics_lines, theme).child(
-        attach(
-            AboutControl::Diagnostics,
-            action_button(
-                "about-diagnostics",
-                DIAGNOSTICS_LABEL,
-                "Copies your version, system and data folder",
-                theme,
-            ),
+    let diagnostics = controls::setting_row("Diagnostics", diagnostics_lines, theme).child(attach(
+        AboutControl::Diagnostics,
+        action_button(
+            "about-diagnostics",
+            DIAGNOSTICS_LABEL,
+            "Copies your version, system and data folder",
+            theme,
         ),
-    );
+    ));
     let card = controls::card(
         [
             version.into_any_element(),

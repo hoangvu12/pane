@@ -320,10 +320,7 @@ impl Default for HostSettings {
 /// Whether `name` is a plain file name: no folder, no parent, nothing a
 /// path could escape the `backgrounds` folder with.
 fn plain_file_name(name: &str) -> bool {
-    !name.is_empty()
-        && name != "."
-        && name != ".."
-        && !name.contains(['/', '\\', ':'])
+    !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\', ':'])
 }
 
 impl HostSettings {

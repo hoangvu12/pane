@@ -178,7 +178,9 @@ impl LauncherWindow {
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 this.click_compact_pin(index, event, window, cx);
             }))
-            .child(tile_at(TileSize::Row, tone, glyph, theme).when(!ready, |tile| tile.opacity(0.5)))
+            .child(
+                tile_at(TileSize::Row, tone, glyph, theme).when(!ready, |tile| tile.opacity(0.5)),
+            )
             .when_some(number.filter(|_| look > 0.), |element, number| {
                 element.child(number_hint(number, look, theme))
             })

@@ -93,8 +93,8 @@ pub(crate) struct Backdrop {
 /// the reason; nothing is kept then. The copy is written beside its final
 /// name and renamed into place, so a half-written copy is never named.
 pub(crate) fn import(source: &Path, data: &Path) -> Result<String, String> {
-    let picture = decode(source)
-        .map_err(|why| format!("Pane could not read {}: {why}", source.display()))?;
+    let picture =
+        decode(source).map_err(|why| format!("Pane could not read {}: {why}", source.display()))?;
     let picture = if picture.width().max(picture.height()) > KEPT_SIDE {
         picture.resize(KEPT_SIDE, KEPT_SIDE, FilterType::Lanczos3)
     } else {
@@ -293,11 +293,7 @@ fn rgb(hue: f32, saturation: f32, lightness: f32) -> [f32; 3] {
             low
         }
     };
-    [
-        channel(hue + 1. / 3.),
-        channel(hue),
-        channel(hue - 1. / 3.),
-    ]
+    [channel(hue + 1. / 3.), channel(hue), channel(hue - 1. / 3.)]
 }
 
 /// The picture cover-fitted into `width` by `height`: scaled to cover it,
@@ -543,7 +539,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let folder = dir.path().join(FOLDER);
         std::fs::create_dir_all(&folder).unwrap();
-        for name in ["background-1.jpg", "background-2.jpg", "background-3.jpg.tmp"] {
+        for name in [
+            "background-1.jpg",
+            "background-2.jpg",
+            "background-3.jpg.tmp",
+        ] {
             std::fs::write(folder.join(name), "").unwrap();
         }
         prune(dir.path(), &["background-2.jpg"]);
@@ -560,15 +560,18 @@ mod tests {
         // to the dark panel's lightness and saturation.
         let blue = canvas([30., 130., 220.], false);
         assert!(blue[2] > blue[0], "{blue:?}");
+        // The holds apply before the 8-bit rounding, which moves lightness
+        // by up to half a step (0.002) and a color this dark's saturation
+        // by about a hundredth per step.
         let (_, saturation, lightness) = hsl(blue.map(|c| c / 255.));
-        assert!((0.059..=0.161).contains(&lightness), "{lightness}");
-        assert!(saturation <= 0.451, "{saturation}");
+        assert!((0.057..=0.163).contains(&lightness), "{lightness}");
+        assert!(saturation <= 0.465, "{saturation}");
         // A white picture cannot lift the dark panel past 16%, nor a black
         // one darken the light panel past 86%.
         let (_, _, lightness) = hsl(canvas([255.; 3], false).map(|c| c / 255.));
-        assert!(lightness <= 0.161, "{lightness}");
+        assert!(lightness <= 0.163, "{lightness}");
         let (_, _, lightness) = hsl(canvas([0.; 3], true).map(|c| c / 255.));
-        assert!(lightness >= 0.859, "{lightness}");
+        assert!(lightness >= 0.857, "{lightness}");
     }
 
     #[test]
@@ -610,9 +613,10 @@ mod tests {
             // just past the panel, so a trace of the picture is left.
             let canvas = gpui::hsla_to_rgba(backdrop.canvas);
             let last = &bytes[bytes.len() - 4..];
-            for (byte, channel) in last[..3]
-                .iter()
-                .zip([canvas.color.blue, canvas.color.green, canvas.color.red])
+            for (byte, channel) in
+                last[..3]
+                    .iter()
+                    .zip([canvas.color.blue, canvas.color.green, canvas.color.red])
             {
                 assert!(
                     (*byte as f32 - channel * 255.).abs() <= 4.5,

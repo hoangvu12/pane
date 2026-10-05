@@ -758,7 +758,11 @@ fn icon_face(mark: Glyph, active: bool, enabled: bool, theme: &Theme) -> Div {
         .child(glyph(
             mark,
             controls.icon_button_glyph,
-            if active { theme.danger } else { theme.text_body },
+            if active {
+                theme.danger
+            } else {
+                theme.text_body
+            },
         ))
         .when(!enabled, |face| {
             face.opacity(controls.disabled_opacity).cursor_default()

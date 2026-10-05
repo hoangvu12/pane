@@ -242,7 +242,10 @@ fn find_focuses_the_search_and_typing_matches_registered_settings(cx: &mut TestA
     sc.simulate_keystrokes("enter");
     sc.run_until_parked();
     assert!(sc.debug_bounds("general").is_some(), "the page opened");
-    assert!(sc.debug_bounds("appearance").is_some(), "with the choice's section");
+    assert!(
+        sc.debug_bounds("appearance").is_some(),
+        "with the choice's section"
+    );
     assert!(
         sc.debug_bounds("settings-search-result-Dark").is_none(),
         "the query cleared"

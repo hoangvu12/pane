@@ -730,7 +730,10 @@ fn escape_cancels_the_recorder_and_captured_keys_do_not_act(cx: &mut TestAppCont
     settings_cx.run_until_parked();
     settings_cx.simulate_keystrokes("tab");
     settings_cx.run_until_parked();
-    assert!(!a11y(&mut settings_cx).contains("Recording;"), "Tab cancels");
+    assert!(
+        !a11y(&mut settings_cx).contains("Recording;"),
+        "Tab cancels"
+    );
     click(&mut settings_cx, "open-pane-recorder");
     settings_cx.run_until_parked();
     assert!(a11y(&mut settings_cx).contains("Recording;"));

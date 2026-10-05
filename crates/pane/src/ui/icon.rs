@@ -536,7 +536,10 @@ mod tests {
             assert_eq!(bold.matches(FILLED_BOLD).count(), filled, "{glyph:?}");
             for element in bold.split('<') {
                 for attribute in [" stroke=", " stroke-width=", " stroke-linejoin="] {
-                    assert!(element.matches(attribute).count() <= 1, "{glyph:?}: {element}");
+                    assert!(
+                        element.matches(attribute).count() <= 1,
+                        "{glyph:?}: {element}"
+                    );
                 }
             }
         }

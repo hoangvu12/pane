@@ -55,11 +55,7 @@ actions!(
 /// must have been initialized first, as the binary does before this
 /// runs.
 pub fn bind_keys(cx: &mut App) {
-    bind_keys_with(
-        cx,
-        &settings::keyboard_of(cx),
-        settings::navigation_of(cx),
-    );
+    bind_keys_with(cx, &settings::keyboard_of(cx), settings::navigation_of(cx));
 }
 
 /// The full key registration over `keyboard`: [`bind_keys`] is this over

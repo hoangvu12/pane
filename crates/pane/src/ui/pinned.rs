@@ -168,7 +168,14 @@ pub(crate) fn pin_hint(theme: &Theme) -> Stateful<Div> {
         .border_color(theme.slot_empty_edge)
         .font_weight(typography.regular)
         .text_color(theme.text_muted)
-        .child(glyph(Glyph::Plus, theme.geometry.slot_tile.glyph, theme.text_muted).flex_none())
+        .child(
+            glyph(
+                Glyph::Plus,
+                theme.geometry.slot_tile.glyph,
+                theme.text_muted,
+            )
+            .flex_none(),
+        )
         .child(PIN_HINT)
 }
 

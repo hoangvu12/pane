@@ -60,7 +60,10 @@ use crate::ui::pinned::{
 use crate::ui::result_row::{RowContent, RowMeta, result_row_with};
 use crate::ui::theme::Theme;
 
-actions!(quick_slots, [PressSlot, TogglePin, MovePinEarlier, MovePinLater]);
+actions!(
+    quick_slots,
+    [PressSlot, TogglePin, MovePinEarlier, MovePinLater]
+);
 
 /// A focused slot's key context.
 const SLOT_CONTEXT: &str = "QuickSlot";
@@ -150,8 +153,7 @@ fn slot_icon(slot: &QuickSlot) -> (IconTone, Glyph) {
 /// place among the pins from 1, saying why it cannot run, with its chord
 /// while it is a numbered pin.
 fn slot_accessibility(index: usize, slot: &QuickSlot, element: Stateful<Div>) -> Stateful<Div> {
-    let shortcut =
-        slot_number(index).map(|number| crate::keyboard::quick_slot_keys(number).name());
+    let shortcut = slot_number(index).map(|number| crate::keyboard::quick_slot_keys(number).name());
     element
         .role(Role::Button)
         .aria_label(format!("Pinned {}: {}", index + 1, slot.title))
@@ -567,7 +569,12 @@ impl LauncherWindow {
 
     /// The input a slot takes, tile or row: its focus, Enter and Space, a
     /// click and a secondary click for its actions.
-    fn slot_input(&self, index: usize, slot: Stateful<Div>, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn slot_input(
+        &self,
+        index: usize,
+        slot: Stateful<Div>,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
         slot.key_context(SLOT_CONTEXT)
             .track_focus(&self.home.focus[index])
             .on_action(cx.listener(move |this, _: &PressSlot, window, cx| {

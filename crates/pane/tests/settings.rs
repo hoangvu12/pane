@@ -741,9 +741,7 @@ fn hiding_the_launcher_leaves_settings_open_and_usable(cx: &mut TestAppContext) 
     assert!(settings_cx.debug_bounds("extensions-title").is_some());
     assert!(settings_cx.debug_bounds("extension-empty").is_some());
     assert!(
-        settings_cx
-            .debug_bounds("extension-install-npm…")
-            .is_none(),
+        settings_cx.debug_bounds("extension-install-npm…").is_none(),
         "a launcher that installs no packages offers no install rows"
     );
 }
@@ -1299,9 +1297,7 @@ fn a_refused_documentation_link_is_explained_on_the_page(cx: &mut TestAppContext
     // The refusal is the page's status, not a silent failure.
     let (_, json) = accessibility(&mut settings_cx);
     assert!(
-        json.contains(
-            "Couldn't open the documentation: no program to open web links is installed"
-        ),
+        json.contains("Couldn't open the documentation: no program to open web links is installed"),
         "the refusal is explained, {json}"
     );
     let view = cx.read_entity(&launcher, |window, _| window.launcher().view());
@@ -1552,7 +1548,10 @@ fn the_page_offers_the_update_and_installs_it_by_the_users_choice(cx: &mut TestA
     // Mid-install there is no row to click: nothing else can be started
     // against the same offer.
     assert!(settings_cx.debug_bounds("about-update").is_none());
-    until_text(&mut settings_cx, "Pane 99.0.0 is installed and starts next time");
+    until_text(
+        &mut settings_cx,
+        "Pane 99.0.0 is installed and starts next time",
+    );
 
     // The program was swapped: the new one in place, the old one renamed
     // out of its way, nothing else in the install folder.
@@ -1614,7 +1613,10 @@ fn a_failed_install_is_explained_and_the_offer_stays_to_try_again(cx: &mut TestA
     // The source works again; choosing the offer again installs it.
     dirs.publish_update("99.0.0", b"the 99.0.0 program");
     click_row(&mut settings_cx, "about-update");
-    until_text(&mut settings_cx, "Pane 99.0.0 is installed and starts next time");
+    until_text(
+        &mut settings_cx,
+        "Pane 99.0.0 is installed and starts next time",
+    );
     assert_eq!(fs::read(dirs.program()).unwrap(), b"the 99.0.0 program");
 }
 
@@ -1637,7 +1639,10 @@ fn an_interrupted_download_from_the_page_is_tried_again_and_lands(cx: &mut TestA
     dirs.artifacts.drop_after(&file, 16, 1);
 
     click_row(&mut settings_cx, "about-update");
-    until_text(&mut settings_cx, "Pane 99.0.0 is installed and starts next time");
+    until_text(
+        &mut settings_cx,
+        "Pane 99.0.0 is installed and starts next time",
+    );
     assert_eq!(fs::read(dirs.program()).unwrap(), b"the 99.0.0 program");
     assert_eq!(
         fs::read(dirs.install.path().join("pane.old")).unwrap(),
@@ -2051,10 +2056,7 @@ fn the_install_rows_from_the_page_open_the_launcher_windows_flows(cx: &mut TestA
     // The install rows are the launcher's own root rows: clicking one opens
     // the flow in the launcher window, where its form (or folder picker)
     // lives, focused there.
-    click_row(
-        &mut settings_cx,
-        "extension-install-npm…",
-    );
+    click_row(&mut settings_cx, "extension-install-npm…");
     let view = settle(&launcher, cx);
     assert!(matches!(view.screen, Screen::Form(_)), "{:?}", view.screen);
     assert!(
@@ -2428,8 +2430,13 @@ fn the_appearance_choices_are_the_reference_segmented_family(cx: &mut TestAppCon
                 "2px apart: {pair:?}"
             );
         }
+        // Equal to the half pixel the layout's pixel snapping leaves when
+        // the track does not divide evenly.
         for segment in row {
-            assert!((segment[2] - first[2]).abs() < 0.5, "equal shares: {row:?}");
+            assert!(
+                (segment[2] - first[2]).abs() <= 0.5,
+                "equal shares: {row:?}"
+            );
             assert_eq!(segment[3], 30., "{segment:?}");
         }
     }
@@ -2638,7 +2645,11 @@ fn the_general_page_draws_the_settings_control_families(cx: &mut TestAppContext)
     let recorder = sc.debug_bounds("open-pane-recorder").expect("the recorder");
     let row_bounds = sc.debug_bounds("general-open-pane-row").expect("its row");
     assert_eq!(recorder.size.height, px(36.), "the recorder's field");
-    assert_eq!(recorder.right(), row_bounds.right() - px(14.), "at the row's end");
+    assert_eq!(
+        recorder.right(),
+        row_bounds.right() - px(14.),
+        "at the row's end"
+    );
     assert!(
         paints_fill_at(sc, recorder, 0x0000003D),
         "the well's black 24%"
@@ -2662,7 +2673,11 @@ fn the_general_page_draws_the_settings_control_families(cx: &mut TestAppContext)
         .debug_bounds("general-launch-at-login-row")
         .expect("its row");
     assert_eq!(switch.size, gpui::size(px(40.), px(24.)), "the switch");
-    assert_eq!(switch.right(), switch_row.right() - px(14.), "at the row's end");
+    assert_eq!(
+        switch.right(),
+        switch_row.right() - px(14.),
+        "at the row's end"
+    );
     let knob = |left: f32| gpui::Bounds {
         origin: switch.origin + gpui::point(px(left), px(3.)),
         size: gpui::size(px(18.), px(18.)),

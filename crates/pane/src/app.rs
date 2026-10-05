@@ -430,7 +430,8 @@ impl LauncherWindow {
         // The Keyboard page's escape behavior: hide from wherever the
         // launcher is, or go back one level and hide from an empty root
         // search.
-        let hides = crate::settings::shared(cx).read(cx).escape() == pane_core::EscapeBehavior::Hide;
+        let hides =
+            crate::settings::shared(cx).read(cx).escape() == pane_core::EscapeBehavior::Hide;
         if hides
             || matches!(&self.launcher.view().screen, Screen::Root { query } if query.is_empty())
         {
@@ -1230,29 +1231,26 @@ impl LauncherWindow {
         let visuals = crate::settings::launcher_visuals(cx);
         let card = root_search::layouts::answer_card(answer, selected, &visuals.theme);
         match number {
-            Some((number, look)) => crate::ui::result_row::with_number_hint(
-                card,
-                number,
-                look,
-                &visuals.theme,
-            ),
+            Some((number, look)) => {
+                crate::ui::result_row::with_number_hint(card, number, look, &visuals.theme)
+            }
             None => card,
         }
         .id(("row", index))
-            .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {
-                this.pointer_moved_over(index, event.position, cx);
-            }))
-            .debug_selector(|| format!("row-{}", row.title))
-            .role(Role::ListBoxOption)
-            .aria_label(root_search::layouts::answer_label(answer))
-            .aria_selected(selected)
-            .when(selected, |card| card.aria_active_descendant())
-            .when_some(row.subtitle, |card, subtitle| {
-                card.aria_description(subtitle)
-            })
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.click_root_row(index, window, cx);
-            }))
+        .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {
+            this.pointer_moved_over(index, event.position, cx);
+        }))
+        .debug_selector(|| format!("row-{}", row.title))
+        .role(Role::ListBoxOption)
+        .aria_label(root_search::layouts::answer_label(answer))
+        .aria_selected(selected)
+        .when(selected, |card| card.aria_active_descendant())
+        .when_some(row.subtitle, |card, subtitle| {
+            card.aria_description(subtitle)
+        })
+        .on_click(cx.listener(move |this, _, window, cx| {
+            this.click_root_row(index, window, cx);
+        }))
     }
 
     /// The footer's right-hand buttons: the selected action's button,
@@ -1399,8 +1397,14 @@ impl LauncherWindow {
         let shown = self.numbers.shown;
         let changed = self.numbers.drawn != shown;
         self.numbers.drawn = shown;
-        motion::advance_reveal(&mut self.numbers.reveal, shown, changed, cx.reduce_motion(), now)
-            .unwrap_or(if shown { 1. } else { 0. })
+        motion::advance_reveal(
+            &mut self.numbers.reveal,
+            shown,
+            changed,
+            cx.reduce_motion(),
+            now,
+        )
+        .unwrap_or(if shown { 1. } else { 0. })
     }
 
     /// Whether the last frame drew the launcher collapsed to its search
@@ -1564,8 +1568,7 @@ impl Render for LauncherWindow {
         // The background image's backdrop, baked for this window's scale
         // (ADR 0028); the visuals below are over it once it is ready.
         let scale = window.scale_factor();
-        crate::settings::shared(cx)
-            .update(cx, |settings, cx| settings.request_backdrop(scale, cx));
+        crate::settings::shared(cx).update(cx, |settings, cx| settings.request_backdrop(scale, cx));
         let visuals = crate::settings::launcher_visuals(cx);
         let theme = visuals.theme;
         let material = visuals.material;
@@ -1809,64 +1812,70 @@ impl Render for LauncherWindow {
                 )
             })
             .child(body)
-            .when(!collapsed, |content| content.child(
-                // The footer: the launcher's status strip (see
-                // [`crate::ui::footer`]). On the left, the Pane mark (the
-                // app menu's button) and the hint — or, while a status
-                // shows (running, progress, a result or an error), the
-                // message instead, wrapping, growing and scrolling as it
-                // always has; on the right, the selected result's primary
-                // action and, on root search, Actions. The strip keeps its
-                // identity (id, role, status-* debug selectors) in every
-                // shape, so a test or a smoke can always find the
-                // launcher's footer where it was. The open menu's popup and
-                // the open Actions panel are the strip's first children:
-                // their capture-phase dismissal runs before the buttons'
-                // click tracking, while their own bounds stay above the
-                // strip (see `footer_menu` and `actions_panel`).
-                Material::footer(&theme)
-                    .id("status")
-                    // The popups are anchored to the strip (above its top
-                    // edge, however tall the message has grown it), and
-                    // the strip never scrolls — the message's viewport
-                    // below does — so the buttons and the popups above
-                    // them stay put while the message scrolls.
-                    .relative()
-                    .when_some(
-                        self.render_menu_popup_layer(menu_in_flight, cx),
-                        |strip, popup| strip.child(popup),
-                    )
-                    .when_some(self.render_actions_layer(cx), |strip, panel| {
-                        strip.child(panel)
-                    })
-                    // The strip is the live region: it carries the
-                    // message as its name, so assistive technology
-                    // announces it. While idle the strip carries no
-                    // message and stays silent.
-                    .role(Role::Status)
-                    .when_some(status.clone(), |footer, text| footer.aria_label(text))
-                    .debug_selector(|| status_selector.into())
-                    .text_size(theme.typography.footer_size)
-                    .text_color(status_color)
-                    .child(footer::footer_row(
-                        self.render_menu_button(&theme, cx).into_any_element(),
-                        match status.clone() {
-                            // Past the 35% cap the message scrolls in its
-                            // own viewport, inside the strip, instead of
-                            // being cut. The strip's bounds carry the
-                            // status-* debug selectors.
-                            Some(text) => footer::status_message(text, &theme).into_any_element(),
-                            None => footer::hint_slot(self.footer_hint(root, &theme, cx), &theme)
-                                .into_any_element(),
-                        },
-                        // While a status shows, the primary action steps
-                        // aside — nothing is dispatched again from a frame
-                        // the status has already overtaken (a double click
-                        // on a quick open) — and Actions stays.
-                        self.footer_buttons(&action, root, status.is_some(), &theme, cx),
-                        &theme,
-                    )),
-            ));
+            .when(!collapsed, |content| {
+                content.child(
+                    // The footer: the launcher's status strip (see
+                    // [`crate::ui::footer`]). On the left, the Pane mark (the
+                    // app menu's button) and the hint — or, while a status
+                    // shows (running, progress, a result or an error), the
+                    // message instead, wrapping, growing and scrolling as it
+                    // always has; on the right, the selected result's primary
+                    // action and, on root search, Actions. The strip keeps its
+                    // identity (id, role, status-* debug selectors) in every
+                    // shape, so a test or a smoke can always find the
+                    // launcher's footer where it was. The open menu's popup and
+                    // the open Actions panel are the strip's first children:
+                    // their capture-phase dismissal runs before the buttons'
+                    // click tracking, while their own bounds stay above the
+                    // strip (see `footer_menu` and `actions_panel`).
+                    Material::footer(&theme)
+                        .id("status")
+                        // The popups are anchored to the strip (above its top
+                        // edge, however tall the message has grown it), and
+                        // the strip never scrolls — the message's viewport
+                        // below does — so the buttons and the popups above
+                        // them stay put while the message scrolls.
+                        .relative()
+                        .when_some(
+                            self.render_menu_popup_layer(menu_in_flight, cx),
+                            |strip, popup| strip.child(popup),
+                        )
+                        .when_some(self.render_actions_layer(cx), |strip, panel| {
+                            strip.child(panel)
+                        })
+                        // The strip is the live region: it carries the
+                        // message as its name, so assistive technology
+                        // announces it. While idle the strip carries no
+                        // message and stays silent.
+                        .role(Role::Status)
+                        .when_some(status.clone(), |footer, text| footer.aria_label(text))
+                        .debug_selector(|| status_selector.into())
+                        .text_size(theme.typography.footer_size)
+                        .text_color(status_color)
+                        .child(footer::footer_row(
+                            self.render_menu_button(&theme, cx).into_any_element(),
+                            match status.clone() {
+                                // Past the 35% cap the message scrolls in its
+                                // own viewport, inside the strip, instead of
+                                // being cut. The strip's bounds carry the
+                                // status-* debug selectors.
+                                Some(text) => {
+                                    footer::status_message(text, &theme).into_any_element()
+                                }
+                                None => {
+                                    footer::hint_slot(self.footer_hint(root, &theme, cx), &theme)
+                                        .into_any_element()
+                                }
+                            },
+                            // While a status shows, the primary action steps
+                            // aside — nothing is dispatched again from a frame
+                            // the status has already overtaken (a double click
+                            // on a quick open) — and Actions stays.
+                            self.footer_buttons(&action, root, status.is_some(), &theme, cx),
+                            &theme,
+                        )),
+                )
+            });
         // While the arriving content is still in flight, keep frames
         // coming; the frame that completes the transition requests none,
         // so a settled window is idle. The scroll relayout above keeps its
@@ -2044,7 +2053,12 @@ mod tests {
     fn the_pinned_home_takes_one_to_five_and_the_rows_follow() {
         // Five pins, or eight: only the first five are numbered, and the
         // rows take the digits after them.
-        let home = view(Screen::Root { query: String::new() }, 3);
+        let home = view(
+            Screen::Root {
+                query: String::new(),
+            },
+            3,
+        );
         assert_eq!(numbered(&home, &STRIP, 1), Some(Numbered::Slot(0)));
         assert_eq!(numbered(&home, &STRIP, 5), Some(Numbered::Slot(4)));
         assert_eq!(numbered(&home, &STRIP, 6), Some(Numbered::Row(0)));
@@ -2060,7 +2074,12 @@ mod tests {
     fn fewer_pins_than_five_leave_their_numbers_to_the_rows() {
         // Two pins: Ctrl+1 and Ctrl+2 are theirs, and the rows follow from
         // 3, up to 9.
-        let home = view(Screen::Root { query: String::new() }, 12);
+        let home = view(
+            Screen::Root {
+                query: String::new(),
+            },
+            12,
+        );
         let pinned = [0, 1];
         assert_eq!(numbered(&home, &pinned, 1), Some(Numbered::Slot(0)));
         assert_eq!(numbered(&home, &pinned, 2), Some(Numbered::Slot(1)));
@@ -2077,7 +2096,12 @@ mod tests {
     fn past_the_fifth_pin_the_numbers_go_to_the_rows() {
         // Eight pins, of which the first five are numbered: Ctrl+6 to
         // Ctrl+9 are the first four rows, and pins 6 to 8 have none.
-        let home = view(Screen::Root { query: String::new() }, 12);
+        let home = view(
+            Screen::Root {
+                query: String::new(),
+            },
+            12,
+        );
         assert_eq!(numbered(&home, &STRIP, 6), Some(Numbered::Row(0)));
         assert_eq!(numbered(&home, &STRIP, 9), Some(Numbered::Row(3)));
         assert_eq!(row_number(&home, &STRIP, 3), Some(9));

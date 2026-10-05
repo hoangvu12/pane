@@ -258,7 +258,8 @@ impl Material {
     /// The L1 panel with `tint` as its glass (see [`Material::panel`]).
     fn tinted_panel(&self, theme: &Theme, tint: Hsla, content: impl IntoElement) -> Div {
         let shape = (theme.geometry.panel_radius, theme.hairline);
-        self.l1_surface(theme, tint, shape, None, content).size_full()
+        self.l1_surface(theme, tint, shape, None, content)
+            .size_full()
     }
 
     /// The L1 surface: `tint` as its glass (the solid panel otherwise),
@@ -321,7 +322,9 @@ impl Material {
             .max_h(relative(0.35))
             .pl(geometry.footer_padding_left)
             .pr(geometry.footer_padding_right)
-            .when_some(theme.frost, |footer, frost| footer.backdrop_blur(frost.blur))
+            .when_some(theme.frost, |footer, frost| {
+                footer.backdrop_blur(frost.blur)
+            })
             .bg(theme.footer_tint)
             .border_t_1()
             .border_color(theme.hairline_soft)

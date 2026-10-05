@@ -363,73 +363,79 @@ fn render(
     let (resettable, login_offered, tray_offered) =
         (view.resettable, view.login_offered, view.tray_offered);
     let appearance = appearance::section(this, cx);
-    compose(&view, focused, Some(appearance), &theme, |control, element| match control {
-        GeneralControl::Recorder => element
-            .anchor_scroll(Some(recorder_anchor.clone()))
-            .key_context(if recording { RECORDER } else { RECORDER_IDLE })
-            .track_focus(&focus)
-            .on_action(cx.listener(SettingsWindow::activate_recorder))
-            .on_action(cx.listener(SettingsWindow::cancel_recording))
-            .on_key_down(cx.listener(SettingsWindow::recorder_key_down))
-            // A mouse-down anywhere outside the recorder while it listens
-            // cancels the recording and is consumed, as the footer menu's
-            // popup does: the click underneath does not act, and the
-            // recorder gives up the keys.
-            .on_mouse_down_out(cx.listener(|this, _: &MouseDownEvent, window, cx| {
-                if this.general.recording {
-                    this.stop_recording(window, cx);
-                    cx.stop_propagation();
-                }
-            }))
-            // A click starts recording, or stops it again.
-            .on_click(cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
-                if this.general.recording {
-                    this.stop_recording(window, cx);
-                } else {
-                    this.start_recorder(window, cx);
-                }
-            })),
-        GeneralControl::Reset => {
-            element
-                .anchor_scroll(Some(reset_anchor.clone()))
-                // The reset sits inside the recorder: its click is its own.
-                .on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
-                    cx.stop_propagation();
-                    if resettable {
-                        this.apply_open_pane(Shortcut::open_pane_default(), window, cx);
+    compose(
+        &view,
+        focused,
+        Some(appearance),
+        &theme,
+        |control, element| match control {
+            GeneralControl::Recorder => element
+                .anchor_scroll(Some(recorder_anchor.clone()))
+                .key_context(if recording { RECORDER } else { RECORDER_IDLE })
+                .track_focus(&focus)
+                .on_action(cx.listener(SettingsWindow::activate_recorder))
+                .on_action(cx.listener(SettingsWindow::cancel_recording))
+                .on_key_down(cx.listener(SettingsWindow::recorder_key_down))
+                // A mouse-down anywhere outside the recorder while it listens
+                // cancels the recording and is consumed, as the footer menu's
+                // popup does: the click underneath does not act, and the
+                // recorder gives up the keys.
+                .on_mouse_down_out(cx.listener(|this, _: &MouseDownEvent, window, cx| {
+                    if this.general.recording {
+                        this.stop_recording(window, cx);
+                        cx.stop_propagation();
                     }
                 }))
-        }
-        GeneralControl::Login => {
-            element
-                .anchor_scroll(Some(login_anchor.clone()))
-                .when(login_offered, |switch| {
-                    // The click reports the choice to the host settings: the
-                    // registration is changed, the record written, and the
-                    // switch redrawn with what was actually kept.
-                    switch.on_click(cx.listener(move |_, _: &gpui::ClickEvent, _, cx| {
-                        crate::settings::shared(cx).update(cx, |settings, cx| {
-                            settings.set_launch_at_login(!preference, cx);
-                        });
+                // A click starts recording, or stops it again.
+                .on_click(cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
+                    if this.general.recording {
+                        this.stop_recording(window, cx);
+                    } else {
+                        this.start_recorder(window, cx);
+                    }
+                })),
+            GeneralControl::Reset => {
+                element
+                    .anchor_scroll(Some(reset_anchor.clone()))
+                    // The reset sits inside the recorder: its click is its own.
+                    .on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+                        cx.stop_propagation();
+                        if resettable {
+                            this.apply_open_pane(Shortcut::open_pane_default(), window, cx);
+                        }
                     }))
-                })
-        }
-        GeneralControl::Tray => {
-            element
-                .anchor_scroll(Some(tray_anchor.clone()))
-                .when(tray_offered, |switch| {
-                    // The click reports the choice to the host settings: the
-                    // native entry is shown or hidden, the record written, and
-                    // the switch redrawn with what was actually kept — the
-                    // preference read as it is now, not as the frame that drew
-                    // the row holds it.
-                    switch.on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-                        let visible = crate::settings::shared(cx).read(cx).tray_visible();
-                        this.apply_tray_visible(!visible, cx);
-                    }))
-                })
-        }
-    })
+            }
+            GeneralControl::Login => {
+                element
+                    .anchor_scroll(Some(login_anchor.clone()))
+                    .when(login_offered, |switch| {
+                        // The click reports the choice to the host settings: the
+                        // registration is changed, the record written, and the
+                        // switch redrawn with what was actually kept.
+                        switch.on_click(cx.listener(move |_, _: &gpui::ClickEvent, _, cx| {
+                            crate::settings::shared(cx).update(cx, |settings, cx| {
+                                settings.set_launch_at_login(!preference, cx);
+                            });
+                        }))
+                    })
+            }
+            GeneralControl::Tray => {
+                element
+                    .anchor_scroll(Some(tray_anchor.clone()))
+                    .when(tray_offered, |switch| {
+                        // The click reports the choice to the host settings: the
+                        // native entry is shown or hidden, the record written, and
+                        // the switch redrawn with what was actually kept — the
+                        // preference read as it is now, not as the frame that drew
+                        // the row holds it.
+                        switch.on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                            let visible = crate::settings::shared(cx).read(cx).tray_visible();
+                            this.apply_tray_visible(!visible, cx);
+                        }))
+                    })
+            }
+        },
+    )
     .into_any_element()
 }
 

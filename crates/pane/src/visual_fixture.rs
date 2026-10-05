@@ -8444,7 +8444,10 @@ mod tests {
         let third = home.slots[2].rect;
         assert_eq!(hint.y, third.y);
         assert_eq!((hint.width, hint.height), (third.width, third.height));
-        assert!((hint.x - (third.x + third.width + 8.)).abs() < 0.01, "{hint:?}");
+        assert!(
+            (hint.x - (third.x + third.width + 8.)).abs() < 0.01,
+            "{hint:?}"
+        );
         assert_eq!(home.strip.height, 2. + 80. + 6.);
         let unavailable = &home.slots[2];
         assert_eq!(unavailable.unavailable, Some("Notes is disabled"));

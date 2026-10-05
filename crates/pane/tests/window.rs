@@ -3573,9 +3573,7 @@ fn pinning_from_the_actions_panel_adds_a_slot_whose_chord_opens_it(cx: &mut Test
 /// A click on a slot runs what it holds; a click on the pin hint runs
 /// nothing and leaves the query focused, so typing still searches.
 #[gpui::test]
-fn a_click_on_a_slot_opens_what_it_holds_and_one_on_the_hint_runs_nothing(
-    cx: &mut TestAppContext,
-) {
+fn a_click_on_a_slot_opens_what_it_holds_and_one_on_the_hint_runs_nothing(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
     let (window, cx) = pinned_rows(cx, data.path(), &["sample_ts"]);
     assert_eq!(slot_titles(&window, cx), ["Charlie"]);

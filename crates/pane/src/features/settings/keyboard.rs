@@ -99,7 +99,11 @@ pub(crate) const NAVIGATION_NAME: &str = "Navigation bindings";
 /// The escape behaviors the page offers, in segment order: the
 /// preference, the segment's name and its test selector.
 pub(crate) const ESCAPES: [(EscapeBehavior, &str, &str); 2] = [
-    (EscapeBehavior::BackOrHide, "Go back", "keyboard-escape-back"),
+    (
+        EscapeBehavior::BackOrHide,
+        "Go back",
+        "keyboard-escape-back",
+    ),
     (EscapeBehavior::Hide, "Hide Pane", "keyboard-escape-hide"),
 ];
 
@@ -357,75 +361,80 @@ fn render(
     let focuses = this.keyboard.focuses.clone();
     let recording = this.keyboard.recording;
     let defaults = Keyboard::default_for_this_system();
-    compose(&view, Some(navigation), &theme, |control, element| match control {
-        KeyboardControl::Recorder(action) => {
-            let focus = focuses
-                .get(&action)
-                .expect("every action has a recorder focus")
-                .clone();
-            element
-                .anchor_scroll(anchors.get(&action).cloned())
-                .key_context(if recording == Some(action) {
-                    RECORDER
-                } else {
-                    RECORDER_IDLE
-                })
-                .track_focus(&focus)
-                .on_action(cx.listener(move |this, _: &ActivateRecorder, window, cx| {
-                    this.keyboard_activate_recorder(action, window, cx);
-                }))
-                .on_action(cx.listener(move |this, _: &CancelRecording, window, cx| {
-                    this.keyboard_cancel_recording(window, cx);
-                }))
-                .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
-                    this.keyboard_key_down(event, window, cx);
-                }))
-                // A mouse-down anywhere outside the recorder while it
-                // listens cancels the recording and is consumed, as the
-                // footer menu's popup does: the click underneath does not
-                // act, and the recorder gives up the keys.
-                .on_mouse_down_out(cx.listener(move |this, _: &MouseDownEvent, window, cx| {
-                    if this.keyboard.recording == Some(action) {
-                        this.keyboard_cancel_recording(window, cx);
-                        cx.stop_propagation();
-                    }
-                }))
-                // A click starts recording, or stops it again.
-                .on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
-                    if this.keyboard.recording == Some(action) {
-                        this.keyboard_cancel_recording(window, cx);
+    compose(
+        &view,
+        Some(navigation),
+        &theme,
+        |control, element| match control {
+            KeyboardControl::Recorder(action) => {
+                let focus = focuses
+                    .get(&action)
+                    .expect("every action has a recorder focus")
+                    .clone();
+                element
+                    .anchor_scroll(anchors.get(&action).cloned())
+                    .key_context(if recording == Some(action) {
+                        RECORDER
                     } else {
+                        RECORDER_IDLE
+                    })
+                    .track_focus(&focus)
+                    .on_action(cx.listener(move |this, _: &ActivateRecorder, window, cx| {
                         this.keyboard_activate_recorder(action, window, cx);
+                    }))
+                    .on_action(cx.listener(move |this, _: &CancelRecording, window, cx| {
+                        this.keyboard_cancel_recording(window, cx);
+                    }))
+                    .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+                        this.keyboard_key_down(event, window, cx);
+                    }))
+                    // A mouse-down anywhere outside the recorder while it
+                    // listens cancels the recording and is consumed, as the
+                    // footer menu's popup does: the click underneath does not
+                    // act, and the recorder gives up the keys.
+                    .on_mouse_down_out(cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+                        if this.keyboard.recording == Some(action) {
+                            this.keyboard_cancel_recording(window, cx);
+                            cx.stop_propagation();
+                        }
+                    }))
+                    // A click starts recording, or stops it again.
+                    .on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+                        if this.keyboard.recording == Some(action) {
+                            this.keyboard_cancel_recording(window, cx);
+                        } else {
+                            this.keyboard_activate_recorder(action, window, cx);
+                        }
+                    }))
+            }
+            KeyboardControl::Reset(action) => {
+                let default = defaults.binding(action).clone();
+                element.on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+                    // The reset sits inside the recorder: its click is its own.
+                    cx.stop_propagation();
+                    if !keyboard_is_default(action, cx) {
+                        this.keyboard_apply(action, default.clone(), window, cx);
                     }
                 }))
-        }
-        KeyboardControl::Reset(action) => {
-            let default = defaults.binding(action).clone();
-            element.on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
-                // The reset sits inside the recorder: its click is its own.
-                cx.stop_propagation();
-                if !keyboard_is_default(action, cx) {
-                    this.keyboard_apply(action, default.clone(), window, cx);
-                }
-            }))
-        }
-        KeyboardControl::Escape(escape) => element
-            .anchor_scroll(Some(escape_anchor.clone()))
-            .on_click(cx.listener(move |_, _: &gpui::ClickEvent, _, cx| {
-                crate::settings::shared(cx).update(cx, |settings, cx| {
-                    settings.set_escape(escape, cx);
-                });
-            })),
-        KeyboardControl::EscapeCloses => element
-            .anchor_scroll(Some(closes_anchor.clone()))
-            .on_click(cx.listener(|_, _: &gpui::ClickEvent, _, cx| {
-                let settings = crate::settings::shared(cx);
-                let closes = settings.read(cx).escape_closes_settings();
-                settings.update(cx, |settings, cx| {
-                    settings.set_escape_closes_settings(!closes, cx);
-                });
-            })),
-    })
+            }
+            KeyboardControl::Escape(escape) => element
+                .anchor_scroll(Some(escape_anchor.clone()))
+                .on_click(cx.listener(move |_, _: &gpui::ClickEvent, _, cx| {
+                    crate::settings::shared(cx).update(cx, |settings, cx| {
+                        settings.set_escape(escape, cx);
+                    });
+                })),
+            KeyboardControl::EscapeCloses => element
+                .anchor_scroll(Some(closes_anchor.clone()))
+                .on_click(cx.listener(|_, _: &gpui::ClickEvent, _, cx| {
+                    let settings = crate::settings::shared(cx);
+                    let closes = settings.read(cx).escape_closes_settings();
+                    settings.update(cx, |settings, cx| {
+                        settings.set_escape_closes_settings(!closes, cx);
+                    });
+                })),
+        },
+    )
     .into_any_element()
 }
 
@@ -506,17 +515,16 @@ pub(crate) fn compose(
         recorder_row(row, listening, rejection, theme, &attach).into_any_element()
     });
     let inset = theme.geometry.settings.section_label_inset;
-    let shortcuts = div()
-        .flex()
-        .flex_col()
-        .gap(theme.geometry.settings.section_label_gap)
-        .child(controls::card(rows, theme))
-        // What a save reported, if it failed.
-        .children(
-            view.status
-                .as_ref()
-                .map(|status| note("keyboard-status", status.clone(), theme.danger, theme).px(inset)),
-        );
+    let shortcuts =
+        div()
+            .flex()
+            .flex_col()
+            .gap(theme.geometry.settings.section_label_gap)
+            .child(controls::card(rows, theme))
+            // What a save reported, if it failed.
+            .children(view.status.as_ref().map(|status| {
+                note("keyboard-status", status.clone(), theme.danger, theme).px(inset)
+            }));
     let page = controls::page(theme)
         .child(controls::section(Some(BEHAVIOR.into()), behavior, theme))
         .child(

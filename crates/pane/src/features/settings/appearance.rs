@@ -64,11 +64,7 @@ pub(crate) const LABEL: &str = "Appearance";
 /// The theme choices the section offers, in segment order: the
 /// preference, the segment's name and its test selector.
 pub(crate) const THEMES: [(ThemePreference, &str, &str); 3] = [
-    (
-        ThemePreference::System,
-        "System",
-        "appearance-theme-System",
-    ),
+    (ThemePreference::System, "System", "appearance-theme-System"),
     (ThemePreference::Light, "Light", "appearance-theme-Light"),
     (ThemePreference::Dark, "Dark", "appearance-theme-Dark"),
 ];
@@ -77,7 +73,11 @@ pub(crate) const THEMES: [(ThemePreference, &str, &str); 3] = [
 /// the effect, the segment's name and its test selector.
 pub(crate) const EFFECTS: [(BackgroundEffect, &str, &str); 5] = [
     (BackgroundEffect::None, "None", "appearance-effect-None"),
-    (BackgroundEffect::Dither, "Dither", "appearance-effect-Dither"),
+    (
+        BackgroundEffect::Dither,
+        "Dither",
+        "appearance-effect-Dither",
+    ),
     (BackgroundEffect::Ascii, "ASCII", "appearance-effect-ASCII"),
     (
         BackgroundEffect::Halftone,
@@ -322,13 +322,24 @@ fn background_rows(
         background
             .problem
             .as_ref()
-            .map(|problem| notice("appearance-background-problem", problem.clone(), theme.danger, theme))
+            .map(|problem| {
+                notice(
+                    "appearance-background-problem",
+                    problem.clone(),
+                    theme.danger,
+                    theme,
+                )
+            })
             .map(IntoElement::into_any_element),
     );
     let anchor = this.search_anchor(CHOOSE_BACKGROUND);
     let choose = button(
         controls::button(
-            if background.chosen { "Change…" } else { "Choose…" },
+            if background.chosen {
+                "Change…"
+            } else {
+                "Choose…"
+            },
             ready,
             theme,
         ),
@@ -379,8 +390,9 @@ fn background_rows(
                 &focus,
                 theme,
                 move |cx| {
-                    crate::settings::shared(cx)
-                        .update(cx, |settings, cx| settings.set_background_effect(effect, cx));
+                    crate::settings::shared(cx).update(cx, |settings, cx| {
+                        settings.set_background_effect(effect, cx)
+                    });
                 },
             )
         })
@@ -388,7 +400,15 @@ fn background_rows(
     let track = controls::segment_track(theme)
         .flex_none()
         .w(theme.geometry.settings.wide_choice_width);
-    let effect = row_on(track, "effect", "Effect", segments, Vec::new(), offered, theme);
+    let effect = row_on(
+        track,
+        "effect",
+        "Effect",
+        segments,
+        Vec::new(),
+        offered,
+        theme,
+    );
     vec![picture.into_any_element(), effect.into_any_element()]
 }
 
@@ -627,7 +647,12 @@ fn row_on(
 
 /// A line the section reports (the material's note, the override notice,
 /// a save's failure) in `color`, announced as a status.
-fn notice(id: &'static str, text: impl Into<SharedString>, color: Hsla, theme: &Theme) -> Stateful<Div> {
+fn notice(
+    id: &'static str,
+    text: impl Into<SharedString>,
+    color: Hsla,
+    theme: &Theme,
+) -> Stateful<Div> {
     let text = text.into();
     controls::field_description(text.clone(), color, theme)
         .id(id)
@@ -639,7 +664,10 @@ fn notice(id: &'static str, text: impl Into<SharedString>, color: Hsla, theme: &
 /// The material row's note, if it needs one, with its color: where glass
 /// is chosen but the platform cannot provide it, why, in the warning's
 /// color. Glass that stands and Solid need none.
-pub(crate) fn material_note(preference: MaterialPreference, theme: &Theme) -> Option<(String, Hsla)> {
+pub(crate) fn material_note(
+    preference: MaterialPreference,
+    theme: &Theme,
+) -> Option<(String, Hsla)> {
     if preference == MaterialPreference::Solid {
         return None;
     }

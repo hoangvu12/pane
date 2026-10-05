@@ -96,13 +96,17 @@ fn entries(launcher: &Launcher, _cx: &App) -> Vec<search::Entry> {
         })
         .collect();
     if launcher.installs_packages() {
-        entries.extend(INSTALL_ROWS.into_iter().map(|(id, _, title)| search::Entry {
-            control: Some(id.into()),
-            title: title.into(),
-            // The page's own section label, which the rows sit under.
-            group: Some(INSTALL.into()),
-            unavailable: None,
-        }));
+        entries.extend(
+            INSTALL_ROWS
+                .into_iter()
+                .map(|(id, _, title)| search::Entry {
+                    control: Some(id.into()),
+                    title: title.into(),
+                    // The page's own section label, which the rows sit under.
+                    group: Some(INSTALL.into()),
+                    unavailable: None,
+                }),
+        );
     }
     entries
 }
@@ -120,7 +124,11 @@ fn focus(_: &mut SettingsWindow, _: &str, _: &mut Window, _: &mut Context<Settin
 /// dispatches to those rows through the launcher window, which owns their
 /// pickers and forms.
 const INSTALL_ROWS: [(&str, &str, &str); 3] = [
-    ("pane.install-from-folder", "Folder…", "Install from a folder"),
+    (
+        "pane.install-from-folder",
+        "Folder…",
+        "Install from a folder",
+    ),
     ("pane.install-from-npm", "npm…", "Install from npm"),
     ("pane.install-from-git", "Git…", "Install from Git"),
 ];
@@ -239,11 +247,7 @@ pub(crate) enum ExtensionsControl {
 pub(crate) fn gather(
     rows: &[pane_core::Row],
     packages: &[(String, String, bool)],
-) -> (
-    Vec<PackageCard>,
-    Vec<ExtensionItem>,
-    Option<(String, bool)>,
-) {
+) -> (Vec<PackageCard>, Vec<ExtensionItem>, Option<(String, bool)>) {
     let on = |row: &pane_core::Row| {
         row.subtitle
             .as_deref()
@@ -275,7 +279,9 @@ pub(crate) fn gather(
                 .iter()
                 .flat_map(|subtitle| subtitle.split(" · "))
                 .filter(|part| {
-                    part.starts_with("Paused") || part.starts_with("Failed") || *part == "Developing"
+                    part.starts_with("Paused")
+                        || part.starts_with("Failed")
+                        || *part == "Developing"
                 })
                 .map(str::to_owned)
                 .collect();
@@ -307,7 +313,8 @@ pub(crate) fn gather(
                         .collect::<Vec<_>>()
                         .join(" "),
                 };
-                card.actions.push((row.id.clone(), label, row.title.clone(), reason));
+                card.actions
+                    .push((row.id.clone(), label, row.title.clone(), reason));
             }
             None => others.push(ExtensionItem {
                 id: row.id.clone(),
@@ -431,12 +438,19 @@ pub(crate) fn compose(
             theme,
             |switch| attach(ExtensionsControl::Row(id.clone()), switch),
         );
-        controls::section(None, controls::card([switch.into_any_element()], theme), theme)
+        controls::section(
+            None,
+            controls::card([switch.into_any_element()], theme),
+            theme,
+        )
     });
     let installs = (!view.installs.is_empty()).then(|| {
         let buttons = view.installs.iter().map(|install| {
             let button = controls::button(install.title.clone(), true, theme)
-                .id(SharedString::from(format!("extension-install-{}", install.id)))
+                .id(SharedString::from(format!(
+                    "extension-install-{}",
+                    install.id
+                )))
                 .debug_selector(|| format!("extension-install-{}", install.title))
                 .role(Role::Button)
                 .aria_label(install.title.clone());
@@ -703,13 +717,11 @@ fn render(
                     activate(this, &id, cx);
                 }))
         }
-        ExtensionsControl::Install(id) => {
-            element
-                .anchor_scroll(anchors.get(&id).cloned())
-                .on_click(cx.listener(move |_, _: &gpui::ClickEvent, _, cx| {
-                    open_in_launcher(&id, cx);
-                }))
-        }
+        ExtensionsControl::Install(id) => element
+            .anchor_scroll(anchors.get(&id).cloned())
+            .on_click(cx.listener(move |_, _: &gpui::ClickEvent, _, cx| {
+                open_in_launcher(&id, cx);
+            })),
         // The way out of a details screen the page entered, as the
         // launcher window's Escape is there: [`pane_core::Launcher::back`].
         ExtensionsControl::Back => {

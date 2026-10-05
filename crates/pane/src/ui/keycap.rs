@@ -153,7 +153,13 @@ pub(crate) fn row_number_hint(number: usize, look: f32, theme: &Theme) -> Div {
         .bg(gpui::linear_gradient(
             90.,
             gpui::linear_color_stop(clear, 0.),
-            gpui::linear_color_stop(gpui::Hsla { alpha: 0.94, ..panel }, 0.45),
+            gpui::linear_color_stop(
+                gpui::Hsla {
+                    alpha: 0.94,
+                    ..panel
+                },
+                0.45,
+            ),
         ))
         .child(number_cap(number, theme))
 }

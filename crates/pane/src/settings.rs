@@ -552,9 +552,9 @@ impl Settings {
             return Some(problem.clone());
         }
         match &self.backdrop {
-            Some((key, Err(problem))) if self.background() == Some(key.name.as_str()) => {
-                Some(format!("Pane could not draw the background image: {problem}"))
-            }
+            Some((key, Err(problem))) if self.background() == Some(key.name.as_str()) => Some(
+                format!("Pane could not draw the background image: {problem}"),
+            ),
             _ => None,
         }
     }
@@ -622,7 +622,11 @@ impl Settings {
 
     /// Chooses the texture drawn into the background image; the backdrop
     /// is baked again as the launcher next draws.
-    pub(crate) fn set_background_effect(&mut self, effect: BackgroundEffect, cx: &mut Context<Self>) {
+    pub(crate) fn set_background_effect(
+        &mut self,
+        effect: BackgroundEffect,
+        cx: &mut Context<Self>,
+    ) {
         let mut chosen = self.chosen.clone();
         chosen.background_effect = effect;
         self.record_choice(chosen, cx);

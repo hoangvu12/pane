@@ -325,14 +325,19 @@ pub(crate) fn render_page(
     cx: &App,
 ) -> AnyElement {
     match page {
-        PanePage::General { recording } => {
-            general::compose(&general_view(recording), recording, None, theme, |_, part| part)
-                .into_any_element()
-        }
+        PanePage::General { recording } => general::compose(
+            &general_view(recording),
+            recording,
+            None,
+            theme,
+            |_, part| part,
+        )
+        .into_any_element(),
         PanePage::Launcher => {
             let select =
                 select.map(|select| div().id("launcher-monitor").w_full().child(select.clone()));
-            launcher::compose(&launcher_view(), (select, None), theme, |_, part| part).into_any_element()
+            launcher::compose(&launcher_view(), (select, None), theme, |_, part| part)
+                .into_any_element()
         }
         PanePage::Keyboard => {
             keyboard::compose(&keyboard_view(cx), None, theme, |_, part| part).into_any_element()
@@ -1070,12 +1075,7 @@ fn declared_parts(
                     ],
                     None => vec![well],
                 };
-                column.row(
-                    row.action.title(),
-                    &lines,
-                    &trailing,
-                    1.,
-                );
+                column.row(row.action.title(), &lines, &trailing, 1.);
             }
         }
         PanePage::Extensions { confirm } => {
