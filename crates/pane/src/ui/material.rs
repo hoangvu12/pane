@@ -37,8 +37,8 @@
 
 use gpui::prelude::*;
 use gpui::{
-    BoxShadow, Div, Hsla, WindowBackgroundAppearance, div, linear_color_stop, linear_gradient, px,
-    relative, solid_background, transparent_black,
+    BoxShadow, Div, Hsla, Pixels, WindowBackgroundAppearance, div, linear_color_stop,
+    linear_gradient, px, relative, solid_background, transparent_black,
 };
 
 use crate::ui::theme::Theme;
@@ -207,22 +207,58 @@ impl Material {
         self.tinted_panel(theme, theme.settings_tint, content)
     }
 
+    /// Whether this material paints the glass tint, rather than the solid
+    /// surface: what the Appearance preview shows is in effect.
+    pub(crate) fn is_glass(&self) -> bool {
+        self.mode == MaterialMode::Glass
+    }
+
+    /// The Appearance preview's miniature launcher (#98): the L1 panel's
+    /// surface — the launcher's glass tint, or the solid fallback, under
+    /// the sheen fading out over its top 36% — at the miniature's 14px
+    /// radius, under its own 1px ring (the board's white 8%) and the
+    /// panel's top highlight. It is drawn with the material in effect, so
+    /// it shows what the launcher shows: the tint where glass stands, the
+    /// solid surface where it does not. Its drop shadow belongs to a
+    /// wrapper (GPUI paints an outer shadow under the element's own
+    /// translucent fill; see [`Material::popover`]).
+    pub(crate) fn preview_panel(&self, theme: &Theme, content: impl IntoElement) -> Div {
+        let shape = (
+            theme.geometry.preview.panel_radius,
+            theme.controls.preview_panel_edge,
+        );
+        self.l1_surface(theme, theme.panel_tint, shape, content)
+    }
+
     /// The L1 panel with `tint` as its glass (see [`Material::panel`]).
     fn tinted_panel(&self, theme: &Theme, tint: Hsla, content: impl IntoElement) -> Div {
+        let shape = (theme.geometry.panel_radius, theme.hairline);
+        self.l1_surface(theme, tint, shape, content).size_full()
+    }
+
+    /// The L1 surface: `tint` as its glass (the solid panel otherwise),
+    /// rounded and ringed as `shape` (its radius, and its inset edge's
+    /// color) says, under the panel's top highlight, with the sheen
+    /// beneath `content`.
+    fn l1_surface(
+        &self,
+        theme: &Theme,
+        tint: Hsla,
+        (radius, edge): (Pixels, Hsla),
+        content: impl IntoElement,
+    ) -> Div {
         let background = match self.mode {
             MaterialMode::Glass => solid_background(tint),
             MaterialMode::Opaque => solid_background(theme.panel_solid),
         };
-        let geometry = &theme.geometry;
         div()
             .relative()
-            .size_full()
             .flex()
             .flex_col()
             .overflow_hidden()
-            .rounded(geometry.panel_radius)
+            .rounded(radius)
             .bg(background)
-            .shadow(inset_edges(theme.hairline, theme.panel_top_highlight))
+            .shadow(inset_edges(edge, theme.panel_top_highlight))
             // The sheen paints beneath the content: earlier child, and a
             // plain div, so it never intercepts input.
             .child(div().absolute().size_full().bg(linear_gradient(

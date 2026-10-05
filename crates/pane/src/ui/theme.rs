@@ -191,6 +191,9 @@ pub(crate) struct Theme {
     pub(crate) field_edge: Hsla,
     /// A Settings page's heading (#FFFFFF).
     pub(crate) heading_text: Hsla,
+    /// The Settings controls and the Appearance preview (#98): see
+    /// [`ControlColors`].
+    pub(crate) controls: ControlColors,
 
     // -- The footer's buttons and the Actions panel ---------------------------
     /// The footer mark's filled square (#EDEDEF at .92); its stroked one
@@ -297,15 +300,18 @@ pub(crate) struct Typography {
     /// The Settings window's 13px: its titlebar label, its sidebar items
     /// and its search field.
     pub(crate) settings_text_size: Pixels,
-    /// The Settings window's 12px captions: a sidebar item's count, a
-    /// page column's label ("Preview").
+    /// The Settings window's 12px captions: a sidebar item's count. (A
+    /// page column's label, "Preview", is [`SettingsType::caption`].)
     pub(crate) settings_caption_size: Pixels,
-    /// A Settings page's heading: 22px at 600 with -.01em of tracking.
-    pub(crate) heading_size: Pixels,
+    /// A Settings page's heading's weight (600) and tracking (-.01em); its
+    /// 22px and its line are [`SettingsType::heading`].
     pub(crate) heading_weight: FontWeight,
     pub(crate) heading_tracking: f32,
     /// Root search's result layouts' type (#96).
     pub(crate) results: ResultType,
+    /// The Settings pages' type lines: the heading block, the controls and
+    /// the Appearance preview (#98).
+    pub(crate) settings: SettingsType,
     /// An Actions row's 13px label, its search's 13px and its empty
     /// note's.
     pub(crate) action_size: Pixels,
@@ -391,6 +397,11 @@ pub(crate) struct Geometry {
     pub(crate) mini_tile: TileMetrics,
     /// The Settings window's shell, sidebar and page composition.
     pub(crate) settings: SettingsGeometry,
+    /// The Settings controls: fields, segments, swatches, sliders and
+    /// toggles (#98).
+    pub(crate) controls: ControlGeometry,
+    /// The Appearance page's live preview (#98).
+    pub(crate) preview: PreviewGeometry,
     /// The footer's height.
     pub(crate) footer_height: Pixels,
     /// The footer's left padding (the reference's 16).
@@ -826,6 +837,255 @@ impl ResultGeometry {
     }
 }
 
+/// The colors of the Settings controls and the Appearance preview (#98):
+/// the reference Settings board's `.segwrap`/`.seg`, its swatches, range
+/// inputs and toggles, and its preview stage and miniature launcher. Text
+/// roles the theme already has (a field's label is the title ink, its
+/// description the muted one) are the theme's own.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ControlColors {
+    /// A segmented control's track (black 24%) under its 1px inset ring
+    /// (white 6%).
+    pub(crate) segment_track: Hsla,
+    pub(crate) segment_edge: Hsla,
+    /// A segment's label at rest (#9A9BA0) and under the pointer (#EDEDEF).
+    pub(crate) segment_text: Hsla,
+    pub(crate) segment_hover_text: Hsla,
+    /// The chosen segment: its wash (white 12%), its label (#FFFFFF) and
+    /// its 1px top inset (white 8%).
+    pub(crate) segment_on: Hsla,
+    pub(crate) segment_on_text: Hsla,
+    pub(crate) segment_on_highlight: Hsla,
+    /// A toggle's track while off (white 16%; on, it is the accent), its
+    /// knob (#FFFFFF) and the knob's short shadow (black 40%).
+    pub(crate) toggle_off: Hsla,
+    pub(crate) toggle_knob: Hsla,
+    pub(crate) toggle_knob_shadow: Hsla,
+    /// A swatch's 1px inset edge (black 20%), the 2px gap ring around the
+    /// chosen one (#1A1B1E), and the custom swatch's ring (white 22%).
+    pub(crate) swatch_edge: Hsla,
+    pub(crate) swatch_gap: Hsla,
+    pub(crate) swatch_add_edge: Hsla,
+    /// A slider's track beyond its value (white 16%); up to the value, it
+    /// is the accent.
+    pub(crate) slider_track: Hsla,
+    /// The preview stage's 1px inset ring (white 8%).
+    pub(crate) preview_stage_edge: Hsla,
+    /// The miniature launcher's 1px inset ring (white 8%) and its drop
+    /// shadow (black 70%).
+    pub(crate) preview_panel_edge: Hsla,
+    pub(crate) preview_shadow: Hsla,
+    /// The miniature's selected row (white 9%) and its pinned slots
+    /// (white 5%).
+    pub(crate) preview_row_selected: Hsla,
+    pub(crate) preview_pin: Hsla,
+}
+
+impl ControlColors {
+    /// The reference's dark values, exactly as authored.
+    fn dark() -> ControlColors {
+        ControlColors {
+            segment_track: color(0x0000003D),
+            segment_edge: color(0xFFFFFF0F),
+            segment_text: color(0x9A9BA0FF),
+            segment_hover_text: color(0xEDEDEFFF),
+            segment_on: color(0xFFFFFF1F),
+            segment_on_text: color(0xFFFFFFFF),
+            segment_on_highlight: color(0xFFFFFF14),
+            toggle_off: color(0xFFFFFF29),
+            toggle_knob: color(0xFFFFFFFF),
+            toggle_knob_shadow: color(0x00000066),
+            swatch_edge: color(0x00000033),
+            swatch_gap: color(0x1A1B1EFF),
+            swatch_add_edge: color(0xFFFFFF38),
+            slider_track: color(0xFFFFFF29),
+            preview_stage_edge: color(0xFFFFFF14),
+            preview_panel_edge: color(0xFFFFFF14),
+            preview_shadow: color(0x000000B3),
+            preview_row_selected: color(0xFFFFFF17),
+            preview_pin: color(0xFFFFFF0D),
+        }
+    }
+
+    /// Derived light counterparts, as the light palette derives the rest:
+    /// black washes for white ones, a white chosen segment on the darker
+    /// track, dark inks. A proposal for review, not reference truth.
+    fn light() -> ControlColors {
+        ControlColors {
+            segment_track: color(0x0000000A),
+            segment_edge: color(0x00000014),
+            segment_text: color(0x575A63FF),
+            segment_hover_text: color(0x202126FF),
+            segment_on: color(0xFFFFFFD9),
+            segment_on_text: color(0x111214FF),
+            segment_on_highlight: color(0xFFFFFF66),
+            toggle_off: color(0x00000029),
+            toggle_knob: color(0xFFFFFFFF),
+            toggle_knob_shadow: color(0x00000040),
+            swatch_edge: color(0x00000033),
+            swatch_gap: color(0xF6F6F8FF),
+            swatch_add_edge: color(0x00000038),
+            slider_track: color(0x00000029),
+            preview_stage_edge: color(0x00000014),
+            preview_panel_edge: color(0x00000014),
+            preview_shadow: color(0x00000040),
+            preview_row_selected: color(0x00000016),
+            preview_pin: color(0x0000000B),
+        }
+    }
+}
+
+/// The Settings pages' type: each role's size and its line box, as Chrome
+/// lays the reference's `normal` line height out (see [`TypeLine`]), so a
+/// column of fields stacks to the reference's own heights.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SettingsType {
+    /// The page heading (22/600, its line 28) and its subtitle (13, 17).
+    pub(crate) heading: TypeLine,
+    pub(crate) subtitle: TypeLine,
+    /// An aside column's caption ("Preview": 12/500, 16).
+    pub(crate) caption: TypeLine,
+    /// A field's label (`.flabel`: 13.5/500, 18) and its description
+    /// (`.fdesc`: 12.5 at line height 1.45, 18.125).
+    pub(crate) field_label: TypeLine,
+    pub(crate) field_description: TypeLine,
+    /// A segment's label (12.5/500, 17), and a slider's value (Geist Mono
+    /// 12.5, 17).
+    pub(crate) segment: TypeLine,
+    pub(crate) value: TypeLine,
+    /// The link under the preview (13/500, 17).
+    pub(crate) link: TypeLine,
+    /// The miniature launcher's query (14, 18), its rows' titles (12.5/500,
+    /// 17), their kinds and the footer's text (11.5, 15).
+    pub(crate) preview_query: TypeLine,
+    pub(crate) preview_title: TypeLine,
+    pub(crate) preview_small: TypeLine,
+}
+
+impl SettingsType {
+    fn shared() -> SettingsType {
+        let line = |size: f32, line_height: f32| TypeLine {
+            size: px(size),
+            line_height: px(line_height),
+        };
+        SettingsType {
+            heading: line(22., 28.),
+            subtitle: line(13., 17.),
+            caption: line(12., 16.),
+            field_label: line(13.5, 18.),
+            field_description: line(12.5, 18.125),
+            segment: line(12.5, 17.),
+            value: line(12.5, 17.),
+            link: line(13., 17.),
+            preview_query: line(14., 18.),
+            preview_title: line(12.5, 17.),
+            preview_small: line(11.5, 15.),
+        }
+    }
+}
+
+/// The Settings controls' geometry (#98): the reference board's field
+/// groups, `.segwrap`/`.seg`, swatches, range inputs and toggles.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ControlGeometry {
+    /// The gap between a page's field groups (18) and inside one, between
+    /// its label, its control and its description (8).
+    pub(crate) group_gap: Pixels,
+    pub(crate) field_gap: Pixels,
+    /// A segmented control: the track's padding (3), the gap between its
+    /// segments (2) and its radius (10); a segment's height (30) and
+    /// radius (7). The track is 36 high.
+    pub(crate) track_padding: Pixels,
+    pub(crate) segment_gap: Pixels,
+    pub(crate) track_radius: Pixels,
+    pub(crate) segment_height: Pixels,
+    pub(crate) segment_radius: Pixels,
+    /// A swatch (30, round), the gap between swatches (10), the chosen
+    /// one's gap ring (2) and its outer ring (2 more), and the custom
+    /// swatch's 14px glyph.
+    pub(crate) swatch_size: Pixels,
+    pub(crate) swatch_gap: Pixels,
+    pub(crate) swatch_ring_gap: Pixels,
+    pub(crate) swatch_ring: Pixels,
+    pub(crate) swatch_glyph: Pixels,
+    /// A slider's box (20 high), its track (4) and its thumb (16): Pane's
+    /// drawing of the reference's native range input.
+    pub(crate) slider_height: Pixels,
+    pub(crate) slider_track: Pixels,
+    pub(crate) slider_thumb: Pixels,
+    /// A toggle's row (44 with its 1px rule above), the toggle (40×24,
+    /// radius 12), its knob (18) and the knob's inset (3; on, it sits at
+    /// 19).
+    pub(crate) toggle_row_height: Pixels,
+    pub(crate) toggle_width: Pixels,
+    pub(crate) toggle_height: Pixels,
+    pub(crate) toggle_knob: Pixels,
+    pub(crate) toggle_inset: Pixels,
+    /// A control's keyboard focus ring (Pane's adaptation: the reference
+    /// draws none for these controls).
+    pub(crate) focus_width: Pixels,
+    /// A disabled field's opacity: the reference's 40% for the sliders
+    /// Solid disables, Pane's for any control it cannot offer.
+    pub(crate) disabled_opacity: f32,
+}
+
+/// The Appearance page's live preview (#98): the reference board's 400×520
+/// stage and the miniature launcher on it — a distinct recipe from the
+/// launcher's own (its rows are 38, not root search's 44).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct PreviewGeometry {
+    /// The stage: 520 high, radius 16, the miniature 56 below its top.
+    pub(crate) stage_height: Pixels,
+    pub(crate) stage_radius: Pixels,
+    pub(crate) stage_padding_top: Pixels,
+    /// The miniature: 340 wide, radius 14, and its drop shadow (down 30,
+    /// blur 70, spread -20).
+    pub(crate) panel_width: Pixels,
+    pub(crate) panel_radius: Pixels,
+    pub(crate) shadow_offset: Pixels,
+    pub(crate) shadow_blur: Pixels,
+    pub(crate) shadow_spread: Pixels,
+    /// The search line: 46 high (its 1px rule included), padded 14 either
+    /// side, 10 between its 15px magnifier and the query; the caret
+    /// (1.5×17) pulled 9 back toward the query.
+    pub(crate) search_height: Pixels,
+    pub(crate) search_padding_x: Pixels,
+    pub(crate) search_gap: Pixels,
+    pub(crate) search_glyph: Pixels,
+    pub(crate) caret_width: Pixels,
+    pub(crate) caret_height: Pixels,
+    pub(crate) caret_pull: Pixels,
+    /// The list: padded 6, its children 2 apart.
+    pub(crate) body_padding: Pixels,
+    pub(crate) body_gap: Pixels,
+    /// The pinned strip: four slots 6 apart, padded 2 above and either
+    /// side and 6 below; a slot 44 high, radius 9, its 24px tile.
+    pub(crate) pins_gap: Pixels,
+    pub(crate) pins_padding_x: Pixels,
+    pub(crate) pins_padding_top: Pixels,
+    pub(crate) pins_padding_bottom: Pixels,
+    pub(crate) pin_height: Pixels,
+    pub(crate) pin_radius: Pixels,
+    pub(crate) pin_tile: TileMetrics,
+    /// A row (`.mrow`): 38 high, radius 8, padded 8 either side, 10
+    /// between its parts, its 22px tile.
+    pub(crate) row_height: Pixels,
+    pub(crate) row_radius: Pixels,
+    pub(crate) row_padding_x: Pixels,
+    pub(crate) row_gap: Pixels,
+    pub(crate) row_tile: TileMetrics,
+    /// The footer: 38 high (its rule included), padded 12 left and 8
+    /// right, its sides 8 apart, "Open" 6 before its cap.
+    pub(crate) footer_height: Pixels,
+    pub(crate) footer_padding_left: Pixels,
+    pub(crate) footer_padding_right: Pixels,
+    pub(crate) footer_gap: Pixels,
+    pub(crate) open_gap: Pixels,
+    /// The link under the stage: 6 between its label and its 14px arrow.
+    pub(crate) link_gap: Pixels,
+    pub(crate) link_glyph: Pixels,
+}
+
 impl Theme {
     /// The theme for `appearance`.
     pub(crate) fn new(appearance: Appearance) -> Theme {
@@ -899,6 +1159,7 @@ impl Theme {
             field_fill: color(0x0000003D),
             field_edge: color(0xFFFFFF0F),
             heading_text: color(0xFFFFFFFF),
+            controls: ControlColors::dark(),
 
             footer_mark: color(0xEDEDEFEB),
             footer_button_text: color(0xD9DADDFF),
@@ -1004,6 +1265,7 @@ impl Theme {
             field_fill: color(0x0000000A),
             field_edge: color(0x00000014),
             heading_text: color(0x111214FF),
+            controls: ControlColors::light(),
 
             footer_mark: color(0x202126EB),
             footer_button_text: color(0x2A2B31FF),
@@ -1054,10 +1316,10 @@ impl Typography {
             line_height: 1.3,
             settings_text_size: px(13.),
             settings_caption_size: px(12.),
-            heading_size: px(22.),
             heading_weight: FontWeight::SEMIBOLD,
             heading_tracking: -0.01,
             results: ResultType::shared(),
+            settings: SettingsType::shared(),
             action_size: px(13.),
             action_weight: FontWeight(450.),
             actions_header_size: px(12.),
@@ -1156,6 +1418,76 @@ impl Geometry {
                 controls_width: px(388.),
                 aside_width: px(400.),
                 aside_gap: px(10.),
+            },
+            controls: ControlGeometry {
+                group_gap: px(18.),
+                field_gap: px(8.),
+                track_padding: px(3.),
+                segment_gap: px(2.),
+                track_radius: px(10.),
+                segment_height: px(30.),
+                segment_radius: px(7.),
+                swatch_size: px(30.),
+                swatch_gap: px(10.),
+                swatch_ring_gap: px(2.),
+                swatch_ring: px(2.),
+                swatch_glyph: px(14.),
+                slider_height: px(20.),
+                slider_track: px(4.),
+                slider_thumb: px(16.),
+                toggle_row_height: px(44.),
+                toggle_width: px(40.),
+                toggle_height: px(24.),
+                toggle_knob: px(18.),
+                toggle_inset: px(3.),
+                focus_width: px(2.),
+                disabled_opacity: 0.4,
+            },
+            preview: PreviewGeometry {
+                stage_height: px(520.),
+                stage_radius: px(16.),
+                stage_padding_top: px(56.),
+                panel_width: px(340.),
+                panel_radius: px(14.),
+                shadow_offset: px(30.),
+                shadow_blur: px(70.),
+                shadow_spread: px(-20.),
+                search_height: px(46.),
+                search_padding_x: px(14.),
+                search_gap: px(10.),
+                search_glyph: px(15.),
+                caret_width: px(1.5),
+                caret_height: px(17.),
+                caret_pull: px(9.),
+                body_padding: px(6.),
+                body_gap: px(2.),
+                pins_gap: px(6.),
+                pins_padding_x: px(2.),
+                pins_padding_top: px(2.),
+                pins_padding_bottom: px(6.),
+                pin_height: px(44.),
+                pin_radius: px(9.),
+                pin_tile: TileMetrics {
+                    size: px(24.),
+                    radius: px(6.),
+                    glyph: px(13.),
+                },
+                row_height: px(38.),
+                row_radius: px(8.),
+                row_padding_x: px(8.),
+                row_gap: px(10.),
+                row_tile: TileMetrics {
+                    size: px(22.),
+                    radius: px(6.),
+                    glyph: px(12.),
+                },
+                footer_height: px(38.),
+                footer_padding_left: px(12.),
+                footer_padding_right: px(8.),
+                footer_gap: px(8.),
+                open_gap: px(6.),
+                link_gap: px(6.),
+                link_glyph: px(14.),
             },
             footer_height: px(50.),
             footer_padding_left: px(16.),
