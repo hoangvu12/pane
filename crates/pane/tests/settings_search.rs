@@ -430,7 +430,7 @@ fn a_jump_reveals_the_control_on_its_page(cx: &mut TestAppContext) {
     // The window opens on the General page; the Appearance page's
     // overflow is what the reveal has to scroll through, so walk to it.
     let appearance = sc
-        .debug_bounds("section-Appearance")
+        .debug_bounds("section-General")
         .expect("the Appearance section");
     sc.simulate_click(appearance.center(), Modifiers::none());
     sc.run_until_parked();

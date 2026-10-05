@@ -15,8 +15,8 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     App, ClipboardItem, Context, Div, EntityInputHandler, FocusHandle, Hsla, KeyDownEvent,
-    MouseMoveEvent, PathPromptOptions, Pixels, Point, Role, ScrollHandle, SharedString, Size,
-    Stateful, Window, div, prelude::*, px, relative,
+    ModifiersChangedEvent, MouseMoveEvent, PathPromptOptions, Pixels, Point, Role, ScrollHandle,
+    SharedString, Size, Stateful, Window, div, prelude::*, px, relative,
 };
 use pane_core::changes::Changes;
 use pane_core::hotkeys::Shortcut;
@@ -29,6 +29,7 @@ use pane_core::{
 use crate::extension_views::{custom_view, form};
 use crate::features::actions_panel;
 use crate::features::clipboard_history;
+use crate::features::compact_pins;
 use crate::features::footer_menu;
 use crate::features::quick_slots;
 use crate::features::root_search;
@@ -38,7 +39,6 @@ use crate::ui::icon::{Glyph, IconTone};
 use crate::ui::keycap::CapStyle;
 use crate::ui::material::Material;
 use crate::ui::motion::{self, Direction};
-use crate::ui::pinned;
 use crate::ui::result_row::{RowContent, RowMeta, result_row_with};
 use crate::ui::shell;
 use crate::ui::theme::Theme;
@@ -56,6 +56,63 @@ pub(crate) const KEY_CONTEXT: &str = "Launcher";
 /// report a held key again, so the window keeps the guard itself. A
 /// genuine second press after this long toggles again.
 const OPEN_PANE_REPEAT: Duration = Duration::from_millis(600);
+
+/// How long Ctrl must be held alone before the launcher's items show the
+/// numbers Ctrl+1 to Ctrl+9 pick them with.
+const NUMBERS_HOLD: Duration = Duration::from_millis(400);
+
+/// The number hints Ctrl reveals: whether they show, the hold that will
+/// show them, and their slide in or out.
+#[derive(Default)]
+struct Numbers {
+    /// Whether the hints show: Ctrl has been held alone long enough.
+    shown: bool,
+    /// Whether Ctrl is held alone and the hold has not yet shown them.
+    pending: bool,
+    /// Counts holds, so a hold that ended does not show them later.
+    generation: u64,
+    /// Their slide in flight, if any, and what the last frame drew.
+    reveal: Option<motion::Tween>,
+    drawn: bool,
+}
+
+/// What Ctrl and a digit pick: a quick slot, or a row of the list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Numbered {
+    Slot(usize),
+    Row(usize),
+}
+
+/// What Ctrl and `digit` (1 to 9) pick on the screen `view` shows: while
+/// the pinned home shows, the first numbers are `slots` (the home's
+/// numbered slots, in order; see `LauncherWindow::numbered_slots`) and
+/// the next ones the first rows; otherwise 1 to 9 are the first rows. Only
+/// root search and a command's lists number their items.
+pub(crate) fn numbered(view: &LauncherView, slots: &[usize], digit: usize) -> Option<Numbered> {
+    if !matches!(
+        view.screen,
+        Screen::Root { .. } | Screen::Command | Screen::CommandSearch { .. }
+    ) || !(1..=9).contains(&digit)
+    {
+        return None;
+    }
+    let home = quick_slots::home_shown(view);
+    let slots = if home { slots } else { &[] };
+    let picked = match slots.get(digit - 1) {
+        Some(&slot) => Numbered::Slot(slot),
+        None => Numbered::Row(digit - slots.len() - 1),
+    };
+    match picked {
+        Numbered::Row(row) if row >= view.rows.len() => None,
+        picked => Some(picked),
+    }
+}
+
+/// The number row `index` of `view`'s list is picked with, if it has one
+/// (see [`numbered`]).
+pub(crate) fn row_number(view: &LauncherView, slots: &[usize], index: usize) -> Option<usize> {
+    (1..=9).find(|&digit| numbered(view, slots, digit) == Some(Numbered::Row(index)))
+}
 
 /// The launcher window's root view.
 pub struct LauncherWindow {
@@ -154,6 +211,15 @@ pub struct LauncherWindow {
     /// is the same whatever the platform reports about a hidden window.
     /// The test-observable copy is [`LauncherWindow::hidden`].
     hidden: bool,
+    /// When the launcher was last hidden, for the Launcher page's pop to
+    /// root search choice.
+    hidden_at: Option<Instant>,
+    /// The number hints Ctrl reveals.
+    numbers: Numbers,
+    /// Whether the last frame drew the launcher collapsed to its search
+    /// field (the compact window mode), and the size it had before.
+    collapsed: Option<bool>,
+    expanded_size: Option<Size<Pixels>>,
 }
 
 /// What the list was last scrolled for. When any of it changes, the list
@@ -221,7 +287,7 @@ impl LauncherWindow {
             menu: None,
             actions: None,
             clipboard: None,
-            home: quick_slots::Home::new(cx),
+            home: quick_slots::Home::default(),
             menu_transition: None,
             menu_exit: None,
             drawn_menu: false,
@@ -229,9 +295,21 @@ impl LauncherWindow {
             drawn_menu_popup: None,
             open_pane_press: None,
             hidden: false,
+            hidden_at: None,
+            numbers: Numbers::default(),
+            collapsed: None,
+            expanded_size: None,
             #[cfg(any(test, debug_assertions))]
             drawn: None,
         };
+        // The number hints go when the window loses focus: the Ctrl
+        // release would go to another window.
+        cx.observe_window_activation(window, |this, window, cx| {
+            if !window.is_window_active() {
+                this.end_numbers(cx);
+            }
+        })
+        .detach();
         // The launcher opens placed on the display the Launcher page's
         // choice resolves to, before the first frame is drawn.
         this.place(window, cx);
@@ -349,8 +427,12 @@ impl LauncherWindow {
         if self.leave_clipboard_controls(window, cx) {
             return;
         }
-        if let Screen::Root { query } = &self.launcher.view().screen
-            && query.is_empty()
+        // The Keyboard page's escape behavior: hide from wherever the
+        // launcher is, or go back one level and hide from an empty root
+        // search.
+        let hides = crate::settings::shared(cx).read(cx).escape() == pane_core::EscapeBehavior::Hide;
+        if hides
+            || matches!(&self.launcher.view().screen, Screen::Root { query } if query.is_empty())
         {
             self.hide(window, cx);
             return;
@@ -588,7 +670,9 @@ impl LauncherWindow {
     fn hide(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.set_visible(false);
         self.hidden = true;
+        self.hidden_at = Some(cx.background_executor().now());
         self.pointer = None;
+        self.end_numbers(cx);
         cx.notify();
     }
 
@@ -601,7 +685,12 @@ impl LauncherWindow {
     /// leaves it where it is, and the page explains that rather than
     /// pretending the choice applied.
     fn place(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let size = window.bounds().size;
+        // Collapsed to its search field, the launcher is placed as its
+        // expanded size would be, so it grows downward from where it is.
+        let size = match (self.collapsed, self.expanded_size) {
+            (Some(true), Some(expanded)) => expanded,
+            _ => window.bounds().size,
+        };
         self.place_sized(size, window, cx);
     }
 
@@ -683,7 +772,12 @@ impl LauncherWindow {
         // here (the Settings window's focus is not the launcher's), and
         // nothing is run.
         let reopening = crate::settings::shared(cx).read(cx).reopening();
-        if reopening == pane_core::Reopening::RootSearch || !self.launcher.restorable_view() {
+        let now = cx.background_executor().now();
+        let pops = reopening.pops_after().is_some_and(|after| {
+            self.hidden_at
+                .is_none_or(|hidden| now.saturating_duration_since(hidden) >= after)
+        });
+        if pops || !self.launcher.restorable_view() {
             self.launcher.show_root_search();
             self.sync_screen(window, cx);
         } else if self.launcher.view().search_field().is_some() {
@@ -886,6 +980,7 @@ impl LauncherWindow {
         view: &LauncherView,
         presentation: &Presentation,
         window: &mut Window,
+        cx: &App,
     ) {
         let shown = ScrolledFor {
             screen: discriminant(&view.screen),
@@ -922,11 +1017,7 @@ impl LauncherWindow {
             // shows (over the fallbacks, whichever is selected). (Another
             // screen's empty line shows only while nothing is selected,
             // when nothing is scrolled to.)
-            let home = if quick_slots::home_shown(view) {
-                pinned::HOME_CHILDREN
-            } else {
-                0
-            };
+            let home = self.home_children(view, cx);
             let notice = root_search::layouts::nothing_found(&view.screen, presentation);
             let labels = section_labels(presentation);
             let child =
@@ -1043,6 +1134,7 @@ impl LauncherWindow {
         selected: bool,
         shown: RowPresentation,
         root: bool,
+        number: Option<(usize, f32)>,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let visuals = crate::settings::visuals(cx);
@@ -1073,6 +1165,7 @@ impl LauncherWindow {
             } else {
                 None
             },
+            number,
         };
         // Presentation only: the shared row paints the chrome, and the
         // identity, accessibility and click behavior are attached here.
@@ -1131,11 +1224,21 @@ impl LauncherWindow {
         row: Row,
         answer: &ComputedAnswer,
         selected: bool,
+        number: Option<(usize, f32)>,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let visuals = crate::settings::visuals(cx);
-        root_search::layouts::answer_card(answer, selected, &visuals.theme)
-            .id(("row", index))
+        let card = root_search::layouts::answer_card(answer, selected, &visuals.theme);
+        match number {
+            Some((number, look)) => crate::ui::result_row::with_number_hint(
+                card,
+                number,
+                look,
+                &visuals.theme,
+            ),
+            None => card,
+        }
+        .id(("row", index))
             .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {
                 this.pointer_moved_over(index, event.position, cx);
             }))
@@ -1193,7 +1296,9 @@ impl LauncherWindow {
     /// force, or "Type to filter actions · Esc goes back" while Actions is
     /// open; nothing elsewhere.
     fn footer_hint(&self, root: bool, theme: &Theme, cx: &mut Context<Self>) -> Option<Div> {
-        if !root {
+        // At rest the footer's buttons already show the keys; the hint says
+        // only how the open Actions panel is used.
+        if !root || self.actions.is_none() {
             return None;
         }
         let keyboard = crate::settings::shared(cx).read(cx).keyboard().clone();
@@ -1232,6 +1337,165 @@ impl LauncherWindow {
             self.confirm(&Confirm, window, cx);
         }
     }
+
+    /// Ctrl pressed or released: held alone, it shows the number hints
+    /// once held for [`NUMBERS_HOLD`]; any other modifiers, or none, hide
+    /// them at once.
+    fn modifiers_changed(
+        &mut self,
+        event: &ModifiersChangedEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let modifiers = event.modifiers;
+        let alone = modifiers.control
+            && !modifiers.alt
+            && !modifiers.shift
+            && !modifiers.platform
+            && !modifiers.function;
+        if !alone {
+            self.end_numbers(cx);
+            return;
+        }
+        if self.numbers.pending || self.numbers.shown {
+            return;
+        }
+        self.numbers.generation += 1;
+        self.numbers.pending = true;
+        let generation = self.numbers.generation;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(NUMBERS_HOLD).await;
+            this.update(cx, |this, cx| {
+                if this.numbers.pending && this.numbers.generation == generation {
+                    this.numbers.pending = false;
+                    this.numbers.shown = true;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Ends a hold of Ctrl: the hints slide away, and a hold not yet long
+    /// enough shows nothing.
+    pub(crate) fn end_numbers(&mut self, cx: &mut Context<Self>) {
+        self.numbers.generation += 1;
+        self.numbers.pending = false;
+        if std::mem::take(&mut self.numbers.shown) {
+            cx.notify();
+        }
+    }
+
+    /// A key pressed while Ctrl is held, before the hints show: the user is
+    /// pressing a chord, not looking for the numbers.
+    pub(crate) fn chord_pressed(&mut self) {
+        self.numbers.pending = false;
+    }
+
+    /// Advances the number hints' slide to the frame about to be drawn:
+    /// their look, 0 hidden and 1 shown.
+    fn advance_numbers(&mut self, now: Instant, cx: &App) -> f32 {
+        let shown = self.numbers.shown;
+        let changed = self.numbers.drawn != shown;
+        self.numbers.drawn = shown;
+        motion::advance_reveal(&mut self.numbers.reveal, shown, changed, cx.reduce_motion(), now)
+            .unwrap_or(if shown { 1. } else { 0. })
+    }
+
+    /// Whether the last frame drew the launcher collapsed to its search
+    /// field (and the pins' row, if shown): its rows are hidden then.
+    pub(crate) fn is_collapsed(&self) -> bool {
+        self.collapsed == Some(true)
+    }
+
+    /// What Ctrl and `digit` pick as the launcher is drawn: what
+    /// [`numbered`] names, except a row while the window is collapsed,
+    /// where the rows are hidden and only the pins are picked.
+    pub(crate) fn number_target(&self, digit: usize) -> Option<Numbered> {
+        let picked = numbered(&self.launcher.view(), &self.numbered_slots(), digit);
+        match picked {
+            Some(Numbered::Row(_)) if self.is_collapsed() => None,
+            picked => picked,
+        }
+    }
+
+    /// Picks what Ctrl and `digit` name (see [`Self::number_target`]): a
+    /// quick slot is pressed as its chord always pressed it, a row is
+    /// selected and activated. Whether something was picked.
+    pub(crate) fn pick_number(
+        &mut self,
+        digit: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(picked) = self.number_target(digit) else {
+            return false;
+        };
+        self.end_numbers(cx);
+        match picked {
+            Numbered::Slot(index) => self.press_quick_slot(index, window, cx),
+            Numbered::Row(index) => {
+                if self.actions.is_some() || self.menu.is_some() {
+                    return true;
+                }
+                self.launcher.select(index);
+                self.activate_selected(window, cx);
+            }
+        }
+        true
+    }
+
+    /// Whether the launcher shows only its search field: the compact
+    /// window mode, at root search with a blank query, with nothing open
+    /// over it and no status to say.
+    fn collapses(&self, view: &LauncherView, cx: &App) -> bool {
+        crate::settings::shared(cx).read(cx).window_mode() == pane_core::WindowMode::Compact
+            && quick_slots::home_shown(view)
+            && matches!(view.status, Status::Idle)
+            && self.actions.is_none()
+            && self.menu.is_none()
+    }
+
+    /// Fits the window to the window mode as `view` is drawn: collapsing to
+    /// the search field's height — and the pins' row under it, while the
+    /// Launcher page shows the pins in Compact mode and something is pinned
+    /// (see [`compact_pins`]) — keeps the size it had, which expanding gives
+    /// back. The window's top stays where it is, so the results grow
+    /// downward from the search field. The window's own height is what is
+    /// compared, so a size another view gave it (Clipboard History's) is
+    /// fitted too, and so is a collapsed height the switch or the pins no
+    /// longer call for. Whether it is collapsed.
+    fn fit_window_mode(&mut self, view: &LauncherView, window: &mut Window, cx: &App) -> bool {
+        let collapsed = self.collapses(view, cx);
+        let bar = crate::settings::visuals(cx).theme.geometry.search_height;
+        let with_pins = bar + px(compact_pins::ROW_HEIGHT);
+        // The collapsed height this frame calls for; the pins are resolved
+        // only while the window collapses.
+        let target = if collapsed && self.shows_compact_pins(cx) {
+            with_pins
+        } else {
+            bar
+        };
+        let size = window.viewport_size();
+        let near = |height: Pixels| (size.height - height).abs() < px(1.);
+        // Either collapsed height: a size never to keep as the expanded one.
+        let is_bar = near(bar) || near(with_pins);
+        if collapsed && !near(target) {
+            if !is_bar {
+                self.expanded_size = Some(size);
+            }
+            window.resize(gpui::size(size.width, target));
+        } else if !collapsed && is_bar && self.collapsed == Some(true) {
+            let (width, height) = shell::LAUNCHER_CLIENT;
+            let expanded = self
+                .expanded_size
+                .unwrap_or_else(|| gpui::size(px(width), px(height)));
+            window.resize(expanded);
+        }
+        self.collapsed = Some(collapsed);
+        collapsed
+    }
 }
 
 impl Render for LauncherWindow {
@@ -1245,7 +1509,10 @@ impl Render for LauncherWindow {
         if let Some(split) = self.render_clipboard_history(&view, cx) {
             return split;
         }
-        self.keep_selected_visible(&view, &presentation, window);
+        // The compact window mode shows only the search field until
+        // something is typed.
+        let collapsed = self.fit_window_mode(&view, window, cx);
+        self.keep_selected_visible(&view, &presentation, window, cx);
         // A view transition runs when the screen *kind* changed — root
         // search to a command, a command back to root, a form or custom
         // view opening or closing — and moves only the content that
@@ -1255,6 +1522,8 @@ impl Render for LauncherWindow {
         // first frame draws, so nothing waits on the transition. See
         // `crate::ui::motion` for the whole policy.
         let now = cx.background_executor().now();
+        // The number hints' look this frame: 0 hidden, 1 shown.
+        let numbers = self.advance_numbers(now, cx);
         let screen = discriminant(&view.screen);
         let arriving = motion::advance(
             &mut self.transition,
@@ -1337,7 +1606,12 @@ impl Render for LauncherWindow {
         );
         // A blank query's pinned home, above the rows (read before the
         // status moves out of the view).
-        let home = self.render_home(&view, &theme, cx);
+        let home = self.render_home(&view, numbers, &theme, cx);
+        // Each row's number while Ctrl is held.
+        let slots = self.numbered_slots();
+        let row_numbers: Vec<Option<usize>> = (0..view.rows.len())
+            .map(|index| row_number(&view, &slots, index))
+            .collect();
         // The footer's status: while the launcher runs, works, answers or
         // fails, the strip is that message; `None` while it is idle, when
         // the strip becomes the selected action (below).
@@ -1366,12 +1640,15 @@ impl Render for LauncherWindow {
             .map(|(index, row)| {
                 let selected = view.selected == Some(index);
                 let shown = presentation.rows.get(index).cloned().unwrap_or_default();
+                let number = row_numbers[index]
+                    .filter(|_| numbers > 0.)
+                    .map(|number| (number, numbers));
                 if let Some(answer) = &shown.answer {
                     return self
-                        .render_answer(index, row, answer, selected, cx)
+                        .render_answer(index, row, answer, selected, number, cx)
                         .into_any_element();
                 }
-                self.render_row(index, row, selected, shown, root, cx)
+                self.render_row(index, row, selected, shown, root, number, cx)
                     .into_any_element()
             })
             .collect();
@@ -1438,6 +1715,17 @@ impl Render for LauncherWindow {
             // While the Actions panel is open, its dimmer lies over the
             // results — between the search header and the footer — and
             // takes no input.
+            // Collapsed, root search is its search field alone — with the
+            // pins' row under it, where the Launcher page shows them.
+            Screen::Root { query } if collapsed => {
+                let pins = self.render_compact_pins(numbers, &theme, cx);
+                self.render_search(
+                    query,
+                    root_search::ROOT_PLACEHOLDER,
+                    div().children(pins),
+                    cx,
+                )
+            }
             Screen::Root { query } => {
                 let results = actions_panel::dimmed(
                     motion::arriving(list, arriving).into_any_element(),
@@ -1476,6 +1764,7 @@ impl Render for LauncherWindow {
             .map(|content| Self::on_quick_slot_keys(content, cx))
             .on_action(cx.listener(Self::focus_next))
             .on_action(cx.listener(Self::focus_previous))
+            .on_modifiers_changed(cx.listener(Self::modifiers_changed))
             .on_key_down(cx.listener(Self::key_down))
             // Bubbling after the rows' own handlers, so a row compares the
             // event against the position before it.
@@ -1511,7 +1800,7 @@ impl Render for LauncherWindow {
                 )
             })
             .child(body)
-            .child(
+            .when(!collapsed, |content| content.child(
                 // The footer: the launcher's status strip (see
                 // [`crate::ui::footer`]). On the left, the Pane mark (the
                 // app menu's button) and the hint — or, while a status
@@ -1568,13 +1857,13 @@ impl Render for LauncherWindow {
                         self.footer_buttons(&action, root, status.is_some(), &theme, cx),
                         &theme,
                     )),
-            );
+            ));
         // While the arriving content is still in flight, keep frames
         // coming; the frame that completes the transition requests none,
         // so a settled window is idle. The scroll relayout above keeps its
         // own separate request, for the frame after the rows change, and
         // so does the footer menu popup's entrance or exit.
-        if arriving.is_some() || menu_in_flight.is_some() {
+        if arriving.is_some() || menu_in_flight.is_some() || self.numbers.reveal.is_some() {
             window.request_animation_frame();
         }
         // The panel surface: the frost material's L1 glass around the
@@ -1673,5 +1962,97 @@ pub(crate) fn row_icon(id: &str) -> Option<(IconTone, Glyph)> {
         "pane.manage-extensions" => Some((IconTone::Command, Glyph::Blocks)),
         "pane.settings" => Some((IconTone::Command, Glyph::Gear)),
         _ => Some((IconTone::Command, Glyph::Prompt)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A view of `screen` listing `count` rows.
+    fn view(screen: Screen, count: usize) -> LauncherView {
+        LauncherView {
+            screen,
+            title: String::new(),
+            rows: (0..count)
+                .map(|index| Row {
+                    id: format!("row-{index}"),
+                    title: format!("Row {index}"),
+                    subtitle: None,
+                    unavailable: None,
+                })
+                .collect(),
+            selected: None,
+            status: Status::Idle,
+        }
+    }
+
+    /// The numbered pins of five or more: the first five, in their places
+    /// (see `LauncherWindow::numbered_slots`).
+    const STRIP: [usize; 5] = [0, 1, 2, 3, 4];
+
+    #[test]
+    fn the_pinned_home_takes_one_to_five_and_the_rows_follow() {
+        // Five pins, or eight: only the first five are numbered, and the
+        // rows take the digits after them.
+        let home = view(Screen::Root { query: String::new() }, 3);
+        assert_eq!(numbered(&home, &STRIP, 1), Some(Numbered::Slot(0)));
+        assert_eq!(numbered(&home, &STRIP, 5), Some(Numbered::Slot(4)));
+        assert_eq!(numbered(&home, &STRIP, 6), Some(Numbered::Row(0)));
+        assert_eq!(numbered(&home, &STRIP, 8), Some(Numbered::Row(2)));
+        // Past the rows, and outside 1 to 9, nothing is picked.
+        assert_eq!(numbered(&home, &STRIP, 9), None);
+        assert_eq!(numbered(&home, &STRIP, 0), None);
+        assert_eq!(row_number(&home, &STRIP, 0), Some(6));
+        assert_eq!(row_number(&home, &STRIP, 2), Some(8));
+    }
+
+    #[test]
+    fn fewer_pins_than_five_leave_their_numbers_to_the_rows() {
+        // Two pins: Ctrl+1 and Ctrl+2 are theirs, and the rows follow from
+        // 3, up to 9.
+        let home = view(Screen::Root { query: String::new() }, 12);
+        let pinned = [0, 1];
+        assert_eq!(numbered(&home, &pinned, 1), Some(Numbered::Slot(0)));
+        assert_eq!(numbered(&home, &pinned, 2), Some(Numbered::Slot(1)));
+        assert_eq!(numbered(&home, &pinned, 3), Some(Numbered::Row(0)));
+        assert_eq!(numbered(&home, &pinned, 9), Some(Numbered::Row(6)));
+        assert_eq!(row_number(&home, &pinned, 0), Some(3));
+        assert_eq!(row_number(&home, &pinned, 6), Some(9));
+        assert_eq!(row_number(&home, &pinned, 7), None);
+        // Nothing pinned: the rows start at 1.
+        assert_eq!(row_number(&home, &[], 0), Some(1));
+    }
+
+    #[test]
+    fn past_the_fifth_pin_the_numbers_go_to_the_rows() {
+        // Eight pins, of which the first five are numbered: Ctrl+6 to
+        // Ctrl+9 are the first four rows, and pins 6 to 8 have none.
+        let home = view(Screen::Root { query: String::new() }, 12);
+        assert_eq!(numbered(&home, &STRIP, 6), Some(Numbered::Row(0)));
+        assert_eq!(numbered(&home, &STRIP, 9), Some(Numbered::Row(3)));
+        assert_eq!(row_number(&home, &STRIP, 3), Some(9));
+        assert_eq!(row_number(&home, &STRIP, 4), None);
+        assert!(
+            (1..=9).all(|digit| numbered(&home, &STRIP, digit) != Some(Numbered::Slot(5))),
+            "the sixth pin has no number"
+        );
+    }
+
+    #[test]
+    fn a_query_or_a_command_numbers_its_rows_from_one() {
+        let search = view(
+            Screen::Root {
+                query: "notes".into(),
+            },
+            12,
+        );
+        assert_eq!(numbered(&search, &STRIP, 1), Some(Numbered::Row(0)));
+        assert_eq!(numbered(&search, &STRIP, 9), Some(Numbered::Row(8)));
+        assert_eq!(row_number(&search, &STRIP, 8), Some(9));
+        assert_eq!(row_number(&search, &STRIP, 9), None);
+        let command = view(Screen::Command, 2);
+        assert_eq!(numbered(&command, &STRIP, 2), Some(Numbered::Row(1)));
+        assert_eq!(numbered(&command, &STRIP, 3), None);
     }
 }

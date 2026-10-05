@@ -54,7 +54,11 @@ actions!(
 /// must have been initialized first, as the binary does before this
 /// runs.
 pub fn bind_keys(cx: &mut App) {
-    bind_keys_with(cx, &settings::keyboard_of(cx));
+    bind_keys_with(
+        cx,
+        &settings::keyboard_of(cx),
+        settings::navigation_of(cx),
+    );
 }
 
 /// The full key registration over `keyboard`: [`bind_keys`] is this over
@@ -62,7 +66,11 @@ pub fn bind_keys(cx: &mut App) {
 /// over the keyboard it holds as a choice changes
 /// ([`keyboard::rebuild`]) — it cannot read itself back through
 /// [`settings::keyboard_of`] while its own update is in flight.
-pub(crate) fn bind_keys_with(cx: &mut App, keyboard: &Keyboard) {
+pub(crate) fn bind_keys_with(
+    cx: &mut App,
+    keyboard: &Keyboard,
+    navigation: pane_core::NavigationBindings,
+) {
     cx.bind_keys([
         KeyBinding::new("tab", FocusNext, Some(app::KEY_CONTEXT)),
         KeyBinding::new("shift-tab", FocusPrevious, Some(app::KEY_CONTEXT)),
@@ -77,7 +85,7 @@ pub(crate) fn bind_keys_with(cx: &mut App, keyboard: &Keyboard) {
     features::settings::bind_keys(cx);
     ui::select::bind_keys(cx);
     extension_views::custom_view::bind_keys(cx);
-    keyboard::bind_keys(cx, keyboard);
+    keyboard::bind_keys(cx, keyboard, navigation);
 }
 
 /// The version of Pane this build is: the workspace's version, or the one

@@ -191,6 +191,12 @@ pub(crate) struct Theme {
     pub(crate) field_edge: Hsla,
     /// A Settings page's heading (#FFFFFF).
     pub(crate) heading_text: Hsla,
+    /// A Settings card: the raised block a section's rows sit in (white
+    /// 4.7% over the panel in dark), its 1px inset ring and the rule
+    /// between its rows. Pane's own: the reference's board has no cards.
+    pub(crate) card_fill: Hsla,
+    pub(crate) card_edge: Hsla,
+    pub(crate) card_rule: Hsla,
     /// The Settings controls and the Appearance preview (#98): see
     /// [`ControlColors`].
     pub(crate) controls: ControlColors,
@@ -244,8 +250,8 @@ pub(crate) struct Theme {
     pub(crate) slot_hover: Hsla,
     /// A pinned slot's title (`.slot-t`: #D9DADD).
     pub(crate) slot_title: Hsla,
-    /// An empty slot's dashed outline (Pane's own: the reference authors
-    /// no empty slot; white 10%).
+    /// The pin hint's dashed outline, in the strip's cell after the last
+    /// pin (Pane's own: the reference authors no such tile; white 10%).
     pub(crate) slot_empty_edge: Hsla,
 
     // -- Type and geometry --------------------------------------------------
@@ -556,19 +562,44 @@ pub(crate) struct SettingsGeometry {
     pub(crate) aside_width: Pixels,
     /// The gap between an aside's caption and its content.
     pub(crate) aside_gap: Pixels,
+    /// Pane's own page layout (the board's page above is the workbench's
+    /// fixture's): the content's padding above, either side and below,
+    /// and the widest it grows in a large window.
+    pub(crate) content_padding_top: Pixels,
+    pub(crate) content_padding_x: Pixels,
+    pub(crate) content_padding_bottom: Pixels,
+    pub(crate) content_max_width: Pixels,
+    /// A section: the space between sections, between a section's label
+    /// and its card, and the label's inset from the card's edge.
+    pub(crate) section_gap: Pixels,
+    pub(crate) section_label_gap: Pixels,
+    pub(crate) section_label_inset: Pixels,
+    /// A card: its radius and its rows' side padding.
+    pub(crate) card_radius: Pixels,
+    pub(crate) card_padding_x: Pixels,
+    /// A card's row: at least 48 high, 10 above and below its text.
+    pub(crate) card_row_height: Pixels,
+    pub(crate) card_row_padding_y: Pixels,
+    /// The width of a choice at a row's end: a select's trigger and its
+    /// popup, a segmented choice's track.
+    pub(crate) choice_width: Pixels,
 }
 
-/// The pinned home's geometry: the reference's grid of five `.slot`s under
-/// the "Pinned" label, and each slot's anatomy.
+/// The pinned home's geometry: the reference's grid of `.slot`s under the
+/// "Pinned" label — five equal columns, wrapping onto more rows as pins
+/// are added (`crate::ui::pinned::PINNED_COLUMNS`) — and each slot's
+/// anatomy, which the pin hint's cell shares.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct PinnedGeometry {
-    /// The gap between the five equal columns.
+    /// The gap between the strip's equal columns, and between its rows
+    /// once it wraps.
     pub(crate) columns_gap: Pixels,
     /// The grid's padding above and below its slots.
     pub(crate) strip_padding_top: Pixels,
     pub(crate) strip_padding_bottom: Pixels,
-    /// A slot: its height, radius and paddings (14 above, 8 either side,
-    /// 10 below), and the gap between its tile and its title.
+    /// A slot: its height, radius and paddings (8 all round), and the gap
+    /// between its tile and its title — Pane's compact strip, lower than
+    /// the reference's 100px slots so the results keep more room.
     pub(crate) slot_height: Pixels,
     pub(crate) slot_radius: Pixels,
     pub(crate) slot_padding_top: Pixels,
@@ -577,9 +608,9 @@ pub(crate) struct PinnedGeometry {
     pub(crate) slot_gap: Pixels,
     /// An unavailable slot's gap between its tile and its title, the
     /// reason right under the title (Pane's own state): the tile, both
-    /// lines and the reference's 9px gaps would overflow the slot's 76px
-    /// inside its paddings, so the lines would shrink and clip; 42, 2 and
-    /// the two lines (16.25 and 14.95) fit.
+    /// lines and the 7px gaps would overflow the slot's 64px inside its
+    /// paddings, so the lines would shrink and clip; 30, 2 and the two
+    /// lines (16.25 and 14.95) fit.
     pub(crate) unavailable_gap: Pixels,
     /// The corner key hint's inset from the slot's top and right (8).
     pub(crate) keys_inset: Pixels,
@@ -1057,6 +1088,15 @@ pub(crate) struct ControlGeometry {
     pub(crate) well_gap: Pixels,
     pub(crate) well_glyph: Pixels,
     pub(crate) recorder_min_width: Pixels,
+    /// A key binding recorder (Discord's keybind field): 220×36, its icon
+    /// buttons 4 in from its right edge.
+    pub(crate) recorder_width: Pixels,
+    pub(crate) recorder_height: Pixels,
+    pub(crate) recorder_inset: Pixels,
+    /// An icon button: a 28px square, radius 6, its glyph 16.
+    pub(crate) icon_button_size: Pixels,
+    pub(crate) icon_button_radius: Pixels,
+    pub(crate) icon_button_glyph: Pixels,
     /// A pressable list row's radius (the sidebar item's 8) and the 14px
     /// chevron at its right end.
     pub(crate) list_radius: Pixels,
@@ -1202,6 +1242,9 @@ impl Theme {
             field_fill: color(0x0000003D),
             field_edge: color(0xFFFFFF0F),
             heading_text: color(0xFFFFFFFF),
+            card_fill: color(0xFFFFFF0C),
+            card_edge: color(0xFFFFFF0F),
+            card_rule: color(0xFFFFFF0D),
             controls: ControlColors::dark(),
 
             footer_mark: color(0xEDEDEFEB),
@@ -1308,6 +1351,9 @@ impl Theme {
             field_fill: color(0x0000000A),
             field_edge: color(0x00000014),
             heading_text: color(0x111214FF),
+            card_fill: color(0xFFFFFFB3),
+            card_edge: color(0x00000012),
+            card_rule: color(0x0000000F),
             controls: ControlColors::light(),
 
             footer_mark: color(0x202126EB),
@@ -1425,9 +1471,9 @@ impl Geometry {
                 glyph: px(16.),
             },
             slot_tile: TileMetrics {
-                size: px(42.),
-                radius: px(11.),
-                glyph: px(22.),
+                size: px(30.),
+                radius: px(8.),
+                glyph: px(17.),
             },
             mini_tile: TileMetrics {
                 size: px(18.),
@@ -1462,6 +1508,18 @@ impl Geometry {
                 controls_width: px(388.),
                 aside_width: px(400.),
                 aside_gap: px(10.),
+                content_padding_top: px(20.),
+                content_padding_x: px(24.),
+                content_padding_bottom: px(24.),
+                content_max_width: px(680.),
+                section_gap: px(24.),
+                section_label_gap: px(8.),
+                section_label_inset: px(4.),
+                card_radius: px(10.),
+                card_padding_x: px(14.),
+                card_row_height: px(48.),
+                card_row_padding_y: px(10.),
+                choice_width: px(200.),
             },
             controls: ControlGeometry {
                 group_gap: px(18.),
@@ -1497,6 +1555,12 @@ impl Geometry {
                 well_gap: px(8.),
                 well_glyph: px(14.),
                 recorder_min_width: px(96.),
+                recorder_width: px(220.),
+                recorder_height: px(36.),
+                recorder_inset: px(4.),
+                icon_button_size: px(28.),
+                icon_button_radius: px(6.),
+                icon_button_glyph: px(16.),
                 list_radius: px(8.),
                 chevron: px(14.),
                 menu_padding_y: px(4.),
@@ -1599,12 +1663,12 @@ impl Geometry {
                 columns_gap: px(8.),
                 strip_padding_top: px(2.),
                 strip_padding_bottom: px(6.),
-                slot_height: px(100.),
+                slot_height: px(80.),
                 slot_radius: px(12.),
-                slot_padding_top: px(14.),
+                slot_padding_top: px(8.),
                 slot_padding_x: px(8.),
-                slot_padding_bottom: px(10.),
-                slot_gap: px(9.),
+                slot_padding_bottom: px(8.),
+                slot_gap: px(7.),
                 unavailable_gap: px(2.),
                 keys_inset: px(8.),
                 focus_width: px(2.),

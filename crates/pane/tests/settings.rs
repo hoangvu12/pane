@@ -600,7 +600,7 @@ fn open_settings(cx: &mut VisualTestContext) -> VisualTestContext {
     let settings = settings_windows(cx).pop().expect("Settings opened");
     let mut settings_cx = settings_context(&settings, cx);
     let appearance = settings_cx
-        .debug_bounds("section-Appearance")
+        .debug_bounds("section-General")
         .expect("the Appearance section");
     settings_cx.simulate_click(appearance.center(), Modifiers::none());
     settings_cx.run_until_parked();
@@ -739,7 +739,7 @@ fn hiding_the_launcher_leaves_settings_open_and_usable(cx: &mut TestAppContext) 
     );
     // The Appearance page — one sidebar section away — answers too.
     let appearance = settings_cx
-        .debug_bounds("section-Appearance")
+        .debug_bounds("section-General")
         .expect("the Appearance section");
     settings_cx.simulate_click(appearance.center(), Modifiers::none());
     settings_cx.run_until_parked();
@@ -760,7 +760,7 @@ fn hiding_the_launcher_leaves_settings_open_and_usable(cx: &mut TestAppContext) 
     assert!(settings_cx.debug_bounds("extension-empty").is_some());
     assert!(
         settings_cx
-            .debug_bounds("extension-install-Install extension from npm…")
+            .debug_bounds("extension-install-npm…")
             .is_none(),
         "a launcher that installs no packages offers no install rows"
     );
@@ -833,7 +833,7 @@ fn keys_in_settings_and_the_launcher_stay_in_their_windows(cx: &mut TestAppConte
     // The Appearance page — one sidebar section away — answers too, and
     // walking to it reaches no launcher key either.
     let appearance = settings_cx
-        .debug_bounds("section-Appearance")
+        .debug_bounds("section-General")
         .expect("the Appearance section");
     settings_cx.simulate_click(appearance.center(), Modifiers::none());
     settings_cx.run_until_parked();
@@ -869,12 +869,12 @@ fn the_footer_menu_opens_traverses_dismisses_and_restores_focus(cx: &mut TestApp
     );
 
     // The keyboard reaches the menu: Tab from the query field, past the
-    // pinned home's quick slots (tab stops between the query field and
-    // the footer), then Enter presses the button.
+    // pinned home's pins (tab stops between the query field and the
+    // footer; the pin hint is none), then Enter presses the button.
     let passed = tab_to(cx, "Pane menu");
     assert!(
-        passed.iter().all(|label| label.starts_with("Quick slot")),
-        "only the quick slots come between the query field and the menu: {passed:?}"
+        passed.iter().all(|label| label.starts_with("Pinned ")),
+        "only the pins come between the query field and the menu: {passed:?}"
     );
     cx.simulate_keystrokes("enter");
     cx.run_until_parked();
@@ -1853,29 +1853,31 @@ fn the_extensions_page_lists_the_installed_extensions_and_their_reach(cx: &mut T
     let (launcher, cx) = open_installed(cx, &data, &folder);
     let (_settings, mut settings_cx) = open_extensions(cx);
 
-    // The page lists the package with its state and identity, the
-    // management rows the launcher's own list holds, the package's
-    // commands, and the launcher's install rows.
+    // The page lists the package as a card — its switch and the
+    // management operations the launcher's own list holds, as buttons —
+    // the global automatic updates, and the launcher's install sources.
+    // A command's hotkey and alias are the Shortcuts page's.
     for row in [
         "extension-row-Settings sample",
         "extension-row-Reload Settings sample",
         "extension-row-Clear cache of Settings sample",
         "extension-row-Uninstall Settings sample",
-        "extension-row-Hotkey for Greeting",
-        "extension-row-Alias for Greeting",
         "extension-row-Develop Settings sample",
         "extension-row-Update extensions automatically",
-        "extension-command-Greeting",
-        "extension-install-Install extension from folder…",
-        "extension-install-Install extension from npm…",
-        "extension-install-Install extension from Git…",
+        "extension-install-Folder…",
+        "extension-install-npm…",
+        "extension-install-Git…",
     ] {
         assert!(settings_cx.debug_bounds(row).is_some(), "{row} is drawn");
     }
-    // The package's state and identity are announced, from the same
-    // subtitle the launcher's own list holds.
-    let (_, json) = accessibility(&mut settings_cx);
-    assert!(json.contains("Enabled · "), "the state shows, {json}");
+    for row in [
+        "extension-row-Hotkey for Greeting",
+        "extension-row-Alias for Greeting",
+    ] {
+        assert!(settings_cx.debug_bounds(row).is_none(), "{row} is not");
+    }
+    // The package's switch says it is enabled.
+    assert!(extension_enabled(&mut settings_cx, "Settings sample"));
 
     // Reading the page moved nothing: the launcher stayed where it was,
     // with the install's own outcome still on it.
@@ -2075,41 +2077,6 @@ fn a_reload_that_fails_to_start_is_explained_on_the_page_and_offers_retry(cx: &m
 }
 
 #[gpui::test]
-fn opening_an_extensions_command_from_the_page_summons_the_launcher(cx: &mut TestAppContext) {
-    let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
-    let folder = settings_package(&sources.path().join("settings"));
-    let (launcher, cx) = open_installed(cx, &data, &folder);
-    let launcher_window = cx
-        .update(|window, _| window.window_handle())
-        .downcast::<LauncherWindow>()
-        .expect("the launcher window");
-    let (_settings, mut settings_cx) = open_extensions(cx);
-
-    // The settings sample's command is an extension-owned settings
-    // command: the page opens it where it lives — in the launcher window,
-    // summoned and focused — not a form of its own.
-    click_row(&mut settings_cx, "extension-command-Greeting");
-    let view = settle(&launcher, cx);
-    assert_eq!(view.screen, Screen::Command);
-    assert_eq!(view.title, "Greeting");
-    assert!(
-        cx.cx
-            .update(|cx| launcher_window.is_active(cx))
-            .unwrap_or(false),
-        "the launcher window took focus"
-    );
-
-    // The Settings window stayed open, its page back to a reading: the
-    // launcher left the extension flow when the command opened.
-    assert!(
-        settings_cx
-            .debug_bounds("extension-row-Settings sample")
-            .is_some(),
-        "the page is still drawn"
-    );
-}
-
-#[gpui::test]
 fn the_install_rows_from_the_page_open_the_launcher_windows_flows(cx: &mut TestAppContext) {
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let folder = settings_package(&sources.path().join("settings"));
@@ -2125,7 +2092,7 @@ fn the_install_rows_from_the_page_open_the_launcher_windows_flows(cx: &mut TestA
     // lives, focused there.
     click_row(
         &mut settings_cx,
-        "extension-install-Install extension from npm…",
+        "extension-install-npm…",
     );
     let view = settle(&launcher, cx);
     assert!(matches!(view.screen, Screen::Form(_)), "{:?}", view.screen);
@@ -2159,18 +2126,21 @@ fn the_page_follows_a_change_the_launcher_window_made(cx: &mut TestAppContext) {
     settle(&launcher, cx);
     cx.simulate_keystrokes("enter");
     settle(&launcher, cx);
-    let (_, json) = accessibility(&mut settings_cx);
     assert!(
-        json.contains("Disabled · "),
-        "the page shows the new state, {json}"
+        !extension_enabled(&mut settings_cx, "Settings sample"),
+        "the page shows the new state"
     );
-    // A disabled package's command rows are gone from the page too.
-    assert!(
-        settings_cx
-            .debug_bounds("extension-command-Greeting")
-            .is_none(),
-        "the command is no longer offered"
-    );
+}
+
+/// Whether the Extensions page's switch for the extension `title` reads as
+/// on, as assistive technology sees it.
+fn extension_enabled(cx: &mut VisualTestContext, title: &str) -> bool {
+    let (_, json) = accessibility(cx);
+    let tree: serde_json::Value = serde_json::from_str(&json).unwrap();
+    tree["nodes"].as_object().unwrap().values().any(|node| {
+        let aria = &node["aria"];
+        aria["role"] == "Switch" && aria["label"] == title && aria["toggled"] == "True"
+    })
 }
 
 #[gpui::test]
@@ -2220,7 +2190,7 @@ fn the_settings_window_keeps_its_layout_at_small_sizes(cx: &mut TestAppContext) 
     // The window opens on the General page; the Appearance page — the
     // demanding one — is one sidebar click away.
     let appearance = settings_cx
-        .debug_bounds("section-Appearance")
+        .debug_bounds("section-General")
         .expect("the Appearance section");
     settings_cx.simulate_click(appearance.center(), Modifiers::none());
     settings_cx.run_until_parked();
@@ -2230,7 +2200,7 @@ fn the_settings_window_keeps_its_layout_at_small_sizes(cx: &mut TestAppContext) 
     settings_cx.simulate_resize(gpui::size(px(560.), px(400.)));
     settings_cx.run_until_parked();
     let sidebar = settings_cx
-        .debug_bounds("section-Appearance")
+        .debug_bounds("section-General")
         .expect("the sidebar is laid out");
     let page = settings_cx
         .debug_bounds("settings-page")
@@ -2342,7 +2312,7 @@ fn the_settings_window_opens_at_the_reference_shell_geometry(cx: &mut TestAppCon
     assert_eq!(rect_of(sc, "section-General"), [10., 104., 211., 36.]);
     assert_eq!(rect_of(sc, "section-Launcher"), [10., 142., 211., 36.]);
     assert_eq!(rect_of(sc, "settings-page"), [232., 48., 888., 672.]);
-    let heading = rect_of(sc, "general-title");
+    let heading = rect_of(sc, "general");
     assert_eq!([heading[0], heading[1]], [264., 74.], "the page's padding");
 
     // The label is centered over the whole window, as the reference's is;
@@ -2790,7 +2760,7 @@ fn the_general_page_draws_the_settings_control_families(cx: &mut TestAppContext)
     let (_settings, mut settings_cx) = opened_settings(cx);
     let sc = &mut settings_cx;
 
-    let title = rect_of(sc, "general-title");
+    let title = rect_of(sc, "general");
     let field = rect_of(sc, "general-open-pane-field");
     assert_eq!(
         field[1],
@@ -2863,17 +2833,20 @@ fn the_keyboard_page_shows_bindings_in_recorder_wells(cx: &mut TestAppContext) {
     let well = sc
         .debug_bounds("keyboard-next-result")
         .expect("the recorder");
-    assert_eq!(well.size.height, px(30.), "an inline well");
-    assert_eq!(well.right(), row.right(), "at the row's end");
+    assert_eq!(well.size.height, px(36.), "the recorder's field");
+    assert_eq!(well.right(), row.right() - px(14.), "at the row's end");
     assert!(row.size.height >= px(44.), "a settings row's floor");
     assert!(paints_fill_at(sc, well, 0x0000003D), "the well's black 24%");
-    assert!(
-        sc.debug_bounds("keyboard-reset-next-result").is_none(),
-        "no reset while the binding is the default"
-    );
+    // The reset sits inside the recorder, offered only away from the
+    // default.
+    let reset = sc
+        .debug_bounds("keyboard-reset-next-result")
+        .expect("the reset");
+    assert!(well.contains(&reset.center()), "{reset:?} in {well:?}");
+    // The actions' section follows the Behavior section.
     let field = rect_of(sc, "keyboard-field");
-    let title = rect_of(sc, "keyboard-title");
-    assert_eq!(field[1], title[1] + title[3] + 4. + 18.);
+    let behavior = rect_of(sc, "keyboard-escape-field");
+    assert!(field[1] > behavior[1] + behavior[3]);
 }
 
 /// The About page's actions are the Settings buttons (#99): 30px, white
@@ -2932,11 +2905,7 @@ fn the_extensions_page_lists_its_rows_as_list_items(cx: &mut TestAppContext) {
     pointer_leaves(sc);
     settle_frames(sc);
 
-    for selector in [
-        "extension-row-Settings sample",
-        "extension-command-Greeting",
-        "extension-install-Install extension from folder…",
-    ] {
+    for selector in ["extension-row-Settings sample"] {
         let row = sc.debug_bounds(selector).expect("the row");
         assert!(row.size.height >= px(44.), "{selector}: {row:?}");
         sc.simulate_mouse_move(row.center(), None::<MouseButton>, Modifiers::none());
@@ -3073,7 +3042,7 @@ fn moving_up_the_sidebar_arrives_from_above(cx: &mut TestAppContext) {
 
     // Back up to Appearance, the first section: the content arrives from
     // above.
-    click_section(&mut settings_cx, "section-Appearance");
+    click_section(&mut settings_cx, "section-General");
     assert!(
         settings_cx.debug_bounds("appearance").is_some(),
         "the Appearance page is drawn at once, mid-arrival"
@@ -3205,7 +3174,7 @@ fn reduced_motion_settles_section_switches_at_once_at_the_window_boundary(cx: &m
     // leaves before the section is clicked, for the reason it did
     // above.
     pointer_leaves(&mut settings_cx);
-    click_section(&mut settings_cx, "section-Appearance");
+    click_section(&mut settings_cx, "section-General");
     assert!(
         section_arrival(&settings, &mut settings_cx).is_some(),
         "the switch began under full motion"

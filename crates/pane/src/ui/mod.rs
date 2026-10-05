@@ -27,8 +27,9 @@
 //! Fonts: `crates/pane/assets/fonts/` (Geist-Regular/Medium/SemiBold,
 //! GeistMono-Regular/Medium, `OFL.txt` — Vercel's official release v1.7.2,
 //! <https://github.com/vercel/geist-font>, SIL Open Font License 1.1).
-//! Icons: `crates/pane/assets/icons/*.svg`, embedded the same way (see
-//! [`icon`]).
+//! Icons: `crates/pane/assets/icons/<set>/*.svg` (reicon 1.2.5,
+//! <https://reicon.dev>, MIT, or Pane's own set), embedded the same way
+//! (see [`icon`]).
 
 use std::borrow::Cow;
 

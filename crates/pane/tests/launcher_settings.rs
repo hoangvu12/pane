@@ -185,7 +185,7 @@ fn open_launcher_page(
     click(&mut settings_cx, "section-Launcher");
     settings_cx.run_until_parked();
     assert!(
-        settings_cx.debug_bounds("launcher-title").is_some(),
+        settings_cx.debug_bounds("launcher").is_some(),
         "the Launcher page is drawn"
     );
     // The page arrives over the section transition's span, shifted from
@@ -616,7 +616,7 @@ fn a_platform_that_cannot_choose_the_display_explains_and_offers_nothing(cx: &mu
     );
     // The reopening choice is unaffected: it is no platform integration.
     assert!(
-        tree.contains("Restore the current view"),
+        tree.contains("\"label\": \"Pop to root search\""),
         "reopening is offered, {tree}"
     );
     // The launcher still opens: nothing is placed, and nothing fails.
@@ -672,6 +672,9 @@ fn choosing_root_search_starts_the_reopening_from_root_search(cx: &mut TestAppCo
 
     // The root-search choice, taken through the page's own control.
     let (_settings, mut settings_cx) = open_launcher_page(cx);
+    // Pop to root search, Immediately: the select's choice.
+    click(&mut settings_cx, "launcher-reopening");
+    settings_cx.run_until_parked();
     click(&mut settings_cx, "launcher-reopening-RootSearch");
     settings_cx.run_until_parked();
     until_record(
@@ -826,6 +829,9 @@ fn the_recorded_choices_are_applied_by_a_fresh_application(cx: &mut TestAppConte
     let (_settings, mut settings_cx) = open_launcher_page(cx);
     choose_monitor(&mut settings_cx, "launcher-monitor-Pointer");
     settings_cx.run_until_parked();
+    // Pop to root search, Immediately: the select's choice.
+    click(&mut settings_cx, "launcher-reopening");
+    settings_cx.run_until_parked();
     click(&mut settings_cx, "launcher-reopening-RootSearch");
     settings_cx.run_until_parked();
     until_record(
@@ -904,6 +910,9 @@ fn a_save_that_fails_is_reported_and_the_shown_choice_stays_what_was_saved(
     fs::create_dir(data.path().join("settings.json")).unwrap();
 
     // Another change: it cannot be saved, and the failure is reported.
+    // Pop to root search, Immediately: the select's choice.
+    click(&mut settings_cx, "launcher-reopening");
+    settings_cx.run_until_parked();
     click(&mut settings_cx, "launcher-reopening-RootSearch");
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -922,7 +931,7 @@ fn a_save_that_fails_is_reported_and_the_shown_choice_stays_what_was_saved(
     // rolled the reopening choice back to the default.
     let tree = a11y(&mut settings_cx);
     assert!(
-        tree.contains("Restore the current view"),
+        tree.contains("\"value\": \"Never\""),
         "the shown choice is the one that was saved, {tree}"
     );
 
@@ -1041,11 +1050,11 @@ fn the_page_registers_its_settings_in_the_settings_search(cx: &mut TestAppContex
     // their own words.
     search_cx.simulate_keystrokes("escape");
     search_cx.run_until_parked();
-    search_cx.simulate_input("reopening");
+    search_cx.simulate_input("pop to root");
     search_cx.run_until_parked();
     assert!(
         search_cx
-            .debug_bounds("settings-search-result-Start at root search")
+            .debug_bounds("settings-search-result-Immediately")
             .is_some(),
         "the reopening choices are found"
     );
@@ -1057,6 +1066,83 @@ fn the_page_registers_its_settings_in_the_settings_search(cx: &mut TestAppContex
     assert!(
         search_cx.debug_bounds("section-Launcher").is_some(),
         "the sections are back"
+    );
+    let _ = window;
+}
+
+/// Whether the accessibility tree of the window `cx` drives has the switch
+/// named `title`, on.
+fn switch_on(cx: &mut VisualTestContext, title: &str) -> bool {
+    aria_nodes(cx)
+        .iter()
+        .any(|aria| aria["role"] == "Switch" && aria["label"] == title && aria["toggled"] == "True")
+}
+
+#[gpui::test]
+fn the_compact_pinned_switch_is_in_the_layout_card_and_is_saved(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let placement = Rc::new(FakePlacement::default());
+    placement.layout(Some(Point { x: 100., y: 100. }), Some(DisplayId(1)));
+    let (window, cx) = open(cx, Some(data.path()), &placement);
+    let (settings, mut sc) = open_launcher_page(cx);
+
+    // The switch is the Layout card's, right under the window mode it
+    // qualifies and above the pinned items' layout.
+    let mode = sc
+        .debug_bounds("launcher-window-mode-field")
+        .expect("the window mode's row");
+    let row = sc
+        .debug_bounds("launcher-compact-pinned-row")
+        .expect("the switch's row");
+    let pinned = sc
+        .debug_bounds("launcher-pinned-field")
+        .expect("the pinned items' row");
+    assert!(
+        mode.bottom() <= row.top() && row.bottom() <= pinned.top(),
+        "between the window mode and the pinned items: {mode:?} {row:?} {pinned:?}"
+    );
+    assert!(
+        sc.debug_bounds("launcher-compact-pinned").is_some(),
+        "the switch is drawn"
+    );
+    // Off by default.
+    assert!(
+        !switch_on(&mut sc, "Show pinned in compact window mode"),
+        "off by default"
+    );
+
+    // A click anywhere on the row takes the choice, and the record keeps
+    // it under its camelCase name.
+    click(&mut sc, "launcher-compact-pinned-row");
+    until_record(&mut sc, data.path(), "\"compactPinned\": true");
+    assert!(
+        switch_on(&mut sc, "Show pinned in compact window mode"),
+        "the switch shows the choice"
+    );
+
+    // And again turns it off.
+    click(&mut sc, "launcher-compact-pinned-row");
+    until_record(&mut sc, data.path(), "\"compactPinned\": false");
+    assert!(
+        !switch_on(&mut sc, "Show pinned in compact window mode"),
+        "the switch shows the choice"
+    );
+
+    // The settings search finds it in the Layout group.
+    let mut search_cx = VisualTestContext::from_window(AnyWindowHandle::from(settings), &cx.cx);
+    search_cx.simulate_keystrokes(find_shortcut());
+    search_cx.simulate_input("compact mode");
+    search_cx.run_until_parked();
+    assert!(
+        search_cx
+            .debug_bounds("settings-search-result-Show pinned in compact window mode")
+            .is_some(),
+        "the switch is found"
+    );
+    let tree = a11y(&mut search_cx);
+    assert!(
+        tree.contains("Launcher \u{b7} Layout"),
+        "the result names the page and the group, {tree}"
     );
     let _ = window;
 }
@@ -1711,14 +1797,13 @@ fn a_popup_reopened_during_its_exit_retargets_and_blocks_nothing(cx: &mut TestAp
     assert!(frame(&mut sc, Duration::from_millis(25)) >= 1);
     let mid_exit = popup_presentation(&settings, &mut sc).expect("the exit is painting");
 
-    // The choice the popup covers while it exits: a click on the part of
+    // The control the popup covers while it exits — the Pop to root
+    // search select's trigger, in the row below: a click on the part of
     // it under the popup must not reach it — the overlay, open or
-    // exiting, takes the clicks that land on it. (The popup is as wide as
-    // its contents, so it covers the reopening track's second segment
-    // only at that segment's start.)
+    // exiting, takes the clicks that land on it.
     let segment = sc
-        .debug_bounds("launcher-reopening-RootSearch")
-        .expect("a segment under the popup");
+        .debug_bounds("launcher-reopening")
+        .expect("a control under the popup");
     let popup = sc
         .debug_bounds("launcher-monitor-popup")
         .expect("the exiting popup");
@@ -1773,6 +1858,12 @@ fn a_popup_reopened_during_its_exit_retargets_and_blocks_nothing(cx: &mut TestAp
     assert!(sc.debug_bounds("launcher-monitor-popup").is_none());
     assert_eq!(settle_frames(&mut sc), 0, "nothing of the popup is left");
     sc.simulate_click(covered.center(), Modifiers::none());
+    sc.run_until_parked();
+    assert!(
+        sc.debug_bounds("launcher-reopening-popup").is_some(),
+        "the click opened the select underneath"
+    );
+    click(&mut sc, "launcher-reopening-RootSearch");
     sc.run_until_parked();
     until_record(&mut sc, data.path(), "\"reopening\": \"root-search\"");
 }
@@ -1941,17 +2032,17 @@ fn the_select_is_a_settings_field_whose_washes_change_at_once(cx: &mut TestAppCo
     );
     assert!(!paint::paints_fill_at(&mut sc, row, 0xFFFFFF16));
 
-    // The reopening choice is a segmented choice: two 30px segments, the
+    // The window mode is a segmented choice: two 30px segments, the
     // chosen one on white 12%.
     sc.simulate_keystrokes("escape");
     sc.run_until_parked();
     pointer_leaves(&mut sc);
     settle_frames(&mut sc);
     let restore = sc
-        .debug_bounds("launcher-reopening-RestoreView")
+        .debug_bounds("launcher-window-Expanded")
         .expect("the default's segment");
     let root = sc
-        .debug_bounds("launcher-reopening-RootSearch")
+        .debug_bounds("launcher-window-Compact")
         .expect("the other segment");
     assert_eq!(restore.size.height, px(30.));
     assert_eq!(restore.size.width, root.size.width, "equal shares");
@@ -1980,7 +2071,7 @@ fn a_jump_from_the_settings_search_focuses_the_select(cx: &mut TestAppContext) {
     // The jump opens the Launcher page and focuses the select's trigger
     // — the one keyboard control the page has — without opening it.
     assert!(
-        sc.debug_bounds("launcher-title").is_some(),
+        sc.debug_bounds("launcher").is_some(),
         "the Launcher page opened"
     );
     assert_eq!(

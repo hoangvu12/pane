@@ -81,18 +81,17 @@ pub enum MaterialPreference {
 /// that turns this choice into a display (see `crate::placement`), which
 /// falls back to an available display when the chosen one is gone.
 ///
-/// The default is the primary display, matching where the launcher has
-/// opened since it first shipped; it is the provisional default of the
-/// settings specification, not a separately confirmed product decision,
-/// and the Launcher page names it as such.
+/// The default is the display the pointer is on, as the user decided
+/// (2026-10-05); where the system does not say where the pointer is, the
+/// resolution falls back to the primary display.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OpeningMonitor {
     /// The system's primary display, whatever else is connected.
-    #[default]
     Primary,
     /// The display the pointer is on when the launcher opens, where the
     /// system tells Pane where the pointer is.
+    #[default]
     Pointer,
     /// The display of the operating system's active window — the one the
     /// user is working in — where the system tells Pane which window is
@@ -101,10 +100,10 @@ pub enum OpeningMonitor {
     ActiveWindow,
 }
 
-/// What reopening the launcher shows, as the user chose it. Dismissal —
-/// hiding the launcher, by the Open Pane hotkey or by Escape at root
-/// search with an empty query — never quits Pane, and what the next
-/// opening starts from is this choice.
+/// What reopening the launcher shows, as the user chose it (Raycast's
+/// "Pop to Root Search"). Dismissal — hiding the launcher, by the Open
+/// Pane hotkey or by Escape at root search with an empty query — never
+/// quits Pane, and what the next opening starts from is this choice.
 ///
 /// The default restores a still-valid view, as the settings
 /// specification proposes provisionally; a view that is no longer valid —
@@ -113,13 +112,98 @@ pub enum OpeningMonitor {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Reopening {
-    /// Show the view the launcher was left on, when it is still valid.
+    /// Show the view the launcher was left on, when it is still valid:
+    /// never pop to root search.
     #[serde(rename = "restore-view")]
     #[default]
     RestoreView,
     /// Start from root search, with an empty query, whatever was left.
     #[serde(rename = "root-search")]
     RootSearch,
+    /// Restore the view if the launcher was hidden for less than 90
+    /// seconds, start from root search otherwise.
+    #[serde(rename = "after-90-seconds")]
+    After90Seconds,
+    /// As [`Reopening::After90Seconds`], after 3 minutes.
+    #[serde(rename = "after-3-minutes")]
+    After3Minutes,
+}
+
+impl Reopening {
+    /// How long the launcher may stay hidden before reopening starts from
+    /// root search: zero for [`Reopening::RootSearch`], `None` for never.
+    pub fn pops_after(self) -> Option<std::time::Duration> {
+        match self {
+            Reopening::RestoreView => None,
+            Reopening::RootSearch => Some(std::time::Duration::ZERO),
+            Reopening::After90Seconds => Some(std::time::Duration::from_secs(90)),
+            Reopening::After3Minutes => Some(std::time::Duration::from_secs(180)),
+        }
+    }
+}
+
+/// How much of the launcher shows while root search's query is blank:
+/// Raycast's window modes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WindowMode {
+    /// The whole launcher: the search field, the pinned home, the results
+    /// and the footer.
+    #[default]
+    Expanded,
+    /// Only the search field until something is typed; the results and
+    /// the footer appear with a query.
+    Compact,
+}
+
+/// How root search's pinned home lays out its quick slots.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PinnedLayout {
+    /// A row of tiles above the results.
+    #[default]
+    Horizontal,
+    /// Result rows, one per pinned result, above the results.
+    Vertical,
+}
+
+/// What the launcher's back key (Escape by default) does.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum EscapeBehavior {
+    /// Leave the open screen, one level at a time, and hide the launcher
+    /// from an empty root search.
+    #[default]
+    #[serde(rename = "back-or-hide")]
+    BackOrHide,
+    /// Hide the launcher from wherever it is; reopening follows
+    /// [`Reopening`].
+    #[serde(rename = "hide")]
+    Hide,
+}
+
+/// Extra keys that move the selection, beside the Keyboard page's
+/// previous and next result bindings.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NavigationBindings {
+    /// No extra keys.
+    #[default]
+    None,
+    /// Ctrl+P and Ctrl+N.
+    Emacs,
+    /// Ctrl+K and Ctrl+J.
+    Vim,
+}
+
+impl NavigationBindings {
+    /// The extra bindings' ids, previous result's then next result's.
+    pub fn bindings(self) -> Option<(&'static str, &'static str)> {
+        match self {
+            NavigationBindings::None => None,
+            NavigationBindings::Emacs => Some(("ctrl-p", "ctrl-n")),
+            NavigationBindings::Vim => Some(("ctrl-k", "ctrl-j")),
+        }
+    }
 }
 
 /// The host settings as the user chose them: one theme preference, one
@@ -169,6 +253,19 @@ pub struct HostSettings {
     /// the record holds none. These keys belong to Pane's own windows, not
     /// to any focused field's text editing.
     pub keyboard: Keyboard,
+    /// How much of the launcher shows while the query is blank.
+    pub window_mode: WindowMode,
+    /// Whether the compact window shows the pins as a row of icons under
+    /// the search field (Raycast's "Show favorites in compact mode").
+    pub compact_pinned: bool,
+    /// How the pinned home lays out its quick slots.
+    pub pinned_layout: PinnedLayout,
+    /// What the launcher's back key does.
+    pub escape: EscapeBehavior,
+    /// Whether Escape closes the Settings window.
+    pub escape_closes_settings: bool,
+    /// Extra keys that move the selection.
+    pub navigation: NavigationBindings,
 }
 
 impl Default for HostSettings {
@@ -182,6 +279,12 @@ impl Default for HostSettings {
             opening_monitor: OpeningMonitor::default(),
             reopening: Reopening::default(),
             keyboard: Keyboard::default_for_this_system(),
+            window_mode: WindowMode::default(),
+            compact_pinned: false,
+            pinned_layout: PinnedLayout::default(),
+            escape: EscapeBehavior::default(),
+            escape_closes_settings: true,
+            navigation: NavigationBindings::default(),
         }
     }
 }
@@ -242,6 +345,12 @@ impl HostSettings {
             opening_monitor: recorded.opening_monitor,
             reopening: recorded.reopening,
             keyboard,
+            window_mode: recorded.window_mode,
+            compact_pinned: recorded.compact_pinned,
+            pinned_layout: recorded.pinned_layout,
+            escape: recorded.escape_behavior,
+            escape_closes_settings: recorded.escape_closes_settings,
+            navigation: recorded.navigation_bindings,
         })
     }
 
@@ -261,6 +370,12 @@ impl HostSettings {
             opening_monitor: self.opening_monitor,
             reopening: self.reopening,
             keyboard: Some(self.keyboard.recorded()),
+            window_mode: self.window_mode,
+            compact_pinned: self.compact_pinned,
+            pinned_layout: self.pinned_layout,
+            escape_behavior: self.escape,
+            escape_closes_settings: self.escape_closes_settings,
+            navigation_bindings: self.navigation,
         };
         let text = serde_json::to_string_pretty(&recorded).map_err(|error| error.to_string())?;
         let file = dir.join(FILE);
@@ -311,9 +426,29 @@ struct Recorded {
     /// record.
     #[serde(default)]
     keyboard: Option<BTreeMap<String, String>>,
+    /// The window mode; missing means expanded.
+    #[serde(default)]
+    window_mode: WindowMode,
+    /// Whether the compact window shows the pins; missing means it does
+    /// not.
+    #[serde(default)]
+    compact_pinned: bool,
+    /// The pinned home's layout; missing means horizontal.
+    #[serde(default)]
+    pinned_layout: PinnedLayout,
+    /// The back key's behavior; missing means back, then hide.
+    #[serde(default)]
+    escape_behavior: EscapeBehavior,
+    /// Whether Escape closes Settings; missing means it does.
+    #[serde(default = "shown_by_default")]
+    escape_closes_settings: bool,
+    /// The extra selection keys; missing means none.
+    #[serde(default)]
+    navigation_bindings: NavigationBindings,
 }
 
-/// The record's default for the tray visibility: shown.
+/// The record's default for the tray visibility (and Escape closing
+/// Settings): on.
 fn shown_by_default() -> bool {
     true
 }
@@ -373,11 +508,29 @@ mod tests {
             tray_visible: false,
             launch_at_login: true,
             opening_monitor: super::OpeningMonitor::Pointer,
-            reopening: super::Reopening::RootSearch,
+            reopening: super::Reopening::After90Seconds,
             keyboard,
+            window_mode: super::WindowMode::Compact,
+            compact_pinned: true,
+            pinned_layout: super::PinnedLayout::Vertical,
+            escape: super::EscapeBehavior::Hide,
+            escape_closes_settings: false,
+            navigation: super::NavigationBindings::Emacs,
         };
         settings.save(dir.path()).unwrap();
         assert_eq!(HostSettings::open(dir.path()).unwrap(), settings);
+        let text = std::fs::read_to_string(dir.path().join(FILE)).unwrap();
+        for field in [
+            "\"reopening\": \"after-90-seconds\"",
+            "\"windowMode\": \"compact\"",
+            "\"compactPinned\": true",
+            "\"pinnedLayout\": \"vertical\"",
+            "\"escapeBehavior\": \"hide\"",
+            "\"escapeClosesSettings\": false",
+            "\"navigationBindings\": \"emacs\"",
+        ] {
+            assert!(text.contains(field), "the record is {text}");
+        }
     }
 
     #[test]
@@ -403,10 +556,10 @@ mod tests {
             "the record is {text}"
         );
         // A record without the fields is one an older Pane wrote: the
-        // provisional defaults, not an error.
+        // defaults, not an error.
         assert_eq!(
             reading(r#"{ "version": 1 }"#).unwrap().opening_monitor,
-            super::OpeningMonitor::Primary
+            super::OpeningMonitor::Pointer
         );
         assert_eq!(
             reading(r#"{ "version": 1 }"#).unwrap().reopening,
@@ -512,6 +665,24 @@ mod tests {
     }
 
     #[test]
+    fn showing_the_pins_in_compact_mode_defaults_to_off_and_is_written_and_read() {
+        // Missing: off, so the compact window is the search field alone.
+        assert!(!HostSettings::default().compact_pinned);
+        assert!(!reading(r#"{ "version": 1 }"#).unwrap().compact_pinned);
+        // Recorded as the record's camelCase field, and read back.
+        assert_eq!(
+            reading(r#"{ "version": 1, "compactPinned": true }"#).unwrap(),
+            HostSettings {
+                compact_pinned: true,
+                ..HostSettings::default()
+            }
+        );
+        // A value that is not a boolean fails the whole record.
+        let problem = reading(r#"{ "version": 1, "compactPinned": "yes" }"#);
+        assert!(problem.is_err(), "{problem:?}");
+    }
+
+    #[test]
     fn an_unparseable_record_is_a_problem() {
         let problem = reading("{ not a record");
         assert!(problem.is_err(), "{problem:?}");
@@ -568,6 +739,7 @@ mod tests {
             opening_monitor: super::OpeningMonitor::Pointer,
             reopening: super::Reopening::RootSearch,
             keyboard: Keyboard::default_for_this_system(),
+            ..HostSettings::default()
         }
         .save(dir.path());
         assert!(failed.is_err(), "{failed:?}");

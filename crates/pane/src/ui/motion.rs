@@ -413,6 +413,26 @@ pub(crate) fn advance_disclosure(
     )
 }
 
+/// How long the launcher's number hints take to slide in or out while
+/// Ctrl is held (see [`advance_reveal`]).
+pub(crate) const REVEAL: Duration = Duration::from_millis(160);
+
+/// Advances a reveal — the number hints' look, 0 hidden, 1 shown — over
+/// the reveal span, as [`advance_disclosure`] advances a group's. `shown`
+/// is the hints' state this frame and `changed` says it flipped since the
+/// last drawn frame. Returns the look while the reveal is in flight;
+/// `None` when settled.
+pub(crate) fn advance_reveal(
+    reveal: &mut Option<Tween>,
+    shown: bool,
+    changed: bool,
+    reduced: bool,
+    now: Instant,
+) -> Option<f32> {
+    let target = if shown { 1. } else { 0. };
+    advance_tween(reveal, target, 1. - target, REVEAL, changed, reduced, now)
+}
+
 /// Advances a popup's entrance or exit — the popup's look, 0 closed, 1
 /// open — over the popup family's spans, and returns its presentation
 /// while one is in flight: the offset from rest toward the trigger, in
