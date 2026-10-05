@@ -586,6 +586,8 @@ def compare(native_dir, reference_dir, out_dir, label):
         if board.get("glass"):
             report.check("harness-reference", "boards", board["slug"], "glass", "size",
                          f"{board['image'][0]}x{board['image'][1]}", f"{board['glass'][2]}x{board['glass'][3]}", 0, "px")
+            if not board.get("sourceOnly"):
+                check_reference_fonts(report, "boards", board["slug"], board["slug"], board.get("fonts"))
 
     for scenario_dir in sorted(p for p in Path(native_dir).iterdir() if (p / "fixture-manifest.json").exists()):
         manifest = json.loads((scenario_dir / "fixture-manifest.json").read_text(encoding="utf-8-sig"))
@@ -624,6 +626,11 @@ def compare(native_dir, reference_dir, out_dir, label):
                                  f"{native.width / scale:g}x{native.height / scale:g}",
                                  f"{reference_image.width}x{reference_image.height}", 0, "logical px",
                                  "compared at 1:1; never rescaled")
+                    native_scale, ref_scale = scale_parity(run, reference)
+                    report.check("parity", name, capture, "client", "device scale", native_scale, ref_scale, 0, "",
+                                 "the native window's DPI / 96 against the reference's device scale factor")
+                    check_reference_fonts(report, name, capture, ref.get("board", "root"), ref_capture.get("fonts"))
+                    check_reference_pointer(report, name, capture, ref_capture.get("pointer"))
             crops = []
             if scenario["family"] == "root":
                 compare_root(report, name, capture, declared, manifest, native, scale, ref_capture,
@@ -1029,6 +1036,99 @@ def check_fonts(report, name, manifest):
             report.check("harness-native", name, "manifest", "fonts", f"{family} 500 is its own face",
                          "distinct" if regular != medium else "the 400 face", "distinct", 0, "",
                          "500 must resolve to the embedded Medium face, not a synthesized weight")
+
+
+# The reference's faces each board draws with (#103). A face that failed or
+# never loaded leaves Chrome to draw the board's text in a fallback, which
+# the board's own DOM rects would follow, so the harness alone would not
+# notice. Faces load only when a board draws with them, so these are the
+# weights each board was seen to draw: Geist at 400 and 500 everywhere, 600
+# for the Settings page's heading, Geist Mono for caps, values and times.
+REFERENCE_FACES = {
+    "root": [("Geist", 400), ("Geist", 500), ("Geist Mono", 400), ("Geist Mono", 500)],
+    "actions": [("Geist", 400), ("Geist", 500), ("Geist Mono", 500)],
+    "calculator": [("Geist", 400), ("Geist", 500), ("Geist Mono", 400), ("Geist Mono", 500)],
+    "empty": [("Geist", 400), ("Geist", 500), ("Geist Mono", 500)],
+    "clipboard": [("Geist", 400), ("Geist", 500), ("Geist Mono", 400), ("Geist Mono", 500)],
+    "settings": [("Geist", 400), ("Geist", 500), ("Geist", 600), ("Geist Mono", 400), ("Geist Mono", 500)],
+}
+DEFAULT_REFERENCE_FACES = [("Geist", 400), ("Geist", 500)]
+
+
+def _weight_covers(declared, weight):
+    """Whether a FontFace's weight descriptor ("500", or a variable face's
+    "100 900") covers `weight`."""
+    try:
+        parts = [float(p) for p in str(declared).split()]
+    except ValueError:
+        return False
+    return bool(parts) and parts[0] <= weight <= parts[-1]
+
+
+def face_status(faces, family, weight):
+    """A family's state at one weight on a board: 'loaded' when one of its
+    faces (the unicode-range subsets) loaded, 'error' when one failed and
+    none loaded, 'absent' when the board declares none, else 'not loaded'."""
+    statuses = [f.get("status") for f in faces if f.get("family") == family and _weight_covers(f.get("weight"), weight)]
+    if not statuses:
+        return "absent"
+    if "loaded" in statuses:
+        return "loaded"
+    if "error" in statuses:
+        return "error"
+    return "not loaded"
+
+
+def check_reference_fonts(report, name, capture, board, faces):
+    """The reference board's own faces loaded before its capture (#103)."""
+    if faces is None:
+        report.check("harness-reference", name, capture, "fonts", "faces recorded", "not recorded", "recorded", 0, "",
+                     "a capture without its board's font record cannot show it was drawn in Geist")
+        return
+    for family, weight in REFERENCE_FACES.get(board, DEFAULT_REFERENCE_FACES):
+        report.check("harness-reference", name, capture, "fonts", f"{family} {weight:g} loaded",
+                     face_status(faces, family, weight), "loaded", 0, "",
+                     "the board's own FontFaceSet, read right after its capture")
+    failed = sorted({f"{f.get('family')} {f.get('weight')}" for f in faces if f.get("status") == "error"})
+    report.check("harness-reference", name, capture, "fonts", "faces failed", ", ".join(failed) or "none", "none", 0, "")
+
+
+# The search header's height: the query field the reference's rest clicks
+# to focus lies inside it, above every row.
+HEADER_PX = 64
+
+
+def pointer_rest(pointer):
+    """Where a reference capture's pointer was, against where the capture
+    put it (#103): (measured, expected). Before the scenario's own pointer
+    steps it rests off the board (parked) or on the query field (the rest's
+    click), never over a row a leftover position could hover; after them it
+    is on the board."""
+    if not pointer:
+        return "not recorded", "recorded"
+    on_board = pointer.get("board")
+    if pointer.get("steps"):
+        return ("on the board" if on_board else "off the board"), "on the board"
+    expected = "off the board or on the query field"
+    if on_board is None:
+        return expected, expected
+    if pointer.get("fieldClick") and on_board[1] < HEADER_PX:
+        return expected, expected
+    return f"over the board at {on_board[0]:.0f},{on_board[1]:.0f}", expected
+
+
+def check_reference_pointer(report, name, capture, pointer):
+    measured, expected = pointer_rest(pointer)
+    report.check("harness-reference", name, capture, "pointer", "where the capture put it", measured, expected, 0, "",
+                 "headless Chrome has no OS cursor; this script's moves are the only pointer")
+
+
+def scale_parity(run, reference):
+    """(native, reference) device scale: the native window's DPI over 96
+    against the reference's device scale factor. Parity compares the two
+    sides only at the same scale (#103)."""
+    native = (run.get("dpi") or 0) / 96 if run.get("dpi") else None
+    return native, reference.get("deviceScaleFactor")
 
 
 def box_edges(image, rect, background, fill, scale=1.0, margin=2, avoid=(), chroma=False):

@@ -553,6 +553,19 @@ window.__wb = {
     const doc = this.frame(0).contentDocument;
     return Array.from(doc.fonts).map((f) => ({ family: f.family, weight: f.weight, style: f.style, status: f.status }));
   },
+  // A board's own font faces and whether each loaded (#103: a face that
+  // failed or never loaded would draw the board in a fallback). Every board
+  // is its own document with its own FontFaceSet.
+  fontsOf(index) {
+    const doc = this.frame(index).contentDocument;
+    return Array.from(doc.fonts).map((f) => ({
+      family: f.family.replace(/^["']|["']$/g, ''), weight: f.weight, style: f.style, status: f.status,
+    }));
+  },
+  fontsReady(index) {
+    const frames = index === undefined ? Array.from(document.querySelectorAll('iframe')) : [this.frame(index)];
+    return Promise.all(frames.map((f) => (f.contentDocument ? f.contentDocument.fonts.ready : null))).then(() => true);
+  },
 };
 true`;
 
@@ -752,6 +765,7 @@ async function load() {
     if (frames[index].hasProps) await evaluate(`__wb.setWindows(${index})`);
   }
   await evaluate('document.fonts.ready.then(() => true)');
+  await evaluate('__wb.fontsReady()');
   await sleep(700);
   return evaluate('__wb.frames()');
 }
@@ -770,8 +784,31 @@ const KEYS = {
   escape: { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 },
 };
 
+// Where this script last put Chrome's pointer, in page coordinates. Headless
+// Chrome has no OS cursor: this is the only pointer the boards ever see.
+let pointerAt = null;
+
 async function pointerTo(x, y) {
+  pointerAt = [x, y];
   await call('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none' });
+}
+
+// Parks the pointer on the page outside every board before a scenario
+// (#103), so where an earlier scenario left it can never hover a board.
+async function parkPointer(frames) {
+  const inside = ([x, y]) => frames.some(({ frame: [fx, fy, fw, fh] }) => x >= fx && x < fx + fw && y >= fy && y < fy + fh);
+  const spot = [[2, 2], [1597, 2], [2, 9597], [1597, 9597]].find((point) => !inside(point));
+  if (!spot) throw new Error('no place on the page lies outside every board to park the pointer');
+  await pointerTo(spot[0], spot[1]);
+}
+
+// Where the pointer is relative to a board's glass panel, or null when it
+// lies off the panel.
+function pointerOnBoard(frame, glass) {
+  if (!pointerAt) return null;
+  const x = pointerAt[0] - frame[0] - glass[0];
+  const y = pointerAt[1] - frame[1] - glass[1];
+  return x >= 0 && y >= 0 && x < glass[2] && y < glass[3] ? [x, y] : null;
 }
 
 // The elements a click step names, found on the board by what they show.
@@ -842,6 +879,11 @@ async function runScenario(scenario, rootIndex, frames) {
     : rootIndex;
   if (boardIndex < 0) throw new Error(`the reference has no ${scenario.board} board`);
   const authored = boardIndex !== rootIndex && !INTERACTIVE.has(scenario.board);
+  await parkPointer(frames);
+  // The pointer moves the scenario's own steps made (pointer, point,
+  // click); the rest's click on the query field is counted apart.
+  let pointerSteps = 0;
+  let fieldClick = false;
   if (!authored) {
     // Rest: the query field focused by a real click, as the native fixture
     // opens with its field focused; the pointer is then over the header,
@@ -850,6 +892,7 @@ async function runScenario(scenario, rootIndex, frames) {
     await pointerTo(field.x, field.y);
     await call('Input.dispatchMouseEvent', { type: 'mousePressed', x: field.x, y: field.y, button: 'left', clickCount: 1 });
     await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: field.x, y: field.y, button: 'left', clickCount: 1 });
+    fieldClick = true;
     await sleep(300);
   }
   const record = { name: scenario.name, board: scenario.board ?? 'root', authored, captures: [], steps: scenario.steps };
@@ -866,10 +909,15 @@ async function runScenario(scenario, rootIndex, frames) {
       const state = await evaluate(`__wb.${STATES[scenario.board] ?? 'state'}(${boardIndex})`);
       const frame = frames[boardIndex].frame;
       const glass = (await evaluate('__wb.frames()'))[boardIndex].glass;
+      await evaluate(`__wb.fontsReady(${boardIndex})`);
       const shot = await screenshot(join(dir, `${step.name}.png`), frame, glass);
-      record.captures.push({ name: step.name, after: [...after], file: `${scenario.name}/${step.name}.png`, width: shot.width, height: shot.height, state });
+      // The board's faces as captured, and where the pointer was (#103).
+      const fonts = await evaluate(`__wb.fontsOf(${boardIndex})`);
+      const pointer = { page: pointerAt, board: pointerOnBoard(frame, glass), steps: pointerSteps, fieldClick };
+      record.captures.push({ name: step.name, after: [...after], file: `${scenario.name}/${step.name}.png`, width: shot.width, height: shot.height, state, fonts, pointer });
       continue;
     }
+    if (['pointer', 'point', 'click'].includes(step.action)) pointerSteps++;
     if (step.action === 'pointer' && authored) {
       // A static board's element at the step's index, from a pixel to its
       // left, as the native side arrives.
@@ -968,6 +1016,7 @@ try {
       const shot = await screenshot(join(out, 'boards', `${slug}.png`), frame.frame, frame.glass);
       board.file = `boards/${slug}.png`;
       board.image = [shot.width, shot.height];
+      board.fonts = await evaluate(`__wb.fontsOf(${index})`);
     }
     manifest.boards.push(board);
   }
