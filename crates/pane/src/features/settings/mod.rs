@@ -70,12 +70,14 @@ use crate::ui::motion;
 use crate::ui::settings_shell::{self, SidebarItem};
 use crate::{FocusNext, FocusPrevious};
 
-mod about;
+// The pages the visual workbench's fixture draws through their own
+// compositions (#98, #99) are visible to it.
+pub(crate) mod about;
 pub(crate) mod appearance;
-mod extensions;
-mod general;
-mod keyboard;
-mod launcher;
+pub(crate) mod extensions;
+pub(crate) mod general;
+pub(crate) mod keyboard;
+pub(crate) mod launcher;
 mod search;
 mod shortcuts;
 

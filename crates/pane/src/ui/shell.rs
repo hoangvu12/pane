@@ -11,7 +11,7 @@
 //! reaches both.
 
 use gpui::prelude::*;
-use gpui::{AnyElement, Div, Role, SharedString, Stateful, div};
+use gpui::{AnyElement, Div, Role, SharedString, Stateful, WindowControlArea, div};
 
 use crate::ui::theme::Theme;
 
@@ -48,16 +48,6 @@ pub(crate) struct SectionLabel {
     pub(crate) first: usize,
     pub(crate) label: SharedString,
     pub(crate) note: Option<SharedString>,
-}
-
-impl From<&pane_core::Section> for SectionLabel {
-    fn from(section: &pane_core::Section) -> Self {
-        Self {
-            first: section.first,
-            label: section.label.clone().into(),
-            note: section.note.clone().map(SharedString::from),
-        }
-    }
 }
 
 /// The result list's children: `rows` in order, each section's label
@@ -116,4 +106,24 @@ pub(crate) fn section_label(label: SharedString, note: Option<SharedString>, the
         .when_some(note, |label, note| {
             label.child(div().font_weight(typography.regular).child(note))
         })
+}
+
+/// A launcher screen's heading (every screen but the search screens, whose
+/// header is the query field): the screen's `title` in the row title's
+/// 14/500, 20px in from either side and 12px above and below, truncating
+/// rather than eating the screen. It is also the screen's drag region:
+/// with the native title bar hidden, it is the one place outside an
+/// editable field to grab the window by. Shared by the launcher and the
+/// visual workbench's form scenario (#99).
+pub(crate) fn screen_heading(title: impl Into<SharedString>, theme: &Theme) -> Div {
+    div()
+        .flex_none()
+        .px(theme.geometry.search_padding_x)
+        .py(theme.geometry.screen_padding_y)
+        .truncate()
+        .text_size(theme.typography.row_title_size)
+        .font_weight(theme.typography.medium)
+        .text_color(theme.text_title)
+        .window_control_area(WindowControlArea::Drag)
+        .child(title.into())
 }

@@ -354,6 +354,9 @@ pub(crate) struct Geometry {
     /// keeps the browser's own 2px inline padding, so its text begins 2px
     /// after the field does.
     pub(crate) search_text_inset: Pixels,
+    /// A launcher screen's 12 above and below its heading, and above and
+    /// below a form's fields (their sides are the search header's 20).
+    pub(crate) screen_padding_y: Pixels,
     /// The result list's padding above its first row (the reference's
     /// root body: 4).
     pub(crate) list_padding_top: Pixels,
@@ -1027,6 +1030,43 @@ pub(crate) struct ControlGeometry {
     /// A disabled field's opacity: the reference's 40% for the sliders
     /// Solid disables, Pane's for any control it cannot offer.
     pub(crate) disabled_opacity: f32,
+    /// A settings row (#99), the toggle row generalized: at least the
+    /// toggle row's 44, 10 above and below a label that has a description
+    /// under it, and 16 between the text and the row's control. Derived:
+    /// the board's toggle rows carry no description.
+    pub(crate) row_padding_y: Pixels,
+    pub(crate) row_gap: Pixels,
+    /// The gap between a button's parts (`.pill`'s 6; its box is the
+    /// result layouts' pill's, [`ResultGeometry`]), and between the
+    /// controls at a settings row's end.
+    pub(crate) button_gap: Pixels,
+    /// The 2px between a Settings list's entries (an extension's, a group
+    /// of commands'), as the sidebar's items stand.
+    pub(crate) list_gap: Pixels,
+    /// A field's well, the sidebar search's family: 34 high on its own
+    /// line, 30 inside a settings row (a button's height), 10 either side,
+    /// radius 8, 8 between its 14px glyph and its text. A recorder's well
+    /// is at least 96 wide, so an empty one is still a target.
+    pub(crate) well_height: Pixels,
+    pub(crate) inline_well_height: Pixels,
+    pub(crate) well_padding_x: Pixels,
+    pub(crate) well_radius: Pixels,
+    pub(crate) well_gap: Pixels,
+    pub(crate) well_glyph: Pixels,
+    pub(crate) recorder_min_width: Pixels,
+    /// A pressable list row's radius (the sidebar item's 8) and the 14px
+    /// chevron at its right end.
+    pub(crate) list_radius: Pixels,
+    pub(crate) chevron: Pixels,
+    /// A select's list row: 4 above and below its label and description
+    /// (Pane's own: the Actions panel's entries hold one line), and the
+    /// committed choice's mark, a 6px disc.
+    pub(crate) menu_padding_y: Pixels,
+    pub(crate) mark_size: Pixels,
+    /// The host's frame around an extension's own view: 4 of padding (the
+    /// part of the frame a press only focuses) and radius 10.
+    pub(crate) frame_padding: Pixels,
+    pub(crate) frame_radius: Pixels,
 }
 
 /// The Appearance page's live preview (#98): the reference board's 400×520
@@ -1358,6 +1398,7 @@ impl Geometry {
             search_gap: px(14.),
             search_glyph_size: px(20.),
             search_text_inset: px(2.),
+            screen_padding_y: px(12.),
             list_padding_top: px(4.),
             list_padding_bottom: px(10.),
             list_padding_x: px(10.),
@@ -1442,6 +1483,23 @@ impl Geometry {
                 toggle_inset: px(3.),
                 focus_width: px(2.),
                 disabled_opacity: 0.4,
+                row_padding_y: px(10.),
+                row_gap: px(16.),
+                button_gap: px(6.),
+                list_gap: px(2.),
+                well_height: px(34.),
+                inline_well_height: px(30.),
+                well_padding_x: px(10.),
+                well_radius: px(8.),
+                well_gap: px(8.),
+                well_glyph: px(14.),
+                recorder_min_width: px(96.),
+                list_radius: px(8.),
+                chevron: px(14.),
+                menu_padding_y: px(4.),
+                mark_size: px(6.),
+                frame_padding: px(4.),
+                frame_radius: px(10.),
             },
             preview: PreviewGeometry {
                 stage_height: px(520.),

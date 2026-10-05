@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use gpui::{
     App, ClipboardItem, Context, Div, EntityInputHandler, FocusHandle, Hsla, KeyDownEvent,
     MouseMoveEvent, PathPromptOptions, Pixels, Point, Role, ScrollHandle, SharedString, Size,
-    Stateful, Window, WindowControlArea, div, prelude::*, px, relative,
+    Stateful, Window, div, prelude::*, px, relative,
 };
 use pane_core::changes::Changes;
 use pane_core::hotkeys::Shortcut;
@@ -1418,18 +1418,7 @@ impl Render for LauncherWindow {
         // truncates instead of eating the list.
         let heading = match &view.screen {
             Screen::Root { .. } => None,
-            _ => Some(
-                div()
-                    .flex_none()
-                    .px(theme.geometry.search_padding_x)
-                    .py(px(12.))
-                    .truncate()
-                    .text_size(theme.typography.row_title_size)
-                    .font_weight(theme.typography.medium)
-                    .text_color(theme.text_title)
-                    .window_control_area(WindowControlArea::Drag)
-                    .child(view.title.clone()),
-            ),
+            _ => Some(shell::screen_heading(view.title.clone(), &theme)),
         };
 
         // The content that changes between screens — the results, a form,
@@ -1679,11 +1668,18 @@ pub(crate) fn action_button(
 /// The launcher presentation's section labels, as the shared list draws
 /// them.
 fn section_labels(presentation: &Presentation) -> Vec<shell::SectionLabel> {
-    presentation
-        .sections
-        .iter()
-        .map(shell::SectionLabel::from)
-        .collect()
+    presentation.sections.iter().map(section_label).collect()
+}
+
+/// A launcher section as the shared list labels it: the adapter between
+/// the core's section and the presentation value (the shared UI imports no
+/// core types).
+pub(crate) fn section_label(section: &pane_core::Section) -> shell::SectionLabel {
+    shell::SectionLabel {
+        first: section.first,
+        label: section.label.clone().into(),
+        note: section.note.clone().map(SharedString::from),
+    }
 }
 
 /// The icon presentation for a row, chosen by the row's stable id: the

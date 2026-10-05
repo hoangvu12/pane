@@ -13,6 +13,9 @@ mod platforms;
 #[path = "support/settle.rs"]
 mod settle;
 
+#[path = "support/paint.rs"]
+mod paint;
+
 #[path = "../../pane-core/tests/support/artifacts.rs"]
 mod artifacts;
 
@@ -458,6 +461,57 @@ fn clicking_a_choice_and_the_submit_button_submits_the_form(cx: &mut TestAppCont
         settle(&window, cx).status,
         Status::Result("Welcome, Ada, from the Rust guest".into())
     );
+}
+
+/// The form is drawn with the Settings field families (#99), the
+/// launcher's own copies of their styling gone: each field a label 8px
+/// over its control — a text field a 34px well (black 24% under its
+/// ring), a choice the segmented track (black 24%) whose chosen segment
+/// takes the white 12% wash — and the submit control a 30px button on
+/// white 8%. A rejected field's error stands under its control.
+#[gpui::test]
+fn the_form_draws_the_settings_field_families(cx: &mut TestAppContext) {
+    let (window, cx) = open(cx, &RUST);
+    open_form(&window, cx);
+    // The form arrives over the view transition's fade; its fills are read
+    // once it has settled.
+    settle_frames(cx);
+
+    let name = cx.debug_bounds("field-name").expect("the name field");
+    assert_eq!(name.size.height, px(34.), "a field's well");
+    assert!(paint::paints_fill_at(cx, name, 0x0000003D), "black 24%");
+    let label = cx
+        .debug_bounds("field-label-name")
+        .expect("the name's label");
+    assert_eq!(name.top(), label.bottom() + px(8.), "the label over it");
+
+    let greeting = cx.debug_bounds("field-greeting").expect("the choice");
+    assert_eq!(greeting.size.height, px(36.), "a segmented track");
+    assert!(paint::paints_fill_at(cx, greeting, 0x0000003D), "black 24%");
+    let welcome = cx
+        .debug_bounds("choice-greeting-welcome")
+        .expect("a segment");
+    cx.simulate_click(welcome.center(), Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(field_value(&window, cx, "greeting"), "welcome");
+    assert_eq!(welcome.size.height, px(30.), "a segment");
+    assert!(
+        paint::paints_fill_at(cx, welcome, 0xFFFFFF1F),
+        "the chosen segment's white 12%"
+    );
+
+    let submit = cx.debug_bounds("submit").expect("the submit button");
+    assert_eq!(submit.size.height, px(30.), "a button");
+    assert!(paint::paints_fill_at(cx, submit, 0xFFFFFF14), "white 8%");
+
+    // Submitted with the name empty: the error stands under the field.
+    cx.simulate_click(submit.center(), Modifiers::none());
+    settle(&window, cx);
+    let error = cx
+        .debug_bounds("field-error-name")
+        .expect("the field's error");
+    let name = cx.debug_bounds("field-name").expect("the name field");
+    assert!(error.top() >= name.bottom(), "{error:?} under {name:?}");
 }
 
 #[gpui::test]

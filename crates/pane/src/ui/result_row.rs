@@ -76,13 +76,9 @@ pub(crate) struct RowMeta {
     pub(crate) kind: Option<SharedString>,
 }
 
-/// A result row showing `content`. See the module docs for the identity,
-/// accessibility and behavior the caller adds to the returned [`Div`].
-pub(crate) fn result_row(content: RowContent, theme: &Theme) -> Div {
-    result_row_with(content, RowMeta::default(), theme)
-}
-
-/// A result row showing `content` with `meta`'s parts.
+/// A result row showing `content` with `meta`'s parts. See the module docs
+/// for the identity, accessibility and behavior the caller adds to the
+/// returned [`Div`].
 pub(crate) fn result_row_with(content: RowContent, meta: RowMeta, theme: &Theme) -> Div {
     let geometry = &theme.geometry;
     let typography = &theme.typography;

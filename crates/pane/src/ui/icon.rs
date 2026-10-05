@@ -79,14 +79,8 @@ pub(crate) enum Glyph {
 
     /// A cog: the Settings root row and the Settings window's sidebar.
     Gear,
-    /// A globe: the web, and Settings' documentation entry.
+    /// A globe: the web.
     Globe,
-    /// A down arrow over a line: the Settings About page's update rows,
-    /// whose choice downloads a package.
-    Download,
-    /// Two overlapping squares: the Settings About page's copy of the
-    /// diagnostics it already holds.
-    Copy,
     /// A keyboard: the Settings window's Keyboard section.
     Keyboard,
     /// A chevron pointing right: a group of rows — rotated to point
@@ -174,8 +168,6 @@ impl Glyph {
         Glyph::Target,
         Glyph::Gear,
         Glyph::Globe,
-        Glyph::Download,
-        Glyph::Copy,
         Glyph::Keyboard,
         Glyph::ChevronRight,
         Glyph::Theme,
@@ -221,8 +213,6 @@ impl Glyph {
             Glyph::Target => include_bytes!("../../assets/icons/target.svg"),
             Glyph::Gear => include_bytes!("../../assets/icons/gear.svg"),
             Glyph::Globe => include_bytes!("../../assets/icons/globe.svg"),
-            Glyph::Download => include_bytes!("../../assets/icons/download.svg"),
-            Glyph::Copy => include_bytes!("../../assets/icons/copy.svg"),
             Glyph::Keyboard => include_bytes!("../../assets/icons/keyboard.svg"),
             Glyph::ChevronRight => include_bytes!("../../assets/icons/chevron-right.svg"),
             Glyph::Theme => include_bytes!("../../assets/icons/theme.svg"),
