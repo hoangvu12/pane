@@ -365,7 +365,7 @@ def panel_background(image, y, scale=1.0):
     return median_color(image, (3 * scale, y - 3 * scale, 8 * scale, y + 3 * scale))
 
 
-def row_wash(image, rect, scale=1.0, floor=False, lighter=True):
+def row_wash(image, rect, scale=1.0, floor=False, lighter=True, ceiling=False):
     """A row's wash, measured column by column: the strip just under its
     top edge (above the tile and the text) against the list gaps just above
     and below the row, interpolated to the strip's height. The panels'
@@ -373,7 +373,11 @@ def row_wash(image, rect, scale=1.0, floor=False, lighter=True):
     wallpaper under a fading sheen), so each column's wash is measured
     against the background directly beside it; the median over the columns
     is the row's. A row whose height is only a floor (it may grow) uses the
-    gap above alone. Returns the median fill, background and overlay alpha
+    gap above alone. A row flush with its list's top edge (ceiling) has no
+    gap above, and a backdrop that shades down the panel makes the gap below
+    a different background: its columns are read against the list's side
+    padding beside its two ends, at the strip's own rows, interpolated
+    across the row. Returns the median fill, background and overlay alpha
     (levels)."""
     x, y, w, h = scaled(rect, scale)
     data = image.load()
@@ -382,13 +386,22 @@ def row_wash(image, rect, scale=1.0, floor=False, lighter=True):
     if top - 1 < 0 or bottom >= image.height:
         return None
     weight = 0.0 if floor else (strip - (top - 1)) / (bottom - (top - 1))
+    if ceiling:
+        ends = (median_color(image, (x - 6 * scale, strip - 1, x - 2 * scale, strip + 2)),
+                median_color(image, (x + w + 2 * scale, strip - 1, x + w + 6 * scale, strip + 2)))
+        if None in ends:
+            return None
     alphas, fills, backgrounds = [], [], []
     for column in range(int(x + 14 * scale), int(x + w - 14 * scale)):
         if not 0 <= column < image.width:
             continue
-        above = data[column, top - 1]
-        below = above if floor else data[column, bottom]
-        background = tuple(a + (b - a) * weight for a, b in zip(above, below))
+        if ceiling:
+            across = (column - (x - 4 * scale)) / (w + 8 * scale)
+            background = tuple(a + (b - a) * across for a, b in zip(*ends))
+        else:
+            above = data[column, top - 1]
+            below = above if floor else data[column, bottom]
+            background = tuple(a + (b - a) * weight for a, b in zip(above, below))
         fill = tuple(statistics.mean(data[column, r][i] for r in (strip - 1, strip, strip + 1)) for i in range(3))
         alpha = overlay_alpha(fill, background, lighter)
         if alpha is not None:
@@ -404,11 +417,11 @@ def row_wash(image, rect, scale=1.0, floor=False, lighter=True):
     }
 
 
-def measure_row(image, rect, washed, text_color, scale=1.0, floor=False, pal=DARK):
+def measure_row(image, rect, washed, text_color, scale=1.0, floor=False, pal=DARK, ceiling=False):
     """What the image shows for a row at the given rect."""
     result = {}
     lighter = pal["lighter"]
-    wash = row_wash(image, rect, scale, floor, lighter)
+    wash = row_wash(image, rect, scale, floor, lighter, ceiling)
     if wash is None:
         return result
     result["alpha"] = wash["alpha"]
@@ -3337,10 +3350,16 @@ def parity_board(report, name, capture, declared, manifest, native, scale, state
 # ------------------------------------------------- the clipboard split view (#102)
 
 # The reference's list scrolls a row the keys select into view with an 8px
-# cushion past its edge (componentDidUpdate); GPUI's scroll_to_item scrolls
-# the least that shows the row, so a row scrolled into view sits 8px apart.
+# cushion past its edge (componentDidUpdate; the board runtime never runs
+# it on the board's frame, so the reference capture applies it the same
+# way, __wb.clipboardScroll); GPUI's scroll_to_item scrolls the least that
+# shows the row, so a row scrolled into view sits 8px apart.
 CUSHION_DISPOSITION = ("accepted (#102): the reference scrolls the selected clip 8px past the list's edge; "
                        "GPUI's scroll_to_item scrolls the least that shows it, as root search's list does")
+CUSHION_PX = 8
+NO_CLIP_ACTIONS = ("accepted (#102): with no clip listed there is nothing to paste or copy. The approved contract "
+                   "(#102: 'zero records means no preview and no primary action') shows only Actions then; the "
+                   "reference's footer is static and lists Paste to Obsidian and Copy whatever is selected")
 
 
 def card_edges(image, rect, scale=1.0):
@@ -3372,6 +3391,70 @@ def card_edges(image, rect, scale=1.0):
     top, bottom = min(dark_y), max(dark_y) + 1
     return {"edges": (left / scale, top / scale, (right - left) / scale, (bottom - top) / scale),
             "fill": fill, "background": background}
+
+
+def cushioned(scrolled, n_rect, r_rect):
+    """Whether a part of a scrolled list lies where the reference's 8px
+    cushion puts it: the reference scrolled 8px further, so its part sits
+    8px higher than Pane's, to the edge limit."""
+    return scrolled and abs((n_rect[1] - r_rect[1]) - CUSHION_PX) <= LIMITS["edge_px"]
+
+
+def card_box(image, rect, scale=1.0):
+    """The preview card around rect = (x, y, w, h), logical, read against
+    the panel just outside each edge (local_edges): its 1px white 7% ring
+    is its outermost pixel. Its fill (black 24%) as an overlay, read just
+    inside its left and right edges against the panel just outside them,
+    at the same rows, below its content. The reference's glass shades the
+    card's backdrop across and down it, so a fill read far from the panel
+    it is compared with misreads it. Returns {"edges", "alpha"} in logical
+    px and levels, or None."""
+    x, y, w, h = rect
+    edges = local_edges(image, scaled(rect, scale), scale)
+    alphas = []
+    for inside, outside in ((x + 3, x - 8), (x + w - 8, x + w + 3)):
+        fill = mean_color(image, box_px((inside, y + h * 0.6, 5, h * 0.3), scale))
+        panel = mean_color(image, box_px((outside, y + h * 0.6, 5, h * 0.3), scale))
+        if fill and panel:
+            alphas.append(black_alpha(fill, panel))
+    return {"edges": tuple(v / scale for v in edges) if edges else None,
+            "alpha": statistics.mean(alphas) if alphas and None not in alphas else None}
+
+
+def clip_wash_sides(image, rect, scale=1.0):
+    """A clip row's wash left and right, logical px, read against the list's
+    padding just beside each end (local_edges, 4px out: the padding is 8px,
+    and the panel's own edge ring lies at its outer end), or None."""
+    edges = local_edges(image, scaled(rect, scale), scale, out=4)
+    if not edges:
+        return None
+    return edges[0] / scale, (edges[0] + edges[2]) / scale
+
+
+def measure_clip_row(image, rect, list_rect, washed, title_color, scale=1.0, pal=DARK):
+    """A clip row as measure_row reads it, with two differences. A row
+    flush with the list's bottom (the keys scrolled it there by the least
+    that shows it) has no list gap below it, only the footer's rule, so its
+    wash is read against the gap above alone; one flush with the list's top
+    (the reference's cushion scrolls the list that far), against the list's
+    padding beside it (see row_wash). A washed row's left and right
+    are read against the list's padding beside each end (clip_wash_sides):
+    the list's 8px padding is narrower than wash_edges' margin, which
+    reached the panel's edge ring, and the reference's glass is lighter
+    beside the row's right end than beside its left."""
+    flush = rect[1] + rect[3] >= list_rect[1] + list_rect[3] - 0.5
+    ceiling = rect[1] <= list_rect[1] + 0.5
+    measured = measure_row(image, rect, washed, title_color, scale, floor=flush, pal=pal, ceiling=ceiling)
+    if washed and measured.get("edges"):
+        sides = clip_wash_sides(image, rect, scale)
+        left, top, width, height = measured["edges"]
+        if sides:
+            left, width = sides[0], sides[1] - sides[0]
+        # The list's viewport clips a flush row; past it lies the footer's
+        # rule, lighter than the panel, which a wash's run would take in.
+        height = min(top + height, list_rect[1] + list_rect[3]) - top
+        measured["edges"] = (left, top, width, height)
+    return measured
 
 
 def tab_wash(image, rect, scale=1.0, lighter=True):
@@ -3444,7 +3527,7 @@ def compare_clipboard(report, name, capture, declared, manifest, native, scale, 
             continue
         rect = as_tuple(row["rect"])
         washed = row["selected"] or row["hovered"]
-        measured = measure_row(native, rect, washed, title_color, scale, pal=pal)
+        measured = measure_clip_row(native, rect, list_rect, washed, title_color, scale, pal)
         native_rows[row["title"]] = (row, measured)
         subject = f"clip:{row['title']}"
         if row["selected"]:
@@ -3533,7 +3616,7 @@ def compare_clipboard(report, name, capture, declared, manifest, native, scale, 
             continue
         rect = as_tuple(row["rect"])
         washed = row["selected"] or row["hovered"]
-        measured = measure_row(reference_image, rect, washed, title_color)
+        measured = measure_clip_row(reference_image, rect, as_tuple(state["list"]), washed, title_color)
         ref_rows[row["title"]] = (row, measured)
         report.check("harness-reference", name, capture, f"clip:{row['title']}", "wash alpha vs DOM background",
                      measured.get("alpha"), css_rgba(row["background"])[3], LIMITS["flat_fill_levels"], "levels",
@@ -3569,7 +3652,7 @@ def compare_clipboard(report, name, capture, declared, manifest, native, scale, 
         n_rect, r_rect = as_tuple(row["rect"]), as_tuple(ref_row["rect"])
         crops.append(("parity-clip-" + title, n_rect, r_rect))
         report.check("parity", name, capture, subject, "top in client", n_rect[1], r_rect[1], LIMITS["edge_px"], "px",
-                     accepted=CUSHION_DISPOSITION if scrolled else None)
+                     accepted=CUSHION_DISPOSITION if cushioned(scrolled, n_rect, r_rect) else None)
         report.check("parity", name, capture, subject, "left and width",
                      f"{n_rect[0]:g}/{n_rect[2]:g}", f"{r_rect[0]:g}/{r_rect[2]:g}", 0, "")
         report.check("parity", name, capture, subject, "wash alpha", measured.get("alpha"), ref_measured.get("alpha"),
@@ -3607,7 +3690,7 @@ def compare_clipboard(report, name, capture, declared, manifest, native, scale, 
         subject = f"clip-section:{label['label']}"
         n_rect, r_rect = as_tuple(label["rect"]), as_tuple(ref["rect"])
         report.check("parity", name, capture, subject, "top in client", n_rect[1], r_rect[1], LIMITS["edge_px"], "px",
-                     accepted=CUSHION_DISPOSITION if scrolled else None)
+                     accepted=CUSHION_DISPOSITION if cushioned(scrolled, n_rect, r_rect) else None)
         n_left, _ = section_ink(native, n_rect, scale, pal)
         r_left, _ = section_ink(reference_image, r_rect)
         if n_left and r_left:
@@ -3639,15 +3722,14 @@ def compare_clipboard(report, name, capture, declared, manifest, native, scale, 
                      state["card"]["kind"] if state.get("card") else "none", 0, "",
                      "no clip listed: no preview card on either side")
     if preview and state.get("card") and preview["kind"] in ("code", "text"):
-        mine = card_edges(native, as_tuple(preview["rect"]), scale)
-        theirs = card_edges(reference_image, as_tuple(state["card"]["rect"]))
-        if mine and theirs:
-            for prop, index in (("left", 0), ("top", 1), ("width", 2), ("height", 3)):
-                report.check("parity", name, capture, "clip-preview", f"card {prop}", mine["edges"][index],
-                             theirs["edges"][index], LIMITS["edge_px"], "px")
-            report.check("parity", name, capture, "clip-preview", "card fill alpha",
-                         black_alpha(mine["fill"], mine["background"]),
-                         black_alpha(theirs["fill"], theirs["background"]), LIMITS["flat_fill_levels"], "levels")
+        mine = card_box(native, as_tuple(preview["rect"]), scale)
+        theirs = card_box(reference_image, as_tuple(state["card"]["rect"]))
+        for prop, index in (("left", 0), ("top", 1), ("width", 2), ("height", 3)):
+            report.check("parity", name, capture, "clip-preview", f"card {prop}",
+                         mine["edges"] and mine["edges"][index], theirs["edges"] and theirs["edges"][index],
+                         LIMITS["edge_px"], "px")
+        report.check("parity", name, capture, "clip-preview", "card fill alpha", mine["alpha"], theirs["alpha"],
+                     LIMITS["flat_fill_levels"], "levels")
         crops.append(("parity-clip-preview", as_tuple(preview["rect"]), as_tuple(state["card"]["rect"])))
     if state.get("copied"):
         report.check("parity", name, capture, "clip-copied", "text", copied["text"], state["copied"]["text"], 0, "")
@@ -3659,9 +3741,13 @@ def compare_clipboard(report, name, capture, declared, manifest, native, scale, 
             for prop in ("left", "top"):
                 report.check("parity", name, capture, "clip-copied", f"ink {prop}", lead[prop], theirs[prop],
                              LIMITS["edge_px"], "px")
-    report.check("parity", name, capture, "clip-footer", "buttons",
-                 " | ".join(button["text"] for button in clip.get("buttons", [])),
-                 " | ".join(button["label"] for button in state.get("buttons", [])), 0, "")
+    n_buttons = [button["text"] for button in clip.get("buttons", [])]
+    r_buttons = [button["label"] for button in state.get("buttons", [])]
+    # With no clip selected Pane keeps only the buttons that need none: the
+    # reference's own buttons, less those that act on a clip.
+    idle = not preview and n_buttons == r_buttons[len(r_buttons) - len(n_buttons):]
+    report.check("parity", name, capture, "clip-footer", "buttons", " | ".join(n_buttons), " | ".join(r_buttons), 0,
+                 "", accepted=NO_CLIP_ACTIONS if idle else None)
     if state.get("empty") or clip.get("empty"):
         report.check("parity", name, capture, "clip-empty", "note",
                      clip["empty"]["text"] if clip.get("empty") else "",

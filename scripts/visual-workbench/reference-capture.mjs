@@ -448,6 +448,23 @@ window.__wb = {
       columns: columns.map((column) => this.rel(index, column)),
     };
   },
+  // The clipboard board's logic scrolls a clip the keys select into view,
+  // 8px past the list's edge (componentDidUpdate, through the global
+  // document), which this board runtime never runs against the board's
+  // frame: its list stays where it was. The capture scrolls it as that
+  // logic would, with the same arithmetic; a clip in view is left alone.
+  clipboardScroll(index) {
+    const doc = this.frame(index).contentDocument;
+    const el = doc.querySelector('.row.sel');
+    const list = el && el.closest('.list');
+    if (!el || !list) return null;
+    const r = el.getBoundingClientRect();
+    const lr = list.getBoundingClientRect();
+    const scale = lr.height / (list.offsetHeight || 1);
+    if (r.bottom > lr.bottom) list.scrollTop += (r.bottom - lr.bottom) / scale + 8;
+    else if (r.top < lr.top) list.scrollTop -= (lr.top - r.top) / scale + 8;
+    return list.scrollTop;
+  },
   // The clipboard board (#102): its header, tab strip, list (rows, day
   // labels, the note in place of rows), preview card and footer, relative
   // to its glass panel. The preview's branch is told by the card's first
@@ -745,6 +762,10 @@ async function runScenario(scenario, rootIndex, frames) {
       if (!key) throw new Error(`unknown key ${step.key}`);
       await call('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...key });
       await call('Input.dispatchKeyEvent', { type: 'keyUp', ...key });
+      if (scenario.board === 'clipboard') {
+        await sleep(150);
+        await evaluate(`__wb.clipboardScroll(${boardIndex})`);
+      }
     } else if (step.action === 'click') {
       const target = CLICK_TARGETS[step.target];
       if (!target) throw new Error(`unknown click target ${step.target}`);

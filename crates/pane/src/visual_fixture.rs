@@ -4237,6 +4237,27 @@ fn keys_width(window: &Window, theme: &Theme, keys: &keycap::KeySequence, style:
     widths.iter().map(|(_, width)| width).sum::<f32>() + gaps
 }
 
+/// The width `keys` lays out to in `style`, as [`keys_width`] but with
+/// each cap's label box rounded up to a whole pixel, as GPUI's text
+/// element lays it out: where a chain of caps and labels places a part.
+fn laid_keys_width(
+    window: &Window,
+    theme: &Theme,
+    keys: &keycap::KeySequence,
+    style: CapStyle,
+) -> f32 {
+    let CapMetrics {
+        height, padding_x, ..
+    } = style.metrics(theme);
+    let widths = cap_widths(window, theme, keys, style, None);
+    let gaps = widths.len().saturating_sub(1) as f32 * f32::from(theme.geometry.key_gap);
+    widths
+        .iter()
+        .map(|(label, _)| (label.ceil() + 2. * f32::from(padding_x)).max(f32::from(height)))
+        .sum::<f32>()
+        + gaps
+}
+
 fn declared_group(
     window: &Window,
     theme: &Theme,
@@ -6056,8 +6077,12 @@ fn declare_clipboard(
     let geometry = &theme.geometry;
     let typography = &theme.typography;
     let f = f32::from;
-    let label_width =
-        |text: &str, size: Pixels| shaped_width(window, theme, text, size, typography.medium);
+    // Each label is a text box, which GPUI lays out at its shaped width
+    // rounded up to a whole pixel: the tabs and the footer's buttons chain
+    // several, so their places are declared at the laid-out widths.
+    let label_width = |text: &str, size: Pixels| {
+        shaped_width(window, theme, text, size, typography.medium).ceil()
+    };
     for capture in captures.iter_mut() {
         let Some(clip) = capture.clipboard.as_mut() else {
             continue;
@@ -6116,7 +6141,7 @@ fn declare_clipboard(
                     let width = 2. * f(geometry.action_padding_x)
                         + label_width(label, typography.footer_size)
                         + f(geometry.action_gap)
-                        + keys_width(window, theme, &keys, style);
+                        + laid_keys_width(window, theme, &keys, style);
                     buttons.push(DeclaredText {
                         text: label.to_owned(),
                         rect: Rect {
