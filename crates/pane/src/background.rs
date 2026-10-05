@@ -12,7 +12,7 @@
 //!
 //! [`bake`] makes the backdrop: GPUI CE draws images but has no image
 //! masks, so the whole look the background mockup settled on
-//! (`.scratch/background-mockup`, the "Hero" preset) is composited here,
+//! (`docs/research/background-mockup`, the "Hero" preset) is composited here,
 //! on the CPU, into one opaque frame at the launcher panel's size in
 //! physical pixels — the picture cover-fitted into the panel, the chosen
 //! [`BackgroundEffect`], a blurred copy beneath a sharp one that gives way
