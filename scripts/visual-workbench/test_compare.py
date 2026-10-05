@@ -649,6 +649,23 @@ class PanePages(unittest.TestCase):
         self.assertAlmostEqual(compare.measure_page_part(image, chosen)["alpha"], 0.12 * 255, delta=2)
         self.assertAlmostEqual(compare.measure_page_part(image, rest)["alpha"], 0, delta=0.5)
 
+    def test_a_headings_ink_begins_its_first_glyphs_side_bearing_in(self):
+        # Geist SemiBold's stems sit 80 units in, its G 43 and its A 19: at
+        # the heading's 22px, 1.76, 0.95 and 0.42px.
+        for text, bearing in (("Keyboard", 1.76), ("Launcher", 1.76), ("Extensions", 1.76),
+                              ("General", 0.95), ("Appearance", 0.42)):
+            self.assertAlmostEqual(compare.first_glyph_bearing(text), bearing, delta=0.03, msg=text)
+        self.assertEqual(compare.first_glyph_bearing(""), 0.0)
+
+    def test_an_open_popover_moves_the_sidebars_fill_below_its_shadow(self):
+        layout = {"sidebar": (0, 47, 233, 673),
+                  "items": [{"rect": (8, 330, 216, 36)}]}
+        self.assertEqual(compare.sidebar_rows(layout), (376, 526))
+        self.assertEqual(compare.sidebar_rows(layout, popover=True), (610, 710))
+        # A sidebar too short for both keeps its rows below the last section.
+        short = {"sidebar": (0, 47, 233, 400), "items": [{"rect": (8, 330, 216, 36)}]}
+        self.assertEqual(compare.sidebar_rows(short, popover=True), (376, 437))
+
 
 if __name__ == "__main__":
     unittest.main()

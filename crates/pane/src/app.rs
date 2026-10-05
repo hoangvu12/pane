@@ -1553,34 +1553,11 @@ impl Render for LauncherWindow {
                     .child(footer::footer_row(
                         self.render_menu_button(&theme, cx).into_any_element(),
                         match status.clone() {
-                            Some(text) => div()
-                                // The message's own scroll viewport: past
-                                // the 35% cap the message scrolls here —
-                                // inside the strip — instead of being cut,
-                                // and the strip never scrolls, so the
-                                // buttons and any popup above them stay
-                                // put. The strip's bounds carry the
-                                // status-* debug selectors; this one, the
-                                // message's, lets tests see wrapping and
-                                // scroll. The message fills the room the
-                                // buttons leave and wraps there — a long
-                                // error is several readable lines, never
-                                // one clipped — and the strip grows with
-                                // it.
-                                .id("status-scroll")
-                                .flex_1()
-                                .min_w(px(0.))
-                                .overflow_y_scroll()
-                                .child(
-                                    div()
-                                        .w_full()
-                                        .min_w(px(0.))
-                                        .flex_none()
-                                        .py(px(12.))
-                                        .debug_selector(|| "status-message".into())
-                                        .child(text),
-                                )
-                                .into_any_element(),
+                            // Past the 35% cap the message scrolls in its
+                            // own viewport, inside the strip, instead of
+                            // being cut. The strip's bounds carry the
+                            // status-* debug selectors.
+                            Some(text) => footer::status_message(text, &theme).into_any_element(),
                             None => footer::hint_slot(self.footer_hint(root, &theme, cx), &theme)
                                 .into_any_element(),
                         },

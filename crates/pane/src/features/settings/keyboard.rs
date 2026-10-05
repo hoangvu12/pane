@@ -87,6 +87,9 @@ pub(crate) fn bind_keys(cx: &mut App) {
     ]);
 }
 
+/// The page's heading.
+pub(crate) const TITLE: &str = "Keyboard";
+
 /// What the page is, in one line: its sidebar entry's description in
 /// the search, and its heading's subtitle.
 pub(crate) const ABOUT: &str = "The in-app navigation bindings of Pane's own windows";
@@ -361,7 +364,7 @@ pub(crate) fn compose(
         );
     let column = controls::column(theme)
         .child(
-            settings_shell::page_header("Keyboard", Some(ABOUT.into()), theme)
+            settings_shell::page_header(TITLE, Some(ABOUT.into()), theme)
                 .id("keyboard-title")
                 .debug_selector(|| "keyboard-title".into()),
         )

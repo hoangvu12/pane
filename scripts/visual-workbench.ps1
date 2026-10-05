@@ -142,6 +142,7 @@ if (-not $SkipSensitivity) {
         'hover-fill' = 'wash alpha (hovered)'
         'nav-selected-fill' = 'nav wash alpha (selected)'
         'segment-on-fill' = 'segment on wash alpha'
+        'well-fill' = 'well fill alpha'
     }
     $perturbedScenarios = @{
         'row-padding-plus-4' = @('root-rest', 'root-selected')
@@ -154,9 +155,12 @@ if (-not $SkipSensitivity) {
         'nav-selected-fill' = @('settings-shell')
         # The Appearance page's chosen segment (#98).
         'segment-on-fill' = @('appearance-page')
+        # The wells of Pane's own pages (#99): the Keyboard page's recorders.
+        'well-fill' = @('settings-keyboard')
     }
     $run.sensitivity = [ordered]@{}
-    foreach ($perturb in 'row-padding-plus-4', 'selected-fill', 'hover-fill', 'nav-selected-fill', 'segment-on-fill') {
+    foreach ($perturb in 'row-padding-plus-4', 'selected-fill', 'hover-fill', 'nav-selected-fill', 'segment-on-fill',
+        'well-fill') {
         Step "sensitivity-$perturb" {
             $dir = Join-Path $OutputDir "native-$perturb"
             Capture-Native $dir $perturb $perturbedScenarios[$perturb]

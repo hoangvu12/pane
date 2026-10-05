@@ -336,6 +336,27 @@ pub(crate) fn render_page(
     }
 }
 
+/// The heading and subtitle Settings page `page` shows over its column,
+/// as its composition draws them; `None` for the form, which is a launcher
+/// screen.
+pub(crate) fn heading(page: PanePage) -> Option<(String, Option<String>)> {
+    let fixed = |title: &str, subtitle: &str| Some((title.to_owned(), Some(subtitle.to_owned())));
+    match page {
+        PanePage::General { .. } => fixed(general::TITLE, general::ABOUT),
+        PanePage::Launcher => fixed(launcher::TITLE, launcher::ABOUT),
+        PanePage::Keyboard => fixed(keyboard::TITLE, keyboard::ABOUT),
+        PanePage::Extensions { confirm } => {
+            let view = extensions_view(confirm);
+            Some((
+                view.title,
+                view.subtitle.map(|subtitle| subtitle.to_string()),
+            ))
+        }
+        PanePage::About => fixed(about::TITLE, about::ABOUT),
+        PanePage::Form => None,
+    }
+}
+
 /// The launcher's form screen after a rejected submission, through the
 /// form's own parts and the launcher's screen heading: the name field
 /// (the fixture's own editable field, focused) with its error under it,
@@ -394,18 +415,14 @@ pub(crate) fn render_form(fixture: &FixtureWindow, theme: &Theme, cx: &App) -> D
         form::submit_button(FORM_SUBMIT.to_owned(), theme),
         theme,
     );
-    let status = div()
-        .id("status-message")
-        .flex_1()
-        .min_w(gpui::px(0.))
-        .text_color(theme.danger)
-        .child(FORM_STATUS);
+    // The strip carries the status's tone, as the launcher's does.
     let footer = Material::footer(theme)
         .id("status")
         .text_size(theme.typography.footer_size)
+        .text_color(theme.danger)
         .child(footer::footer_row(
             footer::mark_button(theme).into_any_element(),
-            status.into_any_element(),
+            footer::status_message(FORM_STATUS, theme).into_any_element(),
             footer::buttons(None, None, theme),
             theme,
         ));
@@ -448,6 +465,9 @@ pub(crate) struct DeclaredPart {
 pub(crate) struct DeclaredPage {
     capture: &'static str,
     page: String,
+    /// Whether the select's list is open in this capture: the popover and
+    /// its shadow then lie over the page (and reach the sidebar beside it).
+    select_open: bool,
     parts: Vec<DeclaredPart>,
     colors: PageColors,
 }
@@ -897,6 +917,7 @@ pub(crate) fn declare(
                 declared.push(DeclaredPage {
                     capture: name,
                     page: format!("{page:?}"),
+                    select_open: opened,
                     parts,
                     colors: PageColors {
                         field_fill: Hex(theme.field_fill),

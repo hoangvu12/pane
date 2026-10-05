@@ -433,6 +433,9 @@ pub(crate) struct Geometry {
     /// How far the mark's button box bleeds past the mark on every side,
     /// for its hover wash.
     pub(crate) footer_mark_bleed: Pixels,
+    /// A footer status message's padding above and below each line block:
+    /// one line of it centers in the strip's first line, as the hint does.
+    pub(crate) footer_status_padding_y: Pixels,
     /// A popover's outline width and its drop: offset down, blur and
     /// spread (`0 0 0 .5px`, `0 28px 70px -14px`).
     pub(crate) popover_outline_width: Pixels,
@@ -1560,6 +1563,7 @@ impl Geometry {
             footer_hint_gap: px(6.),
             footer_mark_size: px(18.),
             footer_mark_bleed: px(5.),
+            footer_status_padding_y: px(12.),
             popover_outline_width: px(0.5),
             popover_drop_offset: px(28.),
             popover_drop_blur: px(70.),

@@ -54,6 +54,9 @@ const DOCUMENTATION: &str = "https://github.com/hoangvu12/pane";
 /// search jumps to (see [`entries`]).
 const DOCUMENTATION_ROW: &str = "documentation";
 
+/// The page's heading.
+pub(crate) const TITLE: &str = "About";
+
 /// What the page is, in one line: its sidebar entry's description in
 /// the search, and its heading's subtitle.
 pub(crate) const ABOUT: &str = "Pane's version, documentation and diagnostics";
@@ -449,7 +452,7 @@ pub(crate) fn compose(
         );
     let column = controls::column(theme)
         .child(
-            settings_shell::page_header("About", Some(ABOUT.into()), theme)
+            settings_shell::page_header(TITLE, Some(ABOUT.into()), theme)
                 .id("about-title")
                 .debug_selector(|| "about-title".into()),
         )

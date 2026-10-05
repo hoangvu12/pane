@@ -93,6 +93,9 @@ pub(crate) const REOPENINGS: [(Reopening, &str, &str, &str); 2] = [
     ),
 ];
 
+/// The page's heading.
+pub(crate) const TITLE: &str = "Launcher";
+
 /// What the page is, in one line: its sidebar entry's description in
 /// the search, and its heading's subtitle.
 pub(crate) const ABOUT: &str = "The display the launcher opens on, and what reopening shows";
@@ -459,7 +462,7 @@ pub(crate) fn compose(
     let column =
         controls::column(theme)
             .child(
-                settings_shell::page_header("Launcher", Some(ABOUT.into()), theme)
+                settings_shell::page_header(TITLE, Some(ABOUT.into()), theme)
                     .id("launcher-title")
                     .debug_selector(|| "launcher-title".into()),
             )

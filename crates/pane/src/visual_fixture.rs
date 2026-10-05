@@ -1943,6 +1943,9 @@ pub enum Perturbation {
     /// The chosen segment's wash is filled with a wrong color: the
     /// Appearance page's segmented choice (#98).
     SegmentOnFill,
+    /// A field's well is filled with a wrong color: the well every
+    /// recorder, the select's trigger and a form's text sit in (#99).
+    WellFill,
 }
 
 /// Every perturbation, by the name the runner passes.
@@ -1952,6 +1955,7 @@ const PERTURBATIONS: &[(&str, Perturbation)] = &[
     ("hover-fill", Perturbation::HoverFill),
     ("nav-selected-fill", Perturbation::NavSelectedFill),
     ("segment-on-fill", Perturbation::SegmentOnFill),
+    ("well-fill", Perturbation::WellFill),
 ];
 
 impl Perturbation {
@@ -2002,6 +2006,8 @@ impl Perturbation {
             Perturbation::SegmentOnFill => {
                 theme.controls.segment_on = gpui::rgb_to_hsla(gpui::rgba(0xFFFFFF4D))
             }
+            // A well at black 50% against the authored 24%.
+            Perturbation::WellFill => theme.field_fill = gpui::rgb_to_hsla(gpui::rgba(0x00000080)),
         }
     }
 }
@@ -2033,7 +2039,7 @@ pub enum Command {
 const USAGE: &str = "usage: pane-visual-fixture --scenario <name> --manifest <file> \
     [--data-dir <dir>] [--theme dark|light] [--material glass|opaque] \
     [--perturb none|row-padding-plus-4|selected-fill|hover-fill|nav-selected-fill|\
-    segment-on-fill]\n       \
+    segment-on-fill|well-fill]\n       \
     pane-visual-fixture --registry <file>";
 
 /// Parses the fixture binary's arguments (without the program name).
@@ -6167,8 +6173,14 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
                 &mut captures,
             );
             if let Some(page) = page {
-                // Pane's pages have no aside column (#99).
+                // Pane's pages have no aside column (#99), and head their
+                // column with their own heading and subtitle (none, for a
+                // confirmation).
                 shell.aside = None;
+                if let Some((heading, subtitle)) = pages::heading(page) {
+                    shell.heading.text = heading;
+                    shell.subtitle.text = subtitle.unwrap_or_default();
+                }
                 pane_page = pages::declare(
                     window,
                     &theme,
@@ -8169,6 +8181,17 @@ mod tests {
         let mut theme = theme();
         Perturbation::SegmentOnFill.apply(&mut theme);
         assert_ne!(theme.controls.segment_on, Theme::dark().controls.segment_on);
+    }
+
+    #[test]
+    fn the_well_fault_is_a_named_perturbation() {
+        assert_eq!(
+            Perturbation::parse("well-fill"),
+            Ok(Some(Perturbation::WellFill))
+        );
+        let mut theme = theme();
+        Perturbation::WellFill.apply(&mut theme);
+        assert_ne!(theme.field_fill, Theme::dark().field_fill);
     }
 
     #[test]

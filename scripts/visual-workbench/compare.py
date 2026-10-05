@@ -45,9 +45,38 @@ import math
 import statistics
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 
 LIMITS = {"edge_px": 1.0, "flat_fill_levels": 2.0, "glyph_core_levels": 4.0}
+# Pane's embedded faces, which both sides draw Geist from.
+FONTS = Path(__file__).resolve().parents[2] / "crates" / "pane" / "assets" / "fonts"
+# The Settings page heading's face and size (theme::SettingsType: 22/600).
+HEADING_FACE, HEADING_SIZE = "Geist-SemiBold.ttf", 22.0
+_BEARINGS = {}
+
+
+def first_glyph_bearing(text, size=HEADING_SIZE, face=HEADING_FACE):
+    """Where the first glyph of text begins to ink past its pen position,
+    in logical px at size: its left side bearing, read from the font's own
+    outline: the glyph drawn at 1000px from a known pen position, where its
+    ink begins (Pillow's own text box starts at the pen, not the ink). A
+    straight stem's bearing (K, L, E: 80 units, 1.76px at 22) is more than
+    a round or diagonal one's (G 0.95, A 0.42). 0 for no text, or no face."""
+    if not text:
+        return 0.0
+    key = (text[0], face)
+    if key not in _BEARINGS:
+        try:
+            font = ImageFont.truetype(str(FONTS / face), 1000)
+        except OSError:
+            _BEARINGS[key] = 0.0
+        else:
+            pen = 200
+            canvas = Image.new("L", (1600, 1600))
+            ImageDraw.Draw(canvas).text((pen, 1200), text[0], font=font, fill=255, anchor="ls")
+            ink = canvas.getbbox()
+            _BEARINGS[key] = (ink[0] - pen) / 1000 if ink else 0.0
+    return _BEARINGS[key] * size
 # The muted subtitle text both sides author (#8E8F94).
 MUTED = (142, 143, 148)
 # What the measuring needs to know about a palette: whether its washes and
@@ -2643,6 +2672,7 @@ def native_settings_layout(shell, capture):
             "count": as_tuple(item["count"]["rect"]) if item.get("count") else None,
         } for index, item in enumerate(shell["sections"])],
         "heading": as_tuple(shell["heading"]["rect"]),
+        "headingText": shell["heading"].get("text", ""),
         "subtitle": as_tuple(shell["subtitle"]["rect"]),
         "aside": as_tuple(shell["aside"]["rect"]) if shell.get("aside") else None,
     }
@@ -2676,13 +2706,32 @@ def reference_settings_layout(state):
     }
 
 
-def measure_settings(image, layout, inks, scale=1.0, lighter=True):
+def sidebar_rows(layout, popover=False):
+    """The rows the sidebar's rule and fill are read in (logical px, top and
+    bottom): below its last section, where nothing else is drawn - and,
+    while a popover is open over the page, the sidebar's last 100 rows, past
+    the reach of the popover's shadow (it darkens the sidebar and the page
+    beside it unevenly to about 130px below the popover)."""
+    sx, sy, sw, sh = layout["sidebar"]
+    last = layout["items"][-1]["rect"]
+    y0 = last[1] + last[3] + 10
+    y1 = min(sy + sh - 10, y0 + 150)
+    if popover:
+        y1 = sy + sh - 10
+        y0 = max(y0, y1 - 100)
+    return y0, y1
+
+
+def measure_settings(image, layout, inks, scale=1.0, lighter=True, popover=False):
     """What an image shows of the Settings shell laid out as layout says
     (logical px): the titlebar's rule and label, the sidebar's rule and
     fill, the search well and its placeholder, each section's wash, label,
     glyph and count, and the page's heading, subtitle and column caption.
     Fills are read as overlay alphas against the background right beside
-    them, which survives the reference's glass over its wallpaper."""
+    them, which survives the reference's glass over its wallpaper. While a
+    popover is open over the page (the select's list), its shadow reaches
+    the sidebar's rule and darkens both sides of it unevenly well below the
+    last section, so the sidebar's fill is read in its bottom rows."""
     result = {}
     sx, sy, sw, sh = layout["sidebar"]
     right = sx + sw
@@ -2694,9 +2743,7 @@ def measure_settings(image, layout, inks, scale=1.0, lighter=True):
     # The sidebar's rule and fill, below its last section, where nothing
     # else is drawn: the fill as a black overlay over the page just past the
     # rule.
-    last = layout["items"][-1]["rect"]
-    y0 = last[1] + last[3] + 10
-    y1 = min(sy + sh - 10, y0 + 150)
+    y0, y1 = sidebar_rows(layout, popover)
     found = vline(image, (int((right - 5) * scale), int((right + 4) * scale)), (int(y0 * scale), int(y1 * scale)),
                   None, lighter)
     result["separator"] = found / scale if found is not None else None
@@ -2809,7 +2856,8 @@ def compare_settings(report, name, capture, manifest, native, scale, ref_capture
 
     # ---- the native side against its declaration
     layout = native_settings_layout(shell, capture)
-    mine = measure_settings(native, layout, inks, scale, lighter)
+    page = page_of(manifest, capture)
+    mine = measure_settings(native, layout, inks, scale, lighter, popover=bool(page and page.get("selectOpen")))
     sidebar = layout["sidebar"]
     rule_x = sidebar[0] + sidebar[2] - 1
     report.check("harness-native", name, capture, "titlebar", "rule y", mine["rule"], layout["rule"], edge, "px")
@@ -2851,10 +2899,16 @@ def compare_settings(report, name, capture, manifest, native, scale, ref_capture
                      glyph and glyph[0] + glyph[2] / 2, box[0] - rect[0] + box[2] / 2, edge * 1.5, "px",
                      "the glyph's ink, not its viewBox")
         crops.append((subject, rect, None))
-    for label, key in (("heading", "heading"), ("aside caption", "aside")):
-        if layout[key]:
-            report.check("harness-native", name, capture, "page", f"{label} ink left",
-                         mine.get(key) and mine[key]["left"], layout[key][0], edge * 1.5, "px", bearing)
+    # The heading's ink begins its first glyph's side bearing past its box
+    # (Pane's pages head with K, L and E, whose stems sit 1.76px in at 22px).
+    heading_bearing = first_glyph_bearing(layout["headingText"])
+    report.check("harness-native", name, capture, "page", "heading ink left",
+                 mine.get("heading") and mine["heading"]["left"], layout["heading"][0] + heading_bearing,
+                 edge * 1.5, "px",
+                 f"after the first glyph's side bearing in the font ({heading_bearing:.2f}px); its edge allowed")
+    if layout["aside"]:
+        report.check("harness-native", name, capture, "page", "aside caption ink left",
+                     mine.get("aside") and mine["aside"]["left"], layout["aside"][0], edge * 1.5, "px", bearing)
     title = mine["title"]
     report.check("harness-native", name, capture, "titlebar", "label ink center x",
                  title and (title["left"] + title["right"]) / 2, layout["title"][0] + layout["title"][2] / 2,
