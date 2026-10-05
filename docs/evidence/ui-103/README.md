@@ -1,6 +1,13 @@
 # #103 evidence: the integrated Windows UI, component by component
 
-The integrated acceptance record for the UI port ([#90](https://github.com/hoangvu12/pane/issues/90)), on Windows only, from local checks. It is not release certification. Everything here is **local and unpushed** on `impl/ui-91`. **#90 is not complete:** the operator-consent items and the open user questions below must resolve first.
+The integrated acceptance record for the UI port ([#90](https://github.com/hoangvu12/pane/issues/90)), on Windows only, from local checks. It is not release certification. Everything here is **local and unpushed** on `impl/ui-91`. **#90 is not complete:** the remaining operator-consent items and the open user questions below must resolve first.
+
+**Real-window evidence, added later.** After the user's go-ahead ("no games rn"), the coordinator ran two of the consented steps on the real `pane.exe`:
+
+- the glass and opaque captures over matched backdrops (window crop only);
+- the real-app smoke.
+
+They are recorded in [Real-window evidence](#real-window-evidence-glass-and-the-real-app-smoke) and [`real-app/`](real-app/). I measured and looked at their images; I ran nothing visible myself.
 
 **Files:**
 
@@ -11,6 +18,7 @@ The integrated acceptance record for the UI port ([#90](https://github.com/hoang
 - `light-variant.json`: the `-Theme light` run's totals and harness failures.
 - `test-summary.txt`: the full test run, target by target.
 - `atlas/`: 29 images copied from `run-103/compare/`. Each is described [below](#atlas-what-the-images-show).
+- `real-app/`: the real window's glass and opaque captures, their backdrop patterns, their run records, `glass-measurements.json`, and the real-app smoke's captures and records.
 
 ## Identifiers
 
@@ -28,7 +36,7 @@ The integrated acceptance record for the UI port ([#90](https://github.com/hoang
 - **OS:** Windows 11 Pro 25H2, build 26200.8737. The registry's `ProductName` reads "Windows 10 Pro", as it does on every Windows 11.
 - **Scale:** 96 DPI (100%) on every native capture, and device scale factor 1 on the reference. The new parity check `client/device scale` compares the two: 45/45 pass. **125% and 150% were not run.**
 - **Client sizes:** root 760×518, Settings 1120×720, clipboard 940×600, each checked on both sides. The narrow variants are 480×360 (launcher), 760×520 (Settings) and 760×518 (clipboard).
-- **Material:** every strict capture is in the opaque ("solid") material. **Glass was not captured.** Acrylic blur, the DWM corner and the window shadow exist only in an on-screen composition, which needs the operator's consent ([pending](#pending-operator-consent)).
+- **Material:** every workbench capture is in the opaque ("solid") material. Glass exists only in an on-screen composition: acrylic blur, the DWM corner and the window shadow. It was captured later on the real window over matched backdrops, window crop only, and is measured in R1 ([below](#real-window-evidence-glass-and-the-real-app-smoke)). Windows' transparency setting was on (`transparencySetting: 1`). The shadow outside the window rect is still not captured.
 - **Theme:** dark. The light palette is a derived adaptation with no light board. `launcher-frame-light` and `appearance-light` are measured in the main run, and a whole `-Theme light` run is recorded [below](#the-light-variant).
 
 ## Checks (local, Windows)
@@ -41,6 +49,7 @@ cargo test -p pane-core -p pane --locked -j 1 --no-fail-fast           68 target
 python -m unittest discover -s scripts/visual-workbench -p "test_*.py" 72 passed (56 + 8 new guard tests + 8 freshness tests)
 ./scripts/visual-workbench.ps1 -OutputDir .scratch/visual-workbench/run-103            exit 0, see below
 ./scripts/visual-workbench.ps1 -OutputDir .scratch/visual-workbench/run-103-light -Theme light -SkipSensitivity -SkipBuild   exit 0, see below
+./scripts/visual-workbench.ps1 -OutputDir .scratch/visual-workbench/run-103-smoke -Scenario root-rest -SkipSensitivity -RealAppSmoke   exit 0 (run by the coordinator), see "Real-window evidence"
 ```
 
 **The full test run had no failure.** These were all checked and none failed:
@@ -117,14 +126,14 @@ I looked at three light captures (`root-actions/open`, `answer-plain`, `clipboar
 
 ## Ledger summary
 
-[`ledger.md`](ledger.md) has 73 rows:
+[`ledger.md`](ledger.md) has 74 rows:
 
 | Result | Rows |
 |---|---|
-| pass | 17 |
-| accepted deviation | 20 |
+| pass | 18 |
+| accepted deviation | 21 |
 | native-only (harness pass, no board state to compare) | 25 |
-| not covered | 11 |
+| not covered | 10 |
 
 The 131 accepted checks carry 18 dispositions (D1–D18), each copied in full into the ledger. In brief:
 
@@ -132,7 +141,13 @@ The 131 accepted checks carry 18 dispositions (D1–D18), each copied in full in
   - GPUI's glyph contrast thickens icon strokes (D4, 43) and nav glyph boxes (D16, 6).
   - Chrome's glass composites the sidebar's black 10% about 0.3 level darker (D15, 6).
   - The reference's Geist Mono subset lacks ← and ↵ (D3, 20).
-- **Windows frame (1):** the corner is DWM's, not a painted 18px (D1).
+- **Windows frame (1):** the corner is DWM's, not a painted 18px (D1). On the real window it measures about 8px (R1).
+- **Real-window glass (R1, measured outside the workbench):**
+  - the blur is present;
+  - it passes about 25% of the backdrop, against the CSS's 30%;
+  - the acrylic holds when the window is inactive.
+
+  Saturation and the outer shadow are unmeasured.
 - **Pane content and behaviour, per #100 (55):**
   - "Commands" rather than "Suggested · From your recent use" (D2, 19);
   - only real Actions entries (D6, 3);
@@ -143,10 +158,9 @@ The 131 accepted checks carry 18 dispositions (D1–D18), each copied in full in
   - GPUI scrolls the least that shows the clip, not an 8px cushion (D17, 10);
   - the no-match footer shows only Actions (D18, 1).
 
-The 11 not-covered rows are:
+The 10 not-covered rows are:
 
-- glass and the on-screen corner and shadow (pending consent);
-- real Settings minimize, maximize, drag and resize (pending consent);
+- real Settings minimize, maximize, drag and resize (no script; pending);
 - footer hover;
 - long footer status;
 - Actions entry hover and a target gone from behind the panel;
@@ -182,7 +196,7 @@ The authored values, matched within the #91 limits (1 logical px for edges and b
 Each is recorded with its ticket. Accepted parity checks carry their Dn.
 
 - **Windows caption buttons** (minimize, maximize, close) replace the Settings board's lone close glyph (#97). They are not compared.
-- **DWM window corners** (`DWMWCP_ROUND`, documented 8px) replace a painted 18px radius, because acrylic covers the whole window rect (#92, D1). The outer shadow and the .5px edge are DWM's own (#92). They are unmeasured until the glass capture runs.
+- **DWM window corners** (`DWMWCP_ROUND`, documented 8px) replace a painted 18px radius, because acrylic covers the whole window rect (#92, D1). On the real window the corner measures about 8px on glass and opaque alike (R1). The outer shadow and the .5px edge are DWM's own (#92). They are still unmeasured: the shadow lies outside the window crop that was captured.
 - **Windows keycaps and effective bindings:** Ctrl, Alt and Win names; Win Ctrl Alt Shift key order; full chords such as Shift ↵, Ctrl ↵ and Ctrl Shift P. The boards are captured with `platform: 'Windows'` (#93).
 - **Pane-specific copy:**
   - "Search apps and commands…" (#92);
@@ -254,7 +268,7 @@ None of these is implemented, and no capture or text claims them. The reference 
 
 ## Found while reviewing, not measured
 
-- **The narrow launcher's footer hint is cut mid-keycap.** At 480×360, "· Ctrl K for more" ends in a clipped "Ctr" behind Run Command (`atlas/launcher-frame-narrow--narrow-last-selected-native.png`). The hint is `overflow_hidden` in `ui/footer.rs` (#95). No check measures it. It is left unfixed here and is a user question.
+- **The narrow launcher's footer hint is cut mid-keycap.** At 480×360, "· Ctrl K for more" ends in a clipped "Ctr" behind Run Command (`atlas/launcher-frame-narrow--narrow-last-selected-native.png`). The hint is `overflow_hidden` in `ui/footer.rs` (#95). No check measures it. It is left unfixed here and is a user question. The real window shows the same thing at its 380×420 narrow size (`real-app/glass-light-narrow.png`, `real-app/opaque-light-narrow.png`): only a fragment of the ↵ cap shows before Open command.
 - **The colour preview's hex/rgb/hsl lines sit about 14px higher** natively (`atlas/clipboard-previews--color-side-by-side.png`). The preview is fixture-only (#102), and the check covers only which branch shows.
 - **Solid's dimmed sliders keep the accent at 40%,** where the board's disabled range is grey (#98; fixture-only family).
 - **The Settings shell scenario** draws the shell only: its page body below the heading is empty, while the board shows the Appearance page. The Appearance scenarios draw the page.
@@ -280,59 +294,82 @@ These are covered by the full test run, not by captures. The fixture attaches no
 - **Extension drawing is not recoloured:** the custom-view window tests pass. No test asserts the host frame's ring, and no scenario captures it.
 - **Not run against the real `pane.exe`:** restart persistence (theme, material, pins) is shown only by a fresh application in the test process.
 
+## Real-window evidence: glass and the real-app smoke
+
+Run by the coordinator, after the user's go-ahead, against `pane.exe` SHA-256 `A5A9317B…989A`. That is the same binary as above, rebuilt with a plain `cargo build` at `582b73a`. All three captures are at 96 DPI, and each run verified that its backdrop sat directly behind Pane in Z-order. I measured the captures (`real-app/glass-measurements.json`, from a script reading the PNGs only) and looked at every image copied here.
+
+**Glass and opaque over matched backdrops** (`scripts/capture-pane-windows.ps1 -Theme dark -Material glass|opaque -Backdrop -BackdropPattern light|dark [-ExerciseWindow]`, window crop, **no `-FullScreen`**). The runs are `.scratch/ui-captures/103-glass-light/run-20261005-160732-4f92a4b5`, `103-glass-dark/run-20261005-160741-473a6182` and `103-opaque-light/run-20261005-160754-eb8f7845`. Each holds the initial capture plus active, inactive, moved, narrow and restored. Copied here: `glass-light-{initial,moved,narrow}.png`, `glass-dark-initial.png`, `opaque-light-{initial,narrow}.png`, both backdrop patterns, and each run's `pane-run.json`.
+
+- **What the images show:**
+  - Glass over the light backdrop (#ECECEC with black blocks and bands, `backdrop-light-pattern.png`): the pattern's black blocks show through as soft dark blobs behind a grey-tinted panel. No hard edge survives.
+  - Glass over the dark backdrop (#161616 with white blocks): the white blocks show as soft light patches in a darker panel.
+  - The opaque control over the light backdrop: a flat dark panel with nothing showing through.
+  - All three show the real fresh-install home: five dashed "Empty" slots (the dashes are faint, especially in opaque), Commands with the sample rows (Rust, JavaScript, TypeScript sample, Install extension from folder and from npm), and the footer hint with its keycaps.
+  - `glass-light-moved.png`: the blobs sit elsewhere, so the blur follows what is behind the window.
+  - `glass-light-narrow.png` (366×413 crop): five narrow Empty slots, rows ellipsized, and the footer hint clipped to a fragment of its ↵ cap (see [Found while reviewing](#found-while-reviewing-not-measured)).
+- **Measured (R1 in the ledger):**
+  - **Blur present.** The backdrop steps 236 levels from one pixel to the next. Behind the panel's content-free areas no two neighbouring pixels differ by more than 2–3 levels, and a column profile in the right padding varies smoothly between 52 and 69 over about 100px.
+  - **Tint.**
+    - Comparing the two backdrops, the panel passes about 25% of the blurred backdrop: 0.24 in the header, 0.25 in the right padding, and 0.34 in a strip whose own backdrop mean departs from the pattern's.
+    - The CSS `.glass` passes 30% under a 5% sheen, so Pane's glass reads about 5 points more opaque.
+    - The base recovered from both backdrops is about 24 levels of luma, against the opaque control's 23 (#16171A-ish).
+    - This method's spread between regions is as large as that difference, so I record it as a measured near-match, not an exact one.
+  - **Corners are DWM-rounded, at about 8px,** on glass and opaque alike. The backdrop shows whole in the first 2 pixels along the diagonal and the first 4 along the edge, then anti-aliases into a 1px DWM rim. A radius of 8px predicts a 2.3px diagonal inset; the reference's 18px would predict 5.3. The crop is the DWM frame, 762×519 around the 760×518 client, and the rim's luma follows the backdrop (189 over light, 60 over dark at the top edge).
+  - **Inactive.** With another window in the foreground (`foregroundIsPane: false`), the capture is byte-identical to the active and restored ones, in all three runs. **The acrylic holds when the window is inactive**, and nothing else in the crop changes.
+- **Not measured:**
+  - saturation: both backdrops are grey, so `saturate(160%)` has nothing to act on;
+  - the outer drop shadows and the .5px black edge beyond the window rect, because `-FullScreen` was not run;
+  - the blur radius against the reference's 44px;
+  - the glass preview miniature over a real desktop (#98).
+
+**Real-app smoke** (`./scripts/visual-workbench.ps1 -OutputDir .scratch/visual-workbench/run-103-smoke -Scenario root-rest -SkipSensitivity -RealAppSmoke`, revision `582b73a`, clean tree). Its `root-rest` comparison came out the same as run-103's: harness-native 199/0, harness-reference 53/0, parity 399/0/4. The real `pane.exe` passed all three assertions:
+
+- `00`–`03` are distinct;
+- `02-down` equals `04-escape`: Escape from the form returns to exactly the search it was opened from;
+- `00-root` equals `05-escape-again`: the second Escape clears the query.
+
+The hashes confirm both pairs (`F49430AD…`, `0FEBA31F…`). Copied here: `smoke-00-root.png` through `smoke-03-enter.png`, `smoke-pane-run.json` and `smoke-workbench-run.json`.
+
+- `00`: the fresh-install home (five Empty slots, Rust sample selected, Open command).
+- `01`: "install" typed gives "Results · 3 matches", with "Install" in the accent and folder selected.
+- `02`: Down selects "Install extension from npm"; the footer reads "Install from npm".
+- `03`: Enter opens the form "Install extension from npm", with its field focused, Show package, and Submit ↵.
+
+The smoke drives the real window through posted window messages, as the fixture does. It exercises the real feature adapters, not the OS's own pointer hit-testing or focus arbitration.
+
 ## Pending operator consent
 
-None of these was run. Each shows a window on the operator's desktop or changes a global setting. They wait for the user's agreement, and their acceptance items stay open.
+Not run yet. Each shows a window on the operator's desktop or changes a global setting.
 
-1. **Glass and shadow, matched backdrop (#92 boxes 3 and 4; Appearance's glass preview).** First run `cargo build -p pane --locked -j 1`, then from the repository root:
-
-   ```powershell
-   $rev = git rev-parse HEAD
-   ./scripts/capture-pane-windows.ps1 -Binary ./target/debug/pane.exe -ApplicationRevision $rev -OutputDir ./.scratch/ui-captures/103-glass-light -Theme dark -Material glass -Backdrop -BackdropPattern light -ExerciseWindow
-   ./scripts/capture-pane-windows.ps1 -Binary ./target/debug/pane.exe -ApplicationRevision $rev -OutputDir ./.scratch/ui-captures/103-glass-dark  -Theme dark -Material glass -Backdrop -BackdropPattern dark  -ExerciseWindow
-   ./scripts/capture-pane-windows.ps1 -Binary ./target/debug/pane.exe -ApplicationRevision $rev -OutputDir ./.scratch/ui-captures/103-opaque-light -Theme dark -Material opaque -Backdrop -BackdropPattern light
-   ```
-
-   - **Duration:** about 5–15 s each.
-   - **What it shows:**
-     - a high-contrast test-pattern window (light or dark blocks and bands), sized to the launcher plus a margin;
-     - the real launcher, centred and **in the foreground** (it takes focus);
-     - with `-ExerciseWindow`, the window moved and deactivated, then reactivated, to record active and inactive glass.
-   - **Optional `-FullScreen`** captures the whole virtual screen, needed to measure the DWM outer shadow. It also captures anything else on screen.
-   - **It measures** the blurred backdrop against plain transparency, the 8px corner on screen, and the shadow placement.
-2. **Real-app smoke.** It covers search, select, open and back in the real `pane.exe` (#91's box):
+1. **The outer shadow** (#92 box 4). The same glass command with `-FullScreen`, which captures the whole virtual screen and anything else on it. About 10 s; Pane takes the foreground. Example:
 
    ```powershell
-   ./scripts/visual-workbench.ps1 -OutputDir C:/Users/ADMIN/Desktop/nguyenvu/pane/.scratch/visual-workbench/run-103-smoke -Scenario root-rest -SkipSensitivity -RealAppSmoke
+   ./scripts/capture-pane-windows.ps1 -Binary ./target/debug/pane.exe -ApplicationRevision (git rev-parse HEAD) -OutputDir ./.scratch/ui-captures/103-glass-full -Theme dark -Material glass -Backdrop -BackdropPattern light -FullScreen
    ```
 
-   - **Duration:** about 1 minute for the run, with about 10 s visible.
-   - **What it shows:** `pane.exe` opens centred and active for a moment, then parks off-screen. It types `install`, presses Down, Enter, Escape and Escape through posted messages.
-
-   **No script exists for the other real-process checks:**
-
+   A coloured backdrop would also be needed to measure `saturate(160%)`. `capture-pane-windows.ps1` has only grey patterns, so that is script work first.
+2. **Real-process checks with no script:**
    - Settings' real minimize, maximize, drag and resize (#97);
    - a real restart that keeps the theme and material (#98) and the pins (#101);
    - a real arithmetic copy and a configured fallback (#96);
    - real clipboard copies (#102).
 
-   Each needs either the operator by hand or a new scripted step in `real-app-smoke.ps1`. Both would show `pane.exe`.
-3. **125% and 150% DPI.** This needs the display scale changed, a global Windows setting the spec says not to change, or a second display at that scale. Then:
+   Each needs the operator by hand, or new scripted steps in `real-app-smoke.ps1`. Either way it shows `pane.exe`.
+3. **125% and 150% DPI.** This needs the display scale changed, a global Windows setting, or a second display at that scale. Then:
 
    ```powershell
    ./scripts/visual-workbench.ps1 -OutputDir C:/Users/ADMIN/Desktop/nguyenvu/pane/.scratch/visual-workbench/run-103-125 -SkipSensitivity
    ```
 
-   - **Duration:** about 5 minutes. The fixture stays off-screen; only the scale change itself is visible.
+   - **Duration:** about 5 minutes; the fixture stays off-screen.
    - **What it measures:** harness-native, at the new scale.
-   - **Parity will fail its `client/device scale` check by design.** The reference capture is pinned at device scale 1, and capturing it at a matching scale is workbench work not yet done.
-
+   - **Parity will fail `client/device scale` by design.** The reference is pinned at device scale 1.
 ## Open user questions
 
 Collected from every ticket's results comment. None is answered yet.
 
 - **All tickets:** how do local, unpushed commits count toward closing #91–#103? Until that is decided, every ticket stays open.
-- **#92 and everything after it:** may the visible glass and shadow capture and the real-app smoke run? See [Pending operator consent](#pending-operator-consent).
+- **#92 and everything after it:** the window-crop glass captures and the real-app smoke have run. May the `-FullScreen` shadow capture, the unscripted real-process checks and a 125%/150% run follow? See [Pending operator consent](#pending-operator-consent).
 - **#94:** should command and command-search rows lose their pointer fade? #95 has since given command rows root search's immediate washes, per #100. The question remains only for confirmation.
 - **#96:**
   1. Restrict the answer card to the calculator?
