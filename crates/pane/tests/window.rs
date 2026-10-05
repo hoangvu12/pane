@@ -2166,11 +2166,10 @@ fn opening_a_command_transitions_the_content_and_keeps_the_chrome_still(cx: &mut
     assert_eq!(settle_frames(cx), 0, "a settled window asks for no frame");
 }
 
-/// Backing out is the paired transition: the root content arrives from
-/// above rest instead of below, over the quicker return, and settles
-/// leaving the window idle.
+/// Backing out lands at once: root search is drawn settled on the frame
+/// that shows it, with no arrival from either side.
 #[gpui::test]
-fn backing_out_transitions_the_root_content_from_above(cx: &mut TestAppContext) {
+fn backing_out_lands_at_once(cx: &mut TestAppContext) {
     let (window, cx) = open(cx, &RUST);
     cx.simulate_keystrokes("enter");
     settle(&window, cx);
@@ -2178,28 +2177,25 @@ fn backing_out_transitions_the_root_content_from_above(cx: &mut TestAppContext) 
     settle_frames(cx);
     assert!(arriving(&window, cx).is_none());
 
-    // Escape backs out to root search.
+    // Escape backs out to root search, settled.
     cx.simulate_keystrokes("escape");
     let view = settle(&window, cx);
     assert!(matches!(view.screen, Screen::Root { .. }));
-    let (offset, _) = arriving(&window, cx).expect("the root content is arriving");
     assert!(
-        offset < -2.5 && offset > -3.5,
-        "the return starts the full shift above rest: {offset}"
+        arriving(&window, cx).is_none(),
+        "the return drew root settled"
     );
-
-    // The return is the quicker of the two spans: 130ms — past its 120ms
-    // — settles it.
-    assert!(frame(cx, Duration::from_millis(130)) >= 1);
+    // Only the functional scroll relayout may still ask for a frame; no
+    // transition starts once it has run.
+    settle_frames(cx);
     assert!(arriving(&window, cx).is_none());
-    assert_eq!(settle_frames(cx), 0, "a settled window asks for no frame");
 }
 
-/// A rapid open/back/open retargets each arrival from the presentation on
-/// screen — the interrupted offset carries over, so nothing restarts, no
-/// departed screen flashes back and the navigation itself is unaffected.
+/// A rapid open/back/open: backing out drops the arrival in flight, so
+/// root lands settled with no departed screen flashing back, and opening
+/// again starts a fresh arrival.
 #[gpui::test]
-fn rapid_open_back_open_retargets_the_arrival_from_where_it_is(cx: &mut TestAppContext) {
+fn rapid_open_back_open_drops_the_arrival_and_starts_fresh(cx: &mut TestAppContext) {
     let (window, cx) = open(cx, &RUST);
     settle(&window, cx);
 
@@ -2212,12 +2208,9 @@ fn rapid_open_back_open_retargets_the_arrival_from_where_it_is(cx: &mut TestAppC
     cx.simulate_keystrokes("escape");
     let view = settle(&window, cx);
     assert!(matches!(view.screen, Screen::Root { .. }));
-    let (back, _) = arriving(&window, cx).expect("the root content is arriving");
-    // The back transition continued from the interrupted presentation —
-    // the same offset, not a fresh start from above.
     assert!(
-        (back - offset).abs() < 0.05,
-        "the back continued the presentation: {back} from {offset}"
+        arriving(&window, cx).is_none(),
+        "backing out dropped the arrival"
     );
 
     cx.simulate_keystrokes("enter");
@@ -2226,19 +2219,16 @@ fn rapid_open_back_open_retargets_the_arrival_from_where_it_is(cx: &mut TestAppC
         (view.screen, view.title.as_str()),
         (Screen::Command, "Rust sample")
     );
-    let (retargeted, _) = arriving(&window, cx).expect("the command's content is arriving again");
+    let (fresh, _) = arriving(&window, cx).expect("the command's content is arriving again");
     assert!(
-        (retargeted - offset).abs() < 0.05,
-        "the reopening continued the presentation"
+        (fresh - offset).abs() < 0.05,
+        "the reopening started the full shift again: {fresh} from {offset}"
     );
 
-    // The retargeted arrival then progresses and completes like any other.
+    // The arrival then progresses and completes like any other.
     assert!(frame(cx, Duration::from_millis(40)) >= 1);
     let (progressed, _) = arriving(&window, cx).expect("the content is still arriving");
-    assert!(
-        progressed < retargeted,
-        "the arrival progressed toward rest"
-    );
+    assert!(progressed < fresh, "the arrival progressed toward rest");
     settle_frames(cx);
     assert!(arriving(&window, cx).is_none());
     // And the screen the user navigated to is what is drawn — the rapid
@@ -2248,41 +2238,35 @@ fn rapid_open_back_open_retargets_the_arrival_from_where_it_is(cx: &mut TestAppC
 }
 
 /// Navigation, focus and typing take effect immediately: while an arrival
-/// is still in flight, the query field has focus, typing lands on the very
-/// frames that carry the transition, and Enter dispatches without waiting
-/// for it.
+/// is still in flight, Escape backs out without waiting for it, the query
+/// field has focus at once, typing lands, and Enter dispatches.
 #[gpui::test]
-fn typing_and_dispatch_take_effect_while_an_arrival_is_in_flight(cx: &mut TestAppContext) {
+fn navigation_and_typing_take_effect_while_an_arrival_is_in_flight(cx: &mut TestAppContext) {
     let (window, cx) = open(cx, &RUST);
     settle(&window, cx);
     cx.simulate_keystrokes("enter");
     settle(&window, cx);
+    assert!(
+        arriving(&window, cx).is_some(),
+        "the command's content is arriving"
+    );
 
-    // Back out: the root content's arrival is in flight.
+    // Back out mid-arrival: root is drawn at once, settled, with focus.
     cx.simulate_keystrokes("escape");
     let view = settle(&window, cx);
     assert!(matches!(view.screen, Screen::Root { .. }));
-    assert!(
-        arriving(&window, cx).is_some(),
-        "the return is still arriving"
-    );
+    assert!(arriving(&window, cx).is_none(), "the return drew settled");
     assert!(
         query_has_focus(&window, cx),
         "focus moved to the query at once"
     );
 
-    // Typing lands while the arrival is in flight: the frame that draws
-    // the narrowed results is the same frame that draws the transition.
+    // Typing lands at once.
     cx.simulate_input("Rust");
     let view = settle(&window, cx);
     assert_eq!(view.search_field(), Some("Rust"));
-    assert!(
-        arriving(&window, cx).is_some(),
-        "typing did not wait for the arrival to finish"
-    );
 
-    // So does dispatch: Enter opens the best match while the arrival is
-    // still in flight.
+    // So does dispatch: Enter opens the best match.
     cx.simulate_keystrokes("enter");
     let view = settle(&window, cx);
     assert_eq!(
@@ -2294,8 +2278,8 @@ fn typing_and_dispatch_take_effect_while_an_arrival_is_in_flight(cx: &mut TestAp
 
 /// Escaping mid-arrival cancels the opening: the departing command's
 /// content is unmounted at once — the drawn screen is root's, its rows
-/// are root's — and the in-flight arrival belongs to the root content,
-/// with no overlay of the command fading out. The command's answer,
+/// are root's — and root is drawn settled, with no overlay of the command
+/// fading out. The command's answer,
 /// arriving after the user left, updates the status without navigating
 /// back to the departed screen.
 #[gpui::test]
@@ -2319,12 +2303,10 @@ fn escaping_mid_arrival_cancels_it_without_a_trace_of_the_departed_screen(cx: &m
             .any(|title| title == "Rust sample"),
         "the root results are drawn, not the command's"
     );
-    // The arrival in flight is the root content's, continued from the
-    // interrupted forward arrival.
-    let (offset, _) = arriving(&window, cx).expect("the root content is arriving");
+    // Backing out dropped the opening's arrival: root is drawn settled.
     assert!(
-        (offset - 3.).abs() < 0.5,
-        "the arrival continued from below rest: {offset}"
+        arriving(&window, cx).is_none(),
+        "the return drew root settled"
     );
 
     // The item's answer, landing after the user left, changes nothing
@@ -2385,10 +2367,6 @@ fn typing_selection_and_row_changes_never_transition(cx: &mut TestAppContext) {
     assert!(arriving(&window, cx).is_none());
 }
 
-/// Reduced motion settles every view transition at once: a navigation
-/// under it starts no arrival, and reducing motion mid-arrival ends it on
-/// the next drawn frame. Either way the window schedules no frame for
-/// presentation.
 /// Root search's rows follow the reference's pointer (#94): movement onto
 /// a row selects it at once — the selected wash arrives with no fade, and
 /// the window asks for no frame — and the footer and Enter act on it,
@@ -2951,6 +2929,10 @@ fn the_footer_buttons_change_their_washes_at_once(cx: &mut TestAppContext) {
     );
 }
 
+/// Reduced motion settles every view transition at once: a navigation
+/// under it starts no arrival, and reducing motion mid-arrival ends it on
+/// the next drawn frame. Either way the window schedules no frame for
+/// presentation.
 #[gpui::test]
 fn reduced_motion_settles_transitions_at_once_without_frames(cx: &mut TestAppContext) {
     let (window, cx) = open(cx, &RUST);
@@ -2970,14 +2952,18 @@ fn reduced_motion_settles_transitions_at_once_without_frames(cx: &mut TestAppCon
         "reduced motion drew the command's content settled"
     );
 
-    // Reduced motion engaged mid-arrival ends it on the next frame. Begin
-    // a return under full motion, then flip the preference.
+    // Reduced motion engaged mid-arrival ends it on the next frame. Back
+    // out (which lands at once), begin an opening under full motion, then
+    // flip the preference.
     cx.update(|_, cx| cx.set_reduce_motion(false));
     cx.simulate_keystrokes("escape");
     settle(&window, cx);
+    settle_frames(cx);
+    cx.simulate_keystrokes("enter");
+    settle(&window, cx);
     assert!(
         arriving(&window, cx).is_some(),
-        "the return began under full motion"
+        "the opening began under full motion"
     );
     cx.update(|_, cx| cx.set_reduce_motion(true));
     // The frame the arrival had asked for draws settled, and asks for

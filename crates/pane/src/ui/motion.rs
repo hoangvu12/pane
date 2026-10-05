@@ -21,10 +21,12 @@
 //!
 //! What animates and what never does:
 //!
-//! - A **view transition** — the launcher's screen *kind* changes (root
-//!   search to a command, a command back to root, a form or custom view
-//!   opening or closing) — moves the content that changes: the arriving
-//!   content fades in over a tiny directional shift. The shift is a
+//! - A **view transition** — the launcher's screen *kind* changes going
+//!   forward (root search to a command, a form or custom view opening) —
+//!   moves the content that changes: the arriving content fades in over a
+//!   tiny shift from below. Backing out (Escape, return to root) lands at
+//!   once: it is the most frequent keyboard action in a launcher, and the
+//!   way out should never be something the user waits on. The shift is a
 //!   relative `top` inset, applied after layout like a CSS transform, so
 //!   the stable shell chrome (the panel, the footer with its action
 //!   strip, the query field, the heading) never moves. The departing
@@ -77,11 +79,11 @@
 //!   Navigation, dispatch, cancellation and focus are applied by the
 //!   window before any frame draws; the transition only paints what
 //!   already changed, so it can never rerun a command, delay its
-//!   request, resubmit a form, change history or wait for typing. A
-//!   rapid open/back/open starts the next transition from the current
-//!   presentation (the interrupted offset), so a reversal retargets
-//!   smoothly instead of flashing — and so does a rapid section switch
-//!   or a re-reversed disclosure.
+//!   request, resubmit a form, change history or wait for typing.
+//!   Backing out mid-arrival drops the arrival, so root lands settled; a
+//!   rapid section switch or a re-reversed disclosure starts the next
+//!   transition from the current presentation (the interrupted value), so
+//!   a reversal retargets smoothly instead of flashing.
 //! - A **control's pointer feedback** — the wash a row, an item or a
 //!   button takes under the pointer, and the stronger wash it takes
 //!   while pressed — fades over 150ms between the control's rest,
@@ -139,21 +141,16 @@ pub(crate) enum Direction {
     /// place from below.
     Forward,
     /// Back out: returning to root search or a shallower view. The
-    /// arriving content settles down into place from above.
+    /// arriving content lands at once, with no transition.
     Back,
 }
 
-/// How long the content of a view that opens takes to arrive: 150ms, in
-/// the ticket's 120-180ms window and just above Roboco's 140ms menu
-/// entrance. Ease-out quint covers most of the distance in the first
-/// third of it, so the arrival reads fast and the settle reads gentle.
-pub(crate) const VIEW_ENTER: Duration = Duration::from_millis(150);
-
-/// How long the content of a shallower view takes to arrive when the user
-/// backs out: 120ms, faster than the entrance for the same reason
-/// Roboco's menu exit (100ms) is faster than its entrance (140ms) — the
-/// way out should not linger.
-pub(crate) const VIEW_RETURN: Duration = Duration::from_millis(120);
+/// How long the content of a view that opens takes to arrive: 100ms.
+/// Opening a command is keyboard-driven and happens many times a day, so
+/// the arrival is kept to a hint of direction rather than a motion the
+/// user watches; ease-out quint covers most of the distance in the first
+/// third of it, so even that reads as immediate.
+pub(crate) const VIEW_ENTER: Duration = Duration::from_millis(100);
 
 /// How long the content of a Settings section takes to arrive when the
 /// user switches sections: 150ms — in the ticket's 120-180ms window, the
@@ -339,11 +336,13 @@ fn fade(offset: f32) -> f32 {
 ///
 /// `screen_changed` says the launcher's screen *kind* changed since the
 /// last drawn frame (a real view transition); query and result updates
-/// pass `false` and never animate. `reduced` is
-/// [`App::reduce_motion`]: reduced motion settles immediately — no
-/// transition is started or kept — and, engaged mid-transition, the very
-/// next frame lands settled. A transition that has run its duration ends
-/// here, so nothing keeps requesting frames once the content has arrived.
+/// pass `false` and never animate. Backing out lands at once: a change in
+/// the [`Direction::Back`] direction drops any arrival in flight and
+/// starts none. `reduced` is [`App::reduce_motion`]: reduced motion
+/// settles immediately — no transition is started or kept — and, engaged
+/// mid-transition, the very next frame lands settled. A transition that
+/// has run its duration ends here, so nothing keeps requesting frames once
+/// the content has arrived.
 pub(crate) fn advance(
     transition: &mut Option<Tween>,
     navigation: Direction,
@@ -351,15 +350,15 @@ pub(crate) fn advance(
     reduced: bool,
     now: Instant,
 ) -> Option<(f32, f32)> {
-    let (fresh, duration) = match navigation {
-        Direction::Forward => (VIEW_SHIFT, VIEW_ENTER),
-        Direction::Back => (-VIEW_SHIFT, VIEW_RETURN),
-    };
+    if screen_changed && navigation == Direction::Back {
+        *transition = None;
+        return None;
+    }
     let offset = advance_tween(
         transition,
         0.,
-        fresh,
-        duration,
+        VIEW_SHIFT,
+        VIEW_ENTER,
         screen_changed,
         reduced,
         now,
@@ -413,15 +412,20 @@ pub(crate) fn advance_disclosure(
     )
 }
 
-/// How long the launcher's number hints take to slide in or out while
-/// Ctrl is held (see [`advance_reveal`]).
-pub(crate) const REVEAL: Duration = Duration::from_millis(160);
+/// How long the launcher's number hints take to slide in once Ctrl has
+/// been held (see [`advance_reveal`]).
+pub(crate) const REVEAL_IN: Duration = Duration::from_millis(160);
+
+/// How long the number hints take to slide away when Ctrl is released:
+/// 120ms, faster than they arrive, as every exit here is faster than its
+/// entrance.
+pub(crate) const REVEAL_OUT: Duration = Duration::from_millis(120);
 
 /// Advances a reveal — the number hints' look, 0 hidden, 1 shown — over
-/// the reveal span, as [`advance_disclosure`] advances a group's. `shown`
-/// is the hints' state this frame and `changed` says it flipped since the
-/// last drawn frame. Returns the look while the reveal is in flight;
-/// `None` when settled.
+/// the reveal spans, as [`advance_disclosure`] advances a group's.
+/// `shown` is the hints' state this frame and `changed` says it flipped
+/// since the last drawn frame. Returns the look while the reveal is in
+/// flight; `None` when settled.
 pub(crate) fn advance_reveal(
     reveal: &mut Option<Tween>,
     shown: bool,
@@ -429,8 +433,12 @@ pub(crate) fn advance_reveal(
     reduced: bool,
     now: Instant,
 ) -> Option<f32> {
-    let target = if shown { 1. } else { 0. };
-    advance_tween(reveal, target, 1. - target, REVEAL, changed, reduced, now)
+    let (target, duration) = if shown {
+        (1., REVEAL_IN)
+    } else {
+        (0., REVEAL_OUT)
+    };
+    advance_tween(reveal, target, 1. - target, duration, changed, reduced, now)
 }
 
 /// Advances a popup's entrance or exit — the popup's look, 0 closed, 1
@@ -486,11 +494,43 @@ pub(crate) fn advance_popup(
 /// between the control's rest, hover and pressed styles, continues from
 /// the value on screen when the pointer reverses, jumps to the endpoint
 /// under reduced motion, and requests frames only while a fade is in
-/// flight. The span is this module's pointer family's; the curve is the
-/// same quintic ease-out every other family runs, so a wash settles in
-/// the launcher's one look.
+/// flight. The span is this module's pointer family's. The curve is
+/// CSS's `ease` rather than the quintic ease-out the other families run:
+/// a color change has no distance to cover, and `ease`'s gentler start
+/// reads as a soft wash where the quint's would read as a snap.
 pub(crate) fn pointer_fade() -> gpui::Motion {
-    gpui::Motion::new(POINTER_FADE).with_easing(gpui::ease_out_quint())
+    gpui::Motion::new(POINTER_FADE).with_easing(ease_css)
+}
+
+/// CSS's `ease`, `cubic-bezier(0.25, 0.1, 0.25, 1)`: the curve's y at
+/// `x`, found by solving the bezier's x for its parameter.
+fn ease_css(x: f32) -> f32 {
+    const X1: f32 = 0.25;
+    const Y1: f32 = 0.1;
+    const X2: f32 = 0.25;
+    const Y2: f32 = 1.;
+    if x <= 0. {
+        return 0.;
+    }
+    if x >= 1. {
+        return 1.;
+    }
+    let bezier = |t: f32, p1: f32, p2: f32| {
+        let u = 1. - t;
+        3. * u * u * t * p1 + 3. * u * t * t * p2 + t * t * t
+    };
+    // x(t) is monotonic on [0, 1] for these control points, so bisection
+    // always converges; 20 halvings is far below any visible step.
+    let (mut low, mut high) = (0f32, 1f32);
+    for _ in 0..20 {
+        let mid = (low + high) / 2.;
+        if bezier(mid, X1, X2) < x {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+    bezier((low + high) / 2., Y1, Y2)
 }
 
 /// Wraps `content` — the area that changes between the launcher's screens
@@ -696,5 +736,21 @@ struct Watch {
 impl Drop for Watch {
     fn drop(&mut self) {
         let _ = self.settings.RemoveAnimationsEnabledChanged(self.token);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ease_css_follows_the_css_curve() {
+        assert_eq!(ease_css(0.), 0.);
+        assert_eq!(ease_css(1.), 1.);
+        // Browsers' own `ease` at its midpoint: about 0.8024.
+        assert!((ease_css(0.5) - 0.8024).abs() < 1e-3, "{}", ease_css(0.5));
+        // Monotonic, as a fade's curve must be.
+        let samples: Vec<f32> = (0..=20).map(|step| ease_css(step as f32 / 20.)).collect();
+        assert!(samples.windows(2).all(|pair| pair[0] <= pair[1]));
     }
 }
