@@ -4423,7 +4423,8 @@ struct DeclaredSettings {
     sidebar: Rect,
     /// The search field's well.
     search: Rect,
-    /// The placeholder's text box, after the magnifier and its gap.
+    /// The placeholder's text box, after the magnifier, its gap and the
+    /// field's text inset.
     placeholder: DeclaredText,
     sections: Vec<DeclaredNavItem>,
     page: Rect,
@@ -4521,7 +4522,8 @@ fn declared_settings(
             x: frame.search.x
                 + f(settings.search_padding_x)
                 + f(settings.search_glyph)
-                + f(settings.search_gap),
+                + f(settings.search_gap)
+                + f(theme.geometry.search_text_inset),
             y: frame.search.y,
             width: shaped_width(
                 window,

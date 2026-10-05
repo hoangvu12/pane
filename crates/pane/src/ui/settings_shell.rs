@@ -167,7 +167,9 @@ pub(crate) fn section_list(theme: &Theme) -> Div {
 /// The sidebar's search field: the 34px well (black 24% under a white 6%
 /// inset ring, radius 8, with an 8px margin below it that the sidebar's
 /// 2px gap follows) with the 14px magnifier
-/// and `input`'s editable text in 13px. The ring takes the focus ring's
+/// (which keeps its 14px: the field never squeezes it) and `input`'s
+/// editable text in 13px, inset by the reference's `<input>` padding
+/// (`search_text_inset`). The ring takes the focus ring's
 /// color while the field has the keyboard focus — an adaptation: the
 /// reference draws no focus state for it. The caller tracks the input's
 /// focus and attaches the field's identity and keys.
@@ -191,7 +193,7 @@ pub(crate) fn search_field(
         .bg(theme.field_fill)
         .shadow(inset_ring(theme.field_edge))
         .focus(move |field| field.shadow(inset_ring(focus_ring)))
-        .child(glyph(Glyph::Search, settings.search_glyph, theme.nav_icon))
+        .child(glyph(Glyph::Search, settings.search_glyph, theme.nav_icon).flex_none())
         .child(
             text_input("settings-search")
                 .state(input.downgrade())
@@ -204,6 +206,7 @@ pub(crate) fn search_field(
                 .text_color(theme.text_title)
                 .font_family(typography.family.clone())
                 .font_features(typography.features.clone())
+                .pl(theme.geometry.search_text_inset)
                 .w_full()
                 .min_w(px(0.))
                 .whitespace_nowrap()
@@ -299,7 +302,7 @@ pub(crate) fn sidebar_item(item: SidebarItem, theme: &Theme) -> Div {
         })
         .when(item.selected, |row| row.bg(theme.nav_selected))
         .hover(move |row| row.bg(hover).text_color(hover_text))
-        .child(glyph(item.glyph, settings.item_glyph, theme.nav_icon))
+        .child(glyph(item.glyph, settings.item_glyph, theme.nav_icon).flex_none())
         .child(text)
         .when_some(item.count, |row, count| {
             row.child(

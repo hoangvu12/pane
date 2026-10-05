@@ -116,6 +116,16 @@ def median_color(image, box):
     return tuple(statistics.median(channel) for channel in zip(*values))
 
 
+def mean_color(image, box):
+    """The mean color inside box: unlike the median it keeps a fraction of
+    a level, which a faint overlay on a dark fill needs (see
+    measure_settings)."""
+    values = pixels(image, box)
+    if not values:
+        return None
+    return tuple(statistics.mean(channel) for channel in zip(*values))
+
+
 def white_alpha(fill, background):
     """A white overlay's alpha, in levels (0-255), from the composited fill
     and the background it sits on: (fill - bg) / (255 - bg) per channel."""
@@ -2542,6 +2552,16 @@ def measured_cores(manifest, native, scale):
 # palette, shield and info glyphs): the fixture draws a stand-in there, so
 # those glyphs are compared by place only.
 STAND_IN_GLYPH = "a stand-in for the board's own glyph, which Pane does not have: compared by place only"
+SIDEBAR_ROUNDING = ("accepted (#97): both draw the sidebar as black 10% (25.5 levels). Over the page's ~22 levels "
+                    "that darkens it by about 2 levels, so one level of rounding is about 11 alpha levels. Pane reads "
+                    "its 25.5 within the flat-fill limit; Chrome's glass composites the same overlay 0.2-0.3 of a "
+                    "level darker, and reads about 28. Accepted only while Pane matches its declaration and the two "
+                    "differ by less than one level of the page")
+NAV_GLYPH_LIFT = ("accepted (#97): the same 16px glyph at the same center. Its 1.6 stroke is about 1.07px here, and "
+                  "a vertical stroke's round cap covers its end row only partly; GPUI's sprite contrast (see "
+                  "SPRITE_CONTRAST) lifts that row past a pixel's worth of coverage (0.64 a pixel against Chrome's "
+                  "0.5 on General's sliders), so the native box reads an edge row longer at an end. Accepted only "
+                  "where the native box is larger, by at most 2px, around a center within 1px of the reference's")
 
 
 def vline(image, x_range, y_range, background=None, lighter=True):
@@ -2656,19 +2676,33 @@ def measure_settings(image, layout, inks, scale=1.0, lighter=True):
     found = vline(image, (int((right - 5) * scale), int((right + 4) * scale)), (int(y0 * scale), int(y1 * scale)),
                   None, lighter)
     result["separator"] = found / scale if found is not None else None
-    inside = median_color(image, box_px((right - 7, y0, 4, 20), scale))
-    beside = median_color(image, box_px((right + 3, y0, 4, 20), scale))
+    # Mean colors over many pixels: a black overlay on these ~22 levels
+    # moves them by 2 to 6, so a median's whole levels would round the
+    # alpha by about 11 levels each, while the mean keeps the fraction the
+    # fixture's dithered gradient carries.
+    inside = mean_color(image, box_px((right - 7, y0, 4, y1 - y0), scale))
+    beside = mean_color(image, box_px((right + 3, y0, 4, y1 - y0), scale))
     result["sidebarAlpha"] = black_alpha(inside, beside) if inside and beside else None
+    result["sidebarLevels"] = min(beside) if beside else None
 
-    # The search well: its fill (between its ring and its magnifier) as a
-    # black overlay over the sidebar in the gap below it, its edges, and
-    # its placeholder's ink.
+    # The search well: its fill (between its ring and its magnifier, and
+    # inside its right end) as a black overlay over the sidebar right
+    # beside each end, at the same rows - the panel's top gradient (and the
+    # reference's glass) changes down the sidebar, so the sidebar below the
+    # well is darker than the sidebar beside it. Then its edges, and its
+    # placeholder's ink.
     x, y, w, h = layout["search"]
     below = median_color(image, box_px((x + 20, y + h + 3, 60, 3), scale))
     fill = median_color(image, box_px((x + 2.5, y + 8, 4, h - 16), scale))
+    alphas = []
+    for fill_x, beside_x in ((x + 2.5, x - 8), (x + w - 6.5, x + w + 3)):
+        end_fill = mean_color(image, box_px((fill_x, y + 8, 4, h - 16), scale))
+        end_beside = mean_color(image, box_px((beside_x, y + 8, 5, h - 16), scale))
+        if end_fill and end_beside:
+            alphas.append(black_alpha(end_fill, end_beside))
     result["search"] = {
         "edges": ringed_box(image, (x, y, w, h), below, fill, scale) if below and fill else None,
-        "alpha": black_alpha(fill, below) if below and fill else None,
+        "alpha": statistics.mean(alphas) if alphas and None not in alphas else None,
     }
     px_left = layout["placeholder"][0]
     result["placeholder"] = ink_extent(image, (px_left - 4, y + 4, 140, h - 8), fill, inks["placeholder"],
@@ -2695,9 +2729,13 @@ def measure_settings(image, layout, inks, scale=1.0, lighter=True):
                 bx, by, bw, bh = text["box"]
                 measured["text"] = {"left": bx / scale - x, "top": by / scale - y, "height": bh / scale,
                                     "color": text["color"]}
-            glyph = ink(image, box_px(item["glyph"], scale, pad=2), wash["fill"], inks["icon"], exclude_accent=False)
+            # The glyph's box by coverage, not core pixels: GPUI lifts an
+            # icon's anti-aliased edges (see SPRITE_CONTRAST), so a thin
+            # stroke's round cap (the General sliders' ends) is core in
+            # GPUI and not in Chrome.
+            glyph = coverage_box(image, box_px(item["glyph"], scale, pad=2), inks["icon"])
             if glyph:
-                gx, gy, gw, gh = glyph["box"]
+                gx, gy, gw, gh = glyph
                 measured["glyph"] = (gx / scale - x, gy / scale - y, gw / scale, gh / scale)
             if item["count"]:
                 count = ink(image, box_px(item["count"], scale, pad=3), wash["fill"], inks["icon"],
@@ -2838,8 +2876,14 @@ def compare_settings(report, name, capture, manifest, native, scale, ref_capture
             report.check("parity", name, capture, "titlebar", f"label ink {prop}", value(mine["title"]),
                          value(theirs["title"]), edge, "px")
     report.check("parity", name, capture, "sidebar", "rule x", mine["separator"], theirs["separator"], edge, "px")
+    # One channel level of the page under the sidebar, in alpha levels: the
+    # most a black 10% can be misread by where each renderer rounds it.
+    level = 255 / theirs["sidebarLevels"] if theirs.get("sidebarLevels") else 0
+    true_native = mine["sidebarAlpha"] is not None and abs(mine["sidebarAlpha"] - colors["sidebarFill"][3]) <= flat
+    rounded = (true_native and theirs["sidebarAlpha"] is not None
+               and abs(mine["sidebarAlpha"] - theirs["sidebarAlpha"]) < level)
     report.check("parity", name, capture, "sidebar", "fill alpha", mine["sidebarAlpha"], theirs["sidebarAlpha"],
-                 flat, "levels")
+                 flat, "levels", accepted=SIDEBAR_ROUNDING if rounded else None)
     n_edges, r_edges = mine["search"]["edges"], theirs["search"]["edges"]
     for prop, index in (("left", 0), ("top", 1), ("width", 2), ("height", 3)):
         report.check("parity", name, capture, "search", f"well {prop}", n_edges and n_edges[index],
@@ -2880,8 +2924,16 @@ def compare_settings(report, name, capture, manifest, native, scale, ref_capture
         if n_glyph and r_glyph:
             props = (("left", 0), ("top", 1), ("width", 2), ("height", 3)) if item["boardGlyph"] else ()
             for prop, index in props:
+                lifted = None
+                if index >= 2:
+                    # A size: a native box grown by the sprite contrast's lift
+                    # at its ends, around the same center.
+                    grown = n_glyph[index] - r_glyph[index]
+                    shift = (n_glyph[index - 2] + n_glyph[index] / 2) - (r_glyph[index - 2] + r_glyph[index] / 2)
+                    if 0 < grown <= 2 * edge and abs(shift) <= edge:
+                        lifted = NAV_GLYPH_LIFT
                 report.check("parity", name, capture, subject, f"glyph ink {prop} in item", n_glyph[index],
-                             r_glyph[index], edge, "px")
+                             r_glyph[index], edge, "px", accepted=lifted)
             if not item["boardGlyph"]:
                 report.check("parity", name, capture, subject, "glyph ink center x in item",
                              n_glyph[0] + n_glyph[2] / 2, r_glyph[0] + r_glyph[2] / 2, edge * 1.5, "px",
