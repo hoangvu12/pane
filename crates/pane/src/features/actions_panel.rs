@@ -3,9 +3,15 @@
 //! by its Actions button or the Open actions binding (Ctrl+K by default).
 //!
 //! What it lists is the core's ([`pane_core::Launcher::result_actions`]):
-//! the result's primary action — the footer's, the same dispatch — then,
-//! for an installed command, its hotkey and alias configuration. Nothing
-//! is listed without a working operation behind it (#100).
+//! the result's primary action — the footer's, the same dispatch — then
+//! pinning it to a quick slot, then, for an installed command, its hotkey
+//! and alias configuration. Nothing is listed without a working operation
+//! behind it (#100). Pinning with all five slots taken turns the panel
+//! into the explicit choice of the slot to replace; pinning what a slot
+//! holds already moves focus to that slot. A quick slot has a panel of its
+//! own — opened by a secondary click on it, or the Open actions binding
+//! while it has focus — invoking, removing and moving it (see
+//! [`crate::features::quick_slots`]).
 //!
 //! The panel holds its target: the row selected when it opened, by its
 //! stable id. While it is open the pointer cannot move root search's
@@ -28,9 +34,13 @@ use gpui::{
 };
 use gpui_elements::editable_text::actions::DEFAULT_INPUT_CONTEXT;
 use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged, text_input};
-use pane_core::{KeyboardAction, ResultAction, ResultActionItem, ResultActions, RowKind, Screen};
+use pane_core::{
+    KeyboardAction, PinTarget, ResultAction, ResultActionItem, ResultActions, RowKind, Screen,
+    SlotChange,
+};
 
 use crate::app::{LauncherWindow, row_icon};
+use crate::features::quick_slots;
 use crate::ui::icon::{Glyph, IconTone, TileSize, glyph, tile_at};
 use crate::ui::input::TextEditingKeys;
 use crate::ui::keycap::{CapStyle, KeySequence, key_sequence};
@@ -54,6 +64,10 @@ pub(crate) const NO_MATCH: &str = "No actions match";
 pub(crate) const NOTHING_SELECTED: &str = "Select a result to see its actions";
 /// The group label over the command's configuration.
 pub(crate) const PANE_GROUP: &str = "Pane";
+/// The group label over the slots a full set offers to replace.
+pub(crate) const REPLACE_GROUP: &str = "Replace a Quick Slot";
+/// The group label over a quick slot's own operations.
+pub(crate) const SLOT_GROUP: &str = "Quick Slot";
 
 /// Registers the panel's keys: Up and Down in its search field, above the
 /// field's own caret keys, and Enter, Escape and Tab in the panel, above
@@ -91,6 +105,31 @@ struct Opened {
     actions: ResultActions,
     /// The target's kind: an application's primary action opens it.
     kind: Option<RowKind>,
+    /// What the entries act on.
+    subject: Subject,
+}
+
+/// What the panel's entries act on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Subject {
+    /// Root search's selected result.
+    Result,
+    /// Root search's selected result, which every quick slot is too full
+    /// to take: the entries are the slots it can replace.
+    Replacing,
+    /// The quick slot holding the target.
+    Slot,
+}
+
+impl Subject {
+    /// The label over the entries after the primary action.
+    fn group(self) -> &'static str {
+        match self {
+            Subject::Result => PANE_GROUP,
+            Subject::Replacing => REPLACE_GROUP,
+            Subject::Slot => SLOT_GROUP,
+        }
+    }
 }
 
 impl ActionsPanel {
@@ -116,13 +155,14 @@ impl LauncherWindow {
         }
     }
 
-    /// Opens the Actions panel for root search's selected result, with
-    /// focus in its search field. Only root search has Actions.
+    /// Opens the Actions panel for root search's selected result — or, while
+    /// a quick slot has focus, for that slot — with focus in its search
+    /// field. Only root search has Actions.
     pub(crate) fn open_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.actions.is_some() || !matches!(self.launcher.view().screen, Screen::Root { .. }) {
+        if let Some(slot) = self.focused_slot(window) {
+            self.open_slot_actions(slot, window, cx);
             return;
         }
-        self.close_open_menu(window, cx);
         let opened = self.launcher.result_actions().map(|actions| {
             let presentation = self.launcher.presentation();
             let kind = self
@@ -130,8 +170,48 @@ impl LauncherWindow {
                 .selected()
                 .and_then(|index| presentation.rows.get(index))
                 .and_then(|row| row.kind);
-            Opened { actions, kind }
+            Opened {
+                actions,
+                kind,
+                subject: Subject::Result,
+            }
         });
+        self.open_panel(opened, window, cx);
+    }
+
+    /// Opens the Actions panel for the quick slot at `index`: invoking,
+    /// removing and moving it. An empty slot has none.
+    pub(crate) fn open_slot_actions(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(slot) = self.launcher.quick_slots().into_iter().nth(index) else {
+            return;
+        };
+        let Some(target) = slot.target.as_ref().map(PinTarget::key) else {
+            return;
+        };
+        let opened = self
+            .launcher
+            .quick_slot_actions(&target)
+            .map(|actions| Opened {
+                actions,
+                kind: slot.kind,
+                subject: Subject::Slot,
+            });
+        if opened.is_some() {
+            self.open_panel(opened, window, cx);
+        }
+    }
+
+    /// Opens the panel over `opened`, with focus in its search field.
+    fn open_panel(&mut self, opened: Option<Opened>, window: &mut Window, cx: &mut Context<Self>) {
+        if self.actions.is_some() || !matches!(self.launcher.view().screen, Screen::Root { .. }) {
+            return;
+        }
+        self.close_open_menu(window, cx);
         let filter = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
         let filtering = cx.subscribe(&filter, |this, _, _: &TextChanged, cx| {
             if let Some(panel) = this.actions.as_mut() {
@@ -175,8 +255,14 @@ impl LauncherWindow {
     /// unavailable — a target removed or disabled behind the panel runs
     /// nothing.
     fn live_actions(&self) -> Option<ResultActions> {
-        let opened = &self.actions.as_ref()?.opened.as_ref()?.actions;
-        match self.launcher.result_actions() {
+        let panel = self.actions.as_ref()?.opened.as_ref()?;
+        let opened = &panel.actions;
+        let live = match panel.subject {
+            Subject::Result => self.launcher.result_actions(),
+            Subject::Replacing => self.launcher.pin_replacements(&opened.target),
+            Subject::Slot => self.launcher.quick_slot_actions(&opened.target),
+        };
+        match live {
             Some(live) if live.target == opened.target => Some(live),
             _ => Some(ResultActions {
                 items: opened
@@ -235,30 +321,90 @@ impl LauncherWindow {
     }
 
     /// Runs the listed entry `index`, once, if the core still has the
-    /// panel's target selected with that action ready; the panel closes
-    /// either way, but an entry that cannot run does nothing.
+    /// panel's target — the selected row, or the slot holding it — with
+    /// that action ready; the panel closes, but an entry that cannot run
+    /// does nothing. Pinning with every slot taken keeps the panel open on
+    /// the slots to replace instead.
     fn run_action(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let target = self
+        let opened = self
             .actions
             .as_ref()
             .and_then(|panel| panel.opened.as_ref())
-            .map(|opened| opened.actions.target.clone());
+            .map(|opened| (opened.actions.target.clone(), opened.subject));
         let action = self.listed(cx).get(index).map(|item| item.action);
-        let (Some(target), Some(action)) = (target, action) else {
+        let (Some((target, subject)), Some(action)) = (opened, action) else {
             return;
         };
-        if !self.launcher.result_action_ready(&target, action) {
+        let ready = match subject {
+            Subject::Result => self.launcher.result_action_ready(&target, action),
+            Subject::Replacing | Subject::Slot => {
+                self.launcher.quick_slot_action_ready(&target, action)
+            }
+        };
+        if !ready {
             return;
         }
-        self.close_actions(window, cx);
         match action {
-            ResultAction::Invoke => self.press_primary_action(window, cx),
+            ResultAction::Invoke => {
+                self.close_actions(window, cx);
+                match self.launcher.quick_slot_of(&target) {
+                    Some(slot) if subject == Subject::Slot => {
+                        self.activate_quick_slot(slot, window, cx)
+                    }
+                    _ => self.press_primary_action(window, cx),
+                }
+            }
             ResultAction::Hotkey | ResultAction::Alias => {
+                self.close_actions(window, cx);
                 if self.launcher.open_result_action(&target, action) {
                     self.navigate_forward(window, cx);
                 }
             }
+            ResultAction::Pin
+            | ResultAction::ReplaceSlot(_)
+            | ResultAction::Unpin
+            | ResultAction::MoveSlotLeft
+            | ResultAction::MoveSlotRight => {
+                let (change, recording) = self.launcher.change_quick_slots(&target, action);
+                if change == SlotChange::ChooseReplacement {
+                    self.choose_replacement(&target, cx);
+                    return;
+                }
+                self.close_actions(window, cx);
+                // Pinning what a slot holds already moves focus to that
+                // slot: a typed query is cleared first, so the home and
+                // the slot show (the status keeps naming the slot).
+                if let SlotChange::AlreadyPinned(slot) = change {
+                    if !quick_slots::home_shown(&self.launcher.view()) {
+                        let cleared = self.launcher.set_query("");
+                        self.show_until_done(cleared, window, cx);
+                    }
+                    self.focus_slot(slot, window, cx);
+                }
+                self.show_until_done(recording, window, cx);
+            }
         }
+    }
+
+    /// Turns the open panel over `target`, which no slot can take while
+    /// all five are full, into the explicit choice of the slot to replace.
+    fn choose_replacement(&mut self, target: &str, cx: &mut Context<Self>) {
+        let Some(replacements) = self.launcher.pin_replacements(target) else {
+            return;
+        };
+        let Some(panel) = self.actions.as_mut() else {
+            return;
+        };
+        let kind = panel.opened.as_ref().and_then(|opened| opened.kind);
+        panel.opened = Some(Opened {
+            actions: replacements,
+            kind,
+            subject: Subject::Replacing,
+        });
+        panel.selected = 0;
+        let filter = panel.filter.clone();
+        filter.update(cx, |filter, cx| filter.emplace("", cx));
+        cx.notify();
     }
 
     /// Test support: whether the Actions panel is open.
@@ -294,6 +440,7 @@ impl LauncherWindow {
                 target: opened.map(|opened| (&opened.actions, opened.kind)),
                 icon: opened.and_then(|opened| row_icon(&opened.actions.target)),
                 listed: &listed,
+                group: opened.map_or(PANE_GROUP, |opened| opened.subject.group()),
                 filtering,
                 selected: panel.selected,
                 invoke: &invoke,
@@ -344,6 +491,9 @@ pub(crate) struct PanelView<'a> {
     pub(crate) icon: Option<(IconTone, Glyph)>,
     /// What the filter lists now.
     pub(crate) listed: &'a [ResultActionItem],
+    /// The label over the entries after the primary action: "Pane" over
+    /// a result's, or the quick slot labels over a slot's.
+    pub(crate) group: &'static str,
     /// Whether the filter holds text, which drops the group's separator
     /// and label as the reference's does.
     pub(crate) filtering: bool,
@@ -368,6 +518,7 @@ pub(crate) fn compose(
 ) -> Stateful<Div> {
     let rows = list_children(
         view.listed,
+        view.group,
         view.filtering,
         view.selected,
         primary_glyph(view.target.and_then(|(_, kind)| kind)),
@@ -472,6 +623,11 @@ fn action_glyph(action: ResultAction, primary: Glyph) -> Glyph {
         ResultAction::Invoke => primary,
         ResultAction::Hotkey => Glyph::ActionHotkey,
         ResultAction::Alias => Glyph::ActionAlias,
+        ResultAction::Pin
+        | ResultAction::ReplaceSlot(_)
+        | ResultAction::Unpin
+        | ResultAction::MoveSlotLeft
+        | ResultAction::MoveSlotRight => Glyph::ActionPin,
     }
 }
 
@@ -484,6 +640,7 @@ fn action_glyph(action: ResultAction, primary: Glyph) -> Glyph {
 /// does; the configuration has no keys of its own.
 pub(crate) fn list_children(
     listed: &[ResultActionItem],
+    group: &'static str,
     filtering: bool,
     selected: usize,
     primary: Glyph,
@@ -495,7 +652,7 @@ pub(crate) fn list_children(
         .into_iter()
         .map(|child| match child {
             PanelChild::Rule => rule(theme).into_any_element(),
-            PanelChild::Group => group_label(PANE_GROUP, theme).into_any_element(),
+            PanelChild::Group => group_label(group, theme).into_any_element(),
             PanelChild::Entry(index) => {
                 let item = &listed[index];
                 let keys = (item.action == ResultAction::Invoke).then_some(invoke);

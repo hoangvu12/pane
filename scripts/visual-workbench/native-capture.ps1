@@ -54,7 +54,7 @@ param(
     [ValidateSet('glass', 'opaque')]
     [string]$Material = 'opaque',
 
-    [ValidateSet('none', 'row-padding-plus-4', 'selected-fill', 'hover-fill')]
+    [ValidateSet('none', 'row-padding-plus-4', 'selected-fill', 'hover-fill', 'nav-selected-fill')]
     [string]$Perturb = 'none',
 
     [int]$StepDelayMs = 450,
@@ -91,6 +91,7 @@ public static class PaneFixtureWin {
     [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint flags);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+    [DllImport("user32.dll")] public static extern IntPtr SendMessageTimeout(IntPtr h, uint m, IntPtr w, IntPtr l, uint flags, uint timeout, out IntPtr result);
     [DllImport("user32.dll")] public static extern int GetDpiForWindow(IntPtr h);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern uint MapVirtualKey(uint code, uint type);
@@ -138,6 +139,27 @@ function Send-Key([IntPtr]$hwnd, [int]$vk) {
     [void][PaneFixtureWin]::PostMessage($hwnd, $WM_KEYDOWN, [IntPtr]$vk, [IntPtr][int64]$down)
     Start-Sleep -Milliseconds 30
     [void][PaneFixtureWin]::PostMessage($hwnd, $WM_KEYUP, [IntPtr]$vk, [IntPtr][int64]$up)
+}
+
+# Waits until the fixture has handled the input posted to it. A capture is
+# a message sent to the window, and Windows dispatches sent messages before
+# posted ones, so a capture taken while the fixture is busy (a debug
+# build's first raster of a large SVG takes seconds) would show the state
+# before the keys still queued behind it. A WM_NULL sent to a busy thread
+# waits for it; two prompt replies 120ms apart mean the queue has drained.
+# Returns how long the wait took, in milliseconds.
+function Wait-Idle([IntPtr]$hwnd) {
+    $total = [Diagnostics.Stopwatch]::StartNew()
+    $prompt = 0
+    while ($prompt -lt 2 -and $total.ElapsedMilliseconds -lt 30000) {
+        $reply = [Diagnostics.Stopwatch]::StartNew()
+        $result = [IntPtr]::Zero
+        [void][PaneFixtureWin]::SendMessageTimeout($hwnd, 0, [IntPtr]::Zero, [IntPtr]::Zero, 0, 20000, [ref]$result)
+        if ($reply.ElapsedMilliseconds -lt 60) { $prompt++ } else { $prompt = 0 }
+        Start-Sleep -Milliseconds 120
+    }
+    if ($prompt -lt 2) { throw 'the fixture did not become idle within 30s' }
+    return [int]$total.ElapsedMilliseconds
 }
 
 function Send-Pointer([IntPtr]$hwnd, [double]$x, [double]$y, [double]$scale) {
@@ -257,9 +279,10 @@ foreach ($entry in $selected) {
                     # is the only pointer the fixture has, and Windows may
                     # report a leave because the real cursor is elsewhere.
                     if ($null -ne $pointer) { Send-Pointer $hwnd $pointer[0] $pointer[1] $scale; Start-Sleep -Milliseconds 300 }
+                    $settled = Wait-Idle $hwnd
                     $file = Join-Path $dir ($step.name + '.png')
                     $size = Save-Client $hwnd $file
-                    $meta.captures += [ordered]@{ name = $step.name; file = "$($entry.name)/$($step.name).png"; size = $size; utc = (Get-Date).ToUniversalTime().ToString('o') }
+                    $meta.captures += [ordered]@{ name = $step.name; file = "$($entry.name)/$($step.name).png"; size = $size; settledMs = $settled; utc = (Get-Date).ToUniversalTime().ToString('o') }
                     Write-Host "native $($entry.name): $($step.name) ($($size -join 'x'))"
                 }
                 'pointer' {
@@ -285,6 +308,15 @@ foreach ($entry in $selected) {
                     Send-Pointer $hwnd $pointer[0] $pointer[1] $scale
                     Start-Sleep -Milliseconds 40
                     Send-Click $hwnd $pointer[0] $pointer[1] $scale
+                }
+                'point' {
+                    # The pointer arrives at the element (a pinned slot)
+                    # from a pixel to its left, and stays there unpressed.
+                    if ($null -eq $step.point) { throw "the point at $($step.target) has no point" }
+                    $pointer = @($step.point[0], $step.point[1])
+                    Send-Pointer $hwnd ($pointer[0] - 1) $pointer[1] $scale
+                    Start-Sleep -Milliseconds 40
+                    Send-Pointer $hwnd $pointer[0] $pointer[1] $scale
                 }
                 'type' {
                     foreach ($character in $step.text.ToCharArray()) {

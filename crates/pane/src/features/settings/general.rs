@@ -71,7 +71,8 @@ use pane_core::autostart::Registration;
 use pane_core::hotkeys::Shortcut;
 
 use super::{Page, SettingsWindow, search};
-use crate::ui::icon::{Glyph, IconTone};
+use crate::ui::icon::Glyph;
+use crate::ui::settings_shell;
 use crate::ui::theme::Theme;
 
 /// The tray row's title, in the platform's own terms for the entry: the
@@ -134,13 +135,18 @@ pub(crate) fn bind_keys(cx: &mut App) {
     ]);
 }
 
+/// What the page is, in one line: its sidebar entry's description in
+/// the search, and its heading's subtitle.
+const ABOUT: &str = "The Open Pane hotkey and the launch-at-login choice";
+
 /// The General page, registered first in the window's page list: the
 /// page of Pane as a whole, the one the window opens on.
 pub(crate) fn page() -> Page {
     Page {
         title: "General",
-        about: "The Open Pane hotkey and the launch-at-login choice",
-        icon: (IconTone::Command, Glyph::Sliders),
+        about: ABOUT,
+        icon: Glyph::Sliders,
+        count: None,
         render,
         search: entries,
         focus,
@@ -248,7 +254,6 @@ fn render(
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let theme = crate::settings::visuals(cx).theme;
-    let typography = &theme.typography;
     // Everything the page shows comes from the host settings (the
     // choices, the save's word, the registration and ability each
     // integration reports, the entry's state) and the launcher (what is
@@ -296,14 +301,9 @@ fn render(
         .flex_col()
         .gap(px(4.))
         .child(
-            div()
+            settings_shell::page_header("General", Some(ABOUT.into()), &theme)
                 .id("general-title")
-                .debug_selector(|| "general-title".into())
-                .pb(px(8.))
-                .text_size(typography.search_size)
-                .font_weight(typography.medium)
-                .text_color(theme.text_title)
-                .child("General"),
+                .debug_selector(|| "general-title".into()),
         )
         .child(group(
             "Open Pane",

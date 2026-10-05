@@ -22,12 +22,15 @@ use pane_core::changes::Changes;
 use pane_core::hotkeys::Shortcut;
 use pane_core::tray::TrayAction;
 use pane_core::{
-    Launcher, LauncherView, Presentation, Row, RowPresentation, Screen, SelectedAction, Status,
+    ComputedAnswer, Launcher, LauncherView, Presentation, Row, RowPresentation, Screen,
+    SelectedAction, Status,
 };
 
 use crate::extension_views::{custom_view, form};
 use crate::features::actions_panel;
+use crate::features::clipboard_history;
 use crate::features::footer_menu;
+use crate::features::quick_slots;
 use crate::features::root_search;
 use crate::features::settings;
 use crate::ui::footer;
@@ -35,6 +38,7 @@ use crate::ui::icon::{Glyph, IconTone};
 use crate::ui::keycap::CapStyle;
 use crate::ui::material::Material;
 use crate::ui::motion::{self, Direction};
+use crate::ui::pinned;
 use crate::ui::result_row::{RowContent, RowMeta, result_row_with};
 use crate::ui::shell;
 use crate::ui::theme::Theme;
@@ -72,6 +76,12 @@ pub struct LauncherWindow {
     pub(crate) menu: Option<footer_menu::FooterMenu>,
     /// The open Actions panel, if any; see [`features::actions_panel`].
     pub(crate) actions: Option<actions_panel::ActionsPanel>,
+    /// Pane's Clipboard History in the split view, while its command is
+    /// open; see [`features::clipboard_history`].
+    pub(crate) clipboard: Option<clipboard_history::ClipboardHistory>,
+    /// Root search's pinned home: its slots' focus; see
+    /// [`features::quick_slots`].
+    pub(crate) home: quick_slots::Home,
     /// The footer menu popup's entrance or exit in flight, if any: the
     /// popup's look (0 closed, 1 open), presentation only — see
     /// [`crate::ui::motion`]. One tween serves both the open menu and
@@ -210,6 +220,8 @@ impl LauncherWindow {
             menu_button,
             menu: None,
             actions: None,
+            clipboard: None,
+            home: quick_slots::Home::new(cx),
             menu_transition: None,
             menu_exit: None,
             drawn_menu: false,
@@ -223,6 +235,8 @@ impl LauncherWindow {
         // The launcher opens placed on the display the Launcher page's
         // choice resolves to, before the first frame is drawn.
         this.place(window, cx);
+        // The home's slots resolve from the first visit.
+        this.sync_home(cx);
         this
     }
 
@@ -315,7 +329,7 @@ impl LauncherWindow {
         }
     }
 
-    fn back(&mut self, _: &Back, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn back(&mut self, _: &Back, window: &mut Window, cx: &mut Context<Self>) {
         // The back key's order, as the specification states it: an active
         // IME composition in the focused field is cancelled first, then an
         // open footer menu is dismissed, and only then does the key leave
@@ -328,6 +342,11 @@ impl LauncherWindow {
             || self.close_open_menu(window, cx)
             || self.close_actions(window, cx)
         {
+            return;
+        }
+        // Clipboard History's own list, shown from its split view: back to
+        // the split view first.
+        if self.leave_clipboard_controls(window, cx) {
             return;
         }
         if let Screen::Root { query } = &self.launcher.view().screen
@@ -348,7 +367,12 @@ impl LauncherWindow {
     /// Returns to root search from wherever the launcher is — the state a
     /// summoned launcher starts from — leaving every open screen at once,
     /// as the back key leaves them one at a time.
-    fn return_to_root(&mut self, _: &ReturnToRoot, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn return_to_root(
+        &mut self,
+        _: &ReturnToRoot,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.close_open_menu(window, cx) || self.close_actions(window, cx) {
             return;
         }
@@ -365,7 +389,12 @@ impl LauncherWindow {
     /// registered, and the Open Pane hotkey shows the same window and the
     /// same launcher again. In the Settings window the platform's close
     /// shortcut closes only that window.
-    fn dismiss(&mut self, _: &DismissLauncher, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn dismiss(
+        &mut self,
+        _: &DismissLauncher,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.hide(window, cx);
     }
 
@@ -572,6 +601,20 @@ impl LauncherWindow {
     /// leaves it where it is, and the page explains that rather than
     /// pretending the choice applied.
     fn place(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let size = window.bounds().size;
+        self.place_sized(size, window, cx);
+    }
+
+    /// Places the launcher window as [`LauncherWindow::place`] does, for a
+    /// window of `size`: the size it is about to take (the Clipboard
+    /// History view's), which the window reports only once the system has
+    /// resized it.
+    pub(crate) fn place_sized(
+        &mut self,
+        size: Size<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let choice = crate::settings::shared(cx).read(cx).opening_monitor();
         let placement = crate::placement::shared(cx);
         let layout = placement.layout();
@@ -581,7 +624,6 @@ impl LauncherWindow {
         // The window's size in the layout's own units, so the placement is
         // computed in the space its displays are measured in; a window
         // keeps that size as it moves.
-        let size = window.bounds().size;
         let units = crate::placement::units_per_pixel(window);
         let bounds = resolved.display.window_bounds(pane_core::placement::Size {
             width: size.width.as_f32() * units,
@@ -713,11 +755,21 @@ impl LauncherWindow {
         }
     }
 
-    fn focus_next(&mut self, _: &FocusNext, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn focus_next(
+        &mut self,
+        _: &FocusNext,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         window.focus_next(cx);
     }
 
-    fn focus_previous(&mut self, _: &FocusPrevious, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn focus_previous(
+        &mut self,
+        _: &FocusPrevious,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         window.focus_prev(cx);
     }
 
@@ -725,7 +777,12 @@ impl LauncherWindow {
     /// default, rebindable on the Keyboard page): opens or focuses the
     /// Settings window, the same one the footer menu and the root result
     /// open.
-    fn open_settings(&mut self, _: &OpenSettings, _: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_settings(
+        &mut self,
+        _: &OpenSettings,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         settings::open(&self.launcher, cx);
     }
 
@@ -860,10 +917,21 @@ impl LauncherWindow {
         }
         if let Some(selected) = view.selected {
             // The list's children are its rows with the section labels
-            // between them. (The empty notice above the rows shows only
-            // while nothing is selected, when nothing is scrolled to.)
-            self.scroll
-                .scroll_to_item(shell::child_of_row(&section_labels(presentation), selected));
+            // between them, after the pinned home's while it shows (a blank
+            // query's) and after root search's no-results notice while it
+            // shows (over the fallbacks, whichever is selected). (Another
+            // screen's empty line shows only while nothing is selected,
+            // when nothing is scrolled to.)
+            let home = if quick_slots::home_shown(view) {
+                pinned::HOME_CHILDREN
+            } else {
+                0
+            };
+            let notice = root_search::layouts::nothing_found(&view.screen, presentation);
+            let labels = section_labels(presentation);
+            let child =
+                home + root_search::layouts::child_of_row(notice.is_some(), &labels, selected);
+            self.scroll.scroll_to_item(child);
         }
         self.scrolled_for = Some(shown);
     }
@@ -892,6 +960,9 @@ impl LauncherWindow {
         // Last: coming back to root search, even as a view closes, focuses
         // the query rather than the list.
         self.sync_root_search(window, cx);
+        // After it: the Clipboard History view focuses its own search.
+        self.sync_clipboard_history(window, cx);
+        self.sync_home(cx);
         cx.refresh_windows();
     }
 
@@ -1049,6 +1120,38 @@ impl LauncherWindow {
         }))
     }
 
+    /// Root search's row `index`, a computed answer, drawn as the answer
+    /// card (#96): the row's identity, selection, pointer and click are
+    /// the result row's, and so are its accessibility — named for what
+    /// was typed and its answer ("6*7 = 42"), described by the row's
+    /// subtitle — and its dispatch, which copies the answer.
+    fn render_answer(
+        &self,
+        index: usize,
+        row: Row,
+        answer: &ComputedAnswer,
+        selected: bool,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let visuals = crate::settings::visuals(cx);
+        root_search::layouts::answer_card(answer, selected, &visuals.theme)
+            .id(("row", index))
+            .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {
+                this.pointer_moved_over(index, event.position, cx);
+            }))
+            .debug_selector(|| format!("row-{}", row.title))
+            .role(Role::ListBoxOption)
+            .aria_label(root_search::layouts::answer_label(answer))
+            .aria_selected(selected)
+            .when(selected, |card| card.aria_active_descendant())
+            .when_some(row.subtitle, |card, subtitle| {
+                card.aria_description(subtitle)
+            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.click_root_row(index, window, cx);
+            }))
+    }
+
     /// The footer's right-hand buttons: the selected action's button,
     /// when the screen has a primary action at all (a custom view, the
     /// network details screen and a hotkey screen with nothing to remove
@@ -1137,6 +1240,10 @@ impl Render for LauncherWindow {
         #[cfg(any(test, debug_assertions))]
         {
             self.drawn = Some(view.clone());
+        }
+        // Pane's Clipboard History draws its own split view (#102).
+        if let Some(split) = self.render_clipboard_history(&view, cx) {
+            return split;
         }
         self.keep_selected_visible(&view, &presentation, window);
         // A view transition runs when the screen *kind* changed — root
@@ -1228,6 +1335,9 @@ impl Render for LauncherWindow {
             (&view.screen, &view.status),
             (Screen::CommandSearch { .. }, Status::Error(_))
         );
+        // A blank query's pinned home, above the rows (read before the
+        // status moves out of the view).
+        let home = self.render_home(&view, &theme, cx);
         // The footer's status: while the launcher runs, works, answers or
         // fails, the strip is that message; `None` while it is idle, when
         // the strip becomes the selected action (below).
@@ -1244,7 +1354,11 @@ impl Render for LauncherWindow {
         // availability — and the dispatch both the button and Enter take.
         let action = self.launcher.selected_action();
         let root = matches!(view.screen, Screen::Root { .. });
-        // The rows, with each section's label ahead of its first row.
+        // Root search's notice when nothing but fallbacks is listed for
+        // its query (#96).
+        let notice = root_search::layouts::nothing_found(&view.screen, &presentation);
+        // The rows — a computed answer as its card — with each section's
+        // label ahead of its first row, after the notice.
         let rows: Vec<gpui::AnyElement> = view
             .rows
             .into_iter()
@@ -1252,21 +1366,29 @@ impl Render for LauncherWindow {
             .map(|(index, row)| {
                 let selected = view.selected == Some(index);
                 let shown = presentation.rows.get(index).cloned().unwrap_or_default();
+                if let Some(answer) = &shown.answer {
+                    return self
+                        .render_answer(index, row, answer, selected, cx)
+                        .into_any_element();
+                }
                 self.render_row(index, row, selected, shown, root, cx)
                     .into_any_element()
             })
             .collect();
-        let rows = shell::with_section_labels(rows, &section_labels(&presentation), &theme);
+        let rows = root_search::layouts::list_children(
+            notice
+                .as_ref()
+                .map(|copy| root_search::layouts::notice(copy, &theme).into_any_element()),
+            rows,
+            &section_labels(&presentation),
+            &theme,
+        );
         let empty = match &view.screen {
             Screen::CommandSearch { .. } if search_failed => div().id("empty"),
-            Screen::Root { query } | Screen::CommandSearch { query }
-                if !query.trim().is_empty() =>
-            {
-                div()
-                    .id("no-results")
-                    .debug_selector(|| "no-results".into())
-                    .child(format!("No results for “{}”", query.trim()))
-            }
+            Screen::CommandSearch { query } if !query.trim().is_empty() => div()
+                .id("no-results")
+                .debug_selector(|| "no-results".into())
+                .child(format!("No results for “{}”", query.trim())),
             _ => div().id("empty").child(empty),
         };
         let list = shell::result_list(&theme)
@@ -1276,9 +1398,12 @@ impl Render for LauncherWindow {
                 _ => view.title.clone(),
             })
             .track_scroll(&self.scroll)
-            // Above the rows: with none selected, the only rows are root
-            // search's fallbacks, listed below "No results".
-            .when(view.selected.is_none(), |rows| {
+            // The pinned home over a blank query, above the rows (#101).
+            .when_some(home, |list, home| list.children(home))
+            // Above the rows, with none selected: a command's search found
+            // nothing, or a screen has no rows. (Root search's notice for a
+            // query is among the rows' children, above its fallbacks.)
+            .when(notice.is_none() && view.selected.is_none(), |rows| {
                 rows.child(empty.text_color(theme.text_muted))
             })
             .children(rows);
@@ -1359,6 +1484,7 @@ impl Render for LauncherWindow {
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::open_settings))
             .on_action(cx.listener(Self::toggle_actions))
+            .map(|content| Self::on_quick_slot_keys(content, cx))
             .on_action(cx.listener(Self::focus_next))
             .on_action(cx.listener(Self::focus_previous))
             .on_key_down(cx.listener(Self::key_down))

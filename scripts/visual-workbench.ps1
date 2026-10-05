@@ -11,8 +11,9 @@
 # 5. captures the native fixture's scenarios (off-screen, inactive, posted input);
 # 6. compares them (report.json, summary.md, side-by-sides, diffs, crops);
 # 7. re-runs the native capture with each deliberate perturbation (row
-#    padding +4px, wrong selected fill, wrong hover fill) and proves the
-#    comparison flips the checks those faults drive (sensitivity);
+#    padding +4px, wrong selected fill, wrong hover fill, wrong selected
+#    Settings section fill) and proves the comparison flips the checks
+#    those faults drive (sensitivity);
 # 8. with -RealAppSmoke, runs one real search interaction with pane.exe.
 # Everything it writes goes under -OutputDir; every process it starts it
 # closes, and every temporary directory it creates it deletes.
@@ -139,6 +140,7 @@ if (-not $SkipSensitivity) {
         'row-padding-plus-4' = 'wash left'
         'selected-fill' = 'wash alpha (selected)'
         'hover-fill' = 'wash alpha (hovered)'
+        'nav-selected-fill' = 'nav wash alpha (selected)'
     }
     $perturbedScenarios = @{
         'row-padding-plus-4' = @('root-rest', 'root-selected')
@@ -147,9 +149,11 @@ if (-not $SkipSensitivity) {
         # shows only where the keys moved the selection off the row the
         # pointer rests on.
         'hover-fill' = @('root-pointer-keys')
+        # The Settings shell's own selection (#97).
+        'nav-selected-fill' = @('settings-shell')
     }
     $run.sensitivity = [ordered]@{}
-    foreach ($perturb in 'row-padding-plus-4', 'selected-fill', 'hover-fill') {
+    foreach ($perturb in 'row-padding-plus-4', 'selected-fill', 'hover-fill', 'nav-selected-fill') {
         Step "sensitivity-$perturb" {
             $dir = Join-Path $OutputDir "native-$perturb"
             Capture-Native $dir $perturb $perturbedScenarios[$perturb]

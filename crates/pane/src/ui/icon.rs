@@ -62,6 +62,19 @@ pub(crate) enum Glyph {
     Moon,
     /// A padlock: locking the screen.
     Lock,
+    /// A magnifier over a minus: the no-results notice (#96).
+    SearchNone,
+    /// An arrow pointing right: the answer card's, from what was typed to
+    /// its answer.
+    ArrowRight,
+    /// A calculator: a calculation history row.
+    Calculator,
+    /// A clock: a time-zone history row.
+    Clock,
+    /// A box: an extension suggestion.
+    Package,
+    /// Concentric circles with cross hairs: an extension suggestion.
+    Target,
 
     /// A cog: the Settings root row and the Settings window's sidebar.
     Gear,
@@ -100,6 +113,28 @@ pub(crate) enum Glyph {
     ActionHotkey,
     /// A tag: the Actions panel's alias entry (`A.tag`).
     ActionAlias,
+    /// An arrow pointing left: the split view's back button.
+    ArrowLeft,
+    /// Two bars: the split view's Pause.
+    Pause,
+    /// A shield with a check: the split view's caption on what is kept.
+    Shield,
+    /// Lines of text: a clipboard history record, which is text.
+    Lines,
+    /// Two links of a chain: the fixture's link records.
+    Link,
+    /// A framed landscape: the fixture's image records.
+    Image,
+    /// An envelope: the fixture's mail record.
+    Mail,
+    /// A page with lines: notes (the reference's `notes`, a pinned
+    /// sample's).
+    Notes,
+    /// Two beamed notes: music (the reference's `music`, a pinned
+    /// sample's).
+    Music,
+    /// A pushpin: the Actions panel's quick slot entries (`A.pin`).
+    ActionPin,
     /// The Windows titlebar's close mark.
     #[cfg(target_os = "windows")]
     WindowClose,
@@ -127,6 +162,12 @@ impl Glyph {
         Glyph::Layout,
         Glyph::Moon,
         Glyph::Lock,
+        Glyph::SearchNone,
+        Glyph::ArrowRight,
+        Glyph::Calculator,
+        Glyph::Clock,
+        Glyph::Package,
+        Glyph::Target,
         Glyph::Gear,
         Glyph::Globe,
         Glyph::Download,
@@ -140,6 +181,16 @@ impl Glyph {
         Glyph::ActionRun,
         Glyph::ActionHotkey,
         Glyph::ActionAlias,
+        Glyph::ArrowLeft,
+        Glyph::Pause,
+        Glyph::Shield,
+        Glyph::Lines,
+        Glyph::Link,
+        Glyph::Image,
+        Glyph::Mail,
+        Glyph::Notes,
+        Glyph::Music,
+        Glyph::ActionPin,
     ];
 
     /// The embedded SVG bytes for this glyph.
@@ -157,6 +208,12 @@ impl Glyph {
             Glyph::Layout => include_bytes!("../../assets/icons/layout.svg"),
             Glyph::Moon => include_bytes!("../../assets/icons/moon.svg"),
             Glyph::Lock => include_bytes!("../../assets/icons/lock.svg"),
+            Glyph::SearchNone => include_bytes!("../../assets/icons/search-none.svg"),
+            Glyph::ArrowRight => include_bytes!("../../assets/icons/arrow-right.svg"),
+            Glyph::Calculator => include_bytes!("../../assets/icons/calculator.svg"),
+            Glyph::Clock => include_bytes!("../../assets/icons/clock.svg"),
+            Glyph::Package => include_bytes!("../../assets/icons/package.svg"),
+            Glyph::Target => include_bytes!("../../assets/icons/target.svg"),
             Glyph::Gear => include_bytes!("../../assets/icons/gear.svg"),
             Glyph::Globe => include_bytes!("../../assets/icons/globe.svg"),
             Glyph::Download => include_bytes!("../../assets/icons/download.svg"),
@@ -170,6 +227,16 @@ impl Glyph {
             Glyph::ActionRun => include_bytes!("../../assets/icons/action-run.svg"),
             Glyph::ActionHotkey => include_bytes!("../../assets/icons/action-hotkey.svg"),
             Glyph::ActionAlias => include_bytes!("../../assets/icons/action-alias.svg"),
+            Glyph::ArrowLeft => include_bytes!("../../assets/icons/arrow-left.svg"),
+            Glyph::Pause => include_bytes!("../../assets/icons/pause.svg"),
+            Glyph::Shield => include_bytes!("../../assets/icons/shield.svg"),
+            Glyph::Lines => include_bytes!("../../assets/icons/lines.svg"),
+            Glyph::Link => include_bytes!("../../assets/icons/link.svg"),
+            Glyph::Image => include_bytes!("../../assets/icons/image.svg"),
+            Glyph::Mail => include_bytes!("../../assets/icons/mail.svg"),
+            Glyph::Notes => include_bytes!("../../assets/icons/notes.svg"),
+            Glyph::Music => include_bytes!("../../assets/icons/music.svg"),
+            Glyph::ActionPin => include_bytes!("../../assets/icons/action-pin.svg"),
             #[cfg(target_os = "windows")]
             Glyph::WindowClose => include_bytes!("../../assets/icons/window-close.svg"),
             #[cfg(target_os = "windows")]
@@ -205,6 +272,10 @@ pub(crate) enum IconTone {
     Web,
     Pen,
     Folder,
+    /// The reference's `note` tone (violet).
+    Note,
+    /// The reference's `music` tone (green).
+    Music,
     Command,
 }
 
@@ -223,6 +294,8 @@ fn app_tone(tone: IconTone) -> Option<(Hsla, Hsla, Hsla)> {
         IconTone::Web => (0xFFA24DFF, 0xE2530FFF, 0xFFFFFFFF),
         IconTone::Pen => (0xFF739FFF, 0xCF2D63FF, 0xFFFFFFFF),
         IconTone::Folder => (0x74B6FFFF, 0x2F78DEFF, 0xFFFFFFFF),
+        IconTone::Note => (0xA184FFFF, 0x5B3BD0FF, 0xFFFFFFFF),
+        IconTone::Music => (0x3DDC78FF, 0x129245FF, 0xFFFFFFFF),
         IconTone::Command => return None,
     };
     Some((color(top), color(bottom), color(glyph)))
@@ -330,10 +403,12 @@ pub(crate) fn tile_at(size: TileSize, tone: IconTone, glyph: Glyph, theme: &Them
                 linear_color_stop(bottom, 1.),
             ))
             // inset 0 0 0 .5px rgba(255,255,255,.28), inset 0 1px 0
-            // rgba(255,255,255,.35), 0 1px 3px rgba(0,0,0,.45)
+            // rgba(255,255,255,.35), 0 1px 3px rgba(0,0,0,.45). The
+            // half-pixel edge is drawn as the one pixel Chrome rasterizes
+            // it to (see `Theme::tile_app_edge`).
             .shadow(vec![
                 gpui::BoxShadow::new(px(0.), px(0.), theme.tile_app_edge)
-                    .spread_radius(px(0.5))
+                    .spread_radius(px(1.))
                     .inset(),
                 gpui::BoxShadow::new(px(0.), px(1.), theme.tile_app_highlight).inset(),
                 gpui::BoxShadow::new(px(0.), px(1.), theme.tile_drop).blur_radius(px(3.)),

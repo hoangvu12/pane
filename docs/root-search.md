@@ -110,12 +110,13 @@ state and maps input to those calls.
 
 **The Actions panel** (#95) lists what can be done with the selected
 result, from the core's `Launcher::result_actions`: its primary action
-(the footer's, with the same dispatch), then, for an installed command,
-"Assign Hotkey…"/"Change Hotkey…" and "Add Alias…"/"Change Alias…" under
-"Pane", which open the same hotkey screen and alias form Manage extensions
-does and return to this search when they end. Nothing without a working
-operation is listed: no pin (until quick slots, #101), new window, file
-manager, quit or hide (#100). Its search field holds focus: typing filters
+(the footer's, with the same dispatch), then, under "Pane", "Pin to Quick
+Slot" for a command or an indexed result (see [the pinned
+home](#the-pinned-home)) and, for an installed command, "Assign
+Hotkey…"/"Change Hotkey…" and "Add Alias…"/"Change Alias…", which open the
+same hotkey screen and alias form Manage extensions does and return to this
+search when they end. Nothing without a working operation is listed: no new
+window, file manager, quit or hide (#100). Its search field holds focus: typing filters
 the entries by label ("No actions match" when none does), Up and Down move
 the selection, Enter or a click runs the entry once, and Escape (or Tab)
 closes only the panel, giving focus back to the query. A mouse-down outside
@@ -123,6 +124,47 @@ it closes it and is consumed, so the result it covered is never invoked.
 The panel holds its target: the pointer cannot move the selection while it
 is open, and an entry whose target is no longer selected, or no longer has
 that action, runs nothing. With no result selected it says so.
+
+### The pinned home
+
+A blank query shows the **pinned home** (#101) above the results: the
+"Pinned" label, with the slots' chord, and five **quick slots**. A query
+whose trimmed text is not blank hides it; clearing the query brings it
+back. The results below keep their own order and their "Commands" label:
+Pane lists no suggestions of recent use.
+
+- **What a slot holds** is an identity, never a row: a registered command
+  by its id, or an indexed result (an installed application) by its own id
+  under the command that supplies it. A computed answer, a file or Pane's
+  own rows cannot be pinned. A fresh installation pins nothing: empty slots
+  are dashed outlines saying so, which invoke nothing.
+- **Pinning:** the Actions panel's "Pin to Quick Slot" fills the first
+  empty slot. With all five taken, the panel lists the five slots under
+  "Replace a Quick Slot" and the one chosen is replaced. Pinning what a
+  slot already holds changes nothing, says which slot holds it and moves
+  focus there, clearing a typed query so the home and that slot show.
+- **A slot's own actions** — a secondary click on it, or Ctrl+K while it
+  has focus — open it, remove it ("Remove from Quick Slot") or move it
+  ("Move Slot Left"/"Move Slot Right", not past either end).
+- **Invoking a slot:** a click, Enter or Space while it has focus, or its
+  chord Ctrl+1 to Ctrl+5. The chords are the root search field's and the
+  slots' own, never registered with the system, and act only on root
+  search, with no overlay open, no input-method composition in the query
+  and no action already running; a held chord's repeats and a double
+  click's second click run nothing more. The slot is resolved again then,
+  and only a target that can run is run; an empty slot does nothing at
+  all, and a click keeps the query focused.
+- **Resolution:** each slot is resolved through what is enabled now. A
+  disabled, paused or missing target, or an application its command has
+  not listed yet, keeps its slot and its name and says why it cannot run;
+  it can always be removed, and enabling or installing the same identity
+  resolves it again. Showing root search asks a pinned application's
+  command for its results if it never answered, without typing a query.
+- **The record** is `quick-slots.json` in Pane's data folder, beside
+  `settings.json` (see [ADR 0026](adr/0026-host-keeps-quick-slots-by-identity.md)):
+  versioned, written atomically one write at a time; a write that fails
+  puts back what the record holds and says why, and a record Pane cannot
+  read is reported and never replaced.
 
 **The footer** shows the Pane mark at its left — the button of Pane's own
 menu (Settings), a Windows/Pane adaptation of the reference's decorative
@@ -137,7 +179,28 @@ Each row shows what the launcher knows beyond its title and subtitle, from a rea
 - the alias and the registered global hotkey the user gave its command;
 - the part of its title the query matched, in the accent.
 
-Rows sit under section labels: "Commands" over a blank query's list (root search's own order, with no claim of recent use), "Results" with their count over a query's, and the fallbacks under "Fallbacks" (below the "No results for “…”" notice when nothing else matched). The presentation changes nothing about what is listed, its order, or what a row does.
+Rows sit under section labels: "Commands" over a blank query's list (root search's own order, with no claim of recent use), "Results" with their count over a query's, a computed answer under the title of the command that computed it ("Calculator"), and the fallbacks under "Fallbacks" (below the no-results notice when nothing else matched). The presentation changes nothing about what is listed, its order, or what a row does.
+
+**A computed answer** (#96) — a computed result whose action copies
+text, such as the calculator's — is drawn as the reference calculator
+board's card: what was typed, an arrow, and the answer, in Geist Mono at
+the board's 34px, or at 24 or 18 when the longer of the two would not fit
+its column (past that it wraps). The card shows only what the launcher
+holds (`ComputedAnswer`: the query, the text Enter copies, the command):
+the board's units, "Also" conversions and recent calculations have no
+provider and stay in the visual workbench's fixture. It is a row like any
+other — selected first, moved to by the keys or the pointer, its primary
+action "Copy answer", named "6*7 = 42" for assistive technology — and its
+accent ring shows while it is selected.
+
+**The no-results notice** (#96) heads the list while nothing but
+fallbacks is listed for a query that is not blank: "Nothing matches
+“…”", then "Pick a fallback below, or install an extension that knows
+about it." (or, with no fallback, where one is offered: Manage
+extensions). It stays above the fallbacks whichever is selected; Pane
+searches commands, applications and a granted folder, so it claims no
+search of the whole computer, and it suggests no extensions, having no
+store to suggest them from.
 
 The query field has keyboard focus whenever root search is on screen: when
 Pane starts and whenever the user returns to root search. Returning to root
@@ -145,10 +208,11 @@ search (Escape from a command, after an install or update) starts with an
 empty query. Opening a command moves focus to its list.
 
 A **missing result is not a failed action**: a query that matches nothing
-shows "No results for “…”", selects nothing, and Enter then does nothing;
-the status line stays idle. The [fallbacks](aliases.md#making-a-command-a-fallback),
-if the user has any, are listed below it, unselected: Down selects the
-first. A result that matches but fails when invoked
+shows the no-results notice ("Nothing matches “…”"), selects nothing, and
+Enter then does nothing; the status line stays idle. The
+[fallbacks](aliases.md#making-a-command-a-fallback), if the user has any,
+are listed below it, unselected: Down selects the first, and the notice
+stays above it. A result that matches but fails when invoked
 (its component is missing, the runtime is unavailable, the guest reports an
 error) shows the failure as the status error, as before this slice.
 
@@ -284,7 +348,8 @@ double precision; the answer shows at most 15 significant digits and at most
 10 decimals, without trailing zeros (0.1 + 0.2 is 0.3, 1 / 3 is
 0.3333333333), and scientific notation from 10^15 up or below 10^-6
 (`1.00000000000001e15`, `1e-7`). The row shows the answer as its title and
-"<query> = <answer> · Enter copies the answer" as its subtitle.
+"<query> = <answer> · Enter copies the answer" as its subtitle; root search
+draws it as a computed answer's card (above).
 
 ## Activation
 

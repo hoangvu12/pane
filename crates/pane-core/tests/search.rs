@@ -618,3 +618,54 @@ fn rows_off_root_search_carry_no_presentation() {
             .all(|row| *row == pane_core::RowPresentation::default())
     );
 }
+
+/// A computed answer's section (#96): a run of answers among a query's
+/// results sits under the title of the command that computed it, the
+/// results around it under "Results" with their own count, the
+/// fallbacks under "Fallbacks"; with no answer listed, the sections are
+/// root search's own, and a blank query's rows are its commands.
+#[test]
+fn computed_answers_sit_under_their_commands_title_and_results_keep_their_count() {
+    use pane_core::{Section, answer_sections, root_sections};
+    let section = |label: &str, note: Option<&str>, first: usize| Section {
+        label: label.into(),
+        note: note.map(Into::into),
+        first,
+    };
+
+    // The calculator's answer, two title matches, then a fallback.
+    let answers = [Some("Calculator"), None, None, None];
+    assert_eq!(
+        answer_sections("6*7", &answers, 3),
+        [
+            section("Calculator", None, 0),
+            section("Results", Some("2 matches"), 1),
+            section("Fallbacks", None, 3),
+        ]
+    );
+    // The answer alone.
+    assert_eq!(
+        answer_sections("6*7", &[Some("Calculator")], 1),
+        [section("Calculator", None, 0)]
+    );
+    // A row the alias names first, then two commands' answers.
+    let sums = Some("Sums");
+    let answers = [None, Some("Calculator"), sums, sums, None];
+    assert_eq!(
+        answer_sections("ec 1 + 1", &answers, 5),
+        [
+            section("Results", Some("1 match"), 0),
+            section("Calculator", None, 1),
+            section("Sums", None, 2),
+            section("Results", Some("1 match"), 4),
+        ]
+    );
+    // No answer: root search's own sections, whatever the query.
+    for (query, rows, fallbacks) in [("down", 3, 2), ("", 4, 4), ("zqx", 1, 0), ("zqx", 0, 0)] {
+        assert_eq!(
+            answer_sections(query, &vec![None; rows], fallbacks),
+            root_sections(query, rows, fallbacks),
+            "{query:?}"
+        );
+    }
+}

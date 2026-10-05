@@ -40,11 +40,13 @@ mod actions;
 mod aliases;
 mod application_update;
 mod choices;
+pub mod clipboard_view;
 mod command_search;
 mod hotkeys;
 mod indexed;
 mod network;
 mod presentation;
+mod quick_slots;
 
 use crate::clipboard::{Capture, ClipboardSystem};
 use crate::dependencies;
@@ -93,7 +95,10 @@ pub use developing::{BuildFailure, Development};
 pub use hotkeys::HotkeyOutcome;
 use hotkeys::{Bindings, OpenPane};
 use pausing::{Pauses, Recorder};
-pub use presentation::{Presentation, RowKind, RowPresentation, Section, root_sections};
+pub use presentation::{
+    ComputedAnswer, Presentation, RowKind, RowPresentation, Section, answer_sections, root_sections,
+};
+pub use quick_slots::{PinTarget, QUICK_SLOTS, QuickSlot, SlotChange};
 use schedules::Schedules;
 use services::Services;
 pub use shortcuts::{ShortcutCatalog, ShortcutCommand, ShortcutGroup};
@@ -666,6 +671,9 @@ struct State {
     open_pane: OpenPane,
     /// The aliases and fallbacks the user gave commands.
     aliases: Record<AliasChoices>,
+    /// The quick slots the user pinned results to, and their record (see
+    /// `quick_slots`).
+    quick_slots: quick_slots::Kept,
     /// Acquiring Pane's default extensions: what the status line says of
     /// the one being acquired, and which failed and can be tried again
     /// (see `acquire`).
@@ -895,12 +903,19 @@ struct RootResult {
     keys: Keys,
     /// The installed command it opens, for its alias and fallback.
     target: Option<aliases::Target>,
+    /// Its identity as a quick slot holds it, if one can: a registered
+    /// command, or an indexed result under its command (see
+    /// `quick_slots`).
+    pin: Option<PinTarget>,
 }
 
 /// A root result a command computed from the current query.
 struct Computed {
     /// The component of the command that computed it.
     component: PathBuf,
+    /// The title of the command that computed it, which labels its
+    /// answers in root search ("Calculator").
+    command_title: String,
     row: Row,
     entry: Entry,
 }
@@ -1155,6 +1170,7 @@ impl Launcher {
             bindings,
             open_pane: OpenPane::default(),
             aliases,
+            quick_slots: quick_slots::Kept::default(),
             acquisitions: Acquisitions::default(),
             updates: Updates::default(),
             sent_from: None,
@@ -2889,9 +2905,10 @@ impl Launcher {
         state.view = LauncherView {
             rows,
             selected,
-            status: match &state.store_problem {
-                Some(problem) => Status::Error(problem.clone()),
-                None => Status::Idle,
+            status: match (&state.store_problem, state.quick_slots.unreadable()) {
+                (Some(problem), _) => Status::Error(problem.clone()),
+                (None, Some(problem)) => Status::Error(quick_slots::unreadable_report(problem)),
+                (None, None) => Status::Idle,
             },
             ..LauncherView::new(
                 Screen::Root {
@@ -3034,11 +3051,16 @@ impl Launcher {
         let mut add = |row: Row, entry: Entry, package: Option<&str>, target| {
             let alias = state.aliases.chosen.active_alias(&row.id);
             let keys = Keys::new(&row.title, row.subtitle.as_deref(), package).with_alias(alias);
+            // A command's row, available or not, is a registered command a
+            // quick slot can hold by its id; Pane's own rows are not.
+            let pin = matches!(entry, Entry::Open(_) | Entry::Unavailable(_))
+                .then(|| PinTarget::Command(row.id.clone()));
             results.push(RootResult {
                 row,
                 entry,
                 keys,
                 target,
+                pin,
             });
         };
         let command = |(command, unavailable): (CommandRegistration, Option<Unavailable>)| {
@@ -4758,6 +4780,7 @@ fn computed_results(
 ) -> Vec<Computed> {
     let computed = |row: Row, entry: Entry| Computed {
         component: command.component.clone(),
+        command_title: command.title.clone(),
         row,
         entry,
     };

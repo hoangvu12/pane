@@ -43,6 +43,7 @@ use super::{Page, SettingsWindow, search};
 use crate::app::launcher_changed_outside;
 use crate::ui::icon::{Glyph, IconTone};
 use crate::ui::result_row::{RowContent, result_row};
+use crate::ui::settings_shell;
 
 /// The documentation entry's address: Pane's repository, whose README is
 /// the documentation of this build.
@@ -52,13 +53,18 @@ const DOCUMENTATION: &str = "https://github.com/hoangvu12/pane";
 /// search jumps to (see [`entries`]).
 const DOCUMENTATION_ROW: &str = "documentation";
 
+/// What the page is, in one line: its sidebar entry's description in
+/// the search, and its heading's subtitle.
+const ABOUT: &str = "Pane's version, documentation and diagnostics";
+
 /// The About page, registered last in the window's page list: the spec's
 /// section order names it the last of the seven.
 pub(crate) fn page() -> Page {
     Page {
         title: "About",
-        about: "Pane's version, documentation and diagnostics",
-        icon: (IconTone::Command, Glyph::Gear),
+        about: ABOUT,
+        icon: Glyph::Gear,
+        count: None,
         render,
         search: entries,
         focus,
@@ -299,14 +305,9 @@ fn render(
         .flex_col()
         .gap(px(4.))
         .child(
-            div()
+            settings_shell::page_header("About", Some(ABOUT.into()), &theme)
                 .id("about-title")
-                .debug_selector(|| "about-title".into())
-                .pb(px(8.))
-                .text_size(typography.search_size)
-                .font_weight(typography.medium)
-                .text_color(theme.text_title)
-                .child("About"),
+                .debug_selector(|| "about-title".into()),
         )
         .child(
             // The version row: what this build runs, as `pane --version`

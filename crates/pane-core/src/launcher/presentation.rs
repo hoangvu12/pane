@@ -2,7 +2,8 @@
 //! projection of what the launcher already knows about each row beyond
 //! its title and subtitle — what kind of thing it is, the alias and the
 //! global hotkey the user gave its command, where the query matched its
-//! title — and how the rows group under section labels.
+//! title, the answer a command computed from the query — and how the rows
+//! group under section labels.
 //!
 //! Nothing here changes what root search lists, in which order, or what a
 //! row does: the projection is computed from the same state the rows and
@@ -16,7 +17,7 @@
 use std::ops::Range;
 
 use super::aliases::{Sending, Via};
-use super::{Entry, Screen, State};
+use super::{Entry, Row, Screen, State};
 use crate::hotkeys::Shortcut;
 use crate::search::title_matches;
 
@@ -63,6 +64,25 @@ pub struct RowPresentation {
     /// title, in order and not overlapping. Empty for a blank query, or a
     /// row found by its subtitle, package or alias alone.
     pub matched: Vec<Range<usize>>,
+    /// The answer the row is, when a command computed it from the query
+    /// and activating it copies it (see [`ComputedAnswer`]).
+    pub answer: Option<ComputedAnswer>,
+}
+
+/// A computed answer: a root result a command computed from the query
+/// whose action copies its text, such as the calculator's answer to
+/// "6*7". Only what the launcher holds: the query it answers, the text
+/// activating it copies and the command that computed it — no units,
+/// conversions or history, which no command supplies. The row keeps its
+/// id and its copy action.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ComputedAnswer {
+    /// The query it answers, without its surrounding spaces.
+    pub query: String,
+    /// The text activating it copies.
+    pub answer: String,
+    /// The title of the command that computed it ("Calculator").
+    pub command: String,
 }
 
 /// A section label over a run of rows: the rows from `first` up to the
@@ -112,9 +132,10 @@ pub(super) fn presentation(state: &State) -> Presentation {
                     .then(|| state.bindings.registered_of(&row.id))
                     .flatten(),
                 matched: title_matches(&row.title, query),
+                answer: answer(state, row, entry, query),
             }
         })
-        .collect();
+        .collect::<Vec<_>>();
     let shown = state.view.rows.len();
     let first_fallback = state
         .entries
@@ -129,14 +150,33 @@ pub(super) fn presentation(state: &State) -> Presentation {
             )
         })
         .unwrap_or(shown);
-    Presentation {
-        rows,
-        sections: root_sections(query, shown, first_fallback),
-    }
+    let answers: Vec<Option<&str>> = rows
+        .iter()
+        .map(|row| row.answer.as_ref().map(|answer| answer.command.as_str()))
+        .collect();
+    let sections = answer_sections(query, &answers, first_fallback);
+    Presentation { rows, sections }
+}
+
+/// The computed answer `row` is, when `entry` copies text a command
+/// computed from `query`.
+fn answer(state: &State, row: &Row, entry: &Entry, query: &str) -> Option<ComputedAnswer> {
+    let Entry::Copy(text) = entry else {
+        return None;
+    };
+    let computed = state
+        .computed
+        .iter()
+        .find(|computed| computed.row.id == row.id)?;
+    Some(ComputedAnswer {
+        query: query.trim().to_owned(),
+        answer: text.clone(),
+        command: computed.command_title.clone(),
+    })
 }
 
 /// What kind of thing activating `entry` from root search reaches.
-fn kind(entry: &Entry) -> Option<RowKind> {
+pub(super) fn kind(entry: &Entry) -> Option<RowKind> {
     match entry {
         Entry::Open(_) | Entry::Unavailable(_) => Some(RowKind::Command),
         Entry::Send(Sending {
@@ -185,10 +225,7 @@ pub fn root_sections(query: &str, rows: usize, fallbacks: usize) -> Vec<Section>
     if fallbacks > 0 {
         sections.push(Section {
             label: "Results".into(),
-            note: Some(match fallbacks {
-                1 => "1 match".into(),
-                found => format!("{found} matches"),
-            }),
+            note: Some(matches_note(fallbacks)),
             first: 0,
         });
     }
@@ -200,4 +237,58 @@ pub fn root_sections(query: &str, rows: usize, fallbacks: usize) -> Vec<Section>
         });
     }
     sections
+}
+
+/// Root search's sections for `query` (see [`root_sections`]), with each
+/// run of computed answers among the results under a label of its own —
+/// the title of the command that computed them, as the reference's
+/// calculator board labels its card "Calculator" — and the results
+/// before or after such a run under "Results" with their own count.
+///
+/// `answers` holds, for each listed row, the title of the command that
+/// computed it when it is a computed answer; `fallbacks` is the index of
+/// the first fallback (the number of rows when none is listed).
+pub fn answer_sections(query: &str, answers: &[Option<&str>], fallbacks: usize) -> Vec<Section> {
+    let rows = answers.len();
+    let found = fallbacks.min(rows);
+    if query.trim().is_empty() || answers[..found].iter().all(Option::is_none) {
+        return root_sections(query, rows, fallbacks);
+    }
+    let mut sections = Vec::new();
+    let mut first = 0;
+    while first < found {
+        let command = answers[first];
+        let end = (first..found)
+            .find(|&index| answers[index] != command)
+            .unwrap_or(found);
+        sections.push(match command {
+            Some(command) => Section {
+                label: command.to_owned(),
+                note: None,
+                first,
+            },
+            None => Section {
+                label: "Results".into(),
+                note: Some(matches_note(end - first)),
+                first,
+            },
+        });
+        first = end;
+    }
+    if found < rows {
+        sections.push(Section {
+            label: "Fallbacks".into(),
+            note: None,
+            first: found,
+        });
+    }
+    sections
+}
+
+/// A "Results" label's note: how many rows it is over.
+fn matches_note(found: usize) -> String {
+    match found {
+        1 => "1 match".into(),
+        found => format!("{found} matches"),
+    }
 }

@@ -1,6 +1,7 @@
 //! Pane's shared visual layer: semantic tokens, frost materials, the
 //! reference's icon treatment, and the shared control chrome — result
-//! rows and keycaps — plus the motion policy (see [`motion`]) that the
+//! rows, keycaps and the Settings window's shell and sidebar items (see
+//! [`settings_shell`]) — plus the motion policy (see [`motion`]) that the
 //! launcher's subtle transitions share.
 //!
 //! This layer owns presentation only. It imports no `pane-core` types, so
@@ -38,9 +39,13 @@ pub(crate) mod input;
 pub(crate) mod keycap;
 pub(crate) mod material;
 pub(crate) mod motion;
+pub(crate) mod pinned;
+pub(crate) mod result_layouts;
 pub(crate) mod result_row;
 pub(crate) mod select;
+pub(crate) mod settings_shell;
 pub(crate) mod shell;
+pub(crate) mod split_view;
 pub(crate) mod theme;
 
 use material::Material;

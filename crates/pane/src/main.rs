@@ -86,9 +86,12 @@ fn main() {
             })
             .detach();
         }
+        // The quick slots' record, beside the host settings in the same
+        // data folder (#101).
         let launcher = match pane::data_dir() {
             Some(dir) => {
                 Launcher::with_packages(runtime, pane::sample_commands(), dir.join("extensions"))
+                    .with_quick_slots(&dir)
             }
             None => Launcher::new(runtime, pane::sample_commands()),
         }

@@ -40,8 +40,9 @@ use pane_core::placement::{DisplayLayout, resolve};
 use pane_core::{Launcher, OpeningMonitor, Reopening};
 
 use super::{Page, SettingsWindow, search};
-use crate::ui::icon::{Glyph, IconTone};
+use crate::ui::icon::Glyph;
 use crate::ui::select::{Choice, Model, Select};
+use crate::ui::settings_shell;
 use crate::ui::theme::Theme;
 
 /// The opening-monitor choices the page offers, in row order: the
@@ -90,13 +91,18 @@ const REOPENINGS: [(Reopening, &str, &str, &str); 2] = [
     ),
 ];
 
+/// What the page is, in one line: its sidebar entry's description in
+/// the search, and its heading's subtitle.
+const ABOUT: &str = "The display the launcher opens on, and what reopening shows";
+
 /// The Launcher page, registered after General in the window's page list:
 /// the page of the launcher window itself.
 pub(crate) fn page() -> Page {
     Page {
         title: "Launcher",
-        about: "The display the launcher opens on, and what reopening shows",
-        icon: (IconTone::Command, Glyph::Monitor),
+        about: ABOUT,
+        icon: Glyph::Monitor,
+        count: None,
         render,
         search: entries,
         focus,
@@ -316,7 +322,6 @@ fn render(
     let layout = placement.layout();
     let visuals = crate::settings::visuals(cx);
     let theme = &visuals.theme;
-    let typography = &theme.typography;
     // The select's scroll anchor, which the search's reveal scrolls to
     // (see the window's render): the whole control is what a jump to
     // any of the monitor's choices reveals.
@@ -329,14 +334,9 @@ fn render(
         .flex_col()
         .gap(px(4.))
         .child(
-            div()
+            settings_shell::page_header("Launcher", Some(ABOUT.into()), theme)
                 .id("launcher-title")
-                .debug_selector(|| "launcher-title".into())
-                .pb(px(8.))
-                .text_size(typography.search_size)
-                .font_weight(typography.medium)
-                .text_color(theme.text_title)
-                .child("Launcher"),
+                .debug_selector(|| "launcher-title".into()),
         )
         // A platform that cannot choose the launcher's display at all:
         // the reason, and no choices offered below.

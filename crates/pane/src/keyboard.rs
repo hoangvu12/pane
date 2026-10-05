@@ -134,6 +134,30 @@ pub(crate) fn escape_keys() -> KeySequence {
     binding_keys(&Binding::parse("escape").expect("escape is a binding"))
 }
 
+/// The local chord that invokes quick slot `number` (1 to 5) while root
+/// search has focus: Ctrl and the digit, the approved Windows chord. A
+/// window-local binding of the root search field, never registered with
+/// the system, and fixed — not one of the actions the Keyboard page
+/// rebinds — so the hints the slots show are always the chords that work.
+pub(crate) fn quick_slot_binding(number: usize) -> Binding {
+    Binding::parse(&format!("ctrl-{number}")).expect("a digit chord is a binding")
+}
+
+/// The caps of quick slot `number`'s chord ([`quick_slot_binding`]).
+pub(crate) fn quick_slot_keys(number: usize) -> KeySequence {
+    binding_keys(&quick_slot_binding(number))
+}
+
+/// The caps the "Pinned" label shows for the chords of all `count` slots:
+/// the modifier's, then the digits' range, "1–5", named "1 to 5".
+pub(crate) fn quick_slots_keys(count: usize) -> KeySequence {
+    let mut keys = quick_slot_keys(1);
+    if let Some(digit) = keys.keys.last_mut() {
+        *digit = Key::new(format!("1–{count}"), format!("1 to {count}"));
+    }
+    keys
+}
+
 /// The keys `binding` is pressed with, as keycaps show them on this
 /// platform: every modifier its own cap, then the key. On Windows (and
 /// Linux) the Windows key leads, as Windows writes its own shortcuts

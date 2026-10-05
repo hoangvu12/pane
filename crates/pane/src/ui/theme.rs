@@ -105,6 +105,11 @@ pub(crate) struct Theme {
     /// The selected row's inset edge (reference: rgba(255,255,255,.05)).
     pub(crate) row_selected_border: Hsla,
 
+    // -- Root search's result layouts (#96) ----------------------------------
+    /// The no-results notice, the computed answer's card and the authored
+    /// boards' history and suggestion rows.
+    pub(crate) results: ResultColors,
+
     // -- Focus --------------------------------------------------------------
     /// The keyboard focus ring (reference focus-visible: white 50%).
     pub(crate) focus_ring: Hsla,
@@ -131,7 +136,11 @@ pub(crate) struct Theme {
     pub(crate) tile_border: Hsla,
     /// A neutral tile's top inset (reference: rgba(255,255,255,.1)).
     pub(crate) tile_highlight: Hsla,
-    /// An app tile's thin pale edge (reference: rgba(255,255,255,.28)).
+    /// An app tile's thin pale edge. The reference's is half a pixel of
+    /// rgba(255,255,255,.28), which Chrome rasterizes at 100% as its tile's
+    /// outermost pixel at half that alpha (measured 13–14%). GPUI draws
+    /// next to nothing for an inset spread under a pixel, so the tile draws
+    /// that pixel: a 1px ring of white 14%.
     pub(crate) tile_app_edge: Hsla,
     /// An app tile's top inset (reference: rgba(255,255,255,.35)).
     pub(crate) tile_app_highlight: Hsla,
@@ -155,6 +164,33 @@ pub(crate) struct Theme {
     pub(crate) alias_text: Hsla,
     /// The alias chip's 1px inset ring (rgba(255,255,255,.14)).
     pub(crate) alias_edge: Hsla,
+
+    // -- The Settings window (the reference's Settings board) ------------------
+    /// The Settings panel's tint: the board's `.glass` at .78, against the
+    /// root's .70 (see `Material::settings_panel`). The light value is the
+    /// light panel's own: the reference authors dark only.
+    pub(crate) settings_tint: Hsla,
+    /// The sidebar's fill (black 10%).
+    pub(crate) sidebar_fill: Hsla,
+    /// A sidebar item's label at rest (`.nav`: #B3B4B9).
+    pub(crate) nav_text: Hsla,
+    /// A sidebar item's wash under the pointer (white 5%), with
+    /// [`Theme::nav_hover_text`] on it.
+    pub(crate) nav_hover: Hsla,
+    pub(crate) nav_hover_text: Hsla,
+    /// The selected sidebar item's wash (`.nav.on`: white 9%), with
+    /// [`Theme::nav_selected_text`] on it; it stays under the pointer.
+    pub(crate) nav_selected: Hsla,
+    pub(crate) nav_selected_text: Hsla,
+    /// A sidebar item's glyph and count, and the search field's magnifier
+    /// (#8E8F94), whatever the item's state.
+    pub(crate) nav_icon: Hsla,
+    /// A Settings field's well — the sidebar's search — (black 24%) and
+    /// its 1px inset ring (white 6%).
+    pub(crate) field_fill: Hsla,
+    pub(crate) field_edge: Hsla,
+    /// A Settings page's heading (#FFFFFF).
+    pub(crate) heading_text: Hsla,
 
     // -- The footer's buttons and the Actions panel ---------------------------
     /// The footer mark's filled square (#EDEDEF at .92); its stroked one
@@ -191,6 +227,23 @@ pub(crate) struct Theme {
     /// its content above a popup's drop shadow; see
     /// `crate::ui::footer::footer_row`.
     pub(crate) footer_order_fill: Hsla,
+
+    /// The split view's own tokens (the reference's clipboard board):
+    /// see [`SplitTokens`].
+    pub(crate) split: SplitTokens,
+
+    // -- The pinned home's quick slots (#101) ---------------------------------
+    /// A pinned slot's fill at rest (reference `.slot`: white 3.5%).
+    pub(crate) slot_background: Hsla,
+    /// A pinned slot's 1px inset edge (white 5%).
+    pub(crate) slot_edge: Hsla,
+    /// A pinned slot under the pointer (`.slot:hover`: white 7%).
+    pub(crate) slot_hover: Hsla,
+    /// A pinned slot's title (`.slot-t`: #D9DADD).
+    pub(crate) slot_title: Hsla,
+    /// An empty slot's dashed outline (Pane's own: the reference authors
+    /// no empty slot; white 10%).
+    pub(crate) slot_empty_edge: Hsla,
 
     // -- Type and geometry --------------------------------------------------
     /// Families, sizes and weights.
@@ -241,6 +294,18 @@ pub(crate) struct Typography {
     /// ascent and descent (1005 + 295 per 1000), CSS's `normal` for text
     /// the reference sets no line height for.
     pub(crate) line_height: f32,
+    /// The Settings window's 13px: its titlebar label, its sidebar items
+    /// and its search field.
+    pub(crate) settings_text_size: Pixels,
+    /// The Settings window's 12px captions: a sidebar item's count, a
+    /// page column's label ("Preview").
+    pub(crate) settings_caption_size: Pixels,
+    /// A Settings page's heading: 22px at 600 with -.01em of tracking.
+    pub(crate) heading_size: Pixels,
+    pub(crate) heading_weight: FontWeight,
+    pub(crate) heading_tracking: f32,
+    /// Root search's result layouts' type (#96).
+    pub(crate) results: ResultType,
     /// An Actions row's 13px label, its search's 13px and its empty
     /// note's.
     pub(crate) action_size: Pixels,
@@ -250,6 +315,10 @@ pub(crate) struct Typography {
     pub(crate) actions_header_size: Pixels,
     /// An Actions group label's 11.5px (`.alabel`).
     pub(crate) action_group_size: Pixels,
+    /// A pinned slot's 12.5px title (`.slot-t`).
+    pub(crate) slot_title_size: Pixels,
+    /// The 11.5px reason under an unavailable slot's title (Pane's own).
+    pub(crate) slot_reason_size: Pixels,
     /// Title and label weight (500).
     pub(crate) medium: FontWeight,
     /// Body weight (400): a section label's note.
@@ -301,6 +370,8 @@ pub(crate) struct Geometry {
     pub(crate) row_list_gap: Pixels,
     /// A row's kind label's least width, right-aligned in it (88).
     pub(crate) row_kind_min_width: Pixels,
+    /// Root search's result layouts (#96).
+    pub(crate) results: ResultGeometry,
     /// The alias chip's padding: 2 above and below, 6 either side.
     pub(crate) alias_padding_y: Pixels,
     pub(crate) alias_padding_x: Pixels,
@@ -318,6 +389,8 @@ pub(crate) struct Geometry {
     pub(crate) slot_tile: TileMetrics,
     /// The Actions panel header's icon tile: 18, radius 5, an 11px glyph.
     pub(crate) mini_tile: TileMetrics,
+    /// The Settings window's shell, sidebar and page composition.
+    pub(crate) settings: SettingsGeometry,
     /// The footer's height.
     pub(crate) footer_height: Pixels,
     /// The footer's left padding (the reference's 16).
@@ -354,6 +427,8 @@ pub(crate) struct Geometry {
     pub(crate) popover_drop_spread: Pixels,
     /// The Actions panel.
     pub(crate) actions: ActionsGeometry,
+    /// The pinned home's strip of quick slots.
+    pub(crate) pinned: PinnedGeometry,
     /// A keycap's height, and its least width.
     pub(crate) keycap_height: Pixels,
     /// A keycap's corner radius.
@@ -416,6 +491,87 @@ pub(crate) struct ActionsGeometry {
     pub(crate) empty_padding_x: Pixels,
 }
 
+/// The Settings window's geometry: the reference Settings board's
+/// titlebar, its `nav` sidebar with the search field and the `.nav`
+/// items, and its page — the padding, the heading block and the two
+/// columns (see `crate::ui::settings_shell`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct SettingsGeometry {
+    /// The titlebar's height, its 1px rule included.
+    pub(crate) titlebar_height: Pixels,
+    /// A Windows caption button's width (the platform's own 46): the
+    /// adaptation of the reference's lone close glyph. Its glyph's size.
+    pub(crate) caption_width: Pixels,
+    pub(crate) caption_glyph: Pixels,
+    /// The sidebar: its width (its 1px right rule included), its padding
+    /// above and below, either side, and the gap between its children.
+    pub(crate) sidebar_width: Pixels,
+    pub(crate) sidebar_padding_y: Pixels,
+    pub(crate) sidebar_padding_x: Pixels,
+    pub(crate) sidebar_gap: Pixels,
+    /// The search field: its height, side padding, the gap after its
+    /// magnifier, the space below it, its radius and its magnifier.
+    pub(crate) search_height: Pixels,
+    pub(crate) search_padding_x: Pixels,
+    pub(crate) search_gap: Pixels,
+    pub(crate) search_margin_bottom: Pixels,
+    pub(crate) search_radius: Pixels,
+    pub(crate) search_glyph: Pixels,
+    /// A sidebar item (`.nav`): its height (a floor), radius, side
+    /// padding, the gap between its parts and its glyph.
+    pub(crate) item_height: Pixels,
+    pub(crate) item_radius: Pixels,
+    pub(crate) item_padding_x: Pixels,
+    pub(crate) item_gap: Pixels,
+    pub(crate) item_glyph: Pixels,
+    /// The page's padding: above, either side and below.
+    pub(crate) page_padding_top: Pixels,
+    pub(crate) page_padding_x: Pixels,
+    pub(crate) page_padding_bottom: Pixels,
+    /// The heading block: the gap between the heading and its subtitle,
+    /// and the space below the block.
+    pub(crate) header_gap: Pixels,
+    pub(crate) header_margin_bottom: Pixels,
+    /// The page's two columns: the gap between them, the controls
+    /// column's width and the aside's (the preview's).
+    pub(crate) column_gap: Pixels,
+    pub(crate) controls_width: Pixels,
+    pub(crate) aside_width: Pixels,
+    /// The gap between an aside's caption and its content.
+    pub(crate) aside_gap: Pixels,
+}
+
+/// The pinned home's geometry: the reference's grid of five `.slot`s under
+/// the "Pinned" label, and each slot's anatomy.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct PinnedGeometry {
+    /// The gap between the five equal columns.
+    pub(crate) columns_gap: Pixels,
+    /// The grid's padding above and below its slots.
+    pub(crate) strip_padding_top: Pixels,
+    pub(crate) strip_padding_bottom: Pixels,
+    /// A slot: its height, radius and paddings (14 above, 8 either side,
+    /// 10 below), and the gap between its tile and its title.
+    pub(crate) slot_height: Pixels,
+    pub(crate) slot_radius: Pixels,
+    pub(crate) slot_padding_top: Pixels,
+    pub(crate) slot_padding_x: Pixels,
+    pub(crate) slot_padding_bottom: Pixels,
+    pub(crate) slot_gap: Pixels,
+    /// An unavailable slot's gap between its tile and its title, the
+    /// reason right under the title (Pane's own state): the tile, both
+    /// lines and the reference's 9px gaps would overflow the slot's 76px
+    /// inside its paddings, so the lines would shrink and clip; 42, 2 and
+    /// the two lines (16.25 and 14.95) fit.
+    pub(crate) unavailable_gap: Pixels,
+    /// The corner key hint's inset from the slot's top and right (8).
+    pub(crate) keys_inset: Pixels,
+    /// The focus ring's width (the reference's 2px outline, inset).
+    pub(crate) focus_width: Pixels,
+    /// The inset edge's width (1px).
+    pub(crate) edge_width: Pixels,
+}
+
 /// One icon tile size: the square's side, its corner radius and the
 /// glyph inside it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -426,6 +582,248 @@ pub(crate) struct TileMetrics {
     pub(crate) radius: Pixels,
     /// The glyph's side inside it.
     pub(crate) glyph: Pixels,
+}
+
+/// The colors of root search's result layouts (#96): the reference's
+/// empty and calculator boards. Text roles the launcher already has (a
+/// title's, a muted label's) are the theme's own.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ResultColors {
+    /// The notice's disc (white 6%), its 1px inset ring (white 8%) and its
+    /// glyph (#A3A4A9).
+    pub(crate) notice_disc: Hsla,
+    pub(crate) notice_disc_edge: Hsla,
+    pub(crate) notice_glyph: Hsla,
+    /// The answer card's fill (white 6%); its 1px ring while selected is
+    /// the accent stroke ([`Theme::accent_text`]).
+    pub(crate) card_fill: Hsla,
+    /// The value typed (#D9DADD) and the answer (#FFFFFF).
+    pub(crate) card_source: Hsla,
+    pub(crate) card_answer: Hsla,
+    /// The disc behind the card's arrow (white 7%) and the arrow (#A3A4A9).
+    pub(crate) card_arrow_disc: Hsla,
+    pub(crate) card_arrow: Hsla,
+    /// The rule above the card's "Also" line (white 7%).
+    pub(crate) card_rule: Hsla,
+    /// A chip on that line: its fill (white 6%), ring (white 7%), hover
+    /// fill (white 10%) and label (#D9DADD).
+    pub(crate) chip_fill: Hsla,
+    pub(crate) chip_edge: Hsla,
+    pub(crate) chip_hover: Hsla,
+    pub(crate) chip_text: Hsla,
+    /// A history row's answer (#A3A4A9).
+    pub(crate) history_answer: Hsla,
+    /// A suggestion's Install pill: its fill (white 8%), ring (white 8%)
+    /// and hover fill (white 13%).
+    pub(crate) pill_fill: Hsla,
+    pub(crate) pill_edge: Hsla,
+    pub(crate) pill_hover: Hsla,
+}
+
+impl ResultColors {
+    /// The reference's dark values, exactly as authored.
+    fn dark() -> ResultColors {
+        ResultColors {
+            notice_disc: color(0xFFFFFF0F),
+            notice_disc_edge: color(0xFFFFFF14),
+            notice_glyph: color(0xA3A4A9FF),
+            card_fill: color(0xFFFFFF0F),
+            card_source: color(0xD9DADDFF),
+            card_answer: color(0xFFFFFFFF),
+            card_arrow_disc: color(0xFFFFFF12),
+            card_arrow: color(0xA3A4A9FF),
+            card_rule: color(0xFFFFFF12),
+            chip_fill: color(0xFFFFFF0F),
+            chip_edge: color(0xFFFFFF12),
+            chip_hover: color(0xFFFFFF1A),
+            chip_text: color(0xD9DADDFF),
+            history_answer: color(0xA3A4A9FF),
+            pill_fill: color(0xFFFFFF14),
+            pill_edge: color(0xFFFFFF14),
+            pill_hover: color(0xFFFFFF21),
+        }
+    }
+
+    /// Derived light counterparts, as the light palette derives the rest:
+    /// black washes for white ones and dark inks, a proposal for review.
+    fn light() -> ResultColors {
+        ResultColors {
+            notice_disc: color(0x0000000F),
+            notice_disc_edge: color(0x00000014),
+            notice_glyph: color(0x575A63FF),
+            card_fill: color(0x0000000F),
+            card_source: color(0x2A2B31FF),
+            card_answer: color(0x111214FF),
+            card_arrow_disc: color(0x00000012),
+            card_arrow: color(0x575A63FF),
+            card_rule: color(0x00000012),
+            chip_fill: color(0x0000000F),
+            chip_edge: color(0x00000012),
+            chip_hover: color(0x0000001A),
+            chip_text: color(0x2A2B31FF),
+            history_answer: color(0x575A63FF),
+            pill_fill: color(0x00000014),
+            pill_edge: color(0x00000014),
+            pill_hover: color(0x00000021),
+        }
+    }
+}
+
+/// A text role's size and its line box: CSS's `normal` line height for
+/// Geist and Geist Mono (their ascent and descent, 1005 + 295 per 1000)
+/// as Chrome lays it out, rounding the ascent and the descent each to a
+/// whole pixel — so a line box here is the reference's own height.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct TypeLine {
+    pub(crate) size: Pixels,
+    pub(crate) line_height: Pixels,
+}
+
+/// The type of root search's result layouts (#96).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ResultType {
+    /// The notice's title (15/500) and description (13).
+    pub(crate) notice_title: TypeLine,
+    pub(crate) notice_description: TypeLine,
+    /// The card's values: Geist Mono 34/500 as authored, then the smaller
+    /// steps a value too long for its column takes (24, then 18).
+    pub(crate) answer_value: TypeLine,
+    pub(crate) answer_value_compact: TypeLine,
+    pub(crate) answer_value_small: TypeLine,
+    /// The values' tracking, in em (−.03).
+    pub(crate) answer_tracking: f32,
+    /// Geist Mono's advance, in em: every glyph's is the same (600 units).
+    pub(crate) mono_advance: f32,
+    /// A value's caption (12.5), the "Also" label (12) and a chip's label
+    /// (Geist Mono 12.5).
+    pub(crate) answer_caption: TypeLine,
+    pub(crate) answer_also: TypeLine,
+    pub(crate) chip: TypeLine,
+    /// A history row's expression and answer (Geist Mono 13.5).
+    pub(crate) history: TypeLine,
+    /// A suggestion's title (14/500), its line of metadata (12.5) and its
+    /// pill's label (12.5/500).
+    pub(crate) suggestion_title: TypeLine,
+    pub(crate) suggestion_meta: TypeLine,
+    pub(crate) pill: TypeLine,
+}
+
+impl ResultType {
+    fn shared() -> ResultType {
+        let line = |size: f32, line_height: f32| TypeLine {
+            size: px(size),
+            line_height: px(line_height),
+        };
+        ResultType {
+            notice_title: line(15., 19.),
+            notice_description: line(13., 17.),
+            answer_value: line(34., 44.),
+            answer_value_compact: line(24., 31.),
+            answer_value_small: line(18., 23.),
+            answer_tracking: -0.03,
+            mono_advance: 0.6,
+            answer_caption: line(12.5, 17.),
+            answer_also: line(12., 16.),
+            chip: line(12.5, 17.),
+            history: line(13.5, 18.),
+            suggestion_title: line(14., 18.),
+            suggestion_meta: line(12.5, 17.),
+            pill: line(12.5, 17.),
+        }
+    }
+}
+
+/// The geometry of root search's result layouts (#96): the reference's
+/// empty board's notice and suggestions, and its calculator board's card.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ResultGeometry {
+    /// The notice: 84 high, padded 8 above, 4 below and 12 either side,
+    /// 16 between its disc and its text, and 4 between the text's lines.
+    pub(crate) notice_height: Pixels,
+    pub(crate) notice_padding_top: Pixels,
+    pub(crate) notice_padding_bottom: Pixels,
+    pub(crate) notice_padding_x: Pixels,
+    pub(crate) notice_gap: Pixels,
+    pub(crate) notice_text_gap: Pixels,
+    /// The notice's 44px disc and its 20px glyph.
+    pub(crate) notice_disc: Pixels,
+    pub(crate) notice_glyph: Pixels,
+    /// The card: 2 above it and 4 below, padded 20 above and either side
+    /// and 16 below, 14 between its values and its "Also" line, radius 14.
+    pub(crate) card_margin_top: Pixels,
+    pub(crate) card_margin_bottom: Pixels,
+    pub(crate) card_padding_top: Pixels,
+    pub(crate) card_padding_x: Pixels,
+    pub(crate) card_padding_bottom: Pixels,
+    pub(crate) card_gap: Pixels,
+    pub(crate) card_radius: Pixels,
+    /// The 16 between the card's columns, and the 4 between a value and its
+    /// caption.
+    pub(crate) card_column_gap: Pixels,
+    pub(crate) card_value_gap: Pixels,
+    /// The arrow's 40px disc and its 18px glyph.
+    pub(crate) card_arrow_disc: Pixels,
+    pub(crate) card_arrow: Pixels,
+    /// The "Also" line: 14 below its rule, 8 between its parts.
+    pub(crate) also_padding_top: Pixels,
+    pub(crate) also_gap: Pixels,
+    /// A chip: 30 high, 10 either side, radius 8.
+    pub(crate) chip_height: Pixels,
+    pub(crate) chip_padding_x: Pixels,
+    pub(crate) chip_radius: Pixels,
+    /// A section label's note and its keys, 6 apart.
+    pub(crate) label_keys_gap: Pixels,
+    /// A suggestion row: 54 high, 2 between its title and its metadata,
+    /// its 32px tile (radius 8, a 17px glyph).
+    pub(crate) suggestion_height: Pixels,
+    pub(crate) suggestion_text_gap: Pixels,
+    pub(crate) suggestion_tile: TileMetrics,
+    /// The Install pill: 30 high, 12 either side, radius 8.
+    pub(crate) pill_height: Pixels,
+    pub(crate) pill_padding_x: Pixels,
+    pub(crate) pill_radius: Pixels,
+}
+
+impl ResultGeometry {
+    fn shared() -> ResultGeometry {
+        ResultGeometry {
+            notice_height: px(84.),
+            notice_padding_top: px(8.),
+            notice_padding_bottom: px(4.),
+            notice_padding_x: px(12.),
+            notice_gap: px(16.),
+            notice_text_gap: px(4.),
+            notice_disc: px(44.),
+            notice_glyph: px(20.),
+            card_margin_top: px(2.),
+            card_margin_bottom: px(4.),
+            card_padding_top: px(20.),
+            card_padding_x: px(20.),
+            card_padding_bottom: px(16.),
+            card_gap: px(14.),
+            card_radius: px(14.),
+            card_column_gap: px(16.),
+            card_value_gap: px(4.),
+            card_arrow_disc: px(40.),
+            card_arrow: px(18.),
+            also_padding_top: px(14.),
+            also_gap: px(8.),
+            chip_height: px(30.),
+            chip_padding_x: px(10.),
+            chip_radius: px(8.),
+            label_keys_gap: px(6.),
+            suggestion_height: px(54.),
+            suggestion_text_gap: px(2.),
+            suggestion_tile: TileMetrics {
+                size: px(32.),
+                radius: px(8.),
+                glyph: px(17.),
+            },
+            pill_height: px(30.),
+            pill_padding_x: px(12.),
+            pill_radius: px(8.),
+        }
+    }
 }
 
 impl Theme {
@@ -465,6 +863,8 @@ impl Theme {
             row_selected: color(0xFFFFFF16),
             row_selected_border: color(0xFFFFFF0D),
 
+            results: ResultColors::dark(),
+
             focus_ring: color(0xFFFFFF80),
 
             accent_text: color(0xC9EE6AFF),
@@ -476,7 +876,7 @@ impl Theme {
             tile_foreground: color(0xE9E9ECFF),
             tile_border: color(0xFFFFFF14),
             tile_highlight: color(0xFFFFFF1A),
-            tile_app_edge: color(0xFFFFFF47),
+            tile_app_edge: color(0xFFFFFF24),
             tile_app_highlight: color(0xFFFFFF59),
             tile_drop: color(0x00000073),
             keycap_background: color(0xFFFFFF12),
@@ -487,6 +887,18 @@ impl Theme {
             accent_ink: color(0x111210FF),
             alias_text: color(0xB9BABEFF),
             alias_edge: color(0xFFFFFF24),
+
+            settings_tint: color(0x16171AC7),
+            sidebar_fill: color(0x0000001A),
+            nav_text: color(0xB3B4B9FF),
+            nav_hover: color(0xFFFFFF0D),
+            nav_hover_text: color(0xEDEDEFFF),
+            nav_selected: color(0xFFFFFF17),
+            nav_selected_text: color(0xFFFFFFFF),
+            nav_icon: color(0x8E8F94FF),
+            field_fill: color(0x0000003D),
+            field_edge: color(0xFFFFFF0F),
+            heading_text: color(0xFFFFFFFF),
 
             footer_mark: color(0xEDEDEFEB),
             footer_button_text: color(0xD9DADDFF),
@@ -502,6 +914,14 @@ impl Theme {
             popover_outline: color(0x000000CC),
             popover_drop: color(0x000000BF),
             footer_order_fill: color(0x00000001),
+
+            split: SplitTokens::dark(),
+
+            slot_background: color(0xFFFFFF09),
+            slot_edge: color(0xFFFFFF0D),
+            slot_hover: color(0xFFFFFF12),
+            slot_title: color(0xD9DADDFF),
+            slot_empty_edge: color(0xFFFFFF1A),
 
             typography: Typography::shared(),
             geometry: Geometry::shared(),
@@ -545,6 +965,8 @@ impl Theme {
             row_selected: color(0x00000016),
             row_selected_border: color(0x0000000D),
 
+            results: ResultColors::light(),
+
             focus_ring: color(0x00000073),
 
             accent_text: color(0x5C7A17FF),
@@ -556,7 +978,7 @@ impl Theme {
             tile_foreground: color(0x202126FF),
             tile_border: color(0x00000014),
             tile_highlight: color(0xFFFFFF59),
-            tile_app_edge: color(0xFFFFFF47),
+            tile_app_edge: color(0xFFFFFF24),
             tile_app_highlight: color(0xFFFFFF59),
             tile_drop: color(0x00000073),
             keycap_background: color(0x0000000D),
@@ -567,6 +989,21 @@ impl Theme {
             accent_ink: color(0x111210FF),
             alias_text: color(0x3B3D44FF),
             alias_edge: color(0x00000024),
+
+            // Derived, like the rest of the light palette: the light
+            // panel's own tint, and dark washes in place of the dark
+            // board's white ones.
+            settings_tint: color(0xF6F6F8CC),
+            sidebar_fill: color(0x00000008),
+            nav_text: color(0x3B3D44FF),
+            nav_hover: color(0x0000000B),
+            nav_hover_text: color(0x202126FF),
+            nav_selected: color(0x00000016),
+            nav_selected_text: color(0x111214FF),
+            nav_icon: color(0x575A63FF),
+            field_fill: color(0x0000000A),
+            field_edge: color(0x00000014),
+            heading_text: color(0x111214FF),
 
             footer_mark: color(0x202126EB),
             footer_button_text: color(0x2A2B31FF),
@@ -582,6 +1019,14 @@ impl Theme {
             popover_outline: color(0x00000033),
             popover_drop: color(0x00000040),
             footer_order_fill: color(0x00000001),
+
+            split: SplitTokens::light(),
+
+            slot_background: color(0x00000009),
+            slot_edge: color(0x0000000D),
+            slot_hover: color(0x00000012),
+            slot_title: color(0x2A2B31FF),
+            slot_empty_edge: color(0x0000001A),
 
             typography: Typography::shared(),
             geometry: Geometry::shared(),
@@ -607,10 +1052,18 @@ impl Typography {
             section_size: px(12.),
             section_tracking: 0.01,
             line_height: 1.3,
+            settings_text_size: px(13.),
+            settings_caption_size: px(12.),
+            heading_size: px(22.),
+            heading_weight: FontWeight::SEMIBOLD,
+            heading_tracking: -0.01,
+            results: ResultType::shared(),
             action_size: px(13.),
             action_weight: FontWeight(450.),
             actions_header_size: px(12.),
             action_group_size: px(11.5),
+            slot_title_size: px(12.5),
+            slot_reason_size: px(11.5),
             medium: FontWeight::MEDIUM,
             regular: FontWeight::NORMAL,
         }
@@ -652,6 +1105,7 @@ impl Geometry {
             row_gap: px(12.),
             row_list_gap: px(2.),
             row_kind_min_width: px(88.),
+            results: ResultGeometry::shared(),
             alias_padding_y: px(2.),
             alias_padding_x: px(6.),
             alias_radius: px(5.),
@@ -673,6 +1127,35 @@ impl Geometry {
                 size: px(18.),
                 radius: px(5.),
                 glyph: px(11.),
+            },
+            settings: SettingsGeometry {
+                titlebar_height: px(48.),
+                caption_width: px(46.),
+                caption_glyph: px(16.),
+                sidebar_width: px(232.),
+                sidebar_padding_y: px(12.),
+                sidebar_padding_x: px(10.),
+                sidebar_gap: px(2.),
+                search_height: px(34.),
+                search_padding_x: px(10.),
+                search_gap: px(8.),
+                search_margin_bottom: px(8.),
+                search_radius: px(8.),
+                search_glyph: px(14.),
+                item_height: px(36.),
+                item_radius: px(8.),
+                item_padding_x: px(10.),
+                item_gap: px(10.),
+                item_glyph: px(16.),
+                page_padding_top: px(26.),
+                page_padding_x: px(32.),
+                page_padding_bottom: px(24.),
+                header_gap: px(4.),
+                header_margin_bottom: px(4.),
+                column_gap: px(36.),
+                controls_width: px(388.),
+                aside_width: px(400.),
+                aside_gap: px(10.),
             },
             footer_height: px(50.),
             footer_padding_left: px(16.),
@@ -718,6 +1201,21 @@ impl Geometry {
                 empty_padding_y: px(14.),
                 empty_padding_x: px(10.),
             },
+            pinned: PinnedGeometry {
+                columns_gap: px(8.),
+                strip_padding_top: px(2.),
+                strip_padding_bottom: px(6.),
+                slot_height: px(100.),
+                slot_radius: px(12.),
+                slot_padding_top: px(14.),
+                slot_padding_x: px(8.),
+                slot_padding_bottom: px(10.),
+                slot_gap: px(9.),
+                unavailable_gap: px(2.),
+                keys_inset: px(8.),
+                focus_width: px(2.),
+                edge_width: px(1.),
+            },
             keycap_height: px(20.),
             keycap_radius: px(5.),
             keycap_padding_x: px(5.),
@@ -725,6 +1223,311 @@ impl Geometry {
             keycap_compact_padding_x: px(4.),
             key_gap: px(3.),
             popover_radius: px(14.),
+        }
+    }
+}
+
+/// The split view's tokens: the reference's clipboard board (#102) — its
+/// 64px header with the back button, the command's chip and the capture
+/// button; the 46px tab strip; the 360px list of 44px rows beside the
+/// preview card; and the 52px footer. Rows, section labels, keycaps and
+/// footer buttons are the launcher's own families and take their tokens.
+///
+/// The tones and the code, color, link and image previews are the
+/// reference fixture's: Pane keeps text alone and guesses no kind of it,
+/// so only the visual workbench's fixture draws them (#100).
+#[derive(Clone, Debug)]
+pub(crate) struct SplitTokens {
+    /// The header: its height and its left and right padding (14, 12),
+    /// the gap between its parts (12).
+    pub(crate) header_height: Pixels,
+    pub(crate) header_padding_left: Pixels,
+    pub(crate) header_padding_right: Pixels,
+    pub(crate) header_gap: Pixels,
+    /// The back button: 32 square, radius 8, a 16px glyph, white 6% under
+    /// #C9CACE.
+    pub(crate) back_size: Pixels,
+    pub(crate) back_radius: Pixels,
+    pub(crate) back_glyph: Pixels,
+    pub(crate) back_fill: Hsla,
+    pub(crate) back_text: Hsla,
+    /// The command's chip: 30 high, padding 6 left and 10 right, gap 7,
+    /// radius 8, 13px/500, white 8% with a white 8% inset ring; its tile
+    /// 20 square, radius 5, white 10%, a 12px glyph.
+    pub(crate) chip_height: Pixels,
+    pub(crate) chip_padding_left: Pixels,
+    pub(crate) chip_padding_right: Pixels,
+    pub(crate) chip_gap: Pixels,
+    pub(crate) chip_radius: Pixels,
+    pub(crate) chip_size: Pixels,
+    pub(crate) chip_fill: Hsla,
+    pub(crate) chip_edge: Hsla,
+    pub(crate) chip_tile: Pixels,
+    pub(crate) chip_tile_radius: Pixels,
+    pub(crate) chip_tile_fill: Hsla,
+    pub(crate) chip_glyph: Pixels,
+    /// The capture button's glyph (15).
+    pub(crate) capture_glyph: Pixels,
+    /// The tab strip: 46 high, 14px either side, 4 between tabs.
+    pub(crate) tabs_height: Pixels,
+    pub(crate) tabs_padding_x: Pixels,
+    pub(crate) tabs_gap: Pixels,
+    /// A tab: 30 high, 12px either side, radius 8, 12.5px/500; #9A9BA0 at
+    /// rest, white 4% and #EDEDEF on hover, white 10% and white with a
+    /// white 6% inset ring while chosen.
+    pub(crate) tab_height: Pixels,
+    pub(crate) tab_padding_x: Pixels,
+    pub(crate) tab_radius: Pixels,
+    pub(crate) tab_size: Pixels,
+    pub(crate) tab_text: Hsla,
+    pub(crate) tab_hover: Hsla,
+    pub(crate) tab_hover_text: Hsla,
+    pub(crate) tab_on: Hsla,
+    pub(crate) tab_on_text: Hsla,
+    pub(crate) tab_on_edge: Hsla,
+    /// The strip's caption: 12px, a 14px glyph 6px before it.
+    pub(crate) caption_size: Pixels,
+    pub(crate) caption_glyph: Pixels,
+    pub(crate) caption_gap: Pixels,
+    /// The list: 360 wide with its 1px rule on the right, padded 2 above,
+    /// 8 either side and 10 below.
+    pub(crate) list_width: Pixels,
+    /// The most of a narrower window the list takes (half), so the
+    /// preview keeps room beside it.
+    pub(crate) list_max_share: f32,
+    pub(crate) list_padding_top: Pixels,
+    pub(crate) list_padding_x: Pixels,
+    pub(crate) list_padding_bottom: Pixels,
+    /// A row's title (13.5px/500) and its time (Geist Mono 11.5).
+    pub(crate) title_size: Pixels,
+    pub(crate) time_size: Pixels,
+    /// A color record's swatch ring (white 18%).
+    pub(crate) swatch_edge: Hsla,
+    /// The note in place of rows: 40 above and below, 16 either side, 13px.
+    pub(crate) empty_padding_y: Pixels,
+    pub(crate) empty_padding_x: Pixels,
+    pub(crate) empty_size: Pixels,
+    /// The preview pane's padding (12), and its card: radius 12, black 24%
+    /// with a white 7% inset ring.
+    pub(crate) preview_padding: Pixels,
+    pub(crate) preview_radius: Pixels,
+    pub(crate) preview_fill: Hsla,
+    pub(crate) preview_edge: Hsla,
+    /// Plain text, previewed: padding 28 by 30, 20px at line height 1.5
+    /// with -.005em of tracking.
+    pub(crate) text_padding_y: Pixels,
+    pub(crate) text_padding_x: Pixels,
+    pub(crate) text_size: Pixels,
+    pub(crate) text_line_height: f32,
+    pub(crate) text_tracking: f32,
+    /// The fixture's code preview: padding 26 by 28, Geist Mono 14.5 at
+    /// line height 1.8 in #D9DADD, line numbers 12 wide in #5F6066, 18
+    /// before the line; the reference's keyword, function, number and
+    /// string colors.
+    pub(crate) code_padding_y: Pixels,
+    pub(crate) code_padding_x: Pixels,
+    pub(crate) code_size: Pixels,
+    pub(crate) code_line_height: f32,
+    pub(crate) code_number_width: Pixels,
+    pub(crate) code_gap: Pixels,
+    pub(crate) code_text: Hsla,
+    pub(crate) code_number: Hsla,
+    pub(crate) code_keyword: Hsla,
+    pub(crate) code_function: Hsla,
+    pub(crate) code_value: Hsla,
+    pub(crate) code_string: Hsla,
+    /// The fixture's color preview: its hex (32px/500 Mono, -.02em) and
+    /// values (13px Mono) in black 80% and 66%, 6 apart, padded 24 by 26.
+    pub(crate) color_hex_size: Pixels,
+    pub(crate) color_hex_tracking: f32,
+    pub(crate) color_value_size: Pixels,
+    pub(crate) color_hex_text: Hsla,
+    pub(crate) color_value_text: Hsla,
+    pub(crate) color_gap: Pixels,
+    pub(crate) color_padding_y: Pixels,
+    pub(crate) color_padding_x: Pixels,
+    /// The fixture's link preview: a 44px tile (radius 11, a 22px glyph),
+    /// the domain at 22px/500 and the address in 13px Mono #A3A4A9, 10
+    /// apart.
+    pub(crate) link_tile: Pixels,
+    pub(crate) link_tile_radius: Pixels,
+    pub(crate) link_glyph: Pixels,
+    pub(crate) link_domain_size: Pixels,
+    pub(crate) link_url_size: Pixels,
+    pub(crate) link_url_text: Hsla,
+    pub(crate) link_gap: Pixels,
+    pub(crate) link_padding: Pixels,
+    /// The fixture's image placeholder: the hatch (white 5% over #15161A),
+    /// a 28px glyph, the label at 13px and the size at 12px Mono, 8 apart.
+    pub(crate) hatch_fill: Hsla,
+    pub(crate) hatch_stripe: Hsla,
+    pub(crate) image_glyph: Pixels,
+    pub(crate) image_text: Hsla,
+    pub(crate) image_size: Pixels,
+    pub(crate) image_dims_size: Pixels,
+    pub(crate) image_gap: Pixels,
+    /// The hatch drawing's side: one stripe pattern, 1:1, clipped by the
+    /// card (the reference's card is 556×414).
+    pub(crate) hatch_size: Pixels,
+    /// The footer: 52 high, padded 16 left and 8 right, its two sides 16
+    /// apart; the clock glyph (16) 10 before the copied line.
+    pub(crate) footer_height: Pixels,
+    pub(crate) footer_gap: Pixels,
+    pub(crate) footer_lead_gap: Pixels,
+    pub(crate) footer_glyph: Pixels,
+    /// The fixture tiles' tones: (fill, glyph) for the reference's
+    /// terminal, code, web, chat and folder sources.
+    pub(crate) tone_term: (Hsla, Hsla),
+    pub(crate) tone_code: (Hsla, Hsla),
+    pub(crate) tone_web: (Hsla, Hsla),
+    pub(crate) tone_chat: (Hsla, Hsla),
+    pub(crate) tone_folder: (Hsla, Hsla),
+}
+
+impl SplitTokens {
+    /// The derived light values: the white overlays become black ones and
+    /// the reference's light inks dark, as the light palette derives its
+    /// own; the geometry and the fixture tones are the dark ones. A
+    /// proposal, not reference truth.
+    fn light() -> SplitTokens {
+        SplitTokens {
+            back_fill: color(0x0000000F),
+            back_text: color(0x3B3D44FF),
+            chip_fill: color(0x00000012),
+            chip_edge: color(0x00000014),
+            chip_tile_fill: color(0x00000014),
+            tab_text: color(0x575A63FF),
+            tab_hover: color(0x0000000A),
+            tab_hover_text: color(0x202126FF),
+            tab_on: color(0x00000016),
+            tab_on_text: color(0x111214FF),
+            tab_on_edge: color(0x0000000F),
+            swatch_edge: color(0x0000002E),
+            preview_fill: color(0x0000000A),
+            preview_edge: color(0x00000012),
+            code_text: color(0x2A2B31FF),
+            code_number: color(0x8A8C93FF),
+            code_keyword: color(0x6A4FC4FF),
+            code_function: color(0x1D62C8FF),
+            code_value: color(0xA65A12FF),
+            code_string: color(0x1F7A4CFF),
+            color_hex_text: color(0x000000CC),
+            color_value_text: color(0x000000A8),
+            link_url_text: color(0x575A63FF),
+            hatch_fill: color(0xE6E7EBFF),
+            hatch_stripe: color(0x0000000D),
+            image_text: color(0x575A63FF),
+            ..SplitTokens::dark()
+        }
+    }
+
+    /// The reference's dark values, as authored: its geometry, its colors
+    /// and the fixture's tones.
+    fn dark() -> SplitTokens {
+        SplitTokens {
+            header_height: px(64.),
+            header_padding_left: px(14.),
+            header_padding_right: px(12.),
+            header_gap: px(12.),
+            back_size: px(32.),
+            back_radius: px(8.),
+            back_glyph: px(16.),
+            back_fill: color(0xFFFFFF0F),
+            back_text: color(0xC9CACEFF),
+            chip_height: px(30.),
+            chip_padding_left: px(6.),
+            chip_padding_right: px(10.),
+            chip_gap: px(7.),
+            chip_radius: px(8.),
+            chip_size: px(13.),
+            chip_fill: color(0xFFFFFF14),
+            chip_edge: color(0xFFFFFF14),
+            chip_tile: px(20.),
+            chip_tile_radius: px(5.),
+            chip_tile_fill: color(0xFFFFFF1A),
+            chip_glyph: px(12.),
+            capture_glyph: px(15.),
+            tabs_height: px(46.),
+            tabs_padding_x: px(14.),
+            tabs_gap: px(4.),
+            tab_height: px(30.),
+            tab_padding_x: px(12.),
+            tab_radius: px(8.),
+            tab_size: px(12.5),
+            tab_text: color(0x9A9BA0FF),
+            tab_hover: color(0xFFFFFF0A),
+            tab_hover_text: color(0xEDEDEFFF),
+            tab_on: color(0xFFFFFF1A),
+            tab_on_text: color(0xFFFFFFFF),
+            tab_on_edge: color(0xFFFFFF0F),
+            caption_size: px(12.),
+            caption_glyph: px(14.),
+            caption_gap: px(6.),
+            list_width: px(360.),
+            list_max_share: 0.5,
+            list_padding_top: px(2.),
+            list_padding_x: px(8.),
+            list_padding_bottom: px(10.),
+            title_size: px(13.5),
+            time_size: px(11.5),
+            swatch_edge: color(0xFFFFFF2E),
+            empty_padding_y: px(40.),
+            empty_padding_x: px(16.),
+            empty_size: px(13.),
+            preview_padding: px(12.),
+            preview_radius: px(12.),
+            preview_fill: color(0x0000003D),
+            preview_edge: color(0xFFFFFF12),
+            text_padding_y: px(28.),
+            text_padding_x: px(30.),
+            text_size: px(20.),
+            text_line_height: 1.5,
+            text_tracking: -0.005,
+            code_padding_y: px(26.),
+            code_padding_x: px(28.),
+            code_size: px(14.5),
+            code_line_height: 1.8,
+            code_number_width: px(12.),
+            code_gap: px(18.),
+            code_text: color(0xD9DADDFF),
+            code_number: color(0x5F6066FF),
+            code_keyword: color(0xC6B0FFFF),
+            code_function: color(0x8FC3FFFF),
+            code_value: color(0xFFC285FF),
+            code_string: color(0x86DEAFFF),
+            color_hex_size: px(32.),
+            color_hex_tracking: -0.02,
+            color_value_size: px(13.),
+            color_hex_text: color(0x000000CC),
+            color_value_text: color(0x000000A8),
+            color_gap: px(6.),
+            color_padding_y: px(24.),
+            color_padding_x: px(26.),
+            link_tile: px(44.),
+            link_tile_radius: px(11.),
+            link_glyph: px(22.),
+            link_domain_size: px(22.),
+            link_url_size: px(13.),
+            link_url_text: color(0xA3A4A9FF),
+            link_gap: px(10.),
+            link_padding: px(20.),
+            hatch_fill: color(0x15161AFF),
+            hatch_stripe: color(0xFFFFFF0D),
+            image_glyph: px(28.),
+            image_text: color(0xA3A4A9FF),
+            image_size: px(13.),
+            image_dims_size: px(12.),
+            image_gap: px(8.),
+            hatch_size: px(600.),
+            footer_height: px(52.),
+            footer_gap: px(16.),
+            footer_lead_gap: px(10.),
+            footer_glyph: px(16.),
+            tone_term: (color(0x2A2C30FF), color(0xE6E7EAFF)),
+            tone_code: (color(0x173352FF), color(0x8FC3FFFF)),
+            tone_web: (color(0x4A2E17FF), color(0xFFC285FF)),
+            tone_chat: (color(0x163B3FFF), color(0x86D9E0FF)),
+            tone_folder: (color(0x2B3542FF), color(0xA9C6E8FF)),
         }
     }
 }

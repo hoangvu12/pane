@@ -197,6 +197,168 @@ class Keycaps(unittest.TestCase):
         self.assertIsNone(compare.bottom_line_alpha(self.cap(), (20, 20.5, 36, 20), (40, 41, 44)))
 
 
+class ResultBoards(unittest.TestCase):
+    """The no-results notice's disc and the answer card (#96)."""
+
+    PANEL = (22, 23, 26)
+    ACCENT = (201, 238, 106)
+
+    def disc(self, x=20, y=20, size=44, ring=True, glyph=True):
+        """The notice's disc: white 6% under a white 8% ring, a lighter
+        glyph in its middle."""
+        image = Image.new("RGB", (120, 90), self.PANEL)
+        draw = ImageDraw.Draw(image)
+        fill = over_white(self.PANEL, 0.06)
+        box = (x, y, x + size - 1, y + size - 1)
+        draw.ellipse(box, fill=over_white(fill, 0.08) if ring else fill)
+        draw.ellipse((x + 1, y + 1, x + size - 2, y + size - 2), fill=fill)
+        if glyph:
+            draw.ellipse((x + 14, y + 14, x + 28, y + 28), outline=(163, 164, 169), width=2)
+        return image
+
+    def card(self, ring):
+        """A 300x120 card: white 6%, a 1px accent ring when selected, a
+        white value in the middle of its left half."""
+        image = Image.new("RGB", (340, 160), self.PANEL)
+        draw = ImageDraw.Draw(image)
+        fill = over_white(self.PANEL, 0.06)
+        draw.rounded_rectangle((20, 20, 319, 139), radius=14, fill=self.ACCENT if ring else fill)
+        draw.rounded_rectangle((21, 21, 318, 138), radius=13, fill=fill)
+        draw.rectangle((70, 60, 109, 89), fill=(255, 255, 255))  # the value's core
+        return image
+
+    def test_a_disc_with_a_glyph_measures_its_box_and_fill(self):
+        measured = compare.measure_box(self.disc(), (20, 20, 44, 44))
+        left, top, width, height = measured["edges"]
+        # The circle's chord across its middle rows is its diameter, or a
+        # pixel short of it on the rows either side.
+        self.assertTrue(19 <= left <= 21 and 43 <= width <= 45, measured["edges"])
+        self.assertEqual((top, height), (20, 44))
+        self.assertAlmostEqual(measured["alpha"], 0.06 * 255, delta=1.5)
+
+    def test_a_shifted_disc_is_measured_where_it_is(self):
+        measured = compare.measure_box(self.disc(x=24), (20, 20, 44, 44))
+        self.assertTrue(23 <= measured["edges"][0] <= 25, measured["edges"])
+
+    def test_the_accent_ring_marks_only_the_selected_card(self):
+        self.assertTrue(compare.accent_ring(self.card(ring=True), (20, 20, 300, 120)))
+        self.assertFalse(compare.accent_ring(self.card(ring=False), (20, 20, 300, 120)))
+        # Measured a row off, it is found in the row below.
+        self.assertTrue(compare.accent_ring(self.card(ring=True), (20, 19, 300, 120)))
+
+    def test_a_cards_edges_and_fill_hold_under_its_ring(self):
+        for ring in (True, False):
+            measured = compare.measure_box(self.card(ring), (20, 20, 300, 120))
+            self.assertEqual(measured["edges"], (20, 20, 300, 120), ring)
+            self.assertAlmostEqual(measured["alpha"], 0.06 * 255, delta=1.5)
+
+    def test_a_values_ink_is_found_inside_its_widened_line_box(self):
+        image = self.card(ring=True)
+        fill = over_white(self.PANEL, 0.06)
+        # Declared 4px off its ink, as shaping may leave it.
+        found = compare.measure_text(image, (74, 56, 40, 40), fill, (255, 255, 255))
+        self.assertEqual((found["left"], found["top"], found["right"]), (70, 60, 110))
+        self.assertEqual((found["height"], found["center"]), (30, 90))
+        self.assertIsNone(compare.measure_text(image, (74, 56, 40, 40), None, (255, 255, 255)))
+
+
+class SplitView(unittest.TestCase):
+    """The clipboard split view's measures (#102)."""
+
+    panel = (22, 23, 26)
+
+    def test_a_vertical_rule_is_found_beside_a_dark_card(self):
+        image = Image.new("RGB", (200, 120), self.panel)
+        draw = ImageDraw.Draw(image)
+        draw.line((59, 0, 59, 119), fill=over_white(self.panel, 0.06))      # the list's rule
+        draw.rectangle((72, 10, 190, 110), fill=over_black(self.panel, 0.24))  # a card beyond it
+        self.assertEqual(compare.vline(image, (54, 66), (20, 100)), 59)
+
+    def test_a_cards_edges_are_found_inside_its_ring_past_its_content(self):
+        image = Image.new("RGB", (300, 200), self.panel)
+        draw = ImageDraw.Draw(image)
+        fill = over_black(self.panel, 0.24)
+        # The card at (40, 20, 220, 160): a lighter 1px ring, then the fill,
+        # with bright text across its upper part.
+        draw.rectangle((40, 20, 259, 179), fill=over_white(fill, 0.07))
+        draw.rectangle((41, 21, 258, 178), fill=fill)
+        draw.rectangle((60, 40, 240, 70), fill=(217, 218, 221))
+        found = compare.card_edges(image, (40, 20, 220, 160))
+        self.assertEqual(found["edges"], (41, 21, 218, 158))
+        self.assertAlmostEqual(compare.black_alpha(found["fill"], found["background"]), 0.24 * 255, delta=2)
+
+    def test_a_lighter_card_has_no_dark_edges(self):
+        image = Image.new("RGB", (300, 200), self.panel)
+        ImageDraw.Draw(image).rectangle((40, 20, 259, 179), fill=(201, 238, 106))  # a color preview
+        self.assertIsNone(compare.card_edges(image, (40, 20, 220, 160)))
+
+    def test_a_tabs_wash_is_read_against_the_strip_above_not_its_neighbour(self):
+        image = Image.new("RGB", (200, 60), self.panel)
+        draw = ImageDraw.Draw(image)
+        on = over_white(self.panel, 0.10)
+        # A chosen tab at (10, 15, 40, 30), its ring at 6%, its label; an
+        # unchosen neighbour 4px to its right.
+        draw.rounded_rectangle((10, 15, 49, 44), radius=8, fill=over_white(on, 0.06))
+        draw.rounded_rectangle((11, 16, 48, 43), radius=7, fill=on)
+        draw.rectangle((20, 24, 38, 34), fill=(255, 255, 255))
+        draw.rectangle((60, 24, 80, 34), fill=(154, 155, 160))
+        chosen = compare.tab_wash(image, (10, 15, 40, 30))
+        self.assertAlmostEqual(chosen["alpha"], 0.10 * 255, delta=1.5)
+        self.assertEqual((chosen["edges"][0], chosen["edges"][2]), (10, 40))
+        rest = compare.tab_wash(image, (53, 15, 34, 30))
+        self.assertAlmostEqual(rest["alpha"], 0, delta=0.5)
+
+
+class PinnedSlots(unittest.TestCase):
+    PANEL = (22, 23, 26)
+
+    def slot(self, alpha=0.035, x=10, y=30, w=142, h=100):
+        """A reference .slot on a dark panel: a white fill under a white 5%
+        inset ring, a 42px gradient tile centered across it and a bright
+        title line centered below the tile."""
+        image = Image.new("RGB", (180, 160), self.PANEL)
+        draw = ImageDraw.Draw(image)
+        fill = over_white(self.PANEL, alpha)
+        draw.rounded_rectangle((x, y, x + w - 1, y + h - 1), radius=12, fill=over_white(fill, 0.05))
+        draw.rounded_rectangle((x + 1, y + 1, x + w - 2, y + h - 2), radius=11, fill=fill)
+        tile_x, tile_y = x + (w - 42) // 2, y + 18
+        for row in range(42):
+            shade = (74 - row, 77 - row, 85 - row)
+            draw.line((tile_x, tile_y + row, tile_x + 41, tile_y + row), fill=shade)
+        draw.rectangle((x + 46, tile_y + 42 + 12, x + w - 47, tile_y + 42 + 21), fill=(217, 218, 221))
+        return image, (x, y, w, h), (tile_x, tile_y, 42, 42), (x + 8, tile_y + 51, w - 16, 16.25)
+
+    def test_a_slot_measures_its_fill_box_title_and_tile(self):
+        image, rect, tile, title = self.slot()
+        measured = compare.measure_slot(image, rect, title, tile, True)
+        self.assertAlmostEqual(measured["alpha"], 0.035 * 255, delta=1.5)
+        self.assertEqual(measured["edges"], rect)
+        self.assertAlmostEqual(measured["title"]["center"], rect[0] + rect[2] / 2, delta=0.5)
+        self.assertEqual(measured["title"]["top"], tile[1] + 42 + 12)
+        self.assertEqual(measured["tile"]["edges"][:2], tile[:2])
+
+    def test_the_hover_wash_measures_twice_the_rest(self):
+        image, rect, tile, title = self.slot(alpha=0.07)
+        self.assertAlmostEqual(compare.measure_slot(image, rect, title, tile, True)["alpha"], 0.07 * 255, delta=1.5)
+
+    def test_an_empty_slot_measures_no_fill(self):
+        image = Image.new("RGB", (180, 160), self.PANEL)
+        measured = compare.measure_slot(image, (10, 30, 142, 100), None, None, False)
+        self.assertAlmostEqual(measured["alpha"], 0, delta=0.5)
+        self.assertIsNone(measured["title"])
+
+    def test_a_label_only_the_reference_shows_counts_above_its_rows(self):
+        declared = {"sections": [{"rect": {"x": 10, "y": 68, "width": 740, "height": 30}},
+                                 {"rect": {"x": 10, "y": 210, "width": 740, "height": 30}}]}
+        state = {"labels": [{"rect": {"x": 10, "y": 68, "width": 740, "height": 30}},
+                            {"rect": {"x": 10, "y": 210, "width": 740, "height": 30}},
+                            {"rect": {"x": 10, "y": 426, "width": 740, "height": 30}}]}
+        # Above the fourth row both sides show the same two labels; above
+        # the fifth the reference shows its third.
+        self.assertEqual(compare.extra_labels_above(declared, state, 380, 380), 0)
+        self.assertEqual(compare.extra_labels_above(declared, state, 426, 458), 1)
+
+
 class Accepted(unittest.TestCase):
     def test_a_failing_check_with_a_disposition_is_accepted_not_failed(self):
         report = compare.Report()
@@ -218,6 +380,52 @@ class Sensitivity(unittest.TestCase):
         flips = compare.sensitivity(current, baseline)
         self.assertEqual([flip["id"] for flip in flips], ["a"])
         self.assertEqual((flips[0]["baseline"], flips[0]["now"], flips[0]["delta"]), (11, 15, 4))
+
+
+class SettingsShell(unittest.TestCase):
+    """The Settings shell's measures (#97)."""
+
+    def sidebar(self):
+        # The sidebar's black 10% fill left of x 100, its 1px white rule at
+        # x 99, and the page to the right.
+        image = Image.new("RGB", (200, 120), (25, 26, 29))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((0, 0, 98, 119), fill=(22, 23, 26))
+        draw.line((99, 0, 99, 119), fill=over_white((22, 23, 26), 0.06))
+        return image
+
+    def test_vline_finds_the_rule_not_the_step_between_two_fills(self):
+        image = self.sidebar()
+        self.assertEqual(compare.vline(image, (90, 110), (10, 110)), 99)
+
+    def test_vline_finds_a_darker_rule_in_the_light_palette(self):
+        image = Image.new("RGB", (200, 120), (240, 240, 242))
+        ImageDraw.Draw(image).line((60, 0, 60, 119), fill=(225, 225, 227))
+        self.assertEqual(compare.vline(image, (50, 70), (10, 110), lighter=False), 60)
+
+    def test_a_ringed_box_is_its_fill_and_its_ring(self):
+        # The search well: black 24% under a white 6% ring at 10,60 211x34,
+        # with its magnifier and placeholder lighter than the fill inside.
+        background = (22, 23, 26)
+        fill = tuple(round(c * 0.76) for c in background)
+        image = Image.new("RGB", (240, 120), background)
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((10, 60, 220, 93), fill=over_white(fill, 0.06))
+        draw.rectangle((11, 61, 219, 92), fill=fill)
+        draw.rectangle((20, 70, 33, 83), fill=(142, 143, 148))   # the magnifier
+        draw.rectangle((42, 70, 140, 84), fill=(134, 135, 140))  # the placeholder
+        self.assertEqual(compare.ringed_box(image, (10, 60, 211, 34), background, fill), (10, 60, 211, 34))
+
+    def test_a_ringed_box_is_measured_where_it_is(self):
+        background = (22, 23, 26)
+        fill = tuple(round(c * 0.76) for c in background)
+        image = Image.new("RGB", (240, 120), background)
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((12, 61, 222, 94), fill=over_white(fill, 0.06))
+        draw.rectangle((13, 62, 221, 93), fill=fill)
+        # Looked for at its declared place, 2px left of and 1px above it.
+        edges = compare.ringed_box(image, (10, 60, 211, 34), background, fill)
+        self.assertEqual(edges, (12, 61, 211, 34))
 
 
 if __name__ == "__main__":
