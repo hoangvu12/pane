@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, prelude::*, px};
+use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, px};
 use pane::LauncherWindow;
 use pane_core::{CommandRegistration, Launcher, Runtime, Screen};
 

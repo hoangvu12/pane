@@ -1405,8 +1405,10 @@ impl Theme {
     /// This palette over the launcher's background image (ADR 0028), its
     /// panel painted `canvas` — the color the backdrop was baked over (see
     /// `crate::background`). The values are the background mockup's
-    /// "Hero" preset, as the user chose them: the panel is the opaque
-    /// canvas with no sheen; the frosted surfaces blur what is behind
+    /// "Hero" preset, as the user chose them: the panel is the canvas
+    /// with no sheen — opaque on the solid material, at the palette's
+    /// glass tint alpha on glass, so the window's frost still shows
+    /// through it; the frosted surfaces blur what is behind
     /// them 30px under the canvas at 40% (the footer at 60%) and a cool
     /// silver edge; hover and selection are plain white washes (dark ones
     /// in the light palette); and the secondary text steps up a shade to
@@ -1446,7 +1448,7 @@ impl Theme {
             } else {
                 color(0xA9AAAFFF)
             },
-            panel_tint: canvas,
+            panel_tint: at(canvas, self.panel_tint.alpha),
             panel_solid: canvas,
             panel_sheen: transparent_black(),
             footer_tint: at(canvas, 0.6),

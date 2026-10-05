@@ -599,7 +599,7 @@ fn open_settings(cx: &mut VisualTestContext) -> VisualTestContext {
     cx.simulate_keystrokes(settings_shortcut());
     cx.run_until_parked();
     let settings = settings_windows(cx).pop().expect("Settings opened");
-    let mut settings_cx = settings_context(&settings, cx);
+    let settings_cx = settings_context(&settings, cx);
     settings_cx.run_until_parked();
     settings_cx
 }
@@ -2804,23 +2804,22 @@ fn the_extensions_page_lists_its_rows_as_list_items(cx: &mut TestAppContext) {
     pointer_leaves(sc);
     settle_frames(sc);
 
-    for selector in ["extension-row-Settings sample"] {
-        let row = sc.debug_bounds(selector).expect("the row");
-        assert!(row.size.height >= px(44.), "{selector}: {row:?}");
-        sc.simulate_mouse_move(row.center(), None::<MouseButton>, Modifiers::none());
-        sc.run_until_parked();
-        assert!(
-            paints_fill_at(sc, row, 0xFFFFFF0D),
-            "{selector}: the list item's white 5% under the pointer"
-        );
-        assert!(
-            !paints_fill_at(sc, row, 0xFFFFFF09),
-            "{selector}: not the root row's hover"
-        );
-        assert_eq!(frame(sc, Duration::ZERO), 0, "{selector}: at once");
-        pointer_leaves(sc);
-        sc.run_until_parked();
-    }
+    let selector = "extension-row-Settings sample";
+    let row = sc.debug_bounds(selector).expect("the row");
+    assert!(row.size.height >= px(44.), "{selector}: {row:?}");
+    sc.simulate_mouse_move(row.center(), None::<MouseButton>, Modifiers::none());
+    sc.run_until_parked();
+    assert!(
+        paints_fill_at(sc, row, 0xFFFFFF0D),
+        "{selector}: the list item's white 5% under the pointer"
+    );
+    assert!(
+        !paints_fill_at(sc, row, 0xFFFFFF09),
+        "{selector}: not the root row's hover"
+    );
+    assert_eq!(frame(sc, Duration::ZERO), 0, "{selector}: at once");
+    pointer_leaves(sc);
+    sc.run_until_parked();
 }
 
 /// A helper for the section-transition tests: the Settings window over

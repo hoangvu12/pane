@@ -1128,6 +1128,7 @@ impl LauncherWindow {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_row(
         &self,
         index: usize,
@@ -1901,6 +1902,11 @@ impl Render for LauncherWindow {
                 0.
             };
             let shown = 1. - scrolled / (height * HERO_DISSOLVE);
+            let opacity = if material.is_glass() {
+                HERO_GLASS_OPACITY
+            } else {
+                1.
+            };
             (shown > 0.).then(|| {
                 img(backdrop.image)
                     .absolute()
@@ -1909,7 +1915,7 @@ impl Render for LauncherWindow {
                     .w_full()
                     .h(px(height))
                     .object_fit(ObjectFit::Cover)
-                    .opacity(shown.min(1.))
+                    .opacity(shown.min(1.) * opacity)
             })
         });
         // The panel surface: the frost material's L1 glass around the
@@ -1929,6 +1935,10 @@ const HERO_SCROLL: f32 = 1.25;
 /// The share of the panel's height the list scrolls by the time the
 /// background image has dissolved.
 const HERO_DISSOLVE: f32 = 0.5;
+
+/// The background image's opacity over the glass panel, so the window's
+/// frost shows through it too: Roboco's frosted new-thread background's.
+const HERO_GLASS_OPACITY: f32 = 0.84;
 
 /// Tells the launcher window that the launcher changed outside its own
 /// flow — the Settings window's Extensions page drove an operation through

@@ -10,8 +10,9 @@
 //!   window*. This is the launcher's glass. It is never simulated: no copy
 //!   of the desktop's wallpaper is drawn inside the app. A background
 //!   image the user chooses for the launcher (ADR 0028) is not glass
-//!   either: it is the user's own picture, drawn on an opaque panel
-//!   ([`Material::panel_over`]).
+//!   either: it is the user's own picture ([`Material::panel_over`]),
+//!   drawn translucent over the glass panel so the frost still shows
+//!   through, and on the opaque panel otherwise.
 //! - **In-scene frost** — GPUI's `Styled::backdrop_blur(radius)` blurs
 //!   content *inside* the window, behind an element. The L2 popover
 //!   ([`Material::popover`]) uses it in glass mode, blurring the list
