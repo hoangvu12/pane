@@ -143,7 +143,44 @@ pub(crate) fn pinned_slot(content: SlotContent, theme: &Theme) -> Stateful<Div> 
     };
     let (tone, glyph) = content.icon;
     let unavailable = content.unavailable.is_some();
+    let title = div()
+        .max_w(relative(1.))
+        .min_w(px(0.))
+        .truncate()
+        .font_weight(typography.medium)
+        .text_color(if unavailable {
+            theme.text_muted
+        } else {
+            theme.slot_title
+        })
+        .child(title);
+    // An unavailable slot's title and reason are one block, the reason
+    // right under the title, the block closer to the tile: with the
+    // reference's gaps they would not fit the slot (see
+    // `PinnedGeometry::unavailable_gap`).
+    let text = match content.unavailable {
+        None => title.into_any_element(),
+        Some(reason) => div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .max_w(relative(1.))
+            .min_w(px(0.))
+            .child(title)
+            .child(
+                div()
+                    .max_w(relative(1.))
+                    .min_w(px(0.))
+                    .truncate()
+                    .text_size(typography.slot_reason_size)
+                    .line_height(typography.slot_reason_size * typography.line_height)
+                    .text_color(theme.warning)
+                    .child(reason),
+            )
+            .into_any_element(),
+    };
     slot.cursor_pointer()
+        .when(unavailable, |slot| slot.gap(geometry.unavailable_gap))
         .bg(theme.slot_background)
         .shadow(vec![
             BoxShadow::new(px(0.), px(0.), theme.slot_edge)
@@ -154,31 +191,7 @@ pub(crate) fn pinned_slot(content: SlotContent, theme: &Theme) -> Stateful<Div> 
         .child(
             tile_at(TileSize::Slot, tone, glyph, theme).when(unavailable, |tile| tile.opacity(0.5)),
         )
-        .child(
-            div()
-                .max_w(relative(1.))
-                .min_w(px(0.))
-                .truncate()
-                .font_weight(typography.medium)
-                .text_color(if unavailable {
-                    theme.text_muted
-                } else {
-                    theme.slot_title
-                })
-                .child(title),
-        )
-        .when_some(content.unavailable, |slot, reason| {
-            slot.child(
-                div()
-                    .max_w(relative(1.))
-                    .min_w(px(0.))
-                    .truncate()
-                    .text_size(typography.slot_reason_size)
-                    .line_height(typography.slot_reason_size * typography.line_height)
-                    .text_color(theme.warning)
-                    .child(reason),
-            )
-        })
+        .child(text)
         .when_some(content.keys, |slot, keys| {
             slot.child(
                 div()

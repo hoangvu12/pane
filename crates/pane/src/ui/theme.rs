@@ -136,7 +136,11 @@ pub(crate) struct Theme {
     pub(crate) tile_border: Hsla,
     /// A neutral tile's top inset (reference: rgba(255,255,255,.1)).
     pub(crate) tile_highlight: Hsla,
-    /// An app tile's thin pale edge (reference: rgba(255,255,255,.28)).
+    /// An app tile's thin pale edge. The reference's is half a pixel of
+    /// rgba(255,255,255,.28), which Chrome rasterizes at 100% as its tile's
+    /// outermost pixel at half that alpha (measured 13–14%). GPUI draws
+    /// next to nothing for an inset spread under a pixel, so the tile draws
+    /// that pixel: a 1px ring of white 14%.
     pub(crate) tile_app_edge: Hsla,
     /// An app tile's top inset (reference: rgba(255,255,255,.35)).
     pub(crate) tile_app_highlight: Hsla,
@@ -554,6 +558,12 @@ pub(crate) struct PinnedGeometry {
     pub(crate) slot_padding_x: Pixels,
     pub(crate) slot_padding_bottom: Pixels,
     pub(crate) slot_gap: Pixels,
+    /// An unavailable slot's gap between its tile and its title, the
+    /// reason right under the title (Pane's own state): the tile, both
+    /// lines and the reference's 9px gaps would overflow the slot's 76px
+    /// inside its paddings, so the lines would shrink and clip; 42, 2 and
+    /// the two lines (16.25 and 14.95) fit.
+    pub(crate) unavailable_gap: Pixels,
     /// The corner key hint's inset from the slot's top and right (8).
     pub(crate) keys_inset: Pixels,
     /// The focus ring's width (the reference's 2px outline, inset).
@@ -866,7 +876,7 @@ impl Theme {
             tile_foreground: color(0xE9E9ECFF),
             tile_border: color(0xFFFFFF14),
             tile_highlight: color(0xFFFFFF1A),
-            tile_app_edge: color(0xFFFFFF47),
+            tile_app_edge: color(0xFFFFFF24),
             tile_app_highlight: color(0xFFFFFF59),
             tile_drop: color(0x00000073),
             keycap_background: color(0xFFFFFF12),
@@ -968,7 +978,7 @@ impl Theme {
             tile_foreground: color(0x202126FF),
             tile_border: color(0x00000014),
             tile_highlight: color(0xFFFFFF59),
-            tile_app_edge: color(0xFFFFFF47),
+            tile_app_edge: color(0xFFFFFF24),
             tile_app_highlight: color(0xFFFFFF59),
             tile_drop: color(0x00000073),
             keycap_background: color(0x0000000D),
@@ -1201,6 +1211,7 @@ impl Geometry {
                 slot_padding_x: px(8.),
                 slot_padding_bottom: px(10.),
                 slot_gap: px(9.),
+                unavailable_gap: px(2.),
                 keys_inset: px(8.),
                 focus_width: px(2.),
                 edge_width: px(1.),

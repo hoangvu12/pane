@@ -41,6 +41,7 @@ Requires Pillow. Usage:
 """
 import argparse
 import json
+import math
 import statistics
 from pathlib import Path
 
@@ -100,6 +101,12 @@ def pixels(image, box):
 def clamp_box(image, box):
     left, top, right, bottom = (int(round(v)) for v in box)
     return (max(0, left), max(0, top), min(image.width, right), min(image.height, bottom))
+
+
+def box_visible(box):
+    """Whether a clamped box still holds a pixel (a rect off the image clamps empty)."""
+    left, top, right, bottom = box
+    return right > left and bottom > top
 
 
 def median_color(image, box):
@@ -408,10 +415,17 @@ def measure_row(image, rect, washed, text_color, scale=1.0, floor=False, pal=DAR
     found = ink(image, title_box, wash["fill"], text_color, exclude_accent=False)
     if found:
         bx, by, bw, bh = found["box"]
+        # The type's body by coverage, over the title's own columns: the
+        # rows holding a quarter of its fullest row's ink. A thin
+        # diagonal's tips (a slash's) are single partial pixels that GPUI's
+        # text contrast lifts past a core threshold and Chrome leaves under
+        # it, which a core extent counts as a pixel at each end.
+        lines = coverage_rows(image, (bx, y + 4 * scale, bx + bw, y + h - 4 * scale), wash["fill"], text_color,
+                              fraction=0.25)
         result["title"] = {
             "left": (bx - x) / scale,
             "top": (by - y) / scale,
-            "height": bh / scale,
+            "height": (lines[1] - lines[0]) / scale if lines else bh / scale,
             "color": found["color"],
         }
         # The subtitle: muted ink after the title's last core column (the
@@ -422,6 +436,29 @@ def measure_row(image, rect, washed, text_color, scale=1.0, floor=False, pal=DAR
             result["subtitleGap"] = (sub["box"][0] - (bx + bw)) / scale
     result["accent"] = accent_pixels(image, title_box)
     return result
+
+
+def coverage_rows(image, box, background, color, fraction=0.0):
+    """The first and one past the last image row inside box (left, top,
+    right, bottom) holding a pixel's worth of ink by coverage (see
+    coverage_edges), and at least fraction of the fullest row's, or
+    None."""
+    left, top, right, bottom = clamp_box(image, box)
+    bg, fg = luma(background), luma(color)
+    if fg == bg or right <= left:
+        return None
+    data = image.load()
+
+    def coverage(value):
+        amount = min(1.0, max(0.0, (luma(value) - bg) / (fg - bg)))
+        return amount if amount >= 0.2 else 0.0
+
+    totals = {y: sum(coverage(data[x, y]) for x in range(left, right)) for y in range(top, bottom)}
+    if not totals:
+        return None
+    enough = max(1.0, fraction * max(totals.values()))
+    rows = [y for y, total in totals.items() if total >= enough]
+    return (rows[0], rows[-1] + 1) if rows else None
 
 
 def measure_header(image, rule_y, scale=1.0, pal=DARK):
@@ -452,7 +489,9 @@ def measure_footer(image, rule_y, scale=1.0, lighter=True):
     control reaches - a selected row scrolled flush with the list's bottom
     edge would otherwise be taken for the panel above the rule."""
     background = median_color(image, (3 * scale, (rule_y - 4) * scale, 8 * scale, (rule_y - 2) * scale))
-    rule = hline(image, (int(40 * scale), int(300 * scale)),
+    # The rule runs the panel's width; a row the list cuts off at its
+    # bottom puts its title and keycaps right above the rule further in.
+    rule = hline(image, (int(2 * scale), int(10 * scale)),
                  (int((rule_y - 4) * scale), int((rule_y + 5) * scale)), background, lighter)
     if rule is None:
         return {"rule": None, "alpha": None}
@@ -763,6 +802,11 @@ def compare_root(report, name, capture, declared, manifest, native, scale, ref_c
     ref_groups = state.get("keycaps", {})
     for group in manifest.get("keycaps", []):
         footer_group = group.get("group") in ("footer-primary", "footer-actions")
+        # The primary action's keys show only beside it: with nothing
+        # selected (the empty board's unselected fallbacks, #96) the footer
+        # shows no primary action, so its keys are not drawn.
+        if group.get("group") == "footer-primary" and not declared.get("actionButton"):
+            continue
         static_board = len((state.get("footerParts") or {}).get("hint") or []) == 1
         compare_key_group(report, name, capture, group, manifest, native, scale,
                           ref_groups.get(group.get("group")), reference_image, crops,
@@ -928,7 +972,7 @@ def check_fonts(report, name, manifest):
                          "500 must resolve to the embedded Medium face, not a synthesized weight")
 
 
-def box_edges(image, rect, background, fill, scale=1.0, margin=2):
+def box_edges(image, rect, background, fill, scale=1.0, margin=2, avoid=(), chroma=False):
     """The edges of a filled box (a keycap, a tile) near its declared rect:
     left and right along its middle rows, top (and bottom) down columns
     just inside its left edge, where no label or glyph reaches. Pixels count
@@ -945,16 +989,46 @@ def box_edges(image, rect, background, fill, scale=1.0, margin=2):
     sign = 1 if luma(fill) >= bg else -1
     delta = max(3.0, abs(luma(fill) - bg) / 2)
 
+    # A saturated box (an app tile's gradient) keeps its chroma to its
+    # edge, where a drop shadow only darkens the panel's own grey: in the
+    # light palette that shadow is as far from the panel as the tile is.
+    spread = max(fill) - min(fill)
+
     def lit(color):
+        if chroma and spread >= 60 and max(color) - min(color) < 0.4 * spread:
+            return False
         return sign * (luma(color) - bg) >= delta
 
     columns = range(max(0, int(x - margin * scale)), min(image.width, int(x + w + margin * scale)))
-    lefts, rights = [], []
-    for row in range(int(y + h * 0.35), int(y + h * 0.65) + 1):
-        flags = [lit(data[c, row]) for c in columns]
-        if any(flags):
-            lefts.append(columns.start + flags.index(True))
-            rights.append(columns.start + len(flags) - flags[::-1].index(True))
+
+    def clear(row, near):
+        """Whether nothing in avoid covers row near columns near (a range
+        of columns): a slot's tile under its key hint leaves no panel
+        there to find the edge against."""
+        return not any(top <= row < bottom and left < near.stop and right > near.start
+                       for left, top, right, bottom in avoid)
+
+    def scan(scan_rows):
+        lefts, rights = [], []
+        for row in scan_rows:
+            flags = [lit(data[c, row]) for c in columns]
+            if not any(flags):
+                continue
+            first, last = columns.start + flags.index(True), columns.start + len(flags) - flags[::-1].index(True)
+            # Each edge only from a row whose scan reaches it over the
+            # panel: nothing avoided between the scan's end and the edge.
+            if clear(row, range(columns.start, first + 1)):
+                lefts.append(first)
+            if clear(row, range(last - 1, columns.stop)):
+                rights.append(last)
+        return lefts, rights
+
+    lefts, rights = scan(range(int(y + h * 0.35), int(y + h * 0.65) + 1))
+    if avoid and not (lefts and rights):
+        # The middle rows are covered at an edge: the rows above them,
+        # under the rounded corner's last pixel of curve.
+        more_lefts, more_rights = scan(range(int(y + 2 * scale), int(y + h * 0.35)))
+        lefts, rights = lefts or more_lefts, rights or more_rights
     rows = range(max(0, int(y - margin * scale)), min(image.height, int(y + h + margin * scale)))
     tops, bottoms = [], []
     # Down the middle columns, clear of the rounded corners: a label or
@@ -964,7 +1038,7 @@ def box_edges(image, rect, background, fill, scale=1.0, margin=2):
         if any(flags):
             tops.append(rows.start + flags.index(True))
             bottoms.append(rows.start + len(flags) - flags[::-1].index(True))
-    if not (lefts and tops):
+    if not (lefts and rights and tops):
         return None
     left, right = statistics.median(lefts), statistics.median(rights)
     top, bottom = statistics.median(tops), statistics.median(bottoms)
@@ -997,26 +1071,72 @@ def bottom_line_alpha(image, rect, fill, scale=1.0):
     return black_alpha(under, row_color(bottom_row - 2))
 
 
-def measure_key(image, rect, accent, text_color, scale=1.0, lighter=True):
+def key_alpha(image, rect, scale=1.0, lighter=True, avoid=()):
+    """A regular cap's fill as an overlay's alpha (levels), measured column
+    by column as a row's wash is: the cap's top interior (inside its ring,
+    above its label) against the panel just above and just below the cap,
+    interpolated to that height. The reference's glass shades across and
+    down the panel, so each column is read against the panel beside it;
+    the median over the columns is the cap's. None if unreadable."""
+    x, y, w, h = scaled(rect, scale)
+    data = image.load()
+    top, bottom = int(round(y)), int(round(y + h))
+    above_row, below_row = top - int(round(2 * scale)), bottom + int(round(1 * scale)) - 1
+    rows = (top + int(round(2 * scale)), top + int(round(3 * scale)))
+    if above_row < 0 or below_row >= image.height:
+        return None
+    weight = (statistics.mean(rows) - above_row) / (below_row - above_row)
+    alphas = []
+
+    def covered(column, row):
+        return any(left <= column < right and top <= row < bottom for left, top, right, bottom in avoid)
+
+    for column in range(int(x + 4 * scale), int(x + w - 4 * scale)):
+        if not 0 <= column < image.width or any(covered(column, r) for r in rows):
+            continue
+        above, below = data[column, above_row], data[column, below_row]
+        # Where something lies under the cap's bottom (a slot's tile), the
+        # panel above the cap is its background alone.
+        if covered(column, below_row):
+            below = above
+        background = tuple(a + (b - a) * weight for a, b in zip(above, below))
+        fill = tuple(statistics.mean(data[column, r][i] for r in rows) for i in range(3))
+        alpha = overlay_alpha(fill, background, lighter)
+        if alpha is not None:
+            alphas.append(alpha)
+    return statistics.median(alphas) if alphas else None
+
+
+def measure_key(image, rect, accent, text_color, scale=1.0, lighter=True, avoid=()):
     """One keycap: its edges, its fill (as a white overlay's alpha, or its
     color for an accent cap), the line along its bottom, and its label's
-    ink box relative to the cap."""
+    ink box relative to the cap. avoid: logical rects of what lies under
+    or beside the cap (a slot's tile under its key hint), each grown by
+    its drop shadow, which the cap's measures read around."""
     x, y, w, h = scaled(rect, scale)
+    avoid = [box_px(as_tuple(r), scale, pad=3) for r in avoid]
+    fill_bottom = min([y + h - 3 * scale] + [top for left, top, right, bottom in avoid
+                                             if left < x + 3 * scale and right > x + 1.5 * scale])
     above = median_color(image, (x + 2 * scale, y - 4 * scale, x + w - 2 * scale, y - 2 * scale))
     below = median_color(image, (x + 2 * scale, y + h + 2 * scale, x + w - 2 * scale, y + h + 4 * scale))
-    fill = median_color(image, (x + 1.5 * scale, y + 2 * scale, x + 3 * scale, y + h - 3 * scale))
+    fill = median_color(image, (x + 1.5 * scale, y + 2 * scale, x + 3 * scale, max(y + 3 * scale, fill_bottom)))
     if above is None or fill is None:
         return None
+    if any(left < x + w and right > x and top < y + h + 4 * scale and bottom > y + h
+           for left, top, right, bottom in avoid):
+        below = None
     # The panel under a cap shades down the panel (the sheen); the cap's
     # fill is read against the panel beside it on both sides.
     background = tuple((a + b) / 2 for a, b in zip(above, below or above))
-    edges = box_edges(image, rect, background, fill, scale)
-    label = ink(image, (x + 2 * scale, y + 2 * scale, x + w - 2 * scale, y + h - 2 * scale), fill, text_color,
+    edges = box_edges(image, rect, background, fill, scale, avoid=avoid)
+    label_bottom = min([y + h - 2 * scale] + [top for left, top, right, bottom in avoid
+                                              if left < x + w and right > x and top > y])
+    label = ink(image, (x + 2 * scale, y + 2 * scale, x + w - 2 * scale, label_bottom), fill, text_color,
                 exclude_accent=False)
     return {
         "edges": edges,
         "fill": fill,
-        "alpha": None if accent else overlay_alpha(fill, background, lighter),
+        "alpha": None if accent else key_alpha(image, rect, scale, lighter, avoid),
         # The estimate assumes a lightening ring over the darkening line,
         # the dark palette's caps.
         "bottom": None if accent or not lighter else bottom_line_alpha(image, rect, fill, scale),
@@ -1039,7 +1159,7 @@ CHAIN_NOTE = "declared through a chain of shaped widths, which layout rounds par
 
 
 def compare_key_group(report, name, capture, group, manifest, native, scale, ref_group, reference_image, crops,
-                      harness=True, chained=False, footer=False, static=None):
+                      harness=True, chained=False, footer=False, static=None, avoid=(), ref_avoid=()):
     """One key sequence: each cap against its declaration, then - when the
     reference shows the same effective binding - against the reference's
     caps: labels, sizes, fills, the bottom line and the label's place."""
@@ -1052,7 +1172,7 @@ def compare_key_group(report, name, capture, group, manifest, native, scale, ref
     native_caps = []
     for index, cap in enumerate(group["caps"]):
         rect = as_tuple(cap["rect"])
-        measured = measure_key(native, rect, accent, text, scale, lighter)
+        measured = measure_key(native, rect, accent, text, scale, lighter, avoid)
         native_caps.append(measured)
         if not harness:
             continue
@@ -1091,7 +1211,7 @@ def compare_key_group(report, name, capture, group, manifest, native, scale, ref
         report.check("parity", name, capture, subject, "group width", width, ref_rect[2], LIMITS["edge_px"], "px")
     for index, (cap, ref_cap) in enumerate(zip(group["caps"], ref_group["caps"])):
         mine = native_caps[index]
-        theirs = measure_key(reference_image, as_tuple(ref_cap["rect"]), accent, text)
+        theirs = measure_key(reference_image, as_tuple(ref_cap["rect"]), accent, text, avoid=ref_avoid)
         if not mine or not theirs:
             continue
         if mine["edges"] and theirs["edges"]:
@@ -1138,20 +1258,64 @@ def compare_keycaps(report, name, capture, manifest, native, scale, ref_capture,
                           groups.get(group["group"]) if group["group"] else None, reference_image, crops)
 
 
+def coverage_box(image, box, color):
+    """The (x, y, w, h) image-px box of the columns and rows inside box
+    (left, top, right, bottom) holding a pixel's worth of ink by coverage
+    (see coverage_edges), or None. Each row's background is read at that
+    row's ends, the box's two outermost columns on either side: an app
+    tile's gradient changes down the tile, never across it, and the box
+    lies clear of the glyph there."""
+    left, top, right, bottom = clamp_box(image, box)
+    if right - left < 6 or bottom <= top:
+        return None
+    data = image.load()
+    fg = luma(color)
+
+    def row_cover(y):
+        values = [luma(data[x, y]) for x in range(left, right)]
+        bg = statistics.median(values[:2] + values[-2:])
+        if fg == bg:
+            return [0.0] * len(values)
+        amounts = (min(1.0, max(0.0, (value - bg) / (fg - bg))) for value in values)
+        return [amount if amount >= 0.2 else 0.0 for amount in amounts]
+
+    cover = [row_cover(y) for y in range(top, bottom)]
+    columns = [i for i in range(right - left) if sum(row[i] for row in cover) >= 1.0]
+    rows = [i for i, row in enumerate(cover) if sum(row) >= 1.0]
+    if not columns or not rows:
+        return None
+    return (left + columns[0], top + rows[0], columns[-1] - columns[0] + 1, rows[-1] - rows[0] + 1)
+
+
 def measure_tile(image, rect, app, glyph_color, background, scale=1.0):
     """An icon tile: its edges, its gradient's two ends (an app tile) or its
     fill's overlay alpha (a command tile), and its glyph's core ink - box
     relative to the tile and core pixel count (the stroke's weight)."""
     x, y, w, h = scaled(rect, scale)
-    top = median_color(image, (x + 3 * scale, y + 3 * scale, x + 5 * scale, y + 5 * scale))
-    bottom = median_color(image, (x + 3 * scale, y + h - 6 * scale, x + 5 * scale, y + h - 4 * scale))
+    # The gradient's ends a quarter of the way across, where the tile's top
+    # and bottom edges are straight (its corner is a quarter of its side,
+    # 11 of 42), and clear of the glyph in its middle.
+    across = x + w / 4
+    top = median_color(image, (across, y + 3 * scale, across + 2 * scale, y + 5 * scale))
+    bottom = median_color(image, (across, y + h - 6 * scale, across + 2 * scale, y + h - 4 * scale))
     middle = median_color(image, (x + 3 * scale, y + h / 2 - 2 * scale, x + 5 * scale, y + h / 2 + 2 * scale))
     if top is None or middle is None:
         return None
-    glyph = ink(image, (x + 2 * scale, y + 2 * scale, x + w - 2 * scale, y + h - 2 * scale), middle, glyph_color,
-                exclude_accent=False)
+    inner = (x + 2 * scale, y + 2 * scale, x + w - 2 * scale, y + h - 2 * scale)
+    glyph = ink(image, inner, middle, glyph_color, exclude_accent=False)
+    # The glyph's box by coverage (a pixel's worth of ink per column or
+    # row), not by core pixels: GPUI lifts an icon's anti-aliased edges
+    # (see SPRITE_CONTRAST), which moves a core extent by an edge pixel on
+    # each side, and a coverage extent by a fraction.
+    # Clear of the rounded corners' ring and of a slot's key hint over the
+    # tile's corner: every glyph sits well inside its tile (22 in 42, 16 in
+    # 28, 11 in 18).
+    clear = 0.15 * w
+    covered = coverage_box(image, (x + clear, y + clear, x + w - clear, y + h - clear), glyph_color)
+    if glyph is not None and covered is not None:
+        glyph = dict(glyph, box=covered)
     return {
-        "edges": box_edges(image, rect, background, middle, scale),
+        "edges": box_edges(image, rect, background, middle, scale, chroma=app),
         "top": top,
         "bottom": bottom,
         "alpha": None if app else white_alpha(middle, background),
@@ -1222,9 +1386,10 @@ def compare_row_tile(report, name, capture, subject, row, ref_row, manifest, nat
         for prop in ("left", "top", "width", "height"):
             report.check("parity", name, capture, sub, f"glyph ink {prop}", mine["glyph"][prop],
                          theirs["glyph"][prop], LIMITS["edge_px"], "px")
-        report.check("parity", name, capture, sub, "glyph core pixels (stroke weight)",
-                     100 * (mine["glyph"]["count"] / max(1, theirs["glyph"]["count"]) - 1), 0, STROKE_LIMIT, "%",
-                     f"{mine['glyph']['count']:.0f} vs {theirs['glyph']['count']:.0f} core pixels")
+        weight = 100 * (mine["glyph"]["count"] / max(1, theirs["glyph"]["count"]) - 1)
+        report.check("parity", name, capture, sub, "glyph core pixels (stroke weight)", weight, 0, STROKE_LIMIT, "%",
+                     f"{mine['glyph']['count']:.0f} vs {theirs['glyph']['count']:.0f} core pixels",
+                     accepted=SPRITE_CONTRAST if weight > 0 else None)
 
 
 def kind_ink(image, rect, fill, scale=1.0, pal=DARK):
@@ -1439,6 +1604,63 @@ def extra_labels_above(declared, state, native_y, reference_y):
     return reference - native
 
 
+def local_edges(image, approx, scale=1.0, threshold=6.0, out=4, corner=14):
+    """A box's edges around approx = (x, y, w, h), image px: each edge is
+    where a scan line, walking in from out px outside that edge, first
+    leaves the background it started on by threshold luma levels (either
+    way: a white inset edge or fill lightens the dark panel, and darkens
+    nothing in the light palette's).
+
+    Each scan line keeps its own starting background, so a backdrop that
+    changes across or down the panel (the reference's glass) never moves
+    an edge. out must stay inside the space around the box (a pinned
+    slot's 8px column gap: 4), so a neighbor is never read as the box.
+    Scan lines run corner px clear of the box's rounded corners. The
+    medians over the scan lines are the edges. Returns (x, y, w, h) or
+    None."""
+    x, y, w, h = approx
+    data = image.load()
+    out = out * scale
+    corner = corner * scale
+
+    def walk(points):
+        start = luma(data[points[0]])
+        for index, point in enumerate(points[1:], 1):
+            if abs(luma(data[point]) - start) >= threshold:
+                return index
+        return None
+
+    def inside(px, py):
+        return 0 <= px < image.width and 0 <= py < image.height
+
+    lefts, rights, tops, bottoms = [], [], [], []
+    for row in range(int(y + corner), int(y + h - corner)):
+        begin, end = int(math.floor(x - out)), int(math.ceil(x + w + out))
+        if not (inside(begin, row) and inside(end, row)):
+            continue
+        step = walk([(c, row) for c in range(begin, end)])
+        if step is not None:
+            lefts.append(begin + step)
+        step = walk([(c, row) for c in range(end, begin, -1)])
+        if step is not None:
+            rights.append(end - step + 1)
+    for column in range(int(x + corner), int(x + w - corner)):
+        begin, end = int(math.floor(y - out)), int(math.ceil(y + h + out))
+        if not (inside(column, begin) and inside(column, end)):
+            continue
+        step = walk([(column, r) for r in range(begin, end)])
+        if step is not None:
+            tops.append(begin + step)
+        step = walk([(column, r) for r in range(end, begin, -1)])
+        if step is not None:
+            bottoms.append(end - step + 1)
+    if not (lefts and rights and tops and bottoms):
+        return None
+    left, right = statistics.median(lefts), statistics.median(rights)
+    top, bottom = statistics.median(tops), statistics.median(bottoms)
+    return (left, top, right - left, bottom - top)
+
+
 def measure_slot(image, rect, title_rect, tile_rect, app, title_color=SLOT_TITLE, scale=1.0, lighter=True):
     """A pinned slot: its fill (measured as a row's wash is, against the
     strip's padding just above and below it), its box, its title's core
@@ -1449,9 +1671,7 @@ def measure_slot(image, rect, title_rect, tile_rect, app, title_color=SLOT_TITLE
     if wash is None:
         return None
     result = {"alpha": wash["alpha"], "fill": wash["fill"], "edges": None, "title": None, "tile": None}
-    sign = 1 if lighter else -1
-    delta = max(3.0, sign * (luma(wash["fill"]) - luma(wash["background"])) / 2)
-    edges = wash_edges(image, scaled(rect, scale), wash["background"], delta, lighter=lighter)
+    edges = local_edges(image, scaled(rect, scale), scale)
     if edges:
         result["edges"] = tuple(v / scale for v in edges)
     if title_rect is not None:
@@ -1461,11 +1681,44 @@ def measure_slot(image, rect, title_rect, tile_rect, app, title_color=SLOT_TITLE
         if found:
             bx, by, bw, bh = found["box"]
             result["title"] = {"center": (bx + bw / 2) / scale, "top": by / scale, "height": bh / scale,
-                               "color": found["color"]}
+                               "left": bx / scale, "right": (bx + bw) / scale, "color": found["color"]}
     if tile_rect is not None:
         result["tile"] = measure_tile(image, as_tuple(tile_rect), app, APP_GLYPH if app else COMMAND_GLYPH,
                                       wash["fill"], scale)
     return result
+
+
+def coverage_center(image, rect, background, color, scale=1.0):
+    """The center of text's ink extent across rect, by coverage: the first
+    and last columns holding a pixel's worth of ink (see coverage_edges).
+    Logical px, or None."""
+    left, top, right, bottom = clamp_box(image, box_px(rect, scale, pad=2))
+    bg, fg = luma(background), luma(color)
+    if fg == bg or right <= left:
+        return None
+    data = image.load()
+
+    def coverage(value):
+        amount = min(1.0, max(0.0, (luma(value) - bg) / (fg - bg)))
+        return amount if amount >= 0.2 else 0.0
+
+    columns = [sum(coverage(data[x, y]) for y in range(top, bottom)) for x in range(left, right)]
+    inked = [i for i, total in enumerate(columns) if total >= 1.0]
+    if not inked:
+        return None
+    return (left + (inked[0] + inked[-1] + 1) / 2) / scale
+
+
+# GPUI draws every monochrome sprite - text and SVG icons alike - through
+# its text's grayscale contrast and gamma correction
+# (gpui_render/src/shaders/sprites.rs, fragment_monochrome_sprite), which
+# lifts a stroke's partially covered edge pixels; Chrome's Skia leaves them
+# linear. A stroke's fully covered pixels match, its edges do not.
+SPRITE_CONTRAST = ("accepted (#93, #101): the same 2px stroke at the same place; GPUI draws an SVG icon "
+                   "through its text's contrast and gamma correction, which lifts the stroke's anti-aliased edge "
+                   "pixels past the core threshold (e.g. Firefox's globe, one column: 232/208 native against "
+                   "211/194 reference at the edges, 255 at the center on both), so the native glyph counts more "
+                   "core pixels. Only a heavier native glyph is accepted; a lighter one (a 1.6 stroke) still fails")
 
 
 def slot_state(slot):
@@ -1487,9 +1740,15 @@ def harness_pinned(report, name, capture, declared, manifest, native, scale, pal
     alphas = {"rest": hex_rgba(colors.get("slotBackground", "#FFFFFF09"))[3],
               "hovered": hex_rgba(colors.get("slotHover", "#FFFFFF12"))[3], "empty": 0}
     title_color = hex_rgba(colors.get("slotTitle", "#D9DADDFF"))[:3]
+    # Only what the list shows whole is measured, as with its rows: a
+    # scrolled list (the narrow frame's last row, #92) carries the home
+    # above its viewport.
+    viewport = as_tuple(manifest["list"])
     for slot in home["slots"]:
         subject = f"slot:{slot['number']}"
         rect = as_tuple(slot["rect"])
+        if not within(rect, viewport):
+            continue
         state = slot_state(slot)
         crops.append((subject, rect, None))
         mine = measure_slot(native, rect, slot.get("titleRect"), slot.get("tile"), slot.get("tone") == "app",
@@ -1504,27 +1763,52 @@ def harness_pinned(report, name, capture, declared, manifest, native, scale, pal
                          rect[index], LIMITS["edge_px"], "px")
         tile = as_tuple(slot["tile"])
         tile_edges = mine and mine["tile"] and mine["tile"]["edges"]
+        # A tile's top is read down its middle columns; in a slot too
+        # narrow for its key hint to clear the tile (the narrow frame's,
+        # 85.6 wide), the hint lies over those columns, so the tile's top
+        # and height are not measured there - its left and width are.
+        hint = slot.get("keyGroup") and as_tuple(slot["keyGroup"]["rect"])
+        middle = tile[0] + tile[2] / 2
+        topless = bool(hint) and hint[0] - 1 <= middle <= hint[0] + hint[2] + 1 and hint[1] + hint[3] > tile[1]
         for prop, index in (("left", 0), ("top", 1), ("width", 2), ("height", 3)):
+            if topless and prop in ("top", "height"):
+                continue
             report.check("harness-native", name, capture, subject, f"tile {prop}",
                          tile_edges[index] if tile_edges else None, tile[index], LIMITS["edge_px"], "px")
         if slot.get("keyGroup"):
             compare_key_group(report, name, capture, slot["keyGroup"], manifest, native, scale, None, None, crops,
-                              chained=True)
+                              chained=True, avoid=[tile])
         # An unavailable slot's title is muted, not the title color.
         if slot.get("unavailable"):
             continue
         title = mine and mine["title"]
-        report.check("harness-native", name, capture, subject, "title ink center", title and title["center"],
-                     rect[0] + rect[2] / 2, LIMITS["edge_px"] * 1.5, "px",
-                     "centered across the slot; a glyph's side bearing allowed")
         line = as_tuple(slot["titleRect"])
+        if slot.get("truncated"):
+            # An ellipsized title fills its line from the left and ends
+            # where its last whole glyph and the ellipsis do: inside the
+            # line, not centered.
+            inside_x = title and line[0] - LIMITS["edge_px"] <= title["left"] and (
+                title["right"] <= line[0] + line[2] + LIMITS["edge_px"])
+            report.check("harness-native", name, capture, subject, "truncated title ink inside its line (x)",
+                         "yes" if inside_x else "no", "yes", 0, "")
+        else:
+            report.check("harness-native", name, capture, subject, "title ink center", title and title["center"],
+                         rect[0] + rect[2] / 2, LIMITS["edge_px"] * 1.5, "px",
+                         "centered across the slot; a glyph's side bearing allowed")
         inside = title and line[1] - LIMITS["edge_px"] <= title["top"] and (
             title["top"] + title["height"] <= line[1] + line[3] + LIMITS["edge_px"])
         report.check("harness-native", name, capture, subject, "title ink inside its line",
                      "yes" if inside else "no", "yes", 0, "")
-    if home.get("labelKeys"):
+    if home.get("labelKeys") and within(as_tuple(home["label"]), viewport):
         compare_key_group(report, name, capture, home["labelKeys"], manifest, native, scale, None, None, crops,
                           chained=True)
+
+
+def within(rect, viewport):
+    """Whether rect lies wholly inside viewport (both x, y, w, h)."""
+    x, y, w, h = rect
+    vx, vy, vw, vh = viewport
+    return x >= vx and y >= vy and x + w <= vx + vw and y + h <= vy + vh
 
 
 def parity_pinned(report, name, capture, declared, manifest, native, scale, state, reference_image, pal, crops):
@@ -1568,8 +1852,14 @@ def parity_pinned(report, name, capture, declared, manifest, native, scale, stat
                              theirs["edges"][index], LIMITS["edge_px"], "px")
         n_title, r_title = mine["title"], theirs["title"]
         if n_title and r_title:
-            report.check("parity", name, capture, subject, "title ink center in slot", n_title["center"] - n_rect[0],
-                         r_title["center"] - r_rect[0], LIMITS["edge_px"], "px")
+            # Centered by coverage: ClearType's colored fringes move a
+            # core-pixel extent unevenly at its two ends.
+            n_center = coverage_center(native, as_tuple(slot["titleRect"]), mine["fill"], title_color, scale)
+            r_center = coverage_center(reference_image, as_tuple(ref["titleRect"]), theirs["fill"], SLOT_TITLE)
+            report.check("parity", name, capture, subject, "title ink center in slot",
+                         n_center - n_rect[0] if n_center is not None else None,
+                         r_center - r_rect[0] if r_center is not None else None, LIMITS["edge_px"], "px",
+                         "the extent's center by coverage (a pixel's worth of ink per column)")
             report.check("parity", name, capture, subject, "title ink top in slot", n_title["top"] - n_rect[1],
                          r_title["top"] - r_rect[1], LIMITS["edge_px"], "px")
             report.check("parity", name, capture, subject, "title ink height", n_title["height"], r_title["height"],
@@ -1596,16 +1886,27 @@ def parity_pinned(report, name, capture, declared, manifest, native, scale, stat
                                  LIMITS["glyph_core_levels"], "levels",
                                  f"native {fmt_color(n_tile[end])} vs reference {fmt_color(r_tile[end])}")
             if n_tile["glyph"] and r_tile["glyph"]:
+                # The glyph's place inside the tile as drawn: layout puts a
+                # slot's fractional tile on whole pixels, so its measured
+                # edges, not its declared rect, are the origin.
+                n_origin, r_origin = (as_tuple(slot["tile"]), as_tuple(ref["tile"]))
                 for prop in ("left", "top", "width", "height"):
-                    report.check("parity", name, capture, sub, f"glyph ink {prop}", n_tile["glyph"][prop],
-                                 r_tile["glyph"][prop], LIMITS["edge_px"], "px")
-                report.check("parity", name, capture, sub, "glyph core pixels (stroke weight)",
-                             100 * (n_tile["glyph"]["count"] / max(1, r_tile["glyph"]["count"]) - 1), 0,
+                    n_value, r_value = n_tile["glyph"][prop], r_tile["glyph"][prop]
+                    if prop in ("left", "top") and n_tile["edges"] and r_tile["edges"]:
+                        i = 0 if prop == "left" else 1
+                        n_value += n_origin[i] - n_tile["edges"][i]
+                        r_value += r_origin[i] - r_tile["edges"][i]
+                    report.check("parity", name, capture, sub, f"glyph ink {prop}", n_value, r_value,
+                                 LIMITS["edge_px"], "px")
+                weight = 100 * (n_tile["glyph"]["count"] / max(1, r_tile["glyph"]["count"]) - 1)
+                report.check("parity", name, capture, sub, "glyph core pixels (stroke weight)", weight, 0,
                              STROKE_LIMIT, "%",
-                             f"{n_tile['glyph']['count']:.0f} vs {r_tile['glyph']['count']:.0f} core pixels")
+                             f"{n_tile['glyph']['count']:.0f} vs {r_tile['glyph']['count']:.0f} core pixels",
+                             accepted=SPRITE_CONTRAST if weight > 0 else None)
         if slot.get("keyGroup") and ref.get("keyGroup"):
             compare_key_group(report, name, capture, slot["keyGroup"], manifest, native, scale, ref["keyGroup"],
-                              reference_image, crops, harness=False, chained=True)
+                              reference_image, crops, harness=False, chained=True,
+                              avoid=[as_tuple(slot["tile"])], ref_avoid=[as_tuple(ref["tile"])])
 
 
 # ------------------------------------------------- the footer and Actions (#95)
@@ -1618,6 +1919,12 @@ ACTIONS_CONTENT = ("accepted (#95, #100): the reference lists Open New Window, S
                    "pinning to a quick slot (#101) and an installed command's hotkey and alias")
 STATIC_ENTER = ("accepted (#95): the static Actions board draws its footer's Enter as a plain cap; the root "
                 "board, live, draws it in the accent, as Pane does (#93)")
+ACTIONS_LABEL_COLOR = ("accepted (#95): the reference's boards disagree on the open Actions button's label - the "
+                       "static Actions board sets it white (`color: #ffffff`), the root board's live button keeps "
+                       ".fbtn's #D9DADD - and Pane draws it white, as the static board does (compared there, it "
+                       "passes). Against the root board's dimmer label, the white label's anti-aliased first column "
+                       "holds a pixel's worth of ink one column early; the closed button, one color on both "
+                       "sides, matches within 1px")
 STATIC_HINT = ("accepted (#95): the static Actions board's footer shows a tip ('Every action keeps its shortcut - no "
                "menu needed next time'); Pane's footer shows the hint the root board shows while Actions is open")
 
@@ -1642,6 +1949,16 @@ def ink_extent(image, rect, background, color, scale=1.0, pad=0.0):
     left, top, width, height = found["box"]
     return {"left": left / scale, "top": top / scale, "right": (left + width) / scale,
             "bottom": (top + height) / scale, "color": found["color"]}
+
+
+def brightest(image, box):
+    """The color of text's fullest ink inside box (left, top, right,
+    bottom): the median of its brightest 2% of pixels, or None."""
+    values = sorted(pixels(image, box), key=luma)
+    if not values:
+        return None
+    top = values[-max(1, len(values) // 50):]
+    return tuple(statistics.median(channel) for channel in zip(*top))
 
 
 def coverage_edges(image, rect, background, color, scale=1.0, enough=1.0):
@@ -1741,10 +2058,14 @@ def measure_footer_parts(image, footer, parts, scale=1.0, pal=DARK, mark_color=(
         rect = as_tuple(button if "x" in button else button["rect"])
         # Against the button's own fill (its open wash, while open).
         inside = median_color(image, box_px((rect[0] + 2, rect[1] + 8, 3, rect[3] - 16), scale)) or background
-        text = coverage_edges(image, (rect[0] + 3, rect[1], rect[2] * 0.6, rect[3]), inside,
-                              (217, 218, 221), scale)
+        area = (rect[0] + 3, rect[1], rect[2] * 0.6, rect[3])
+        text = coverage_edges(image, area, inside, (217, 218, 221), scale)
+        # The label's own color, the brightest of its ink: white while the
+        # static Actions board's panel is open, #D9DADD on the root board's.
+        label_color = brightest(image, box_px(area, scale))
         measured = measure_cap(image, rect, scale, pal["lighter"])
         out["actionsButton"] = {"labelLeft": text and text["left"], "labelTop": text and text["top"],
+                                "labelColor": label_color,
                                 "alpha": measured and measured["alpha"], "edges": measured and measured["edges"]}
     return out
 
@@ -1837,9 +2158,15 @@ def parity_footer(report, name, capture, declared, manifest, native, scale, stat
     ref_button = ref_parts.get("actionsButton")
     if ref_button:
         a, b = mine["actionsButton"], theirs["actionsButton"]
+        # The reference's two boards draw the open Actions label in two
+        # colors; a brighter label's anti-aliased first column carries more
+        # ink, so its edge is only comparable between labels of one color.
+        recolored = bool(a.get("labelColor") and b.get("labelColor")) and abs(
+            luma(a["labelColor"]) - luma(b["labelColor"])) > 20
         for prop in ("labelLeft", "labelTop"):
             report.check("parity", name, capture, "footer-actions", f"label ink {prop[5:].lower()}", a[prop], b[prop],
-                         LIMITS["edge_px"], "px")
+                         LIMITS["edge_px"], "px",
+                         accepted=ACTIONS_LABEL_COLOR if recolored and prop == "labelLeft" else None)
         report.check("parity", name, capture, "footer-actions", "pressed", "yes" if parts["actionsPressed"] else "no",
                      "yes" if ref_button["pressed"] else "no", 0, "")
         report.check("parity", name, capture, "footer-actions", "wash alpha", a["alpha"], b["alpha"],
@@ -2083,17 +2410,42 @@ def parity_actions(report, name, capture, declared, manifest, native, scale, sta
                 report.check("parity", name, capture, subject, f"{part} ink top in row", pa["top"] - row["rect"][1],
                              pb["top"] - ref_row["rect"][1], LIMITS["edge_px"], "px")
         crops.append((f"parity-action-{row['action']}", row["rect"], ref_row["rect"]))
+    # A group label and the rule above it are placed against the first
+    # entry below them that both sides list (the "Pane" group's Pin to
+    # Quick Slot): the reference's extra entries above them (see
+    # ACTIONS_CONTENT) move them down its taller panel. Without such an
+    # entry, against the panel's top.
+    shared = {row["action"] for row in mine["rows"]} & set(ref_by_action)
+
+    def anchor(rows, y, panel_top):
+        below = [row for row in rows if row["action"] in shared and row["rect"][1] > y]
+        if not below:
+            return panel_top, "panel"
+        first = min(below, key=lambda row: row["rect"][1])
+        return first["rect"][1], first["action"]
+
+    def placed(y, ref_y):
+        (mine_at, mine_of), (theirs_at, theirs_of) = anchor(mine["rows"], y, top), anchor(theirs["rows"], ref_y,
+                                                                                          ref_top)
+        if mine_of != theirs_of:
+            return None, None, None
+        if mine_of == "panel":
+            return y - mine_at, ref_y - theirs_at, "in panel"
+        return mine_at - y, theirs_at - ref_y, f"above action:{mine_of}"
+
     for ga, gb in zip(mine["groups"], theirs["groups"]):
         report.check("parity", name, capture, "action-group", "text", ga["text"], gb["text"], 0, "")
         if ga["ink"] and gb["ink"]:
             report.check("parity", name, capture, "action-group", "ink left", ga["ink"]["left"], gb["ink"]["left"],
                          LIMITS["edge_px"], "px")
-            report.check("parity", name, capture, "action-group", "ink top in panel", ga["ink"]["top"] - top,
-                         gb["ink"]["top"] - ref_top, LIMITS["edge_px"], "px")
+            n_value, r_value, where = placed(ga["ink"]["top"], gb["ink"]["top"])
+            report.check("parity", name, capture, "action-group", f"ink top {where or 'placed'}", n_value, r_value,
+                         LIMITS["edge_px"], "px")
     if mine["rules"] and theirs["rules"]:
         ra, rb = mine["rules"][0], theirs["rules"][0]
         if ra["y"] is not None and rb["y"] is not None:
-            report.check("parity", name, capture, "action-rule", "y in panel", ra["y"] - top, rb["y"] - ref_top,
+            n_value, r_value, where = placed(ra["y"], rb["y"])
+            report.check("parity", name, capture, "action-rule", f"y {where or 'placed'}", n_value, r_value,
                          LIMITS["edge_px"], "px")
         report.check("parity", name, capture, "action-rule", "alpha", ra["alpha"], rb["alpha"],
                      LIMITS["flat_fill_levels"], "levels")
@@ -2619,7 +2971,33 @@ def measure_text(image, rect, background, color, scale=1.0, slack=8):
         return None
     return {"left": edges["left"], "top": edges["top"], "right": extent["right"],
             "height": extent["bottom"] - extent["top"],
+            "baseline": coverage_baseline(image, box, background, color, scale),
             "center": (extent["left"] + extent["right"]) / 2}
+
+
+def coverage_baseline(image, rect, background, color, scale=1.0):
+    """Where a line of text's baseline lies inside rect, by coverage: the
+    bottom of the last row holding at least a quarter of the ink of the
+    line's fullest row. A descender's thin rows (g, p) stay under that, so
+    two lines of different copy share a baseline; a hinted renderer's half
+    pixel at a glyph's end moves it by a fraction, not a pixel. Logical px,
+    or None."""
+    left, top, right, bottom = clamp_box(image, box_px(rect, scale))
+    bg, fg = luma(background), luma(color)
+    if fg == bg:
+        return None
+    data = image.load()
+
+    def coverage(value):
+        amount = min(1.0, max(0.0, (luma(value) - bg) / (fg - bg)))
+        return amount if amount >= 0.2 else 0.0
+
+    rows = [sum(coverage(data[x, y]) for x in range(left, right)) for y in range(top, bottom)]
+    if not rows or max(rows) < 1.0:
+        return None
+    floor = max(rows) / 4
+    last = max(i for i, total in enumerate(rows) if total >= floor)
+    return (top + last + 1) / scale
 
 
 def measure_notice(image, notice, scale=1.0, lighter=True, title=TITLE, muted=MUTED):
@@ -2641,6 +3019,11 @@ def measure_answer(image, answer, scale=1.0, lighter=True, colors=(SOURCE_VALUE,
     disc, the chips and the rule above them."""
     rect = as_tuple(answer["rect"])
     card = measure_box(image, rect, scale, lighter)
+    if card:
+        # Its edges against the panel right beside each one: the glass
+        # above the card is lighter than the list's padding left of it.
+        edges = local_edges(image, scaled(rect, scale), scale, out=2, corner=16)
+        card["edges"] = edges and tuple(v / scale for v in edges)
     out = {"card": card, "ring": accent_ring(image, rect, scale)}
     fill = card and card["fill"]
     for key, color in zip(("source", "answer"), colors):
@@ -2805,9 +3188,14 @@ def parity_board(report, name, capture, declared, manifest, native, scale, state
                     theirs["disc"] and theirs["disc"]["edges"])
         report.check("parity", name, capture, "notice-disc", "fill alpha", mine["disc"] and mine["disc"]["alpha"],
                      theirs["disc"] and theirs["disc"]["alpha"], LIMITS["flat_fill_levels"], "levels")
+        # Top and baseline, both by coverage: the two sides' copy differs
+        # (NOTICE_COPY), so a descender one line has and the other lacks
+        # must not decide its size; Chrome's unhinted glyphs also end half
+        # a pixel past DirectWrite's at both ends, which a core-pixel
+        # extent doubles.
         for key in ("title", "description"):
             a, b = mine[key], theirs[key]
-            for prop in ("left", "top", "height"):
+            for prop in ("left", "top", "baseline"):
                 report.check("parity", name, capture, f"notice-{key}", f"ink {prop}", a and a[prop], b and b[prop],
                              LIMITS["edge_px"], "px")
         crops.append(("parity-notice", as_tuple(notice["rect"]), as_tuple(ref_notice["rect"])))
@@ -3267,15 +3655,23 @@ def write_images(out_dir, name, capture, native, reference_image, crops, scale):
             if crop_name.startswith("parity-"):
                 continue
             nx, ny, nw, nh = scaled(native_rect, scale)
+            box = clamp_box(native, (nx - pad, ny - pad, nx + nw + pad, ny + nh + pad))
+            if not box_visible(box):
+                # Scrolled out of the client (the narrow frame's pinned
+                # home above its last row): nothing to crop.
+                continue
             safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in crop_name)[:60]
-            native.crop(clamp_box(native, (nx - pad, ny - pad, nx + nw + pad, ny + nh + pad))).save(
-                base / f"{capture}-native-crop-{safe}.png")
+            native.crop(box).save(base / f"{capture}-native-crop-{safe}.png")
             record["crops"].append(f"{name}/{capture}-native-crop-{safe}.png")
             continue
         nx, ny, nw, nh = scaled(native_rect, scale)
         rx, ry, rw, rh = ref_rect
-        n_crop = native.crop(clamp_box(native, (nx - pad, ny - pad, nx + nw + pad, ny + nh + pad)))
-        r_crop = reference_image.crop(clamp_box(reference_image, (rx - pad, ry - pad, rx + rw + pad, ry + rh + pad)))
+        n_box = clamp_box(native, (nx - pad, ny - pad, nx + nw + pad, ny + nh + pad))
+        r_box = clamp_box(reference_image, (rx - pad, ry - pad, rx + rw + pad, ry + rh + pad))
+        if not (box_visible(n_box) and box_visible(r_box)):
+            continue
+        n_crop = native.crop(n_box)
+        r_crop = reference_image.crop(r_box)
         pair = Image.new("RGB", (max(n_crop.width, r_crop.width), n_crop.height + gap + r_crop.height), "#FF00FF")
         pair.paste(n_crop, (0, 0))
         pair.paste(r_crop, (0, n_crop.height + gap))

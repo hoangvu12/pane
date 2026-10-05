@@ -2137,6 +2137,11 @@ pub(crate) struct DeclaredSlot {
     /// text when the manifest is written.
     #[serde(skip_serializing_if = "Option::is_none")]
     key_group: Option<KeyGroupRecord>,
+    /// Whether its title is wider than its line and so ends in an
+    /// ellipsis (its ink is then not centered), from shaped text when the
+    /// manifest is written.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    truncated: Option<bool>,
 }
 
 /// The height the pinned home takes above the rows, the list's gap after
@@ -2212,13 +2217,16 @@ fn declared_home(
                 width: column,
                 height: f(pinned.slot_height),
             };
-            // The tile, the title and any reason, centered down the slot
-            // inside its paddings, the slot's gap between them.
+            // The tile and the title, centered down the slot inside its
+            // paddings, the slot's gap between them; an unavailable slot's
+            // reason right under its title, the tile closer to them.
             let reason = pin.as_ref().and_then(|pin| pin.unavailable);
-            let content = tile
-                + f(pinned.slot_gap)
-                + line
-                + reason.map_or(0., |_| f(pinned.slot_gap) + reason_line);
+            let text_gap = f(if reason.is_some() {
+                pinned.unavailable_gap
+            } else {
+                pinned.slot_gap
+            });
+            let content = tile + text_gap + line + reason.map_or(0., |_| reason_line);
             let tile_y = rect.y + f(pinned.slot_padding_top) + (inner - content) / 2.;
             DeclaredSlot {
                 number: index + 1,
@@ -2234,12 +2242,13 @@ fn declared_home(
                 }),
                 title_rect: pin.as_ref().map(|_| Rect {
                     x: rect.x + f(pinned.slot_padding_x),
-                    y: tile_y + tile + f(pinned.slot_gap),
+                    y: tile_y + tile + text_gap,
                     width: column - 2. * f(pinned.slot_padding_x),
                     height: line,
                 }),
                 hovered: pin.is_some() && pointer.is_some_and(|point| rect.contains(point)),
                 key_group: None,
+                truncated: None,
             }
         })
         .collect();
@@ -2890,10 +2899,16 @@ impl FixtureWindow {
         perturbation: Option<Perturbation>,
         cx: &mut Context<Self>,
     ) -> FixtureWindow {
-        // A result board's query is in the field from the start (#96).
+        // A result board's query is in the field from the start (#96),
+        // its caret after it, as typing it leaves the caret.
         let state = FixtureState::of(scenario);
         let text = StringStorage::from(state.query.clone());
-        let query = cx.new(|cx| EditableTextState::new(text, cx));
+        let typed = state.query.len();
+        let query = cx.new(|cx| {
+            let mut field = EditableTextState::new(text, cx);
+            field.move_to(typed, cx);
+            field
+        });
         query.focus_handle(cx).tab_stop(true);
         cx.subscribe(&query, |this, input, _: &TextChanged, cx| {
             let text = input.read(cx).as_str().to_owned();
@@ -4117,6 +4132,9 @@ fn declare_home_keys(window: &Window, theme: &Theme, home: &mut DeclaredPinned) 
     let content = f32::from(geometry.section_height) - f32::from(geometry.section_padding_top);
     let y = home.label.y + f32::from(geometry.section_padding_top) + (content - height) / 2.;
     let keys = crate::keyboard::quick_slots_keys(home.slots.len());
+    // The caps sit in the section label, whose tracking their labels
+    // inherit, as the reference's `.kbd` inherits `.label`'s.
+    let tracking = theme.typography.section_size * theme.typography.section_tracking;
     let mut label = declared_keys(
         window,
         theme,
@@ -4124,6 +4142,7 @@ fn declare_home_keys(window: &Window, theme: &Theme, home: &mut DeclaredPinned) 
         Some("pinned-label"),
         CapStyle::Regular,
         (0., y),
+        Some(tracking),
     );
     let right = home.label.x + home.label.width - f32::from(geometry.section_padding_x);
     let left = right - label.rect.width;
@@ -4131,6 +4150,16 @@ fn declare_home_keys(window: &Window, theme: &Theme, home: &mut DeclaredPinned) 
     home.label_keys = Some(label);
     let inset = f32::from(geometry.pinned.keys_inset);
     for slot in &mut home.slots {
+        if let (Some(title), Some(line)) = (slot.title, slot.title_rect) {
+            let width = shaped_width(
+                window,
+                theme,
+                title,
+                theme.typography.slot_title_size,
+                theme.typography.medium,
+            );
+            slot.truncated = Some(width > line.width);
+        }
         let index = slot.number - 1;
         if slot.title.is_none() || index >= SLOT_CHORDS.len() {
             continue;
@@ -4143,6 +4172,7 @@ fn declare_home_keys(window: &Window, theme: &Theme, home: &mut DeclaredPinned) 
             Some(SLOT_GROUPS[index]),
             CapStyle::Compact,
             (0., slot.rect.y + inset),
+            None,
         );
         let left = slot.rect.x + slot.rect.width - inset - group.rect.width;
         shift_group(&mut group, left);
@@ -4174,6 +4204,7 @@ fn cap_widths(
     theme: &Theme,
     keys: &keycap::KeySequence,
     style: CapStyle,
+    spacing: Option<Pixels>,
 ) -> Vec<(f32, f32)> {
     let CapMetrics {
         height,
@@ -4183,13 +4214,14 @@ fn cap_widths(
     keys.keys
         .iter()
         .map(|key| {
-            let label_width = shaped_width_in(
+            let label_width = shaped_width_tracked(
                 window,
                 theme.typography.mono_family.clone(),
                 theme,
                 &key.cap,
                 size,
                 theme.typography.medium,
+                spacing,
             );
             let width = (label_width + 2. * f32::from(padding)).max(f32::from(height));
             (label_width, width)
@@ -4200,7 +4232,7 @@ fn cap_widths(
 /// The width `keys` lays out to in `style`: its caps and the gaps between
 /// them.
 fn keys_width(window: &Window, theme: &Theme, keys: &keycap::KeySequence, style: CapStyle) -> f32 {
-    let widths = cap_widths(window, theme, keys, style);
+    let widths = cap_widths(window, theme, keys, style, None);
     let gaps = widths.len().saturating_sub(1) as f32 * f32::from(theme.geometry.key_gap);
     widths.iter().map(|(_, width)| width).sum::<f32>() + gaps
 }
@@ -4214,12 +4246,13 @@ fn declared_group(
     at: (f32, f32),
 ) -> KeyGroupRecord {
     let keys = crate::keyboard::binding_keys(binding);
-    declared_keys(window, theme, (id, &keys), group, style, at)
+    declared_keys(window, theme, (id, &keys), group, style, at, None)
 }
 
 /// `keys` in `style`, laid out from `(x, y)` as [`declared_group`] lays
 /// out a binding's: for a sequence that is not one binding's (the pinned
-/// label's "Ctrl" "1–5").
+/// label's "Ctrl" "1–5"). `spacing` is the tracking the caps' labels
+/// inherit from where they sit, if any (the section label's).
 fn declared_keys(
     window: &Window,
     theme: &Theme,
@@ -4227,6 +4260,7 @@ fn declared_keys(
     group: Option<&'static str>,
     style: CapStyle,
     (x, y): (f32, f32),
+    spacing: Option<Pixels>,
 ) -> KeyGroupRecord {
     let geometry = &theme.geometry;
     let typography = &theme.typography;
@@ -4237,7 +4271,10 @@ fn declared_keys(
     } = style.metrics(theme);
     let mut left = x;
     let mut caps = Vec::new();
-    for (key, (label_width, width)) in keys.keys.iter().zip(cap_widths(window, theme, keys, style))
+    for (key, (label_width, width)) in keys
+        .keys
+        .iter()
+        .zip(cap_widths(window, theme, keys, style, spacing))
     {
         caps.push(CapRecord {
             label: key.cap.to_string(),
@@ -6702,10 +6739,23 @@ mod tests {
         assert!(home.slots[1].tile.is_none());
         let unavailable = &home.slots[2];
         assert_eq!(unavailable.unavailable, Some("Notes is disabled"));
-        // The reason's line below the title moves the content up.
+        // The reason's line below the title moves the content up, and the
+        // tile, the title and the reason still fit inside the slot's
+        // paddings, so nothing shrinks or clips.
         let tile = unavailable.tile.expect("its tile");
         let available = home.slots[0].tile.expect("its tile");
         assert!(tile.y < available.y);
+        let theme = theme();
+        let pinned = &theme.geometry.pinned;
+        let reason_line =
+            f32::from(theme.typography.slot_reason_size) * theme.typography.line_height;
+        let title = unavailable.title_rect.expect("its title's line");
+        let slot = unavailable.rect;
+        assert!(tile.y >= slot.y + f32::from(pinned.slot_padding_top) - 0.01);
+        assert!(
+            title.y + title.height + reason_line
+                <= slot.y + slot.height - f32::from(pinned.slot_padding_bottom) + 0.01
+        );
     }
 
     #[test]

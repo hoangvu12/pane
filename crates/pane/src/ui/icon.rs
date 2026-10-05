@@ -403,10 +403,12 @@ pub(crate) fn tile_at(size: TileSize, tone: IconTone, glyph: Glyph, theme: &Them
                 linear_color_stop(bottom, 1.),
             ))
             // inset 0 0 0 .5px rgba(255,255,255,.28), inset 0 1px 0
-            // rgba(255,255,255,.35), 0 1px 3px rgba(0,0,0,.45)
+            // rgba(255,255,255,.35), 0 1px 3px rgba(0,0,0,.45). The
+            // half-pixel edge is drawn as the one pixel Chrome rasterizes
+            // it to (see `Theme::tile_app_edge`).
             .shadow(vec![
                 gpui::BoxShadow::new(px(0.), px(0.), theme.tile_app_edge)
-                    .spread_radius(px(0.5))
+                    .spread_radius(px(1.))
                     .inset(),
                 gpui::BoxShadow::new(px(0.), px(1.), theme.tile_app_highlight).inset(),
                 gpui::BoxShadow::new(px(0.), px(1.), theme.tile_drop).blur_radius(px(3.)),
