@@ -1,32 +1,34 @@
 //! The Launcher page: the choices that govern the launcher window — which
-//! display it opens on, and what reopening it starts from.
+//! display it opens on, when reopening it pops back to root search, and
+//! its layout: the window mode (expanded or compact), how the pins are
+//! laid out, and whether the compact window shows them.
 //!
 //! Every value it shows and every choice it takes goes through the host
 //! settings ([`crate::settings`]), so the record's own rules — atomic
 //! writes, an unreadable record never replaced, a failed save reported
 //! with the shown choice rolled back — are the ones these choices live
-//! by. Neither choice changes what the windows render, so choosing here
-//! repaints nothing: the opening display is resolved against the display
-//! layout every time the launcher opens (through [`crate::placement`],
-//! the platform seam this page also reads to explain the choices), and
-//! what reopening shows is applied when the launcher is next opened.
+//! by. The display and reopening choices change nothing the windows
+//! render: the opening display is resolved against the display layout
+//! every time the launcher opens (through [`crate::placement`], the
+//! platform seam this page also reads to explain the choices), and what
+//! reopening shows is applied when the launcher is next opened. The
+//! layout choices are read by the launcher window as it draws.
 //!
-//! The opening monitor is the Pane-styled searchable select
-//! ([`crate::ui::select`]): the first real consumer of the shared
-//! control, whose choices are few but whose search and keywords the
-//! control needs exercised. The reopening choices are a segmented choice
-//! (#99, the Settings board's family): two fixed choices a user scans
-//! faster than searches, the control's own rule for when a searchable
-//! select is warranted.
+//! The display and the reopening delay are Pane-styled searchable
+//! selects ([`crate::ui::select`]); the window mode and the pinned
+//! layout are segmented choices (#99, the Settings board's family), two
+//! fixed choices a user scans faster than searches; showing the pins in
+//! the compact window is a switch.
 //!
 //! What the page explains, as the General page does for its hotkey: the
-//! choices the platform cannot answer — the pointer's display where the
-//! system does not tell Pane where the pointer is, the active window's
-//! display where it does not tell Pane which window is active — are
-//! shown with their reason and not offered, rather than pretending they
-//! succeeded; a platform that cannot choose the launcher's display at
-//! all (Wayland) explains that instead; and a choice whose display is
-//! disconnected falls back to the primary display, which the page says.
+//! choices the platform cannot answer — the display with the mouse where
+//! the system does not tell Pane where the pointer is, the display with
+//! the active window where it does not tell Pane which window is active —
+//! are shown with their reason and not offered, rather than pretending
+//! they succeeded; a platform that cannot choose the launcher's display
+//! at all (Wayland) explains that instead; and a choice whose display
+//! cannot be found falls back to the primary display, which the page
+//! says.
 
 use std::rc::Rc;
 
@@ -323,13 +325,14 @@ impl SettingsWindow {
     }
 }
 
-/// The settings the page offers the sidebar's search: each choice of both
-/// groups, named as the page names it, in the group it sits in, saying
-/// why it cannot be used where the system does not answer it — the result
-/// stays listed with its reason, as the control does on the page. The
-/// opening monitor's choices all jump to the one select control that
-/// offers them; the reopening choices to their rows. The reopening
-/// choices are no platform integration: they are always usable.
+/// The settings the page offers the sidebar's search: each choice of the
+/// display and reopening selects, named as the page names it, in the group
+/// it sits in, saying why it cannot be used where the system does not
+/// answer it — the result stays listed with its reason, as the control
+/// does on the page — then the Layout card's three rows. Each select's
+/// choices all jump to the one select control that offers them. The
+/// reopening and layout choices are no platform integration: they are
+/// always usable.
 fn entries(_launcher: &Launcher, cx: &App) -> Vec<search::Entry> {
     let placement = crate::placement::shared(cx);
     let layout = placement.layout();
@@ -368,12 +371,12 @@ fn entries(_launcher: &Launcher, cx: &App) -> Vec<search::Entry> {
     monitors.chain(reopenings).chain(layout).collect()
 }
 
-/// The page's one keyboard control is the opening-monitor select: its
-/// trigger takes focus (it is a tab stop, and Enter opens its choices),
-/// so a jump to any of the monitor's choices focuses it. The reopening
-/// rows take no keyboard focus (they are chosen with the pointer, as
-/// the reference's settings rows are), so a jump to one reveals it and
-/// the sidebar keeps the focus: `false`.
+/// The page's keyboard controls are its two selects, the display and the
+/// reopening delay: a select's trigger takes focus (it is a tab stop, and
+/// Enter opens its choices), so a jump to any of its choices focuses it.
+/// The Layout card's segments and switch take no keyboard focus (they are
+/// chosen with the pointer, as the reference's settings rows are), so a
+/// jump to one reveals it and the sidebar keeps the focus: `false`.
 fn focus(
     this: &mut SettingsWindow,
     target: &str,

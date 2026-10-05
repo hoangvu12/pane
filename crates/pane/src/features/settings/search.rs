@@ -12,7 +12,7 @@
 //!
 //! While it holds a query, the sidebar's list shows the search's results
 //! instead of the sections; each result names the setting and where it
-//! lives — "Dark", "Appearance · Theme" — and an unavailable one says
+//! lives — "Dark", "General · Theme" — and an unavailable one says
 //! why, as the control itself does on its page. The arrows move the
 //! selection (Enter opens it; a click does the same), Enter on no result
 //! does nothing, and the selection never moves by itself. Escape clears
@@ -34,12 +34,13 @@
 //! results follow the launcher's packages even mid-query.
 //!
 //! A jump opens the entry's page and clears the query. The control is
-//! focused where it takes focus — the Shortcuts page's filter field —
-//! and revealed where it does not, as the Appearance choices and the
-//! extension rows are: the reveal scrolls the page area to the control
-//! through a GPUI [`ScrollAnchor`], after the frame that paints the
-//! jumped-to page (the anchor records where the control drew there), so
-//! it never scrolls on a stale position. A control that no longer
+//! focused where it takes focus — the Shortcuts page's filter field, a
+//! shortcut recorder, the Launcher and Keyboard pages' selects — and
+//! revealed where it does not, as the General page's theme and material
+//! choices and the extension rows are: the reveal scrolls the page area
+//! to the control through a GPUI [`ScrollAnchor`], after the frame that
+//! paints the jumped-to page (the anchor records where the control drew
+//! there), so it never scrolls on a stale position. A control that no longer
 //! exists still opens its page — nothing is focused for it, nothing
 //! scrolls, and the sidebar keeps the keyboard on the entry's page.
 //! Where no control took the focus, the sidebar holds it, on the page

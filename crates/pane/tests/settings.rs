@@ -2,10 +2,10 @@
 //! which closes without quitting Pane, keeps its keyboard input to itself,
 //! and answers for its titlebar controls. Drives the real windows through
 //! GPUI's test platform, as `window.rs` drives the launcher's. The
-//! Appearance page is driven the same way — through the page's own
-//! controls — with what the windows paint checked on their quads, so a
-//! choice is observed at the same boundary a user sees it. The General
-//! page's launch-at-login toggle is driven the same way, through a fake
+//! General page's Appearance section is driven the same way — through the
+//! page's own controls — with what the windows paint checked on their
+//! quads, so a choice is observed at the same boundary a user sees it. The
+//! General page's launch-at-login toggle is driven the same way, through a fake
 //! login system the tests script — no test ever touches the real login
 //! configuration of the machine running it; and the Extensions page
 //! manages extensions through the launcher's own operations.
@@ -278,7 +278,7 @@ fn install(launcher: &Launcher, folder: &Path) {
 
 /// Opens the Settings window with the local `Ctrl+,` shortcut and returns
 /// a context driving it, on its Extensions page — the window opens on the
-/// Appearance page, so this walks the sidebar to Extensions first. The
+/// General page, so this walks the sidebar to Extensions first. The
 /// window is made tall enough that the page's whole list is in reach of a
 /// click without scrolling it — the page itself scrolls when the window is
 /// smaller.
@@ -569,8 +569,8 @@ fn paints_panel(cx: &mut VisualTestContext, colors: &[gpui::Background]) -> bool
     })
 }
 
-/// Whether the Appearance page's RadioButton named `label` is the choice
-/// in effect, as assistive technology reads it.
+/// Whether the Appearance section's RadioButton named `label` is the
+/// choice in effect, as assistive technology reads it.
 fn chosen(cx: &mut VisualTestContext, label: &str) -> bool {
     let (_, json) = accessibility(cx);
     let tree: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -580,8 +580,9 @@ fn chosen(cx: &mut VisualTestContext, label: &str) -> bool {
     })
 }
 
-/// Clicks the Appearance page's choice whose debug selector is
-/// `selector`, through the page's own control.
+/// Clicks the General page's control whose debug selector is `selector`
+/// — an Appearance choice, the launch-at-login switch — through the
+/// page's own control.
 fn choose(cx: &mut VisualTestContext, selector: &'static str) {
     let choice = cx
         .debug_bounds(selector)
@@ -590,35 +591,21 @@ fn choose(cx: &mut VisualTestContext, selector: &'static str) {
 }
 
 /// Opens the Settings window over the launcher `cx` drives, on the
-/// Appearance page — one sidebar section from the General page the
-/// window opens on — as its own window context. Every caller of this
-/// helper drives the Appearance page; the General page's own tests live
-/// in `open_pane.rs`.
+/// General page it first shows, as its own window context: the page the
+/// Open Pane hotkey's recorder, the launch-at-login switch and the
+/// Appearance section's theme and material choices live on. The Open
+/// Pane hotkey's own tests live in `open_pane.rs`.
 fn open_settings(cx: &mut VisualTestContext) -> VisualTestContext {
     cx.simulate_keystrokes(settings_shortcut());
     cx.run_until_parked();
     let settings = settings_windows(cx).pop().expect("Settings opened");
     let mut settings_cx = settings_context(&settings, cx);
-    let appearance = settings_cx
-        .debug_bounds("section-General")
-        .expect("the Appearance section");
-    settings_cx.simulate_click(appearance.center(), Modifiers::none());
     settings_cx.run_until_parked();
     settings_cx
 }
 
-/// Opens the Settings window over the launcher `cx` drives, on the
-/// General page it first shows, as its own window context: the page the
-/// Open Pane hotkey's recorder and the launch-at-login switch live on.
-fn general_page(cx: &mut VisualTestContext) -> VisualTestContext {
-    cx.simulate_keystrokes(settings_shortcut());
-    cx.run_until_parked();
-    let settings = settings_windows(cx).pop().expect("Settings opened");
-    settings_context(&settings, cx)
-}
-
 /// Runs the window until the settings record exists in `data`: the save
-/// the Appearance page started is written off the window's thread.
+/// the page's choice started is written off the window's thread.
 fn until_record(cx: &mut VisualTestContext, data: &std::path::Path) {
     let record = data.join("settings.json");
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -737,12 +724,7 @@ fn hiding_the_launcher_leaves_settings_open_and_usable(cx: &mut TestAppContext) 
             .debug_bounds("general-launch-at-login")
             .is_some()
     );
-    // The Appearance page — one sidebar section away — answers too.
-    let appearance = settings_cx
-        .debug_bounds("section-General")
-        .expect("the Appearance section");
-    settings_cx.simulate_click(appearance.center(), Modifiers::none());
-    settings_cx.run_until_parked();
+    // The page's Appearance section is drawn too, with its choices.
     assert!(
         settings_cx
             .debug_bounds("appearance-theme-System")
@@ -830,16 +812,10 @@ fn keys_in_settings_and_the_launcher_stay_in_their_windows(cx: &mut TestAppConte
         "the About section is still offered in the sidebar"
     );
 
-    // The Appearance page — one sidebar section away — answers too, and
-    // walking to it reaches no launcher key either.
-    let appearance = settings_cx
-        .debug_bounds("section-General")
-        .expect("the Appearance section");
-    settings_cx.simulate_click(appearance.center(), Modifiers::none());
-    settings_cx.run_until_parked();
+    // The page's Appearance section is drawn too.
     assert!(
         settings_cx.debug_bounds("appearance").is_some(),
-        "the Appearance page is drawn"
+        "the Appearance section is drawn"
     );
 
     // The launcher's keys, in turn, never reach Settings.
@@ -1324,7 +1300,7 @@ fn a_refused_documentation_link_is_explained_on_the_page(cx: &mut TestAppContext
     let (_, json) = accessibility(&mut settings_cx);
     assert!(
         json.contains(
-            "Could not open the documentation: no program to open web links is installed"
+            "Couldn't open the documentation: no program to open web links is installed"
         ),
         "the refusal is explained, {json}"
     );
@@ -1439,10 +1415,7 @@ fn the_about_page_explains_where_no_release_source_is_configured(cx: &mut TestAp
     // development checkout without PANE_ARTIFACTS runs — is explained as
     // what it is: no release to check, no claim of a feed or an available
     // release, and no row to click.
-    until_text(
-        &mut settings_cx,
-        "No artifact source is configured for this Pane",
-    );
+    until_text(&mut settings_cx, "This build has no update source.");
     assert!(
         settings_cx.debug_bounds("about-check-update").is_none(),
         "no check is offered against a source that is not there"
@@ -1492,7 +1465,7 @@ fn an_unreachable_release_source_is_explained_on_the_page(cx: &mut TestAppContex
     let (_settings, mut settings_cx) = open_about(cx);
 
     click_row(&mut settings_cx, "about-check-update");
-    until_text(&mut settings_cx, "Could not check for a Pane update");
+    until_text(&mut settings_cx, "Couldn't check for updates: ");
     // The failure explains the unreachable source, retried as an
     // interrupted acquisition is, and the page offers the check again.
     let (_, json) = accessibility(&mut settings_cx);
@@ -1532,7 +1505,7 @@ fn a_failed_check_is_tried_again_from_the_page_and_finds_the_update(cx: &mut Tes
     let (_settings, mut settings_cx) = open_about(cx);
 
     click_row(&mut settings_cx, "about-check-update");
-    until_text(&mut settings_cx, "Could not check for a Pane update");
+    until_text(&mut settings_cx, "Couldn't check for updates: ");
 
     // The source works again, with a newer version published: the retry
     // from the page finds it, and both entry points show the offer.
@@ -1557,13 +1530,10 @@ fn the_page_offers_the_update_and_installs_it_by_the_users_choice(cx: &mut TestA
     click_row(&mut settings_cx, "about-check-update");
     until_text(&mut settings_cx, "Pane 99.0.0 is available");
     let (_, json) = accessibility(&mut settings_cx);
-    assert!(json.contains("Update Pane to 99.0.0"), "{json}");
+    assert!(json.contains("Update to 99.0.0"), "{json}");
     assert!(
-        json.contains(
-            "Your extensions and settings are kept; the new version is used the next time Pane \
-             starts"
-        ),
-        "the row says what installing does, {json}"
+        json.contains("Keeps your extensions and settings. The new version starts next time."),
+        "the button says what installing does, {json}"
     );
     assert!(
         titles(&launcher, cx).contains(&"Update Pane to 99.0.0".to_owned()),
@@ -1582,10 +1552,7 @@ fn the_page_offers_the_update_and_installs_it_by_the_users_choice(cx: &mut TestA
     // Mid-install there is no row to click: nothing else can be started
     // against the same offer.
     assert!(settings_cx.debug_bounds("about-update").is_none());
-    until_text(
-        &mut settings_cx,
-        "Installed Pane 99.0.0; the new version is used the next time Pane starts",
-    );
+    until_text(&mut settings_cx, "Pane 99.0.0 is installed and starts next time");
 
     // The program was swapped: the new one in place, the old one renamed
     // out of its way, nothing else in the install folder.
@@ -1621,7 +1588,7 @@ fn a_failed_install_is_explained_and_the_offer_stays_to_try_again(cx: &mut TestA
     dirs.artifacts.corrupt_application();
 
     click_row(&mut settings_cx, "about-update");
-    until_text(&mut settings_cx, "Could not update Pane to 99.0.0");
+    until_text(&mut settings_cx, "Couldn't update to 99.0.0: ");
 
     // The failure is explained with the offer still offered, ready to be
     // chosen again; nothing changed.
@@ -1647,10 +1614,7 @@ fn a_failed_install_is_explained_and_the_offer_stays_to_try_again(cx: &mut TestA
     // The source works again; choosing the offer again installs it.
     dirs.publish_update("99.0.0", b"the 99.0.0 program");
     click_row(&mut settings_cx, "about-update");
-    until_text(
-        &mut settings_cx,
-        "Installed Pane 99.0.0; the new version is used the next time Pane starts",
-    );
+    until_text(&mut settings_cx, "Pane 99.0.0 is installed and starts next time");
     assert_eq!(fs::read(dirs.program()).unwrap(), b"the 99.0.0 program");
 }
 
@@ -1673,10 +1637,7 @@ fn an_interrupted_download_from_the_page_is_tried_again_and_lands(cx: &mut TestA
     dirs.artifacts.drop_after(&file, 16, 1);
 
     click_row(&mut settings_cx, "about-update");
-    until_text(
-        &mut settings_cx,
-        "Installed Pane 99.0.0; the new version is used the next time Pane starts",
-    );
+    until_text(&mut settings_cx, "Pane 99.0.0 is installed and starts next time");
     assert_eq!(fs::read(dirs.program()).unwrap(), b"the 99.0.0 program");
     assert_eq!(
         fs::read(dirs.install.path().join("pane.old")).unwrap(),
@@ -1719,7 +1680,7 @@ fn leaving_the_page_while_a_check_runs_cancels_nothing(cx: &mut TestAppContext) 
     // The check starts from the page; the user walks away to another
     // section while it runs.
     click_row(&mut settings_cx, "about-check-update");
-    until_text(&mut settings_cx, "Checking for a Pane update");
+    until_text(&mut settings_cx, "Checking for updates");
     let extensions = settings_cx
         .debug_bounds("section-Extensions")
         .expect("the Extensions section");
@@ -1761,7 +1722,7 @@ fn the_page_copies_the_diagnostics_to_the_clipboard_locally(cx: &mut TestAppCont
     // The copy is the user's explicit click, and its completion is the
     // page's own status.
     click_row(&mut settings_cx, "about-diagnostics");
-    until_text(&mut settings_cx, "Copied the diagnostics to the clipboard");
+    until_text(&mut settings_cx, "Copied to the clipboard");
     // What was copied is what Pane knows of this installation — the real
     // version, the system, the data folder, the update state — as plain
     // text on this computer's clipboard: nothing was sent anywhere, and
@@ -2187,16 +2148,12 @@ fn the_settings_window_keeps_its_layout_at_small_sizes(cx: &mut TestAppContext) 
     let settings = settings_windows(cx).pop().expect("Settings opened");
     let mut settings_cx = settings_context(&settings, cx);
     settings_cx.run_until_parked();
-    // The window opens on the General page; the Appearance page — the
-    // demanding one — is one sidebar click away.
-    let appearance = settings_cx
-        .debug_bounds("section-General")
-        .expect("the Appearance section");
-    settings_cx.simulate_click(appearance.center(), Modifiers::none());
-    settings_cx.run_until_parked();
 
-    // The window's floor: at its smallest usable size the sidebar and the
-    // page both stay laid out — nothing reaches past the panel's edge.
+    // The window opens on the General page — the demanding one: the Open
+    // Pane hotkey's recorder and the Appearance section's choices sit at
+    // the ends of its rows. At the window's floor, its smallest usable
+    // size, the sidebar and the page both stay laid out — nothing reaches
+    // past the panel's edge.
     settings_cx.simulate_resize(gpui::size(px(560.), px(400.)));
     settings_cx.run_until_parked();
     let sidebar = settings_cx
@@ -2205,33 +2162,34 @@ fn the_settings_window_keeps_its_layout_at_small_sizes(cx: &mut TestAppContext) 
     let page = settings_cx
         .debug_bounds("settings-page")
         .expect("the page is laid out");
+    let recorder = settings_cx
+        .debug_bounds("open-pane-recorder")
+        .expect("the hotkey's recorder is laid out");
     let choice = settings_cx
         .debug_bounds("appearance-theme-System")
         .expect("the page's choice row is laid out");
-    let preview = settings_cx
-        .debug_bounds("appearance-preview")
-        .expect("the preview is laid out");
+    let material = settings_cx
+        .debug_bounds("appearance-material-track")
+        .expect("the material's choice is laid out");
     assert!(
         sidebar.right() <= page.left(),
         "the sidebar is beside the page"
     );
-    assert!(
-        choice.right() <= page.right(),
-        "the choices stay within the page"
-    );
     // The page scrolls when the window is short, so vertical position is
-    // not containment; the preview must stay within the page's width.
+    // not containment; the rows' controls must stay within its width.
     assert!(
-        preview.right() <= page.right(),
-        "the preview stays within the page's width"
+        recorder.right() <= page.right(),
+        "the recorder stays within the page"
+    );
+    assert!(
+        choice.right() <= page.right() && material.right() <= page.right(),
+        "the choices stay within the page"
     );
 
     // The About page keeps its own rows laid out at the same floor,
-    // reached through the sidebar. The Keyboard page has joined the
-    // sections since this floor was written, so the sidebar's list
-    // scrolls at this size on the platforms whose titlebar is inside
-    // the window: turn its wheel to bring the About section's row
-    // into view before it is clicked.
+    // reached through the sidebar. The sidebar's list scrolls inside it
+    // when the window is short, so its wheel is turned to bring the About
+    // section's row into view before it is clicked.
     let sections = settings_cx
         .debug_bounds("sections")
         .expect("the sections list");
@@ -2287,12 +2245,13 @@ fn selector(text: String) -> &'static str {
     Box::leak(text.into_boxed_str())
 }
 
-/// The Settings window opens at the reference board's 1120×720 client,
+/// The Settings window opens at Pane's 860×600 client — narrower than the
+/// reference board's 1120×720, as a list of settings rows needs no more —
 /// and its shell lands where the board puts it (#97): the 48px titlebar
 /// with its label centered and the Windows caption buttons at its right
 /// edge, the 232px sidebar below it with the 34px search and the 36px
-/// sections 2px apart, and the page beside the sidebar with its 26px top
-/// and 32px side padding.
+/// sections 2px apart, and the page beside the sidebar with Pane's own
+/// 20px top and 24px side padding.
 #[cfg(target_os = "windows")]
 #[gpui::test]
 fn the_settings_window_opens_at_the_reference_shell_geometry(cx: &mut TestAppContext) {
@@ -2302,18 +2261,18 @@ fn the_settings_window_opens_at_the_reference_shell_geometry(cx: &mut TestAppCon
     let viewport = settings_cx.update(|window, _| window.viewport_size());
     assert_eq!(
         viewport,
-        gpui::size(px(1120.), px(720.)),
-        "the Settings board's client"
+        gpui::size(px(860.), px(600.)),
+        "the Settings window's client"
     );
     let sc = &mut settings_cx;
-    assert_eq!(rect_of(sc, "settings-titlebar"), [0., 0., 1120., 48.]);
-    assert_eq!(rect_of(sc, "settings-sidebar"), [0., 48., 232., 672.]);
+    assert_eq!(rect_of(sc, "settings-titlebar"), [0., 0., 860., 48.]);
+    assert_eq!(rect_of(sc, "settings-sidebar"), [0., 48., 232., 552.]);
     assert_eq!(rect_of(sc, "settings-search-field"), [10., 60., 211., 34.]);
     assert_eq!(rect_of(sc, "section-General"), [10., 104., 211., 36.]);
     assert_eq!(rect_of(sc, "section-Launcher"), [10., 142., 211., 36.]);
-    assert_eq!(rect_of(sc, "settings-page"), [232., 48., 888., 672.]);
-    let heading = rect_of(sc, "general");
-    assert_eq!([heading[0], heading[1]], [264., 74.], "the page's padding");
+    assert_eq!(rect_of(sc, "settings-page"), [232., 48., 628., 552.]);
+    let content = rect_of(sc, "general");
+    assert_eq!([content[0], content[1]], [256., 68.], "the page's padding");
 
     // The label is centered over the whole window, as the reference's is;
     // the caption buttons — the Windows adaptation of its lone close
@@ -2321,11 +2280,11 @@ fn the_settings_window_opens_at_the_reference_shell_geometry(cx: &mut TestAppCon
     // height above its rule.
     let label = rect_of(sc, "settings-title");
     assert!(
-        (label[0] + label[2] / 2. - 560.).abs() <= 1.,
+        (label[0] + label[2] / 2. - 430.).abs() <= 1.,
         "the label is centered: {label:?}"
     );
     let close = rect_of(sc, "window-close");
-    assert_eq!(close[0] + close[2], 1120.);
+    assert_eq!(close[0] + close[2], 860.);
     assert_eq!([close[1], close[3]], [0., 47.]);
 
     // At the window's floor the titlebar and its controls hold: the
@@ -2395,56 +2354,15 @@ fn the_sidebar_items_are_their_own_family_and_change_at_once(cx: &mut TestAppCon
     assert_eq!(settle_frames(&mut settings_cx), 0, "the window is idle");
 }
 
-/// The Appearance page is the reference's two-column page (#97): the
-/// controls in a 388px column from the page's padding, the preview in a
-/// 400px column 36px to its right. A window narrower than the two
-/// columns collapses them — the preview wraps below the controls, inside
-/// the page — so every control stays reachable.
-#[gpui::test]
-fn the_appearance_preview_sits_beside_the_controls_and_below_them_when_narrow(
-    cx: &mut TestAppContext,
-) {
-    let (_launcher, _links, cx) = open_launcher(cx);
-    let mut settings_cx = open_settings(cx);
-    pointer_leaves(&mut settings_cx);
-    settle_frames(&mut settings_cx);
-
-    // The theme's segmented choice spans the controls column (#98).
-    let choice = settings_cx
-        .debug_bounds("appearance-theme-track")
-        .expect("a choice");
-    let preview = settings_cx
-        .debug_bounds("appearance-preview")
-        .expect("the preview");
-    let page = settings_cx.debug_bounds("settings-page").expect("the page");
-    assert_eq!(choice.left(), page.left() + px(32.));
-    assert_eq!(choice.size.width, px(388.), "the controls column");
-    assert_eq!(preview.left(), choice.right() + px(36.));
-    assert_eq!(preview.size.width, px(400.), "the preview column");
-
-    settings_cx.simulate_resize(gpui::size(px(760.), px(720.)));
-    settings_cx.run_until_parked();
-    let choice = settings_cx
-        .debug_bounds("appearance-theme-track")
-        .expect("a choice");
-    let preview = settings_cx
-        .debug_bounds("appearance-preview")
-        .expect("the preview");
-    let page = settings_cx.debug_bounds("settings-page").expect("the page");
-    assert!(
-        preview.top() > choice.bottom(),
-        "the preview wrapped below the controls: {preview:?} under {choice:?}"
-    );
-    assert_eq!(preview.left(), page.left() + px(32.));
-    assert!(preview.right() <= page.right() - px(32.));
-}
-
-/// The Appearance page's choices are the reference board's segmented
-/// family (#98), not launcher rows: each setting a field group — its
-/// 18px label 8px above the 36px track (black 24% under its ring), whose
-/// 30px segments share its width inside its 3px padding, 2px apart — 18px
-/// below the one before it, the chosen segment on the white 12% wash and
-/// no root-row wash on any of them.
+/// The Appearance section's choices are the reference board's segmented
+/// family (#98), not launcher rows: the section stands the page's 24px
+/// under the General page's own card, its label over a card of two
+/// settings rows — the theme's, then the material's, past the card's 1px
+/// rule — each at least 48 high with its 200px track (36 high, black 24%
+/// under its ring) at its end, 14px in and centered on the row; the 30px
+/// segments share the track's width inside its 3px padding, 2px apart,
+/// the chosen segment on the white 12% wash and no root-row wash on any of
+/// them.
 #[gpui::test]
 fn the_appearance_choices_are_the_reference_segmented_family(cx: &mut TestAppContext) {
     let (_launcher, _links, cx) = open_launcher(cx);
@@ -2453,23 +2371,39 @@ fn the_appearance_choices_are_the_reference_segmented_family(cx: &mut TestAppCon
     settle_frames(&mut settings_cx);
     let sc = &mut settings_cx;
 
-    let title = rect_of(sc, "appearance-title");
+    let card = rect_of(sc, "general-card");
+    let section = rect_of(sc, "appearance");
+    assert!(
+        (section[1] - (card[1] + card[3] + 24.)).abs() < 0.5,
+        "the section follows the page's card: {section:?} under {card:?}"
+    );
     let theme_field = rect_of(sc, "appearance-theme-field");
     let theme_track = rect_of(sc, "appearance-theme-track");
     let material_field = rect_of(sc, "appearance-material-field");
     let material_track = rect_of(sc, "appearance-material-track");
-    // The heading block's 4px below it, then the column's 18px.
-    let below_title = title[1] + title[3] + 4. + 18.;
-    assert_eq!(theme_field[1], below_title, "{theme_field:?}");
-    let below_theme = theme_field[1] + theme_field[3] + 18.;
-    assert_eq!(material_field[1], below_theme, "{material_field:?}");
+    assert!(
+        theme_field[1] > section[1],
+        "the rows sit under the section's label: {theme_field:?} in {section:?}"
+    );
+    assert!(
+        (material_field[1] - (theme_field[1] + theme_field[3] + 1.)).abs() < 0.5,
+        "the material's row follows the theme's: {material_field:?} under {theme_field:?}"
+    );
     for (field, track) in [(theme_field, theme_track), (material_field, material_track)] {
-        // The 18px label and the field's 8px before the track.
-        assert_eq!(track[1], field[1] + 18. + 8., "{track:?} in {field:?}");
-        assert_eq!([track[0], track[2], track[3]], [field[0], 388., 36.]);
+        assert!(field[3] >= 48., "a settings row's floor: {field:?}");
+        assert_eq!([track[2], track[3]], [200., 36.], "{track:?}");
+        assert!(
+            (track[0] + track[2] - (field[0] + field[2] - 14.)).abs() < 0.5,
+            "the track at the row's end: {track:?} in {field:?}"
+        );
+        assert!(
+            (track[1] + track[3] / 2. - (field[1] + field[3] / 2.)).abs() < 0.5,
+            "the track centered on the row: {track:?} in {field:?}"
+        );
     }
 
-    // Three equal segments on the theme's track, two on the material's.
+    // Three equal segments on the theme's track, two on the material's,
+    // filling it inside its padding.
     let themes: Vec<_> = ["System", "Light", "Dark"]
         .into_iter()
         .map(|name| rect_of(sc, selector(format!("appearance-theme-{name}"))))
@@ -2478,16 +2412,25 @@ fn the_appearance_choices_are_the_reference_segmented_family(cx: &mut TestAppCon
         .into_iter()
         .map(|name| rect_of(sc, selector(format!("appearance-material-{name}"))))
         .collect();
-    for (track, row, width) in [
-        (theme_track, &themes, 126.),
-        (material_track, &materials, 190.),
-    ] {
-        assert_eq!([row[0][0], row[0][1]], [track[0] + 3., track[1] + 3.]);
+    for (track, row) in [(theme_track, &themes), (material_track, &materials)] {
+        let (first, last) = (row[0], row[row.len() - 1]);
+        assert!(
+            (first[0] - (track[0] + 3.)).abs() < 0.5 && (first[1] - (track[1] + 3.)).abs() < 0.5,
+            "inside the track's padding: {first:?} in {track:?}"
+        );
+        assert!(
+            (last[0] + last[2] - (track[0] + track[2] - 3.)).abs() < 0.5,
+            "the segments fill the track: {row:?} in {track:?}"
+        );
         for pair in row.windows(2) {
-            assert_eq!(pair[1][0], pair[0][0] + pair[0][2] + 2., "2px apart");
+            assert!(
+                (pair[1][0] - (pair[0][0] + pair[0][2] + 2.)).abs() < 0.5,
+                "2px apart: {pair:?}"
+            );
         }
         for segment in row {
-            assert_eq!([segment[2], segment[3]], [width, 30.], "{segment:?}");
+            assert!((segment[2] - first[2]).abs() < 0.5, "equal shares: {row:?}");
+            assert_eq!(segment[3], 30., "{segment:?}");
         }
     }
 
@@ -2532,86 +2475,6 @@ fn the_appearance_choices_are_the_reference_segmented_family(cx: &mut TestAppCon
     pointer_leaves(sc);
     sc.run_until_parked();
     assert_eq!(settle_frames(sc), 0, "the window is idle");
-}
-
-/// The live preview is the reference's stage and miniature (#98): the
-/// 400x520 stage below the column's caption, the 340px miniature centered
-/// on it 56px below its top — its 46px search line, its pinned strip, its
-/// 38px rows (the first selected, on white 9%) and its 38px footer — drawn
-/// with the appearance in effect: the solid surface once Solid is chosen,
-/// in the palette chosen.
-#[gpui::test]
-fn the_live_preview_is_the_reference_miniature_in_the_appearance_in_effect(
-    cx: &mut TestAppContext,
-) {
-    let data = tempfile::tempdir().unwrap();
-    cx.update(|cx| {
-        pane::settings::init_with_overrides(
-            Some(data.path().to_owned()),
-            pane::settings::Overrides::default(),
-            cx,
-        )
-    });
-    let (_launcher, _links, cx) = open_launcher(cx);
-    let mut settings_cx = open_settings(cx);
-    pointer_leaves(&mut settings_cx);
-    settle_frames(&mut settings_cx);
-    let sc = &mut settings_cx;
-
-    let page = rect_of(sc, "settings-page");
-    let stage = rect_of(sc, "appearance-preview");
-    let panel = rect_of(sc, "appearance-preview-panel");
-    // The page's 26px, the caption's 16px line and the column's 10px.
-    assert_eq!(stage[1], page[1] + 26. + 16. + 10., "{stage:?}");
-    assert_eq!([stage[2], stage[3]], [400., 520.]);
-    assert_eq!([panel[0], panel[1]], [stage[0] + 30., stage[1] + 56.]);
-    assert_eq!(panel[2], 340.);
-    let search = rect_of(sc, "preview-search");
-    assert_eq!([search[1], search[3]], [panel[1], 46.]);
-    let pins = rect_of(sc, "preview-pins");
-    assert_eq!([pins[1], pins[3]], [panel[1] + 46. + 6., 52.]);
-    let first = rect_of(sc, "preview-row-0");
-    let second = rect_of(sc, "preview-row-1");
-    assert_eq!(first[1], pins[1] + pins[3] + 2.);
-    assert_eq!([first[3], second[1]], [38., first[1] + 40.]);
-    let footer = rect_of(sc, "preview-footer");
-    assert_eq!(footer[3], 38.);
-    assert_eq!(
-        footer[1] + footer[3],
-        panel[1] + panel[3],
-        "the footer closes it"
-    );
-    let row = sc.debug_bounds("preview-row-0").expect("the first row");
-    assert!(
-        paints_fill_at(sc, row, 0xFFFFFF17),
-        "the selected row's white 9%"
-    );
-
-    // Solid: the miniature takes the solid surface, as the windows do.
-    choose(sc, "appearance-material-Solid");
-    cx.run_until_parked();
-    sc.run_until_parked();
-    let panel = sc
-        .debug_bounds("appearance-preview-panel")
-        .expect("the miniature");
-    assert!(
-        paints_fill_at(sc, panel, 0x16171AFF),
-        "the solid dark surface"
-    );
-    assert!(!paints_fill_at(sc, panel, 0x16171AB3), "no glass tint");
-
-    // Light: the same miniature in the light palette.
-    choose(sc, "appearance-theme-Light");
-    cx.run_until_parked();
-    sc.run_until_parked();
-    let panel = sc
-        .debug_bounds("appearance-preview-panel")
-        .expect("the miniature");
-    assert!(
-        paints_fill_at(sc, panel, 0xF6F6F8FF),
-        "the solid light surface"
-    );
-    until_record(cx, data.path());
 }
 
 /// The keyboard reaches the segments (#98): Tab moves from the sidebar
@@ -2681,18 +2544,18 @@ fn overridden_segments_take_no_keyboard_focus(cx: &mut TestAppContext) {
     }
 }
 
-/// The seven real pages — and only those — are the sidebar's sections, in
+/// The six real pages — and only those — are the sidebar's sections, in
 /// order: each opens its page, and the search finds each by its title.
-/// The reference's other labels (Window Manager, Clipboard, Privacy) add
-/// no page.
+/// Appearance is a section of the General page, not a page of its own,
+/// and the reference's other labels (Window Manager, Clipboard, Privacy)
+/// add no page.
 #[gpui::test]
-fn all_seven_pages_are_listed_reachable_and_searchable(cx: &mut TestAppContext) {
+fn all_six_pages_are_listed_reachable_and_searchable(cx: &mut TestAppContext) {
     let (_launcher, _links, cx) = open_launcher(cx);
     let (_settings, mut settings_cx) = opened_settings(cx);
     let pages = [
         "General",
         "Launcher",
-        "Appearance",
         "Shortcuts",
         "Keyboard",
         "Extensions",
@@ -2715,6 +2578,7 @@ fn all_seven_pages_are_listed_reachable_and_searchable(cx: &mut TestAppContext) 
         );
     }
     for absent in [
+        "section-Appearance",
         "section-Window Manager",
         "section-Clipboard",
         "section-Privacy",
@@ -2735,15 +2599,14 @@ fn all_seven_pages_are_listed_reachable_and_searchable(cx: &mut TestAppContext) 
     }
 }
 
-/// The General page is composed of the Settings board's families (#99),
-/// not launcher rows: its groups stand in the page's column 22px under the
-/// heading block (its 4px and the column's 18), each a field label 8px
-/// over its settings rows; the Open Pane hotkey's recorder is a 30px well
-/// (black 24%) at its row's right end with the Reset button beside it,
-/// and the launch-at-login choice is the board's 40x24 switch — white 16%
-/// with its knob at the left while off, the accent with the knob at the
-/// right once taken. No root-row wash is painted on the rows, and nothing
-/// fades.
+/// The General page is composed of the Settings families (#99), not
+/// launcher rows: its own settings rows stand in a card, one under the
+/// other past the card's 1px rule, each at least 48 high; the Open Pane
+/// hotkey's recorder is a 36px well (black 24%) at its row's end, 14px
+/// in, with the Reset button inside it, and the launch-at-login choice is
+/// the board's 40x24 switch at its row's end — white 16% with its knob at
+/// the left while off, the accent with the knob at the right once taken.
+/// No root-row wash is painted on the rows, and nothing fades.
 #[gpui::test]
 fn the_general_page_draws_the_settings_control_families(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
@@ -2760,28 +2623,31 @@ fn the_general_page_draws_the_settings_control_families(cx: &mut TestAppContext)
     let (_settings, mut settings_cx) = opened_settings(cx);
     let sc = &mut settings_cx;
 
-    let title = rect_of(sc, "general");
-    let field = rect_of(sc, "general-open-pane-field");
-    assert_eq!(
-        field[1],
-        title[1] + title[3] + 4. + 18.,
-        "the column's gap under the heading block"
-    );
+    let card = rect_of(sc, "general-card");
     let row = rect_of(sc, "general-open-pane-row");
-    assert_eq!(row[1], field[1] + 18. + 8., "the label's line and gap");
-    assert!(row[3] >= 44., "a settings row's floor: {row:?}");
+    let login_row = rect_of(sc, "general-launch-at-login-row");
+    assert_eq!(row[1], card[1], "the card's first row");
+    assert!(
+        (login_row[1] - (row[1] + row[3] + 1.)).abs() < 0.5,
+        "the next row past the card's rule: {login_row:?} under {row:?}"
+    );
+    for bounds in [row, login_row] {
+        assert!(bounds[3] >= 48., "a settings row's floor: {bounds:?}");
+    }
 
     let recorder = sc.debug_bounds("open-pane-recorder").expect("the recorder");
     let row_bounds = sc.debug_bounds("general-open-pane-row").expect("its row");
-    assert_eq!(recorder.size.height, px(30.), "an inline well");
-    assert_eq!(recorder.right(), row_bounds.right(), "at the row's end");
+    assert_eq!(recorder.size.height, px(36.), "the recorder's field");
+    assert_eq!(recorder.right(), row_bounds.right() - px(14.), "at the row's end");
     assert!(
         paints_fill_at(sc, recorder, 0x0000003D),
         "the well's black 24%"
     );
     let reset = sc.debug_bounds("open-pane-reset").expect("the reset");
-    assert_eq!(reset.size.height, px(30.), "a button's height");
-    assert!(reset.right() <= recorder.left(), "beside the recorder");
+    assert!(
+        recorder.contains(&reset.center()),
+        "the reset inside the recorder: {reset:?} in {recorder:?}"
+    );
     for root_wash in [0xFFFFFF09, 0xFFFFFF16] {
         assert!(
             !paints_fill_at(sc, row_bounds, root_wash),
@@ -2792,7 +2658,11 @@ fn the_general_page_draws_the_settings_control_families(cx: &mut TestAppContext)
     let switch = sc
         .debug_bounds("general-launch-at-login")
         .expect("the switch");
+    let switch_row = sc
+        .debug_bounds("general-launch-at-login-row")
+        .expect("its row");
     assert_eq!(switch.size, gpui::size(px(40.), px(24.)), "the switch");
+    assert_eq!(switch.right(), switch_row.right() - px(14.), "at the row's end");
     let knob = |left: f32| gpui::Bounds {
         origin: switch.origin + gpui::point(px(left), px(3.)),
         size: gpui::size(px(18.), px(18.)),
@@ -2851,8 +2721,9 @@ fn the_keyboard_page_shows_bindings_in_recorder_wells(cx: &mut TestAppContext) {
 
 /// The About page's actions are the Settings buttons (#99): 30px, white
 /// 8% at rest and white 13% under the pointer, at once — no fade, no
-/// frame asked for — in field groups labelled as the board labels its
-/// fields.
+/// frame asked for — each at the end of its settings row in the page's
+/// card, under the version's row, as the version sits at the end of its
+/// own.
 #[gpui::test]
 fn the_about_pages_actions_are_buttons_whose_washes_change_at_once(cx: &mut TestAppContext) {
     let (_launcher, _links, cx) = open_launcher(cx);
@@ -2883,11 +2754,24 @@ fn the_about_pages_actions_are_buttons_whose_washes_change_at_once(cx: &mut Test
         pointer_leaves(sc);
         sc.run_until_parked();
     }
-    let label = rect_of(sc, "about-label-Documentation");
-    let button = rect_of(sc, "about-documentation");
+    // The rows' controls share the card's right edge, one row under the
+    // other: the version, the documentation's button, the diagnostics'.
+    let version = rect_of(sc, "about-version");
+    let documentation = rect_of(sc, "about-documentation");
+    let diagnostics = rect_of(sc, "about-diagnostics");
+    for control in [documentation, diagnostics] {
+        assert!(
+            (control[0] + control[2] - (version[0] + version[2])).abs() < 0.5,
+            "at its row's end: {control:?} beside {version:?}"
+        );
+    }
     assert!(
-        button[1] >= label[1] + label[3],
-        "the field's label is over its control"
+        documentation[1] >= version[1] + version[3],
+        "the documentation's row is under the version's"
+    );
+    assert!(
+        diagnostics[1] >= documentation[1] + documentation[3],
+        "the diagnostics' row is under the documentation's"
     );
 }
 
@@ -3040,12 +2924,12 @@ fn moving_up_the_sidebar_arrives_from_above(cx: &mut TestAppContext) {
     settle_frames(&mut settings_cx);
     assert!(section_arrival(&settings, &mut settings_cx).is_none());
 
-    // Back up to Appearance, the first section: the content arrives from
+    // Back up to General, the first section: the content arrives from
     // above.
     click_section(&mut settings_cx, "section-General");
     assert!(
-        settings_cx.debug_bounds("appearance").is_some(),
-        "the Appearance page is drawn at once, mid-arrival"
+        settings_cx.debug_bounds("general").is_some(),
+        "the General page is drawn at once, mid-arrival"
     );
     let (offset, _) = section_arrival(&settings, &mut settings_cx).expect("the page is arriving");
     assert!(
@@ -3117,9 +3001,8 @@ fn reduced_motion_settles_section_switches_at_once_at_the_window_boundary(cx: &m
     let (_launcher, _links, cx) = open_launcher(cx);
     let (settings, mut settings_cx) = opened_settings(cx);
     // The window's floor: the boundary the reduced presentation must
-    // still work at. The Keyboard page has joined the sections since
-    // this floor was written, so the sidebar's list now scrolls at this
-    // size: turn its wheel to bring the About section's row into view
+    // still work at. The sidebar's list scrolls inside it when the window
+    // is short: turn its wheel to bring the About section's row into view
     // before it is clicked.
     settings_cx.simulate_resize(gpui::size(px(560.), px(400.)));
     settings_cx.run_until_parked();
@@ -3160,7 +3043,7 @@ fn reduced_motion_settles_section_switches_at_once_at_the_window_boundary(cx: &m
 
     // Reduced motion engaged mid-arrival ends it on the next frame. Begin
     // a return under full motion, then flip the preference. The wheel
-    // goes back up first: the Appearance section's row was above the
+    // goes back up first, for the General section's row above the
     // scrolled view.
     settings_cx.update(|_, cx| cx.set_reduce_motion(false));
     settings_cx.simulate_event(gpui::ScrollWheelEvent {
@@ -3262,7 +3145,7 @@ fn a_missing_record_starts_from_the_reference_defaults(cx: &mut TestAppContext) 
 }
 
 #[gpui::test]
-fn choosing_a_theme_re_renders_both_windows_and_the_preview(cx: &mut TestAppContext) {
+fn choosing_a_theme_re_renders_both_windows(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
     cx.update(|cx| {
         pane::settings::init_with_overrides(
@@ -3295,16 +3178,6 @@ fn choosing_a_theme_re_renders_both_windows_and_the_preview(cx: &mut TestAppCont
     assert!(
         chosen(&mut settings_cx, "Light"),
         "the page follows its own choice"
-    );
-
-    // The preview is drawn with the choice in effect: it is laid out on
-    // the page, and the page paints the light surface. (Whether the
-    // preview's own panel quad reaches the painted scene depends on the
-    // page's scroll and the platform's culling of fully-clipped quads, so
-    // the preview is asserted by its layout, not by its quad.)
-    assert!(
-        settings_cx.debug_bounds("appearance-preview").is_some(),
-        "the preview is laid out beside the light choice"
     );
 
     // Dark returns the same way.
@@ -3386,8 +3259,9 @@ fn the_material_choice_switches_the_panel_surface(cx: &mut TestAppContext) {
 
     // Glass returns: the tint where the platform provides frost, the
     // solid surface where it does not (Linux; a Windows with transparency
-    // off) — either way the page's note under the group explains the
-    // truth that holds, and the row carries the preference.
+    // off) — and the row carries the preference either way. Where the
+    // solid surface stands in for glass, the material's row says so and
+    // why; where the tint is drawn, there is nothing to explain.
     choose(&mut settings_cx, "appearance-material-Glass");
     cx.run_until_parked();
     settings_cx.run_until_parked();
@@ -3399,33 +3273,37 @@ fn the_material_choice_switches_the_panel_surface(cx: &mut TestAppContext) {
         chosen(&mut settings_cx, "Glass"),
         "the glass preference is held"
     );
-    assert!(
+    let glass_stands = paints_panel(cx, &[panel(0xF6F6F8CC)]);
+    assert_eq!(
         settings_cx
             .debug_bounds("appearance-material-note")
             .is_some(),
-        "the material's truth is explained"
+        !glass_stands,
+        "the material's row explains a fallback, and only a fallback"
     );
     #[cfg(target_os = "linux")]
     {
         let (_, json) = accessibility(&mut settings_cx);
         assert!(
-            json.contains("Glass is unavailable here"),
+            json.contains("Glass isn't available here"),
             "the fallback is named, {json}"
         );
     }
 
-    // The solid surface's description says what it is: no caveat about
-    // blur is left standing under it.
+    // The solid surface needs no explaining: no caveat about glass is left
+    // standing under it.
     choose(&mut settings_cx, "appearance-material-Solid");
     cx.run_until_parked();
     settings_cx.run_until_parked();
+    assert!(
+        settings_cx
+            .debug_bounds("appearance-material-note")
+            .is_none(),
+        "no note under the solid choice"
+    );
     let (_, json) = accessibility(&mut settings_cx);
     assert!(
-        json.contains("No transparency"),
-        "the solid surface is described, {json}"
-    );
-    assert!(
-        !json.contains("not see whether the blur") && !json.contains("Glass is unavailable"),
+        !json.contains("Glass isn't available"),
         "no glass caveat is left under the solid choice, {json}"
     );
     until_record(cx, data.path());
@@ -3765,7 +3643,7 @@ fn a_fresh_application_reconciles_a_registration_the_platform_lost(cx: &mut Test
         )
     });
     let (_launcher, _links, cx) = open_launcher(cx);
-    let mut settings_cx = general_page(cx);
+    let mut settings_cx = open_settings(cx);
     choose(&mut settings_cx, "general-launch-at-login");
     cx.run_until_parked();
     until_record(&mut settings_cx, data.path());
@@ -3926,7 +3804,7 @@ fn a_failed_save_rolls_the_registration_back_to_what_was_saved(cx: &mut TestAppC
         )
     });
     let (_launcher, _links, cx) = open_launcher(cx);
-    let mut settings_cx = general_page(cx);
+    let mut settings_cx = open_settings(cx);
 
     // A choice that saves, so the record holds it.
     choose(&mut settings_cx, "general-launch-at-login");
@@ -4054,7 +3932,7 @@ fn a_registration_awaiting_approval_is_explained(cx: &mut TestAppContext) {
     );
     let (_, json) = accessibility(&mut settings_cx);
     assert!(
-        json.contains("macOS asks for your approval"),
+        json.contains("Allow Pane in System Settings, under General > Login Items."),
         "the approval is explained, {json}"
     );
 }

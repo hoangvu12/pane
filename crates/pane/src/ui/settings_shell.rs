@@ -6,15 +6,17 @@
 //! (12px by 10px of padding, a 2px gap) holding the 34px search field and
 //! the 36px section items, and the page beside it, padded 26px above, 32px
 //! either side and 24px below. A page opens with its heading block — the
-//! 22px/600 heading over its 13px subtitle — and the Appearance page lays
-//! its controls and its preview out in two columns, 388px and 400px with
-//! 36px between them, which fill the canonical page exactly. The
-//! workbench's fixture draws that board.
+//! 22px/600 heading over its 13px subtitle — and the board's Appearance
+//! page lays its controls and its preview out in two columns, 388px and
+//! 400px with 36px between them, which fill the canonical page exactly.
+//! The workbench's fixture draws that board.
 //!
 //! Pane's own window keeps the board's titlebar and sidebar, and draws its
 //! pages its own way ([`content_viewport`], `ui::controls::page`): no
 //! heading block (the titlebar names the page), and sections of rows in
-//! raised cards, padded 20 above and 24 either side and below.
+//! raised cards, padded 20 above and 24 either side and below. It has no
+//! Appearance page and no preview: the theme and material are a section
+//! of the General page.
 //!
 //! The pieces return plain [`Div`]s. Identity, accessibility, focus,
 //! scrolling and every handler stay with the caller (the Settings window's
