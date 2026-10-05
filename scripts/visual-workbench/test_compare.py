@@ -428,5 +428,169 @@ class SettingsShell(unittest.TestCase):
         self.assertEqual(edges, (12, 61, 211, 34))
 
 
+class AppearanceControls(unittest.TestCase):
+    """The Appearance page's measures (#98)."""
+
+    PAGE = (22, 23, 26)
+    LIME = (201, 238, 106)
+
+    def track(self, chosen=0, count=3, x=20, y=20, w=388):
+        """A .segwrap at x,y: black 24% under a white 6% ring, its segments
+        3px in and 2px apart, the chosen one white 12%, each with a label
+        block in its middle; returns the image, the track and the
+        segments."""
+        image = Image.new("RGB", (w + 60, 80), self.PAGE)
+        draw = ImageDraw.Draw(image)
+        fill = over_black(self.PAGE, 0.24)
+        draw.rectangle((x, y, x + w - 1, y + 35), fill=over_white(fill, 0.06))
+        draw.rectangle((x + 1, y + 1, x + w - 2, y + 34), fill=fill)
+        width = (w - 6 - 2 * (count - 1)) / count
+        segments = []
+        for index in range(count):
+            left = x + 3 + index * (width + 2)
+            rect = (left, y + 3, width, 30)
+            if index == chosen:
+                draw.rectangle((round(left), y + 3, round(left + width) - 1, y + 32), fill=over_white(fill, 0.12))
+            label = (255, 255, 255) if index == chosen else (154, 155, 160)
+            middle = left + width / 2
+            draw.rectangle((round(middle - 12), y + 13, round(middle + 12), y + 21), fill=label)
+            segments.append({"rect": rect, "labelBox": (middle - 12, y + 9.5, 25, 17), "chosen": index == chosen,
+                             "hovered": False})
+        return image, (x, y, w, 36), segments
+
+    def test_a_track_measures_its_ring_box_and_black_fill(self):
+        image, rect, _ = self.track()
+        measured = compare.measure_track(image, rect)
+        self.assertEqual(measured["edges"], rect)
+        self.assertAlmostEqual(measured["alpha"], 0.24 * 255, delta=4)
+
+    @staticmethod
+    def ink(color):
+        return lambda fill: color
+
+    def test_the_chosen_segment_measures_its_wash_edges_and_label(self):
+        image, rect, segments = self.track(chosen=1)
+        chosen = compare.measure_segment(image, segments[1], self.ink((255, 255, 255)))
+        self.assertAlmostEqual(chosen["alpha"], 0.12 * 255, delta=1.5)
+        left, top, width, height = chosen["edges"]
+        self.assertEqual((top, height), (23, 30))
+        self.assertTrue(abs(left - segments[1]["rect"][0]) <= 1 and abs(width - 126) <= 1, chosen["edges"])
+        middle = segments[1]["rect"][0] + 63
+        self.assertAlmostEqual(chosen["label"]["center"], middle, delta=1)
+        rest = compare.measure_segment(image, segments[0], self.ink((154, 155, 160)))
+        self.assertAlmostEqual(rest["alpha"], 0, delta=0.5)
+        self.assertNotIn("edges", rest)
+
+    def shade_across(self, image, left, right):
+        """Shades image's page from left levels at its left edge to right at
+        its right, keeping every pixel's offset from the page: the
+        reference's glass behind a track."""
+        data = image.load()
+        for x in range(image.width):
+            shift = left + (right - left) * x / (image.width - 1) - self.PAGE[0]
+            for y in range(image.height):
+                data[x, y] = tuple(int(round(c + shift)) for c in data[x, y])
+
+    def test_a_track_over_a_shaded_page_keeps_its_ring_box(self):
+        # The reference's glass: 25 levels at the track's left, 38 at its
+        # right, which a single page read beside the left end lost.
+        image, rect, segments = self.track(chosen=1)
+        self.shade_across(image, 24, 40)
+        self.assertEqual(compare.measure_track(image, rect)["edges"], rect)
+        # Each segment against the track's fill just left of it.
+        far = compare.measure_segment(image, segments[2], self.ink((154, 155, 160)))
+        self.assertAlmostEqual(far["alpha"], 0, delta=1.5)
+        chosen = compare.measure_segment(image, segments[1], self.ink((255, 255, 255)))
+        self.assertAlmostEqual(chosen["alpha"], 0.12 * 255, delta=2.5)
+
+    def test_a_disabled_track_is_found_by_its_ring(self):
+        # At 40% the fill moves the page by 2 levels; the ring by 4.
+        image = Image.new("RGB", (448, 80), self.PAGE)
+        draw = ImageDraw.Draw(image)
+        fill = over_black(self.PAGE, 0.24 * 0.4)
+        draw.rectangle((20, 20, 407, 55), fill=over_white(fill, 0.06 * 0.4))
+        draw.rectangle((21, 21, 406, 54), fill=fill)
+        self.assertEqual(compare.measure_track(image, (20, 20, 388, 36))["edges"], (20, 20, 388, 36))
+
+    def test_an_overlays_limit_is_two_channel_levels_over_its_background(self):
+        self.assertAlmostEqual(compare.overlay_limit((25, 25, 25), False), 20.4, delta=0.1)
+        self.assertAlmostEqual(compare.overlay_limit((221, 221, 221), True), 15.0, delta=0.1)
+        self.assertAlmostEqual(compare.overlay_limit((19, 19, 19), True), 2.16, delta=0.01)
+        self.assertEqual(compare.overlay_limit(None, True), 2.0)
+
+    def test_the_light_caret_is_found_by_its_darkened_green(self):
+        image = Image.new("RGB", (60, 30), (237, 237, 238))
+        ImageDraw.Draw(image).rectangle((31, 5, 32, 21), fill=(92, 122, 23))
+        self.assertEqual(compare.caret_left(image, (30, 5, 1.5, 17)), 31)
+        # ClearType's fringes beside a glyph lean red or blue.
+        fringes = Image.new("RGB", (60, 30), (237, 237, 238))
+        ImageDraw.Draw(fringes).rectangle((31, 5, 31, 21), fill=(171, 111, 35))
+        ImageDraw.Draw(fringes).rectangle((32, 5, 32, 21), fill=(72, 143, 198))
+        self.assertIsNone(compare.caret_left(fringes, (30, 5, 1.5, 17)))
+
+    def test_a_miniature_row_follows_its_side_paddings_shade(self):
+        # The light miniature shades from its top and levels off at its
+        # first row; a selected row (black 8.6%) is read against the gap
+        # above it moved by what its side padding does down to the strip.
+        image = Image.new("RGB", (120, 80), (246, 246, 246))
+        data = image.load()
+        for y in range(0, 26):
+            for x in range(120):
+                data[x, y] = (230 + y * 16 // 26,) * 3
+        wash = over_black((246, 246, 246), 22 / 255)
+        ImageDraw.Draw(image).rectangle((10, 22, 109, 59), fill=wash)
+        found = compare.mini_row_wash(image, (10, 22, 100, 38), lighter=False)
+        self.assertAlmostEqual(found["alpha"], 22, delta=1.5)
+        # A backdrop darker mid-row than at its sides (the glass miniature)
+        # leaves an unwashed row unwashed.
+        glass = Image.new("RGB", (120, 80), (20, 21, 24))
+        ImageDraw.Draw(glass).rectangle((20, 0, 99, 79), fill=(18, 19, 22))
+        self.assertAlmostEqual(compare.mini_row_wash(glass, (10, 22, 100, 38))["alpha"], 0, delta=0.5)
+
+    def test_a_chosen_swatch_is_measured_with_its_rings(self):
+        image = Image.new("RGB", (120, 80), self.PAGE)
+        draw = ImageDraw.Draw(image)
+        draw.ellipse((16, 16, 53, 53), fill=self.LIME)        # the 2px ring, 4px out
+        draw.ellipse((18, 18, 51, 51), fill=(26, 27, 30))     # the 2px gap
+        draw.ellipse((20, 20, 49, 49), fill=self.LIME)        # the disc
+        edges = compare.measure_swatch(image, {"rect": (20, 20, 30, 30), "chosen": True})
+        self.assertTrue(abs(edges[0] - 16) <= 1 and abs(edges[2] - 38) <= 1, edges)
+
+    def test_a_toggle_measures_its_track_and_where_its_knob_begins(self):
+        image = Image.new("RGB", (120, 60), self.PAGE)
+        draw = ImageDraw.Draw(image)
+        draw.rounded_rectangle((40, 10, 79, 33), radius=12, fill=self.LIME)
+        draw.ellipse((59, 13, 76, 30), fill=(255, 255, 255))
+        measured = compare.measure_toggle(image, {"rect": (40, 10, 40, 24)})
+        self.assertEqual(measured["edges"][:3], (40, 10, 40))
+        self.assertAlmostEqual(measured["knob"], 59, delta=1)
+
+    def test_the_caret_is_found_by_its_accent(self):
+        image = Image.new("RGB", (60, 30), self.PAGE)
+        ImageDraw.Draw(image).rectangle((31, 5, 32, 21), fill=self.LIME)
+        self.assertEqual(compare.caret_left(image, (30, 5, 1.5, 17)), 31)
+        self.assertIsNone(compare.caret_left(Image.new("RGB", (60, 30), self.PAGE), (30, 5, 1.5, 17)))
+
+    def test_the_boards_state_takes_the_fixtures_shape(self):
+        rect = {"x": 10, "y": 20, "width": 30, "height": 18}
+        state = {
+            "labels": [{"text": "Material", "rect": rect, "opacity": 1}],
+            "tracks": [{"field": "material", "rect": rect, "opacity": 0.4, "background": "rgba(0, 0, 0, 0.24)",
+                        "segments": [{"label": "Solid", "rect": rect, "labelBox": rect, "chosen": True,
+                                      "hovered": False, "background": "rgba(255, 255, 255, 0.12)"}]}],
+            "descriptions": [], "swatches": [], "sliders": [], "toggles": [],
+        }
+        page = compare.reference_appearance(state)
+        self.assertEqual(page["tracks"][0]["segments"][0]["target"], "segment-solid")
+        self.assertEqual(page["tracks"][0]["opacity"], 0.4)
+        self.assertIsNone(page["preview"])
+        # Measuring a page that shows nothing finds nothing, without failing.
+        colors = {"title": (237, 237, 239), "muted": (142, 143, 148), "body": (163, 164, 169),
+                  "query": (243, 243, 245), "onText": (255, 255, 255), "hoverText": (237, 237, 239),
+                  "segmentText": (154, 155, 160)}
+        measured = compare.measure_appearance(Image.new("RGB", (80, 60), self.PAGE), page, colors)
+        self.assertIsNone(measured["labels"][0])
+
+
 if __name__ == "__main__":
     unittest.main()

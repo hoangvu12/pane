@@ -21,9 +21,10 @@
 //! [`pending_scenarios`] records the reference boards whose native
 //! scenarios do not exist yet, each with the ticket that will add them, so
 //! the workbench reports them as pending rather than silently passing
-//! them by. Store and the snap HUD stay source-only fixture references:
-//! their boards are catalogued in the research, and no production or
-//! fixture implementation is planned for them in this milestone.
+//! them by (none is left since the Appearance page, #98). Store and the
+//! snap HUD stay source-only fixture references: their boards are
+//! catalogued in the research, and no production or fixture
+//! implementation is planned for them in this milestone.
 //!
 //! The steps are the one description of a scenario both capture helpers
 //! follow — the native one against this window, the reference one against
@@ -66,13 +67,16 @@ use crate::app::{KEY_CONTEXT, action_button};
 use crate::features::actions_panel;
 use crate::features::clipboard_history;
 use crate::features::root_search::{self, search_header};
+use crate::features::settings::appearance;
 use crate::settings;
+use crate::ui::controls;
 use crate::ui::footer;
 use crate::ui::icon::{Glyph, IconTone, TileSize, tile_at};
 use crate::ui::input::bind_text_editing;
 use crate::ui::keycap::{self, CapMetrics, CapStyle};
-use crate::ui::material::Material;
+use crate::ui::material::{Material, MaterialMode};
 use crate::ui::pinned::{self, SlotContent};
+use crate::ui::preview::{self, PreviewContent, PreviewRow};
 use crate::ui::result_layouts::{self, AnswerCard, AnswerSide, HistoryRow, NoticeCopy, Suggestion};
 use crate::ui::result_row::{RowContent, RowMeta, result_row_with};
 use crate::ui::settings_shell::{self, SidebarItem};
@@ -1150,6 +1154,88 @@ const SCENARIOS: &[Scenario] = {
             steps: &[capture("narrow")],
         },
         Scenario {
+            name: "appearance-page",
+            description: "The Settings board's Appearance page: Material with Glass chosen and its note, the accent swatches, the blur and tint sliders, Density and the two toggles, beside the preview's stage and miniature launcher; then the pointer over Frost, whose label lightens (#98). The swatches, sliders, Frost, density and toggles are the board's, deferred in production (#100)",
+            family: Family::Settings,
+            client: SETTINGS_CLIENT,
+            reference: true,
+            board: Some("settings"),
+            theme: None,
+            frame: false,
+            rows: &[],
+            pins: &[],
+            steps: &[
+                capture("rest"),
+                point(SEGMENT_FROST),
+                capture("segment-hover"),
+            ],
+        },
+        Scenario {
+            name: "appearance-solid",
+            description: "A click on Solid: its segment takes the wash, its note replaces Glass's, the blur and tint sliders keep their values at the board's 40% disabled opacity, and the miniature takes the solid surface (#98)",
+            family: Family::Settings,
+            client: SETTINGS_CLIENT,
+            reference: true,
+            board: Some("settings"),
+            theme: None,
+            frame: false,
+            rows: &[],
+            pins: &[],
+            steps: &[click(SEGMENT_SOLID), capture("solid")],
+        },
+        Scenario {
+            name: "appearance-production",
+            description: "Production's own Appearance page through its composition: Theme (System, Light, Dark) and Material (Glass, Solid) with their descriptions, beside the preview in the appearance in effect (no reference counterpart: the board shows no theme choice)",
+            family: Family::Settings,
+            client: SETTINGS_CLIENT,
+            reference: false,
+            board: None,
+            theme: None,
+            frame: false,
+            rows: &[],
+            pins: &[],
+            steps: &[capture("production")],
+        },
+        Scenario {
+            name: "appearance-light",
+            description: "Production's Appearance page in the derived light palette: Light chosen, the preview light (no reference counterpart)",
+            family: Family::Settings,
+            client: SETTINGS_CLIENT,
+            reference: false,
+            board: None,
+            theme: Some("light"),
+            frame: false,
+            rows: &[],
+            pins: &[],
+            steps: &[capture("light")],
+        },
+        Scenario {
+            name: "appearance-override",
+            description: "Production's Appearance page under the run's development overrides: the notice naming them, both fields' labels and choices at the disabled opacity (no reference counterpart)",
+            family: Family::Settings,
+            client: SETTINGS_CLIENT,
+            reference: false,
+            board: None,
+            theme: None,
+            frame: false,
+            rows: &[],
+            pins: &[],
+            steps: &[capture("override")],
+        },
+        Scenario {
+            name: "appearance-narrow",
+            description: "Production's Appearance page at 760x520: the fields take the page's width and the preview wraps below them (no reference counterpart)",
+            family: Family::Settings,
+            client: SETTINGS_NARROW_CLIENT,
+            reference: false,
+            board: None,
+            theme: None,
+            frame: false,
+            rows: &[],
+            pins: &[],
+            steps: &[capture("narrow")],
+        },
+        Scenario {
             name: "empty-state",
             description: "The empty board: 'kubectx' matches nothing, so the notice heads the fallbacks, none selected — the board preselects the first, which Pane never does (#100) — until Down selects it; the board's store suggestions are fixture content",
             family: Family::Root,
@@ -1393,17 +1479,12 @@ pub(crate) struct PendingScenario {
 }
 
 /// The registered-but-pending scenarios: saved reference boards whose
-/// native fixtures later tickets add. Store and the snap HUD are
-/// deliberately absent — they stay source-only fixture references for
-/// this milestone (see the #90 specification's deferred capabilities).
+/// native fixtures later tickets add. None is left: the Appearance page
+/// (#98) was the last. Store and the snap HUD are deliberately absent —
+/// they stay source-only fixture references for this milestone (see the
+/// #90 specification's deferred capabilities).
 pub(crate) fn pending_scenarios() -> &'static [PendingScenario] {
-    &[PendingScenario {
-        name: "appearance-page",
-        board: "settings",
-        ticket: "https://github.com/hoangvu12/pane/issues/98",
-        description: "The Appearance page's controls and live preview",
-        client: SETTINGS_CLIENT,
-    }]
+    &[]
 }
 
 /// One key sequence the keycap scenario renders: a production binding,
@@ -1536,6 +1617,194 @@ const SETTINGS_SUBTITLE: &str =
     "Changes apply instantly. Themes from the Plugin Store show up here too.";
 const SETTINGS_ASIDE: &str = "Preview";
 
+/// Which Appearance page a Settings scenario draws, if any (#98).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AppearancePage {
+    /// The board's own page: its fixture content — every control the
+    /// board shows, the advanced ones #100 defers among them — through the
+    /// production control families.
+    Board,
+    /// Production's page, through the page's own composition
+    /// (`features::settings::appearance::compose`): the theme and the
+    /// material Pane has, offered — or, `overridden`, disabled under the
+    /// run's development overrides, with the notice naming them.
+    Production { overridden: bool },
+}
+
+/// The Appearance page the scenario `name` draws, if any.
+pub(crate) fn appearance_page(name: &str) -> Option<AppearancePage> {
+    match name {
+        "appearance-page" | "appearance-solid" => Some(AppearancePage::Board),
+        "appearance-production" | "appearance-light" | "appearance-narrow" => {
+            Some(AppearancePage::Production { overridden: false })
+        }
+        "appearance-override" => Some(AppearancePage::Production { overridden: true }),
+        _ => None,
+    }
+}
+
+/// The board's materials, in segment order, each with the note the board
+/// shows while it is chosen. Frost is the board's alone (#100).
+pub(crate) const BOARD_MATERIALS: [(&str, &str); 3] = [
+    ("Glass", "Dark, blurred glass that picks up your wallpaper."),
+    ("Frost", "Lighter, brighter glass for pale wallpapers."),
+    (
+        "Solid",
+        "No transparency. Pane switches to this when your OS asks to reduce transparency.",
+    ),
+];
+
+/// The board's Solid, which dims its sliders (an index into
+/// [`BOARD_MATERIALS`]).
+const BOARD_SOLID: usize = 2;
+
+/// The board's accent swatches (`0xRRGGBBAA`), Lime chosen.
+pub(crate) const BOARD_SWATCHES: [(&str, u32); 4] = [
+    ("Lime", 0xC9EE6AFF),
+    ("Ice", 0x8FD3FFFF),
+    ("Amber", 0xFFC46BFF),
+    ("Lilac", 0xC3B2FFFF),
+];
+
+/// The board's sliders: label, the value it shows, and where the value
+/// lies along the range (blur 44 of 0–60; tint 70 of 55–95).
+const BOARD_BLUR: (&str, &str, f32) = ("Blur", "44 px", 44. / 60.);
+const BOARD_TINT: (&str, &str, f32) = ("Tint", "70%", 15. / 40.);
+const BOARD_TINT_NOTE: &str =
+    "Tint never drops below 55% so text stays readable on bright wallpapers.";
+
+/// The board's densities, Default chosen.
+pub(crate) const BOARD_DENSITIES: [&str; 3] = ["Compact", "Default", "Roomy"];
+const BOARD_DENSITY: usize = 1;
+
+/// The board's toggles, both on.
+pub(crate) const BOARD_TOGGLES: [&str; 2] = ["Show pinned slots", "Show tips in the footer"];
+
+/// The link under the board's preview.
+const BOARD_LINK: &str = "Find themes in the Plugin Store";
+
+/// The board's miniature: its rows (title, kind, tile) with the first
+/// selected, and its footer's tip. Its file row's tile is the board's own
+/// slate tone, drawn as the neutral command tile.
+const BOARD_PREVIEW_ROWS: [(&str, &str, IconTone, Glyph); 4] = [
+    ("Figma", "Application", IconTone::Pen, Glyph::Pen),
+    (
+        "Configure Pane",
+        "Command",
+        IconTone::Command,
+        Glyph::Sliders,
+    ),
+    ("figma-tokens.json", "File", IconTone::Command, Glyph::File),
+    (
+        "Recent Figma Files",
+        "Command",
+        IconTone::Command,
+        Glyph::File,
+    ),
+];
+const BOARD_TIP: &str = "Tab searches inside a plugin";
+
+/// The segment a point or click step names: `segment-<label>`, lower case.
+pub(crate) fn segment_target(label: &str) -> String {
+    format!("segment-{}", label.to_lowercase())
+}
+
+/// The board's Frost and Solid segments, as steps name them.
+pub(crate) const SEGMENT_FROST: &str = "segment-frost";
+pub(crate) const SEGMENT_SOLID: &str = "segment-solid";
+
+/// The board's miniature, with the effective invoke binding on its
+/// action.
+fn board_preview(keyboard: &pane_core::Keyboard) -> PreviewContent {
+    PreviewContent {
+        query: "fig".into(),
+        pins: vec![
+            (IconTone::Term, Glyph::Prompt),
+            (IconTone::Code, Glyph::Code),
+            (IconTone::Web, Glyph::Globe),
+            (IconTone::Music, Glyph::Music),
+        ],
+        rows: BOARD_PREVIEW_ROWS
+            .iter()
+            .enumerate()
+            .map(|(index, &(title, kind, tone, glyph))| PreviewRow {
+                title: title.into(),
+                kind: kind.into(),
+                tone,
+                glyph,
+                selected: index == 0,
+            })
+            .collect(),
+        tip: Some(BOARD_TIP.into()),
+        action: "Open".into(),
+        keys: crate::keyboard::binding_keys(keyboard.binding(KeyboardAction::InvokeSelectedAction)),
+    }
+}
+
+/// What production's Appearance page shows in this run: the theme and
+/// material in effect, and the descriptions of the run's overrides.
+struct ProductionAppearance {
+    theme: pane_core::ThemePreference,
+    material: pane_core::MaterialPreference,
+    overrides: Vec<String>,
+    preview: PreviewContent,
+    surface: Material,
+}
+
+impl ProductionAppearance {
+    fn read(cx: &App) -> ProductionAppearance {
+        let state = settings::shared(cx).read(cx);
+        let keyboard = settings::keyboard_of(cx);
+        let invoke = keyboard.binding(KeyboardAction::InvokeSelectedAction);
+        let open_actions = keyboard.binding(KeyboardAction::OpenActions);
+        ProductionAppearance {
+            theme: state.theme_preference(),
+            material: state.material_preference(),
+            overrides: state.override_descriptions(),
+            preview: appearance::preview_content(
+                crate::keyboard::binding_keys(invoke),
+                &crate::keyboard::binding_keys(open_actions).name(),
+            ),
+            surface: settings::visuals(cx).material,
+        }
+    }
+}
+
+/// Production's Appearance page (#98), through the page's own
+/// composition and parts, in the theme and material in effect: its
+/// segments offered — or, `overridden`, under the notice naming the run's
+/// overrides, disabled — but taking no clicks here (the window tests drive
+/// the real page's).
+fn render_appearance_production(
+    overridden: bool,
+    theme: &Theme,
+    cx: &App,
+) -> gpui::Stateful<gpui::Div> {
+    let page = ProductionAppearance::read(cx);
+    let offered = !overridden;
+    let themes = appearance::THEMES
+        .iter()
+        .map(|&(preference, name, _, selector)| {
+            controls::segment(name, preference == page.theme, offered, theme).id(selector)
+        })
+        .collect();
+    let materials = appearance::MATERIALS
+        .iter()
+        .map(|&(preference, name, selector)| {
+            controls::segment(name, preference == page.material, offered, theme).id(selector)
+        })
+        .collect();
+    let fields = appearance::fields(
+        (themes, materials),
+        (page.theme, page.material),
+        offered,
+        theme,
+    );
+    let notice = overridden.then(|| appearance::override_notice(&page.overrides, theme));
+    let stage = appearance::preview_stage(&page.preview, page.surface, page.theme, theme);
+    appearance::compose(notice, fields, None, stage, theme)
+}
+
 /// A deliberate fault the workbench injects to prove its comparison is
 /// sensitive to exactly the errors the port cares about. The perturbed
 /// fixture renders with one visual value wrong; the comparison must fail,
@@ -1558,6 +1827,9 @@ pub enum Perturbation {
     /// The selected sidebar section's wash is filled with a wrong color:
     /// the Settings shell's own selection (#97).
     NavSelectedFill,
+    /// The chosen segment's wash is filled with a wrong color: the
+    /// Appearance page's segmented choice (#98).
+    SegmentOnFill,
 }
 
 /// Every perturbation, by the name the runner passes.
@@ -1566,6 +1838,7 @@ const PERTURBATIONS: &[(&str, Perturbation)] = &[
     ("selected-fill", Perturbation::SelectedFill),
     ("hover-fill", Perturbation::HoverFill),
     ("nav-selected-fill", Perturbation::NavSelectedFill),
+    ("segment-on-fill", Perturbation::SegmentOnFill),
 ];
 
 impl Perturbation {
@@ -1612,6 +1885,10 @@ impl Perturbation {
             Perturbation::NavSelectedFill => {
                 theme.nav_selected = gpui::rgb_to_hsla(gpui::rgba(0xFFFFFF40))
             }
+            // A chosen segment at white 30% against the authored 12%.
+            Perturbation::SegmentOnFill => {
+                theme.controls.segment_on = gpui::rgb_to_hsla(gpui::rgba(0xFFFFFF4D))
+            }
         }
     }
 }
@@ -1642,7 +1919,8 @@ pub enum Command {
 
 const USAGE: &str = "usage: pane-visual-fixture --scenario <name> --manifest <file> \
     [--data-dir <dir>] [--theme dark|light] [--material glass|opaque] \
-    [--perturb none|row-padding-plus-4|selected-fill|hover-fill|nav-selected-fill]\n       \
+    [--perturb none|row-padding-plus-4|selected-fill|hover-fill|nav-selected-fill|\
+    segment-on-fill]\n       \
     pane-visual-fixture --registry <file>";
 
 /// Parses the fixture binary's arguments (without the program name).
@@ -2891,6 +3169,9 @@ pub(crate) struct FixtureWindow {
     /// A clipboard scenario's split view (#102): its records, query, tab
     /// and selection; the query field above is its search.
     clip: Option<ClipState>,
+    /// The Appearance board's chosen material, an index into
+    /// [`BOARD_MATERIALS`] (#98): a click on a segment changes it.
+    board_material: usize,
 }
 
 impl FixtureWindow {
@@ -2944,6 +3225,7 @@ impl FixtureWindow {
             pointer: None,
             filter,
             clip: (scenario.family == Family::Clipboard).then(|| ClipState::new(scenario)),
+            board_material: 0,
         }
     }
 
@@ -3095,11 +3377,16 @@ impl FixtureWindow {
     /// The Settings board's shell over the board's own data, through the
     /// Settings window's own composition (`features::settings::compose`):
     /// the titlebar, the sidebar with its search field and section items,
-    /// and the page with its heading block and two columns
-    /// (`ui::settings_shell`), on the Settings panel. The page shows the
-    /// board's heading and its preview column's caption only: the
-    /// Appearance controls and preview are #98's.
-    fn render_settings(&self, theme: &Theme, material: Material) -> gpui::Div {
+    /// and the page (`ui::settings_shell`), on the Settings panel. The
+    /// shell's scenarios show the board's heading and its preview column's
+    /// caption only; the Appearance scenarios show the page itself (#98:
+    /// see [`appearance_page`]).
+    fn render_settings(
+        &self,
+        theme: &Theme,
+        material: Material,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
         let sections = SETTINGS_SECTIONS
             .iter()
             .enumerate()
@@ -3121,12 +3408,130 @@ impl FixtureWindow {
             settings_shell::search_field(&self.query, settings_shell::SEARCH_PLACEHOLDER, theme);
         let sections = settings_shell::section_list(theme).children(sections);
         let sidebar = settings_shell::sidebar(search, sections, theme);
-        let header =
-            settings_shell::page_header(SETTINGS_HEADING, Some(SETTINGS_SUBTITLE.into()), theme);
-        let aside = settings_shell::aside(SETTINGS_ASIDE, theme);
-        let columns = settings_shell::page_columns(header, aside, theme);
-        let page = settings_shell::page_viewport(theme).child(columns);
+        let page = settings_shell::page_viewport(theme);
+        let page = match appearance_page(self.scenario.name) {
+            Some(AppearancePage::Board) => page.child(self.render_appearance_board(theme, cx)),
+            Some(AppearancePage::Production { overridden }) => {
+                page.child(render_appearance_production(overridden, theme, cx))
+            }
+            None => {
+                let header = settings_shell::page_header(
+                    SETTINGS_HEADING,
+                    Some(SETTINGS_SUBTITLE.into()),
+                    theme,
+                );
+                let aside = settings_shell::aside(SETTINGS_ASIDE, theme);
+                page.child(settings_shell::page_columns(header, aside, theme))
+            }
+        };
         crate::features::settings::compose(div(), sidebar, page, theme, material)
+    }
+
+    /// The Appearance board's page (#98): its fixture content — the
+    /// Material choice (the board's Glass, Frost and Solid), its accent
+    /// swatches, the blur and tint sliders, Density and the two toggles —
+    /// through the production control families (`ui::controls`), beside
+    /// the preview's stage and miniature (`ui::preview`) and the board's
+    /// store link. A click on a material segment chooses it, as the
+    /// board's does: Solid dims the sliders to the board's 40% (keeping
+    /// their values) and puts the miniature on the solid surface. The
+    /// controls past the Material choice are the board's deferred ones
+    /// (#100): they do nothing here either.
+    fn render_appearance_board(
+        &self,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let chosen = self.board_material;
+        let solid = chosen == BOARD_SOLID;
+        let dimmed = |field: gpui::Div| {
+            field.when(solid, |field| {
+                field.opacity(theme.geometry.controls.disabled_opacity)
+            })
+        };
+        let materials: Vec<_> = BOARD_MATERIALS
+            .iter()
+            .enumerate()
+            .map(|(index, &(name, _))| {
+                controls::segment(name, index == chosen, true, theme)
+                    .id(SharedString::from(segment_target(name)))
+                    .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                        this.board_material = index;
+                        cx.notify();
+                    }))
+            })
+            .collect();
+        let material = controls::field(theme)
+            .child(controls::field_label("Material", theme))
+            .child(controls::segment_track(theme).children(materials))
+            .child(controls::field_description(
+                BOARD_MATERIALS[chosen].1,
+                theme.text_muted,
+                theme,
+            ));
+        let swatches = BOARD_SWATCHES
+            .iter()
+            .enumerate()
+            .map(|(index, &(_, fill))| {
+                controls::swatch(gpui::rgb_to_hsla(gpui::rgba(fill)), index == 0, theme)
+            });
+        let accent = controls::field(theme)
+            .child(controls::field_label("Accent", theme))
+            .child(
+                controls::swatch_row(theme)
+                    .children(swatches)
+                    .child(controls::swatch_add(theme)),
+            );
+        let slider = |(label, value, fraction): (&str, &str, f32)| {
+            dimmed(controls::field(theme))
+                .child(controls::slider_header(label, value, theme))
+                .child(controls::slider(fraction, theme))
+        };
+        let blur = slider(BOARD_BLUR);
+        let tint = slider(BOARD_TINT).child(controls::field_description(
+            BOARD_TINT_NOTE,
+            theme.text_muted,
+            theme,
+        ));
+        let densities = BOARD_DENSITIES.iter().enumerate().map(|(index, &name)| {
+            controls::segment(name, index == BOARD_DENSITY, true, theme)
+                .id(SharedString::from(segment_target(name)))
+        });
+        let density = controls::field(theme)
+            .child(controls::field_label("Density", theme))
+            .child(controls::segment_track(theme).children(densities));
+        let toggles = controls::toggle_list().children(
+            BOARD_TOGGLES
+                .iter()
+                .map(|&label| controls::toggle_row(label, controls::toggle(true, theme), theme)),
+        );
+        let column = controls::column(theme)
+            .child(settings_shell::page_header(
+                SETTINGS_HEADING,
+                Some(SETTINGS_SUBTITLE.into()),
+                theme,
+            ))
+            .child(material)
+            .child(accent)
+            .child(blur)
+            .child(tint)
+            .child(density)
+            .child(toggles);
+        // The board's Glass and Frost are glass; its Solid, the solid
+        // surface.
+        let surface = Material::new(if solid {
+            MaterialMode::Opaque
+        } else {
+            MaterialMode::Glass
+        });
+        let content = board_preview(&settings::keyboard_of(cx));
+        let stage = preview::stage(preview::miniature(&content, surface, theme), theme);
+        let aside = settings_shell::aside(SETTINGS_ASIDE, theme)
+            .child(stage)
+            .child(preview::link(BOARD_LINK, theme));
+        div()
+            .id("appearance")
+            .child(settings_shell::page_columns(column, aside, theme))
     }
 
     /// A result board's extension suggestions under their label (#96),
@@ -3413,7 +3818,7 @@ impl Render for FixtureWindow {
             Family::Root => self.render_root(&theme, cx),
             Family::Clipboard => self.render_clipboard(&theme, cx),
             // The Settings window's composition brings its own panel.
-            Family::Settings => return self.render_settings(&theme, material),
+            Family::Settings => return self.render_settings(&theme, material, cx),
         };
         material.panel(&theme, content)
     }
@@ -3447,6 +3852,9 @@ struct Manifest {
     /// The Settings shell, for the Settings family's scenarios.
     #[serde(skip_serializing_if = "Option::is_none")]
     settings: Option<DeclaredSettings>,
+    /// The Appearance page, capture by capture, for its scenarios (#98).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    appearance_page: Vec<DeclaredAppearance>,
     fonts: Vec<FontRecord>,
     /// How the text system resolved each embedded face (see
     /// [`FontResolution`]).
@@ -4412,13 +4820,13 @@ fn settings_frame(theme: &Theme, client: (f32, f32)) -> SettingsFrame {
         x: left,
         y: top,
         width: column,
-        height: f(typography.heading_size) * typography.line_height,
+        height: f(typography.settings.heading.line_height),
     };
     let aside = side_by_side.then(|| Rect {
         x: left + column + gap,
         y: top,
         width: aside_width,
-        height: f(typography.settings_caption_size) * typography.line_height,
+        height: f(typography.settings.caption.line_height),
     });
     SettingsFrame {
         titlebar,
@@ -4606,7 +5014,7 @@ fn declared_settings(
         text: SETTINGS_SUBTITLE.into(),
         rect: Rect {
             y: frame.subtitle_top,
-            height: line(typography.row_subtitle_size),
+            height: f(typography.settings.subtitle.line_height),
             ..frame.heading
         },
     };
@@ -4673,6 +5081,893 @@ fn declared_settings(
     }
 }
 
+// ------------------------------------------------- the Appearance page (#98)
+
+/// The Appearance page as a capture declares it (#98): where each part
+/// lies, in the state the capture shows, with the colors it is drawn in.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeclaredAppearance {
+    capture: &'static str,
+    /// "board" (the reference's page) or "production" (Pane's).
+    variant: &'static str,
+    /// The controls column.
+    column: Rect,
+    /// The field labels, top to bottom.
+    labels: Vec<DeclaredLine>,
+    /// The segmented choices.
+    tracks: Vec<DeclaredTrack>,
+    /// The fields' descriptions, notices and notes: each first line's box.
+    descriptions: Vec<DeclaredLine>,
+    swatches: Vec<DeclaredSwatch>,
+    sliders: Vec<DeclaredSlider>,
+    toggles: Vec<DeclaredToggle>,
+    /// The preview, where the page holds it beside the controls.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preview: Option<DeclaredMiniature>,
+    /// The board's link under the preview.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    link: Option<DeclaredText>,
+    colors: AppearanceColors,
+}
+
+/// A line of text: what it says, its first line's box, its color and
+/// the opacity its field is drawn at.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeclaredLine {
+    text: String,
+    rect: Rect,
+    color: Hex,
+    opacity: f32,
+}
+
+/// A segmented choice: its track, the opacity its field is drawn at, and
+/// its segments.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeclaredTrack {
+    field: &'static str,
+    rect: Rect,
+    opacity: f32,
+    segments: Vec<DeclaredSegment>,
+}
+
+/// One segment: its label, the target a step names it by, its box, its
+/// label's line box (centered in it), and its state.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeclaredSegment {
+    label: &'static str,
+    target: String,
+    rect: Rect,
+    label_box: Rect,
+    chosen: bool,
+    hovered: bool,
+}
+
+/// One accent swatch: its disc (the chosen one's rings reach 4px past it).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeclaredSwatch {
+    name: &'static str,
+    rect: Rect,
+    chosen: bool,
+}
+
+/// One slider: its label, its value (right-aligned), its box and its
+/// field's opacity.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeclaredSlider {
+    label: DeclaredLine,
+    value: DeclaredText,
+    rect: Rect,
+    opacity: f32,
+}
+
+/// One toggle row: its label's line box, the toggle and its knob.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeclaredToggle {
+    label: DeclaredText,
+    rect: Rect,
+    knob: Rect,
+    on: bool,
+}
+
+/// The preview: the column's caption, the stage, the miniature and its
+/// parts, and whether it shows the glass tint.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeclaredMiniature {
+    caption: Rect,
+    stage: Rect,
+    panel: Rect,
+    search: Rect,
+    query: DeclaredText,
+    caret: Rect,
+    pins: Vec<Rect>,
+    rows: Vec<DeclaredMiniRow>,
+    footer: Rect,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tip: Option<DeclaredText>,
+    keys: Rect,
+    glass: bool,
+}
+
+/// One row of the miniature: its title's and kind's line boxes, its box,
+/// its tile and whether it is selected.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeclaredMiniRow {
+    title: DeclaredText,
+    kind: DeclaredText,
+    rect: Rect,
+    tile: Rect,
+    selected: bool,
+}
+
+/// The colors the Appearance page paints with, as the theme in force
+/// holds them.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppearanceColors {
+    segment_track: Hex,
+    segment_edge: Hex,
+    segment_on: Hex,
+    segment_text: Hex,
+    segment_hover_text: Hex,
+    segment_on_text: Hex,
+    title: Hex,
+    muted: Hex,
+    body: Hex,
+    query: Hex,
+    accent: Hex,
+    footer_tint: Hex,
+    preview_row_selected: Hex,
+    preview_pin: Hex,
+    preview_stage_edge: Hex,
+}
+
+/// The state an Appearance capture shows: the board's chosen material (an
+/// index into [`BOARD_MATERIALS`]) and the segment under the pointer.
+#[derive(Clone, Copy, Debug, Default)]
+struct AppearanceState {
+    material: usize,
+    hovered: Option<&'static str>,
+}
+
+/// How many lines `text` wraps to in `width` at `size` and `weight`, word
+/// by word, as the text system wraps a paragraph.
+fn wrapped_lines(
+    window: &Window,
+    theme: &Theme,
+    text: &str,
+    (size, weight): (Pixels, FontWeight),
+    width: f32,
+) -> usize {
+    let mut lines = 1;
+    let mut line = String::new();
+    for word in text.split(' ') {
+        let candidate = if line.is_empty() {
+            word.to_owned()
+        } else {
+            format!("{line} {word}")
+        };
+        if !line.is_empty() && shaped_width(window, theme, &candidate, size, weight) > width {
+            lines += 1;
+            line = word.to_owned();
+        } else {
+            line = candidate;
+        }
+    }
+    lines
+}
+
+/// `count` segments in `track`, as `ui::controls` lays them out: equal
+/// shares of the track inside its padding, the segment gap between them.
+fn segment_rects(theme: &Theme, track: Rect, count: usize) -> Vec<Rect> {
+    let controls = &theme.geometry.controls;
+    let padding = f32::from(controls.track_padding);
+    let gap = f32::from(controls.segment_gap);
+    let width = (track.width - 2. * padding - (count as f32 - 1.) * gap) / count as f32;
+    (0..count)
+        .map(|index| Rect {
+            x: track.x + padding + index as f32 * (width + gap),
+            y: track.y + padding,
+            width,
+            height: f32::from(controls.segment_height),
+        })
+        .collect()
+}
+
+/// The preview's geometry from the aside's top left, as `ui::preview`
+/// lays it out: the caption, the stage, the miniature centered on it, its
+/// search line, its pinned slots (`pins` of them), its rows (`rows`) and
+/// its footer.
+struct MiniatureFrame {
+    caption: Rect,
+    stage: Rect,
+    panel: Rect,
+    search: Rect,
+    pins: Vec<Rect>,
+    rows: Vec<Rect>,
+    footer: Rect,
+}
+
+fn miniature_frame(theme: &Theme, (x, y): (f32, f32), pins: usize, rows: usize) -> MiniatureFrame {
+    let settings = &theme.geometry.settings;
+    let preview = &theme.geometry.preview;
+    let f = f32::from;
+    let caption = Rect {
+        x,
+        y,
+        width: f(settings.aside_width),
+        height: f(theme.typography.settings.caption.line_height),
+    };
+    let stage = Rect {
+        y: y + caption.height + f(settings.aside_gap),
+        height: f(preview.stage_height),
+        ..caption
+    };
+    let panel_x = stage.x + (stage.width - f(preview.panel_width)) / 2.;
+    let panel_y = stage.y + f(preview.stage_padding_top);
+    let search = Rect {
+        x: panel_x,
+        y: panel_y,
+        width: f(preview.panel_width),
+        height: f(preview.search_height),
+    };
+    let inner_x = panel_x + f(preview.body_padding);
+    let inner_width = search.width - 2. * f(preview.body_padding);
+    let mut top = search.y + search.height + f(preview.body_padding);
+    let mut pin_rects = Vec::new();
+    if pins > 0 {
+        let padding = f(preview.pins_padding_x);
+        let gap = f(preview.pins_gap);
+        let width = (inner_width - 2. * padding - (pins as f32 - 1.) * gap) / pins as f32;
+        pin_rects = (0..pins)
+            .map(|index| Rect {
+                x: inner_x + padding + index as f32 * (width + gap),
+                y: top + f(preview.pins_padding_top),
+                width,
+                height: f(preview.pin_height),
+            })
+            .collect();
+        top += f(preview.pins_padding_top)
+            + f(preview.pin_height)
+            + f(preview.pins_padding_bottom)
+            + f(preview.body_gap);
+    }
+    let step = f(preview.row_height) + f(preview.body_gap);
+    let row_rects: Vec<Rect> = (0..rows)
+        .map(|index| Rect {
+            x: inner_x,
+            y: top + index as f32 * step,
+            width: inner_width,
+            height: f(preview.row_height),
+        })
+        .collect();
+    let rows_bottom = row_rects.last().map_or(top, |row| row.y + row.height);
+    let body_bottom = rows_bottom + f(preview.body_padding);
+    let footer = Rect {
+        x: panel_x,
+        y: body_bottom,
+        width: search.width,
+        height: f(preview.footer_height),
+    };
+    MiniatureFrame {
+        caption,
+        stage,
+        panel: Rect {
+            height: footer.y + footer.height - panel_y,
+            ..search
+        },
+        search,
+        pins: pin_rects,
+        rows: row_rects,
+        footer,
+    }
+}
+
+/// The miniature showing `content` from the aside's top left `origin`,
+/// with its text placed by the widths the text system shapes.
+fn declared_miniature(
+    window: &Window,
+    theme: &Theme,
+    origin: (f32, f32),
+    content: &PreviewContent,
+    glass: bool,
+) -> DeclaredMiniature {
+    let preview = &theme.geometry.preview;
+    let typography = &theme.typography;
+    let lines = &typography.settings;
+    let f = f32::from;
+    let frame = miniature_frame(theme, origin, content.pins.len(), content.rows.len());
+    // A line box of `size` centered in a box `height` high from `top`.
+    let centered = |top: f32, height: f32, line: Pixels| top + (height - f(line)) / 2.;
+    // The search line's content sits above its 1px rule.
+    let search_inner = frame.search.height - 1.;
+    let query_width = shaped_width(
+        window,
+        theme,
+        &content.query,
+        lines.preview_query.size,
+        typography.regular,
+    );
+    let query = DeclaredText {
+        text: content.query.to_string(),
+        rect: Rect {
+            x: frame.search.x
+                + f(preview.search_padding_x)
+                + f(preview.search_glyph)
+                + f(preview.search_gap),
+            y: centered(
+                frame.search.y,
+                search_inner,
+                lines.preview_query.line_height,
+            ),
+            width: query_width,
+            height: f(lines.preview_query.line_height),
+        },
+    };
+    let caret = Rect {
+        x: query.rect.x + query_width + f(preview.search_gap) - f(preview.caret_pull),
+        y: centered(frame.search.y, search_inner, preview.caret_height),
+        width: f(preview.caret_width),
+        height: f(preview.caret_height),
+    };
+    let rows = content
+        .rows
+        .iter()
+        .zip(&frame.rows)
+        .map(|(row, &rect)| {
+            let tile = f(preview.row_tile.size);
+            let title_width = shaped_width(
+                window,
+                theme,
+                &row.title,
+                lines.preview_title.size,
+                typography.medium,
+            );
+            let kind_width = shaped_width(
+                window,
+                theme,
+                &row.kind,
+                lines.preview_small.size,
+                typography.regular,
+            );
+            let left = rect.x + f(preview.row_padding_x);
+            DeclaredMiniRow {
+                title: DeclaredText {
+                    text: row.title.to_string(),
+                    rect: Rect {
+                        x: left + tile + f(preview.row_gap),
+                        y: centered(rect.y, rect.height, lines.preview_title.line_height),
+                        width: title_width,
+                        height: f(lines.preview_title.line_height),
+                    },
+                },
+                kind: DeclaredText {
+                    text: row.kind.to_string(),
+                    rect: Rect {
+                        x: rect.x + rect.width - f(preview.row_padding_x) - kind_width,
+                        y: centered(rect.y, rect.height, lines.preview_small.line_height),
+                        width: kind_width,
+                        height: f(lines.preview_small.line_height),
+                    },
+                },
+                rect,
+                tile: Rect {
+                    x: left,
+                    y: centered(rect.y, rect.height, preview.row_tile.size),
+                    width: tile,
+                    height: tile,
+                },
+                selected: row.selected,
+            }
+        })
+        .collect();
+    // The footer's content sits below its 1px rule.
+    let footer_top = frame.footer.y + 1.;
+    let footer_inner = frame.footer.height - 1.;
+    let tip = content.tip.as_ref().map(|tip| DeclaredText {
+        text: tip.to_string(),
+        rect: Rect {
+            x: frame.footer.x + f(preview.footer_padding_left),
+            y: centered(footer_top, footer_inner, lines.preview_small.line_height),
+            width: shaped_width(
+                window,
+                theme,
+                tip,
+                lines.preview_small.size,
+                typography.regular,
+            ),
+            height: f(lines.preview_small.line_height),
+        },
+    });
+    let keys_wide = keys_width(window, theme, &content.keys, CapStyle::Accent);
+    let keys = Rect {
+        x: frame.footer.x + frame.footer.width - f(preview.footer_padding_right) - keys_wide,
+        y: centered(footer_top, footer_inner, theme.geometry.keycap_height),
+        width: keys_wide,
+        height: f(theme.geometry.keycap_height),
+    };
+    DeclaredMiniature {
+        caption: frame.caption,
+        stage: frame.stage,
+        panel: frame.panel,
+        search: frame.search,
+        query,
+        caret,
+        pins: frame.pins,
+        rows,
+        footer: frame.footer,
+        tip,
+        keys,
+        glass,
+    }
+}
+
+/// Lays the Appearance page's controls column out, top to bottom, as
+/// `ui::controls` stacks it: a cursor down the column that each part
+/// advances past itself.
+struct AppearanceColumn<'a> {
+    window: &'a Window,
+    theme: &'a Theme,
+    x: f32,
+    width: f32,
+    y: f32,
+    labels: Vec<DeclaredLine>,
+    tracks: Vec<DeclaredTrack>,
+    descriptions: Vec<DeclaredLine>,
+}
+
+impl AppearanceColumn<'_> {
+    /// A field's label at `opacity`, then the field's gap.
+    fn label(&mut self, text: &str, opacity: f32) {
+        let typography = &self.theme.typography;
+        let line = typography.settings.field_label;
+        let width = shaped_width(self.window, self.theme, text, line.size, typography.medium);
+        self.labels.push(DeclaredLine {
+            text: text.into(),
+            rect: Rect {
+                x: self.x,
+                y: self.y,
+                width,
+                height: f32::from(line.line_height),
+            },
+            color: Hex(self.theme.text_title),
+            opacity,
+        });
+        self.y += f32::from(line.line_height) + f32::from(self.theme.geometry.controls.field_gap);
+    }
+
+    /// A segmented choice of `labels` for `field`, the one at `chosen`
+    /// chosen, the one named `hovered` under the pointer.
+    fn track(
+        &mut self,
+        field: &'static str,
+        labels: &[&'static str],
+        (chosen, hovered): (usize, Option<&'static str>),
+        opacity: f32,
+    ) {
+        let theme = self.theme;
+        let controls = &theme.geometry.controls;
+        let line = theme.typography.settings.segment;
+        let rect = Rect {
+            x: self.x,
+            y: self.y,
+            width: self.width,
+            height: f32::from(controls.segment_height) + 2. * f32::from(controls.track_padding),
+        };
+        let segments = labels
+            .iter()
+            .zip(segment_rects(theme, rect, labels.len()))
+            .enumerate()
+            .map(|(index, (&label, segment))| {
+                let width = shaped_width(
+                    self.window,
+                    theme,
+                    label,
+                    line.size,
+                    theme.typography.medium,
+                );
+                DeclaredSegment {
+                    label,
+                    target: segment_target(label),
+                    rect: segment,
+                    label_box: Rect {
+                        x: segment.x + (segment.width - width) / 2.,
+                        y: segment.y + (segment.height - f32::from(line.line_height)) / 2.,
+                        width,
+                        height: f32::from(line.line_height),
+                    },
+                    chosen: index == chosen,
+                    hovered: hovered == Some(label),
+                }
+            })
+            .collect();
+        self.tracks.push(DeclaredTrack {
+            field,
+            rect,
+            opacity,
+            segments,
+        });
+        self.y += rect.height;
+    }
+
+    /// A description under a control (the field's gap above it), or a
+    /// notice of its own (`gap` false), in `color` at `opacity`.
+    fn description(&mut self, text: &str, color: Hsla, opacity: f32, gap: bool) {
+        let theme = self.theme;
+        let line = theme.typography.settings.field_description;
+        if gap {
+            self.y += f32::from(theme.geometry.controls.field_gap);
+        }
+        let weight = (line.size, theme.typography.regular);
+        let lines = wrapped_lines(self.window, theme, text, weight, self.width);
+        self.descriptions.push(DeclaredLine {
+            text: text.into(),
+            rect: Rect {
+                x: self.x,
+                y: self.y,
+                width: self.width,
+                height: f32::from(line.line_height),
+            },
+            color: Hex(color),
+            opacity,
+        });
+        self.y += lines as f32 * f32::from(line.line_height);
+    }
+
+    /// The gap between field groups.
+    fn next_group(&mut self) {
+        self.y += f32::from(self.theme.geometry.controls.group_gap);
+    }
+}
+
+/// The Appearance page `page` shows in a client of `client` size, in
+/// `state`, declared for the capture `capture`.
+fn declared_appearance(
+    window: &Window,
+    theme: &Theme,
+    (client, page): ((f32, f32), AppearancePage),
+    (capture, state): (&'static str, AppearanceState),
+    cx: &App,
+) -> DeclaredAppearance {
+    let frame = settings_frame(theme, client);
+    let settings_geometry = &theme.geometry.settings;
+    let controls = &theme.geometry.controls;
+    let lines = &theme.typography.settings;
+    let f = f32::from;
+    let disabled = controls.disabled_opacity;
+    let mut column = AppearanceColumn {
+        window,
+        theme,
+        x: frame.heading.x,
+        width: frame.heading.width,
+        y: frame.heading.y,
+        labels: Vec::new(),
+        tracks: Vec::new(),
+        descriptions: Vec::new(),
+    };
+    // The heading block: the heading, its subtitle's lines, the block's
+    // margin, then the column's gap.
+    let subtitle = match page {
+        AppearancePage::Board => SETTINGS_SUBTITLE,
+        AppearancePage::Production { .. } => appearance::ABOUT,
+    };
+    let subtitle_style = (lines.subtitle.size, theme.typography.regular);
+    let subtitle_lines = wrapped_lines(window, theme, subtitle, subtitle_style, column.width);
+    column.y += f(lines.heading.line_height)
+        + f(settings_geometry.header_gap)
+        + subtitle_lines as f32 * f(lines.subtitle.line_height)
+        + f(settings_geometry.header_margin_bottom);
+    column.next_group();
+
+    let mut swatches = Vec::new();
+    let mut sliders = Vec::new();
+    let mut toggles = Vec::new();
+    let (content, glass, link) = match page {
+        AppearancePage::Board => {
+            let solid = state.material == BOARD_SOLID;
+            let dimmed = if solid { disabled } else { 1. };
+            // Material.
+            let names = BOARD_MATERIALS.map(|(name, _)| name);
+            column.label("Material", 1.);
+            column.track("material", &names, (state.material, state.hovered), 1.);
+            let note = BOARD_MATERIALS[state.material].1;
+            column.description(note, theme.text_muted, 1., true);
+            column.next_group();
+            // Accent.
+            column.label("Accent", 1.);
+            let size = f(controls.swatch_size);
+            let step = size + f(controls.swatch_gap);
+            for (index, &(name, _)) in BOARD_SWATCHES.iter().enumerate() {
+                swatches.push(DeclaredSwatch {
+                    name,
+                    rect: Rect {
+                        x: column.x + index as f32 * step,
+                        y: column.y,
+                        width: size,
+                        height: size,
+                    },
+                    chosen: index == 0,
+                });
+            }
+            column.y += size;
+            column.next_group();
+            // Blur and tint.
+            for (label, value, _) in [BOARD_BLUR, BOARD_TINT] {
+                sliders.push(declared_slider(&mut column, (label, value), dimmed));
+                if label == BOARD_TINT.0 {
+                    column.description(BOARD_TINT_NOTE, theme.text_muted, dimmed, true);
+                }
+                column.next_group();
+            }
+            // Density.
+            column.label("Density", 1.);
+            let hovered = (BOARD_DENSITY, state.hovered);
+            column.track("density", &BOARD_DENSITIES, hovered, 1.);
+            column.next_group();
+            // The toggles, each under its rule.
+            for label in BOARD_TOGGLES {
+                toggles.push(declared_toggle(&column, label));
+                column.y += f(controls.toggle_row_height);
+            }
+            let content = board_preview(&settings::keyboard_of(cx));
+            (content, !solid, Some(BOARD_LINK))
+        }
+        AppearancePage::Production { overridden } => {
+            let production = ProductionAppearance::read(cx);
+            let opacity = if overridden { disabled } else { 1. };
+            if overridden {
+                let notice = appearance::override_text(&production.overrides);
+                column.description(&notice, theme.warning, 1., false);
+                column.next_group();
+            }
+            let themes = appearance::THEMES.map(|(_, name, _, _)| name);
+            let chosen = appearance::THEMES
+                .iter()
+                .position(|&(preference, ..)| preference == production.theme)
+                .unwrap_or_default();
+            column.label("Theme", opacity);
+            column.track("theme", &themes, (chosen, None), opacity);
+            let note = appearance::theme_note(production.theme);
+            column.description(note, theme.text_muted, 1., true);
+            column.next_group();
+            let materials = appearance::MATERIALS.map(|(_, name, _)| name);
+            let chosen = appearance::MATERIALS
+                .iter()
+                .position(|&(preference, ..)| preference == production.material)
+                .unwrap_or_default();
+            column.label("Material", opacity);
+            column.track("material", &materials, (chosen, None), opacity);
+            let (note, color) = appearance::material_note(production.material, theme);
+            column.description(&note, color, 1., true);
+            let glass = production.surface.is_glass();
+            (production.preview, glass, None)
+        }
+    };
+    let column_rect = Rect {
+        x: column.x,
+        y: frame.heading.y,
+        width: column.width,
+        height: column.y - frame.heading.y,
+    };
+    // The preview, beside the controls on the canonical page: a narrower
+    // page wraps it below them, past what the capture shows, so it is not
+    // declared there.
+    let preview = frame
+        .aside
+        .map(|aside| declared_miniature(window, theme, (aside.x, aside.y), &content, glass));
+    let link = link.zip(preview.as_ref()).map(|(text, preview)| {
+        let line = lines.link;
+        DeclaredText {
+            text: text.into(),
+            rect: Rect {
+                x: preview.stage.x,
+                y: preview.stage.y + preview.stage.height + f(settings_geometry.aside_gap),
+                width: shaped_width(window, theme, text, line.size, theme.typography.medium),
+                height: f(line.line_height),
+            },
+        }
+    });
+    let colors = &theme.controls;
+    DeclaredAppearance {
+        capture,
+        variant: match page {
+            AppearancePage::Board => "board",
+            AppearancePage::Production { .. } => "production",
+        },
+        column: column_rect,
+        labels: column.labels,
+        tracks: column.tracks,
+        descriptions: column.descriptions,
+        swatches,
+        sliders,
+        toggles,
+        preview,
+        link,
+        colors: AppearanceColors {
+            segment_track: Hex(colors.segment_track),
+            segment_edge: Hex(colors.segment_edge),
+            segment_on: Hex(colors.segment_on),
+            segment_text: Hex(colors.segment_text),
+            segment_hover_text: Hex(colors.segment_hover_text),
+            segment_on_text: Hex(colors.segment_on_text),
+            title: Hex(theme.text_title),
+            muted: Hex(theme.text_muted),
+            body: Hex(theme.text_body),
+            query: Hex(theme.text_query),
+            accent: Hex(theme.accent),
+            footer_tint: Hex(theme.footer_tint),
+            preview_row_selected: Hex(colors.preview_row_selected),
+            preview_pin: Hex(colors.preview_pin),
+            preview_stage_edge: Hex(colors.preview_stage_edge),
+        },
+    }
+}
+
+/// A slider field at the column's cursor: its header (the label, the
+/// value right-aligned on the label's line bottom) and its box, the field
+/// drawn at `opacity`.
+fn declared_slider(
+    column: &mut AppearanceColumn<'_>,
+    (label, value): (&str, &str),
+    opacity: f32,
+) -> DeclaredSlider {
+    let theme = column.theme;
+    let typography = &theme.typography;
+    let lines = &typography.settings;
+    let f = f32::from;
+    let label_width = shaped_width(
+        column.window,
+        theme,
+        label,
+        lines.field_label.size,
+        typography.medium,
+    );
+    let value_width = shaped_width_in(
+        column.window,
+        typography.mono_family.clone(),
+        theme,
+        value,
+        lines.value.size,
+        typography.regular,
+    );
+    let label_line = f(lines.field_label.line_height);
+    let declared_label = DeclaredLine {
+        text: label.into(),
+        rect: Rect {
+            x: column.x,
+            y: column.y,
+            width: label_width,
+            height: label_line,
+        },
+        color: Hex(theme.text_title),
+        opacity,
+    };
+    let value = DeclaredText {
+        text: value.into(),
+        rect: Rect {
+            x: column.x + column.width - value_width,
+            y: column.y + label_line - f(lines.value.line_height),
+            width: value_width,
+            height: f(lines.value.line_height),
+        },
+    };
+    column.y += label_line + f(theme.geometry.controls.field_gap);
+    let rect = Rect {
+        x: column.x,
+        y: column.y,
+        width: column.width,
+        height: f(theme.geometry.controls.slider_height),
+    };
+    column.y += rect.height;
+    DeclaredSlider {
+        label: declared_label,
+        value,
+        rect,
+        opacity,
+    }
+}
+
+/// A toggle row at the column's cursor, its toggle on: the label and the
+/// toggle centered below the row's 1px rule, the knob in from the right.
+fn declared_toggle(column: &AppearanceColumn<'_>, label: &'static str) -> DeclaredToggle {
+    let theme = column.theme;
+    let controls = &theme.geometry.controls;
+    let line = theme.typography.settings.field_label;
+    let f = f32::from;
+    let inner = f(controls.toggle_row_height) - 1.;
+    let top = column.y + 1.;
+    let width = shaped_width(
+        column.window,
+        theme,
+        label,
+        line.size,
+        theme.typography.regular,
+    );
+    let rect = Rect {
+        x: column.x + column.width - f(controls.toggle_width),
+        y: top + (inner - f(controls.toggle_height)) / 2.,
+        width: f(controls.toggle_width),
+        height: f(controls.toggle_height),
+    };
+    let knob = f(controls.toggle_knob);
+    DeclaredToggle {
+        label: DeclaredText {
+            text: label.into(),
+            rect: Rect {
+                x: column.x,
+                y: top + (inner - f(line.line_height)) / 2.,
+                width,
+                height: f(line.line_height),
+            },
+        },
+        knob: Rect {
+            x: rect.x + rect.width - f(controls.toggle_inset) - knob,
+            y: rect.y + f(controls.toggle_inset),
+            width: knob,
+            height: knob,
+        },
+        rect,
+        on: true,
+    }
+}
+
+/// The Appearance page of `scenario` (`page`), capture by capture: each
+/// point or click step resolved to the center of the segment it names —
+/// which `steps` and `captures` take on — and the board's material
+/// following its clicks.
+fn declare_appearance(
+    window: &Window,
+    theme: &Theme,
+    (scenario, page): (&Scenario, AppearancePage),
+    steps: &mut [ResolvedStep],
+    captures: &mut [DeclaredCapture],
+    cx: &App,
+) -> Vec<DeclaredAppearance> {
+    let client = scenario.client;
+    let mut state = AppearanceState::default();
+    let mut pointer = None;
+    let mut declared = Vec::new();
+    for step in steps.iter_mut() {
+        match step.step {
+            Step::Point { target } | Step::Click { target } => {
+                let layout = declared_appearance(window, theme, (client, page), ("", state), cx);
+                let segment = layout
+                    .tracks
+                    .iter()
+                    .flat_map(|track| &track.segments)
+                    .find(|segment| segment.target == target);
+                pointer = segment.map(|segment| segment.rect.center());
+                step.point = pointer;
+                state.hovered = segment.map(|segment| segment.label);
+                if matches!(step.step, Step::Click { .. })
+                    && let Some(index) = BOARD_MATERIALS
+                        .iter()
+                        .position(|&(name, _)| segment_target(name) == target)
+                {
+                    state.material = index;
+                }
+            }
+            Step::Capture { name } => {
+                if let Some(capture) = captures.iter_mut().find(|capture| capture.name == name) {
+                    capture.pointer = pointer;
+                }
+                let layout = declared_appearance(window, theme, (client, page), (name, state), cx);
+                declared.push(layout);
+            }
+            _ => {}
+        }
+    }
+    declared
+}
+
 /// Every embedded face the theme names — Geist and Geist Mono at 400 and
 /// 500, and Geist at 600 for the Settings headings — as the text system
 /// resolves it, then a family no system has at each weight (the fallback,
@@ -4726,6 +6021,7 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
     let mut keycaps = Vec::new();
     let mut tiles = Vec::new();
     let mut settings = None;
+    let mut appearance = Vec::new();
     match scenario.family {
         Family::Settings => {
             settings = Some(declared_settings(
@@ -4735,6 +6031,16 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
                 &mut steps,
                 &mut captures,
             ));
+            if let Some(page) = appearance_page(scenario.name) {
+                appearance = declare_appearance(
+                    window,
+                    &theme,
+                    (scenario, page),
+                    &mut steps,
+                    &mut captures,
+                    cx,
+                );
+            }
         }
         Family::Keycap => {
             let mut y = KEYCAP_INSET;
@@ -4761,6 +6067,8 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
                         TileSize::Row => "row",
                         TileSize::Slot => "slot",
                         TileSize::Mini => "mini",
+                        TileSize::PreviewRow => "preview-row",
+                        TileSize::PreviewPin => "preview-pin",
                     },
                     tone: if tone == IconTone::Command {
                         "command"
@@ -5062,6 +6370,7 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
         keycaps,
         tiles,
         settings,
+        appearance_page: appearance,
         font_resolution: font_resolution(window, &theme),
         fonts: crate::ui::FONTS
             .iter()
@@ -6486,8 +7795,13 @@ mod tests {
         assert_eq!(frame.page, rect(232., 48., 888., 672.));
         assert_eq!((frame.heading.x, frame.heading.y), (264., 74.));
         assert_eq!(frame.heading.width, 388.);
+        // The heading's line is the board's 28 (#98), so its subtitle
+        // begins at the board's 106.
+        assert_eq!(frame.heading.height, 28.);
+        assert_eq!(frame.subtitle_top, 106.);
         let aside = frame.aside.expect("the columns sit side by side");
         assert_eq!((aside.x, aside.y, aside.width), (688., 74., 400.));
+        assert_eq!(aside.height, 16., "the caption's line");
 
         // A narrower window keeps the titlebar and the sidebar, and the
         // page's columns collapse into one.
@@ -6530,17 +7844,131 @@ mod tests {
             })
             .collect();
         assert_eq!(rows, [0, SETTINGS_SELECTED]);
-        // Settings is not a pending board any more; Appearance still is.
+        // Neither the shell nor its Appearance page is pending (#98).
+        assert!(pending_scenarios().is_empty());
+        assert_eq!(appearance_page(scenario.name), None, "the shell alone");
+    }
+
+    #[test]
+    fn the_appearance_scenarios_render_the_board_and_productions_page() {
+        // The board's own page, reference-backed, on the Settings board.
+        for name in ["appearance-page", "appearance-solid"] {
+            let scenario = scenario(name);
+            assert_eq!(appearance_page(name), Some(AppearancePage::Board));
+            assert_eq!(
+                (scenario.family, scenario.board),
+                (Family::Settings, Some("settings"))
+            );
+            assert!(scenario.reference && scenario.client == SETTINGS_CLIENT);
+        }
+        // Production's page: native-only, the board shows no theme choice.
+        for name in [
+            "appearance-production",
+            "appearance-light",
+            "appearance-override",
+            "appearance-narrow",
+        ] {
+            let scenario = scenario(name);
+            assert!(matches!(
+                appearance_page(name),
+                Some(AppearancePage::Production { .. })
+            ));
+            assert!(!scenario.reference, "{name}");
+        }
+        assert_eq!(
+            appearance_page("appearance-override"),
+            Some(AppearancePage::Production { overridden: true })
+        );
+        assert_eq!(scenario("appearance-light").theme, Some("light"));
+        assert_eq!(scenario("appearance-narrow").client, SETTINGS_NARROW_CLIENT);
+        // The hover lands on Frost and the click on Solid, by the targets
+        // the segments carry.
+        assert_eq!(segment_target("Frost"), SEGMENT_FROST);
+        assert_eq!(segment_target("Solid"), SEGMENT_SOLID);
         assert!(
-            pending_scenarios()
-                .iter()
-                .all(|p| p.name != "settings-shell")
+            scenario("appearance-page")
+                .steps
+                .contains(&point(SEGMENT_FROST))
         );
         assert!(
-            pending_scenarios()
-                .iter()
-                .any(|p| p.name == "appearance-page")
+            scenario("appearance-solid")
+                .steps
+                .contains(&click(SEGMENT_SOLID))
         );
+        assert_eq!(BOARD_MATERIALS[BOARD_SOLID].0, "Solid");
+    }
+
+    #[test]
+    fn the_appearance_board_data_is_the_boards() {
+        let materials: Vec<_> = BOARD_MATERIALS.iter().map(|(name, _)| *name).collect();
+        assert_eq!(materials, ["Glass", "Frost", "Solid"]);
+        let swatches: Vec<_> = BOARD_SWATCHES.iter().map(|(name, _)| *name).collect();
+        assert_eq!(swatches, ["Lime", "Ice", "Amber", "Lilac"]);
+        assert_eq!(BOARD_SWATCHES[0].1, 0xC9EE6AFF, "Lime, the accent, chosen");
+        assert_eq!(BOARD_DENSITIES[BOARD_DENSITY], "Default");
+        assert_eq!(BOARD_TOGGLES.len(), 2);
+        // Blur 44 of 0-60 and tint 70 of 55-95, as the board's ranges.
+        assert_eq!(BOARD_BLUR.2, 44. / 60.);
+        assert_eq!(BOARD_TINT.2, (70. - 55.) / (95. - 55.));
+    }
+
+    #[test]
+    fn segments_share_their_track_as_the_board_lays_them_out() {
+        // The board's Material track at 264,188 388x36: its segments at
+        // 267, 395 and 523, 126x30 from 191.
+        let track = Rect {
+            x: 264.,
+            y: 188.,
+            width: 388.,
+            height: 36.,
+        };
+        let segments = segment_rects(&theme(), track, 3);
+        let xs: Vec<_> = segments.iter().map(|segment| segment.x).collect();
+        assert_eq!(xs, [267., 395., 523.]);
+        assert!(
+            segments
+                .iter()
+                .all(|segment| (segment.y, segment.width, segment.height) == (191., 126., 30.))
+        );
+        // Two segments (production's material) share it in halves.
+        let halves = segment_rects(&theme(), track, 2);
+        assert_eq!((halves[0].width, halves[1].x), (190., 459.));
+    }
+
+    #[test]
+    fn the_miniature_lies_where_the_board_measures_it() {
+        // The board's DOM, relative to its glass panel: the caption at
+        // 688,74, the stage at 688,100 400x520, the miniature at 718,156
+        // 340x308 — its search line 46, its slots from 726,210 76.5 wide
+        // and 82.5 apart, its rows from 262 every 40, its footer at 426.
+        let frame = miniature_frame(&theme(), (688., 74.), 4, 4);
+        let rect = |x, y, width, height| Rect {
+            x,
+            y,
+            width,
+            height,
+        };
+        assert_eq!(frame.caption, rect(688., 74., 400., 16.));
+        assert_eq!(frame.stage, rect(688., 100., 400., 520.));
+        assert_eq!(frame.panel, rect(718., 156., 340., 308.));
+        assert_eq!(frame.search, rect(718., 156., 340., 46.));
+        assert_eq!(frame.pins[0], rect(726., 210., 76.5, 44.));
+        assert_eq!(frame.pins[3].x, 973.5);
+        let tops: Vec<_> = frame.rows.iter().map(|row| row.y).collect();
+        assert_eq!(tops, [262., 302., 342., 382.]);
+        assert_eq!(frame.rows[0], rect(724., 262., 328., 38.));
+        assert_eq!(frame.footer, rect(718., 426., 340., 38.));
+    }
+
+    #[test]
+    fn the_segment_fault_is_a_named_perturbation() {
+        assert_eq!(
+            Perturbation::parse("segment-on-fill"),
+            Ok(Some(Perturbation::SegmentOnFill))
+        );
+        let mut theme = theme();
+        Perturbation::SegmentOnFill.apply(&mut theme);
+        assert_ne!(theme.controls.segment_on, Theme::dark().controls.segment_on);
     }
 
     #[test]
@@ -6609,9 +8037,10 @@ mod tests {
                     .any(|scenario| scenario.reference && scenario.client == client)
             );
         }
-        // Only the Appearance page (#98) is still pending.
-        let pending: Vec<_> = pending_scenarios().iter().map(|p| p.name).collect();
-        assert_eq!(pending, ["appearance-page"]);
+        // Nothing is pending: the Appearance page (#98) was the last, and
+        // asking for it renders it.
+        assert!(pending_scenarios().is_empty());
+        assert!(scenario("appearance-page").reference);
         assert!(scenario("pinned-strip").reference);
         // Store and the snap HUD stay source-only references.
         assert!(

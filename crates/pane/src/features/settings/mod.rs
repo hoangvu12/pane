@@ -71,7 +71,7 @@ use crate::ui::settings_shell::{self, SidebarItem};
 use crate::{FocusNext, FocusPrevious};
 
 mod about;
-mod appearance;
+pub(crate) mod appearance;
 mod extensions;
 mod general;
 mod keyboard;
@@ -115,6 +115,7 @@ pub(crate) fn bind_keys(cx: &mut App) {
             Some(CONTEXT),
         ),
     ]);
+    appearance::bind_keys(cx);
     general::bind_keys(cx);
     search::bind_keys(cx);
     shortcuts::bind_keys(cx);
@@ -149,6 +150,9 @@ pub struct SettingsWindow {
     focus: FocusHandle,
     /// The About page's state, owned by its module.
     about: about::State,
+    /// The Appearance page's state (its segments' focus), owned by its
+    /// module.
+    appearance: appearance::State,
     /// The General page's state, owned by its module.
     general: general::State,
     /// The Launcher page's state, owned by its module.
@@ -225,6 +229,7 @@ impl SettingsWindow {
             arriving: None,
             focus,
             about: about::State::default(),
+            appearance: appearance::State::new(cx),
             general: general::State::new(cx),
             launcher_page: launcher::State::new(window, cx),
             shortcuts: shortcuts::State::new(launcher, cx),
@@ -418,8 +423,6 @@ impl SettingsWindow {
             .debug_selector(|| "settings-page".into())
             .overflow_y_scroll()
             .track_scroll(self.search.scroll())
-            .text_size(theme.typography.row_subtitle_size)
-            .text_color(theme.text_body)
             .child(motion::arriving_page(content, arriving))
     }
 }

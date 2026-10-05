@@ -54,7 +54,7 @@ param(
     [ValidateSet('glass', 'opaque')]
     [string]$Material = 'opaque',
 
-    [ValidateSet('none', 'row-padding-plus-4', 'selected-fill', 'hover-fill', 'nav-selected-fill')]
+    [ValidateSet('none', 'row-padding-plus-4', 'selected-fill', 'hover-fill', 'nav-selected-fill', 'segment-on-fill')]
     [string]$Perturb = 'none',
 
     [int]$StepDelayMs = 450,

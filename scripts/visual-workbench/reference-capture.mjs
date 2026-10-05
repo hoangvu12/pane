@@ -627,6 +627,113 @@ window.__wb.state = function (index) {
 };
 true`;
 
+// The Settings board's Appearance page (#98), added to the Settings
+// board's capture state: its controls column - the field labels, the
+// segmented choices and their segments, the descriptions, the swatches,
+// the sliders and the toggles - and its preview - the caption, the stage,
+// the miniature's search line, slots, rows and footer - and the link under
+// it, each relative to the glass panel. A part's opacity is the product of
+// its ancestors' up to the column (the board dims Solid's sliders to 40%).
+const APPEARANCE_HELPERS = `
+Object.assign(window.__wb, {
+  appearanceState(index) {
+    const doc = this.frame(index).contentDocument;
+    const glass = doc.querySelector('section.glass');
+    const content = glass.children[1].children[1];
+    const [column, aside] = content.children;
+    const rel = (el) => this.rel(index, el);
+    const inner = (el) => el.querySelector('.sc-interp') || el;
+    const text = (el) => (el ? { text: el.textContent.trim(), rect: rel(inner(el)) } : null);
+    const opacity = (el) => {
+      let value = 1;
+      for (let at = el; at && at !== column; at = at.parentElement) value *= Number(getComputedStyle(at).opacity);
+      return value;
+    };
+    const labels = Array.from(column.querySelectorAll('.flabel'))
+      .filter((label) => label.parentElement.parentElement === column)
+      .map((label) => ({ text: label.textContent.trim(), rect: rel(label), opacity: opacity(label) }));
+    const tracks = Array.from(column.querySelectorAll('.segwrap')).map((track) => {
+      const name = doc.getElementById(track.getAttribute('aria-labelledby'));
+      return {
+        field: name ? name.textContent.trim().toLowerCase() : '',
+        rect: rel(track),
+        opacity: opacity(track),
+        background: getComputedStyle(track).backgroundColor,
+        segments: Array.from(track.querySelectorAll('button')).map((segment) => ({
+          label: segment.textContent.trim(),
+          rect: rel(segment),
+          labelBox: rel(inner(segment)),
+          chosen: segment.classList.contains('on'),
+          hovered: segment.matches(':hover'),
+          background: getComputedStyle(segment).backgroundColor,
+          color: getComputedStyle(segment).color,
+        })),
+      };
+    });
+    const descriptions = Array.from(column.querySelectorAll('.fdesc')).map((description) => ({
+      text: description.textContent.trim(), rect: rel(description), opacity: opacity(description),
+    }));
+    const swatches = Array.from(column.querySelectorAll('button.sw'))
+      .filter((swatch) => swatch.getAttribute('aria-label') !== 'Custom color')
+      .map((swatch) => ({ name: swatch.getAttribute('aria-label'), rect: rel(swatch),
+                          chosen: swatch.getAttribute('aria-pressed') === 'true' }));
+    const sliders = Array.from(column.querySelectorAll('input.range')).map((range) => {
+      const header = range.parentElement.children[0];
+      const value = header.querySelector('.mono');
+      return {
+        label: text(header.querySelector('label')),
+        // The whole value ("44 px"), not its interpolated number alone.
+        value: { text: value.textContent.trim(), rect: rel(value) },
+        rect: rel(range),
+        opacity: opacity(range),
+        disabled: range.disabled,
+      };
+    });
+    const toggles = Array.from(column.querySelectorAll('button'))
+      .filter((button) => !button.classList.contains('seg') && !button.classList.contains('sw'))
+      .map((toggle) => ({
+        label: text(toggle.parentElement.querySelector('.flabel')),
+        rect: rel(toggle),
+        knob: rel(toggle.children[0]),
+        on: toggle.getAttribute('aria-pressed') === 'true',
+      }));
+    let preview = null;
+    if (aside && aside.children.length >= 2) {
+      const stage = aside.children[1];
+      const mini = stage.children[stage.children.length - 1];
+      const [search, body, footer] = mini.children;
+      const strip = Array.from(body.children).find((child) => !child.classList.contains('mrow'));
+      preview = {
+        caption: rel(aside.children[0]),
+        stage: rel(stage),
+        panel: rel(mini),
+        search: rel(search),
+        query: text(search.children[1]),
+        caret: rel(search.children[2]),
+        pins: strip ? Array.from(strip.children).map((slot) => rel(slot)) : [],
+        rows: Array.from(body.querySelectorAll('.mrow')).map((row) => ({
+          title: text(row.children[1]),
+          kind: text(row.children[2]),
+          rect: rel(row),
+          tile: rel(row.children[0]),
+          selected: getComputedStyle(row).backgroundColor !== 'rgba(0, 0, 0, 0)',
+        })),
+        footer: rel(footer),
+        tip: text(footer.children[0]),
+        keys: rel(footer.querySelector('.kbd')),
+      };
+    }
+    const link = aside && aside.querySelector('a');
+    return { column: rel(column), labels, tracks, descriptions, swatches, sliders, toggles, preview,
+             link: link ? { text: link.textContent.trim(), rect: rel(link) } : null };
+  },
+});
+const settingsShell = window.__wb.settingsState;
+window.__wb.settingsState = function (index) {
+  return Object.assign(settingsShell.call(this, index), { appearance: this.appearanceState(index) });
+};
+true`;
+
 async function load() {
   await call('Page.navigate', { url: pageUrl });
   for (let attempt = 0; attempt < 120; attempt++) {
@@ -638,6 +745,7 @@ async function load() {
   }
   await evaluate(HELPERS);
   await evaluate(RESULT_HELPERS);
+  await evaluate(APPEARANCE_HELPERS);
   if (!(await evaluate('__wb.snap()'))) throw new Error('the board frames could not be snapped to whole pixels');
   const frames = await evaluate('__wb.frames()');
   for (let index = 0; index < frames.length; index++) {
@@ -671,6 +779,12 @@ const clipRow = (title) => (index) =>
   `Array.from(__wb.frame(${index}).contentDocument.querySelectorAll('.list button.row')).find((b) => b.children[1].textContent === ${JSON.stringify(title)})`;
 const clipTab = (label) => (index) =>
   `Array.from(__wb.frame(${index}).contentDocument.querySelectorAll('button.tab')).find((b) => b.textContent.trim() === ${JSON.stringify(label)})`;
+// The Appearance board's segments (#98), `segment-<label>` in lower case,
+// as the fixture names them.
+const segment = (label) => (index) =>
+  `Array.from(__wb.frame(${index}).contentDocument.querySelectorAll('.segwrap button')).find((b) => b.textContent.trim() === ${JSON.stringify(label)})`;
+const SEGMENTS = Object.fromEntries(['Glass', 'Frost', 'Solid', 'Compact', 'Default', 'Roomy']
+  .map((label) => [`segment-${label.toLowerCase()}`, segment(label)]));
 const CLICK_TARGETS = {
   'actions-button': (index) => `Array.from(__wb.frame(${index}).contentDocument.querySelectorAll('.fbtn')).find((b) => b.textContent.trim().startsWith('Actions'))`,
   // The clipboard board's clips and tabs (#102), by the fixture's ids.
@@ -679,6 +793,7 @@ const CLICK_TARGETS = {
   'clip-link': clipRow('example.com/plugins/manifest'),
   'clip-shot': clipRow('Screenshot 2880 × 1800'),
   'clip-tab-text': clipTab('Text'),
+  ...SEGMENTS,
 };
 
 // A board's capture state, by board: the root family's state by default,
@@ -697,18 +812,31 @@ const POINTER_TARGETS = {
 // driven; any other board authors its one state, captured as it is.
 const INTERACTIVE = new Set(['root', 'clipboard']);
 
-// The elements a point step names: the pinned slots, `slot-<n>` from 1.
-const POINT_TARGETS = Object.fromEntries([1, 2, 3, 4, 5].map((n) => [
-  `slot-${n}`,
-  (index) => `__wb.frame(${index}).contentDocument.querySelectorAll('.slot')[${n - 1}]`,
-]));
+// The elements a point step names: the pinned slots, `slot-<n>` from 1,
+// and the Appearance board's segments (#98).
+const POINT_TARGETS = {
+  ...Object.fromEntries([1, 2, 3, 4, 5].map((n) => [
+    `slot-${n}`,
+    (index) => `__wb.frame(${index}).contentDocument.querySelectorAll('.slot')[${n - 1}]`,
+  ])),
+  ...SEGMENTS,
+};
+
+// The steps a static board takes as authored: the Settings board's
+// sections answer the pointer (`.nav:hover`), and its Appearance page's
+// segments the pointer (`.seg:hover`) and a click, which its logic takes
+// as the native fixture does (#98). Every other step only brings the
+// native fixture to the board's state.
+const AUTHORED_STEPS = { settings: new Set(['pointer', 'point', 'click']) };
 
 async function runScenario(scenario, rootIndex, frames) {
   const dir = join(out, scenario.name);
   mkdirSync(dir, { recursive: true });
   // A static board (any but the interactive root) authors its one state:
   // it is captured as authored, and the scenario's steps — which bring the
-  // native fixture to that state — are not taken here.
+  // native fixture to that state — are not taken here, except the ones the
+  // board answers itself (AUTHORED_STEPS: the Settings board's pointer,
+  // point and click steps).
   const boardIndex = scenario.board
     ? frames.findIndex((frame) => (BOARDS.find(([slug]) => slug === scenario.board) ?? [null, /^$/])[1].test(frame.title ?? ''))
     : rootIndex;
@@ -728,7 +856,9 @@ async function runScenario(scenario, rootIndex, frames) {
   const after = [];
   const pointerTarget = POINTER_TARGETS[scenario.board];
   for (const step of scenario.steps) {
-    if (authored && step.action !== 'capture' && !(step.action === 'pointer' && pointerTarget)) {
+    const takes = AUTHORED_STEPS[scenario.board];
+    const taken = takes && takes.has(step.action) && (step.action !== 'pointer' || pointerTarget);
+    if (authored && step.action !== 'capture' && !taken) {
       after.push(step);
       continue;
     }

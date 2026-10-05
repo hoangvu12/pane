@@ -603,6 +603,9 @@ def compare(native_dir, reference_dir, out_dir, label):
                 compare_tiles(report, name, capture, manifest, native, scale, crops)
             elif scenario["family"] == "settings":
                 compare_settings(report, name, capture, manifest, native, scale, ref_capture, reference_image, crops)
+                if manifest.get("appearancePage"):
+                    compare_appearance(report, name, capture, manifest, native, scale, ref_capture, reference_image,
+                                       crops)
             elif scenario["family"] == "clipboard":
                 compare_clipboard(report, name, capture, declared, manifest, native, scale, ref_capture,
                                   reference_image, crops)
@@ -2599,14 +2602,18 @@ def vline(image, x_range, y_range, background=None, lighter=True):
     return best_x
 
 
-def ringed_box(image, rect, background, fill, scale=1.0):
-    """A box drawn as a fill under a 1px inset ring that differs from both
-    the fill and the background (the Settings search well: black 24% under
-    a white 6% ring): its fill's edges, as box_edges finds them, grown by
-    the ring's logical pixel on every side. Logical (x, y, w, h) or None."""
+def ringed_box(image, rect, background, fill, scale=1.0, ring_lighter=True):
+    """A box drawn as a fill under a 1px inset ring (the Settings search
+    well: black 24% under a white 6% ring): its fill's edges, as box_edges
+    finds them, grown by the ring's logical pixel on every side where the
+    ring is lighter than the fill and the background. A ring darker than
+    both (the light palette's black one, over a black fill) already counts
+    as the fill's, and nothing is grown. Logical (x, y, w, h) or None."""
     edges = box_edges(image, rect, background, fill, scale)
     if edges is None:
         return None
+    if not ring_lighter:
+        return edges
     x, y, w, h = edges
     return (x - 1, y - 1, w + 2, h + 2)
 
@@ -2714,7 +2721,7 @@ def measure_settings(image, layout, inks, scale=1.0, lighter=True):
         if end_fill and end_beside:
             alphas.append(black_alpha(end_fill, end_beside))
     result["search"] = {
-        "edges": ringed_box(image, (x, y, w, h), below, fill, scale) if below and fill else None,
+        "edges": ringed_box(image, (x, y, w, h), below, fill, scale, lighter) if below and fill else None,
         "alpha": statistics.mean(alphas) if alphas and None not in alphas else None,
     }
     px_left = layout["placeholder"][0]
@@ -2967,6 +2974,688 @@ def compare_settings(report, name, capture, manifest, native, scale, ref_capture
             report.check("parity", name, capture, "page", "heading glyph core color (max channel)", worst, 0,
                          LIMITS["glyph_core_levels"], "levels")
     crops.append(("parity-heading", layout["heading"], ref_layout["heading"]))
+
+
+# ------------------------------------------------- the Appearance page (#98)
+
+SLIDER_DRAWING = ("the board's range input is the browser's own control; Pane draws its slider family as an "
+                  "adaptation, so only its label and value are compared, by place")
+PREVIEW_PANEL = ("the board's miniature is glass over the stage's painted wallpaper, which Pane does not paint "
+                 "(#100); its fill is compared only where both draw the solid surface")
+
+
+def appearance_of(manifest, capture):
+    """The fixture's declared Appearance page in one capture, or None."""
+    return next((page for page in manifest.get("appearancePage", []) if page["capture"] == capture), None)
+
+
+def page_left_of(image, x, y, h, scale=1.0):
+    """The page's own fill just left of a part at x (logical), across its
+    middle rows: 4px, 6 to 10px out."""
+    return median_color(image, box_px((x - 10, y + h * 0.3, 4, max(1.0, h * 0.4)), scale))
+
+
+def measure_line(image, rect, color, scale=1.0, opacity=1.0, background=None, slack=8):
+    """A line of text at rect (its first line's box), in color at opacity,
+    over the page beside it (or background): where its ink begins and
+    ends, and its fullest ink's color."""
+    x, y, w, h = rect
+    h = min(h, 18.2)
+    bg = background or page_left_of(image, x, y, h, scale)
+    if bg is None:
+        return None
+    ink_color = tuple(b + (c - b) * opacity for b, c in zip(bg, color))
+    found = measure_text(image, (x, y, max(w, 24), h), bg, ink_color, scale, slack)
+    if not found:
+        return None
+    extent = ink_extent(image, (x - slack, y, max(w, 24) + 2 * slack, h), bg, ink_color, scale)
+    found["color"] = extent["color"] if extent else None
+    return found
+
+
+def measure_track(image, rect, scale=1.0):
+    """A segmented choice's track: its edges and its fill as a black
+    overlay over the page beside it, from mean colors (a black 24% over the
+    page's ~22 levels moves them by about 5).
+
+    The edges are its ring's, found walking in from 4px outside each edge
+    until the luma leaves the page beside it by 3 levels (local_edges):
+    the ring is lighter than the page in the dark palette and darker in the
+    light one, and each scan line keeps its own page, so the reference's
+    glass - 25 levels at the track's left, 38 at its right - moves no edge.
+    A disabled track (40%) moves the page by only 2 levels with its fill,
+    but its ring still by 4."""
+    x, y, w, h = rect
+    beside = mean_color(image, box_px((x - 8, y + 8, 4, h - 16), scale))
+    fill = mean_color(image, box_px((x + 1, y + 8, 2, h - 16), scale))
+    if beside is None or fill is None:
+        return None
+    edges = local_edges(image, scaled(rect, scale), scale, threshold=3.0, out=4, corner=14)
+    return {"edges": tuple(v / scale for v in edges) if edges else None, "fill": fill, "beside": beside,
+            "alpha": black_alpha(fill, beside)}
+
+
+def overlay_limit(background, lighter):
+    """An overlay alpha's limit, in alpha levels: the flat-fill limit's 2
+    channel levels over the background it is read against. A black overlay
+    over b levels moves them one level per 255/b alpha levels (about 10 over
+    the dark page's 25), and a white one over b one per 255/(255-b) (about
+    7.5 over the light track's 221), so a 1-level rounding of the composite
+    reads as that many levels of alpha. The limit stays the channel levels
+    LIMITS defines, and never drops below its 2 alpha levels."""
+    if background is None:
+        return LIMITS["flat_fill_levels"]
+    room = 255 - luma(background) if lighter else luma(background)
+    return max(LIMITS["flat_fill_levels"], LIMITS["flat_fill_levels"] * 255 / max(1.0, room))
+
+
+def overlay_note(background, lighter):
+    return (f"2 channel levels over a background of {luma(background):.0f}: "
+            f"{overlay_limit(background, lighter):.1f} alpha levels") if background else None
+
+
+def measure_segment(image, segment, color, scale=1.0, lighter=True):
+    """A segment: its wash as an overlay over its track's fill (read inside
+    its left end, clear of its label, against the track's fill in the 2px
+    just left of it - the gap from the previous segment, or the track's
+    padding - since the reference's glass shades the track across its
+    width), the chosen one's edges, and its label's ink in color (a
+    function of the segment's own fill, for a dimmed track)."""
+    x, y, w, h = segment["rect"]
+    fill = mean_color(image, box_px((x + 4, y + 9, 6, h - 18), scale))
+    track_fill = mean_color(image, box_px((x - 2, y + 9, 2, h - 18), scale))
+    if fill is None or track_fill is None:
+        return {}
+    color = color(fill)
+    result = {"alpha": overlay_alpha(fill, track_fill, lighter), "trackFill": track_fill}
+    if segment["chosen"]:
+        sign = 1 if lighter else -1
+        delta = max(3.0, sign * (luma(fill) - luma(track_fill)) / 2)
+        edges = wash_edges(image, scaled((x, y, w, h), scale), track_fill, delta, margin=2, lighter=lighter)
+        result["edges"] = tuple(v / scale for v in edges) if edges else None
+    lx, _, lw, _ = segment["labelBox"]
+    found = ink_extent(image, (lx - 6, y + 3, lw + 12, h - 6), fill, color, scale)
+    if found:
+        result["label"] = {"center": (found["left"] + found["right"]) / 2, "top": found["top"],
+                           "color": found["color"]}
+    return result
+
+
+def measure_swatch(image, swatch, scale=1.0):
+    """An accent swatch's disc (the chosen one's rings reach 4px past it):
+    its edges, by its saturated color against the page beside it."""
+    x, y, w, h = swatch["rect"]
+    grow = 4 if swatch["chosen"] else 0
+    background = median_color(image, box_px((x - grow - 9, y + h / 2 - 2, 3, 4), scale))
+    fill = median_color(image, box_px((x + w / 2 - 2, y + h / 2 - 2, 4, 4), scale))
+    if background is None or fill is None:
+        return None
+    return box_edges(image, (x - grow, y - grow, w + 2 * grow, h + 2 * grow), background, fill, scale, margin=3,
+                     chroma=True)
+
+
+def measure_toggle(image, toggle, scale=1.0):
+    """A toggle that is on: its accent track's edges, and where its white
+    knob begins along the track's middle row."""
+    x, y, w, h = toggle["rect"]
+    background = median_color(image, box_px((x - 10, y + h / 2 - 2, 4, 4), scale))
+    fill = median_color(image, box_px((x + 3, y + h / 2 - 1, 2, 2), scale))
+    if background is None or fill is None:
+        return None
+    data = image.load()
+    row = int(round((y + h / 2) * scale))
+    knob = None
+    if 0 <= row < image.height:
+        whites = [c for c in range(max(0, int(x * scale)), min(image.width, int((x + w) * scale)))
+                  if min(data[c, row]) >= 225]
+        knob = whites[0] / scale if whites else None
+    return {"edges": box_edges(image, (x, y, w, h), background, fill, scale, margin=3, chroma=True),
+            "knob": knob}
+
+
+def is_caret(color):
+    """A caret's green: the lime accent, or the light palette's darkened
+    readable one (theme.accent_text, about #5C7A17), which is saturated but
+    not bright. ClearType's fringes beside the query's glyphs lean red or
+    blue, never green."""
+    r, g, b = color[:3]
+    return is_accent(color) or (g - b > 60 and g - r > 15)
+
+
+def caret_left(image, rect, scale=1.0):
+    """The first column of caret pixels (is_caret) near a caret's box, or
+    None."""
+    x, y, w, h = rect
+    left, top, right, bottom = clamp_box(image, box_px((x - 4, y, w + 8, h), scale))
+    data = image.load()
+    for column in range(left, right):
+        if any(is_caret(data[column, row]) for row in range(top, bottom)):
+            return column / scale
+    return None
+
+
+def mini_row_wash(image, rect, scale=1.0, lighter=True):
+    """A miniature row's wash, column by column, like row_wash: the strip
+    just under its top edge against the gap right above it in the same
+    column, moved by however much the miniature's side padding (4 to 2px
+    outside both of the row's ends, clear of the panel's edge) changes
+    between that gap's row and the strip's.
+
+    The backdrop shades both ways and neither alone is linear: the light
+    miniature darkens toward its top and levels off right at its first row
+    (230 levels 26px above it, 246 at it), so the gaps above and below
+    interpolate a backdrop 3 levels too dark there; the glass miniature is
+    2 levels darker mid-row than at its sides, so the side padding alone
+    reads every row as darkened. Returns the median fill, background and
+    overlay alpha (levels)."""
+    x, y, w, h = scaled(rect, scale)
+    data = image.load()
+    top = int(round(y))
+    strip = top + int(round(4 * scale))
+    if top - 1 < 0 or strip + 1 >= image.height:
+        return None
+
+    def side(r0, r1):
+        boxes = ((x - 4 * scale, r0, x - 2 * scale, r1), (x + w + 2 * scale, r0, x + w + 4 * scale, r1))
+        colors = [mean_color(image, box) for box in boxes]
+        if None in colors:
+            return None
+        return tuple(statistics.mean(c) for c in zip(*colors))
+
+    gap_side, strip_side = side(top - 1, top), side(strip - 1, strip + 2)
+    if gap_side is None or strip_side is None:
+        return None
+    shift = tuple(s - g for s, g in zip(strip_side, gap_side))
+    alphas, fills, backgrounds = [], [], []
+    for column in range(int(x + 14 * scale), int(x + w - 14 * scale)):
+        if not 0 <= column < image.width:
+            continue
+        background = tuple(a + d for a, d in zip(data[column, top - 1], shift))
+        fill = tuple(statistics.mean(data[column, r][i] for r in (strip - 1, strip, strip + 1)) for i in range(3))
+        alpha = overlay_alpha(fill, background, lighter)
+        if alpha is not None:
+            alphas.append(alpha)
+            fills.append(fill)
+            backgrounds.append(background)
+    if not alphas:
+        return None
+    return {
+        "fill": tuple(statistics.median(c) for c in zip(*fills)),
+        "background": tuple(statistics.median(c) for c in zip(*backgrounds)),
+        "alpha": statistics.median(alphas),
+    }
+
+
+def measure_miniature(image, mini, colors, scale=1.0, lighter=True):
+    """The preview's miniature laid out as mini says (the fixture's
+    declaration or the board's DOM, in the same shape): its rows' washes,
+    titles and kinds, its slots' fills, its query, caret and tip, its
+    accent key, and its fill where the surface is solid."""
+    result = {"rows": [], "pins": []}
+    for row in mini["rows"]:
+        measured = {"title": row["title"]["text"]}
+        wash = mini_row_wash(image, as_tuple(row["rect"]), scale, lighter)
+        if wash:
+            measured["alpha"] = wash["alpha"]
+            title = measure_line(image, as_tuple(row["title"]["rect"]), colors["title"], scale,
+                                 background=wash["fill"], slack=4)
+            if title:
+                measured["titleLeft"], measured["titleTop"] = title["left"], title["top"]
+            kind = measure_line(image, as_tuple(row["kind"]["rect"]), colors["muted"], scale,
+                                background=wash["fill"], slack=4)
+            if kind:
+                measured["kindRight"] = kind["right"]
+        result["rows"].append(measured)
+    for pin in mini["pins"]:
+        x, y, w, h = as_tuple(pin)
+        background = median_color(image, box_px((x - 4, y + h / 2 - 2, 2, 4), scale))
+        fill = median_color(image, box_px((x + 3, y + h / 2 - 2, 5, 4), scale))
+        measured = {}
+        if background and fill:
+            measured["alpha"] = overlay_alpha(fill, background, lighter)
+            # Each scan line against its own backdrop (local_edges), 3px out
+            # inside the strip's 6px gaps: the reference's glass is lighter
+            # above a slot than beside it, which a single background read
+            # beside it took for the slot.
+            edges = local_edges(image, scaled((x, y, w, h), scale), scale, threshold=4.0, out=3, corner=14)
+            measured["edges"] = tuple(v / scale for v in edges) if edges else None
+        result["pins"].append(measured)
+    query = as_tuple(mini["query"]["rect"])
+    search = as_tuple(mini["search"])
+    background = median_color(image, box_px((query[0] - 7, search[1] + 8, 3, search[3] - 16), scale))
+    result["query"] = measure_line(image, query, colors["query"], scale, background=background, slack=3)
+    result["caret"] = caret_left(image, as_tuple(mini["caret"]), scale)
+    footer = as_tuple(mini["footer"])
+    footer_fill = median_color(image, box_px((footer[0] + 3, footer[1] + 12, 4, 14), scale))
+    if mini.get("tip"):
+        result["tip"] = measure_line(image, as_tuple(mini["tip"]["rect"]), colors["muted"], scale,
+                                     background=footer_fill, slack=3)
+    keys = as_tuple(mini["keys"])
+    key_fill = median_color(image, box_px((keys[0] + 2, keys[1] + keys[3] / 2 - 1, 2, 2), scale))
+    result["keys"] = (box_edges(image, keys, footer_fill, key_fill, scale, margin=3, chroma=True)
+                      if footer_fill and key_fill else None)
+    rows = mini["rows"]
+    if rows:
+        x, y, _, _ = as_tuple(rows[-1]["rect"])
+        result["panelFill"] = mean_color(image, box_px((x - 5, y + 10, 3, 18), scale))
+    return result
+
+
+def reference_miniature(preview):
+    """The board's miniature from its DOM state, in the shape
+    measure_miniature reads."""
+    return {
+        "rows": [{"title": row["title"], "kind": row["kind"], "rect": row["rect"]} for row in preview["rows"]],
+        "pins": preview["pins"],
+        "query": preview["query"],
+        "search": preview["search"],
+        "caret": preview["caret"],
+        "footer": preview["footer"],
+        "tip": preview.get("tip"),
+        "keys": preview["keys"],
+    }
+
+
+def measure_appearance(image, page, colors, scale=1.0, lighter=True):
+    """What an image shows of the Appearance page laid out as page says
+    (the fixture's declaration, or the board's DOM state in the same
+    shape): its field labels, tracks and segments, descriptions,
+    swatches, sliders, toggles, miniature and link."""
+    result = {"labels": [], "tracks": [], "descriptions": [], "swatches": [], "sliders": [], "toggles": []}
+    # The chosen segment's wash is white in both palettes (the light one's
+    # is white 85% over a black 4% track), so its overlay is read as white.
+    on = colors.get("raw", {}).get("segmentOn")
+    segments_lighter = lighter or (on is not None and luma(on) > 128)
+    for label in page["labels"]:
+        result["labels"].append(measure_line(image, as_tuple(label["rect"]), colors["title"], scale,
+                                             label.get("opacity", 1.0)))
+    for track in page["tracks"]:
+        rect = as_tuple(track["rect"])
+        measured = measure_track(image, rect, scale) or {}
+        segments = []
+        for segment in track["segments"]:
+            if segment["chosen"]:
+                color = colors["onText"]
+            elif segment["hovered"]:
+                color = colors["hoverText"]
+            else:
+                color = colors["segmentText"]
+            opacity = track.get("opacity", 1.0)
+
+            def segment_color(fill, color=color, opacity=opacity):
+                return tuple(f + (c - f) * opacity for f, c in zip(fill, color))
+
+            segments.append(measure_segment(image, {**segment, "rect": as_tuple(segment["rect"]),
+                                                    "labelBox": as_tuple(segment["labelBox"])},
+                                            segment_color, scale, segments_lighter))
+        measured["segments"] = segments
+        result["tracks"].append(measured)
+    for description in page["descriptions"]:
+        color = description.get("ink") or colors["muted"]
+        # Its first line's first 160px: tall glyphs enough for its top and
+        # left, clear of the reference glass's bright band at the column's
+        # right, which a 40% line's faint core threshold would count as ink.
+        x, y, w, h = as_tuple(description["rect"])
+        result["descriptions"].append(measure_line(image, (x, y, min(w, 160.0), h), color, scale,
+                                                   description.get("opacity", 1.0)))
+    for swatch in page["swatches"]:
+        result["swatches"].append(measure_swatch(image, {**swatch, "rect": as_tuple(swatch["rect"])}, scale))
+    for slider in page["sliders"]:
+        opacity = slider.get("opacity", 1.0)
+        label = slider.get("label")
+        value = slider.get("value")
+        result["sliders"].append({
+            "label": measure_line(image, as_tuple(label["rect"]), colors["title"], scale, opacity) if label else None,
+            "value": measure_line(image, as_tuple(value["rect"]), colors["body"], scale, opacity) if value else None,
+        })
+    for toggle in page["toggles"]:
+        rect = as_tuple(toggle["rect"])
+        measured = measure_toggle(image, {**toggle, "rect": rect}, scale) or {}
+        label = toggle.get("label")
+        measured["label"] = (measure_line(image, as_tuple(label["rect"]), colors["title"], scale)
+                             if label else None)
+        result["toggles"].append(measured)
+    if page.get("preview"):
+        result["preview"] = measure_miniature(image, page["preview"], colors, scale, lighter)
+    if page.get("link"):
+        result["link"] = measure_line(image, as_tuple(page["link"]["rect"]), colors["title"], scale)
+    return result
+
+
+def reference_appearance(state):
+    """The board's Appearance page from its DOM state, in the shape the
+    fixture declares it."""
+    def opacity(part):
+        return float(part.get("opacity", 1.0))
+
+    preview = state.get("preview")
+    return {
+        "labels": [{"text": l["text"], "rect": l["rect"], "opacity": opacity(l)} for l in state["labels"]],
+        "tracks": [{
+            "field": t["field"],
+            "rect": t["rect"],
+            "opacity": opacity(t),
+            "background": t["background"],
+            "segments": [{"label": s["label"], "target": "segment-" + s["label"].lower(), "rect": s["rect"],
+                          "labelBox": s["labelBox"], "chosen": s["chosen"], "hovered": s["hovered"],
+                          "background": s["background"]} for s in t["segments"]],
+        } for t in state["tracks"]],
+        "descriptions": [{"text": d["text"], "rect": d["rect"], "opacity": opacity(d)} for d in state["descriptions"]],
+        "swatches": state["swatches"],
+        "sliders": [{"label": s["label"], "value": s["value"], "rect": s["rect"], "opacity": opacity(s)}
+                    for s in state["sliders"]],
+        "toggles": state["toggles"],
+        "preview": reference_miniature(preview) if preview else None,
+        "link": state.get("link"),
+    }
+
+
+def appearance_colors(declared):
+    """The ink and fills the measures look for, from the fixture's declared
+    colors."""
+    colors = {key: hex_rgba(value) for key, value in declared["colors"].items()}
+    return {
+        "title": colors["title"][:3], "muted": colors["muted"][:3], "body": colors["body"][:3],
+        "query": colors["query"][:3], "onText": colors["segmentOnText"][:3],
+        "hoverText": colors["segmentHoverText"][:3], "segmentText": colors["segmentText"][:3],
+        "raw": colors,
+    }
+
+
+def compare_appearance(report, name, capture, manifest, native, scale, ref_capture, reference_image, crops):
+    """The Appearance page (#98): the fixture's against its declaration, the
+    board's against its DOM, and the two against each other — field by
+    field, segment by segment, and the preview's miniature row by row."""
+    declared = appearance_of(manifest, capture)
+    if declared is None:
+        report.check("harness-native", name, capture, "appearance", "declared", "missing", "present", 0, "")
+        return
+    colors = appearance_colors(declared)
+    raw = colors["raw"]
+    lighter = palette(manifest)["lighter"]
+    # A description declares its own ink (a warning's, where it reports a
+    # fallback).
+    for description in declared["descriptions"]:
+        description["ink"] = hex_rgba(description["color"])[:3]
+    edge, flat = LIMITS["edge_px"], LIMITS["flat_fill_levels"]
+    bearing = "a glyph's side bearing allowed"
+    mine = measure_appearance(native, declared, colors, scale, lighter)
+    seg_lighter = lighter or luma(raw["segmentOn"]) > 128
+
+    # ---- the native side against its declaration
+    for label, measured in zip(declared["labels"], mine["labels"]):
+        report.check("harness-native", name, capture, f"field:{label['text']}", "label ink left",
+                     measured and measured["left"], label["rect"]["x"], edge * 1.5, "px", bearing)
+    for track, measured in zip(declared["tracks"], mine["tracks"]):
+        subject = f"track:{track['field']}"
+        rect = as_tuple(track["rect"])
+        edges = measured.get("edges")
+        for prop, index in (("left", 0), ("top", 1), ("width", 2), ("height", 3)):
+            report.check("harness-native", name, capture, subject, f"track {prop}", edges[index] if edges else None,
+                         rect[index], edge, "px")
+        beside = measured.get("beside")
+        report.check("harness-native", name, capture, subject, "track fill alpha", measured.get("alpha"),
+                     raw["segmentTrack"][3] * track["opacity"], overlay_limit(beside, False), "levels",
+                     "a black overlay over the page beside it; " + (overlay_note(beside, False) or ""))
+        for segment, seg in zip(track["segments"], measured["segments"]):
+            sub = f"segment:{segment['label']}"
+            state = "chosen" if segment["chosen"] else "rest"
+            expected = raw["segmentOn"][3] * track["opacity"] if segment["chosen"] else 0
+            report.check("harness-native", name, capture, sub, f"segment {'on ' if segment['chosen'] else ''}wash alpha "
+                         f"({state})", seg.get("alpha"), expected, overlay_limit(seg.get("trackFill"), seg_lighter),
+                         "levels", "over the track's fill; " + (overlay_note(seg.get("trackFill"), seg_lighter) or ""))
+            if segment["chosen"]:
+                seg_edges = seg.get("edges")
+                for prop, index in (("left", 0), ("top", 1), ("width", 2), ("height", 3)):
+                    report.check("harness-native", name, capture, sub, f"segment wash {prop}",
+                                 seg_edges[index] if seg_edges else None, as_tuple(segment["rect"])[index], edge, "px")
+            box = as_tuple(segment["labelBox"])
+            report.check("harness-native", name, capture, sub, "label ink center x",
+                         seg.get("label") and seg["label"]["center"], box[0] + box[2] / 2, edge * 1.5, "px",
+                         "centered in its segment")
+        crops.append((subject, rect, None))
+    for description, measured in zip(declared["descriptions"], mine["descriptions"]):
+        report.check("harness-native", name, capture, f"description:{description['text'][:24]}", "ink left",
+                     measured and measured["left"], description["rect"]["x"], edge * 1.5, "px", bearing)
+    for swatch, edges in zip(declared["swatches"], mine["swatches"]):
+        grow = 4 if swatch["chosen"] else 0
+        rect = as_tuple(swatch["rect"])
+        expected = (rect[0] - grow, rect[1] - grow, rect[2] + 2 * grow, rect[3] + 2 * grow)
+        for prop, index in (("left", 0), ("top", 1), ("width", 2), ("height", 3)):
+            report.check("harness-native", name, capture, f"swatch:{swatch['name']}", f"disc {prop}",
+                         edges[index] if edges else None, expected[index], edge, "px",
+                         "with its rings, where chosen")
+    for slider, measured in zip(declared["sliders"], mine["sliders"]):
+        subject = f"slider:{slider['label']['text']}"
+        report.check("harness-native", name, capture, subject, "label ink left",
+                     measured["label"] and measured["label"]["left"], slider["label"]["rect"]["x"], edge * 1.5,
+                     "px", bearing)
+        value = as_tuple(slider["value"]["rect"])
+        report.check("harness-native", name, capture, subject, "value ink right",
+                     measured["value"] and measured["value"]["right"], value[0] + value[2], edge * 1.5, "px",
+                     bearing)
+    for toggle, measured in zip(declared["toggles"], mine["toggles"]):
+        subject = f"toggle:{toggle['label']['text']}"
+        rect = as_tuple(toggle["rect"])
+        edges = measured.get("edges")
+        for prop, index in (("left", 0), ("top", 1), ("width", 2), ("height", 3)):
+            report.check("harness-native", name, capture, subject, f"track {prop}", edges[index] if edges else None,
+                         rect[index], edge, "px")
+        report.check("harness-native", name, capture, subject, "knob left", measured.get("knob"),
+                     toggle["knob"]["x"], edge, "px")
+    preview = declared.get("preview")
+    if preview:
+        stage = as_tuple(preview["stage"])
+        found = vline(native, (int((stage[0] - 3) * scale), int((stage[0] + 4) * scale)),
+                      (int((stage[1] + 60) * scale), int((stage[1] + 300) * scale)), None, lighter)
+        report.check("harness-native", name, capture, "preview", "stage ring x",
+                     found / scale if found is not None else None, stage[0], edge, "px", "its 1px inset ring")
+        measured = mine["preview"]
+        for row, mrow in zip(preview["rows"], measured["rows"]):
+            subject = f"mini-row:{row['title']['text']}"
+            expected = raw["previewRowSelected"][3] if row["selected"] else 0
+            report.check("harness-native", name, capture, subject,
+                         f"mini wash alpha ({'selected' if row['selected'] else 'rest'})", mrow.get("alpha"), expected,
+                         flat, "levels")
+            report.check("harness-native", name, capture, subject, "title ink left", mrow.get("titleLeft"),
+                         row["title"]["rect"]["x"], edge * 1.5, "px", bearing)
+            kind = as_tuple(row["kind"]["rect"])
+            report.check("harness-native", name, capture, subject, "kind ink right", mrow.get("kindRight"),
+                         kind[0] + kind[2], edge * 1.5, "px", bearing)
+        for index, (pin, mpin) in enumerate(zip(preview["pins"], measured["pins"])):
+            report.check("harness-native", name, capture, f"mini-pin:{index + 1}", "fill alpha", mpin.get("alpha"),
+                         raw["previewPin"][3], flat, "levels")
+        query = measured["query"]
+        report.check("harness-native", name, capture, "mini-search", "query ink left", query and query["left"],
+                     preview["query"]["rect"]["x"], edge * 1.5, "px", bearing)
+        report.check("harness-native", name, capture, "mini-search", "caret left", measured["caret"],
+                     preview["caret"]["x"], edge, "px")
+        if preview.get("tip"):
+            tip = measured.get("tip")
+            report.check("harness-native", name, capture, "mini-footer", "tip ink left", tip and tip["left"],
+                         preview["tip"]["rect"]["x"], edge * 1.5, "px", bearing)
+        keys = measured["keys"]
+        report.check("harness-native", name, capture, "mini-footer", "key left", keys and keys[0],
+                     preview["keys"]["x"], edge, "px")
+        crops.append(("preview", stage, None))
+    if declared.get("link"):
+        link = mine.get("link")
+        report.check("harness-native", name, capture, "link", "ink left", link and link["left"],
+                     declared["link"]["rect"]["x"], edge * 1.5, "px", bearing)
+
+    if ref_capture is None or reference_image is None or "appearance" not in ref_capture.get("state", {}):
+        return
+    # ---- the reference side against its DOM
+    ref_page = reference_appearance(ref_capture["state"]["appearance"])
+    theirs = measure_appearance(reference_image, ref_page, colors)
+    for track, measured in zip(ref_page["tracks"], theirs["tracks"]):
+        subject = f"track:{track['field']}"
+        edges = measured.get("edges")
+        rect = as_tuple(track["rect"])
+        for prop, index in (("left", 0), ("top", 1), ("width", 2), ("height", 3)):
+            report.check("harness-reference", name, capture, subject, f"track {prop}",
+                         edges[index] if edges else None, rect[index], edge, "px")
+        for segment, seg in zip(track["segments"], measured["segments"]):
+            report.check("harness-reference", name, capture, f"segment:{segment['label']}",
+                         "segment wash alpha vs DOM background", seg.get("alpha"),
+                         css_rgba(segment["background"])[3] * track["opacity"],
+                         overlay_limit(seg.get("trackFill"), True), "levels",
+                         overlay_note(seg.get("trackFill"), True))
+    for swatch, edges in zip(ref_page["swatches"], theirs["swatches"]):
+        grow = 4 if swatch["chosen"] else 0
+        rect = as_tuple(swatch["rect"])
+        report.check("harness-reference", name, capture, f"swatch:{swatch['name']}", "disc left",
+                     edges and edges[0], rect[0] - grow, edge, "px", "with its rings, where chosen")
+    for toggle, measured in zip(ref_page["toggles"], theirs["toggles"]):
+        report.check("harness-reference", name, capture, f"toggle:{(toggle.get('label') or {}).get('text')}",
+                     "knob left",
+                     measured.get("knob"), toggle["knob"]["x"], edge, "px")
+    if ref_page.get("preview"):
+        for row, mrow in zip(ref_page["preview"]["rows"], theirs["preview"]["rows"]):
+            report.check("harness-reference", name, capture, f"mini-row:{row['title']['text']}", "title ink left",
+                         mrow.get("titleLeft"), row["title"]["rect"]["x"], edge * 1.5, "px", bearing)
+
+    # ---- parity: the same component in the same state
+    def pairs(mine_list, theirs_list, declared_list, ref_list, key):
+        by_key = {key(item): measured for item, measured in zip(ref_list, theirs_list)}
+        for item, measured in zip(declared_list, mine_list):
+            if key(item) in by_key:
+                yield item, measured, by_key[key(item)]
+
+    def place(subject, prop, n, r, limit=edge, note=None, accepted=None):
+        if n is not None and r is not None:
+            report.check("parity", name, capture, subject, prop, n, r, limit, "px", note, accepted)
+
+    for label, n, r in pairs(mine["labels"], theirs["labels"], declared["labels"], ref_page["labels"],
+                             lambda item: item["text"]):
+        subject = f"field:{label['text']}"
+        if n and r:
+            place(subject, "label ink left", n["left"], r["left"])
+            place(subject, "label ink top", n["top"], r["top"])
+            if n.get("color") and r.get("color"):
+                report.check("parity", name, capture, subject, "label glyph core color (max channel)",
+                             color_delta(n["color"], r["color"]), 0, LIMITS["glyph_core_levels"], "levels",
+                             f"native {fmt_color(n['color'])} vs reference {fmt_color(r['color'])}")
+    chosen = lambda tracks: "; ".join(  # noqa: E731
+        f"{t['field']}={','.join(s['label'] for s in t['segments'] if s['chosen'])}" for t in tracks)
+    hovered = lambda tracks: ", ".join(  # noqa: E731
+        s["label"] for t in tracks for s in t["segments"] if s["hovered"] and not s["chosen"])
+    shared = {t["field"] for t in ref_page["tracks"]}
+    report.check("parity", name, capture, "segments", "chosen segments",
+                 chosen([t for t in declared["tracks"] if t["field"] in shared]), chosen(ref_page["tracks"]), 0, "")
+    report.check("parity", name, capture, "segments", "hover-only segments", hovered(declared["tracks"]),
+                 hovered(ref_page["tracks"]), 0, "", "the pointer lightens the label it is over, at once")
+    for track, n, r in pairs(mine["tracks"], theirs["tracks"], declared["tracks"], ref_page["tracks"],
+                             lambda item: item["field"]):
+        subject = f"track:{track['field']}"
+        crops.append(("parity-" + subject, as_tuple(track["rect"]),
+                      as_tuple(next(t for t in ref_page["tracks"] if t["field"] == track["field"])["rect"])))
+        n_edges, r_edges = n.get("edges"), r.get("edges")
+        if n_edges and r_edges:
+            for prop, index in (("left", 0), ("top", 1), ("width", 2), ("height", 3)):
+                place(subject, f"track {prop}", n_edges[index], r_edges[index])
+        if n.get("alpha") is not None and r.get("alpha") is not None:
+            # The reference's page is the coarser: its limit decides.
+            report.check("parity", name, capture, subject, "track fill alpha", n["alpha"], r["alpha"],
+                         overlay_limit(r.get("beside"), False), "levels", overlay_note(r.get("beside"), False))
+        ref_segments = {s["label"]: m for s, m in zip(
+            next(t for t in ref_page["tracks"] if t["field"] == track["field"])["segments"], r["segments"])}
+        for segment, seg in zip(track["segments"], n["segments"]):
+            ref_seg = ref_segments.get(segment["label"])
+            if ref_seg is None:
+                continue
+            sub = f"segment:{segment['label']}"
+            if seg.get("alpha") is not None and ref_seg.get("alpha") is not None:
+                report.check("parity", name, capture, sub, "segment wash alpha", seg["alpha"], ref_seg["alpha"],
+                             overlay_limit(ref_seg.get("trackFill"), True), "levels",
+                             overlay_note(ref_seg.get("trackFill"), True))
+            if seg.get("edges") and ref_seg.get("edges"):
+                for prop, index in (("left", 0), ("top", 1), ("width", 2), ("height", 3)):
+                    place(sub, f"segment wash {prop}", seg["edges"][index], ref_seg["edges"][index])
+            n_label, r_label = seg.get("label"), ref_seg.get("label")
+            if n_label and r_label:
+                place(sub, "label ink center x", n_label["center"], r_label["center"], edge * 1.5,
+                      "the label's own advance rounds per renderer")
+                place(sub, "label ink top", n_label["top"], r_label["top"])
+                report.check("parity", name, capture, sub, "label glyph core color (max channel)",
+                             color_delta(n_label["color"], r_label["color"]), 0, LIMITS["glyph_core_levels"],
+                             "levels", f"native {fmt_color(n_label['color'])} vs reference "
+                             f"{fmt_color(r_label['color'])}")
+    for description, n, r in pairs(mine["descriptions"], theirs["descriptions"], declared["descriptions"],
+                                   ref_page["descriptions"], lambda item: item["text"]):
+        if n and r:
+            subject = f"description:{description['text'][:24]}"
+            place(subject, "ink left", n["left"], r["left"])
+            place(subject, "ink top", n["top"], r["top"])
+    for swatch, n, r in pairs(mine["swatches"], theirs["swatches"], declared["swatches"], ref_page["swatches"],
+                              lambda item: item["name"]):
+        if n and r:
+            for prop, index in (("left", 0), ("top", 1), ("width", 2), ("height", 3)):
+                place(f"swatch:{swatch['name']}", f"disc {prop}", n[index], r[index])
+    for slider, n, r in pairs(mine["sliders"], theirs["sliders"], declared["sliders"], ref_page["sliders"],
+                              lambda item: (item.get("label") or {}).get("text")):
+        subject = f"slider:{slider['label']['text']}"
+        if n["label"] and r["label"]:
+            place(subject, "label ink left", n["label"]["left"], r["label"]["left"], note=SLIDER_DRAWING)
+            place(subject, "label ink top", n["label"]["top"], r["label"]["top"], note=SLIDER_DRAWING)
+            if n["label"].get("color") and r["label"].get("color"):
+                report.check("parity", name, capture, subject, "label glyph core color (max channel)",
+                             color_delta(n["label"]["color"], r["label"]["color"]), 0,
+                             LIMITS["glyph_core_levels"], "levels", "the field's opacity: 40% while Solid is chosen")
+        if n["value"] and r["value"]:
+            place(subject, "value ink right", n["value"]["right"], r["value"]["right"], edge * 1.5, SLIDER_DRAWING)
+    for toggle, n, r in pairs(mine["toggles"], theirs["toggles"], declared["toggles"], ref_page["toggles"],
+                              lambda item: (item.get("label") or {}).get("text")):
+        subject = f"toggle:{toggle['label']['text']}"
+        if n.get("edges") and r.get("edges"):
+            for prop, index in (("left", 0), ("top", 1), ("width", 2), ("height", 3)):
+                place(subject, f"track {prop}", n["edges"][index], r["edges"][index])
+        place(subject, "knob left", n.get("knob"), r.get("knob"))
+        if n.get("label") and r.get("label"):
+            place(subject, "label ink left", n["label"]["left"], r["label"]["left"])
+            place(subject, "label ink top", n["label"]["top"], r["label"]["top"])
+    if preview and ref_page.get("preview"):
+        n_mini, r_mini = mine["preview"], theirs["preview"]
+        crops.append(("parity-preview", as_tuple(preview["stage"]), as_tuple(ref_capture["state"]["appearance"]
+                                                                              ["preview"]["stage"])))
+        by_title = {row["title"]["text"]: m for row, m in zip(ref_page["preview"]["rows"], r_mini["rows"])}
+        for row, n in zip(preview["rows"], n_mini["rows"]):
+            r = by_title.get(row["title"]["text"])
+            if r is None:
+                continue
+            subject = f"mini-row:{row['title']['text']}"
+            if n.get("alpha") is not None and r.get("alpha") is not None:
+                report.check("parity", name, capture, subject, "mini wash alpha", n["alpha"], r["alpha"], flat,
+                             "levels", "over the miniature's own backdrop beside the row")
+            place(subject, "title ink left", n.get("titleLeft"), r.get("titleLeft"))
+            place(subject, "title ink top", n.get("titleTop"), r.get("titleTop"))
+            place(subject, "kind ink right", n.get("kindRight"), r.get("kindRight"), edge * 1.5)
+        for index, (n, r) in enumerate(zip(n_mini["pins"], r_mini["pins"])):
+            subject = f"mini-pin:{index + 1}"
+            if n.get("alpha") is not None and r.get("alpha") is not None:
+                report.check("parity", name, capture, subject, "fill alpha", n["alpha"], r["alpha"], flat, "levels")
+            if n.get("edges") and r.get("edges"):
+                place(subject, "slot left", n["edges"][0], r["edges"][0])
+                place(subject, "slot top", n["edges"][1], r["edges"][1])
+        if n_mini["query"] and r_mini["query"]:
+            place("mini-search", "query ink left", n_mini["query"]["left"], r_mini["query"]["left"])
+            place("mini-search", "query ink top", n_mini["query"]["top"], r_mini["query"]["top"])
+        place("mini-search", "caret left", n_mini["caret"], r_mini["caret"])
+        if n_mini.get("tip") and r_mini.get("tip"):
+            place("mini-footer", "tip ink left", n_mini["tip"]["left"], r_mini["tip"]["left"])
+            place("mini-footer", "tip ink top", n_mini["tip"]["top"], r_mini["tip"]["top"])
+        if n_mini["keys"] and r_mini["keys"]:
+            for prop, index in (("left", 0), ("top", 1), ("width", 2)):
+                place("mini-footer", f"key {prop}", n_mini["keys"][index], r_mini["keys"][index])
+        # The surface: compared where both draw the solid one.
+        ref_solid = any(s["chosen"] and s["label"] == "Solid" for t in ref_page["tracks"] for s in t["segments"])
+        if not preview["glass"] and ref_solid and n_mini.get("panelFill") and r_mini.get("panelFill"):
+            report.check("parity", name, capture, "preview", "solid surface (max channel)",
+                         color_delta(n_mini["panelFill"], r_mini["panelFill"]), 0, flat, "levels", PREVIEW_PANEL)
+    n_link, r_link = mine.get("link"), theirs.get("link")
+    if n_link and r_link:
+        place("link", "ink left", n_link["left"], r_link["left"])
+        place("link", "ink top", n_link["top"], r_link["top"])
 
 
 # ------------------------------------------------- result boards (#96)

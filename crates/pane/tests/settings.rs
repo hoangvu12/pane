@@ -2413,8 +2413,9 @@ fn the_appearance_preview_sits_beside_the_controls_and_below_them_when_narrow(
     pointer_leaves(&mut settings_cx);
     settle_frames(&mut settings_cx);
 
+    // The theme's segmented choice spans the controls column (#98).
     let choice = settings_cx
-        .debug_bounds("appearance-theme-System")
+        .debug_bounds("appearance-theme-track")
         .expect("a choice");
     let preview = settings_cx
         .debug_bounds("appearance-preview")
@@ -2428,7 +2429,7 @@ fn the_appearance_preview_sits_beside_the_controls_and_below_them_when_narrow(
     settings_cx.simulate_resize(gpui::size(px(760.), px(720.)));
     settings_cx.run_until_parked();
     let choice = settings_cx
-        .debug_bounds("appearance-theme-System")
+        .debug_bounds("appearance-theme-track")
         .expect("a choice");
     let preview = settings_cx
         .debug_bounds("appearance-preview")
@@ -2440,6 +2441,248 @@ fn the_appearance_preview_sits_beside_the_controls_and_below_them_when_narrow(
     );
     assert_eq!(preview.left(), page.left() + px(32.));
     assert!(preview.right() <= page.right() - px(32.));
+}
+
+/// The Appearance page's choices are the reference board's segmented
+/// family (#98), not launcher rows: each setting a field group — its
+/// 18px label 8px above the 36px track (black 24% under its ring), whose
+/// 30px segments share its width inside its 3px padding, 2px apart — 18px
+/// below the one before it, the chosen segment on the white 12% wash and
+/// no root-row wash on any of them.
+#[gpui::test]
+fn the_appearance_choices_are_the_reference_segmented_family(cx: &mut TestAppContext) {
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let mut settings_cx = open_settings(cx);
+    pointer_leaves(&mut settings_cx);
+    settle_frames(&mut settings_cx);
+    let sc = &mut settings_cx;
+
+    let title = rect_of(sc, "appearance-title");
+    let theme_field = rect_of(sc, "appearance-theme-field");
+    let theme_track = rect_of(sc, "appearance-theme-track");
+    let material_field = rect_of(sc, "appearance-material-field");
+    let material_track = rect_of(sc, "appearance-material-track");
+    // The heading block's 4px below it, then the column's 18px.
+    let below_title = title[1] + title[3] + 4. + 18.;
+    assert_eq!(theme_field[1], below_title, "{theme_field:?}");
+    let below_theme = theme_field[1] + theme_field[3] + 18.;
+    assert_eq!(material_field[1], below_theme, "{material_field:?}");
+    for (field, track) in [(theme_field, theme_track), (material_field, material_track)] {
+        // The 18px label and the field's 8px before the track.
+        assert_eq!(track[1], field[1] + 18. + 8., "{track:?} in {field:?}");
+        assert_eq!([track[0], track[2], track[3]], [field[0], 388., 36.]);
+    }
+
+    // Three equal segments on the theme's track, two on the material's.
+    let themes: Vec<_> = ["System", "Light", "Dark"]
+        .into_iter()
+        .map(|name| rect_of(sc, selector(format!("appearance-theme-{name}"))))
+        .collect();
+    let materials: Vec<_> = ["Glass", "Solid"]
+        .into_iter()
+        .map(|name| rect_of(sc, selector(format!("appearance-material-{name}"))))
+        .collect();
+    for (track, row, width) in [
+        (theme_track, &themes, 126.),
+        (material_track, &materials, 190.),
+    ] {
+        assert_eq!([row[0][0], row[0][1]], [track[0] + 3., track[1] + 3.]);
+        for pair in row.windows(2) {
+            assert_eq!(pair[1][0], pair[0][0] + pair[0][2] + 2., "2px apart");
+        }
+        for segment in row {
+            assert_eq!([segment[2], segment[3]], [width, 30.], "{segment:?}");
+        }
+    }
+
+    // The fills: the track's black 24%, the chosen segment's white 12%
+    // (Dark and Glass are the defaults), and nothing on the others.
+    let track = sc
+        .debug_bounds("appearance-theme-track")
+        .expect("the track");
+    assert!(
+        paints_fill_at(sc, track, 0x0000003D),
+        "the track's black 24%"
+    );
+    let dark = sc
+        .debug_bounds("appearance-theme-Dark")
+        .expect("the Dark segment");
+    let system = sc
+        .debug_bounds("appearance-theme-System")
+        .expect("the System segment");
+    assert!(paints_fill_at(sc, dark, 0xFFFFFF1F), "the chosen white 12%");
+    assert!(!paints_fill_at(sc, system, 0xFFFFFF1F), "only the chosen");
+    for bounds in [dark, system] {
+        for root_wash in [0xFFFFFF16, 0xFFFFFF09] {
+            assert!(
+                !paints_fill_at(sc, bounds, root_wash),
+                "no root-row wash on a segment"
+            );
+        }
+    }
+
+    // Choosing moves the wash at once, and leaves nothing running.
+    click(sc, "appearance-material-Solid");
+    sc.run_until_parked();
+    assert!(chosen(sc, "Solid"), "the Solid choice is taken");
+    let solid = sc
+        .debug_bounds("appearance-material-Solid")
+        .expect("the Solid segment");
+    let glass = sc
+        .debug_bounds("appearance-material-Glass")
+        .expect("the Glass segment");
+    assert!(paints_fill_at(sc, solid, 0xFFFFFF1F), "the wash moved");
+    assert!(!paints_fill_at(sc, glass, 0xFFFFFF1F), "and left Glass");
+    pointer_leaves(sc);
+    sc.run_until_parked();
+    assert_eq!(settle_frames(sc), 0, "the window is idle");
+}
+
+/// The live preview is the reference's stage and miniature (#98): the
+/// 400x520 stage below the column's caption, the 340px miniature centered
+/// on it 56px below its top — its 46px search line, its pinned strip, its
+/// 38px rows (the first selected, on white 9%) and its 38px footer — drawn
+/// with the appearance in effect: the solid surface once Solid is chosen,
+/// in the palette chosen.
+#[gpui::test]
+fn the_live_preview_is_the_reference_miniature_in_the_appearance_in_effect(
+    cx: &mut TestAppContext,
+) {
+    let data = tempfile::tempdir().unwrap();
+    cx.update(|cx| {
+        pane::settings::init_with_overrides(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            cx,
+        )
+    });
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let mut settings_cx = open_settings(cx);
+    pointer_leaves(&mut settings_cx);
+    settle_frames(&mut settings_cx);
+    let sc = &mut settings_cx;
+
+    let page = rect_of(sc, "settings-page");
+    let stage = rect_of(sc, "appearance-preview");
+    let panel = rect_of(sc, "appearance-preview-panel");
+    // The page's 26px, the caption's 16px line and the column's 10px.
+    assert_eq!(stage[1], page[1] + 26. + 16. + 10., "{stage:?}");
+    assert_eq!([stage[2], stage[3]], [400., 520.]);
+    assert_eq!([panel[0], panel[1]], [stage[0] + 30., stage[1] + 56.]);
+    assert_eq!(panel[2], 340.);
+    let search = rect_of(sc, "preview-search");
+    assert_eq!([search[1], search[3]], [panel[1], 46.]);
+    let pins = rect_of(sc, "preview-pins");
+    assert_eq!([pins[1], pins[3]], [panel[1] + 46. + 6., 52.]);
+    let first = rect_of(sc, "preview-row-0");
+    let second = rect_of(sc, "preview-row-1");
+    assert_eq!(first[1], pins[1] + pins[3] + 2.);
+    assert_eq!([first[3], second[1]], [38., first[1] + 40.]);
+    let footer = rect_of(sc, "preview-footer");
+    assert_eq!(footer[3], 38.);
+    assert_eq!(
+        footer[1] + footer[3],
+        panel[1] + panel[3],
+        "the footer closes it"
+    );
+    let row = sc.debug_bounds("preview-row-0").expect("the first row");
+    assert!(
+        paints_fill_at(sc, row, 0xFFFFFF17),
+        "the selected row's white 9%"
+    );
+
+    // Solid: the miniature takes the solid surface, as the windows do.
+    choose(sc, "appearance-material-Solid");
+    cx.run_until_parked();
+    sc.run_until_parked();
+    let panel = sc
+        .debug_bounds("appearance-preview-panel")
+        .expect("the miniature");
+    assert!(
+        paints_fill_at(sc, panel, 0x16171AFF),
+        "the solid dark surface"
+    );
+    assert!(!paints_fill_at(sc, panel, 0x16171AB3), "no glass tint");
+
+    // Light: the same miniature in the light palette.
+    choose(sc, "appearance-theme-Light");
+    cx.run_until_parked();
+    sc.run_until_parked();
+    let panel = sc
+        .debug_bounds("appearance-preview-panel")
+        .expect("the miniature");
+    assert!(
+        paints_fill_at(sc, panel, 0xF6F6F8FF),
+        "the solid light surface"
+    );
+    until_record(cx, data.path());
+}
+
+/// The keyboard reaches the segments (#98): Tab moves from the sidebar
+/// onto them, and Enter or Space chooses the one it is on, as a click
+/// does — and both windows follow.
+#[gpui::test]
+fn the_keyboard_reaches_and_chooses_a_segment(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    cx.update(|cx| {
+        pane::settings::init_with_overrides(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            cx,
+        )
+    });
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let mut settings_cx = open_settings(cx);
+
+    tab_to(&mut settings_cx, "Light");
+    settings_cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    settings_cx.run_until_parked();
+    assert!(chosen(&mut settings_cx, "Light"), "Enter chose Light");
+    assert!(
+        paints_panel(cx, &light_panel()),
+        "the launcher follows the keyboard's choice"
+    );
+
+    tab_to(&mut settings_cx, "Dark");
+    settings_cx.simulate_keystrokes("space");
+    cx.run_until_parked();
+    settings_cx.run_until_parked();
+    assert!(chosen(&mut settings_cx, "Dark"), "Space chose Dark");
+    assert!(paints_panel(cx, &dark_panel()));
+    until_record(cx, data.path());
+}
+
+/// While an override is in force the segments are offered to neither the
+/// pointer nor the keyboard (#98): Tab passes them by.
+#[gpui::test]
+fn overridden_segments_take_no_keyboard_focus(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    cx.update(|cx| {
+        pane::settings::init_with_overrides(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides {
+                theme: Some(pane_core::ThemePreference::Light),
+                material: None,
+            },
+            cx,
+        )
+    });
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let mut settings_cx = open_settings(cx);
+    // The choices are drawn, as segments, and offered to nothing.
+    assert!(settings_cx.debug_bounds("appearance-theme-track").is_some());
+    let mut reached = Vec::new();
+    for _ in 0..8 {
+        settings_cx.simulate_keystrokes("tab");
+        reached.push(focused_label(&mut settings_cx).unwrap_or_default());
+    }
+    for name in ["System", "Light", "Dark", "Glass", "Solid"] {
+        assert!(
+            !reached.iter().any(|label| label == name),
+            "{name} took the focus while overridden: {reached:?}"
+        );
+    }
 }
 
 /// The seven real pages — and only those — are the sidebar's sections, in
@@ -2986,15 +3229,19 @@ fn the_material_choice_switches_the_panel_surface(cx: &mut TestAppContext) {
         );
     }
 
-    // The solid surface needs no note.
+    // The solid surface's description says what it is: no caveat about
+    // blur is left standing under it.
     choose(&mut settings_cx, "appearance-material-Solid");
     cx.run_until_parked();
     settings_cx.run_until_parked();
+    let (_, json) = accessibility(&mut settings_cx);
     assert!(
-        settings_cx
-            .debug_bounds("appearance-material-note")
-            .is_none(),
-        "nothing to explain about the solid surface"
+        json.contains("No transparency"),
+        "the solid surface is described, {json}"
+    );
+    assert!(
+        !json.contains("not see whether the blur") && !json.contains("Glass is unavailable"),
+        "no glass caveat is left under the solid choice, {json}"
     );
     until_record(cx, data.path());
 }

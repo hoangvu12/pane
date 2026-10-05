@@ -317,8 +317,9 @@ pub(crate) fn sidebar_item(item: SidebarItem, theme: &Theme) -> Div {
 }
 
 /// The page's viewport: the area beside the sidebar, padded 26px above,
-/// 32px either side and 24px below. The caller names it, makes it scroll
-/// and adds the page.
+/// 32px either side and 24px below, its text 13px in the body ink unless a
+/// page sets its own. The caller names it, makes it scroll and adds the
+/// page.
 pub(crate) fn page_viewport(theme: &Theme) -> Div {
     let settings = &theme.geometry.settings;
     div()
@@ -328,11 +329,15 @@ pub(crate) fn page_viewport(theme: &Theme) -> Div {
         .pt(settings.page_padding_top)
         .px(settings.page_padding_x)
         .pb(settings.page_padding_bottom)
+        .text_size(theme.typography.row_subtitle_size)
+        .text_color(theme.text_body)
 }
 
 /// A page's heading block: the 22px/600 heading (-.01em of tracking) in
 /// the heading color (the dark palette's white), over its 13px muted
-/// subtitle, 4px apart, with 4px below the block.
+/// subtitle, 4px apart, with 4px below the block. Each line box is the
+/// reference's own (28 and 17: see `theme::SettingsType`), so the fields
+/// below the block start where the board's do.
 pub(crate) fn page_header(
     title: impl Into<SharedString>,
     subtitle: Option<SharedString>,
@@ -340,6 +345,7 @@ pub(crate) fn page_header(
 ) -> Div {
     let settings = &theme.geometry.settings;
     let typography = &theme.typography;
+    let lines = &typography.settings;
     div()
         .flex_none()
         .flex()
@@ -348,18 +354,18 @@ pub(crate) fn page_header(
         .mb(settings.header_margin_bottom)
         .child(
             div()
-                .text_size(typography.heading_size)
-                .line_height(typography.heading_size * typography.line_height)
+                .text_size(lines.heading.size)
+                .line_height(lines.heading.line_height)
                 .font_weight(typography.heading_weight)
-                .letter_spacing(typography.heading_size * typography.heading_tracking)
+                .letter_spacing(lines.heading.size * typography.heading_tracking)
                 .text_color(theme.heading_text)
                 .child(title.into()),
         )
         .when_some(subtitle, |header, subtitle| {
             header.child(
                 div()
-                    .text_size(typography.row_subtitle_size)
-                    .line_height(typography.row_subtitle_size * typography.line_height)
+                    .text_size(lines.subtitle.size)
+                    .line_height(lines.subtitle.line_height)
                     .font_weight(typography.regular)
                     .text_color(theme.text_muted)
                     .child(subtitle),
@@ -406,18 +412,19 @@ pub(crate) fn page_columns(
         )
 }
 
-/// An aside column's content: its 12px/500 muted caption ("Preview"),
-/// 10px above whatever the caller adds.
+/// An aside column's content: its 12px/500 muted caption ("Preview", in
+/// the reference's 16px line), 10px above whatever the caller adds.
 pub(crate) fn aside(caption: impl Into<SharedString>, theme: &Theme) -> Div {
     let typography = &theme.typography;
+    let caption_line = typography.settings.caption;
     div()
         .flex()
         .flex_col()
         .gap(theme.geometry.settings.aside_gap)
         .child(
             div()
-                .text_size(typography.settings_caption_size)
-                .line_height(typography.settings_caption_size * typography.line_height)
+                .text_size(caption_line.size)
+                .line_height(caption_line.line_height)
                 .font_weight(typography.medium)
                 .text_color(theme.text_muted)
                 .child(caption.into()),

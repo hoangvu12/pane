@@ -92,6 +92,10 @@ _Avoid_: Start page, dashboard, recents (Pane shows no recent use)
 The panel, opened from the launcher's footer or its Open actions binding, that lists what can be done with root search's selected result: its primary action, then pinning it to a quick slot, then the alias and hotkey configuration of an installed command. A quick slot has one of its own, opening, removing and moving it. It lists only operations Pane can perform, and holds the result it opened for.
 _Avoid_: Context menu, app menu (the Pane menu is separate)
 
+**Appearance**:
+How Pane's windows look, as the user chooses it on Settings' Appearance page: a theme (System, which follows the system's light or dark appearance as it changes, Light or Dark) and a material (Glass, a translucent tint over the system's blur where the platform provides it, or Solid, an opaque window). Both windows render a choice at once, and Pane keeps it in its own settings record; a development override (`PANE_THEME`, `PANE_MATERIAL`) wins for its process, disables the choices and is never saved. The page's preview is a picture of the launcher in the appearance in effect, not the user's results. Accent colors, blur and tint strength, density and pinned or tip visibility are not Pane settings: only the visual workbench's reference fixture draws those controls.
+_Avoid_: Theme (one half of it), skin, style
+
 **Pane menu**:
 Pane's own menu, opened from the Pane mark at the left of the launcher's footer, holding Settings. It is not about any result.
 _Avoid_: App menu, footer menu, more actions

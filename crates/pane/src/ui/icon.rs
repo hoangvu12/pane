@@ -29,7 +29,8 @@
 //! The generic command glyph is the reference's terminal prompt.
 //!
 //! Tiles come in the reference's sizes ([`TileSize`]): the result row's
-//! 28, a pinned slot's 42 and the Actions header's 18. (The reference's
+//! 28, a pinned slot's 42, the Actions header's 18, and the Appearance
+//! preview's miniature row (22) and pinned slot (24). (The reference's
 //! 34px toast tile has no Pane counterpart: Pane shows no launch toast.)
 
 use std::collections::HashMap;
@@ -135,6 +136,9 @@ pub(crate) enum Glyph {
     Music,
     /// A pushpin: the Actions panel's quick slot entries (`A.pin`).
     ActionPin,
+    /// A plus: the Appearance board's custom accent swatch (the
+    /// reference's own path; fixture-only, #100).
+    Plus,
     /// The Windows titlebar's close mark.
     #[cfg(target_os = "windows")]
     WindowClose,
@@ -191,6 +195,7 @@ impl Glyph {
         Glyph::Notes,
         Glyph::Music,
         Glyph::ActionPin,
+        Glyph::Plus,
     ];
 
     /// The embedded SVG bytes for this glyph.
@@ -237,6 +242,7 @@ impl Glyph {
             Glyph::Notes => include_bytes!("../../assets/icons/notes.svg"),
             Glyph::Music => include_bytes!("../../assets/icons/music.svg"),
             Glyph::ActionPin => include_bytes!("../../assets/icons/action-pin.svg"),
+            Glyph::Plus => include_bytes!("../../assets/icons/plus.svg"),
             #[cfg(target_os = "windows")]
             Glyph::WindowClose => include_bytes!("../../assets/icons/window-close.svg"),
             #[cfg(target_os = "windows")]
@@ -361,6 +367,10 @@ pub(crate) enum TileSize {
     Slot,
     /// The Actions panel header's tile.
     Mini,
+    /// A row of the Appearance preview's miniature launcher (22).
+    PreviewRow,
+    /// A pinned slot of the Appearance preview's miniature launcher (24).
+    PreviewPin,
 }
 
 impl TileSize {
@@ -371,6 +381,8 @@ impl TileSize {
             TileSize::Row => geometry.tile,
             TileSize::Slot => geometry.slot_tile,
             TileSize::Mini => geometry.mini_tile,
+            TileSize::PreviewRow => geometry.preview.row_tile,
+            TileSize::PreviewPin => geometry.preview.pin_tile,
         }
     }
 }
