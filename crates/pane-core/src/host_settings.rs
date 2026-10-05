@@ -206,6 +206,25 @@ impl NavigationBindings {
     }
 }
 
+/// The texture drawn into the launcher's background image (ADR 0028), as
+/// Roboco's new-thread background offers them: the picture as it is, or
+/// one of four treatments of it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BackgroundEffect {
+    /// The picture as it is.
+    None,
+    /// An ordered (Bayer) dither in 2px dots.
+    Dither,
+    /// The picture redrawn in small bitmap glyphs.
+    Ascii,
+    /// A halftone of round dots.
+    Halftone,
+    /// Every third row darkened, as a display's scanlines.
+    #[default]
+    Scanlines,
+}
+
 /// The host settings as the user chose them: one theme preference, one
 /// material preference, the Open Pane hotkey, the tray visibility, the
 /// launch-at-login choice, the launcher's opening display and what
@@ -266,6 +285,13 @@ pub struct HostSettings {
     pub escape_closes_settings: bool,
     /// Extra keys that move the selection.
     pub navigation: NavigationBindings,
+    /// The launcher's background image (ADR 0028): the file name of Pane's
+    /// own copy of the picture the user chose, in the data folder's
+    /// `backgrounds` folder; `None` for the plain panel. Always a plain
+    /// file name — a record naming a path anywhere else fails to read.
+    pub background: Option<String>,
+    /// The texture drawn into the background image.
+    pub background_effect: BackgroundEffect,
 }
 
 impl Default for HostSettings {
@@ -285,8 +311,19 @@ impl Default for HostSettings {
             escape: EscapeBehavior::default(),
             escape_closes_settings: true,
             navigation: NavigationBindings::default(),
+            background: None,
+            background_effect: BackgroundEffect::default(),
         }
     }
+}
+
+/// Whether `name` is a plain file name: no folder, no parent, nothing a
+/// path could escape the `backgrounds` folder with.
+fn plain_file_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && !name.contains(['/', '\\', ':'])
 }
 
 impl HostSettings {
@@ -336,6 +373,14 @@ impl HostSettings {
             Some(fields) => Keyboard::parse(&fields)
                 .map_err(|problem| format!("{} is invalid: {problem}", file.display()))?,
         };
+        if let Some(name) = &recorded.background
+            && !plain_file_name(name)
+        {
+            return Err(format!(
+                "{} is invalid: its background {name:?} is not a file name",
+                file.display()
+            ));
+        }
         Ok(HostSettings {
             theme: recorded.theme,
             material: recorded.material,
@@ -351,6 +396,8 @@ impl HostSettings {
             escape: recorded.escape_behavior,
             escape_closes_settings: recorded.escape_closes_settings,
             navigation: recorded.navigation_bindings,
+            background: recorded.background,
+            background_effect: recorded.background_effect,
         })
     }
 
@@ -376,6 +423,8 @@ impl HostSettings {
             escape_behavior: self.escape,
             escape_closes_settings: self.escape_closes_settings,
             navigation_bindings: self.navigation,
+            background: self.background.clone(),
+            background_effect: self.background_effect,
         };
         let text = serde_json::to_string_pretty(&recorded).map_err(|error| error.to_string())?;
         let file = dir.join(FILE);
@@ -445,6 +494,13 @@ struct Recorded {
     /// The extra selection keys; missing means none.
     #[serde(default)]
     navigation_bindings: NavigationBindings,
+    /// The background image's file name in the `backgrounds` folder;
+    /// missing means none.
+    #[serde(default)]
+    background: Option<String>,
+    /// The background image's texture; missing means scanlines.
+    #[serde(default)]
+    background_effect: BackgroundEffect,
 }
 
 /// The record's default for the tray visibility (and Escape closing
@@ -516,11 +572,15 @@ mod tests {
             escape: super::EscapeBehavior::Hide,
             escape_closes_settings: false,
             navigation: super::NavigationBindings::Emacs,
+            background: Some("background-1.jpg".into()),
+            background_effect: super::BackgroundEffect::Halftone,
         };
         settings.save(dir.path()).unwrap();
         assert_eq!(HostSettings::open(dir.path()).unwrap(), settings);
         let text = std::fs::read_to_string(dir.path().join(FILE)).unwrap();
         for field in [
+            "\"background\": \"background-1.jpg\"",
+            "\"backgroundEffect\": \"halftone\"",
             "\"reopening\": \"after-90-seconds\"",
             "\"windowMode\": \"compact\"",
             "\"compactPinned\": true",
@@ -680,6 +740,27 @@ mod tests {
         // A value that is not a boolean fails the whole record.
         let problem = reading(r#"{ "version": 1, "compactPinned": "yes" }"#);
         assert!(problem.is_err(), "{problem:?}");
+    }
+
+    #[test]
+    fn the_background_defaults_to_none_with_scanlines_and_names_only_a_file() {
+        let settings = reading(r#"{ "version": 1 }"#).unwrap();
+        assert_eq!(settings.background, None);
+        assert_eq!(
+            settings.background_effect,
+            super::BackgroundEffect::Scanlines
+        );
+        // A record naming a path rather than a file in the backgrounds
+        // folder fails to read, so nothing outside it is ever drawn.
+        for text in [
+            r#"{ "version": 1, "background": "../settings.json" }"#,
+            r#"{ "version": 1, "background": "C:\\Windows\\a.jpg" }"#,
+            r#"{ "version": 1, "background": "/etc/a.jpg" }"#,
+            r#"{ "version": 1, "background": "" }"#,
+            r#"{ "version": 1, "backgroundEffect": "sepia" }"#,
+        ] {
+            assert!(reading(text).is_err(), "{text} reads");
+        }
     }
 
     #[test]

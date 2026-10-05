@@ -27,7 +27,10 @@
 
 use std::sync::Arc;
 
-use gpui::{FontFeatures, FontWeight, Hsla, Pixels, SharedString, px, rgb_to_hsla, rgba};
+use gpui::{
+    FontFeatures, FontWeight, Hsla, Pixels, SharedString, hsla, px, rgb_to_hsla, rgba,
+    transparent_black,
+};
 
 /// Which palette a [`Theme`] carries. The host settings pick one — the
 /// user's preference, or the system's appearance where the preference
@@ -253,6 +256,13 @@ pub(crate) struct Theme {
     /// The pin hint's dashed outline, in the strip's cell after the last
     /// pin (Pane's own: the reference authors no such tile; white 10%).
     pub(crate) slot_empty_edge: Hsla,
+
+    // -- Over a background image (ADR 0028) -----------------------------------
+    /// The frosted surfaces over the launcher's background image — the
+    /// search pill, the pins, the selected row and the footer — when one
+    /// is drawn (see [`Theme::over_backdrop`]); `None`, the palettes' own,
+    /// draws none of it.
+    pub(crate) frost: Option<Frost>,
 
     // -- Type and geometry --------------------------------------------------
     /// Families, sizes and weights.
@@ -583,6 +593,10 @@ pub(crate) struct SettingsGeometry {
     /// The width of a choice at a row's end: a select's trigger and its
     /// popup, a segmented choice's track.
     pub(crate) choice_width: Pixels,
+    /// The width of a segmented choice with more segments than
+    /// [`SettingsGeometry::choice_width`] holds: the background image's
+    /// five effects.
+    pub(crate) wide_choice_width: Pixels,
 }
 
 /// The pinned home's geometry: the reference's grid of `.slot`s under the
@@ -1270,6 +1284,8 @@ impl Theme {
             slot_title: color(0xD9DADDFF),
             slot_empty_edge: color(0xFFFFFF1A),
 
+            frost: None,
+
             typography: Typography::shared(),
             geometry: Geometry::shared(),
         }
@@ -1379,9 +1395,112 @@ impl Theme {
             slot_title: color(0x2A2B31FF),
             slot_empty_edge: color(0x0000001A),
 
+            frost: None,
+
             typography: Typography::shared(),
             geometry: Geometry::shared(),
         }
+    }
+
+    /// This palette over the launcher's background image (ADR 0028), its
+    /// panel painted `canvas` — the color the backdrop was baked over (see
+    /// `crate::background`). The values are the background mockup's
+    /// "Hero" preset, as the user chose them: the panel is the opaque
+    /// canvas with no sheen; the frosted surfaces blur what is behind
+    /// them 30px under the canvas at 40% (the footer at 60%) and a cool
+    /// silver edge; hover and selection are plain white washes (dark ones
+    /// in the light palette); and the secondary text steps up a shade to
+    /// read over the picture. The light values are the dark ones turned
+    /// over, not yet tuned.
+    pub(crate) fn over_backdrop(&self, canvas: Hsla) -> Theme {
+        let light = self.panel_solid.lightness > 0.5;
+        let at = |base: Hsla, alpha: f32| Hsla { alpha, ..base };
+        let wash = |alpha: f32| at(color(if light { 0x000000FF } else { 0xFFFFFFFF }), alpha);
+        let edge = if light {
+            color(0x00000017)
+        } else {
+            hsla(210. / 360., 0.18, 0.78, 0.09)
+        };
+        let frost = Frost {
+            blur: px(30.),
+            tint: at(canvas, 0.4),
+            edge,
+            top: wash(0.06),
+            label: if light {
+                color(0x3B3D44FF)
+            } else {
+                color(0xC9CACEFF)
+            },
+            pill_margin: (px(8.), px(4.), px(10.)),
+            pill_padding_x: px(16.),
+            pill_radius: px(16.),
+        };
+        Theme {
+            text_muted: if light {
+                color(0x4A4D55FF)
+            } else {
+                color(0xA9AAAFFF)
+            },
+            text_placeholder: if light {
+                color(0x4A4D55FF)
+            } else {
+                color(0xA9AAAFFF)
+            },
+            panel_tint: canvas,
+            panel_solid: canvas,
+            panel_sheen: transparent_black(),
+            footer_tint: at(canvas, 0.6),
+            hairline_soft: edge,
+            row_hover: wash(0.06),
+            row_selected: wash(0.10),
+            row_selected_border: Hsla {
+                alpha: edge.alpha + 0.01,
+                ..edge
+            },
+            slot_background: frost.tint,
+            slot_edge: edge,
+            slot_hover: wash(0.09),
+            frost: Some(frost),
+            ..self.clone()
+        }
+    }
+}
+
+/// The frosted surfaces over the launcher's background image (see
+/// [`Theme::over_backdrop`]): Roboco's composer pill, a blur of what is
+/// behind the surface inside the window under a thin tint of the canvas.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Frost {
+    /// The blur behind a frosted surface (GPUI's `backdrop_blur`).
+    pub(crate) blur: Pixels,
+    /// A frosted surface's tint: the canvas at 40%.
+    pub(crate) tint: Hsla,
+    /// A frosted surface's 1px inset edge: a cool silver at 9%.
+    pub(crate) edge: Hsla,
+    /// A frosted surface's top inset line: white 6%.
+    pub(crate) top: Hsla,
+    /// The section labels' ink over the picture (#C9CACE), a step above
+    /// the muted ink the rest of the secondary text takes.
+    pub(crate) label: Hsla,
+    /// The search field as a frosted pill inside the search header's 64px
+    /// row, which keeps its height (so the compact window's does not
+    /// change): its margins above, below and either side (8, 4, 10), its
+    /// own padding either side (16, against the plain header's 20) and its
+    /// radius (16).
+    pub(crate) pill_margin: (Pixels, Pixels, Pixels),
+    pub(crate) pill_padding_x: Pixels,
+    pub(crate) pill_radius: Pixels,
+}
+
+impl Frost {
+    /// A frosted surface's inset edges: the 1px ring and the top line.
+    pub(crate) fn edges(&self) -> Vec<gpui::BoxShadow> {
+        vec![
+            gpui::BoxShadow::new(px(0.), px(0.), self.edge)
+                .spread_radius(px(1.))
+                .inset(),
+            gpui::BoxShadow::new(px(0.), px(1.), self.top).inset(),
+        ]
     }
 }
 
@@ -1520,6 +1639,7 @@ impl Geometry {
                 card_row_height: px(48.),
                 card_row_padding_y: px(10.),
                 choice_width: px(200.),
+                wide_choice_width: px(360.),
             },
             controls: ControlGeometry {
                 group_gap: px(18.),

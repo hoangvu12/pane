@@ -454,7 +454,7 @@ impl LauncherWindow {
     /// right edge 10px in from the window's.
     pub(crate) fn render_actions_layer(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let panel = self.actions.as_ref()?;
-        let visuals = crate::settings::visuals(cx);
+        let visuals = crate::settings::launcher_visuals(cx);
         let theme = &visuals.theme;
         let opened = panel.opened.as_ref();
         let listed = self.listed(cx);

@@ -15,8 +15,8 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     App, ClipboardItem, Context, Div, EntityInputHandler, FocusHandle, Hsla, KeyDownEvent,
-    ModifiersChangedEvent, MouseMoveEvent, PathPromptOptions, Pixels, Point, Role, ScrollHandle,
-    SharedString, Size, Stateful, Window, div, prelude::*, px, relative,
+    ModifiersChangedEvent, MouseMoveEvent, ObjectFit, PathPromptOptions, Pixels, Point, Role,
+    ScrollHandle, SharedString, Size, Stateful, Window, div, img, prelude::*, px, relative,
 };
 use pane_core::changes::Changes;
 use pane_core::hotkeys::Shortcut;
@@ -1137,7 +1137,7 @@ impl LauncherWindow {
         number: Option<(usize, f32)>,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let visuals = crate::settings::visuals(cx);
+        let visuals = crate::settings::launcher_visuals(cx);
         let theme = &visuals.theme;
         let reason = row.unavailable.as_ref().map(|u| u.reason().to_owned());
         // The row's accessible description: its subtitle and, when it
@@ -1227,7 +1227,7 @@ impl LauncherWindow {
         number: Option<(usize, f32)>,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let visuals = crate::settings::visuals(cx);
+        let visuals = crate::settings::launcher_visuals(cx);
         let card = root_search::layouts::answer_card(answer, selected, &visuals.theme);
         match number {
             Some((number, look)) => crate::ui::result_row::with_number_hint(
@@ -1561,7 +1561,12 @@ impl Render for LauncherWindow {
         if menu_open || menu_in_flight.is_none() {
             self.menu_exit = None;
         }
-        let visuals = crate::settings::visuals(cx);
+        // The background image's backdrop, baked for this window's scale
+        // (ADR 0028); the visuals below are over it once it is ready.
+        let scale = window.scale_factor();
+        crate::settings::shared(cx)
+            .update(cx, |settings, cx| settings.request_backdrop(scale, cx));
+        let visuals = crate::settings::launcher_visuals(cx);
         let theme = visuals.theme;
         let material = visuals.material;
         let empty = match &view.screen {
@@ -1697,6 +1702,10 @@ impl Render for LauncherWindow {
             Screen::Root { .. } => None,
             _ => Some(shell::screen_heading(view.title.clone(), &theme)),
         };
+        // Whether the result list is what scrolls: a form and a custom
+        // view scroll their own content, which the background image does
+        // not follow.
+        let listed = !matches!(view.screen, Screen::Form(_) | Screen::CustomView(_));
 
         // The content that changes between screens — the results, a form,
         // a custom view — is what arrives with the transition. On the
@@ -1866,11 +1875,51 @@ impl Render for LauncherWindow {
         if arriving.is_some() || menu_in_flight.is_some() || self.numbers.reveal.is_some() {
             window.request_animation_frame();
         }
+        // The background image (ADR 0028), under the content: the
+        // backdrop, a panel high (the expanded panel's height while the
+        // window is collapsed, so the collapsed bar shows the top of the
+        // same picture), moving up faster than the list as it scrolls and
+        // dissolving by the time the list has scrolled half its height.
+        let hero = visuals.backdrop.and_then(|backdrop| {
+            let height = if collapsed {
+                crate::background::PANEL.1
+            } else {
+                f32::from(window.viewport_size().height)
+            };
+            let scrolled = if listed && !collapsed {
+                (-f32::from(self.scroll.offset().y)).max(0.)
+            } else {
+                0.
+            };
+            let shown = 1. - scrolled / (height * HERO_DISSOLVE);
+            (shown > 0.).then(|| {
+                img(backdrop.image)
+                    .absolute()
+                    .left_0()
+                    .top(px(-scrolled * HERO_SCROLL))
+                    .w_full()
+                    .h(px(height))
+                    .object_fit(ObjectFit::Cover)
+                    .opacity(shown.min(1.))
+            })
+        });
         // The panel surface: the frost material's L1 glass around the
-        // content, with the sheen beneath it.
-        material.panel(&theme, content)
+        // content, with the sheen beneath it — and the background image
+        // between the two, when there is one.
+        match hero {
+            Some(hero) => material.panel_over(&theme, hero, content),
+            None => material.panel(&theme, content),
+        }
     }
 }
+
+/// How much faster than the list the background image moves as the list
+/// scrolls (ADR 0028).
+const HERO_SCROLL: f32 = 1.25;
+
+/// The share of the panel's height the list scrolls by the time the
+/// background image has dissolved.
+const HERO_DISSOLVE: f32 = 0.5;
 
 /// Tells the launcher window that the launcher changed outside its own
 /// flow — the Settings window's Extensions page drove an operation through

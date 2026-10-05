@@ -436,7 +436,7 @@ impl LauncherWindow {
             return None;
         }
         let history = self.launcher.clipboard_history()?;
-        let visuals = crate::settings::visuals(cx);
+        let visuals = crate::settings::launcher_visuals(cx);
         let theme = visuals.theme;
         let now = history.now;
         let offset = local_offset_ms(now);

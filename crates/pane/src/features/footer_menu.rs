@@ -280,7 +280,7 @@ impl LauncherWindow {
         in_flight: Option<(f32, f32)>,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let visuals = crate::settings::visuals(cx);
+        let visuals = crate::settings::launcher_visuals(cx);
         match self.menu.as_ref() {
             Some(menu) => Some(menu_popup(
                 menu_list(Some(&menu.focus), menu.selected, &visuals.theme, cx),

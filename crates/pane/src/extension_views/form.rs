@@ -211,7 +211,7 @@ impl LauncherWindow {
         };
         // The form keeps its own behavior; only its paint comes from the
         // shared theme, so it stays legible in either appearance.
-        let visuals = crate::settings::visuals(cx);
+        let visuals = crate::settings::launcher_visuals(cx);
         let theme = &visuals.theme;
         let fields: Vec<AnyElement> = form
             .fields
@@ -237,7 +237,7 @@ impl LauncherWindow {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let error = field.error.clone();
-        let visuals = crate::settings::visuals(cx);
+        let visuals = crate::settings::launcher_visuals(cx);
         let theme = &visuals.theme;
         let control = match (control, &field.kind) {
             (Control::Text(input), FieldKind::Text { placeholder }) => text_control(
