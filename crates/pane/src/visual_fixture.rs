@@ -85,6 +85,8 @@ use crate::ui::split_view::{self, ClipMark, ClipRow, ClipTone};
 use crate::ui::theme::{Theme, TypeLine};
 use crate::{Back, SelectNext, SelectPrevious};
 
+mod pages;
+
 /// The root reference board's client size, in logical pixels: the authored
 /// 760×518 (64 search header + 404 list + 50 footer). Every root-family
 /// fixture renders at exactly this client size — the launcher window's own
@@ -740,6 +742,9 @@ pub(crate) enum Family {
     Settings,
     /// The split view: Clipboard History's list beside its preview (#102).
     Clipboard,
+    /// A launcher screen of the launcher's own: the form, drawn with the
+    /// Settings field families (#99).
+    Form,
 }
 
 /// One step a capture helper takes, on either side. The helpers act with
@@ -1234,6 +1239,114 @@ const SCENARIOS: &[Scenario] = {
             rows: &[],
             pins: &[],
             steps: &[capture("narrow")],
+        },
+        Scenario {
+            name: "settings-general",
+            description: "Pane's General page through its own composition (#99): the Open Pane hotkey's settings row with its recorder's well and the disabled Reset, the launch-at-login switch on, the tray switch not offered with its reason (no reference counterpart: the board has no such page)",
+            family: Family::Settings,
+            client: SETTINGS_CLIENT,
+            reference: false,
+            board: None,
+            theme: None,
+            frame: false,
+            rows: &[],
+            pins: &[],
+            steps: &[capture("general")],
+        },
+        Scenario {
+            name: "settings-general-recording",
+            description: "The General page's recorder listening under its focus ring, with a refused combination's long error under the row (no reference counterpart)",
+            family: Family::Settings,
+            client: SETTINGS_CLIENT,
+            reference: false,
+            board: None,
+            theme: None,
+            frame: false,
+            rows: &[],
+            pins: &[],
+            steps: &[capture("recording")],
+        },
+        Scenario {
+            name: "settings-launcher",
+            description: "Pane's Launcher page (#99): the opening monitor's select as a field (its trigger a well) and the reopening choice as segments; then a click opens the select's list, the committed choice highlighted and an unanswered one listed with its reason (no reference counterpart)",
+            family: Family::Settings,
+            client: SETTINGS_CLIENT,
+            reference: false,
+            board: None,
+            theme: None,
+            frame: false,
+            rows: &[],
+            pins: &[],
+            steps: &[
+                capture("closed"),
+                click(pages::SELECT_TRIGGER),
+                capture("open"),
+            ],
+        },
+        Scenario {
+            name: "settings-keyboard",
+            description: "Pane's Keyboard page (#99): each action's settings row with its binding's caps in a recorder's well, one action rebound with its Reset (no reference counterpart)",
+            family: Family::Settings,
+            client: SETTINGS_CLIENT,
+            reference: false,
+            board: None,
+            theme: None,
+            frame: false,
+            rows: &[],
+            pins: &[],
+            steps: &[capture("keyboard")],
+        },
+        Scenario {
+            name: "settings-extensions",
+            description: "Pane's Extensions page (#99): an installed package's management rows as list items, one unavailable here with its reason, its command and the install sources (no reference counterpart)",
+            family: Family::Settings,
+            client: SETTINGS_CLIENT,
+            reference: false,
+            board: None,
+            theme: None,
+            frame: false,
+            rows: &[],
+            pins: &[],
+            steps: &[capture("list")],
+        },
+        Scenario {
+            name: "settings-extensions-confirm",
+            description: "The Extensions page asking to confirm disabling a package another requires: its lines, then Disable all and Cancel (no reference counterpart)",
+            family: Family::Settings,
+            client: SETTINGS_CLIENT,
+            reference: false,
+            board: None,
+            theme: None,
+            frame: false,
+            rows: &[],
+            pins: &[],
+            steps: &[capture("confirm")],
+        },
+        Scenario {
+            name: "settings-about",
+            description: "Pane's About page (#99): the version, the update check's state and its button, the documentation and diagnostics buttons and what each reported (no reference counterpart)",
+            family: Family::Settings,
+            client: SETTINGS_CLIENT,
+            reference: false,
+            board: None,
+            theme: None,
+            frame: false,
+            rows: &[],
+            pins: &[],
+            steps: &[capture("about")],
+        },
+        Scenario {
+            name: "form-validation",
+            description: "The launcher's form after a rejected submission (#99): the name's well, focused, with its error under it, the greeting's segmented choice, the submit button and the footer's status (no reference counterpart)",
+            family: Family::Form,
+            client: ROOT_CLIENT,
+            reference: false,
+            board: None,
+            theme: None,
+            frame: false,
+            rows: &[],
+            pins: &[],
+            steps: &[capture("rejected")],
         },
         Scenario {
             name: "empty-state",
@@ -1830,6 +1943,9 @@ pub enum Perturbation {
     /// The chosen segment's wash is filled with a wrong color: the
     /// Appearance page's segmented choice (#98).
     SegmentOnFill,
+    /// A field's well is filled with a wrong color: the well every
+    /// recorder, the select's trigger and a form's text sit in (#99).
+    WellFill,
 }
 
 /// Every perturbation, by the name the runner passes.
@@ -1839,6 +1955,7 @@ const PERTURBATIONS: &[(&str, Perturbation)] = &[
     ("hover-fill", Perturbation::HoverFill),
     ("nav-selected-fill", Perturbation::NavSelectedFill),
     ("segment-on-fill", Perturbation::SegmentOnFill),
+    ("well-fill", Perturbation::WellFill),
 ];
 
 impl Perturbation {
@@ -1889,6 +2006,8 @@ impl Perturbation {
             Perturbation::SegmentOnFill => {
                 theme.controls.segment_on = gpui::rgb_to_hsla(gpui::rgba(0xFFFFFF4D))
             }
+            // A well at black 50% against the authored 24%.
+            Perturbation::WellFill => theme.field_fill = gpui::rgb_to_hsla(gpui::rgba(0x00000080)),
         }
     }
 }
@@ -1920,7 +2039,7 @@ pub enum Command {
 const USAGE: &str = "usage: pane-visual-fixture --scenario <name> --manifest <file> \
     [--data-dir <dir>] [--theme dark|light] [--material glass|opaque] \
     [--perturb none|row-padding-plus-4|selected-fill|hover-fill|nav-selected-fill|\
-    segment-on-fill]\n       \
+    segment-on-fill|well-fill]\n       \
     pane-visual-fixture --registry <file>";
 
 /// Parses the fixture binary's arguments (without the program name).
@@ -2256,7 +2375,7 @@ impl FixtureState {
             .collect();
         pane_core::answer_sections(&self.query, &answers, fallbacks)
             .iter()
-            .map(SectionLabel::from)
+            .map(crate::app::section_label)
             .collect()
     }
 }
@@ -3172,12 +3291,16 @@ pub(crate) struct FixtureWindow {
     /// The Appearance board's chosen material, an index into
     /// [`BOARD_MATERIALS`] (#98): a click on a segment changes it.
     board_material: usize,
+    /// The Launcher page's select (#99): the production control, over
+    /// the fixture's display layout.
+    select: Option<Entity<crate::ui::select::Select>>,
 }
 
 impl FixtureWindow {
     fn new(
         scenario: &'static Scenario,
         perturbation: Option<Perturbation>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> FixtureWindow {
         // A result board's query is in the field from the start (#96),
@@ -3226,6 +3349,8 @@ impl FixtureWindow {
             filter,
             clip: (scenario.family == Family::Clipboard).then(|| ClipState::new(scenario)),
             board_material: 0,
+            select: (pages::pane_page(scenario.name) == Some(pages::PanePage::Launcher))
+                .then(|| pages::monitor_select(window, cx)),
         }
     }
 
@@ -3387,6 +3512,8 @@ impl FixtureWindow {
         material: Material,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
+        let pane_page = pages::pane_page(self.scenario.name);
+        let selected = pages::selected_section(pane_page, SETTINGS_SELECTED);
         let sections = SETTINGS_SECTIONS
             .iter()
             .enumerate()
@@ -3398,7 +3525,7 @@ impl FixtureWindow {
                         detail: None,
                         reason: None,
                         count: section.count.map(Into::into),
-                        selected: index == SETTINGS_SELECTED,
+                        selected: index == selected,
                     },
                     theme,
                 )
@@ -3410,6 +3537,10 @@ impl FixtureWindow {
         let sidebar = settings_shell::sidebar(search, sections, theme);
         let page = settings_shell::page_viewport(theme);
         let page = match appearance_page(self.scenario.name) {
+            // Pane's own pages, through their own compositions (#99).
+            None if pane_page.is_some() => page.children(
+                pane_page.map(|pane| pages::render_page(pane, self.select.as_ref(), theme, cx)),
+            ),
             Some(AppearancePage::Board) => page.child(self.render_appearance_board(theme, cx)),
             Some(AppearancePage::Production { overridden }) => {
                 page.child(render_appearance_production(overridden, theme, cx))
@@ -3817,6 +3948,7 @@ impl Render for FixtureWindow {
             Family::Tiles => self.render_tiles(&theme),
             Family::Root => self.render_root(&theme, cx),
             Family::Clipboard => self.render_clipboard(&theme, cx),
+            Family::Form => pages::render_form(self, &theme, cx),
             // The Settings window's composition brings its own panel.
             Family::Settings => return self.render_settings(&theme, material, cx),
         };
@@ -3855,6 +3987,10 @@ struct Manifest {
     /// The Appearance page, capture by capture, for its scenarios (#98).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     appearance_page: Vec<DeclaredAppearance>,
+    /// Pane's own page or the launcher's form, capture by capture, for
+    /// their scenarios (#99).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pane_page: Vec<pages::DeclaredPage>,
     fonts: Vec<FontRecord>,
     /// How the text system resolved each embedded face (see
     /// [`FontResolution`]).
@@ -4922,7 +5058,7 @@ struct SettingsColors {
 fn declared_settings(
     window: &Window,
     theme: &Theme,
-    client: (f32, f32),
+    (client, selected): ((f32, f32), usize),
     steps: &mut [ResolvedStep],
     captures: &mut [DeclaredCapture],
 ) -> DeclaredSettings {
@@ -4988,7 +5124,7 @@ fn declared_settings(
             DeclaredNavItem {
                 label,
                 rect,
-                selected: index == SETTINGS_SELECTED,
+                selected: index == selected,
                 glyph: Rect {
                     x: left,
                     y: rect.y + (rect.height - glyph) / 2.,
@@ -6022,15 +6158,39 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
     let mut tiles = Vec::new();
     let mut settings = None;
     let mut appearance = Vec::new();
+    let mut pane_page = Vec::new();
     match scenario.family {
         Family::Settings => {
-            settings = Some(declared_settings(
+            let page = pages::pane_page(scenario.name);
+            let mut shell = declared_settings(
                 window,
                 &theme,
-                scenario.client,
+                (
+                    scenario.client,
+                    pages::selected_section(page, SETTINGS_SELECTED),
+                ),
                 &mut steps,
                 &mut captures,
-            ));
+            );
+            if let Some(page) = page {
+                // Pane's pages have no aside column (#99), and head their
+                // column with their own heading and subtitle (none, for a
+                // confirmation).
+                shell.aside = None;
+                if let Some((heading, subtitle)) = pages::heading(page) {
+                    shell.heading.text = heading;
+                    shell.subtitle.text = subtitle.unwrap_or_default();
+                }
+                pane_page = pages::declare(
+                    window,
+                    &theme,
+                    (scenario.client, page),
+                    &mut steps,
+                    &mut captures,
+                    cx,
+                );
+            }
+            settings = Some(shell);
             if let Some(page) = appearance_page(scenario.name) {
                 appearance = declare_appearance(
                     window,
@@ -6264,6 +6424,16 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
             let keyboard = settings::keyboard_of(cx);
             declare_clipboard(window, &theme, &keyboard, &mut captures, &mut steps);
         }
+        Family::Form => {
+            pane_page = pages::declare(
+                window,
+                &theme,
+                (scenario.client, pages::PanePage::Form),
+                &mut steps,
+                &mut captures,
+                cx,
+            );
+        }
     }
 
     let bounds = window.bounds();
@@ -6371,6 +6541,7 @@ fn manifest(fixture: &FixtureWindow, window: &Window, cx: &App) -> Manifest {
         tiles,
         settings,
         appearance_page: appearance,
+        pane_page,
         font_resolution: font_resolution(window, &theme),
         fonts: crate::ui::FONTS
             .iter()
@@ -6441,7 +6612,7 @@ pub fn run(options: FixtureOptions) -> Result<(), String> {
             #[cfg(target_os = "windows")]
             crate::prefer_rounded_window_corners(window);
             cx.new(|cx| {
-                let fixture = FixtureWindow::new(scenario, perturbation, cx);
+                let fixture = FixtureWindow::new(scenario, perturbation, window, cx);
                 // Root search opens with the query field focused; the
                 // fixture does the same, so typing reaches the field the
                 // moment the window appears. The Settings board's search
@@ -7899,6 +8070,47 @@ mod tests {
     }
 
     #[test]
+    fn panes_own_pages_are_native_only_scenarios_through_their_compositions() {
+        // Pane's other Settings pages and its form (#99): derived
+        // compositions, so no board pairs with them.
+        let registered = [
+            ("settings-general", Family::Settings),
+            ("settings-general-recording", Family::Settings),
+            ("settings-launcher", Family::Settings),
+            ("settings-keyboard", Family::Settings),
+            ("settings-extensions", Family::Settings),
+            ("settings-extensions-confirm", Family::Settings),
+            ("settings-about", Family::Settings),
+            ("form-validation", Family::Form),
+        ];
+        for (name, family) in registered {
+            let scenario = scenario(name);
+            assert!(pages::pane_page(name).is_some(), "{name} draws a page");
+            assert_eq!(scenario.family, family, "{name}");
+            assert!(!scenario.reference && scenario.board.is_none(), "{name}");
+            assert_eq!(appearance_page(name), None, "{name}");
+        }
+        assert_eq!(scenario("form-validation").client, ROOT_CLIENT);
+        assert_eq!(scenario("settings-about").client, SETTINGS_CLIENT);
+        // The select opens by a click on its trigger.
+        assert!(
+            scenario("settings-launcher")
+                .steps
+                .contains(&click(pages::SELECT_TRIGGER))
+        );
+        // The board's sidebar selects the section nearest each page.
+        let nearest = |name| {
+            let page = pages::pane_page(name);
+            SETTINGS_SECTIONS[pages::selected_section(page, SETTINGS_SELECTED)].label
+        };
+        assert_eq!(nearest("settings-general"), "General");
+        assert_eq!(nearest("settings-keyboard"), "Hotkeys & Aliases");
+        assert_eq!(nearest("settings-extensions"), "Plugins");
+        assert_eq!(nearest("settings-about"), "About");
+        assert_eq!(nearest("settings-shell"), "Appearance");
+    }
+
+    #[test]
     fn the_appearance_board_data_is_the_boards() {
         let materials: Vec<_> = BOARD_MATERIALS.iter().map(|(name, _)| *name).collect();
         assert_eq!(materials, ["Glass", "Frost", "Solid"]);
@@ -7969,6 +8181,17 @@ mod tests {
         let mut theme = theme();
         Perturbation::SegmentOnFill.apply(&mut theme);
         assert_ne!(theme.controls.segment_on, Theme::dark().controls.segment_on);
+    }
+
+    #[test]
+    fn the_well_fault_is_a_named_perturbation() {
+        assert_eq!(
+            Perturbation::parse("well-fill"),
+            Ok(Some(Perturbation::WellFill))
+        );
+        let mut theme = theme();
+        Perturbation::WellFill.apply(&mut theme);
+        assert_ne!(theme.field_fill, Theme::dark().field_fill);
     }
 
     #[test]

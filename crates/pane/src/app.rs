@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use gpui::{
     App, ClipboardItem, Context, Div, EntityInputHandler, FocusHandle, Hsla, KeyDownEvent,
     MouseMoveEvent, PathPromptOptions, Pixels, Point, Role, ScrollHandle, SharedString, Size,
-    Stateful, Window, WindowControlArea, div, prelude::*, px, relative,
+    Stateful, Window, div, prelude::*, px, relative,
 };
 use pane_core::changes::Changes;
 use pane_core::hotkeys::Shortcut;
@@ -1418,18 +1418,7 @@ impl Render for LauncherWindow {
         // truncates instead of eating the list.
         let heading = match &view.screen {
             Screen::Root { .. } => None,
-            _ => Some(
-                div()
-                    .flex_none()
-                    .px(theme.geometry.search_padding_x)
-                    .py(px(12.))
-                    .truncate()
-                    .text_size(theme.typography.row_title_size)
-                    .font_weight(theme.typography.medium)
-                    .text_color(theme.text_title)
-                    .window_control_area(WindowControlArea::Drag)
-                    .child(view.title.clone()),
-            ),
+            _ => Some(shell::screen_heading(view.title.clone(), &theme)),
         };
 
         // The content that changes between screens — the results, a form,
@@ -1564,34 +1553,11 @@ impl Render for LauncherWindow {
                     .child(footer::footer_row(
                         self.render_menu_button(&theme, cx).into_any_element(),
                         match status.clone() {
-                            Some(text) => div()
-                                // The message's own scroll viewport: past
-                                // the 35% cap the message scrolls here —
-                                // inside the strip — instead of being cut,
-                                // and the strip never scrolls, so the
-                                // buttons and any popup above them stay
-                                // put. The strip's bounds carry the
-                                // status-* debug selectors; this one, the
-                                // message's, lets tests see wrapping and
-                                // scroll. The message fills the room the
-                                // buttons leave and wraps there — a long
-                                // error is several readable lines, never
-                                // one clipped — and the strip grows with
-                                // it.
-                                .id("status-scroll")
-                                .flex_1()
-                                .min_w(px(0.))
-                                .overflow_y_scroll()
-                                .child(
-                                    div()
-                                        .w_full()
-                                        .min_w(px(0.))
-                                        .flex_none()
-                                        .py(px(12.))
-                                        .debug_selector(|| "status-message".into())
-                                        .child(text),
-                                )
-                                .into_any_element(),
+                            // Past the 35% cap the message scrolls in its
+                            // own viewport, inside the strip, instead of
+                            // being cut. The strip's bounds carry the
+                            // status-* debug selectors.
+                            Some(text) => footer::status_message(text, &theme).into_any_element(),
                             None => footer::hint_slot(self.footer_hint(root, &theme, cx), &theme)
                                 .into_any_element(),
                         },
@@ -1679,11 +1645,18 @@ pub(crate) fn action_button(
 /// The launcher presentation's section labels, as the shared list draws
 /// them.
 fn section_labels(presentation: &Presentation) -> Vec<shell::SectionLabel> {
-    presentation
-        .sections
-        .iter()
-        .map(shell::SectionLabel::from)
-        .collect()
+    presentation.sections.iter().map(section_label).collect()
+}
+
+/// A launcher section as the shared list labels it: the adapter between
+/// the core's section and the presentation value (the shared UI imports no
+/// core types).
+pub(crate) fn section_label(section: &pane_core::Section) -> shell::SectionLabel {
+    shell::SectionLabel {
+        first: section.first,
+        label: section.label.clone().into(),
+        note: section.note.clone().map(SharedString::from),
+    }
 }
 
 /// The icon presentation for a row, chosen by the row's stable id: the

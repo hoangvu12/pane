@@ -303,9 +303,35 @@ fn open_extensions(
 /// as its user would — the pointer moving onto it first, for the reason
 /// [`click_section`] gives.
 fn click_row(settings_cx: &mut VisualTestContext, row: &'static str) {
+    // A row below the fold is brought into view first, as a user turns
+    // the page's wheel to reach it: the page scrolls, and a click past the
+    // window's bottom edge would reach nothing.
+    let viewport = settings_cx.update(|window, _| window.viewport_size());
+    for _ in 0..10 {
+        let bounds = settings_cx
+            .debug_bounds(row)
+            .unwrap_or_else(|| panic!("no {row} on the Extensions page"));
+        if bounds.bottom() <= viewport.height {
+            break;
+        }
+        settings_cx.simulate_event(gpui::ScrollWheelEvent {
+            position: gpui::point(bounds.center().x, viewport.height / 2.),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(
+                px(0.),
+                viewport.height - bounds.bottom() - px(24.),
+            )),
+            modifiers: Modifiers::none(),
+            touch_phase: gpui::TouchPhase::Moved,
+        });
+        settings_cx.run_until_parked();
+    }
     let bounds = settings_cx
         .debug_bounds(row)
         .unwrap_or_else(|| panic!("no {row} on the Extensions page"));
+    assert!(
+        bounds.bottom() <= viewport.height,
+        "{row} scrolled into view: {bounds:?}"
+    );
     settings_cx.simulate_mouse_move(bounds.center(), None::<MouseButton>, Modifiers::none());
     settings_cx.simulate_click(bounds.center(), Modifiers::none());
     settings_cx.run_until_parked();
@@ -2736,6 +2762,196 @@ fn all_seven_pages_are_listed_reachable_and_searchable(cx: &mut TestAppContext) 
         );
         settings_cx.simulate_keystrokes("escape");
         settings_cx.run_until_parked();
+    }
+}
+
+/// The General page is composed of the Settings board's families (#99),
+/// not launcher rows: its groups stand in the page's column 22px under the
+/// heading block (its 4px and the column's 18), each a field label 8px
+/// over its settings rows; the Open Pane hotkey's recorder is a 30px well
+/// (black 24%) at its row's right end with the Reset button beside it,
+/// and the launch-at-login choice is the board's 40x24 switch — white 16%
+/// with its knob at the left while off, the accent with the knob at the
+/// right once taken. No root-row wash is painted on the rows, and nothing
+/// fades.
+#[gpui::test]
+fn the_general_page_draws_the_settings_control_families(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let login = Arc::new(FakeLogin::default());
+    cx.update(|cx| {
+        pane::settings::init_with_login(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            login.clone(),
+            cx,
+        )
+    });
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let (_settings, mut settings_cx) = opened_settings(cx);
+    let sc = &mut settings_cx;
+
+    let title = rect_of(sc, "general-title");
+    let field = rect_of(sc, "general-open-pane-field");
+    assert_eq!(
+        field[1],
+        title[1] + title[3] + 4. + 18.,
+        "the column's gap under the heading block"
+    );
+    let row = rect_of(sc, "general-open-pane-row");
+    assert_eq!(row[1], field[1] + 18. + 8., "the label's line and gap");
+    assert!(row[3] >= 44., "a settings row's floor: {row:?}");
+
+    let recorder = sc.debug_bounds("open-pane-recorder").expect("the recorder");
+    let row_bounds = sc.debug_bounds("general-open-pane-row").expect("its row");
+    assert_eq!(recorder.size.height, px(30.), "an inline well");
+    assert_eq!(recorder.right(), row_bounds.right(), "at the row's end");
+    assert!(
+        paints_fill_at(sc, recorder, 0x0000003D),
+        "the well's black 24%"
+    );
+    let reset = sc.debug_bounds("open-pane-reset").expect("the reset");
+    assert_eq!(reset.size.height, px(30.), "a button's height");
+    assert!(reset.right() <= recorder.left(), "beside the recorder");
+    for root_wash in [0xFFFFFF09, 0xFFFFFF16] {
+        assert!(
+            !paints_fill_at(sc, row_bounds, root_wash),
+            "no root-row wash on a settings row"
+        );
+    }
+
+    let switch = sc
+        .debug_bounds("general-launch-at-login")
+        .expect("the switch");
+    assert_eq!(switch.size, gpui::size(px(40.), px(24.)), "the switch");
+    let knob = |left: f32| gpui::Bounds {
+        origin: switch.origin + gpui::point(px(left), px(3.)),
+        size: gpui::size(px(18.), px(18.)),
+    };
+    assert!(paints_fill_at(sc, switch, 0xFFFFFF29), "off: white 16%");
+    assert!(paints_fill_at(sc, knob(3.), 0xFFFFFFFF), "the knob at left");
+    choose(sc, "general-launch-at-login");
+    cx.run_until_parked();
+    until_record_holds(sc, data.path(), "\"launchAtLogin\": true");
+    assert!(login_chosen(sc), "the choice is taken");
+    assert!(paints_fill_at(sc, switch, 0xC9EE6AFF), "on: the accent");
+    assert!(
+        paints_fill_at(sc, knob(19.), 0xFFFFFFFF),
+        "the knob at right"
+    );
+
+    pointer_leaves(sc);
+    sc.run_until_parked();
+    assert_eq!(settle_frames(sc), 0, "nothing fades: the window is idle");
+}
+
+/// The Keyboard page shows each action's binding as the reference's caps
+/// in a recorder's well (#99) at the end of its settings row — the
+/// binding's caps come from the launcher's own adapter — and offers a
+/// reset only for an action that is not at its default.
+#[gpui::test]
+fn the_keyboard_page_shows_bindings_in_recorder_wells(cx: &mut TestAppContext) {
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let (_settings, mut settings_cx) = opened_settings(cx);
+    let sc = &mut settings_cx;
+    click_section(sc, "section-Keyboard");
+    pointer_leaves(sc);
+    settle_frames(sc);
+
+    let row = sc
+        .debug_bounds("keyboard-row-next-result")
+        .expect("the action's row");
+    let well = sc
+        .debug_bounds("keyboard-next-result")
+        .expect("the recorder");
+    assert_eq!(well.size.height, px(30.), "an inline well");
+    assert_eq!(well.right(), row.right(), "at the row's end");
+    assert!(row.size.height >= px(44.), "a settings row's floor");
+    assert!(paints_fill_at(sc, well, 0x0000003D), "the well's black 24%");
+    assert!(
+        sc.debug_bounds("keyboard-reset-next-result").is_none(),
+        "no reset while the binding is the default"
+    );
+    let field = rect_of(sc, "keyboard-field");
+    let title = rect_of(sc, "keyboard-title");
+    assert_eq!(field[1], title[1] + title[3] + 4. + 18.);
+}
+
+/// The About page's actions are the Settings buttons (#99): 30px, white
+/// 8% at rest and white 13% under the pointer, at once — no fade, no
+/// frame asked for — in field groups labelled as the board labels its
+/// fields.
+#[gpui::test]
+fn the_about_pages_actions_are_buttons_whose_washes_change_at_once(cx: &mut TestAppContext) {
+    let (_launcher, _links, cx) = open_launcher(cx);
+    let (_settings, mut settings_cx) = opened_settings(cx);
+    let sc = &mut settings_cx;
+    click_section(sc, "section-About");
+    pointer_leaves(sc);
+    settle_frames(sc);
+
+    for selector in ["about-documentation", "about-diagnostics"] {
+        let button = sc.debug_bounds(selector).expect("the button");
+        assert_eq!(button.size.height, px(30.), "{selector}: a button");
+        assert!(
+            paints_fill_at(sc, button, 0xFFFFFF14),
+            "{selector}: white 8% at rest"
+        );
+        sc.simulate_mouse_move(button.center(), None::<MouseButton>, Modifiers::none());
+        sc.run_until_parked();
+        assert!(
+            paints_fill_at(sc, button, 0xFFFFFF21),
+            "{selector}: white 13% under the pointer"
+        );
+        assert_eq!(
+            frame(sc, Duration::ZERO),
+            0,
+            "{selector}: the hover asks for no frame"
+        );
+        pointer_leaves(sc);
+        sc.run_until_parked();
+    }
+    let label = rect_of(sc, "about-label-Documentation");
+    let button = rect_of(sc, "about-documentation");
+    assert!(
+        button[1] >= label[1] + label[3],
+        "the field's label is over its control"
+    );
+}
+
+/// The Extensions page lists the launcher's management rows as Settings
+/// list items (#99), not root result rows: each at least 44 high, white 5%
+/// under the pointer (the sidebar item's hover), at once, and no root-row
+/// wash.
+#[gpui::test]
+fn the_extensions_page_lists_its_rows_as_list_items(cx: &mut TestAppContext) {
+    let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let folder = settings_package(&sources.path().join("settings"));
+    let (_launcher, cx) = open_installed(cx, &data, &folder);
+    let (_settings, mut settings_cx) = open_extensions(cx);
+    let sc = &mut settings_cx;
+    pointer_leaves(sc);
+    settle_frames(sc);
+
+    for selector in [
+        "extension-row-Settings sample",
+        "extension-command-Greeting",
+        "extension-install-Install extension from folder…",
+    ] {
+        let row = sc.debug_bounds(selector).expect("the row");
+        assert!(row.size.height >= px(44.), "{selector}: {row:?}");
+        sc.simulate_mouse_move(row.center(), None::<MouseButton>, Modifiers::none());
+        sc.run_until_parked();
+        assert!(
+            paints_fill_at(sc, row, 0xFFFFFF0D),
+            "{selector}: the list item's white 5% under the pointer"
+        );
+        assert!(
+            !paints_fill_at(sc, row, 0xFFFFFF09),
+            "{selector}: not the root row's hover"
+        );
+        assert_eq!(frame(sc, Duration::ZERO), 0, "{selector}: at once");
+        pointer_leaves(sc);
+        sc.run_until_parked();
     }
 }
 

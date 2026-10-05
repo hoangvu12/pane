@@ -285,6 +285,31 @@ pub(crate) fn footer_row(
         )
 }
 
+/// A status message in [`footer_row`]'s middle, in place of the hint: its
+/// own scroll viewport, filling the room the buttons leave. The message
+/// wraps there — a long error is several readable lines, never one
+/// clipped — and the strip grows with it; past the strip's cap the message
+/// scrolls here, inside the strip, so the strip never scrolls and the
+/// buttons and any popup above them stay put. One line of it centers in
+/// the strip's first line. The viewport is `status-scroll`, the message
+/// `status-message` (tests see its wrapping and scroll by it).
+pub(crate) fn status_message(text: impl Into<SharedString>, theme: &Theme) -> Stateful<Div> {
+    div()
+        .id("status-scroll")
+        .flex_1()
+        .min_w(px(0.))
+        .overflow_y_scroll()
+        .child(
+            div()
+                .w_full()
+                .min_w(px(0.))
+                .flex_none()
+                .py(theme.geometry.footer_status_padding_y)
+                .debug_selector(|| "status-message".into())
+                .child(text.into()),
+        )
+}
+
 /// The hint's slot in [`footer_row`]: one line, taking the room the
 /// buttons leave, centred in the strip's first 50px.
 pub(crate) fn hint_slot(hint: Option<Div>, theme: &Theme) -> Div {

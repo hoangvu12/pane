@@ -592,5 +592,80 @@ class AppearanceControls(unittest.TestCase):
         self.assertIsNone(measured["labels"][0])
 
 
+class PanePages(unittest.TestCase):
+    """The measures of Pane's own Settings pages and the form (#99)."""
+
+    PAGE = (22, 23, 26)
+
+    def test_a_knob_begins_3px_in_from_the_side_its_state_names(self):
+        rect = {"x": 100, "y": 10, "width": 40, "height": 24}
+        self.assertEqual(compare.knob_left({"rect": rect, "on": False}), 103)
+        self.assertEqual(compare.knob_left({"rect": rect, "on": True}), 119)
+
+    def test_a_line_is_inside_its_box_within_the_slack(self):
+        rect = (10, 20, 100, 18)
+        self.assertTrue(compare.line_inside({"top": 24, "height": 10}, rect))
+        self.assertTrue(compare.line_inside({"top": 19.5, "height": 10}, rect))
+        self.assertFalse(compare.line_inside({"top": 30, "height": 10}, rect))
+        self.assertFalse(compare.line_inside(None, rect))
+
+    def test_a_settings_rows_rule_is_found_where_it_runs(self):
+        # A 1px white 6% rule along a row's top at y 40, the page around it.
+        image = Image.new("RGB", (480, 100), self.PAGE)
+        ImageDraw.Draw(image).line((10, 40, 470, 40), fill=over_white(self.PAGE, 0.06))
+        part = {"kind": "rule", "rect": {"x": 10, "y": 40, "width": 460, "height": 1}}
+        self.assertEqual(compare.measure_page_part(image, part)["y"], 40)
+
+    def test_a_button_measures_its_box_and_white_fill(self):
+        # A .pill: white 8% at 20,20 120x30 with its label inside.
+        image = Image.new("RGB", (200, 80), self.PAGE)
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((20, 20, 139, 49), fill=over_white(self.PAGE, 0.08))
+        draw.rectangle((40, 30, 120, 40), fill=(237, 237, 239))
+        part = {"kind": "button", "rect": {"x": 20, "y": 20, "width": 120, "height": 30}}
+        measured = compare.measure_page_part(image, part)
+        self.assertEqual(measured["edges"], (20, 20, 120, 30))
+        self.assertAlmostEqual(measured["alpha"], 0.08 * 255, delta=3)
+
+    def test_a_well_measures_its_ring_box_and_black_fill(self):
+        image = Image.new("RGB", (240, 80), self.PAGE)
+        draw = ImageDraw.Draw(image)
+        fill = over_black(self.PAGE, 0.24)
+        draw.rectangle((40, 20, 199, 49), fill=over_white(fill, 0.06))
+        draw.rectangle((41, 21, 198, 48), fill=fill)
+        part = {"kind": "well", "rect": {"x": 40, "y": 20, "width": 160, "height": 30}}
+        measured = compare.measure_page_part(image, part)
+        self.assertEqual(measured["edges"], (40, 20, 160, 30))
+        self.assertAlmostEqual(measured["alpha"], 0.24 * 255, delta=4)
+
+    def test_a_chosen_segment_reads_its_wash_over_the_tracks_padding(self):
+        image = Image.new("RGB", (240, 80), self.PAGE)
+        draw = ImageDraw.Draw(image)
+        fill = over_black(self.PAGE, 0.24)
+        draw.rectangle((20, 20, 219, 55), fill=fill)
+        draw.rectangle((23, 23, 120, 52), fill=over_white(fill, 0.12))
+        chosen = {"kind": "segment", "rect": {"x": 23, "y": 23, "width": 98, "height": 30}}
+        rest = {"kind": "segment", "rect": {"x": 123, "y": 23, "width": 94, "height": 30}}
+        self.assertAlmostEqual(compare.measure_page_part(image, chosen)["alpha"], 0.12 * 255, delta=2)
+        self.assertAlmostEqual(compare.measure_page_part(image, rest)["alpha"], 0, delta=0.5)
+
+    def test_a_headings_ink_begins_its_first_glyphs_side_bearing_in(self):
+        # Geist SemiBold's stems sit 80 units in, its G 43 and its A 19: at
+        # the heading's 22px, 1.76, 0.95 and 0.42px.
+        for text, bearing in (("Keyboard", 1.76), ("Launcher", 1.76), ("Extensions", 1.76),
+                              ("General", 0.95), ("Appearance", 0.42)):
+            self.assertAlmostEqual(compare.first_glyph_bearing(text), bearing, delta=0.03, msg=text)
+        self.assertEqual(compare.first_glyph_bearing(""), 0.0)
+
+    def test_an_open_popover_moves_the_sidebars_fill_below_its_shadow(self):
+        layout = {"sidebar": (0, 47, 233, 673),
+                  "items": [{"rect": (8, 330, 216, 36)}]}
+        self.assertEqual(compare.sidebar_rows(layout), (376, 526))
+        self.assertEqual(compare.sidebar_rows(layout, popover=True), (610, 710))
+        # A sidebar too short for both keeps its rows below the last section.
+        short = {"sidebar": (0, 47, 233, 400), "items": [{"rect": (8, 330, 216, 36)}]}
+        self.assertEqual(compare.sidebar_rows(short, popover=True), (376, 437))
+
+
 if __name__ == "__main__":
     unittest.main()
