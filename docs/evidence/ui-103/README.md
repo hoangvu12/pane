@@ -2,10 +2,12 @@
 
 The integrated acceptance record for the UI port ([#90](https://github.com/hoangvu12/pane/issues/90)), on Windows only, from local checks. It is not release certification. Everything here is **local and unpushed** on `impl/ui-91`. **#90 is not complete:** the remaining operator-consent items and the open user questions below must resolve first.
 
-**Real-window evidence, added later.** After the user's go-ahead ("no games rn"), the coordinator ran two of the consented steps on the real `pane.exe`:
+**Real-window evidence, added later.** After the user's go-ahead ("no games rn", then "just run"), the coordinator ran the consented visible steps on the real `pane.exe`:
 
-- the glass and opaque captures over matched backdrops (window crop only);
-- the real-app smoke.
+- the glass and opaque captures over matched backdrops (window crop);
+- the real-app smoke;
+- a full-screen shadow capture;
+- captures at 125% and 150% display scale. The scale was restored to 100% on both monitors afterwards, as the coordinator verified.
 
 They are recorded in [Real-window evidence](#real-window-evidence-glass-and-the-real-app-smoke) and [`real-app/`](real-app/). I measured and looked at their images; I ran nothing visible myself.
 
@@ -34,9 +36,9 @@ They are recorded in [Real-window evidence](#real-window-evidence-glass-and-the-
 ## OS, DPI and material
 
 - **OS:** Windows 11 Pro 25H2, build 26200.8737. The registry's `ProductName` reads "Windows 10 Pro", as it does on every Windows 11.
-- **Scale:** 96 DPI (100%) on every native capture, and device scale factor 1 on the reference. The new parity check `client/device scale` compares the two: 45/45 pass. **125% and 150% were not run.**
+- **Scale:** 96 DPI (100%) on every native capture, and device scale factor 1 on the reference. The new parity check `client/device scale` compares the two: 45/45 pass. The fixture workbench cannot capture at 125% (see [below](#scaled-displays-125-and-150)). The real window was captured at 125% and 150% and reviewed by eye (R3), with no geometry parity at those scales.
 - **Client sizes:** root 760×518, Settings 1120×720, clipboard 940×600, each checked on both sides. The narrow variants are 480×360 (launcher), 760×520 (Settings) and 760×518 (clipboard).
-- **Material:** every workbench capture is in the opaque ("solid") material. Glass exists only in an on-screen composition: acrylic blur, the DWM corner and the window shadow. It was captured later on the real window over matched backdrops, window crop only, and is measured in R1 ([below](#real-window-evidence-glass-and-the-real-app-smoke)). Windows' transparency setting was on (`transparencySetting: 1`). The shadow outside the window rect is still not captured.
+- **Material:** every workbench capture is in the opaque ("solid") material. Glass exists only in an on-screen composition: acrylic blur, the DWM corner and the window shadow. It was captured later on the real window over matched backdrops, window crop only, and is measured in R1 ([below](#real-window-evidence-glass-and-the-real-app-smoke)). Windows' transparency setting was on (`transparencySetting: 1`). A full-screen capture shows that the real window draws **no outer shadow** (R2, an open deviation).
 - **Theme:** dark. The light palette is a derived adaptation with no light board. `launcher-frame-light` and `appearance-light` are measured in the main run, and a whole `-Theme light` run is recorded [below](#the-light-variant).
 
 ## Checks (local, Windows)
@@ -126,7 +128,7 @@ I looked at three light captures (`root-actions/open`, `answer-plain`, `clipboar
 
 ## Ledger summary
 
-[`ledger.md`](ledger.md) has 74 rows:
+[`ledger.md`](ledger.md) has 76 rows:
 
 | Result | Rows |
 |---|---|
@@ -134,6 +136,8 @@ I looked at three light captures (`root-actions/open`, `answer-plain`, `clipboar
 | accepted deviation | 21 |
 | native-only (harness pass, no board state to compare) | 25 |
 | not covered | 10 |
+| open deviation (R2: no outer shadow) | 1 |
+| reviewed by eye (R3: 125%/150%) | 1 |
 
 The 131 accepted checks carry 18 dispositions (D1–D18), each copied in full into the ledger. In brief:
 
@@ -147,7 +151,9 @@ The 131 accepted checks carry 18 dispositions (D1–D18), each copied in full in
   - it passes about 25% of the backdrop, against the CSS's 30%;
   - the acrylic holds when the window is inactive.
 
-  Saturation and the outer shadow are unmeasured.
+  Saturation is unmeasured.
+- **Real-window shadow (R2, open):** no outer drop shadow. There is only a 1px mid-grey DWM rim, where the reference has a soft shadow.
+- **Real window at 125% and 150% (R3):** proportional and legible, reviewed by eye.
 - **Pane content and behaviour, per #100 (55):**
   - "Commands" rather than "Suggested · From your recent use" (D2, 19);
   - only real Actions entries (D6, 3);
@@ -196,7 +202,7 @@ The authored values, matched within the #91 limits (1 logical px for edges and b
 Each is recorded with its ticket. Accepted parity checks carry their Dn.
 
 - **Windows caption buttons** (minimize, maximize, close) replace the Settings board's lone close glyph (#97). They are not compared.
-- **DWM window corners** (`DWMWCP_ROUND`, documented 8px) replace a painted 18px radius, because acrylic covers the whole window rect (#92, D1). On the real window the corner measures about 8px on glass and opaque alike (R1). The outer shadow and the .5px edge are DWM's own (#92). They are still unmeasured: the shadow lies outside the window crop that was captured.
+- **DWM window corners** (`DWMWCP_ROUND`, documented 8px) replace a painted 18px radius, because acrylic covers the whole window rect (#92, D1). On the real window the corner measures about 8px on glass and opaque alike (R1). The reference's outer shadows and .5px black edge have no counterpart: the real window draws no outer shadow, only a 1px mid-grey DWM rim. This is measured, and it is **an open deviation, not an approved adaptation** (R2).
 - **Windows keycaps and effective bindings:** Ctrl, Alt and Win names; Win Ctrl Alt Shift key order; full chords such as Shift ↵, Ctrl ↵ and Ctrl Shift P. The boards are captured with `platform: 'Windows'` (#93).
 - **Pane-specific copy:**
   - "Search apps and commands…" (#92);
@@ -268,7 +274,7 @@ None of these is implemented, and no capture or text claims them. The reference 
 
 ## Found while reviewing, not measured
 
-- **The narrow launcher's footer hint is cut mid-keycap.** At 480×360, "· Ctrl K for more" ends in a clipped "Ctr" behind Run Command (`atlas/launcher-frame-narrow--narrow-last-selected-native.png`). The hint is `overflow_hidden` in `ui/footer.rs` (#95). No check measures it. It is left unfixed here and is a user question. The real window shows the same thing at its 380×420 narrow size (`real-app/glass-light-narrow.png`, `real-app/opaque-light-narrow.png`): only a fragment of the ↵ cap shows before Open command.
+- **The narrow launcher's footer hint is cut mid-keycap.** At 480×360, "· Ctrl K for more" ends in a clipped "Ctr" behind Run Command (`atlas/launcher-frame-narrow--narrow-last-selected-native.png`). The hint is `overflow_hidden` in `ui/footer.rs` (#95). No check measures it. It is left unfixed here and is a user question. The real window shows the same thing at its 380×420 narrow size (`real-app/glass-light-narrow.png`, `real-app/opaque-light-narrow.png`): only a fragment of the ↵ cap shows before Open command. At 125% and 150% the narrow window clips it the same way (`real-app/dpi125-narrow-trimmed.png`, `dpi150-narrow-trimmed.png`).
 - **The colour preview's hex/rgb/hsl lines sit about 14px higher** natively (`atlas/clipboard-previews--color-side-by-side.png`). The preview is fixture-only (#102), and the check covers only which branch shows.
 - **Solid's dimmed sliders keep the accent at 40%,** where the board's disabled range is grey (#98; fixture-only family).
 - **The Settings shell scenario** draws the shell only: its page body below the heading is empty, while the board shows the Appearance page. The Appearance scenarios draw the page.
@@ -337,39 +343,61 @@ The hashes confirm both pairs (`F49430AD…`, `0FEBA31F…`). Copied here: `smok
 
 The smoke drives the real window through posted window messages, as the fixture does. It exercises the real feature adapters, not the OS's own pointer hit-testing or focus arbitration.
 
-## Pending operator consent
+### The outer shadow (full screen)
 
-Not run yet. Each shows a window on the operator's desktop or changes a global setting.
+The coordinator ran `scripts/capture-pane-windows.ps1 -Theme dark -Material glass -Backdrop -BackdropPattern light|dark -FullScreen`, in runs `.scratch/ui-captures/103-shadow-light/run-20261005-162642-f09c37dc` and `103-shadow-dark/run-20261005-162646-f9a41555`.
 
-1. **The outer shadow** (#92 box 4). The same glass command with `-FullScreen`, which captures the whole virtual screen and anything else on it. About 10 s; Pane takes the foreground. Example:
+- **What is committed.** The full-screen PNGs show the operator's other applications outside the backdrop, so they are not committed, and neither is the wider `shadow-crop.png`. Only `shadow-crop-backdrop-only.png` is committed (`real-app/shadow-{light,dark}-backdrop-only.png`): screen 563,233 to 1373,800, wholly inside the test backdrop. I looked at both: they show only the launcher and the black-and-white (or white-on-dark) pattern around it.
+- **No outer drop shadow.**
+  - The pattern's hard edges run right up to the window's edge on every side, with no darkening.
+  - Measured (`real-app/shadow-and-scale-measurements.json`; the frame is 587,257 to 1349,776). Below the bottom edge, at x 700, 968 and 1200, y 772–775 read 66, 66, 78, 189 over the light backdrop, and every row from 776 on reads 236, the backdrop itself. Over the dark backdrop they read 22, 21, 37, 60, then 22.
+  - Past the left and right edges at y 500, and above the top edge, the backdrop resumes one pixel past the rim.
+  - The rim is a 1px mid-grey, semi-opaque DWM edge (189 over 236, 60 over 22). It is not the reference's `.5px` black 75% edge, which would darken both backdrops.
+- **The reference** adds `0 50px 120px -30px rgba(0,0,0,.72), 0 16px 40px -16px rgba(0,0,0,.5)`. My estimate from that CSS (a Gaussian of sigma = blur/2, not a Chrome render) is that it darkens the backdrop by about 58% right under the bottom edge, 50% at 10px, 27% at 40px and 7% at 100px. Over the light backdrop that is about 99, 118, 172 and 220, where Pane leaves 236.
+- **Disposition: open (R2).** This is a measured deviation, not an accepted one.
+  - The cause hasn't been investigated in code. Likely DWM draws no shadow for this window's style or for the acrylic accent, and GPUI paints nothing outside the window rect.
+  - Options for #92, already weighed in its decision record: a DWM shadow attribute or style, or a painted shadow inside a transparent margin (which brings back the rim and corner problems #92 recorded).
+  - It is a follow-up for #92 and a user question.
 
-   ```powershell
-   ./scripts/capture-pane-windows.ps1 -Binary ./target/debug/pane.exe -ApplicationRevision (git rev-parse HEAD) -OutputDir ./.scratch/ui-captures/103-glass-full -Theme dark -Material glass -Backdrop -BackdropPattern light -FullScreen
-   ```
+### Scaled displays: 125% and 150%
 
-   A coloured backdrop would also be needed to measure `saturate(160%)`. `capture-pane-windows.ps1` has only grey patterns, so that is script work first.
+- **The fixture workbench at 125% failed** (`.scratch/visual-workbench/run-103-125`, aborted): every native capture reported "client is 760x518 physical px; the scenario needs 950x648 (… at 120 DPI)".
+  - The fixture is parked past the virtual screen's right edge, so it is probably on no monitor and keeps the default 96-DPI sizing.
+  - The client-size guard caught it, as it should.
+  - 150% was not attempted on the workbench.
+  - **Workbench follow-up:** park the fixture on a real monitor but cloaked (`DWMWA_CLOAK`) or fully occluded, or give the window a per-monitor DPI at creation. Then a scaled reference capture, to make parity meaningful at scale.
+- **The real `pane.exe` on screen** (`capture-pane-windows.ps1 -Theme dark -Material opaque -Backdrop -BackdropPattern dark -ExerciseWindow`): runs `.scratch/ui-captures/103-dpi-125/run-20261005-163042-adc04cd7` (DPI 120) and `103-dpi-150/run-20261005-163057-53020295` (DPI 144).
+  - The frame grows to 952×649 and 1144×779, against 762×519 at 96: ×1.249/1.250 and ×1.501.
+  - I looked at every PNG in both runs: initial, active, inactive, moved, narrow and restored. Active, inactive and restored are byte-identical within each run.
+    - At both scales the layout is the 100% layout, scaled. The query line, the Pinned label with Ctrl 1–5, five Empty slots, Commands with the five sample rows, and the footer's hint, Open command ↵ and Actions Ctrl K are all present.
+    - Text, glyphs, tiles and keycaps are crisp, with no clipping or overlap in the full-size window.
+  - The narrow captures (459×517 and 552×621) ellipsize the descriptions, scroll the third row under the footer, and **clip the footer hint to a fragment of its ↵ cap**, as at 100%.
+- **Committed copies are trimmed 6px a side** (`real-app/dpi{125,150}-{initial,narrow}-trimmed.png`). At scale, the capture script placed its backdrop from the logical `windowRect` (774×526), not the physical frame. So the DWM rim and up to 4px inside the raw crops showed slivers of the operator's desktop: coloured pixels and, at the top of the 125% crop, fragments of other windows. The trimmed copies have no such pixels within 3px of their edges.
+  - This is a `capture-pane-windows.ps1` limitation at non-100% scale; I didn't fix it.
+- **Claim:** the real window scales proportionally and renders legibly at 125% and 150%, reviewed by eye (R3). There is **no geometry parity** at those scales: the reference is pinned at 96 DPI.
+
+## Still pending
+
+None of these has run.
+
+1. **Saturation.** `saturate(160%)` needs a coloured backdrop. `capture-pane-windows.ps1` has only grey patterns, so that is script work first, then a visible capture like the glass runs (about 10 s, Pane in the foreground).
 2. **Real-process checks with no script:**
    - Settings' real minimize, maximize, drag and resize (#97);
    - a real restart that keeps the theme and material (#98) and the pins (#101);
    - a real arithmetic copy and a configured fallback (#96);
    - real clipboard copies (#102).
 
-   Each needs the operator by hand, or new scripted steps in `real-app-smoke.ps1`. Either way it shows `pane.exe`.
-3. **125% and 150% DPI.** This needs the display scale changed, a global Windows setting, or a second display at that scale. Then:
+   Each needs the operator by hand or new scripted steps in `real-app-smoke.ps1`. Either way it shows `pane.exe`.
+3. **Workbench at scale.** The follow-up above, before any parity at 125% or 150%.
+4. **The outer shadow (R2).** It waits on the user's answer below.
 
-   ```powershell
-   ./scripts/visual-workbench.ps1 -OutputDir C:/Users/ADMIN/Desktop/nguyenvu/pane/.scratch/visual-workbench/run-103-125 -SkipSensitivity
-   ```
-
-   - **Duration:** about 5 minutes; the fixture stays off-screen.
-   - **What it measures:** harness-native, at the new scale.
-   - **Parity will fail `client/device scale` by design.** The reference is pinned at device scale 1.
 ## Open user questions
 
 Collected from every ticket's results comment. None is answered yet.
 
 - **All tickets:** how do local, unpushed commits count toward closing #91–#103? Until that is decided, every ticket stays open.
-- **#92 and everything after it:** the window-crop glass captures and the real-app smoke have run. May the `-FullScreen` shadow capture, the unscripted real-process checks and a 125%/150% run follow? See [Pending operator consent](#pending-operator-consent).
+- **#92 and everything after it:** the glass, shadow, smoke and 125%/150% captures have run. The unscripted real-process checks remain; see [Still pending](#still-pending).
+- **#92, the shadow (new):** the real window draws no outer shadow (R2). Pursue it (a DWM shadow attribute or style, or a painted shadow in a transparent margin), or accept its absence as a Windows adaptation?
 - **#94:** should command and command-search rows lose their pointer fade? #95 has since given command rows root search's immediate washes, per #100. The question remains only for confirmation.
 - **#96:**
   1. Restrict the answer card to the calculator?
@@ -402,6 +430,7 @@ Collected from every ticket's results comment. None is answered yet.
 - **#103 (new):**
   1. The narrow launcher clips its footer hint mid-keycap. Should the hint drop its parts whole below some width?
   2. Should the light palette's measurement be extended to every family? Today it is validated only on the launcher frame and the Appearance page.
+  3. Should the workbench gain scaled-display support (a cloaked or on-monitor fixture, plus a scaled reference)?
 
 ## Atlas: what the images show
 
