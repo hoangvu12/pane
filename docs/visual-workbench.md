@@ -15,7 +15,7 @@ From the repository root, in PowerShell:
 It needs Rust, Node 24 (for its global `WebSocket`), Python 3 with Pillow, and Chrome at `C:/Program Files/Google/Chrome/Application/chrome.exe` (`-Chrome` overrides the path). In order, it:
 
 1. Checks the reference's SHA-256 (`docs/evidence/ui-prototype/reference/launcher.html`, `F7E81E03…0BB4`) and refuses any other bytes.
-2. Builds the fixture: `cargo build -p pane --bin pane-visual-fixture --locked -j 1` (`-SkipBuild` reuses the last build).
+2. Builds the fixture: `cargo build -p pane --bin pane-visual-fixture --locked -j 1`, and records the binary's hash and its sources' digest beside it. `-SkipBuild` reuses the last build only if that record still matches the binary and the tree.
 3. Writes the scenario registry: the fixture's `--registry`. Both capture helpers follow its steps.
 4. Captures the reference: `scripts/visual-workbench/reference-capture.mjs`.
 5. Captures the fixture: `scripts/visual-workbench/native-capture.ps1`.
@@ -103,6 +103,20 @@ A scenario lives in `crates/pane/src/visual_fixture.rs`. It is a name, its clien
 To add a scenario, append it to `SCENARIOS`. A scenario can name its own appearance (`theme`), which overrides the run's `-Theme` for it alone, and can ask for the frame checks (`frame`). Use only production components in the fixture's render, and add a branch to the comparison for any new component family. If the reference board already exists but the native component doesn't, the board is listed in `pending_scenarios()` with the ticket that registers it; none is listed since the Appearance page (#98). Asking for a pending scenario fails with that ticket's URL, so it can never pass silently. Store and the snap HUD are source-only references this milestone.
 
 The fixture's data matches the reference root board: Suggested then Commands, with the footer action following the selected row's kind. The fixture is not the launcher's wiring. That is covered by `the_production_scenario_edits_searches_selects_opens_and_back_navigates` in `crates/pane/tests/window.rs`, plus the real-app smoke.
+
+## What cannot pass unnoticed (#103)
+
+| Guard | Where | What fails |
+|---|---|---|
+| The reference is the pinned bytes | `visual-workbench.ps1` step `reference-hash`; `reference-capture.mjs` exits 3 on other bytes | any other reference file |
+| Same device scale | native: `native-capture.ps1` reads the window's DPI and refuses a client that isn't the scenario's logical size at it; reference: Chrome at `--force-device-scale-factor=1`; `compare.py` parity `client/device scale` (the native DPI / 96 against the reference's factor) | a native capture at 125% compared with the 100% reference |
+| Same client bounds | `native-capture.ps1` (throws); `compare.py` harness-native `client/size`, parity `client/size`, harness-reference `boards/<board>/glass/size` | a client or board image of any other size |
+| No resized image | both sides save their captures 1:1 (`PrintWindow` client, CDP clip at scale 1); `compare.py` compares at 1:1 and the size checks above fail a rescaled image | a rescaled capture |
+| No fallback face | native: the fixture's `fontResolution` probe, harness-native `fonts` (`check_fonts`); reference: every board's own FontFaceSet, awaited per board and recorded at each capture, harness-reference `fonts` (`check_reference_fonts`: the board's Geist/Geist Mono weights loaded, no face failed) | a face that resolves to the fallback or never loaded |
+| The pointer is the script's | native: the window is parked off every display (the run throws if it isn't), input is posted to its HWND and `PrintWindow` draws no cursor; reference: headless Chrome has no OS cursor, each scenario starts with the pointer parked off every board, and each capture records where it was (harness-reference `pointer`: off the board or on the query field before the scenario's own pointer steps, on the board after them); parity compares the hovered rows, sections and labels by name | a leftover or uncontrolled pointer hovering something |
+| No old binary | a build records the fixture's SHA-256 and a digest of its sources beside it (`target/debug/pane-visual-fixture.inputs.json`, `freshness.py record`); `-SkipBuild` verifies both (`freshness.py verify`) and refuses a binary built outside the workbench or older than the tree; `workbench-run.json` records the result | a stale or hand-built fixture under `-SkipBuild` |
+
+The guards' own logic is tested offline: `python -m unittest discover -s scripts/visual-workbench -p "test_*.py"`.
 
 ## Reading the report
 

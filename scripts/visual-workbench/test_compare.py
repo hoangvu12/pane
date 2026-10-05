@@ -667,5 +667,72 @@ class PanePages(unittest.TestCase):
         self.assertEqual(compare.sidebar_rows(short, popover=True), (376, 437))
 
 
+class ReferenceGuards(unittest.TestCase):
+    """#103: a reference board drawn in a fallback face, a pointer left
+    over a board by an earlier scenario, or two sides at different scales
+    each fail a check."""
+
+    # Two unicode-range subsets per weight, as the reference embeds them.
+    FACES = [
+        {"family": "Geist", "weight": "400", "status": "unloaded"},
+        {"family": "Geist", "weight": "400", "status": "loaded"},
+        {"family": "Geist", "weight": "600", "status": "unloaded"},
+        {"family": "Geist", "weight": "600", "status": "unloaded"},
+        {"family": "Geist Mono", "weight": "500", "status": "error"},
+        {"family": "Geist Mono", "weight": "100 900", "status": "loaded"},
+    ]
+
+    def test_a_weight_is_loaded_when_one_of_its_subsets_loaded(self):
+        self.assertEqual(compare.face_status(self.FACES, "Geist", 400), "loaded")
+
+    def test_a_weight_no_subset_of_which_loaded_is_reported(self):
+        self.assertEqual(compare.face_status(self.FACES, "Geist", 600), "not loaded")
+        self.assertEqual(compare.face_status(self.FACES, "Geist", 500), "absent")
+
+    def test_a_variable_face_covers_the_weights_in_its_range(self):
+        self.assertEqual(compare.face_status(self.FACES, "Geist Mono", 400), "loaded")
+        failed = [{"family": "Geist Mono", "weight": "500", "status": "error"}]
+        self.assertEqual(compare.face_status(failed, "Geist Mono", 500), "error")
+
+    def test_the_font_check_fails_a_board_missing_a_face_or_its_record(self):
+        report = compare.Report()
+        compare.check_reference_fonts(report, "s", "c", "settings", self.FACES)
+        verdicts = {c["property"]: c["passed"] for c in report.checks}
+        self.assertTrue(verdicts["Geist 400 loaded"])
+        self.assertFalse(verdicts["Geist 500 loaded"])
+        self.assertFalse(verdicts["Geist 600 loaded"])
+        self.assertFalse(verdicts["faces failed"])
+        report = compare.Report()
+        compare.check_reference_fonts(report, "s", "c", "root", None)
+        self.assertFalse(report.checks[0]["passed"])
+
+    def test_a_pointer_parked_off_the_board_or_on_the_field_rests_where_it_was_put(self):
+        parked = {"page": [2, 2], "board": None, "steps": 0, "fieldClick": False}
+        field = {"page": [400, 300], "board": [380, 32], "steps": 0, "fieldClick": True}
+        for pointer in (parked, field):
+            measured, expected = compare.pointer_rest(pointer)
+            self.assertEqual(measured, expected)
+
+    def test_a_pointer_over_a_board_before_any_step_fails(self):
+        leftover = {"page": [400, 500], "board": [380, 200], "steps": 0, "fieldClick": False}
+        measured, expected = compare.pointer_rest(leftover)
+        self.assertNotEqual(measured, expected)
+        # The rest's click leaves it on the field, not below the header.
+        below = {"page": [400, 500], "board": [380, 200], "steps": 0, "fieldClick": True}
+        self.assertNotEqual(*compare.pointer_rest(below))
+        self.assertNotEqual(*compare.pointer_rest(None))
+
+    def test_a_pointer_step_must_land_on_the_board(self):
+        self.assertEqual(*compare.pointer_rest({"board": [10, 100], "steps": 1}))
+        self.assertNotEqual(*compare.pointer_rest({"board": None, "steps": 1}))
+
+    def test_parity_needs_the_same_device_scale(self):
+        self.assertEqual(compare.scale_parity({"dpi": 96}, {"deviceScaleFactor": 1}), (1.0, 1))
+        native, reference = compare.scale_parity({"dpi": 120}, {"deviceScaleFactor": 1})
+        report = compare.Report()
+        self.assertFalse(report.check("parity", "s", "c", "client", "device scale", native, reference, 0, "")["passed"])
+        self.assertEqual(compare.scale_parity({}, {"deviceScaleFactor": 1}), (None, 1))
+
+
 if __name__ == "__main__":
     unittest.main()

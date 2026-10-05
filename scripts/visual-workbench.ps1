@@ -15,6 +15,8 @@
 #    Settings section fill) and proves the comparison flips the checks
 #    those faults drive (sensitivity);
 # 8. with -RealAppSmoke, runs one real search interaction with pane.exe.
+# A run that skips the build first verifies that the fixture was built by
+# the workbench from the sources in the tree (freshness.py).
 # Everything it writes goes under -OutputDir; every process it starts it
 # closes, and every temporary directory it creates it deletes.
 
@@ -92,6 +94,16 @@ if (-not $SkipBuild) {
 }
 if (-not (Test-Path -LiteralPath $fixture)) { throw "no fixture at $fixture; run without -SkipBuild" }
 $run.fixture = [ordered]@{ path = $fixture; sha256 = (Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash }
+# No old binary passes unnoticed (#103): a build records the binary's hash
+# and its sources' digest beside it; a run that skips the build verifies
+# both, and refuses a binary built by hand or older than the tree.
+Step 'fixture-freshness' {
+    $action = if ($SkipBuild) { 'verify' } else { 'record' }
+    $output = python (Join-Path $workbench 'freshness.py') $action --binary $fixture --repo $repo
+    $code = $LASTEXITCODE
+    $run.fixture.freshness = ($output | Select-Object -Last 1) | ConvertFrom-Json
+    if ($code -ne 0) { throw "stale fixture: $($run.fixture.freshness.reason); run without -SkipBuild" }
+}
 
 $registry = Join-Path $OutputDir 'registry.json'
 Step 'registry' {
