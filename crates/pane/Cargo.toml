@@ -5,6 +5,8 @@ edition.workspace = true
 publish.workspace = true
 license.workspace = true
 rust-version.workspace = true
+# The test target is listed at the end.
+autotests = false
 
 [dependencies]
 pane-core = { path = "../pane-core" }
@@ -71,3 +73,9 @@ crc32fast.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 gpui ={ package = "gpui-ce", git = "https://github.com/hoangvu12/gpui-ce", rev = "bcf3a0acd047c1873293069d0ed42085a38f699b", default-features = false, features = ["test-support"] }
+
+# The integration tests are one binary, whose `tests/main.rs` declares each
+# file: a binary per file meant a link, and a debug file, for each of them.
+[[test]]
+name = "integration"
+path = "tests/main.rs"
