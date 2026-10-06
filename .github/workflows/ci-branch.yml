@@ -14,9 +14,9 @@ name: CI (branch)
 # the Cargo book recommends), and the quick legs keep the
 # platform-specific compile errors caught everywhere at a fraction of
 # the cost. The full suite on every operating system still runs: at
-# the [verify] tier of ci-fast.yml on the ticket branches, and in
-# ci.yml's release matrix where a release is at stake (main, a pull
-# request marked ready for review, on demand). pi-subagent/** worktrees
+# the verify tier of ci-fast.yml on the ticket branches, and in
+# ci.yml's release matrix where a release is at stake (pushes to main,
+# and on demand). pi-subagent/** worktrees
 # keep their own two-tier workflow in ci-fast.yml.
 on:
   push:
