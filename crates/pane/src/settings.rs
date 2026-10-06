@@ -396,10 +396,26 @@ impl Settings {
         self.chosen.window_mode
     }
 
+    /// Chooses the window mode; the launcher window resizes as it next
+    /// draws.
+    pub(crate) fn set_window_mode(&mut self, mode: pane_core::WindowMode, cx: &mut Context<Self>) {
+        let mut chosen = self.chosen.clone();
+        chosen.window_mode = mode;
+        self.record_choice(chosen, cx);
+    }
+
     /// Whether the compact window shows the pins as a row of icons under
     /// the search field.
     pub(crate) fn compact_pinned(&self) -> bool {
         self.chosen.compact_pinned
+    }
+
+    /// Chooses whether the compact window shows the pins; the launcher
+    /// window resizes as it next draws.
+    pub(crate) fn set_compact_pinned(&mut self, on: bool, cx: &mut Context<Self>) {
+        let mut chosen = self.chosen.clone();
+        chosen.compact_pinned = on;
+        self.record_choice(chosen, cx);
     }
 
     /// How the pinned home lays out its quick slots.
@@ -407,9 +423,78 @@ impl Settings {
         self.chosen.pinned_layout
     }
 
+    /// Chooses the pinned home's layout.
+    pub(crate) fn set_pinned_layout(
+        &mut self,
+        layout: pane_core::PinnedLayout,
+        cx: &mut Context<Self>,
+    ) {
+        let mut chosen = self.chosen.clone();
+        chosen.pinned_layout = layout;
+        self.record_choice(chosen, cx);
+    }
+
     /// What the launcher's back key does.
     pub(crate) fn escape(&self) -> pane_core::EscapeBehavior {
         self.chosen.escape
+    }
+
+    /// Chooses what the launcher's back key does.
+    pub(crate) fn set_escape(&mut self, escape: pane_core::EscapeBehavior, cx: &mut Context<Self>) {
+        let mut chosen = self.chosen.clone();
+        chosen.escape = escape;
+        self.record_choice(chosen, cx);
+    }
+
+    /// Whether Escape closes the Settings window.
+    pub(crate) fn escape_closes_settings(&self) -> bool {
+        self.chosen.escape_closes_settings
+    }
+
+    /// Chooses whether Escape closes the Settings window.
+    pub(crate) fn set_escape_closes_settings(&mut self, closes: bool, cx: &mut Context<Self>) {
+        let mut chosen = self.chosen.clone();
+        chosen.escape_closes_settings = closes;
+        self.record_choice(chosen, cx);
+    }
+
+    /// The extra selection keys.
+    pub(crate) fn navigation(&self) -> pane_core::NavigationBindings {
+        self.chosen.navigation
+    }
+
+    /// Why `navigation` cannot be chosen, if it cannot: one of its keys is
+    /// already an action's binding.
+    pub(crate) fn navigation_conflict(
+        &self,
+        navigation: pane_core::NavigationBindings,
+    ) -> Option<String> {
+        let (previous, next) = navigation.bindings()?;
+        KeyboardAction::ALL.into_iter().find_map(|action| {
+            let bound = self.chosen.keyboard.binding(action);
+            let id = bound.id();
+            (id == previous || id == next).then(|| format!("{bound} is {}", action.title()))
+        })
+    }
+
+    /// Chooses the extra selection keys: the keymap is re-made at once,
+    /// then the record is written. A set whose keys an action already has
+    /// is refused.
+    pub(crate) fn set_navigation(
+        &mut self,
+        navigation: pane_core::NavigationBindings,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        if let Some(conflict) = self.navigation_conflict(navigation) {
+            return Err(conflict);
+        }
+        if self.unreadable.is_none() && self.chosen.navigation != navigation {
+            crate::keyboard::rebuild(cx, &self.chosen.keyboard, navigation);
+        }
+        let mut chosen = self.chosen.clone();
+        chosen.navigation = navigation;
+        self.record_choice(chosen, cx);
+        Ok(())
     }
 
     /// Records one of the Launcher page's choices — the opening display or

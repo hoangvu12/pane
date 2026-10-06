@@ -1874,10 +1874,10 @@ impl ProductionAppearance {
             theme: state.theme_preference(),
             material: state.material_preference(),
             overrides: state.override_descriptions(),
-            preview: appearance::preview_content(
-                crate::keyboard::binding_keys(invoke),
-                &crate::keyboard::binding_keys(open_actions).name(),
-            ),
+            preview: {
+                let _ = (invoke, open_actions);
+                board_preview(&keyboard)
+            },
             surface: settings::visuals(cx).material,
         }
     }
@@ -1897,7 +1897,7 @@ fn render_appearance_production(
     let offered = !overridden;
     let themes = appearance::THEMES
         .iter()
-        .map(|&(preference, name, _, selector)| {
+        .map(|&(preference, name, selector)| {
             controls::segment(name, preference == page.theme, offered, theme).id(selector)
         })
         .collect();
@@ -1907,15 +1907,19 @@ fn render_appearance_production(
             controls::segment(name, preference == page.material, offered, theme).id(selector)
         })
         .collect();
-    let fields = appearance::fields(
-        (themes, materials),
-        (page.theme, page.material),
-        offered,
-        theme,
-    );
-    let notice = overridden.then(|| appearance::override_notice(&page.overrides, theme));
-    let stage = appearance::preview_stage(&page.preview, page.surface, page.theme, theme);
-    appearance::compose(notice, fields, None, stage, theme)
+    let view = appearance::AppearanceView {
+        theme: page.theme,
+        material: page.material,
+        overrides: if overridden {
+            page.overrides
+        } else {
+            Vec::new()
+        },
+        status: None,
+    };
+    div()
+        .id("appearance")
+        .child(appearance::compose(&view, (themes, materials), theme))
 }
 
 /// A deliberate fault the workbench injects to prove its comparison is
@@ -3578,7 +3582,7 @@ impl FixtureWindow {
                 page.child(settings_shell::page_columns(header, aside, theme))
             }
         };
-        crate::features::settings::compose(div(), sidebar, page, theme, material)
+        crate::features::settings::compose(div(), "Settings", sidebar, page, theme, material)
     }
 
     /// The Appearance board's page (#98): its fixture content — the
@@ -5810,7 +5814,7 @@ fn declared_appearance(
     // margin, then the column's gap.
     let subtitle = match page {
         AppearancePage::Board => SETTINGS_SUBTITLE,
-        AppearancePage::Production { .. } => appearance::ABOUT,
+        AppearancePage::Production { .. } => "",
     };
     let subtitle_style = (lines.subtitle.size, theme.typography.regular);
     let subtitle_lines = wrapped_lines(window, theme, subtitle, subtitle_style, column.width);
@@ -5881,15 +5885,13 @@ fn declared_appearance(
                 column.description(&notice, theme.warning, 1., false);
                 column.next_group();
             }
-            let themes = appearance::THEMES.map(|(_, name, _, _)| name);
+            let themes = appearance::THEMES.map(|(_, name, _)| name);
             let chosen = appearance::THEMES
                 .iter()
                 .position(|&(preference, ..)| preference == production.theme)
                 .unwrap_or_default();
             column.label("Theme", opacity);
             column.track("theme", &themes, (chosen, None), opacity);
-            let note = appearance::theme_note(production.theme);
-            column.description(note, theme.text_muted, 1., true);
             column.next_group();
             let materials = appearance::MATERIALS.map(|(_, name, _)| name);
             let chosen = appearance::MATERIALS
@@ -5898,8 +5900,9 @@ fn declared_appearance(
                 .unwrap_or_default();
             column.label("Material", opacity);
             column.track("material", &materials, (chosen, None), opacity);
-            let (note, color) = appearance::material_note(production.material, theme);
-            column.description(&note, color, 1., true);
+            if let Some((note, color)) = appearance::material_note(production.material, theme) {
+                column.description(&note, color, 1., true);
+            }
             let glass = production.surface.is_glass();
             (production.preview, glass, None)
         }

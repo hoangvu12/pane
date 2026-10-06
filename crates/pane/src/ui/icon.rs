@@ -147,6 +147,11 @@ pub(crate) enum Glyph {
     /// A plus: the pinned home's "+ Pin" hint, and the Appearance board's
     /// custom accent swatch (the reference's own path).
     Plus,
+    /// A counter-clockwise arrow: a key binding recorder's button that
+    /// resets the binding to its default.
+    Reset,
+    /// A keyboard: a key binding recorder's record mark.
+    Record,
     /// The Windows titlebar's close mark.
     #[cfg(target_os = "windows")]
     WindowClose,
@@ -202,6 +207,8 @@ impl Glyph {
         Glyph::Music,
         Glyph::ActionPin,
         Glyph::Plus,
+        Glyph::Reset,
+        Glyph::Record,
     ];
 
     /// The embedded SVG bytes for this glyph.
@@ -247,6 +254,8 @@ impl Glyph {
             Glyph::Music => glyph_svg!("music"),
             Glyph::ActionPin => glyph_svg!("action-pin"),
             Glyph::Plus => glyph_svg!("plus"),
+            Glyph::Reset => glyph_svg!("reset"),
+            Glyph::Record => glyph_svg!("record"),
             #[cfg(target_os = "windows")]
             Glyph::WindowClose => include_bytes!("../../assets/icons/pane/window-close.svg"),
             #[cfg(target_os = "windows")]
