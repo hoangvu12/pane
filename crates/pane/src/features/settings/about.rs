@@ -399,8 +399,7 @@ pub(crate) fn compose(
     let documentation =
         controls::setting_row("Documentation", documentation_lines, theme).child(attach(
             AboutControl::Documentation,
-            controls::button(DOCUMENTATION_LABEL, true, theme)
-                .id("about-documentation")
+            controls::button("about-documentation", DOCUMENTATION_LABEL, true, theme)
                 .debug_selector(|| "about-documentation".into())
                 .role(Role::Link)
                 .aria_label("Open documentation")
@@ -450,8 +449,7 @@ fn action_button(
     description: &'static str,
     theme: &Theme,
 ) -> Stateful<Div> {
-    controls::button(title.to_owned(), true, theme)
-        .id(selector)
+    controls::button(selector, title.to_owned(), true, theme)
         .debug_selector(move || selector.into())
         .role(Role::Button)
         .aria_label(if title == DIAGNOSTICS_LABEL {

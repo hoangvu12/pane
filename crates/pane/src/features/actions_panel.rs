@@ -47,7 +47,7 @@ use crate::ui::icon::{Glyph, IconTone, TileSize, glyph, tile_at};
 use crate::ui::input::TextEditingKeys;
 use crate::ui::keycap::{CapStyle, KeySequence, key_sequence};
 use crate::ui::material::{Material, popover_shadows};
-use crate::ui::theme::Theme;
+use crate::ui::theme::{Theme, pressed};
 
 actions!(
     actions_panel,
@@ -755,6 +755,16 @@ pub(crate) fn action_row(
         .when(selected, |row| row.bg(theme.action_selected))
         .when(!selected && available, |row| {
             row.hover(|row| row.bg(theme.control_hover))
+        })
+        // While held, an available entry takes the stronger wash of its
+        // hover, or of its selected wash, at once.
+        .when(available, |row| {
+            let press = pressed(if selected {
+                theme.action_selected
+            } else {
+                theme.control_hover
+            });
+            row.active(move |row| row.bg(press))
         })
         .when(!available, |row| row.opacity(0.5).aria_disabled(true))
         .child(glyph(glyph_of, geometry.glyph_size, theme.action_icon).flex_none())

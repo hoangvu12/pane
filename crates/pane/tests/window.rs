@@ -99,6 +99,20 @@ fn click_row(
     settle(window, cx)
 }
 
+/// Opens the Rust sample's command from root search with the pointer —
+/// a click on its row — the one way into a view that arrives (a keyboard
+/// open lands at once).
+fn open_by_click(
+    window: &Entity<LauncherWindow>,
+    cx: &mut VisualTestContext,
+) -> pane_core::LauncherView {
+    let row = cx
+        .debug_bounds("row-Rust sample")
+        .expect("the command's root row");
+    cx.simulate_click(row.center(), Modifiers::none());
+    settle(window, cx)
+}
+
 fn the_keyboard_opens_the_sample_and_runs_an_action(cx: &mut TestAppContext, sample: &Sample) {
     let (window, cx) = open(cx, sample);
 
@@ -2099,7 +2113,7 @@ fn settle_frames(cx: &mut VisualTestContext) -> usize {
     panic!("the window never stopped asking for animation frames");
 }
 
-/// Opening a command is a view transition: the content that changes —
+/// Opening a command with the pointer is a view transition: the content that changes —
 /// the results list — arrives over a brief fade and a tiny shift from
 /// below, while the shell chrome (the footer with #71's action strip)
 /// stays exactly where it was. The arrival is driven on the controlled
@@ -2120,10 +2134,9 @@ fn opening_a_command_transitions_the_content_and_keeps_the_chrome_still(cx: &mut
         .debug_bounds("status-idle")
         .expect("the idle strip is rendered");
 
-    // Enter opens the selected command: the frame that draws the new
-    // screen starts the arrival, the full shift below rest.
-    cx.simulate_keystrokes("enter");
-    let view = settle(&window, cx);
+    // A click opens the command: the frame that draws the new screen
+    // starts the arrival, the full shift below rest.
+    let view = open_by_click(&window, cx);
     assert_eq!(
         (view.screen, view.title.as_str()),
         (Screen::Command, "Rust sample")
@@ -2166,6 +2179,61 @@ fn opening_a_command_transitions_the_content_and_keeps_the_chrome_still(cx: &mut
     assert_eq!(settle_frames(cx), 0, "a settled window asks for no frame");
 }
 
+/// A keyboard open lands at once: Enter is the launcher's most repeated
+/// key, so the view it opens is drawn settled on the frame that shows it,
+/// and a later change nothing opened — backing out and opening again with
+/// Enter — never inherits an arrival either.
+#[gpui::test]
+fn opening_with_the_keyboard_lands_at_once(cx: &mut TestAppContext) {
+    let (window, cx) = open(cx, &RUST);
+    settle(&window, cx);
+    settle_frames(cx);
+
+    cx.simulate_keystrokes("enter");
+    let view = settle(&window, cx);
+    assert_eq!(view.screen, Screen::Command);
+    assert!(
+        arriving(&window, cx).is_none(),
+        "Enter drew the command settled"
+    );
+
+    // A click-armed open, used up by the screen it opened, leaves nothing
+    // armed behind it: back out, and Enter's next open lands at once too.
+    cx.simulate_keystrokes("escape");
+    settle(&window, cx);
+    open_by_click(&window, cx);
+    assert!(arriving(&window, cx).is_some(), "the click arrived");
+    settle_frames(cx);
+    cx.simulate_keystrokes("escape");
+    settle(&window, cx);
+    cx.simulate_keystrokes("enter");
+    settle(&window, cx);
+    assert!(
+        arriving(&window, cx).is_none(),
+        "Enter after a click still lands at once"
+    );
+}
+
+/// A click that opens nothing — the command's row runs an action and the
+/// screen stays — leaves no arrival armed behind it: the next keyboard
+/// open (Enter into the command's form) still lands at once.
+#[gpui::test]
+fn a_click_that_opens_nothing_leaves_the_next_keyboard_open_settled(cx: &mut TestAppContext) {
+    let (window, cx) = open(cx, &RUST);
+    settle(&window, cx);
+    let view = click_row(&window, cx, "row-Say hello");
+    assert_eq!(view.screen, Screen::Command, "the click opened nothing");
+    settle_frames(cx);
+
+    cx.simulate_keystrokes("down down down down enter");
+    let view = settle(&window, cx);
+    assert!(matches!(view.screen, Screen::Form(_)), "{:?}", view.screen);
+    assert!(
+        arriving(&window, cx).is_none(),
+        "Enter after a click that opened nothing drew the form settled"
+    );
+}
+
 /// Backing out lands at once: root search is drawn settled on the frame
 /// that shows it, with no arrival from either side.
 #[gpui::test]
@@ -2201,8 +2269,7 @@ fn rapid_open_back_open_drops_the_arrival_and_starts_fresh(cx: &mut TestAppConte
 
     // Open, back and open again, with no test-clock time passing between
     // them: each navigation's frame has already drawn.
-    cx.simulate_keystrokes("enter");
-    settle(&window, cx);
+    open_by_click(&window, cx);
     let (offset, _) = arriving(&window, cx).expect("the command's content is arriving");
 
     cx.simulate_keystrokes("escape");
@@ -2213,8 +2280,7 @@ fn rapid_open_back_open_drops_the_arrival_and_starts_fresh(cx: &mut TestAppConte
         "backing out dropped the arrival"
     );
 
-    cx.simulate_keystrokes("enter");
-    let view = settle(&window, cx);
+    let view = open_by_click(&window, cx);
     assert_eq!(
         (view.screen, view.title.as_str()),
         (Screen::Command, "Rust sample")
@@ -2244,8 +2310,7 @@ fn rapid_open_back_open_drops_the_arrival_and_starts_fresh(cx: &mut TestAppConte
 fn navigation_and_typing_take_effect_while_an_arrival_is_in_flight(cx: &mut TestAppContext) {
     let (window, cx) = open(cx, &RUST);
     settle(&window, cx);
-    cx.simulate_keystrokes("enter");
-    settle(&window, cx);
+    open_by_click(&window, cx);
     assert!(
         arriving(&window, cx).is_some(),
         "the command's content is arriving"
@@ -2286,8 +2351,7 @@ fn navigation_and_typing_take_effect_while_an_arrival_is_in_flight(cx: &mut Test
 fn escaping_mid_arrival_cancels_it_without_a_trace_of_the_departed_screen(cx: &mut TestAppContext) {
     let (window, cx) = open(cx, &RUST);
     settle(&window, cx);
-    cx.simulate_keystrokes("enter");
-    settle(&window, cx);
+    open_by_click(&window, cx);
 
     // The command's selected item starts running (its answer is still to
     // come) and, with the arrival from opening still in flight, the user
@@ -2323,8 +2387,7 @@ fn escaping_mid_arrival_cancels_it_without_a_trace_of_the_departed_screen(cx: &m
     assert_eq!(view.status, Status::Idle);
     // And the cancellation left the window working: opening the command
     // again arrives again.
-    cx.simulate_keystrokes("enter");
-    let view = settle(&window, cx);
+    let view = open_by_click(&window, cx);
     assert_eq!(
         (view.screen, view.title.as_str()),
         (Screen::Command, "Rust sample")
@@ -2370,9 +2433,8 @@ fn typing_selection_and_row_changes_never_transition(cx: &mut TestAppContext) {
 /// Root search's rows follow the reference's pointer (#94): movement onto
 /// a row selects it at once — the selected wash arrives with no fade, and
 /// the window asks for no frame — and the footer and Enter act on it,
-/// once. Off root search, an opened command's items keep the shared
-/// pointer fade: their hover wash fades in and settles with the window
-/// idle.
+/// once. Off root search, an opened command's items share root search's
+/// washes: their hover wash arrives at once, with the window idle.
 #[gpui::test]
 fn root_rows_select_under_the_moving_pointer_at_once(cx: &mut TestAppContext) {
     let (window, cx) = open_with(
@@ -2941,8 +3003,7 @@ fn reduced_motion_settles_transitions_at_once_without_frames(cx: &mut TestAppCon
     // A navigation under reduced motion starts no transition: the frame
     // that draws the new screen is already settled.
     cx.update(|_, cx| cx.set_reduce_motion(true));
-    cx.simulate_keystrokes("enter");
-    let view = settle(&window, cx);
+    let view = open_by_click(&window, cx);
     assert_eq!(
         (view.screen, view.title.as_str()),
         (Screen::Command, "Rust sample")
@@ -2959,8 +3020,7 @@ fn reduced_motion_settles_transitions_at_once_without_frames(cx: &mut TestAppCon
     cx.simulate_keystrokes("escape");
     settle(&window, cx);
     settle_frames(cx);
-    cx.simulate_keystrokes("enter");
-    settle(&window, cx);
+    open_by_click(&window, cx);
     assert!(
         arriving(&window, cx).is_some(),
         "the opening began under full motion"
@@ -2992,8 +3052,7 @@ fn a_window_that_stops_drawing_settles_its_arrival_on_the_next_frame_it_draws(
 ) {
     let (window, cx) = open(cx, &RUST);
     settle(&window, cx);
-    cx.simulate_keystrokes("enter");
-    settle(&window, cx);
+    open_by_click(&window, cx);
     assert!(arriving(&window, cx).is_some());
 
     // Time passes with no frame delivered and no redraw provoked — a

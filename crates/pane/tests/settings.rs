@@ -1129,10 +1129,13 @@ fn a_menu_reopened_during_its_exit_retargets(cx: &mut TestAppContext) {
         reversing.0,
         mid_exit.0
     );
+    // The fade turns around where the exit left it too: no jump up to
+    // the entrance's floor, which a fresh open starts from.
     assert!(
-        reversing.1 > 0.4,
-        "the reopen did not reset to the entrance's floor: {}",
-        reversing.1
+        reversing.1 > 0. && reversing.1 <= mid_exit.1 + 0.05,
+        "the reopen's fade jumped instead of continuing from the exit's: {} from {}",
+        reversing.1,
+        mid_exit.1
     );
     // The reopened menu is the interactive one: its item activates.
     assert!(

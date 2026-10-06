@@ -44,7 +44,7 @@ use super::{Page, SettingsWindow, search};
 use crate::app::{LauncherWindow, launcher_changed_outside, row_icon};
 use crate::ui::controls;
 use crate::ui::icon::{Glyph, IconTone, TileSize, tile_at};
-use crate::ui::theme::Theme;
+use crate::ui::theme::{Theme, pressed};
 
 /// What the page is, in one line: its sidebar entry's description in
 /// the search.
@@ -400,8 +400,7 @@ pub(crate) fn compose(
         })
         .collect::<Vec<_>>();
     let back = view.back.then(|| {
-        let back = controls::button("Back", true, theme)
-            .id("extension-back")
+        let back = controls::button("extension-back", "Back", true, theme)
             .debug_selector(|| "extension-back".into())
             .role(Role::Button)
             .aria_label("Back");
@@ -446,11 +445,8 @@ pub(crate) fn compose(
     });
     let installs = (!view.installs.is_empty()).then(|| {
         let buttons = view.installs.iter().map(|install| {
-            let button = controls::button(install.title.clone(), true, theme)
-                .id(SharedString::from(format!(
-                    "extension-install-{}",
-                    install.id
-                )))
+            let id = SharedString::from(format!("extension-install-{}", install.id));
+            let button = controls::button(id, install.title.clone(), true, theme)
                 .debug_selector(|| format!("extension-install-{}", install.title))
                 .role(Role::Button)
                 .aria_label(install.title.clone());
@@ -527,6 +523,7 @@ fn package_card(
         .debug_selector(|| format!("extension-row-{}", card.title))
         .rounded_t(settings.card_radius)
         .hover(|row| row.bg(theme.nav_hover))
+        .active(|row| row.bg(pressed(theme.nav_hover)))
         .role(Role::Switch)
         .aria_label(card.title.clone())
         .aria_toggled(if card.enabled {
@@ -554,8 +551,8 @@ fn package_card(
     }
     if !card.actions.is_empty() {
         let buttons = card.actions.iter().map(|(id, label, title, reason)| {
-            let button = controls::ghost_button(label.clone(), reason.is_none(), theme)
-                .id(SharedString::from(format!("extension-action-{id}")))
+            let button_id = SharedString::from(format!("extension-action-{id}"));
+            let button = controls::ghost_button(button_id, label.clone(), reason.is_none(), theme)
                 .debug_selector(|| format!("extension-row-{title}"))
                 .role(Role::Button)
                 .aria_label(title.clone())
@@ -594,8 +591,7 @@ fn item(entry: &ExtensionItem, id: ElementId, theme: &Theme) -> Stateful<Div> {
     let tile = entry
         .icon
         .map(|(tone, glyph)| tile_at(TileSize::Row, tone, glyph, theme));
-    controls::list_item(tile, entry.title.clone(), lines, theme)
-        .id(id)
+    controls::list_item(id, tile, entry.title.clone(), lines, theme)
         .role(Role::Button)
         .aria_label(entry.title.clone())
         .when_some(entry.reason.clone(), |item, reason| {

@@ -384,6 +384,16 @@ fn menu_list(
             .when(!inert && !item_selected, |item| {
                 item.hover(|item| item.bg(theme.control_hover))
             })
+            // While held, a live entry takes the stronger wash of its
+            // hover, or of its selected wash, at once.
+            .when(!inert, |item| {
+                let press = ui::theme::pressed(if item_selected {
+                    theme.action_selected
+                } else {
+                    theme.control_hover
+                });
+                item.active(move |item| item.bg(press))
+            })
             .when(item_selected, |item| {
                 item.bg(theme.action_selected)
                     .when(!inert, |item| item.aria_active_descendant())

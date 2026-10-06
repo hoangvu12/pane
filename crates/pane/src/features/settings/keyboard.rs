@@ -562,11 +562,8 @@ fn recorder_row(
         action.title(),
         row.binding
     );
-    let reset = controls::icon_button(Glyph::Reset, row.default.is_some(), theme)
-        .id(SharedString::from(format!(
-            "keyboard-reset-{}",
-            action.id()
-        )))
+    let reset_id = SharedString::from(format!("keyboard-reset-{}", action.id()));
+    let reset = controls::icon_button(reset_id, Glyph::Reset, row.default.is_some(), theme)
         .debug_selector(move || format!("keyboard-reset-{}", action.id()))
         .role(Role::Button)
         .when_some(row.default.as_ref(), |reset, default| {

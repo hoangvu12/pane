@@ -6,7 +6,9 @@
 //!
 //! Presentation only, like [`crate::ui::settings_shell`]: each piece
 //! returns a plain [`Div`], and identity, accessibility, focus, keys and
-//! clicks stay with the caller. Nothing here imports launcher state.
+//! clicks stay with the caller — except that a pressable piece with a
+//! pressed wash takes its id, since GPUI keeps a press only on an element
+//! with one. Nothing here imports launcher state.
 //!
 //! ## What production uses
 //!
@@ -40,12 +42,13 @@
 
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, BoxShadow, Div, Hsla, Pixels, Role, SharedString, Stateful, div, px, relative,
+    AnyElement, BoxShadow, Div, ElementId, Hsla, Pixels, Role, SharedString, Stateful, div, px,
+    relative,
 };
 use gpui_elements::editable_text::EditableTextElement;
 
 use crate::ui::icon::{Glyph, glyph, glyph_rotated};
-use crate::ui::theme::Theme;
+use crate::ui::theme::{Theme, pressed};
 
 /// A 1px ring inset along a box's edge (`box-shadow: inset 0 0 0 1px`):
 /// it takes no layout space.
@@ -386,7 +389,8 @@ pub(crate) fn toggle(on: bool, theme: &Theme) -> Div {
 // - a note, a refusal or a status is a field description in its tone.
 //
 // Every pointer style here is attached in every state and nothing fades:
-// see the module docs.
+// see the module docs. Each pressable family also takes the [`pressed`]
+// wash of its hover while held — an adaptation the board does not author.
 
 /// The focus ring Pane draws on a control the keyboard is on: 2px of the
 /// focus color, inset (an adaptation: the board draws no focus).
@@ -527,11 +531,16 @@ pub(crate) fn row_line(text: impl Into<SharedString>, color: Hsla, theme: &Theme
 /// A button (`.pill`, the empty board's Install, whose tokens the result
 /// layouts' pill already holds): 30 high, 12px either side, radius 8, its
 /// 12.5/500 `label` in the title ink on white 8% under a white 8% inset
-/// ring; white 13% under the pointer, at once. A button that is not
-/// `enabled` is drawn at the disabled opacity, its hover its resting fill
-/// (still attached). The caller attaches its identity, accessibility,
-/// focus and click.
-pub(crate) fn button(label: impl Into<SharedString>, enabled: bool, theme: &Theme) -> Div {
+/// ring; white 13% under the pointer and the [`pressed`] wash while held,
+/// both at once. A button that is not `enabled` is drawn at the disabled
+/// opacity, its hover its resting fill (still attached) and no press. It
+/// is `id`; the caller attaches its accessibility, focus and click.
+pub(crate) fn button(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    enabled: bool,
+    theme: &Theme,
+) -> Stateful<Div> {
     let colors = &theme.results;
     let hover = if enabled {
         colors.pill_hover
@@ -542,14 +551,24 @@ pub(crate) fn button(label: impl Into<SharedString>, enabled: bool, theme: &Them
         .bg(colors.pill_fill)
         .shadow(vec![inset_ring(colors.pill_edge, px(1.))])
         .text_color(theme.text_title)
+        .id(id)
         .hover(move |button| button.bg(hover))
+        .when(enabled, |button| {
+            button.active(move |button| button.bg(pressed(hover)))
+        })
         .child(label.into())
 }
 
 /// A secondary button (the store board's ghost pill, `.pill.ghost`): a
 /// button's box, transparent, its label in the body ink. The store authors
-/// no hover for it; Pane's is a footer button's white 6% (`.fbtn:hover`).
-pub(crate) fn ghost_button(label: impl Into<SharedString>, enabled: bool, theme: &Theme) -> Div {
+/// no hover for it; Pane's is a footer button's white 6% (`.fbtn:hover`),
+/// and its press the [`pressed`] wash of that. It is `id`, as [`button`].
+pub(crate) fn ghost_button(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    enabled: bool,
+    theme: &Theme,
+) -> Stateful<Div> {
     let hover = if enabled {
         theme.control_hover
     } else {
@@ -557,7 +576,11 @@ pub(crate) fn ghost_button(label: impl Into<SharedString>, enabled: bool, theme:
     };
     button_frame(enabled, theme)
         .text_color(theme.text_body)
+        .id(id)
         .hover(move |button| button.bg(hover))
+        .when(enabled, |button| {
+            button.active(move |button| button.bg(pressed(hover)))
+        })
         .child(label.into())
 }
 
@@ -726,15 +749,27 @@ pub(crate) fn recorder(
             well.focus(move |well| well.shadow(focus_ring))
         })
         .child(text)
-        .child(icon_face(Glyph::Record, recording, true, theme))
+        .child(icon_face(
+            "record-mark",
+            Glyph::Record,
+            recording,
+            true,
+            theme,
+        ))
         .children(trailing)
 }
 
-/// An icon button's face: a 28px square, radius 6, white 8% (the button's
-/// fill) under its 16px `mark` in the body ink — the danger tone while
-/// `active` — white 13% under the pointer while `enabled`, the disabled
-/// opacity otherwise.
-fn icon_face(mark: Glyph, active: bool, enabled: bool, theme: &Theme) -> Div {
+/// An icon button's face, `id`: a 28px square, radius 6, white 8% (the
+/// button's fill) under its 16px `mark` in the body ink — the danger tone
+/// while `active` — white 13% under the pointer and the [`pressed`] wash
+/// while held, at once, while `enabled`; the disabled opacity otherwise.
+fn icon_face(
+    id: impl Into<ElementId>,
+    mark: Glyph,
+    active: bool,
+    enabled: bool,
+    theme: &Theme,
+) -> Stateful<Div> {
     let controls = &theme.geometry.controls;
     let colors = &theme.results;
     let hover = if enabled {
@@ -754,7 +789,11 @@ fn icon_face(mark: Glyph, active: bool, enabled: bool, theme: &Theme) -> Div {
         } else {
             colors.pill_fill
         })
+        .id(id)
         .hover(move |face| face.bg(hover))
+        .when(enabled, |face| {
+            face.active(move |face| face.bg(pressed(hover)))
+        })
         .child(glyph(
             mark,
             controls.icon_button_glyph,
@@ -770,23 +809,30 @@ fn icon_face(mark: Glyph, active: bool, enabled: bool, theme: &Theme) -> Div {
 }
 
 /// An icon button (a recorder's reset): [`icon_face`] as a pressable
-/// control. The caller attaches its identity, accessibility and click.
-pub(crate) fn icon_button(mark: Glyph, enabled: bool, theme: &Theme) -> Div {
-    icon_face(mark, false, enabled, theme).when(enabled, |button| button.cursor_pointer())
+/// control, `id`. The caller attaches its accessibility and click.
+pub(crate) fn icon_button(
+    id: impl Into<ElementId>,
+    mark: Glyph,
+    enabled: bool,
+    theme: &Theme,
+) -> Stateful<Div> {
+    icon_face(id, mark, false, enabled, theme).when(enabled, |button| button.cursor_pointer())
 }
 
 /// A pressable entry of a Settings list (an extension, a command to open,
 /// an install source): radius 8 and 10px either side like a sidebar item,
 /// at least 44 high (10px above and below text with `lines`), the
 /// optional 28px `tile`, `label` as a field label over its `lines`, and a
-/// 14px chevron at its right end; white 5% under the pointer (`.nav:hover`),
-/// at once. The caller attaches its identity, accessibility and click.
+/// 14px chevron at its right end; white 5% under the pointer (`.nav:hover`)
+/// and the [`pressed`] wash while held, at once. It is `id`; the caller
+/// attaches its accessibility and click.
 pub(crate) fn list_item(
+    id: impl Into<ElementId>,
     tile: Option<Div>,
     label: impl Into<SharedString>,
     lines: Vec<AnyElement>,
     theme: &Theme,
-) -> Div {
+) -> Stateful<Div> {
     let controls = &theme.geometry.controls;
     let settings = &theme.geometry.settings;
     let padded = !lines.is_empty();
@@ -808,7 +854,9 @@ pub(crate) fn list_item(
         .when(padded, |row| row.py(controls.row_padding_y))
         .rounded(controls.list_radius)
         .cursor_pointer()
+        .id(id)
         .hover(move |row| row.bg(hover))
+        .active(move |row| row.bg(pressed(hover)))
         .children(tile)
         .child(text)
         .child(glyph(Glyph::ChevronRight, controls.chevron, theme.nav_icon).flex_none())
@@ -847,14 +895,16 @@ pub(crate) fn select_trigger(label: impl Into<SharedString>, theme: &Theme) -> D
 /// accent mark at its end while `committed`; the white 11% wash while
 /// `highlighted`, white 6% under the pointer — at once, and the hover
 /// attached in every state (a highlighted or unavailable one's being its
-/// resting look). A choice that is not `offered` is drawn at the disabled
-/// opacity.
+/// resting look). While held, an offered choice takes the [`pressed`] wash
+/// of its hover — of its highlight, if highlighted — at once too. A choice
+/// that is not `offered` is drawn at the disabled opacity. The row is `id`.
 pub(crate) fn menu_row(
+    id: impl Into<ElementId>,
     label: impl Into<SharedString>,
     description: Option<SharedString>,
     (highlighted, committed, offered): (bool, bool, bool),
     theme: &Theme,
-) -> Div {
+) -> Stateful<Div> {
     let actions = &theme.geometry.actions;
     let controls = &theme.geometry.controls;
     let typography = &theme.typography;
@@ -868,6 +918,11 @@ pub(crate) fn menu_row(
     } else {
         theme.control_hover
     };
+    let press = pressed(if highlighted {
+        theme.action_selected
+    } else {
+        theme.control_hover
+    });
     let line = typography.settings.field_description;
     div()
         .flex()
@@ -878,7 +933,9 @@ pub(crate) fn menu_row(
         .py(controls.menu_padding_y)
         .rounded(actions.row_radius)
         .bg(rest)
+        .id(id)
         .hover(move |row| row.bg(hover))
+        .when(offered, |row| row.active(move |row| row.bg(press)))
         .text_size(typography.action_size)
         .font_weight(typography.action_weight)
         .text_color(theme.action_text)
@@ -916,15 +973,17 @@ pub(crate) fn menu_row(
 }
 
 /// A list's group header (the Shortcuts page's extensions): a pressable
-/// row like [`list_item`] — at least 44 high, white 5% under the pointer —
-/// leading with `chevron` (the caller's disclosure glyph, turned as the
-/// group is open) and its `label` over its `lines`.
+/// row like [`list_item`] — at least 44 high, white 5% under the pointer,
+/// the [`pressed`] wash while held — leading with `chevron` (the caller's
+/// disclosure glyph, turned as the group is open) and its `label` over its
+/// `lines`. The row is `id`.
 pub(crate) fn group_header(
+    id: impl Into<ElementId>,
     chevron: impl IntoElement,
     label: impl Into<SharedString>,
     lines: Vec<AnyElement>,
     theme: &Theme,
-) -> Div {
+) -> Stateful<Div> {
     let controls = &theme.geometry.controls;
     let settings = &theme.geometry.settings;
     let padded = !lines.is_empty();
@@ -939,7 +998,9 @@ pub(crate) fn group_header(
         .when(padded, |row| row.py(controls.row_padding_y))
         .rounded(controls.list_radius)
         .cursor_pointer()
+        .id(id)
         .hover(move |row| row.bg(hover))
+        .active(move |row| row.bg(pressed(hover)))
         .child(chevron)
         .child(
             div()

@@ -32,7 +32,7 @@ use pane_core::{QuickSlot, Screen};
 use crate::app::{LauncherWindow, row_icon};
 use crate::ui::icon::{Glyph, IconTone, TileSize, tile_at};
 use crate::ui::keycap::{CapStyle, Key, KeySequence, key_sequence};
-use crate::ui::theme::Theme;
+use crate::ui::theme::{Theme, pressed};
 
 /// The row's height under the search field, in px: the pins and the space
 /// above and below them. The collapsed window grows by this much while
@@ -166,6 +166,7 @@ impl LauncherWindow {
             .rounded(px(PIN_RADIUS))
             .cursor_pointer()
             .hover(move |style| style.bg(hover))
+            .active(move |style| style.bg(pressed(hover)))
             .role(Role::Button)
             .aria_label(format!("Pinned {place}: {}", pin.title))
             .when_some(pin.unavailable.clone(), |element, why| {
@@ -200,6 +201,7 @@ impl LauncherWindow {
             return;
         }
         self.activate_quick_slot(index, window, cx);
+        self.arm_arrival();
         if matches!(self.launcher.view().screen, Screen::Root { .. }) {
             self.query.focus(window, cx);
         }

@@ -399,6 +399,7 @@ impl LauncherWindow {
             return;
         }
         self.activate_quick_slot(index, window, cx);
+        self.arm_arrival();
         if matches!(self.launcher.view().screen, Screen::Root { .. }) {
             self.query.focus(window, cx);
         }
@@ -561,8 +562,10 @@ impl LauncherWindow {
             theme,
         )
         .focus_visible(|row| row.bg(theme.row_hover));
+        let press = crate::ui::result_row::pressed_wash(false, theme);
         let row = row
             .id(("slot", index))
+            .active(move |row| row.bg(press))
             .debug_selector(move || format!("slot-{}", index + 1));
         slot_accessibility(index, &slot, self.slot_input(index, row, cx))
     }

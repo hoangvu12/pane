@@ -447,8 +447,7 @@ pub(crate) fn choice_track(
 /// presses.
 pub(crate) fn submit_button(label: String, theme: &Theme) -> Stateful<Div> {
     let ring = controls::focus_ring(theme);
-    controls::button(label.clone(), true, theme)
-        .id("submit")
+    controls::button("submit", label.clone(), true, theme)
         .debug_selector(|| "submit".into())
         .key_context(BUTTON_CONTEXT)
         .role(Role::Button)

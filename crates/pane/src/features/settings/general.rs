@@ -546,8 +546,7 @@ fn recorder_row(
         if view.recording { "Recording; " } else { "" },
         view.binding
     );
-    let reset = controls::icon_button(Glyph::Reset, view.resettable, theme)
-        .id("open-pane-reset")
+    let reset = controls::icon_button("open-pane-reset", Glyph::Reset, view.resettable, theme)
         .debug_selector(|| "open-pane-reset".into())
         .role(Role::Button)
         .aria_label(format!("Reset the Open Pane hotkey to {}", view.default))

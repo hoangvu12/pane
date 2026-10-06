@@ -359,6 +359,7 @@ impl SettingsWindow {
                     // reference's `.nav` does — and the identity,
                     // accessibility and click behavior are attached here.
                     settings_shell::sidebar_item(
+                        ("section", index),
                         SidebarItem {
                             label: page.title.into(),
                             glyph: page.icon,
@@ -373,7 +374,6 @@ impl SettingsWindow {
                         },
                         theme,
                     )
-                    .id(("section", index))
                     .debug_selector(move || format!("section-{}", page.title))
                     .role(Role::ListBoxOption)
                     .aria_label(page.title)
@@ -649,6 +649,11 @@ fn control_button(
     theme: &ui::theme::Theme,
 ) -> impl IntoElement {
     let glyph_size = theme.geometry.settings.caption_glyph;
+    let hover = if area == WindowControlArea::Close {
+        theme.danger
+    } else {
+        theme.row_hover
+    };
     div()
         .id(id)
         .debug_selector(move || id.into())
@@ -664,23 +669,15 @@ fn control_button(
         .role(Role::Button)
         .aria_label(label)
         .on_click(move |_: &gpui::ClickEvent, window, _| activate(window))
-        .hover(|button| {
-            // The close button's hover is the danger tone, as Windows
-            // paints it; the others take the row hover wash. The wash
-            // fades in and out over the shared pointer span, and the
-            // press takes the selected wash below it — a window control
-            // closes or maximizes the frame the click lands, so the
-            // press is a flicker at most, but it is never a delay.
-            if area == WindowControlArea::Close {
-                button.bg(theme.danger)
-            } else {
-                button.bg(theme.row_hover)
-            }
-        })
-        .when(area != WindowControlArea::Close, |button| {
-            button.active(|button| button.bg(theme.row_selected))
-        })
-        .transitions(|fades| fades.bg(crate::ui::motion::pointer_fade()))
+        // The close button's hover is the danger tone, as Windows paints
+        // it; the others take the row hover wash. The press takes the
+        // stronger wash of either. Both change at once, as every control's
+        // do: a fade here would have to be the press's too, since GPUI
+        // fades a property the same way in every state — and a window
+        // control closes or maximizes the frame the click lands, so the
+        // press is a flicker at most, but it is never a delay.
+        .hover(move |button| button.bg(hover))
+        .active(move |button| button.bg(ui::theme::pressed(hover)))
         .child(glyph(mark, glyph_size, theme.text_title))
 }
 

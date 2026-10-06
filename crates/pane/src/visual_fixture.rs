@@ -3546,6 +3546,7 @@ impl FixtureWindow {
             .enumerate()
             .map(|(index, section)| {
                 settings_shell::sidebar_item(
+                    ("section", index),
                     SidebarItem {
                         label: section.label.into(),
                         glyph: section.glyph,
@@ -3556,7 +3557,6 @@ impl FixtureWindow {
                     },
                     theme,
                 )
-                .id(("section", index))
             });
         let search =
             settings_shell::search_field(&self.query, settings_shell::SEARCH_PLACEHOLDER, theme);
@@ -3705,8 +3705,9 @@ impl FixtureWindow {
             &keys,
             theme,
         );
-        let rows = suggestions.items.iter().map(|item| {
-            result_layouts::suggestion_row(&item.suggestion(), theme).into_any_element()
+        let rows = suggestions.items.iter().enumerate().map(|(index, item)| {
+            result_layouts::suggestion_row(("suggestion", index), &item.suggestion(), theme)
+                .into_any_element()
         });
         std::iter::once(label.into_any_element())
             .chain(rows)
@@ -3719,9 +3720,11 @@ impl FixtureWindow {
             // A result board's card and history rows (#96), through the
             // shared result layouts.
             if let Some(answer) = self.state.answer_at(index) {
+                let press = crate::ui::theme::pressed(theme.results.card_fill);
                 return answer
                     .draw(selected, theme)
                     .id(("row", index))
+                    .active(move |card| card.bg(press))
                     .role(Role::ListBoxOption)
                     .aria_label(answer.label(row.title))
                     .aria_selected(selected)
@@ -3735,8 +3738,10 @@ impl FixtureWindow {
                     icon: row.icon,
                     selected,
                 };
+                let press = crate::ui::result_row::pressed_wash(selected, theme);
                 return result_layouts::history_row(&history, theme)
                     .id(("row", index))
+                    .active(move |row| row.bg(press))
                     .role(Role::ListBoxOption)
                     .aria_label(row.title)
                     .aria_selected(selected)
@@ -3763,6 +3768,10 @@ impl FixtureWindow {
                 theme,
             )
             .id(("row", index))
+            .active({
+                let press = crate::ui::result_row::pressed_wash(selected, theme);
+                move |row| row.bg(press)
+            })
             .role(Role::ListBoxOption)
             .aria_label(row.title)
             .aria_selected(selected)
@@ -7761,15 +7770,19 @@ impl FixtureWindow {
             .into_iter()
             .map(|label| {
                 let target = format!("clip-tab-{}", label.to_lowercase());
-                split_view::tab(label, label == clip.tab, theme)
-                    .id(SharedString::from(target.clone()))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(clip) = this.clip.as_mut() {
-                            clip.click(&target);
-                            cx.notify();
-                        }
-                    }))
-                    .into_any_element()
+                split_view::tab(
+                    SharedString::from(target.clone()),
+                    label,
+                    label == clip.tab,
+                    theme,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if let Some(clip) = this.clip.as_mut() {
+                        clip.click(&target);
+                        cx.notify();
+                    }
+                }))
+                .into_any_element()
             })
             .collect();
         let tabs = split_view::tabs(
@@ -7783,6 +7796,7 @@ impl FixtureWindow {
             .map(|(index, record)| {
                 let target = format!("clip-{}", record.id);
                 split_view::clip_row(
+                    ("clip", index),
                     ClipRow {
                         title: record.title.into(),
                         time: record.time.into(),
@@ -7796,7 +7810,6 @@ impl FixtureWindow {
                     },
                     theme,
                 )
-                .id(("clip", index))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     if let Some(clip) = this.clip.as_mut() {
                         clip.click(&target);

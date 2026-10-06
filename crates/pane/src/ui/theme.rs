@@ -46,6 +46,24 @@ fn color(hex: u32) -> Hsla {
     rgb_to_hsla(rgba(hex))
 }
 
+/// The stronger wash a control takes while pressed: its hover `wash` at
+/// twice the alpha (at most opaque). Derived from the hover wash so every
+/// theme — dark, light, over a background image — gets one without new
+/// tokens. A selected row's press doubles its selected wash instead. An
+/// opaque wash (the close button's danger) has no alpha left to double,
+/// so it darkens instead.
+pub(crate) fn pressed(wash: Hsla) -> Hsla {
+    if wash.alpha >= 1. {
+        let mut darker = wash;
+        darker.lightness *= 0.85;
+        return darker;
+    }
+    Hsla {
+        alpha: (wash.alpha * 2.).min(1.),
+        ..wash
+    }
+}
+
 /// The semantic tokens. Field groups follow the roles the launcher uses:
 /// text, background, borders, selection, focus, semantic states, control
 /// chrome — plus the typography and geometry the reference fixes.

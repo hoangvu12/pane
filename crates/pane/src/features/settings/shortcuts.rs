@@ -1044,8 +1044,7 @@ fn group_element(
         gpui::radians(angle),
     );
     let ring = controls::focus_ring(theme);
-    let header = controls::group_header(chevron, group.title.clone(), lines, theme)
-        .id(key.clone())
+    let header = controls::group_header(key.clone(), chevron, group.title.clone(), lines, theme)
         .debug_selector(|| format!("shortcut-group-{key}"))
         .key_context(GROUP)
         .track_focus(&handle)
@@ -1404,8 +1403,7 @@ fn hotkey_cell(
         let for_keys = id.clone();
         let for_click = id.clone();
         let ring = controls::focus_ring(theme);
-        controls::icon_button(Glyph::Reset, true, theme)
-            .id(format!("hotkey-clear-{id}"))
+        controls::icon_button(format!("hotkey-clear-{id}"), Glyph::Reset, true, theme)
             .debug_selector(|| format!("shortcut-hotkey-clear-{id}"))
             .key_context(HOTKEY_CLEAR)
             .track_focus(&handle)
