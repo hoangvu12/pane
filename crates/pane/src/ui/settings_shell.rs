@@ -18,8 +18,9 @@
 //! Appearance page and no preview: the theme and material are a section
 //! of the General page.
 //!
-//! The pieces return plain [`Div`]s. Identity, accessibility, focus,
-//! scrolling and every handler stay with the caller (the Settings window's
+//! The pieces return plain [`Div`]s, but for the sidebar item, which takes
+//! its id so it can keep its press. Accessibility, focus, scrolling and
+//! every handler stay with the caller (the Settings window's
 //! feature module owns its sections, its search and its pages); nothing
 //! here imports launcher state.
 //!
@@ -43,14 +44,16 @@
 //! unselected: GPUI updates an element's remembered hover state only while
 //! a hover style is attached, so a style that comes and goes leaves the
 //! state stale, and a stale state laid out against the pointer the paint
-//! sees never settles.
+//! sees never settles. While held, an item takes the stronger
+//! [`crate::ui::theme::pressed`] wash of its hover, at once too — an
+//! adaptation: the board authors no pressed state.
 
 use gpui::prelude::*;
-use gpui::{BoxShadow, Div, Entity, Hsla, Pixels, SharedString, div, px};
+use gpui::{BoxShadow, Div, ElementId, Entity, Hsla, Pixels, SharedString, Stateful, div, px};
 use gpui_elements::editable_text::{EditableTextState, text_input};
 
 use crate::ui::icon::{Glyph, glyph};
-use crate::ui::theme::Theme;
+use crate::ui::theme::{Theme, pressed};
 
 /// The reference Settings board's 1120×720 panel (48 titlebar + 672
 /// body), in logical pixels: the size the workbench's fixture draws the
@@ -246,10 +249,15 @@ pub(crate) struct SidebarItem {
 /// of side padding and a 10px gap, the 16px glyph in the muted color,
 /// the 13px/500 label — #B3B4B9 at rest; white 5% and #EDEDEF under the
 /// pointer; white 9% and white while selected, which the pointer does not
-/// change — and the 12px count at its right end. No wash fades (see the
-/// module docs). The caller attaches the item's identity, accessibility
-/// and click.
-pub(crate) fn sidebar_item(item: SidebarItem, theme: &Theme) -> Div {
+/// change — and the 12px count at its right end. While held it takes the
+/// [`pressed`] wash of its hover (of its selected wash, if selected). No
+/// wash fades (see the module docs). The item is `id`; the caller attaches
+/// its accessibility and click.
+pub(crate) fn sidebar_item(
+    id: impl Into<ElementId>,
+    item: SidebarItem,
+    theme: &Theme,
+) -> Stateful<Div> {
     let settings = &theme.geometry.settings;
     let typography = &theme.typography;
     let (hover, hover_text) = if item.selected {
@@ -309,7 +317,9 @@ pub(crate) fn sidebar_item(item: SidebarItem, theme: &Theme) -> Div {
             theme.nav_text
         })
         .when(item.selected, |row| row.bg(theme.nav_selected))
+        .id(id)
         .hover(move |row| row.bg(hover).text_color(hover_text))
+        .active(move |row| row.bg(pressed(hover)).text_color(hover_text))
         .child(glyph(item.glyph, settings.item_glyph, theme.nav_icon).flex_none())
         .child(text)
         .when_some(item.count, |row, count| {

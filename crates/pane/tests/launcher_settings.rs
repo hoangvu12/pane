@@ -242,8 +242,8 @@ fn dismiss(
 /// Clicks the element whose debug selector is `selector` in `cx`. The
 /// pointer moves to the element first, as a real one does: the move is
 /// what tells an element it is hovered, and a click's landing alone does
-/// not — without the move the pointer-feedback fade would see a hover in
-/// the paint's style pass and not in the layout's, and never settle.
+/// not — without the move the paint's style pass would see a hover the
+/// layout's did not.
 fn click(cx: &mut VisualTestContext, selector: &'static str) {
     let bounds = cx
         .debug_bounds(selector)
@@ -1516,7 +1516,7 @@ fn the_trigger_toggles_and_an_outside_click_respects_its_target(cx: &mut TestApp
         .expect("the sidebar's search field");
     // The pointer travels there first, as a real one does (see [`click`]):
     // a click's landing alone leaves the trigger it left believing it is
-    // still hovered, and its pointer fade would never settle.
+    // still hovered.
     sc.simulate_mouse_move(field.center(), None::<MouseButton>, Modifiers::none());
     sc.simulate_click(field.center(), Modifiers::none());
     sc.run_until_parked();
@@ -1862,10 +1862,13 @@ fn a_popup_reopened_during_its_exit_retargets_and_blocks_nothing(cx: &mut TestAp
         reversing.0,
         mid_exit.0
     );
+    // The fade turns around where the exit left it too: no jump up to
+    // the entrance's floor, which a fresh open starts from.
     assert!(
-        reversing.1 > 0.4,
-        "the reopen did not reset to the entrance's floor: {}",
-        reversing.1
+        reversing.1 > 0. && reversing.1 <= mid_exit.1 + 0.05,
+        "the reopen's fade jumped instead of continuing from the exit's: {} from {}",
+        reversing.1,
+        mid_exit.1
     );
     // The reopened popup is the interactive one: typing filters it.
     sc.simulate_input("poi");

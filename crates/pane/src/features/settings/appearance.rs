@@ -335,6 +335,7 @@ fn background_rows(
     let anchor = this.search_anchor(CHOOSE_BACKGROUND);
     let choose = button(
         controls::button(
+            CHOOSE_BACKGROUND,
             if background.chosen {
                 "Change…"
             } else {
@@ -352,7 +353,7 @@ fn background_rows(
     .anchor_scroll(Some(anchor));
     let remove = background.chosen.then(|| {
         button(
-            controls::ghost_button("Remove", ready, theme),
+            controls::ghost_button(REMOVE_BACKGROUND, "Remove", ready, theme),
             REMOVE_BACKGROUND,
             "Remove the background image",
             ready.then(|| this.appearance.focus(REMOVE_BACKGROUND)),
@@ -412,13 +413,13 @@ fn background_rows(
     vec![picture.into_any_element(), effect.into_any_element()]
 }
 
-/// One of the background row's buttons, named `selector` and described
-/// by `label` for assistive technology. Offered (with a `focus`), it is a
-/// tab stop that Enter, Space and a click press — `press` does the
-/// button's work — under Pane's focus ring; while a picture is being
-/// copied in it is neither.
+/// One of the background row's buttons, `drawn` with the id `selector`
+/// and described by `label` for assistive technology. Offered (with a
+/// `focus`), it is a tab stop that Enter, Space and a click press —
+/// `press` does the button's work — under Pane's focus ring; while a
+/// picture is being copied in it is neither.
 fn button(
-    drawn: Div,
+    drawn: Stateful<Div>,
     selector: &'static str,
     label: &'static str,
     focus: Option<FocusHandle>,
@@ -426,7 +427,6 @@ fn button(
     press: impl Fn(&mut App) + Clone + 'static,
 ) -> Stateful<Div> {
     let drawn = drawn
-        .id(selector)
         .debug_selector(move || selector.into())
         .role(Role::Button)
         .aria_label(label);

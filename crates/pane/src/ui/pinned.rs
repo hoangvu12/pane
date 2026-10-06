@@ -38,7 +38,7 @@ use gpui::{AnyElement, BoxShadow, Div, Role, SharedString, Stateful, div, px, re
 use crate::ui::icon::{Glyph, IconTone, TileSize, glyph, tile_at};
 use crate::ui::keycap::slot_number_hint;
 use crate::ui::shell::section_label;
-use crate::ui::theme::Theme;
+use crate::ui::theme::{Theme, pressed};
 
 /// The label over the strip.
 pub(crate) const PINNED_LABEL: &str = "Pinned";
@@ -250,6 +250,7 @@ pub(crate) fn pinned_slot(content: SlotContent, theme: &Theme) -> Stateful<Div> 
             ],
         })
         .hover(|slot| slot.bg(theme.slot_hover))
+        .active(|slot| slot.bg(pressed(theme.slot_hover)))
         .child(
             tile_at(TileSize::Slot, tone, glyph, theme).when(unavailable, |tile| tile.opacity(0.5)),
         )

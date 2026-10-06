@@ -14,7 +14,7 @@
 //!
 //! - `.id(("row", index))` — the stable id (making the row stateful for
 //!   scrolling and hit-testing) and `.debug_selector(...)` for the smokes,
-//! - any pressed feedback a screen keeps, attached after the id, because a
+//! - the pressed wash ([`pressed_wash`]), attached after the id, because a
 //!   press state needs the named (stateful) row,
 //! - the accessibility contract — `.role(Role::ListBoxOption)`,
 //!   `.aria_selected`, `.aria_active_descendant` when selected,
@@ -34,11 +34,11 @@
 use std::ops::Range;
 
 use gpui::prelude::*;
-use gpui::{BoxShadow, Div, ElementId, HighlightStyle, SharedString, StyledText, div, px};
+use gpui::{BoxShadow, Div, ElementId, HighlightStyle, Hsla, SharedString, StyledText, div, px};
 
 use crate::ui::icon::{self, Glyph, IconTone};
 use crate::ui::keycap::{self, CapStyle, KeySequence};
-use crate::ui::theme::Theme;
+use crate::ui::theme::{Theme, pressed};
 
 /// What a result row shows — plain presentation values, already resolved
 /// by the caller from whatever the launcher holds. Nothing here derives
@@ -201,6 +201,18 @@ pub(crate) fn with_number_hint<E: ParentElement + Styled>(
             .rounded_tr(radius)
             .rounded_br(radius),
     )
+}
+
+/// The wash a row takes while pressed: the [`pressed`] wash of its hover,
+/// or of its selected wash while `selected`. The app attaches it after the
+/// row's id (see the module docs) — an adaptation: the reference authors
+/// no press for its rows.
+pub(crate) fn pressed_wash(selected: bool, theme: &Theme) -> Hsla {
+    pressed(if selected {
+        theme.row_selected
+    } else {
+        theme.row_hover
+    })
 }
 
 /// A row's surface (`.row`): at least 44 high, radius 10, 10px either side

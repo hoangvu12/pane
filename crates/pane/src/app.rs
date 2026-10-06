@@ -41,7 +41,7 @@ use crate::ui::material::Material;
 use crate::ui::motion::{self, Direction};
 use crate::ui::result_row::{RowContent, RowMeta, result_row_with};
 use crate::ui::shell;
-use crate::ui::theme::Theme;
+use crate::ui::theme::{Theme, pressed};
 use crate::{
     Back, Confirm, DismissLauncher, FocusNext, FocusPrevious, OpenSettings, ReturnToRoot,
     SelectNext, SelectPrevious,
@@ -140,11 +140,11 @@ pub struct LauncherWindow {
     /// [`features::quick_slots`].
     pub(crate) home: quick_slots::Home,
     /// The footer menu popup's entrance or exit in flight, if any: the
-    /// popup's look (0 closed, 1 open), presentation only — see
-    /// [`crate::ui::motion`]. One tween serves both the open menu and
+    /// popup's look (0 closed, 1 open) and its fade, presentation only —
+    /// see [`crate::ui::motion`]. One record serves both the open menu and
     /// the exit after it, so a reopen during the exit reverses from the
     /// presentation on screen.
-    menu_transition: Option<motion::Tween>,
+    menu_transition: motion::PopupMotion,
     /// The menu item the popup's exit still shows, captured when the
     /// menu closed; the frame that completes the exit clears it, along
     /// with the popup it was painting. Read by the popup layer the
@@ -184,9 +184,13 @@ pub struct LauncherWindow {
     /// only — see [`crate::ui::motion`].
     transition: Option<motion::Tween>,
     /// Which way the last navigation went, for the next view transition's
-    /// direction: `back()` leaves a view, everything else that changes the
-    /// screen (opening a command, a form, a custom view, a preview, a
-    /// hotkey) enters one.
+    /// direction: an open the pointer made (a row clicked, an entry from
+    /// the Settings window — a package preview, a root result) arms
+    /// [`Direction::Forward`]; keyboard opens never do. The screen change
+    /// it causes uses it up — that frame sets it back to
+    /// [`Direction::Back`], so a later change nothing opened (a summon that
+    /// pops to root search, a form submitted back to its list, a second
+    /// reply from the same guest) lands at once instead of inheriting it.
     navigation: Direction,
     /// The screen *kind* the last frame drew, to tell a real view
     /// transition (the kind changed) from a query or result update (it
@@ -279,7 +283,7 @@ impl LauncherWindow {
             scroll_again: false,
             custom_view: None,
             transition: None,
-            navigation: Direction::Forward,
+            navigation: Direction::Back,
             drawn_screen: None,
             #[cfg(any(test, debug_assertions))]
             arriving: None,
@@ -288,7 +292,7 @@ impl LauncherWindow {
             actions: None,
             clipboard: None,
             home: quick_slots::Home::default(),
-            menu_transition: None,
+            menu_transition: Default::default(),
             menu_exit: None,
             drawn_menu: false,
             #[cfg(any(test, debug_assertions))]
@@ -640,7 +644,8 @@ impl LauncherWindow {
         self.unhide(window, cx);
         window.activate_window();
         cx.activate(true);
-        self.navigation = Direction::Forward;
+        // A hotkey is a keyboard open: the command's view lands at once.
+        self.navigation = Direction::Back;
         self.show_until_done(pending, window, cx);
     }
 
@@ -654,6 +659,12 @@ impl LauncherWindow {
             self.hidden = false;
             // The pointer is wherever it is now: the next event records it.
             self.pointer = None;
+            // A window that just appeared has nothing to arrive from: its
+            // first frame draws whatever it shows settled, as the hotkey's
+            // show is itself never animated. A view that changes after
+            // that frame (a command's reply) still arrives as usual.
+            self.drawn_screen = None;
+            self.transition = None;
             // The launcher is opening: it is placed on the display the
             // Launcher page's choice resolves to, wherever the window was
             // left. Only this window is moved — the Settings window, which
@@ -673,6 +684,8 @@ impl LauncherWindow {
         self.hidden = true;
         self.hidden_at = Some(cx.background_executor().now());
         self.pointer = None;
+        // A hidden launcher keeps nothing armed for whatever shows next.
+        self.navigation = Direction::Back;
         self.end_numbers(cx);
         cx.notify();
     }
@@ -780,6 +793,9 @@ impl LauncherWindow {
         });
         if pops || !self.launcher.restorable_view() {
             self.launcher.show_root_search();
+            // Popping to root search leaves the open views, as
+            // `return_to_root` does: it lands at once.
+            self.navigation = Direction::Back;
             self.sync_screen(window, cx);
         } else if self.launcher.view().search_field().is_some() {
             self.query.focus(window, cx);
@@ -840,7 +856,7 @@ impl LauncherWindow {
         match shortcut {
             Ok(shortcut) => {
                 let pending = self.launcher.record_hotkey(shortcut);
-                self.navigation = Direction::Forward;
+                self.navigation = Direction::Back;
                 self.show_until_done(pending, window, cx);
             }
             Err(problem) => {
@@ -882,9 +898,14 @@ impl LauncherWindow {
     }
 
     /// Starts the selected row's action and redraws when the guest answers,
-    /// without blocking the window meanwhile.
+    /// without blocking the window meanwhile. The view it opens lands at
+    /// once: Enter is the launcher's most repeated key, and no keyboard
+    /// open animates. It disarms whatever an earlier click left armed (a
+    /// click that opened nothing — Settings, an app — changes no screen,
+    /// so nothing used its arrival up); a pointer click arms the arrival
+    /// again after calling this (see [`crate::ui::motion`]).
     fn activate_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.navigation = Direction::Forward;
+        self.navigation = Direction::Back;
         // The Settings root result opens the Settings window; the launcher
         // itself does nothing (see [`Launcher::selected_opens_settings`]).
         if self.launcher.selected_opens_settings() {
@@ -921,7 +942,10 @@ impl LauncherWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.navigation = Direction::Forward;
+        // A click in the Settings window: the view it opens arrives, as a
+        // click on the row would — unless the launcher was hidden, when
+        // the window's first frame draws it settled (see `unhide`).
+        let was_shown = !self.hidden;
         // Root search is reached as Escape reaches it, one screen back at a
         // time, wherever the launcher is (a form, a command, the extension
         // list Settings entered); every `back` moves toward root search,
@@ -948,6 +972,9 @@ impl LauncherWindow {
         };
         self.launcher.select(index);
         self.activate_selected(window, cx);
+        if was_shown {
+            self.navigation = Direction::Forward;
+        }
     }
 
     /// Shows the launcher's state now and again when `pending`, a launcher
@@ -1122,6 +1149,7 @@ impl LauncherWindow {
         }
         if self.launcher.selected() == Some(index) {
             self.activate_selected(window, cx);
+            self.navigation = Direction::Forward;
         } else {
             self.select_under_pointer(index);
             cx.notify();
@@ -1184,6 +1212,12 @@ impl LauncherWindow {
             theme,
         )
         .id(("row", index))
+        // While held, the row takes the stronger wash of its hover, or of
+        // its selected wash, at once.
+        .active({
+            let press = crate::ui::result_row::pressed_wash(selected, theme);
+            move |row| row.bg(press)
+        })
         // Every row's washes change at once, as the reference's do (#100:
         // a command's rows share root search's visuals). Root search's
         // rows also select under the moving pointer; a command's rows keep
@@ -1211,6 +1245,7 @@ impl LauncherWindow {
             } else {
                 this.launcher.select(index);
                 this.activate_selected(window, cx);
+                this.navigation = Direction::Forward;
             }
         }))
     }
@@ -1238,6 +1273,13 @@ impl LauncherWindow {
             None => card,
         }
         .id(("row", index))
+        // While held, the card takes the stronger wash of its own fill: it
+        // has no hover or selected wash to derive one from (its selection
+        // is a ring).
+        .active({
+            let press = pressed(visuals.theme.results.card_fill);
+            move |card| card.bg(press)
+        })
         .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {
             this.pointer_moved_over(index, event.position, cx);
         }))
@@ -1313,10 +1355,18 @@ impl LauncherWindow {
         ))
     }
 
-    /// Navigates forward to the screen the launcher now shows, as
-    /// activating a row does.
-    pub(crate) fn navigate_forward(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Arms the next view change to arrive, for a pointer open: the click
+    /// that ran it calls this after the activation (which disarms, as every
+    /// keyboard open does), and the screen change it causes uses it up.
+    pub(crate) fn arm_arrival(&mut self) {
         self.navigation = Direction::Forward;
+    }
+
+    /// Navigates forward to the screen the launcher now shows, as
+    /// activating a row does — landing at once, as a keyboard open does
+    /// (a pointer caller arms the arrival after this returns).
+    pub(crate) fn navigate_forward(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.navigation = Direction::Back;
         self.sync_screen(window, cx);
         cx.notify();
     }
@@ -1530,14 +1580,20 @@ impl Render for LauncherWindow {
         // The number hints' look this frame: 0 hidden, 1 shown.
         let numbers = self.advance_numbers(now, cx);
         let screen = discriminant(&view.screen);
+        let screen_changed = self.drawn_screen.is_some_and(|last| last != screen);
         let arriving = motion::advance(
             &mut self.transition,
             self.navigation,
-            self.drawn_screen.is_some_and(|last| last != screen),
+            screen_changed,
             cx.reduce_motion(),
             now,
         );
         self.drawn_screen = Some(screen);
+        // The open that armed this arrival has had it: whatever changes the
+        // screen next without opening anything lands at once.
+        if screen_changed {
+            self.navigation = Direction::Back;
+        }
         #[cfg(any(test, debug_assertions))]
         {
             self.arriving = arriving;

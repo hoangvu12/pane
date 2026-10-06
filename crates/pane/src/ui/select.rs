@@ -243,11 +243,12 @@ pub(crate) struct Select {
     /// state only — never the committed choice, which the model holds.
     active: Option<SharedString>,
     /// The popup's entrance or exit in flight, if any: the popup's look
-    /// (0 closed, 1 open), presentation only — see [`crate::ui::motion`].
-    /// The draft below it outlives the close that started the exit (a
-    /// fresh open resets it), so the exiting popup paints what the user
-    /// saw; nothing interactive reads it while the exit runs.
-    transition: Option<crate::ui::motion::Tween>,
+    /// (0 closed, 1 open) and its fade, presentation only — see
+    /// [`crate::ui::motion`]. The draft below it outlives the close that
+    /// started the exit (a fresh open resets it), so the exiting popup
+    /// paints what the user saw; nothing interactive reads it while the
+    /// exit runs.
+    transition: crate::ui::motion::PopupMotion,
     /// Whether the last drawn frame drew the popup open — the one thing
     /// that starts or retargets the transition, so a reopen during the
     /// exit reverses from the presentation on screen.
@@ -325,7 +326,7 @@ impl Select {
             _query_changes,
             _deactivation,
             active: None,
-            transition: None,
+            transition: Default::default(),
             drawn_open: false,
             opened: false,
             #[cfg(any(test, debug_assertions))]
@@ -947,6 +948,7 @@ impl Select {
             .or_else(|| choice.subtitle.clone())
             .unwrap_or_default();
         let row_element = controls::menu_row(
+            choice.id.clone(),
             choice.label.clone(),
             (!description.is_empty()).then(|| description.clone()),
             (highlighted, committed, offered),
@@ -957,7 +959,6 @@ impl Select {
         let label = choice.label.clone();
         let description_label = description.clone();
         let row_element = row_element
-            .id(choice.id.clone())
             .debug_selector(move || debug.clone())
             .role(Role::ListBoxOption)
             .aria_label(label)

@@ -371,6 +371,11 @@ impl SettingsWindow {
     fn search_open(&mut self, hit: &Hit, window: &mut Window, cx: &mut Context<Self>) {
         self.clear_search(cx);
         self.selected = hit.page;
+        // A jump lands its page at once: it is going somewhere specific,
+        // and the reveal's scroll must not wait out an arrival first (the
+        // page would arrive, then jump).
+        self.section_arrival = None;
+        self.drawn_section = None;
         cx.notify();
         let control = hit.entry.control.clone();
         let focus = self.pages[hit.page].focus;
@@ -388,10 +393,8 @@ impl SettingsWindow {
             window.on_next_frame(move |window, _cx| {
                 window.on_next_frame(move |window, cx| {
                     // The page has painted; the anchors are the ones it
-                    // drew. Ask for the scroll — which waits, where the
-                    // page is still arriving from the section change,
-                    // for the rest the arrival settles to, so the
-                    // position it lands is the one the control keeps.
+                    // drew, at rest, since the jump starts no arrival.
+                    // Ask for the scroll.
                     SettingsWindow::reveal_when_settled(&this, &target, window, cx);
                 });
             });
@@ -522,6 +525,7 @@ pub(super) fn result_rows(
             // the result's name with its page's glyph, where it lives
             // under it, and why it cannot be used here, if it cannot.
             settings_shell::sidebar_item(
+                ("settings-search-result", index),
                 SidebarItem {
                     label: hit.entry.title.clone().into(),
                     glyph: this.pages[hit.page].icon,
@@ -532,7 +536,6 @@ pub(super) fn result_rows(
                 },
                 theme,
             )
-            .id(("settings-search-result", index))
             .debug_selector(move || format!("settings-search-result-{title}"))
             .role(Role::ListBoxOption)
             .aria_label(hit.entry.title.clone())
