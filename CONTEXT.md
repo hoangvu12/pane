@@ -337,7 +337,7 @@ Replacing the managed copy of an installed package from its source while keeping
 _Avoid_: Reinstall
 
 **Reload**:
-Replacing an installed package's code from its source folder while Pane and other packages keep running: the replacement is checked as an install would check it, then replaces the managed copy, the old instances stop and the new code starts. Settings are kept; live state is not carried over.
+Replacing an installed package's code from its source folder while Pane and other packages keep running: the replacement is checked as an install would check it, then replaces the managed copy, the old instances stop and the new code starts. Settings are kept; live state is not carried over, except a snapshot a package opts in to hand over to its new code (ADR 0041).
 _Avoid_: Restart, hot swap, update (an update does not start the new code)
 
 **Automatic updates**:
@@ -372,6 +372,10 @@ _Avoid_: Build failure, rollback
 An enabled extension Pane stopped running after a failure attributable to it: it could not start, or it crashed or stopped responding three times within five minutes (an error it answers with is not a failure, nor a call stopped because a generation ended). Its commands stay listed, saying why they do not run; its saved data is kept, and the pause holds across restarts until the user retries, reloads, updates, disables or enables it. Distinct from a disabled extension, which is the user's choice.
 _Avoid_: Crashed extension, quarantined, disabled (by Pane)
 
+**Waiting command**:
+A command of an enabled package that needs a required capability or required dependency which is missing, disabled, paused or waiting itself. It stays listed and says what it needs ("Needs DeepL Translate, which is disabled"). Pane runs none of its work: not its view, schedule, continuing service, or root or indexed results. A capability its package provides waits with it. It comes back by itself when what it needs returns (ADR 0041). Waiting ends no generation and is not a failure. An optional capability or dependency never makes a command wait.
+_Avoid_: Pending (Cordis's word), paused extension (stopped after its own failure), disabled extension (the user's choice), unavailable action (excluded by its platforms)
+
 **Extension runtime**:
 The part of Pane that runs every installed extension's code (the Wasmtime engine; the runtime is a thread in Pane's process today), shared by all extensions; the window, root search's own rows and the extension pages in Settings do not depend on it.
 _Avoid_: Engine (one part of it)
@@ -392,6 +396,10 @@ _Avoid_: Unresponsive call (an extension's own), freeze of Pane (the window keep
 One run of an installed package's code, from when it is installed, enabled or Pane starts until it is disabled, paused or its code is replaced by a reload or an update. Every call into the package belongs to the generation current when it was asked for, and is stopped when that generation ends; its late result is discarded.
 _Avoid_: Version (a package's version is its manifest's), session, instance (one generation can start several), screen or search epoch (the launcher's counters of screens and searches, which decide whether an answer is shown; a search also cancels its own pending calls for computed results)
 
+**Owned registration**:
+Something an extension registers imperatively at run time, held as a WIT resource it owns. Examples are a dynamic root item or command, a timer, a subscription, a watcher, and a provider registered for a capability its manifest declares. Dropping the resource undoes the registration, and so does the instance holding it going away or its generation ending (ADR 0041). Pane tags each registration with its owner and generation and refuses a handle of an ended generation. Declarations in `pane.json` are contributions, not owned registrations.
+_Avoid_: Listener, hook, effect (Cordis's word), contribution (declared in the manifest)
+
 **Scheduled work**:
 Work Pane runs for an installed package without the user asking: a command's `pane.json` entry declares a schedule, an interval and the item whose action runs, and Pane runs that action each interval while the package's code may run, taking the generation current when the run is due. A disable, an uninstall, a pause or a code replacement ends it; enabling the package, replacing its code or restarting Pane starts it again, from a full interval, never replaying work that fell due meanwhile.
 _Avoid_: Timer, cron job, trigger, background service (an explicit continuing service is another activation model), watcher
@@ -409,7 +417,7 @@ An action whose supported platforms exclude the current system; Pane keeps it li
 _Avoid_: Hidden action, disabled extension
 
 **Operation**:
-A named, versioned function an installed package publishes in its package manifest for other extensions to call through Pane, with JSON input and result; only published operations are callable, so a command is never one implicitly.
+A named, versioned function an installed package publishes in its package manifest for other extensions to call through Pane, with JSON input and result, addressed by the package or as part of a capability it provides; only published operations are callable, so a command is never one implicitly.
 _Avoid_: API, command (a command is what the user opens), endpoint
 
 **Dependency**:
@@ -427,6 +435,14 @@ _Avoid_: Reverse dependency, child extension
 **Optional dependency**:
 A dependency a package uses only when the user installed it; installing the package lists it but never installs it.
 _Avoid_: Soft dependency, suggestion, recommended extension
+
+**Capability**:
+A named, versioned set of operations, written `<namespace>:<name>@<major>` (such as `acme:translate@1`), that any installed package may provide and other packages use by its name rather than by a package's identity. Pane brokers every call to it: to the provider the user chose in Settings (until the user chooses, the first one installed, which may be the default a consumer names for Pane to install when none is), or to all of them when the consumer declares that it uses every provider. A use is required or optional, like a dependency. A required capability without an available provider makes its consumer's commands wait (ADR 0041). Pane keeps no registry of namespaces, and the major version changes when a change breaks consumers.
+_Avoid_: Service (Cordis's word, and Pane's continuing service), interface, permission or grant (ADR 0002's rejected capability grants), dependency (on one particular package)
+
+**Provider**:
+An installed package that provides a capability, declared in its package manifest, or registered at run time as an owned registration for a capability its manifest declares. It serves the capability's operations as it serves published operations. When several packages provide one capability, the user picks which one serves it. A provider that is disabled, paused, missing or waiting serves nothing.
+_Avoid_: Search provider (a source of root results), implementation, plugin, vendor
 
 **Call chain**:
 The operation calls waiting on one another at one moment, from the command that made the first; each package in it is busy until its call returns, so a call back into one is refused rather than waited on.
