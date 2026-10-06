@@ -2681,19 +2681,28 @@ fn the_general_page_draws_the_settings_control_families(cx: &mut TestAppContext)
         switch_row.right() - px(14.),
         "at the row's end"
     );
-    let knob = |left: f32| gpui::Bounds {
+    let knob = |switch: gpui::Bounds<gpui::Pixels>, left: f32| gpui::Bounds {
         origin: switch.origin + gpui::point(px(left), px(3.)),
         size: gpui::size(px(18.), px(18.)),
     };
     assert!(paints_fill_at(sc, switch, 0xFFFFFF29), "off: white 16%");
-    assert!(paints_fill_at(sc, knob(3.), 0xFFFFFFFF), "the knob at left");
+    assert!(
+        paints_fill_at(sc, knob(switch, 3.), 0xFFFFFFFF),
+        "the knob at left"
+    );
     choose(sc, "general-launch-at-login");
     cx.run_until_parked();
     until_record_holds(sc, data.path(), "\"launchAtLogin\": true");
     assert!(login_chosen(sc), "the choice is taken");
+    // Read the switch again: on Linux the choice adds the autostart note
+    // under the row's name, the row grows and the switch, centred in it,
+    // moves down with it.
+    let switch = sc
+        .debug_bounds("general-launch-at-login")
+        .expect("the switch");
     assert!(paints_fill_at(sc, switch, 0xC9EE6AFF), "on: the accent");
     assert!(
-        paints_fill_at(sc, knob(19.), 0xFFFFFFFF),
+        paints_fill_at(sc, knob(switch, 19.), 0xFFFFFFFF),
         "the knob at right"
     );
 
