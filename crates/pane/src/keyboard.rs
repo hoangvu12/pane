@@ -193,16 +193,6 @@ pub(crate) fn move_pin_bindings(earlier: bool) -> [Binding; 2] {
     })
 }
 
-/// The caps the "Pinned" label shows for the chords of all `count` slots:
-/// the modifier's, then the digits' range, "1–5", named "1 to 5".
-pub(crate) fn quick_slots_keys(count: usize) -> KeySequence {
-    let mut keys = quick_slot_keys(1);
-    if let Some(digit) = keys.keys.last_mut() {
-        *digit = Key::new(format!("1–{count}"), format!("1 to {count}"));
-    }
-    keys
-}
-
 /// The keys `binding` is pressed with, as keycaps show them on this
 /// platform: every modifier its own cap, then the key. On Windows (and
 /// Linux) the Windows key leads, as Windows writes its own shortcuts

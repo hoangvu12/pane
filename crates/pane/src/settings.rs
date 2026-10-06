@@ -1392,7 +1392,7 @@ pub(crate) fn visuals(cx: &App) -> Visuals {
 /// background image's backdrop when one is chosen and ready (ADR 0028) —
 /// the palette then painted over its canvas, with the frosted surfaces
 /// (`Theme::over_backdrop`). Everything the launcher draws reads these;
-/// the Settings window and the visual workbench read [`visuals`]. The
+/// the Settings window reads [`visuals`]. The
 /// launcher asks for the backdrop as it draws, through
 /// [`Settings::request_backdrop`].
 pub(crate) fn launcher_visuals(cx: &App) -> Visuals {

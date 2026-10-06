@@ -26,12 +26,6 @@ open = "~5.4.4"
 # The launcher window's own platform handle, for the placement's move and
 # the DWM call; GPUI exports no raw-window-handle types of its own.
 raw-window-handle = "0.6"
-# The visual workbench fixture's manifest (#91): JSON, and the embedded
-# fonts' hashes; both already in the tree (pane-core's serde_json, and
-# sha2 through the test support).
-serde.workspace = true
-serde_json.workspace = true
-sha2.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 # Read system transparency/high-contrast preferences once at startup, round
@@ -63,13 +57,6 @@ core-graphics = "0.24"
 # adapters.
 objc2.workspace = true
 
-# The visual workbench's native fixture (#91): production components in
-# named states at the reference's client size, for the comparison scripts
-# under scripts/visual-workbench/. Not shipped.
-[[bin]]
-name = "pane-visual-fixture"
-path = "src/bin/visual-fixture.rs"
-
 [dev-dependencies]
 futures.workspace = true
 tempfile.workspace = true
@@ -79,4 +66,8 @@ flate2.workspace = true
 # reuse for the local artifact source's application packages; already in the
 # tree through `pane-core`'s zip reader.
 crc32fast.workspace = true
+# The tests' settings records and accessibility trees, and the npm and
+# artifact test support's integrity hashes.
+serde_json.workspace = true
+sha2.workspace = true
 gpui ={ package = "gpui-ce", git = "https://github.com/hoangvu12/gpui-ce", rev = "bcf3a0acd047c1873293069d0ed42085a38f699b", default-features = false, features = ["test-support"] }

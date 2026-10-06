@@ -32,6 +32,17 @@ mod service;
 
 use settle::settle;
 
+#[path = "support/a11y.rs"]
+mod a11y;
+#[path = "support/setup.rs"]
+mod setup;
+#[path = "support/wait.rs"]
+mod wait;
+
+use a11y::a11y;
+use setup::{init_settings, settings_shortcut};
+use wait::{until, until_record_holds};
+
 /// The fake system: what Pane registered, for checking the launcher's
 /// dismissal leaves the global hotkeys running (a press still works
 /// after).
@@ -56,18 +67,6 @@ impl Hotkeys for FakeSystem {
             .unwrap()
             .retain(|kept| kept != shortcut);
     }
-}
-
-/// Initializes the settings record of `data` in `cx`, as the binary does
-/// before its first window opens.
-fn init_settings(data: Option<&Path>, cx: &mut TestAppContext) {
-    cx.update(|cx| {
-        pane::settings::init_with_overrides(
-            data.map(|data| data.to_owned()),
-            pane::settings::Overrides::default(),
-            cx,
-        )
-    });
 }
 
 /// The launcher window over `launcher`, with the record of `data` in
@@ -140,15 +139,6 @@ fn keyboard_page(cx: &mut VisualTestContext) -> (WindowHandle<SettingsWindow>, V
     (settings, settings_cx)
 }
 
-/// The keystroke that opens Settings on this platform.
-fn settings_shortcut() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "cmd-,"
-    } else {
-        "ctrl-,"
-    }
-}
-
 /// The keystroke that returns to root on this platform.
 fn root_shortcut() -> &'static str {
     if cfg!(target_os = "macos") {
@@ -185,15 +175,6 @@ fn click(cx: &mut VisualTestContext, selector: &'static str) {
     cx.simulate_click(bounds.center(), Modifiers::none());
 }
 
-/// The accessibility tree of the window `cx` drives, as raw JSON, forced
-/// on so the tree is built regardless of platform accessibility.
-fn a11y(cx: &mut VisualTestContext) -> String {
-    cx.update(|window, _| window.set_a11y_forced(true));
-    cx.run_until_parked();
-    cx.update(|window, _| window.debug_a11y_tree_json())
-        .expect("an accessibility tree")
-}
-
 /// The accessible nodes of the window `cx` drives, as the window tests
 /// read them.
 fn accessible_nodes(cx: &mut VisualTestContext) -> Vec<serde_json::Value> {
@@ -215,38 +196,12 @@ fn node<'a>(nodes: &'a [serde_json::Value], role: &str, label: &str) -> &'a serd
         .unwrap_or_else(|| panic!("no {role} labelled {label:?} in {nodes:#?}"))
 }
 
-/// Runs `cx` until `done` returns a value, so that work arriving from
-/// other threads (a record being written) has landed.
-fn until<T>(
-    cx: &mut VisualTestContext,
-    mut done: impl FnMut(&mut VisualTestContext) -> Option<T>,
-) -> T {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        cx.run_until_parked();
-        if let Some(value) = done(cx) {
-            return value;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "timed out waiting for the window to draw"
-        );
-        std::thread::sleep(Duration::from_millis(5));
-    }
-}
-
 /// Runs `cx` until the settings record in `data` holds `field` mapped to
 /// `id`, as the Keyboard page writes them: the save the page started is
 /// written off the window's thread.
 fn until_record(cx: &mut VisualTestContext, data: &Path, field: &str, id: &str) {
-    let record = data.join("settings.json");
     let held = format!("\"{field}\": \"{id}\"");
-    until(cx, |_| {
-        fs::read_to_string(&record)
-            .ok()
-            .filter(|text| text.contains(&held))?;
-        Some(())
-    });
+    until_record_holds(cx, data, &held);
 }
 
 /// Whether the record in `data` holds `field` mapped to `id`.

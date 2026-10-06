@@ -21,6 +21,11 @@ mod artifacts;
 
 use settle::{settle, until};
 
+#[path = "support/wait.rs"]
+mod wait;
+
+use wait::{frame, settle_frames};
+
 /// A sample command: its component and the language it is written in.
 struct Sample {
     component: &'static str,
@@ -1170,13 +1175,10 @@ fn arrow_keys_move_through_the_matches_while_the_query_keeps_focus(cx: &mut Test
 fn the_production_scenario_edits_searches_selects_opens_and_back_navigates(
     cx: &mut TestAppContext,
 ) {
-    // The visual workbench's fixture data (#91) can match the reference by
-    // rendering the production components directly, which says nothing
-    // about the launcher's own wiring. This smoke is that missing half:
-    // the real adapter — the real launcher, its query field, its search,
-    // its selection and its navigation — edits, searches, selects, opens
-    // and back-navigates through the real sample components, so a fixture
-    // that renders beautifully can never hide a broken production path.
+    // The launcher's own wiring, end to end: the real adapter — the real
+    // launcher, its query field, its search, its selection and its
+    // navigation — edits, searches, selects, opens and back-navigates
+    // through the real sample components.
     let (window, cx) = open_with(cx, pane::sample_commands());
     assert!(
         query_has_focus(&window, cx),
@@ -2080,37 +2082,6 @@ fn a_long_status_replaces_the_idle_strip_and_stays_readable(cx: &mut TestAppCont
 /// [`LauncherWindow::view_transition`].
 fn arriving(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) -> Option<(f32, f32)> {
     cx.read_entity(window, |window, _| window.view_transition())
-}
-
-/// Delivers the animation frame the window has asked for, as the native
-/// frame loop would, with `elapsed` passing first on the test platform's
-/// controlled clock. The test platform delivers no frames on its own, so
-/// this is the only thing that advances a running transition; one call
-/// draws at most one frame. Returns how many next-frame callbacks ran —
-/// `0` means the window had asked for no frame, so nothing drew.
-fn frame(cx: &mut VisualTestContext, elapsed: Duration) -> usize {
-    cx.executor().advance_clock(elapsed);
-    let ran = cx.update(|window, cx| window.simulate_next_frame(cx));
-    cx.run_until_parked();
-    ran
-}
-
-/// Delivers frames until the window asks for none, so a transition in
-/// flight completes and the functional scroll relayout after a screen
-/// change finishes, and returns the frames it delivered. `0` means the
-/// window was already idle: no cosmetic and no functional frame was
-/// pending. Bounded, so a window that never stopped asking for frames
-/// fails the test instead of hanging it.
-fn settle_frames(cx: &mut VisualTestContext) -> usize {
-    let mut delivered = 0;
-    for _ in 0..20 {
-        let ran = frame(cx, Duration::from_millis(25));
-        if ran == 0 {
-            return delivered;
-        }
-        delivered += ran;
-    }
-    panic!("the window never stopped asking for animation frames");
 }
 
 /// Opening a command with the pointer is a view transition: the content that changes —

@@ -15,8 +15,8 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     App, ClipboardItem, Context, Div, EntityInputHandler, FocusHandle, Hsla, KeyDownEvent,
-    ModifiersChangedEvent, MouseMoveEvent, ObjectFit, PathPromptOptions, Pixels, Point, Role,
-    ScrollHandle, SharedString, Size, Stateful, Window, div, img, prelude::*, px, relative,
+    MouseMoveEvent, ObjectFit, PathPromptOptions, Pixels, Point, Role, ScrollHandle, SharedString,
+    Size, Stateful, Window, div, img, prelude::*, px, relative,
 };
 use pane_core::changes::Changes;
 use pane_core::hotkeys::Shortcut;
@@ -31,6 +31,7 @@ use crate::features::actions_panel;
 use crate::features::clipboard_history;
 use crate::features::compact_pins;
 use crate::features::footer_menu;
+use crate::features::number_hints::{self, row_number};
 use crate::features::quick_slots;
 use crate::features::root_search;
 use crate::features::settings;
@@ -56,63 +57,6 @@ pub(crate) const KEY_CONTEXT: &str = "Launcher";
 /// report a held key again, so the window keeps the guard itself. A
 /// genuine second press after this long toggles again.
 const OPEN_PANE_REPEAT: Duration = Duration::from_millis(600);
-
-/// How long Ctrl must be held alone before the launcher's items show the
-/// numbers Ctrl+1 to Ctrl+9 pick them with.
-const NUMBERS_HOLD: Duration = Duration::from_millis(400);
-
-/// The number hints Ctrl reveals: whether they show, the hold that will
-/// show them, and their slide in or out.
-#[derive(Default)]
-struct Numbers {
-    /// Whether the hints show: Ctrl has been held alone long enough.
-    shown: bool,
-    /// Whether Ctrl is held alone and the hold has not yet shown them.
-    pending: bool,
-    /// Counts holds, so a hold that ended does not show them later.
-    generation: u64,
-    /// Their slide in flight, if any, and what the last frame drew.
-    reveal: Option<motion::Tween>,
-    drawn: bool,
-}
-
-/// What Ctrl and a digit pick: a quick slot, or a row of the list.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Numbered {
-    Slot(usize),
-    Row(usize),
-}
-
-/// What Ctrl and `digit` (1 to 9) pick on the screen `view` shows: while
-/// the pinned home shows, the first numbers are `slots` (the home's
-/// numbered slots, in order; see `LauncherWindow::numbered_slots`) and
-/// the next ones the first rows; otherwise 1 to 9 are the first rows. Only
-/// root search and a command's lists number their items.
-pub(crate) fn numbered(view: &LauncherView, slots: &[usize], digit: usize) -> Option<Numbered> {
-    if !matches!(
-        view.screen,
-        Screen::Root { .. } | Screen::Command | Screen::CommandSearch { .. }
-    ) || !(1..=9).contains(&digit)
-    {
-        return None;
-    }
-    let home = quick_slots::home_shown(view);
-    let slots = if home { slots } else { &[] };
-    let picked = match slots.get(digit - 1) {
-        Some(&slot) => Numbered::Slot(slot),
-        None => Numbered::Row(digit - slots.len() - 1),
-    };
-    match picked {
-        Numbered::Row(row) if row >= view.rows.len() => None,
-        picked => Some(picked),
-    }
-}
-
-/// The number row `index` of `view`'s list is picked with, if it has one
-/// (see [`numbered`]).
-pub(crate) fn row_number(view: &LauncherView, slots: &[usize], index: usize) -> Option<usize> {
-    (1..=9).find(|&digit| numbered(view, slots, digit) == Some(Numbered::Row(index)))
-}
 
 /// The launcher window's root view.
 pub struct LauncherWindow {
@@ -219,7 +163,7 @@ pub struct LauncherWindow {
     /// root search choice.
     hidden_at: Option<Instant>,
     /// The number hints Ctrl reveals.
-    numbers: Numbers,
+    pub(crate) numbers: number_hints::Numbers,
     /// Whether the last frame drew the launcher collapsed to its search
     /// field (the compact window mode), and the size it had before.
     collapsed: Option<bool>,
@@ -300,7 +244,7 @@ impl LauncherWindow {
             open_pane_press: None,
             hidden: false,
             hidden_at: None,
-            numbers: Numbers::default(),
+            numbers: number_hints::Numbers::default(),
             collapsed: None,
             expanded_size: None,
             #[cfg(any(test, debug_assertions))]
@@ -558,48 +502,46 @@ impl LauncherWindow {
             self.show_until_done(pending, window, cx);
             return;
         }
-        let chosen = cx.prompt_for_paths(PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: Some("Choose".into()),
-        });
-        cx.spawn_in(window, async move |this, cx| {
-            let folder = match chosen.await {
-                Ok(Ok(Some(paths))) => paths.into_iter().next(),
-                Ok(Ok(None)) | Err(_) => None,
-                Ok(Err(error)) => {
-                    this.update(cx, |this, cx| {
-                        this.launcher
-                            .show_error(format!("Could not open a folder picker: {error:#}"));
-                        cx.notify();
-                    })
-                    .ok();
-                    None
-                }
-            };
-            if let Some(folder) = folder {
-                this.update_in(cx, |this, window, cx| {
-                    let pending = this.launcher.grant_folder(&identity, &folder);
-                    this.show_until_done(pending, window, cx);
-                })
-                .ok();
-            }
-        })
-        .detach();
+        self.choose_folder(
+            "Choose",
+            move |this, folder, window, cx| {
+                let pending = this.launcher.grant_folder(&identity, folder);
+                this.show_until_done(pending, window, cx);
+            },
+            window,
+            cx,
+        );
     }
 
     /// Asks for a package folder with the platform's folder picker, then
     /// previews it. Cancelling leaves root search as it was.
     fn choose_package_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let chosen = cx.prompt_for_paths(PathPromptOptions {
+        self.choose_folder(
+            "Install",
+            |this, folder, window, cx| this.preview_package(folder, window, cx),
+            window,
+            cx,
+        );
+    }
+
+    /// Asks for a folder with the platform's folder picker, its button
+    /// saying `prompt`, then hands the chosen one to `chosen`. Cancelling
+    /// does nothing; a picker that cannot open is reported.
+    fn choose_folder(
+        &mut self,
+        prompt: &'static str,
+        chosen: impl FnOnce(&mut Self, &Path, &mut Window, &mut Context<Self>) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let picked = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
             multiple: false,
-            prompt: Some("Install".into()),
+            prompt: Some(prompt.into()),
         });
         cx.spawn_in(window, async move |this, cx| {
-            let folder = match chosen.await {
+            let folder = match picked.await {
                 Ok(Ok(Some(paths))) => paths.into_iter().next(),
                 Ok(Ok(None)) | Err(_) => None,
                 Ok(Err(error)) => {
@@ -613,10 +555,8 @@ impl LauncherWindow {
                 }
             };
             if let Some(folder) = folder {
-                this.update_in(cx, |this, window, cx| {
-                    this.preview_package(&folder, window, cx)
-                })
-                .ok();
+                this.update_in(cx, |this, window, cx| chosen(this, &folder, window, cx))
+                    .ok();
             }
         })
         .detach();
@@ -904,7 +844,7 @@ impl LauncherWindow {
     /// click that opened nothing — Settings, an app — changes no screen,
     /// so nothing used its arrival up); a pointer click arms the arrival
     /// again after calling this (see [`crate::ui::motion`]).
-    fn activate_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn activate_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.navigation = Direction::Back;
         // The Settings root result opens the Settings window; the launcher
         // itself does nothing (see [`Launcher::selected_opens_settings`]).
@@ -952,6 +892,19 @@ impl LauncherWindow {
         // and at root search this stops.
         while !matches!(self.launcher.view().screen, Screen::Root { .. }) {
             self.launcher.back();
+        }
+        // Root search may have been left filtered by a query that hides
+        // the row the page drew (Settings lists every root result): it is
+        // shown unfiltered, as a summoned launcher starts, so the row is
+        // there to find.
+        if self
+            .launcher
+            .view()
+            .query()
+            .is_some_and(|query| !query.is_empty())
+        {
+            self.launcher.show_root_search();
+            self.sync_screen(window, cx);
         }
         self.unhide(window, cx);
         window.activate_window();
@@ -1206,7 +1159,7 @@ impl LauncherWindow {
                 unavailable_reason: reason.map(SharedString::from),
                 selected,
                 unavailable_id: ("unavailable", index).into(),
-                icon: row_icon(&row.id),
+                icon: Some(row_icon(&row.id)),
             },
             meta,
             theme,
@@ -1332,25 +1285,17 @@ impl LauncherWindow {
         footer::buttons(primary, actions, theme)
     }
 
-    /// The footer's hint while no status shows: on root search, the
-    /// reference's "↵ opens instantly · Ctrl K for more" in the bindings in
-    /// force, or "Type to filter actions · Esc goes back" while Actions is
-    /// open; nothing elsewhere.
-    fn footer_hint(&self, root: bool, theme: &Theme, cx: &mut Context<Self>) -> Option<Div> {
+    /// The footer's hint while no status shows: on root search with
+    /// Actions open, "Type to filter actions · Esc goes back"; nothing
+    /// elsewhere.
+    fn footer_hint(&self, root: bool, theme: &Theme) -> Option<Div> {
         // At rest the footer's buttons already show the keys; the hint says
         // only how the open Actions panel is used.
         if !root || self.actions.is_none() {
             return None;
         }
-        let keyboard = crate::settings::shared(cx).read(cx).keyboard().clone();
-        let keys = |action| crate::keyboard::binding_keys(keyboard.binding(action));
         Some(footer::hint_line(
-            footer::hint_parts(
-                self.actions.is_some(),
-                keys(pane_core::KeyboardAction::InvokeSelectedAction),
-                keys(pane_core::KeyboardAction::OpenActions),
-                crate::keyboard::escape_keys(),
-            ),
+            footer::actions_hint(crate::keyboard::escape_keys()),
             theme,
         ))
     }
@@ -1387,118 +1332,10 @@ impl LauncherWindow {
         }
     }
 
-    /// Ctrl pressed or released: held alone, it shows the number hints
-    /// once held for [`NUMBERS_HOLD`]; any other modifiers, or none, hide
-    /// them at once.
-    fn modifiers_changed(
-        &mut self,
-        event: &ModifiersChangedEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let modifiers = event.modifiers;
-        let alone = modifiers.control
-            && !modifiers.alt
-            && !modifiers.shift
-            && !modifiers.platform
-            && !modifiers.function;
-        if !alone {
-            self.end_numbers(cx);
-            return;
-        }
-        if self.numbers.pending || self.numbers.shown {
-            return;
-        }
-        self.numbers.generation += 1;
-        self.numbers.pending = true;
-        let generation = self.numbers.generation;
-        cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(NUMBERS_HOLD).await;
-            this.update(cx, |this, cx| {
-                if this.numbers.pending && this.numbers.generation == generation {
-                    this.numbers.pending = false;
-                    this.numbers.shown = true;
-                    cx.notify();
-                }
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    /// Ends a hold of Ctrl: the hints slide away, and a hold not yet long
-    /// enough shows nothing.
-    pub(crate) fn end_numbers(&mut self, cx: &mut Context<Self>) {
-        self.numbers.generation += 1;
-        self.numbers.pending = false;
-        if std::mem::take(&mut self.numbers.shown) {
-            cx.notify();
-        }
-    }
-
-    /// A key pressed while Ctrl is held, before the hints show: the user is
-    /// pressing a chord, not looking for the numbers.
-    pub(crate) fn chord_pressed(&mut self) {
-        self.numbers.pending = false;
-    }
-
-    /// Advances the number hints' slide to the frame about to be drawn:
-    /// their look, 0 hidden and 1 shown.
-    fn advance_numbers(&mut self, now: Instant, cx: &App) -> f32 {
-        let shown = self.numbers.shown;
-        let changed = self.numbers.drawn != shown;
-        self.numbers.drawn = shown;
-        motion::advance_reveal(
-            &mut self.numbers.reveal,
-            shown,
-            changed,
-            cx.reduce_motion(),
-            now,
-        )
-        .unwrap_or(if shown { 1. } else { 0. })
-    }
-
     /// Whether the last frame drew the launcher collapsed to its search
     /// field (and the pins' row, if shown): its rows are hidden then.
     pub(crate) fn is_collapsed(&self) -> bool {
         self.collapsed == Some(true)
-    }
-
-    /// What Ctrl and `digit` pick as the launcher is drawn: what
-    /// [`numbered`] names, except a row while the window is collapsed,
-    /// where the rows are hidden and only the pins are picked.
-    pub(crate) fn number_target(&self, digit: usize) -> Option<Numbered> {
-        let picked = numbered(&self.launcher.view(), &self.numbered_slots(), digit);
-        match picked {
-            Some(Numbered::Row(_)) if self.is_collapsed() => None,
-            picked => picked,
-        }
-    }
-
-    /// Picks what Ctrl and `digit` name (see [`Self::number_target`]): a
-    /// quick slot is pressed as its chord always pressed it, a row is
-    /// selected and activated. Whether something was picked.
-    pub(crate) fn pick_number(
-        &mut self,
-        digit: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let Some(picked) = self.number_target(digit) else {
-            return false;
-        };
-        self.end_numbers(cx);
-        match picked {
-            Numbered::Slot(index) => self.press_quick_slot(index, window, cx),
-            Numbered::Row(index) => {
-                if self.actions.is_some() || self.menu.is_some() {
-                    return true;
-                }
-                self.launcher.select(index);
-                self.activate_selected(window, cx);
-            }
-        }
-        true
     }
 
     /// Whether the launcher shows only its search field: the compact
@@ -1919,10 +1756,8 @@ impl Render for LauncherWindow {
                                 Some(text) => {
                                     footer::status_message(text, &theme).into_any_element()
                                 }
-                                None => {
-                                    footer::hint_slot(self.footer_hint(root, &theme, cx), &theme)
-                                        .into_any_element()
-                                }
+                                None => footer::hint_slot(self.footer_hint(root, &theme), &theme)
+                                    .into_any_element(),
                             },
                             // While a status shows, the primary action steps
                             // aside — nothing is dispatched again from a frame
@@ -2017,14 +1852,13 @@ pub(crate) fn launcher_changed_outside(cx: &mut App) {
     }
 }
 
-/// The footer's primary action button, as the launcher's footer and the
-/// visual workbench's root fixture (#91) both compose it: the reference's
-/// `.fbtn` (see [`footer::footer_button`]), the action's label truncating
-/// beside the effective `invoke` binding's keys in the accent caps — the
-/// primary action's key — so a rebound Ctrl+Enter shows (and announces)
-/// Ctrl and the return key, never a bare Enter. Presentation only: the
-/// caller attaches the click (the launcher's
-/// [`LauncherWindow::press_primary_action`] path).
+/// The footer's primary action button, as the launcher's footer
+/// composes it: the reference's `.fbtn` (see [`footer::footer_button`]),
+/// the action's label truncating beside the effective `invoke` binding's
+/// keys in the accent caps — the primary action's key — so a rebound
+/// Ctrl+Enter shows (and announces) Ctrl and the return key, never a bare
+/// Enter. Presentation only: the caller attaches the click (the
+/// launcher's [`LauncherWindow::press_primary_action`] path).
 ///
 /// A click never dispatches what the definition says cannot run now, so
 /// an unavailable button is dimmed, marked for assistive technology, and
@@ -2076,122 +1910,15 @@ pub(crate) fn section_label(section: &pane_core::Section) -> shell::SectionLabel
 /// built-in rows and this build's sample commands are known identities,
 /// each with a reference tone and glyph; everything else is a plain
 /// command. No presentation is inferred from a title's text.
-pub(crate) fn row_icon(id: &str) -> Option<(IconTone, Glyph)> {
+pub(crate) fn row_icon(id: &str) -> (IconTone, Glyph) {
     match id {
-        "rust-sample" => Some((IconTone::Term, Glyph::Prompt)),
-        "javascript-sample" | "typescript-sample" => Some((IconTone::Code, Glyph::Code)),
-        "pane.install-from-folder" => Some((IconTone::Folder, Glyph::Folder)),
-        "pane.install-from-npm" => Some((IconTone::Web, Glyph::Blocks)),
-        "pane.install-from-git" => Some((IconTone::Term, Glyph::Terminal)),
-        "pane.manage-extensions" => Some((IconTone::Command, Glyph::Blocks)),
-        "pane.settings" => Some((IconTone::Command, Glyph::Gear)),
-        _ => Some((IconTone::Command, Glyph::Prompt)),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A view of `screen` listing `count` rows.
-    fn view(screen: Screen, count: usize) -> LauncherView {
-        LauncherView {
-            screen,
-            title: String::new(),
-            rows: (0..count)
-                .map(|index| Row {
-                    id: format!("row-{index}"),
-                    title: format!("Row {index}"),
-                    subtitle: None,
-                    unavailable: None,
-                })
-                .collect(),
-            selected: None,
-            status: Status::Idle,
-        }
-    }
-
-    /// The numbered pins of five or more: the first five, in their places
-    /// (see `LauncherWindow::numbered_slots`).
-    const STRIP: [usize; 5] = [0, 1, 2, 3, 4];
-
-    #[test]
-    fn the_pinned_home_takes_one_to_five_and_the_rows_follow() {
-        // Five pins, or eight: only the first five are numbered, and the
-        // rows take the digits after them.
-        let home = view(
-            Screen::Root {
-                query: String::new(),
-            },
-            3,
-        );
-        assert_eq!(numbered(&home, &STRIP, 1), Some(Numbered::Slot(0)));
-        assert_eq!(numbered(&home, &STRIP, 5), Some(Numbered::Slot(4)));
-        assert_eq!(numbered(&home, &STRIP, 6), Some(Numbered::Row(0)));
-        assert_eq!(numbered(&home, &STRIP, 8), Some(Numbered::Row(2)));
-        // Past the rows, and outside 1 to 9, nothing is picked.
-        assert_eq!(numbered(&home, &STRIP, 9), None);
-        assert_eq!(numbered(&home, &STRIP, 0), None);
-        assert_eq!(row_number(&home, &STRIP, 0), Some(6));
-        assert_eq!(row_number(&home, &STRIP, 2), Some(8));
-    }
-
-    #[test]
-    fn fewer_pins_than_five_leave_their_numbers_to_the_rows() {
-        // Two pins: Ctrl+1 and Ctrl+2 are theirs, and the rows follow from
-        // 3, up to 9.
-        let home = view(
-            Screen::Root {
-                query: String::new(),
-            },
-            12,
-        );
-        let pinned = [0, 1];
-        assert_eq!(numbered(&home, &pinned, 1), Some(Numbered::Slot(0)));
-        assert_eq!(numbered(&home, &pinned, 2), Some(Numbered::Slot(1)));
-        assert_eq!(numbered(&home, &pinned, 3), Some(Numbered::Row(0)));
-        assert_eq!(numbered(&home, &pinned, 9), Some(Numbered::Row(6)));
-        assert_eq!(row_number(&home, &pinned, 0), Some(3));
-        assert_eq!(row_number(&home, &pinned, 6), Some(9));
-        assert_eq!(row_number(&home, &pinned, 7), None);
-        // Nothing pinned: the rows start at 1.
-        assert_eq!(row_number(&home, &[], 0), Some(1));
-    }
-
-    #[test]
-    fn past_the_fifth_pin_the_numbers_go_to_the_rows() {
-        // Eight pins, of which the first five are numbered: Ctrl+6 to
-        // Ctrl+9 are the first four rows, and pins 6 to 8 have none.
-        let home = view(
-            Screen::Root {
-                query: String::new(),
-            },
-            12,
-        );
-        assert_eq!(numbered(&home, &STRIP, 6), Some(Numbered::Row(0)));
-        assert_eq!(numbered(&home, &STRIP, 9), Some(Numbered::Row(3)));
-        assert_eq!(row_number(&home, &STRIP, 3), Some(9));
-        assert_eq!(row_number(&home, &STRIP, 4), None);
-        assert!(
-            (1..=9).all(|digit| numbered(&home, &STRIP, digit) != Some(Numbered::Slot(5))),
-            "the sixth pin has no number"
-        );
-    }
-
-    #[test]
-    fn a_query_or_a_command_numbers_its_rows_from_one() {
-        let search = view(
-            Screen::Root {
-                query: "notes".into(),
-            },
-            12,
-        );
-        assert_eq!(numbered(&search, &STRIP, 1), Some(Numbered::Row(0)));
-        assert_eq!(numbered(&search, &STRIP, 9), Some(Numbered::Row(8)));
-        assert_eq!(row_number(&search, &STRIP, 8), Some(9));
-        assert_eq!(row_number(&search, &STRIP, 9), None);
-        let command = view(Screen::Command, 2);
-        assert_eq!(numbered(&command, &STRIP, 2), Some(Numbered::Row(1)));
-        assert_eq!(numbered(&command, &STRIP, 3), None);
+        "rust-sample" => (IconTone::Term, Glyph::Prompt),
+        "javascript-sample" | "typescript-sample" => (IconTone::Code, Glyph::Code),
+        "pane.install-from-folder" => (IconTone::Folder, Glyph::Folder),
+        "pane.install-from-npm" => (IconTone::Web, Glyph::Blocks),
+        "pane.install-from-git" => (IconTone::Term, Glyph::Terminal),
+        "pane.manage-extensions" => (IconTone::Command, Glyph::Blocks),
+        "pane.settings" => (IconTone::Command, Glyph::Gear),
+        _ => (IconTone::Command, Glyph::Prompt),
     }
 }
