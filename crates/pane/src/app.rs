@@ -334,9 +334,9 @@ impl LauncherWindow {
     }
 
     /// Test support: the view transition the last frame drew, as the
-    /// arriving content's (offset from rest in px — below rest for a view
-    /// that opens, above for backing out — and opacity); `None` when
-    /// settled, which is also what reduced motion always reports. Test and
+    /// arriving content's (offset from rest in px, below rest for a view
+    /// that opens, and opacity); `None` when settled, which is also what
+    /// backing out and reduced motion always report. Test and
     /// debug builds only.
     #[cfg(any(test, debug_assertions))]
     #[doc(hidden)]
@@ -439,9 +439,9 @@ impl LauncherWindow {
             return;
         }
         self.launcher.back();
-        // Backing out is the one navigation that leaves a view; the next
-        // frame's view transition (if the screen kind changed) settles the
-        // arriving content down into place.
+        // Backing out is the one navigation that leaves a view, and it
+        // lands at once: the next frame drops any arrival in flight and
+        // starts none.
         self.navigation = Direction::Back;
         self.sync_screen(window, cx);
         cx.notify();
@@ -460,8 +460,8 @@ impl LauncherWindow {
             return;
         }
         self.launcher.show_root_search();
-        // Leaving however many screens were open: the next frame's view
-        // transition settles the arriving content down into place.
+        // Leaving however many screens were open lands at once, as
+        // backing out does.
         self.navigation = Direction::Back;
         self.sync_screen(window, cx);
         cx.notify();
@@ -1518,12 +1518,12 @@ impl Render for LauncherWindow {
         // something is typed.
         let collapsed = self.fit_window_mode(&view, window, cx);
         self.keep_selected_visible(&view, &presentation, window, cx);
-        // A view transition runs when the screen *kind* changed — root
-        // search to a command, a command back to root, a form or custom
-        // view opening or closing — and moves only the content that
-        // changed, while the shell chrome (panel, footer, query field,
-        // heading) stays put. Query and result updates never animate; the
-        // launcher has already navigated, dispatched and focused when the
+        // A view transition runs when the screen *kind* changed going
+        // forward — root search to a command, a form or custom view
+        // opening — and moves only the content that changed, while the
+        // shell chrome (panel, footer, query field, heading) stays put.
+        // Backing out lands at once, and query and result updates never
+        // animate; the launcher has already navigated, dispatched and focused when the
         // first frame draws, so nothing waits on the transition. See
         // `crate::ui::motion` for the whole policy.
         let now = cx.background_executor().now();
