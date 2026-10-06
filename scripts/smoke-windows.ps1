@@ -1826,13 +1826,17 @@ function Not-Kept($text) {
     Start-Sleep -Seconds 2
     if ((Kept-Texts) -contains $text) { throw "$text was kept" }
 }
+# Back to a blank root search from wherever the smoke is, with the return
+# to root key (Shift+Escape): Escape at a blank root search hides the
+# launcher since the redesign (1e61793), so it cannot be pressed blind.
+function To-Root { Send "+{ESC}"; Start-Sleep -Seconds 1 }
 function Open-History {
-    Send "{ESC}"; Start-Sleep -Seconds 1
+    To-Root
     Send "clipboard"; Start-Sleep -Seconds 1
     Send "{ENTER}"; Start-Sleep -Seconds 2
 }
 function Open-Manage {
-    Send "{ESC}"; Start-Sleep -Seconds 1
+    To-Root
     Send "manage"; Start-Sleep -Seconds 1
     Send "{ENTER}"; Start-Sleep -Seconds 1
 }

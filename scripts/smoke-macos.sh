@@ -1590,9 +1590,16 @@ not_kept() { sleep 2; if kept_one "$1"; then echo "$1 was kept"; exit 1; fi; }
 # Copies `text`: AppleScript puts it on the pasteboard, as a program
 # copying text would (the watcher notices within its poll).
 copy() { osascript -e "set the clipboard to \"$1\""; sleep 1; }
+# Back to a blank root search from wherever the smoke is, with the return
+# to root key (Command+Escape): Escape at a blank root search hides the
+# launcher since the redesign (1e61793), so it cannot be pressed blind.
+to_root() {
+  osascript -e 'tell application "System Events" to key code 53 using command down'
+  sleep 1
+}
 # Opens the Clipboard History command from wherever the smoke is.
 open_history() {
-  key 53; sleep 1
+  to_root
   type_text clipboard; sleep 1
   key 36; sleep 2
 }
@@ -1633,7 +1640,7 @@ check 283-clipboard-copied.png success   # "Copied to the clipboard"
 # The pasteboard really holds the item again: pbpaste prints it, and
 # pasting it over root search shows exactly what typing it shows.
 [ "$(pbpaste)" = pane-smoke-second ] || { echo "the pasteboard holds: $(pbpaste)"; exit 1; }
-key 53; key 53; sleep 1
+to_root
 command_key a; command_key v; sleep 1
 capture 284-clipboard-pasted.png
 key 53; sleep 1
