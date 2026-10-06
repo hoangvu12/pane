@@ -712,6 +712,7 @@ impl LauncherWindow {
     /// other hand on the same control; the tray's item says Open Pane
     /// and does only that.
     fn summon(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let was_hidden = self.hidden;
         self.unhide(window, cx);
         window.activate_window();
         cx.activate(true);
@@ -727,10 +728,15 @@ impl LauncherWindow {
         // nothing is run.
         let reopening = crate::settings::shared(cx).read(cx).reopening();
         let now = cx.background_executor().now();
-        let pops = reopening.pops_after().is_some_and(|after| {
-            self.hidden_at
-                .is_none_or(|hidden| now.saturating_duration_since(hidden) >= after)
-        });
+        // How long the launcher was hidden: a launcher brought forward
+        // while still shown (another application had the focus) was not
+        // hidden at all, so only "immediately" pops it — a delay counts
+        // the time hidden, not the time since some earlier hide.
+        let away = match self.hidden_at {
+            Some(hidden) if was_hidden => now.saturating_duration_since(hidden),
+            _ => Duration::ZERO,
+        };
+        let pops = reopening.pops_after().is_some_and(|after| away >= after);
         if pops || !self.launcher.restorable_view() {
             self.launcher.show_root_search();
             // Popping to root search leaves the open views, as
