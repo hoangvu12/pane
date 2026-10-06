@@ -2,7 +2,7 @@
 
 Accepted 2026-10-06 by the user's decision, after the [Raycast deep dive](../research/raycast-deep-dive.md#command-kinds-and-lifecycle). It changes Pane's current command contract, under which every command opens a list (`get-view`) and an item's action answers with text that Pane shows in the status line (`run-action`). A command now declares whether it opens a screen. What happens once it has run is decided by the command, through host functions, rather than implied by Pane. It amends [ADR 0016](0016-host-registers-global-hotkeys-for-commands.md) for commands that open no screen. It leaves [ADR 0011](0011-extension-call-and-result-api.md) unchanged: launching a command returns no result, and operations remain the way one package calls another for one.
 
-So each command declares `"mode"` in its `pane.json` entry. The mode is `view` or `no-view`. Raycast's third mode, `menu-bar`, is not offered, since Raycast itself has none on Windows. A view command renders its UI ([ADR 0036](0036-extension-ui-is-a-tree-pane-renders-written-with-a-gpui-like-api.md)). A no-view command exports a run entry point. Invoking it (Enter in root search, its alias, a fallback, or another command launching it) calls that entry point with the command's launch props, as the extension contract specification defines them, and opens no screen. Its global hotkey runs it without showing Pane's window, where ADR 0016 opened every command in the window.
+So each command declares `"mode"` in its `pane.json` entry. The mode is `view` or `no-view`. Raycast's third mode, `menu-bar`, is not offered, since Raycast itself has none on Windows. A view command renders its UI ([ADR 0036](0036-extension-ui-is-a-tree-pane-renders-written-with-a-gpui-like-api.md)). A no-view command exports a run entry point. Invoking it (Enter in root search, its alias, a fallback, or another command launching it) calls that entry point with the command's launch record, as the extension contract specification defines them, and opens no screen. Its global hotkey runs it without showing Pane's window, where ADR 0016 opened every command in the window.
 
 After that, the command decides what happens through host functions every command has, whether view or no-view:
 
@@ -20,7 +20,7 @@ Beyond reporting a run that fails, Pane does nothing after a run that the comman
 The extension contract specification settles the rest:
 
 - what an action's answered text becomes beside these functions;
-- how the query-taking command's `run-query` folds into the launch props' fallback text;
+- how the query-taking command's `run-query` folds into the launch record' fallback text;
 - whether launching another package's command asks first, as it does in Raycast.
 
 Raycast's model is mature and well used. In its corpus, 30% of commands are no-view, and 42% of extensions close the window, show a HUD or pop to root themselves. Pane must know a command's mode before running it, to decide at Enter whether to open a screen. Functions the command calls are more flexible than a fixed set of built-in outcomes. Pane's single answered text cannot express closing the window, a HUD or a confirmation at all.
