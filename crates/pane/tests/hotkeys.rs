@@ -171,7 +171,11 @@ fn a_command_hotkey_cannot_take_the_open_pane_keys(cx: &mut TestAppContext) {
     // default, which the window registered at startup — are refused:
     // the screen explains them and stays for another try, and nothing
     // is registered or recorded over the working binding.
-    cx.simulate_keystrokes("ctrl-alt-space");
+    cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+        "alt-space"
+    } else {
+        "ctrl-alt-space"
+    });
     let open_pane = Shortcut::open_pane_default();
     let view = settle(&window, cx);
     assert_eq!(

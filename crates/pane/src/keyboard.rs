@@ -272,6 +272,13 @@ fn key_name(key: &str) -> String {
 mod tests {
     use super::*;
 
+    /// Ctrl's cap and name on this platform: macOS writes it out.
+    const CTRL: &str = if cfg!(target_os = "macos") {
+        "Control"
+    } else {
+        "Ctrl"
+    };
+
     fn sequence(binding: &str) -> (Vec<String>, String) {
         let keys = binding_keys(&Binding::parse(binding).expect("the binding parses"));
         let caps = keys.keys.iter().map(|key| key.cap.to_string()).collect();
@@ -291,13 +298,13 @@ mod tests {
         );
         assert_eq!(
             sequence("ctrl-enter"),
-            (vec!["Ctrl".into(), "↵".into()], "Ctrl+Enter".into())
+            (vec![CTRL.into(), "↵".into()], format!("{CTRL}+Enter"))
         );
         assert_eq!(
             sequence("ctrl-shift-p"),
             (
-                vec!["Ctrl".into(), "Shift".into(), "P".into()],
-                "Ctrl+Shift+P".into()
+                vec![CTRL.into(), "Shift".into(), "P".into()],
+                format!("{CTRL}+Shift+P")
             )
         );
     }
@@ -330,13 +337,13 @@ mod tests {
         assert_eq!(sequence("escape"), (vec!["Esc".into()], "Escape".into()));
         assert_eq!(
             sequence("ctrl-k"),
-            (vec!["Ctrl".into(), "K".into()], "Ctrl+K".into())
+            (vec![CTRL.into(), "K".into()], format!("{CTRL}+K"))
         );
         assert_eq!(
             sequence("ctrl-pagedown"),
             (
-                vec!["Ctrl".into(), "Page Down".into()],
-                "Ctrl+Page Down".into()
+                vec![CTRL.into(), "Page Down".into()],
+                format!("{CTRL}+Page Down")
             )
         );
     }
