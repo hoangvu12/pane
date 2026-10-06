@@ -15,6 +15,7 @@ use gpui::Window;
 use pane_core::{CommandRegistration, Keyboard};
 
 mod app;
+mod background;
 mod extension_views;
 mod features;
 mod keyboard;

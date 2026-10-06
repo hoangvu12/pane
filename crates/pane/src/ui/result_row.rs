@@ -223,13 +223,16 @@ pub(crate) fn row_surface(selected: bool, theme: &Theme) -> Div {
         // A row under the pointer (unselected only: selection stays
         // visible while hovering) takes the pale hover wash.
         .when(!selected, |row| row.hover(|row| row.bg(theme.row_hover)))
-        // The selected row: its wash and its 1px inset edge.
+        // The selected row: its wash and its 1px inset edge — frosted over
+        // a background image (ADR 0028).
         .when(selected, |row| {
-            row.bg(theme.row_selected).shadow(vec![
-                BoxShadow::new(px(0.), px(0.), theme.row_selected_border)
-                    .spread_radius(px(1.))
-                    .inset(),
-            ])
+            row.when_some(theme.frost, |row, frost| row.backdrop_blur(frost.blur))
+                .bg(theme.row_selected)
+                .shadow(vec![
+                    BoxShadow::new(px(0.), px(0.), theme.row_selected_border)
+                        .spread_radius(px(1.))
+                        .inset(),
+                ])
         })
 }
 

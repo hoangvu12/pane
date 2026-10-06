@@ -62,7 +62,7 @@ Full values and inline layout come from each `reference/<board>.css` and `<board
 
 **Material recipes:** root/calculator/empty/clipboard tint `rgba(22,23,26,.70)`; Store/HUD .72; Settings .78. L1 sheen white5%→transparent at36%, blur44/saturate160%, radius18; inset border white7.5%, top highlight white10%, black75% outer .5px edge; external shadows `(0,50,120,-30,black72%)` and `(0,16,40,-16,black50%)`. L2 tint `rgba(38,39,43,.82)`, sheen6%→0 at40%, blur30/saturate160%, radius14, edge9%/top10%, outer black80% .5px, shadow `(0,28,70,-14,black75%)`. These are CSS targets, **not a proven GPUI/Windows compositor recipe**.
 
-The decorative graphite/dusk/daylight wallpaper and SVG grain are outside the production app. Use them as external comparison backdrops. Painting that wallpaper inside Pane would fake translucency.
+The decorative graphite/dusk/daylight wallpaper and SVG grain are outside the production app. Use them as external comparison backdrops. Painting that wallpaper inside Pane would fake translucency. (A picture the user chooses as the launcher's background image is a different thing, drawn on an opaque panel, not as glass: see [ADR 0028](../../adr/0028-the-launcher-draws-a-background-image-the-user-chooses.md).)
 
 ## Interaction fidelity, including hover
 

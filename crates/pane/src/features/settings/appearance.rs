@@ -1,5 +1,7 @@
 //! The Appearance section of the General page: the theme and material
-//! choices (#98), as two rows of segmented choices.
+//! choices (#98), as two rows of segmented choices, and the launcher's
+//! background image (ADR 0028) — a row to choose, change or remove the
+//! picture, and its effect as a third row of segments.
 //!
 //! Every value it shows and every choice it takes goes through the host
 //! settings ([`crate::settings`]) — the one entity the launcher window and
@@ -10,7 +12,12 @@
 //! in force, a save that failed).
 //!
 //! It offers only the settings Pane has (#100): the theme (System, Light,
-//! Dark) and the material (Glass and Solid). The board's accent swatches,
+//! Dark), the material (Glass and Solid) and the background image with
+//! its effect (None, Dither, ASCII, Halftone, Scanlines — Roboco's
+//! new-thread background treatments). The picture is chosen with the
+//! platform's file picker; the host settings keep their own copy of it.
+//! The development overrides do not touch the background image, and its
+//! effect waits for a picture. The board's accent swatches,
 //! blur and tint sliders, density, toggles and preview are not Pane's; the
 //! visual workbench's reference fixture draws them to measure the shared
 //! controls against the board.
@@ -28,10 +35,10 @@
 use std::collections::HashMap;
 
 use gpui::{
-    AnyElement, App, Context, Div, FocusHandle, Hsla, KeyBinding, Role, ScrollAnchor, SharedString,
-    Stateful, Toggled, actions, div, prelude::*,
+    AnyElement, App, Context, Div, FocusHandle, Hsla, KeyBinding, PathPromptOptions, Role,
+    ScrollAnchor, SharedString, Stateful, Toggled, actions, div, prelude::*,
 };
-use pane_core::{Launcher, MaterialPreference, ThemePreference};
+use pane_core::{BackgroundEffect, Launcher, MaterialPreference, ThemePreference};
 
 use super::{SettingsWindow, search};
 use crate::ui::controls;
@@ -62,6 +69,32 @@ pub(crate) const THEMES: [(ThemePreference, &str, &str); 3] = [
     (ThemePreference::Dark, "Dark", "appearance-theme-Dark"),
 ];
 
+/// The background image's effects the section offers, in segment order:
+/// the effect, the segment's name and its test selector.
+pub(crate) const EFFECTS: [(BackgroundEffect, &str, &str); 5] = [
+    (BackgroundEffect::None, "None", "appearance-effect-None"),
+    (
+        BackgroundEffect::Dither,
+        "Dither",
+        "appearance-effect-Dither",
+    ),
+    (BackgroundEffect::Ascii, "ASCII", "appearance-effect-ASCII"),
+    (
+        BackgroundEffect::Halftone,
+        "Halftone",
+        "appearance-effect-Halftone",
+    ),
+    (
+        BackgroundEffect::Scanlines,
+        "Scanlines",
+        "appearance-effect-Scanlines",
+    ),
+];
+
+/// The background image row's buttons: Choose (or Change) and Remove.
+const CHOOSE_BACKGROUND: &str = "appearance-background-choose";
+const REMOVE_BACKGROUND: &str = "appearance-background-remove";
+
 /// The material choices the section offers, in segment order: the
 /// preference, the segment's name, and its test selector.
 pub(crate) const MATERIALS: [(MaterialPreference, &str, &str); 2] = [
@@ -89,7 +122,9 @@ impl State {
         let selectors = THEMES
             .iter()
             .map(|&(_, _, selector)| selector)
-            .chain(MATERIALS.iter().map(|&(_, _, selector)| selector));
+            .chain(MATERIALS.iter().map(|&(_, _, selector)| selector))
+            .chain(EFFECTS.iter().map(|&(_, _, selector)| selector))
+            .chain([CHOOSE_BACKGROUND, REMOVE_BACKGROUND]);
         let focuses = selectors
             .map(|selector| (selector, cx.focus_handle().tab_stop(true)))
             .collect();
@@ -110,9 +145,11 @@ impl State {
 /// it sits in. An override in force leaves the choices listed (the page
 /// still shows them) but says why none can be used here.
 pub(crate) fn entries(_launcher: &Launcher, cx: &App) -> Vec<search::Entry> {
-    let overrides = crate::settings::shared(cx).read(cx).override_descriptions();
+    let settings = crate::settings::shared(cx);
+    let settings = settings.read(cx);
+    let overrides = settings.override_descriptions();
     let unavailable = (!overrides.is_empty()).then(|| override_text(&overrides));
-    THEMES
+    let mut entries: Vec<search::Entry> = THEMES
         .iter()
         .map(|&(_, name, selector)| (name, selector, "Theme"))
         .chain(
@@ -126,8 +163,30 @@ pub(crate) fn entries(_launcher: &Launcher, cx: &App) -> Vec<search::Entry> {
             group: Some(group.into()),
             unavailable: unavailable.clone(),
         })
-        .collect()
+        .collect();
+    // The background image and its effects, which no override touches;
+    // the effects wait for a picture.
+    entries.push(search::Entry {
+        control: Some(CHOOSE_BACKGROUND.into()),
+        title: "Background image".into(),
+        group: Some(LABEL.into()),
+        unavailable: None,
+    });
+    let no_picture = settings
+        .background()
+        .is_none()
+        .then(|| NO_PICTURE.to_owned());
+    entries.extend(EFFECTS.iter().map(|&(_, name, selector)| search::Entry {
+        control: Some(selector.into()),
+        title: name.into(),
+        group: Some("Background effect".into()),
+        unavailable: no_picture.clone(),
+    }));
+    entries
 }
+
+/// Why the effects cannot be chosen yet.
+const NO_PICTURE: &str = "Choose a background image first.";
 
 /// What an override in force means here, as the section's notice and the
 /// search's results say it: which environment variables set the choice,
@@ -157,14 +216,21 @@ pub(crate) struct AppearanceView {
 /// stand.
 pub(crate) fn section(this: &mut SettingsWindow, cx: &mut Context<SettingsWindow>) -> Div {
     let settings = crate::settings::shared(cx);
-    let view = {
+    let (view, background) = {
         let state = settings.read(cx);
-        AppearanceView {
+        let view = AppearanceView {
             theme: state.theme_preference(),
             material: state.material_preference(),
             overrides: state.override_descriptions(),
             status: state.status(),
-        }
+        };
+        let background = BackgroundView {
+            chosen: state.background().is_some(),
+            effect: state.background_effect(),
+            importing: state.importing_background(),
+            problem: state.background_problem(),
+        };
+        (view, background)
     };
     let theme = crate::settings::visuals(cx).theme;
     // A choice is offered (focusable, clickable and saved) only where
@@ -214,7 +280,196 @@ pub(crate) fn section(this: &mut SettingsWindow, cx: &mut Context<SettingsWindow
             )
         })
         .collect();
-    compose(&view, (theme_segments, material_segments), &theme)
+    let rows = background_rows(this, &background, &theme);
+    compose_with(&view, (theme_segments, material_segments), rows, &theme)
+}
+
+/// The background image as the section shows it (ADR 0028).
+struct BackgroundView {
+    /// Whether a picture is chosen.
+    chosen: bool,
+    /// The effect chosen for it.
+    effect: BackgroundEffect,
+    /// Whether a picture is still being copied in.
+    importing: bool,
+    /// Why the picture is not drawn as chosen, if it is not.
+    problem: Option<String>,
+}
+
+/// The background image's two rows: the picture — what is chosen, the
+/// problem if any, and its Choose (or Change) and Remove buttons — then
+/// its effect, as five segments on a wide track, offered once a picture
+/// is chosen. Nothing overrides them, so they are offered whatever the
+/// theme and material rows say.
+fn background_rows(
+    this: &mut SettingsWindow,
+    background: &BackgroundView,
+    theme: &Theme,
+) -> Vec<AnyElement> {
+    let ready = !background.importing;
+    let mut lines = vec![controls::row_line(
+        if background.importing {
+            "Copying the picture…"
+        } else if background.chosen {
+            "Drawn behind the launcher, from Pane's own copy of the picture."
+        } else {
+            "None. Choose a picture to draw behind the launcher."
+        },
+        theme.text_muted,
+        theme,
+    )];
+    lines.extend(
+        background
+            .problem
+            .as_ref()
+            .map(|problem| {
+                notice(
+                    "appearance-background-problem",
+                    problem.clone(),
+                    theme.danger,
+                    theme,
+                )
+            })
+            .map(IntoElement::into_any_element),
+    );
+    let anchor = this.search_anchor(CHOOSE_BACKGROUND);
+    let choose = button(
+        controls::button(
+            if background.chosen {
+                "Change…"
+            } else {
+                "Choose…"
+            },
+            ready,
+            theme,
+        ),
+        CHOOSE_BACKGROUND,
+        "Choose a background image",
+        ready.then(|| this.appearance.focus(CHOOSE_BACKGROUND)),
+        theme,
+        choose_picture,
+    )
+    .anchor_scroll(Some(anchor));
+    let remove = background.chosen.then(|| {
+        button(
+            controls::ghost_button("Remove", ready, theme),
+            REMOVE_BACKGROUND,
+            "Remove the background image",
+            ready.then(|| this.appearance.focus(REMOVE_BACKGROUND)),
+            theme,
+            |cx| {
+                crate::settings::shared(cx)
+                    .update(cx, |settings, cx| settings.clear_background(cx));
+            },
+        )
+    });
+    let picture = controls::setting_row("Background image", lines, theme)
+        .debug_selector(|| "appearance-background-field".into())
+        .child(
+            div()
+                .flex_none()
+                .flex()
+                .gap(theme.geometry.controls.button_gap)
+                .children(remove)
+                .child(choose),
+        );
+    let offered = background.chosen;
+    let segments = EFFECTS
+        .iter()
+        .map(|&(effect, name, selector)| {
+            let anchor = this.search_anchor(selector);
+            let focus = this.appearance.focus(selector);
+            segment(
+                Segment {
+                    selector,
+                    name,
+                    chosen: effect == background.effect,
+                    offered,
+                },
+                anchor,
+                &focus,
+                theme,
+                move |cx| {
+                    crate::settings::shared(cx).update(cx, |settings, cx| {
+                        settings.set_background_effect(effect, cx)
+                    });
+                },
+            )
+        })
+        .collect();
+    let track = controls::segment_track(theme)
+        .flex_none()
+        .w(theme.geometry.settings.wide_choice_width);
+    let effect = row_on(
+        track,
+        "effect",
+        "Effect",
+        segments,
+        Vec::new(),
+        offered,
+        theme,
+    );
+    vec![picture.into_any_element(), effect.into_any_element()]
+}
+
+/// One of the background row's buttons, named `selector` and described
+/// by `label` for assistive technology. Offered (with a `focus`), it is a
+/// tab stop that Enter, Space and a click press — `press` does the
+/// button's work — under Pane's focus ring; while a picture is being
+/// copied in it is neither.
+fn button(
+    drawn: Div,
+    selector: &'static str,
+    label: &'static str,
+    focus: Option<FocusHandle>,
+    theme: &Theme,
+    press: impl Fn(&mut App) + Clone + 'static,
+) -> Stateful<Div> {
+    let drawn = drawn
+        .id(selector)
+        .debug_selector(move || selector.into())
+        .role(Role::Button)
+        .aria_label(label);
+    let Some(focus) = focus else {
+        return drawn.aria_disabled(true);
+    };
+    let ring = controls::focus_ring(theme);
+    let on_click = press.clone();
+    drawn
+        .key_context(CHOICE)
+        .track_focus(&focus)
+        .focus_visible(move |style| style.shadow(ring))
+        .on_action(move |_: &Choose, _, cx| press(cx))
+        .on_click(move |_: &gpui::ClickEvent, _, cx| on_click(cx))
+}
+
+/// Asks for a picture with the platform's file picker and chooses it as
+/// the launcher's background image (the host settings copy it in and
+/// record it; see [`crate::settings::Settings::choose_background`]).
+/// Cancelling changes nothing; a picker that cannot open is reported.
+fn choose_picture(cx: &mut App) {
+    let chosen = cx.prompt_for_paths(PathPromptOptions {
+        files: true,
+        directories: false,
+        multiple: false,
+        prompt: Some("Choose".into()),
+    });
+    cx.spawn(async move |cx| {
+        let picked = match chosen.await {
+            Ok(Ok(Some(paths))) => paths.into_iter().next().map(Ok),
+            Ok(Ok(None)) | Err(_) => None,
+            Ok(Err(error)) => Some(Err(format!("Pane could not open a file picker: {error:#}"))),
+        };
+        if let Some(picked) = picked {
+            cx.update(|cx| {
+                crate::settings::shared(cx).update(cx, |settings, cx| match picked {
+                    Ok(source) => settings.choose_background(source, cx),
+                    Err(problem) => settings.background_refused(problem, cx),
+                })
+            });
+        }
+    })
+    .detach();
 }
 
 /// The section's composition, which the visual workbench's fixture draws
@@ -226,6 +481,18 @@ pub(crate) fn section(this: &mut SettingsWindow, cx: &mut Context<SettingsWindow
 pub(crate) fn compose(
     view: &AppearanceView,
     segments: (Vec<Stateful<Div>>, Vec<Stateful<Div>>),
+    theme: &Theme,
+) -> Div {
+    compose_with(view, segments, Vec::new(), theme)
+}
+
+/// [`compose`] with `more` rows in the card after the material's: the
+/// background image's, as the General page draws them (the workbench's
+/// fixture draws none).
+fn compose_with(
+    view: &AppearanceView,
+    segments: (Vec<Stateful<Div>>, Vec<Stateful<Div>>),
+    more: Vec<AnyElement>,
     theme: &Theme,
 ) -> Div {
     let offered = view.overrides.is_empty();
@@ -270,7 +537,9 @@ pub(crate) fn compose(
         .flex_col()
         .gap(theme.geometry.settings.section_label_gap)
         .child(controls::card(
-            rows.into_iter().map(IntoElement::into_any_element),
+            rows.into_iter()
+                .map(IntoElement::into_any_element)
+                .chain(more),
             theme,
         ))
         .children(notes);
@@ -345,7 +614,21 @@ fn row(
     offered: bool,
     theme: &Theme,
 ) -> Div {
-    let track = controls::row_segment_track(theme)
+    let track = controls::row_segment_track(theme);
+    row_on(track, id, label, segments, lines, offered, theme)
+}
+
+/// [`row`] with its segments on `track`, a track the caller sized.
+fn row_on(
+    track: Div,
+    id: &'static str,
+    label: &'static str,
+    segments: Vec<Stateful<Div>>,
+    lines: Vec<AnyElement>,
+    offered: bool,
+    theme: &Theme,
+) -> Div {
+    let track = track
         .id(SharedString::from(format!("appearance-{id}-choices")))
         .debug_selector(move || format!("appearance-{id}-track"))
         .role(Role::RadioGroup)

@@ -237,12 +237,18 @@ pub(crate) fn pinned_slot(content: SlotContent, theme: &Theme) -> Stateful<Div> 
     };
     slot.cursor_pointer()
         .when(unavailable, |slot| slot.gap(geometry.unavailable_gap))
+        // Over a background image a slot is frosted (ADR 0028): it blurs
+        // the picture behind it, under the frost's edges.
+        .when_some(theme.frost, |slot, frost| slot.backdrop_blur(frost.blur))
         .bg(theme.slot_background)
-        .shadow(vec![
-            BoxShadow::new(px(0.), px(0.), theme.slot_edge)
-                .spread_radius(geometry.edge_width)
-                .inset(),
-        ])
+        .shadow(match theme.frost {
+            Some(frost) => frost.edges(),
+            None => vec![
+                BoxShadow::new(px(0.), px(0.), theme.slot_edge)
+                    .spread_radius(geometry.edge_width)
+                    .inset(),
+            ],
+        })
         .hover(|slot| slot.bg(theme.slot_hover))
         .child(
             tile_at(TileSize::Slot, tone, glyph, theme).when(unavailable, |tile| tile.opacity(0.5)),
