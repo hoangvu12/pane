@@ -26,6 +26,16 @@ tokio = "1"
 windows = "0.62"
 x11rb = "0.13"
 
+# Full debug info made every test binary's Windows debug file (.pdb) close to
+# 1 GB, and the target directory over 100 GB. Line tables keep file and line
+# in panics and backtraces; a debugger session that needs local variables can
+# build with CARGO_PROFILE_DEV_DEBUG=full.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 # Extension components are compiled by Cranelift at run time. Unoptimized,
 # Cranelift takes over 10 s for a 4 MB JavaScript component in tests and
 # `cargo run`; optimizing the compiler crates brings that near release speed.
