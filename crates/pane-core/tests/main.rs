@@ -3,6 +3,13 @@
 //! `aliases::` and so on to run one file's). The adapters against the real
 //! clipboard and hotkeys are test targets of their own in Cargo.toml.
 
+// Each test file still pulls in the support helpers it uses through its
+// own `#[path = "support/…"] mod`, as it did when every file was a binary
+// of its own, so several modules load the same support file: deliberate,
+// each copy private to its file. One shared `support` module declared
+// here would replace them.
+#![allow(clippy::duplicate_mod)]
+
 mod aliases;
 mod application_adapters;
 mod application_cache;
