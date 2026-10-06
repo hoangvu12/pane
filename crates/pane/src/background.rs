@@ -13,15 +13,19 @@
 //! [`bake`] makes the backdrop: GPUI CE draws images but has no image
 //! masks, so the whole look the background mockup settled on
 //! (`docs/research/background-mockup`, the "Hero" preset) is composited here,
-//! on the CPU, into one opaque frame at the launcher panel's size in
-//! physical pixels — the picture cover-fitted into the panel, the chosen
+//! on the CPU, into one frame at the launcher panel's size in physical
+//! pixels — the picture cover-fitted into the panel, the chosen
 //! [`BackgroundEffect`], a blurred copy beneath a sharp one that gives way
 //! below the middle, the fade to the canvas and the dim over it all. The
 //! canvas is the panel's own color moved toward the picture's dominant
 //! color (Roboco's `wallpaper_colors::extract`) and kept dark (or light)
 //! enough for the palette's text; the launcher paints its panel with it,
 //! and the frame has faded all but entirely into it by its lower edge, so
-//! the two meet without a seam.
+//! the two meet without a seam. On the solid material the frame is opaque
+//! and the panel the opaque canvas. On glass the frame's alpha follows the
+//! fade instead, and the panel is the canvas at the glass tint's alpha, so
+//! the window's frost shows through the picture's lower part and the
+//! panel below it, as Roboco's new-thread background lets it.
 //!
 //! The effects are Roboco's new-thread background treatments
 //! (`roboco/crates/ui/src/new_thread_background_effects.rs`), drawn at the
@@ -80,8 +84,9 @@ const SCANLINE: f32 = 0.48 * 0.5;
 /// and the canvas its panel is painted with.
 #[derive(Clone)]
 pub(crate) struct Backdrop {
-    /// The frame, opaque, at the panel's size in physical pixels (BGRA,
-    /// as GPUI draws it).
+    /// The frame at the panel's size in physical pixels (BGRA, straight
+    /// alpha, as GPUI draws it): opaque on the solid material, its alpha
+    /// following the fade on glass.
     pub(crate) image: Arc<RenderImage>,
     /// The panel's color over this picture.
     pub(crate) canvas: Hsla,
@@ -149,14 +154,16 @@ pub(crate) fn path(data: &Path, name: &str) -> PathBuf {
     data.join(FOLDER).join(name)
 }
 
-/// What a bake is for: the copy, its effect, the palette and the window's
-/// scale factor. A backdrop is baked again only when one of them changes.
+/// What a bake is for: the copy, its effect, the palette, the window's
+/// scale factor and whether the glass material is in effect. A backdrop
+/// is baked again only when one of them changes.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Key {
     pub(crate) name: String,
     pub(crate) effect: BackgroundEffect,
     pub(crate) appearance: Appearance,
     pub(crate) scale: f32,
+    pub(crate) glass: bool,
 }
 
 /// Bakes the backdrop for the picture at `file` as `key` says (see the
@@ -179,7 +186,7 @@ pub(crate) fn bake(file: &Path, key: &Key) -> Result<Backdrop, String> {
     };
     let blurred = soften(&sharp, BLUR * scale);
     let scanlines = key.effect == BackgroundEffect::Scanlines;
-    let frame = compose(&sharp, &blurred, canvas, scale, scanlines, light);
+    let frame = compose(&sharp, &blurred, canvas, scale, scanlines, light, key.glass);
     let [r, g, b] = canvas.map(|channel| channel as u32);
     Ok(Backdrop {
         image: Arc::new(RenderImage::new([image::Frame::new(frame)])),
@@ -349,7 +356,8 @@ fn sharpness(share: f32) -> f32 {
 /// (each at [`IMAGE_OPACITY`], the sharp one giving way below the middle),
 /// the scanlines if `scanlines`, then the canvas again at [`DIM`] — each
 /// layer under the fade, so the frame's lower part is the canvas alone.
-/// Opaque, in BGRA.
+/// In BGRA: opaque, or with `glass` its alpha the fade's, so the frame
+/// gives way to the translucent panel beneath it rather than covering it.
 fn compose(
     sharp: &RgbImage,
     blurred: &RgbImage,
@@ -357,6 +365,7 @@ fn compose(
     scale: f32,
     scanlines: bool,
     light: bool,
+    glass: bool,
 ) -> RgbaImage {
     let (width, height) = sharp.dimensions();
     let period = (3. * scale).round().max(2.) as u32;
@@ -379,19 +388,27 @@ fn compose(
             0.
         };
         let dim = DIM * shown;
+        let alpha = if glass {
+            (shown * 255.).round() as u8
+        } else {
+            255
+        };
         // Below the fade the frame is the canvas alone.
         if shown <= 0. {
-            for pixel in out.chunks_exact_mut(4) {
+            for pixel in out.as_chunks_mut::<4>().0 {
                 pixel[..3].copy_from_slice(&[2, 1, 0].map(|i| canvas[i].round() as u8));
+                pixel[3] = alpha;
             }
             continue;
         }
         for ((pixel, crisp), soft) in out
-            .chunks_exact_mut(4)
-            .zip(crisp.chunks_exact(3))
-            .zip(soft.chunks_exact(3))
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(crisp.as_chunks::<3>().0)
+            .zip(soft.as_chunks::<3>().0)
         {
-            // RGB in, BGRA out; the alpha is already opaque.
+            // RGB in, BGRA out.
             for (to, from) in [(0, 2), (1, 1), (2, 0)] {
                 let mut value = canvas[from];
                 value += (soft[from] as f32 - value) * blurred_share;
@@ -400,6 +417,7 @@ fn compose(
                 value += (canvas[from] - value) * dim;
                 pixel[to] = value.round().clamp(0., 255.) as u8;
             }
+            pixel[3] = alpha;
         }
     }
     RgbaImage::from_raw(width, height, bytes).expect("the frame's buffer fits its size")
@@ -602,6 +620,7 @@ mod tests {
                 effect,
                 appearance: Appearance::Dark,
                 scale: 1.5,
+                glass: false,
             };
             let backdrop = bake(&file, &key).unwrap();
             let size = backdrop.image.size(0);
@@ -624,6 +643,33 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn over_glass_the_frame_gives_way_to_the_panel_as_it_fades() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = picture(dir.path(), "red.png", (400, 300), [220, 40, 30]);
+        let key = Key {
+            name: "red.png".into(),
+            effect: BackgroundEffect::Scanlines,
+            appearance: Appearance::Dark,
+            scale: 1.,
+            glass: true,
+        };
+        let backdrop = bake(&file, &key).unwrap();
+        let bytes = backdrop.image.as_bytes(0).unwrap();
+        let row = backdrop.image.size(0).width.0 as usize * 4;
+        // Each row's alpha is the fade's: opaque at the top, all but gone
+        // at the bottom, and never rising on the way down.
+        let alphas: Vec<u8> = bytes.chunks(row).map(|line| line[3]).collect();
+        assert_eq!(alphas[0], 255);
+        assert!(alphas[alphas.len() - 1] < 26, "{:?}", alphas.last());
+        assert!(alphas.windows(2).all(|pair| pair[1] <= pair[0]));
+        assert!(
+            bytes
+                .chunks(row)
+                .all(|line| line.chunks(4).all(|pixel| pixel[3] == line[3]))
+        );
     }
 
     #[test]

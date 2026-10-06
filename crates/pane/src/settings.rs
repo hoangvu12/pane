@@ -634,8 +634,8 @@ impl Settings {
 
     /// Asks for the backdrop the launcher window draws at `scale`, its
     /// scale factor, as it draws: a backdrop is baked off the window's
-    /// thread only when the picture, its effect, the palette or the scale
-    /// changed since the last bake (or the one in flight), and the
+    /// thread only when the picture, its effect, the palette, the scale or
+    /// the material changed since the last bake (or the one in flight), and the
     /// launcher keeps drawing the last one until it is ready, then
     /// repaints. With no background image chosen there is no backdrop.
     /// Nothing here repaints by itself: the launcher calls it while it
@@ -651,6 +651,7 @@ impl Settings {
             effect: self.chosen.background_effect,
             appearance: resolve(self.theme_preference(), self.system),
             scale,
+            glass: self.material().is_glass(),
         };
         let baked = self.backdrop.as_ref().map(|(baked, _)| baked);
         if baked == Some(&key) || self.baking.as_ref() == Some(&key) {

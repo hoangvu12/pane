@@ -232,7 +232,8 @@ pub(crate) fn binding_keys(binding: &Binding) -> KeySequence {
     };
     let mut keys: Vec<Key> = modifiers
         .into_iter()
-        .filter_map(|(held, name)| held.then(|| Key::new(name, name)))
+        .filter(|(held, _)| *held)
+        .map(|(_, name)| Key::new(name, name))
         .collect();
     let name = key_name(binding.key());
     let cap = match binding.key() {
