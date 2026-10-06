@@ -105,7 +105,7 @@ How Pane's windows look, as the user chooses it on Settings' Appearance page: a 
 _Avoid_: Theme (one half of it), skin, style
 
 **Background image**:
-A picture the user chooses on the Appearance page, drawn behind the launcher's content (ADR 0028). Pane keeps its own copy in its data folder, so the user's file can move or go. The picture fills the panel's top and fades into the panel's canvas, its own color moved toward the picture's; it scrolls away faster than the results and dissolves as they scroll. The Settings window never draws it. It is not glass: the panel under it is opaque, and no copy of the desktop's wallpaper is ever drawn.
+A picture the user chooses on the Appearance page, drawn behind the launcher's content (ADR 0028). Pane keeps its own copy in its data folder, so the user's file can move or go. The picture fills the panel's top and fades into the panel's canvas, its own color moved toward the picture's; it scrolls away faster than the results and dissolves as they scroll. The Settings window never draws it. On the Solid material the panel under it is the opaque canvas; on Glass it is the canvas at the glass tint's alpha and the picture is drawn at 84%, so the window's frost shows through both. No copy of the desktop's wallpaper is ever drawn.
 _Avoid_: Wallpaper (the desktop's), backdrop (the baked frame, an implementation word)
 
 **Background effect**:
