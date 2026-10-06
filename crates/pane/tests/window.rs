@@ -3562,6 +3562,83 @@ fn a_blank_query_shows_the_pinned_home_and_a_query_hides_it(cx: &mut TestAppCont
     );
 }
 
+/// Chooses the vertical layout of the pinned home in the settings record
+/// of `data`, as the Launcher page writes it, and initializes the host
+/// settings from it before the launcher window is made.
+fn vertical_layout(cx: &mut TestAppContext, data: &std::path::Path) {
+    std::fs::write(
+        data.join("settings.json"),
+        r#"{ "version": 1, "pinnedLayout": "vertical" }"#,
+    )
+    .unwrap();
+    cx.update(|cx| {
+        pane::settings::init_with_overrides(
+            Some(data.to_owned()),
+            pane::settings::Overrides::default(),
+            cx,
+        )
+    });
+}
+
+/// The vertical layout lists the pins as result rows, in order, under the
+/// "Pinned" label and above the results, with no strip of tiles and no
+/// pin hint; a query hides them, and clearing it brings them back.
+#[gpui::test]
+fn the_vertical_layout_lists_the_pins_as_rows_above_the_results(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    vertical_layout(cx, data.path());
+    let (window, cx) = pinned_rows(cx, data.path(), &["sample_ts", "sample_rust"]);
+    let label = cx.debug_bounds("section-Pinned").expect("the home's label");
+    let first = cx.debug_bounds("slot-1").expect("the first pin's row");
+    let second = cx.debug_bounds("slot-2").expect("the second pin's row");
+    let commands = cx
+        .debug_bounds("section-Commands")
+        .expect("the rows' label");
+    assert!(label.bottom() <= first.top(), "{label:?} {first:?}");
+    assert!(first.bottom() <= second.top(), "{first:?} {second:?}");
+    assert!(second.bottom() <= commands.top(), "{second:?} {commands:?}");
+    assert_eq!(first.left(), second.left(), "one column");
+    assert_eq!(first.size, second.size, "rows of one size");
+    assert!(
+        first.size.width > first.size.height * 4.,
+        "a row, not a tile: {first:?}"
+    );
+    assert!(cx.debug_bounds("pinned-strip").is_none(), "no strip");
+    assert!(cx.debug_bounds("pin-hint").is_none(), "no pin hint");
+    // In order, each named as a pin.
+    let nodes = accessible_nodes(cx);
+    node(&nodes, "Button", "Pinned 1: Charlie");
+    node(&nodes, "Button", "Pinned 2: Alpha");
+
+    cx.simulate_input("al");
+    settle(&window, cx);
+    assert!(cx.debug_bounds("slot-1").is_none(), "a query hides them");
+    assert!(cx.debug_bounds("section-Pinned").is_none());
+    cx.simulate_keystrokes("escape");
+    assert_eq!(settle(&window, cx).query(), Some(""));
+    assert!(
+        cx.debug_bounds("slot-1").is_some(),
+        "clearing brings them back"
+    );
+}
+
+/// With nothing pinned, the vertical layout shows nothing of the home: no
+/// label, no rows and no pin hint, only the results.
+#[gpui::test]
+fn the_vertical_layout_shows_nothing_while_nothing_is_pinned(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    vertical_layout(cx, data.path());
+    let (_window, cx) = pinned_rows(cx, data.path(), &[]);
+    assert!(cx.debug_bounds("section-Pinned").is_none(), "no label");
+    assert!(cx.debug_bounds("slot-1").is_none(), "no pin");
+    assert!(cx.debug_bounds("pin-hint").is_none(), "no pin hint");
+    assert!(cx.debug_bounds("pinned-strip").is_none(), "no strip");
+    assert!(
+        cx.debug_bounds("section-Commands").is_some(),
+        "the results show"
+    );
+}
+
 /// The Actions panel pins the selected result after the last pin and
 /// records it; the slot then shows the result with its chord, Ctrl+1,
 /// which opens it — once, one screen deep.

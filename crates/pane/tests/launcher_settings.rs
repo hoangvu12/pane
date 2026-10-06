@@ -938,6 +938,188 @@ fn escape_at_root_search_with_an_empty_query_hides_the_launcher(cx: &mut TestApp
     assert!(!hidden(&window, cx), "the hidden launcher was shown again");
 }
 
+/// Chooses the reopening whose choice row's debug selector is `selector`
+/// through the page's own select, and waits for the record to hold `held`.
+fn choose_reopening(
+    settings_cx: &mut VisualTestContext,
+    data: &Path,
+    selector: &'static str,
+    held: &str,
+) {
+    click(settings_cx, "launcher-reopening");
+    settings_cx.run_until_parked();
+    click(settings_cx, selector);
+    settings_cx.run_until_parked();
+    until_record_holds(settings_cx, data, held);
+}
+
+/// Checks the delayed reopening of `after` on the executor's simulated
+/// clock: a launcher hidden for less than `after` comes back to the view
+/// it was left on, and one hidden for `after` starts from root search.
+/// Each press moves the clock past the repeat guard first, so the time
+/// hidden is the advance plus that.
+fn pops_to_root_after(
+    window: &gpui::Entity<LauncherWindow>,
+    cx: &mut VisualTestContext,
+    placement: &FakePlacement,
+    after: Duration,
+) {
+    let default = Shortcut::open_pane_default();
+    cx.simulate_input("zz");
+    assert_eq!(settle(window, cx).query(), Some("zz"));
+
+    // Long after it opened, the launcher is still shown without focus, as
+    // the test platform opens it: the hotkey brings it forward, and since
+    // nothing was hidden there is nothing to pop.
+    cx.executor().advance_clock(after);
+    press(window, &default, cx);
+    cx.run_until_parked();
+    assert!(!hidden(window, cx));
+    assert_eq!(
+        settle(window, cx).query(),
+        Some("zz"),
+        "a launcher never hidden keeps its view"
+    );
+
+    // Back a moment before the delay is up: the view is restored, with
+    // its search focused.
+    dismiss(window, &default, cx, placement);
+    cx.executor().advance_clock(after - Duration::from_secs(2));
+    press(window, &default, cx);
+    cx.run_until_parked();
+    assert!(!hidden(window, cx));
+    let view = settle(window, cx);
+    assert_eq!(view.query(), Some("zz"), "a quick return restores the view");
+
+    // Away for the whole delay: the reopening starts from root search
+    // with an empty query.
+    dismiss(window, &default, cx, placement);
+    cx.executor().advance_clock(after);
+    press(window, &default, cx);
+    cx.run_until_parked();
+    assert!(!hidden(window, cx));
+    let view = settle(window, cx);
+    assert!(
+        matches!(view.screen, Screen::Root { .. }),
+        "{:?}",
+        view.screen
+    );
+    assert_eq!(
+        view.query(),
+        Some(""),
+        "a late return starts from root search"
+    );
+    cx.simulate_input("q");
+    assert_eq!(
+        settle(window, cx).query(),
+        Some("q"),
+        "root search's query has focus"
+    );
+}
+
+#[gpui::test]
+fn after_90_seconds_restores_a_quick_return_and_pops_a_late_one_to_root(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let placement = Rc::new(FakePlacement::default());
+    placement.layout(None, None);
+    let (window, cx) = open(cx, Some(data.path()), &placement);
+
+    let (_settings, mut settings_cx) = open_launcher_page(cx);
+    choose_reopening(
+        &mut settings_cx,
+        data.path(),
+        "launcher-reopening-After90Seconds",
+        "\"reopening\": \"after-90-seconds\"",
+    );
+    pops_to_root_after(&window, cx, &placement, Duration::from_secs(90));
+}
+
+#[gpui::test]
+fn after_3_minutes_restores_a_quick_return_and_pops_a_late_one_to_root(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let placement = Rc::new(FakePlacement::default());
+    placement.layout(None, None);
+    let (window, cx) = open(cx, Some(data.path()), &placement);
+
+    let (_settings, mut settings_cx) = open_launcher_page(cx);
+    choose_reopening(
+        &mut settings_cx,
+        data.path(),
+        "launcher-reopening-After3Minutes",
+        "\"reopening\": \"after-3-minutes\"",
+    );
+    pops_to_root_after(&window, cx, &placement, Duration::from_secs(180));
+}
+
+#[gpui::test]
+fn the_delayed_reopening_and_the_vertical_layout_are_applied_by_a_fresh_application(
+    cx: &mut TestAppContext,
+) {
+    let data = tempfile::tempdir().unwrap();
+    // Two pins, kept by a Pane that ran before; their commands are not
+    // installed, so they show as unavailable, which is still a pin.
+    fs::write(
+        data.path().join("quick-slots.json"),
+        serde_json::json!({
+            "version": 2,
+            "pins": [{ "command": "one" }, { "command": "two" }],
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let placement = Rc::new(FakePlacement::default());
+    placement.layout(None, None);
+    let (_window, cx) = open(cx, Some(data.path()), &placement);
+
+    // Both choices, taken through the page's own controls.
+    let (_settings, mut settings_cx) = open_launcher_page(cx);
+    choose_reopening(
+        &mut settings_cx,
+        data.path(),
+        "launcher-reopening-After90Seconds",
+        "\"reopening\": \"after-90-seconds\"",
+    );
+    click(&mut settings_cx, "launcher-pinned-Vertical");
+    settings_cx.run_until_parked();
+    until_record_holds(
+        &mut settings_cx,
+        data.path(),
+        "\"pinnedLayout\": \"vertical\"",
+    );
+
+    // A fresh application over the same data folder.
+    let mut fresh = cx.cx.new_app();
+    let fresh_placement = Rc::new(FakePlacement::default());
+    fresh_placement.layout(None, None);
+    fresh.update(|cx| pane::placement::init(fresh_placement.clone() as Rc<dyn Placement>, cx));
+    fresh.update(|cx| {
+        pane::settings::init_with_overrides(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            cx,
+        )
+    });
+    fresh.update(pane::bind_keys);
+    let launcher = Launcher::new(Runtime::start(), Vec::new())
+        .with_hotkeys(Arc::new(FakeSystem::default()))
+        .with_quick_slots(data.path());
+    let (window, fresh_cx) =
+        fresh.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
+    fresh_cx.run_until_parked();
+    settle(&window, fresh_cx);
+
+    // The pins are result rows, not the strip of tiles.
+    assert!(fresh_cx.debug_bounds("slot-1").is_some(), "the first pin");
+    assert!(fresh_cx.debug_bounds("slot-2").is_some(), "the second pin");
+    assert!(
+        fresh_cx.debug_bounds("pinned-strip").is_none(),
+        "no strip in the vertical layout"
+    );
+
+    // And the reopening waits 90 seconds before starting from root search.
+    pops_to_root_after(&window, fresh_cx, &fresh_placement, Duration::from_secs(90));
+}
+
 #[gpui::test]
 fn the_page_registers_its_settings_in_the_settings_search(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
