@@ -10,7 +10,7 @@
 
 use std::time::{Duration, Instant};
 
-use gpui::{App, Context, ModifiersChangedEvent, Window};
+use gpui::{Context, ModifiersChangedEvent, Window};
 use pane_core::{LauncherView, Screen};
 
 use crate::app::LauncherWindow;
@@ -34,6 +34,23 @@ pub(crate) struct Numbers {
     /// Their slide in flight, if any, and what the last frame drew.
     pub(crate) reveal: Option<motion::Tween>,
     drawn: bool,
+}
+
+impl Numbers {
+    /// Advances the hints' slide to the frame about to be drawn, at `now`
+    /// (`reduced`: [`gpui::App::reduce_motion`]): their look, 0 hidden and
+    /// 1 shown. The launcher's frame motion calls this each frame
+    /// ([`crate::app::FrameMotion::frame`]).
+    pub(crate) fn advance(&mut self, reduced: bool, now: Instant) -> f32 {
+        let shown = self.shown;
+        let changed = self.drawn != shown;
+        self.drawn = shown;
+        motion::advance_reveal(&mut self.reveal, shown, changed, reduced, now).unwrap_or(if shown {
+            1.
+        } else {
+            0.
+        })
+    }
 }
 
 /// What Ctrl and a digit pick: a quick slot, or a row of the list.
@@ -94,18 +111,18 @@ impl LauncherWindow {
             self.end_numbers(cx);
             return;
         }
-        if self.numbers.pending || self.numbers.shown {
+        if self.motion.numbers.pending || self.motion.numbers.shown {
             return;
         }
-        self.numbers.generation += 1;
-        self.numbers.pending = true;
-        let generation = self.numbers.generation;
+        self.motion.numbers.generation += 1;
+        self.motion.numbers.pending = true;
+        let generation = self.motion.numbers.generation;
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(NUMBERS_HOLD).await;
             this.update(cx, |this, cx| {
-                if this.numbers.pending && this.numbers.generation == generation {
-                    this.numbers.pending = false;
-                    this.numbers.shown = true;
+                if this.motion.numbers.pending && this.motion.numbers.generation == generation {
+                    this.motion.numbers.pending = false;
+                    this.motion.numbers.shown = true;
                     cx.notify();
                 }
             })
@@ -117,9 +134,9 @@ impl LauncherWindow {
     /// Ends a hold of Ctrl: the hints slide away, and a hold not yet long
     /// enough shows nothing.
     pub(crate) fn end_numbers(&mut self, cx: &mut Context<Self>) {
-        self.numbers.generation += 1;
-        self.numbers.pending = false;
-        if std::mem::take(&mut self.numbers.shown) {
+        self.motion.numbers.generation += 1;
+        self.motion.numbers.pending = false;
+        if std::mem::take(&mut self.motion.numbers.shown) {
             cx.notify();
         }
     }
@@ -127,23 +144,7 @@ impl LauncherWindow {
     /// A key pressed while Ctrl is held, before the hints show: the user is
     /// pressing a chord, not looking for the numbers.
     pub(crate) fn chord_pressed(&mut self) {
-        self.numbers.pending = false;
-    }
-
-    /// Advances the number hints' slide to the frame about to be drawn:
-    /// their look, 0 hidden and 1 shown.
-    pub(crate) fn advance_numbers(&mut self, now: Instant, cx: &App) -> f32 {
-        let shown = self.numbers.shown;
-        let changed = self.numbers.drawn != shown;
-        self.numbers.drawn = shown;
-        motion::advance_reveal(
-            &mut self.numbers.reveal,
-            shown,
-            changed,
-            cx.reduce_motion(),
-            now,
-        )
-        .unwrap_or(if shown { 1. } else { 0. })
+        self.motion.numbers.pending = false;
     }
 
     /// What Ctrl and `digit` pick as the launcher is drawn: what
