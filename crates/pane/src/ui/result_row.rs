@@ -74,6 +74,9 @@ pub(crate) struct RowMeta {
     pub(crate) keys: Option<KeySequence>,
     /// The right-aligned kind (`.row-kind`).
     pub(crate) kind: Option<SharedString>,
+    /// The row's number and its hint's look (0 hidden, 1 shown) while Ctrl
+    /// is held: the cap slides in over the row's right end.
+    pub(crate) number: Option<(usize, f32)>,
 }
 
 /// A result row showing `content` with `meta`'s parts. See the module docs
@@ -178,6 +181,26 @@ pub(crate) fn result_row_with(content: RowContent, meta: RowMeta, theme: &Theme)
                     .child(kind),
             )
         })
+        .when_some(meta.number, |row, (number, look)| {
+            with_number_hint(row, number, look, theme)
+        })
+}
+
+/// `row` with `number`'s hint over its right end at `look` (see
+/// [`keycap::row_number_hint`]): the row positions and clips it, and the
+/// hint keeps the row's rounded right corners.
+pub(crate) fn with_number_hint<E: ParentElement + Styled>(
+    row: E,
+    number: usize,
+    look: f32,
+    theme: &Theme,
+) -> E {
+    let radius = theme.geometry.row_radius;
+    row.relative().overflow_hidden().child(
+        keycap::row_number_hint(number, look, theme)
+            .rounded_tr(radius)
+            .rounded_br(radius),
+    )
 }
 
 /// A row's surface (`.row`): at least 44 high, radius 10, 10px either side

@@ -391,6 +391,27 @@ impl Settings {
         self.record_choice(chosen, cx);
     }
 
+    /// How much of the launcher shows while the query is blank.
+    pub(crate) fn window_mode(&self) -> pane_core::WindowMode {
+        self.chosen.window_mode
+    }
+
+    /// Whether the compact window shows the pins as a row of icons under
+    /// the search field.
+    pub(crate) fn compact_pinned(&self) -> bool {
+        self.chosen.compact_pinned
+    }
+
+    /// How the pinned home lays out its quick slots.
+    pub(crate) fn pinned_layout(&self) -> pane_core::PinnedLayout {
+        self.chosen.pinned_layout
+    }
+
+    /// What the launcher's back key does.
+    pub(crate) fn escape(&self) -> pane_core::EscapeBehavior {
+        self.chosen.escape
+    }
+
     /// Records one of the Launcher page's choices — the opening display or
     /// what reopening shows. Neither changes what the windows render, so
     /// nothing repaints; the record is written off the window's thread, and
@@ -444,6 +465,14 @@ impl Settings {
                 "Pane could not read the settings record, so the shortcut is not changed: {problem}"
             ));
         }
+        // The extra selection keys are taken too.
+        if let Some((previous, next)) = self.chosen.navigation.bindings()
+            && (binding.id() == previous || binding.id() == next)
+        {
+            return Err(format!(
+                "{binding} already moves the selection: turn off the navigation bindings first"
+            ));
+        }
         let mut chosen = self.chosen.clone();
         chosen.keyboard.checked_set(action, binding)?;
         if chosen == self.chosen {
@@ -454,7 +483,7 @@ impl Settings {
         }
         self.chosen = chosen;
         let keyboard = self.chosen.keyboard.clone();
-        crate::keyboard::rebuild(cx, &keyboard);
+        crate::keyboard::rebuild(cx, &keyboard, self.chosen.navigation);
         cx.notify();
         self.save(cx);
         Ok(())
@@ -813,9 +842,11 @@ impl Settings {
                     // the same way: the keymap is re-made over what the
                     // record holds, so a binding that could not be saved
                     // stops working and the recorded one works again.
-                    if snapshot.keyboard != self.saved.keyboard {
+                    if snapshot.keyboard != self.saved.keyboard
+                        || snapshot.navigation != self.saved.navigation
+                    {
                         let keyboard = self.chosen.keyboard.clone();
-                        crate::keyboard::rebuild(cx, &keyboard);
+                        crate::keyboard::rebuild(cx, &keyboard, self.chosen.navigation);
                     }
                 }
                 self.save_error = Some(problem);
@@ -951,6 +982,14 @@ pub(crate) fn shared(cx: &App) -> Entity<Settings> {
 pub(crate) fn keyboard_of(cx: &App) -> Keyboard {
     cx.try_global::<Shared>()
         .map(|shared| shared.0.read(cx).chosen.keyboard.clone())
+        .unwrap_or_default()
+}
+
+/// The extra selection keys in force, as [`keyboard_of`] reads the
+/// bindings.
+pub(crate) fn navigation_of(cx: &App) -> pane_core::NavigationBindings {
+    cx.try_global::<Shared>()
+        .map(|shared| shared.0.read(cx).chosen.navigation)
         .unwrap_or_default()
 }
 

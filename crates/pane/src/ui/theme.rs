@@ -244,8 +244,8 @@ pub(crate) struct Theme {
     pub(crate) slot_hover: Hsla,
     /// A pinned slot's title (`.slot-t`: #D9DADD).
     pub(crate) slot_title: Hsla,
-    /// An empty slot's dashed outline (Pane's own: the reference authors
-    /// no empty slot; white 10%).
+    /// The pin hint's dashed outline, in the strip's cell after the last
+    /// pin (Pane's own: the reference authors no such tile; white 10%).
     pub(crate) slot_empty_edge: Hsla,
 
     // -- Type and geometry --------------------------------------------------
@@ -558,17 +558,21 @@ pub(crate) struct SettingsGeometry {
     pub(crate) aside_gap: Pixels,
 }
 
-/// The pinned home's geometry: the reference's grid of five `.slot`s under
-/// the "Pinned" label, and each slot's anatomy.
+/// The pinned home's geometry: the reference's grid of `.slot`s under the
+/// "Pinned" label — five equal columns, wrapping onto more rows as pins
+/// are added (`crate::ui::pinned::PINNED_COLUMNS`) — and each slot's
+/// anatomy, which the pin hint's cell shares.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct PinnedGeometry {
-    /// The gap between the five equal columns.
+    /// The gap between the strip's equal columns, and between its rows
+    /// once it wraps.
     pub(crate) columns_gap: Pixels,
     /// The grid's padding above and below its slots.
     pub(crate) strip_padding_top: Pixels,
     pub(crate) strip_padding_bottom: Pixels,
-    /// A slot: its height, radius and paddings (14 above, 8 either side,
-    /// 10 below), and the gap between its tile and its title.
+    /// A slot: its height, radius and paddings (8 all round), and the gap
+    /// between its tile and its title — Pane's compact strip, lower than
+    /// the reference's 100px slots so the results keep more room.
     pub(crate) slot_height: Pixels,
     pub(crate) slot_radius: Pixels,
     pub(crate) slot_padding_top: Pixels,
@@ -577,9 +581,9 @@ pub(crate) struct PinnedGeometry {
     pub(crate) slot_gap: Pixels,
     /// An unavailable slot's gap between its tile and its title, the
     /// reason right under the title (Pane's own state): the tile, both
-    /// lines and the reference's 9px gaps would overflow the slot's 76px
-    /// inside its paddings, so the lines would shrink and clip; 42, 2 and
-    /// the two lines (16.25 and 14.95) fit.
+    /// lines and the 7px gaps would overflow the slot's 64px inside its
+    /// paddings, so the lines would shrink and clip; 30, 2 and the two
+    /// lines (16.25 and 14.95) fit.
     pub(crate) unavailable_gap: Pixels,
     /// The corner key hint's inset from the slot's top and right (8).
     pub(crate) keys_inset: Pixels,
@@ -1425,9 +1429,9 @@ impl Geometry {
                 glyph: px(16.),
             },
             slot_tile: TileMetrics {
-                size: px(42.),
-                radius: px(11.),
-                glyph: px(22.),
+                size: px(30.),
+                radius: px(8.),
+                glyph: px(17.),
             },
             mini_tile: TileMetrics {
                 size: px(18.),
@@ -1599,12 +1603,12 @@ impl Geometry {
                 columns_gap: px(8.),
                 strip_padding_top: px(2.),
                 strip_padding_bottom: px(6.),
-                slot_height: px(100.),
+                slot_height: px(80.),
                 slot_radius: px(12.),
-                slot_padding_top: px(14.),
+                slot_padding_top: px(8.),
                 slot_padding_x: px(8.),
-                slot_padding_bottom: px(10.),
-                slot_gap: px(9.),
+                slot_padding_bottom: px(8.),
+                slot_gap: px(7.),
                 unavailable_gap: px(2.),
                 keys_inset: px(8.),
                 focus_width: px(2.),

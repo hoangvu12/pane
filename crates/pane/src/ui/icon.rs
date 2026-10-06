@@ -144,8 +144,8 @@ pub(crate) enum Glyph {
     Music,
     /// A pushpin: the Actions panel's quick slot entries (`A.pin`).
     ActionPin,
-    /// A plus: the Appearance board's custom accent swatch (the
-    /// reference's own path; fixture-only, #100).
+    /// A plus: the pinned home's "+ Pin" hint, and the Appearance board's
+    /// custom accent swatch (the reference's own path).
     Plus,
     /// The Windows titlebar's close mark.
     #[cfg(target_os = "windows")]

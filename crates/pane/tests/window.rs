@@ -3422,22 +3422,19 @@ mod clipboard_split {
 /// Alpha, Bravo and Charlie (the Rust, JavaScript and TypeScript samples,
 /// by the ids `sample_rust`, `sample_js` and `sample_ts`) over a data
 /// folder keeping the quick slots, whose record first pins `pins` (command
-/// ids, slot by slot; no record when empty). The pointer is outside the
+/// ids, in order; no record when empty). The pointer is outside the
 /// window.
 fn pinned_rows<'a>(
     cx: &'a mut TestAppContext,
     data: &std::path::Path,
-    pins: &[Option<&str>],
+    pins: &[&str],
 ) -> (Entity<LauncherWindow>, &'a mut VisualTestContext) {
     if !pins.is_empty() {
-        let slots: Vec<serde_json::Value> = pins
+        let pins: Vec<serde_json::Value> = pins
             .iter()
-            .map(|pin| match pin {
-                Some(id) => serde_json::json!({ "command": id }),
-                None => serde_json::Value::Null,
-            })
+            .map(|id| serde_json::json!({ "command": id }))
             .collect();
-        let record = serde_json::json!({ "version": 1, "slots": slots });
+        let record = serde_json::json!({ "version": 2, "pins": pins });
         std::fs::write(data.join("quick-slots.json"), record.to_string()).unwrap();
     }
     let launcher = Launcher::new(
@@ -3454,7 +3451,7 @@ fn pinned_rows<'a>(
     (window, cx)
 }
 
-/// The quick slots' titles, "" for an empty one.
+/// The pins' titles, in order.
 fn slot_titles(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) -> Vec<String> {
     cx.read_entity(window, |window, _| window.launcher().quick_slots())
         .into_iter()
@@ -3462,9 +3459,42 @@ fn slot_titles(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) -> V
         .collect()
 }
 
-/// A blank query shows the pinned home — the "Pinned" label and its five
-/// slots, empty on a fresh launcher — above the rows' "Commands"; a query
-/// hides it, and clearing the query brings it back.
+/// The launcher's pin key on this system: it pins root search's selected
+/// result, or unpins it, or unpins the focused slot.
+const TOGGLE_PIN: &str = if cfg!(target_os = "macos") {
+    "cmd-shift-f"
+} else {
+    "ctrl-shift-f"
+};
+
+/// The pin key's name, as the pin hint tells assistive technology.
+const TOGGLE_PIN_NAME: &str = if cfg!(target_os = "macos") {
+    "Shift+Command+F"
+} else {
+    "Ctrl+Shift+F"
+};
+
+/// The move keys on this system: the focused slot one place later, or
+/// earlier.
+const MOVE_PIN_DOWN: &str = if cfg!(target_os = "macos") {
+    "cmd-alt-down"
+} else {
+    "ctrl-alt-down"
+};
+const MOVE_PIN_UP: &str = if cfg!(target_os = "macos") {
+    "cmd-alt-up"
+} else {
+    "ctrl-alt-up"
+};
+
+/// Seven pins, none of whose commands is installed: more than the strip's
+/// one row of five, and more than the five Ctrl numbers.
+const SEVEN_PINS: [&str; 7] = ["one", "two", "three", "four", "five", "six", "seven"];
+
+/// A blank query shows the pinned home — the "Pinned" label and its strip,
+/// on a fresh launcher with nothing pinned only the pin hint, which says
+/// how to pin and is no slot — above the rows' "Commands"; a query hides
+/// it, and clearing the query brings it back.
 #[gpui::test]
 fn a_blank_query_shows_the_pinned_home_and_a_query_hides_it(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
@@ -3476,21 +3506,26 @@ fn a_blank_query_shows_the_pinned_home_and_a_query_hides_it(cx: &mut TestAppCont
         .expect("the rows' label");
     assert_eq!(label.size.height, px(30.));
     assert_eq!(strip.top(), label.bottom() + px(2.), "the list's gap");
-    assert_eq!(strip.size.height, px(2. + 100. + 6.));
+    assert_eq!(strip.size.height, px(2. + 80. + 6.));
     assert_eq!(commands.top(), strip.bottom() + px(2.));
-    for number in 1..=5 {
-        let slot = cx
-            .debug_bounds(selector(&format!("slot-{number}")))
-            .expect("five slots");
-        assert_eq!(slot.size.height, px(100.));
-    }
-    // An empty slot says how to fill it, and shows no chord: pressing it
-    // does nothing.
+    let hint = cx.debug_bounds("pin-hint").expect("the pin hint");
+    assert_eq!(hint.top(), strip.top() + px(2.));
+    assert_eq!(hint.size.height, px(80.));
+    assert!(cx.debug_bounds("slot-1").is_none(), "nothing is pinned");
+    // The hint says how to pin, and is no slot: no button, no chord.
     let nodes = accessible_nodes(cx);
-    let empty = node(&nodes, "Button", "Quick slot 1");
-    let hint = empty["description"].as_str().unwrap_or_default();
-    assert!(hint.contains("Pin to Quick Slot"), "{empty:#}");
-    assert!(empty.get("keyboard_shortcut").is_none(), "{empty:#}");
+    let note = node(&nodes, "Note", "Pin");
+    let how = note["description"].as_str().unwrap_or_default();
+    assert!(how.contains(TOGGLE_PIN_NAME), "{note:#}");
+    assert!(how.contains("choose Pin"), "{note:#}");
+    assert!(note.get("keyboard_shortcut").is_none(), "{note:#}");
+    assert!(
+        !nodes.iter().any(|node| node["role"] == "Button"
+            && node["label"]
+                .as_str()
+                .is_some_and(|label| label.starts_with("Pinned "))),
+        "no slot is drawn"
+    );
     assert!(
         !data.path().join("quick-slots.json").exists(),
         "a fresh launcher pins nothing"
@@ -3511,32 +3546,29 @@ fn a_blank_query_shows_the_pinned_home_and_a_query_hides_it(cx: &mut TestAppCont
     );
 }
 
-/// The Actions panel pins the selected result to the first empty slot and
+/// The Actions panel pins the selected result after the last pin and
 /// records it; the slot then shows the result with its chord, Ctrl+1,
 /// which opens it — once, one screen deep.
 #[gpui::test]
-fn pinning_from_the_actions_panel_fills_a_slot_whose_chord_opens_it(cx: &mut TestAppContext) {
+fn pinning_from_the_actions_panel_adds_a_slot_whose_chord_opens_it(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
     let (window, cx) = pinned_rows(cx, data.path(), &[]);
     cx.simulate_keystrokes("down");
     settle(&window, cx);
     cx.simulate_keystrokes("ctrl-k");
     settle(&window, cx);
-    assert!(cx.debug_bounds("action-Pin to Quick Slot").is_some());
+    assert!(cx.debug_bounds("action-Pin").is_some());
     cx.simulate_input("pin");
     settle(&window, cx);
     cx.simulate_keystrokes("enter");
     let view = settle(&window, cx);
     assert!(!actions_open(&window, cx));
-    assert_eq!(
-        view.status,
-        Status::Result("Pinned Bravo to Quick Slot 1".into())
-    );
+    assert_eq!(view.status, Status::Result("Pinned Bravo".into()));
     assert!(query_has_focus(&window, cx), "focus is back in the query");
-    assert_eq!(slot_titles(&window, cx), ["Bravo", "", "", "", ""]);
+    assert_eq!(slot_titles(&window, cx), ["Bravo"]);
     assert!(data.path().join("quick-slots.json").exists());
     let nodes = accessible_nodes(cx);
-    let pinned = node(&nodes, "Button", "Quick slot 1: Bravo");
+    let pinned = node(&nodes, "Button", "Pinned 1: Bravo");
     assert_eq!(pinned["keyboard_shortcut"], "Ctrl+1", "{pinned:#}");
 
     cx.simulate_keystrokes("ctrl-1");
@@ -3552,19 +3584,19 @@ fn pinning_from_the_actions_panel_fills_a_slot_whose_chord_opens_it(cx: &mut Tes
     );
 }
 
-/// A click on a slot runs what it holds; a click on an empty slot runs
+/// A click on a slot runs what it holds; a click on the pin hint runs
 /// nothing and leaves the query focused, so typing still searches.
 #[gpui::test]
-fn a_click_on_a_slot_opens_what_it_holds_and_an_empty_one_runs_nothing(cx: &mut TestAppContext) {
+fn a_click_on_a_slot_opens_what_it_holds_and_one_on_the_hint_runs_nothing(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
-    let (window, cx) = pinned_rows(cx, data.path(), &[Some("sample_ts"), None]);
-    assert_eq!(slot_titles(&window, cx), ["Charlie", "", "", "", ""]);
-    let empty = center_of(cx, "slot-2");
-    cx.simulate_click(empty, Modifiers::none());
+    let (window, cx) = pinned_rows(cx, data.path(), &["sample_ts"]);
+    assert_eq!(slot_titles(&window, cx), ["Charlie"]);
+    let hint = center_of(cx, "pin-hint");
+    cx.simulate_click(hint, Modifiers::none());
     let view = settle(&window, cx);
     assert!(
         matches!(view.screen, Screen::Root { .. }),
-        "an empty slot runs nothing"
+        "the pin hint runs nothing"
     );
     assert!(
         query_has_focus(&window, cx),
@@ -3580,9 +3612,9 @@ fn a_click_on_a_slot_opens_what_it_holds_and_an_empty_one_runs_nothing(cx: &mut 
     );
 }
 
-/// A slot's chord runs nothing for an empty slot, while the Actions
-/// panel has the keys, or while an input method composes in the query;
-/// with none of those, it opens what the slot holds.
+/// A slot's chord runs nothing while the Actions panel has the keys, or
+/// while an input method composes in the query; with neither, it opens
+/// what the slot holds.
 #[gpui::test]
 fn a_slots_chord_runs_nothing_while_an_overlay_or_a_composition_has_the_keys(
     cx: &mut TestAppContext,
@@ -3590,10 +3622,7 @@ fn a_slots_chord_runs_nothing_while_an_overlay_or_a_composition_has_the_keys(
     use gpui::EntityInputHandler;
 
     let data = tempfile::tempdir().unwrap();
-    let (window, cx) = pinned_rows(cx, data.path(), &[Some("sample_rust")]);
-    cx.simulate_keystrokes("ctrl-2");
-    assert!(matches!(settle(&window, cx).screen, Screen::Root { .. }));
-
+    let (window, cx) = pinned_rows(cx, data.path(), &["sample_rust"]);
     cx.simulate_keystrokes("ctrl-k");
     settle(&window, cx);
     cx.simulate_keystrokes("ctrl-1");
@@ -3629,11 +3658,11 @@ fn a_slots_chord_runs_nothing_while_an_overlay_or_a_composition_has_the_keys(
 
 /// A slot whose target is gone keeps its place and says why, on a click
 /// or its chord, running nothing; its own actions, from a secondary click,
-/// remove it.
+/// unpin it — the strip's moves saying left and right.
 #[gpui::test]
-fn a_slot_whose_target_is_gone_says_why_and_its_own_actions_remove_it(cx: &mut TestAppContext) {
+fn a_slot_whose_target_is_gone_says_why_and_its_own_actions_unpin_it(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
-    let (window, cx) = pinned_rows(cx, data.path(), &[Some("local:/nowhere#gone")]);
+    let (window, cx) = pinned_rows(cx, data.path(), &["local:/nowhere#gone"]);
     cx.simulate_keystrokes("ctrl-1");
     let view = settle(&window, cx);
     assert!(matches!(view.screen, Screen::Root { .. }));
@@ -3648,105 +3677,87 @@ fn a_slot_whose_target_is_gone_says_why_and_its_own_actions_remove_it(cx: &mut T
     settle(&window, cx);
     assert!(actions_open(&window, cx), "the slot's own actions");
     assert!(cx.debug_bounds("action-group-Quick Slot").is_some());
+    // The pins lie side by side on the strip: the moves say so.
+    assert!(cx.debug_bounds("action-Move Left").is_some());
+    assert!(cx.debug_bounds("action-Move Right").is_some());
+    assert!(cx.debug_bounds("action-Move Up").is_none());
     // The secondary click leaves focus in the panel's field, not on the
     // slot it pressed: typing filters, and Enter runs the entry.
     assert!(actions_filter_has_focus(&window, cx));
-    cx.simulate_input("remove");
+    cx.simulate_input("unpin");
     settle(&window, cx);
     cx.simulate_keystrokes("enter");
     let view = settle(&window, cx);
-    assert_eq!(
-        view.status,
-        Status::Result("Removed gone from Quick Slot 1".into())
-    );
-    assert_eq!(slot_titles(&window, cx), ["", "", "", "", ""]);
+    assert_eq!(view.status, Status::Result("Unpinned gone".into()));
+    assert!(slot_titles(&window, cx).is_empty());
+    assert!(cx.debug_bounds("pin-hint").is_some(), "the hint is back");
 }
 
-/// With all five slots taken, Pin to Quick Slot keeps the panel open on
-/// the five slots, and the one chosen is replaced.
+/// Pins are not limited to five: with five pinned, Pin adds a sixth, which
+/// starts the strip's second row, the pin hint beside it.
 #[gpui::test]
-fn with_every_slot_taken_pinning_asks_which_slot_to_replace(cx: &mut TestAppContext) {
+fn pinning_past_five_adds_a_pin_on_a_new_row(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
-    let full = [
-        Some("one"),
-        Some("two"),
-        Some("three"),
-        Some("four"),
-        Some("five"),
-    ];
-    let (window, cx) = pinned_rows(cx, data.path(), &full);
+    let five = ["one", "two", "three", "four", "five"];
+    let (window, cx) = pinned_rows(cx, data.path(), &five);
     cx.simulate_keystrokes("ctrl-k");
     settle(&window, cx);
     cx.simulate_input("pin");
     settle(&window, cx);
     cx.simulate_keystrokes("enter");
-    settle(&window, cx);
-    assert!(actions_open(&window, cx), "the panel stays, on the slots");
-    assert!(
-        cx.debug_bounds("action-group-Replace a Quick Slot")
-            .is_some()
-    );
-    assert!(cx.debug_bounds("action-Replace Slot 3: three").is_some());
-    cx.simulate_keystrokes("down down enter");
     let view = settle(&window, cx);
-    assert_eq!(
-        view.status,
-        Status::Result("Pinned Alpha to Quick Slot 3".into())
-    );
+    assert!(!actions_open(&window, cx));
+    assert_eq!(view.status, Status::Result("Pinned Alpha".into()));
     assert_eq!(
         slot_titles(&window, cx),
-        ["one", "two", "Alpha", "four", "five"]
+        ["one", "two", "three", "four", "five", "Alpha"]
     );
+    let first = cx.debug_bounds("slot-1").expect("the first pin");
+    let sixth = cx.debug_bounds("slot-6").expect("the sixth pin");
+    assert_eq!(sixth.left(), first.left());
+    assert_eq!(sixth.top(), first.bottom() + px(8.));
+    let hint = cx.debug_bounds("pin-hint").expect("the pin hint");
+    assert_eq!(hint.top(), sixth.top());
 }
 
-/// Pinning what a slot already holds changes nothing, says which slot
-/// holds it and moves keyboard focus to that slot — clearing the typed
-/// query it was found by, so the home and the slot show.
+/// A pinned result's own actions offer Unpin rather than Pin, which takes
+/// its slot out — the pins after it closing the gap — and keeps the
+/// search as it was.
 #[gpui::test]
-fn pinning_what_a_slot_holds_names_that_slot_and_focuses_it(cx: &mut TestAppContext) {
+fn a_pinned_results_actions_unpin_it(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
-    let (window, cx) = pinned_rows(cx, data.path(), &[None, Some("sample_rust")]);
-    let before = std::fs::read_to_string(data.path().join("quick-slots.json")).unwrap();
+    let (window, cx) = pinned_rows(cx, data.path(), &["sample_rust", "sample_ts"]);
     cx.simulate_input("alpha");
     let view = settle(&window, cx);
     assert_eq!(view.rows[view.selected.unwrap()].title, "Alpha");
-    assert!(cx.debug_bounds("pinned-strip").is_none());
     cx.simulate_keystrokes("ctrl-k");
     settle(&window, cx);
-    cx.simulate_input("pin");
+    assert!(cx.debug_bounds("action-Unpin").is_some());
+    assert!(cx.debug_bounds("action-Pin").is_none());
+    cx.simulate_input("unpin");
     settle(&window, cx);
     cx.simulate_keystrokes("enter");
     let view = settle(&window, cx);
-    assert_eq!(
-        view.status,
-        Status::Result("Alpha is already in Quick Slot 2".into())
-    );
-    assert_eq!(view.query(), Some(""), "the query is cleared");
-    assert!(cx.debug_bounds("pinned-strip").is_some(), "the home shows");
-    assert_eq!(focused_label(cx).as_deref(), Some("Quick slot 2: Alpha"));
-    assert_eq!(
-        std::fs::read_to_string(data.path().join("quick-slots.json")).unwrap(),
-        before
-    );
+    assert_eq!(view.status, Status::Result("Unpinned Alpha".into()));
+    assert_eq!(view.query(), Some("alpha"), "the search stays");
+    assert_eq!(slot_titles(&window, cx), ["Charlie"]);
 }
 
-/// A slot runs once per press: Enter on a focused empty slot does nothing
-/// at all, a held chord's repeats run nothing, and neither does a double
-/// click's second click.
+/// A slot runs once per press: a held chord's repeats run nothing, and
+/// neither does a double click's second click; Enter on the focused slot
+/// opens it. Tab passes from the pins to the footer: the pin hint is no
+/// tab stop.
 #[gpui::test]
-fn a_slot_runs_once_per_press_and_an_empty_one_ignores_its_keys(cx: &mut TestAppContext) {
+fn a_slot_runs_once_per_press_and_the_pin_hint_takes_no_focus(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
-    let (window, cx) = pinned_rows(cx, data.path(), &[Some("sample_rust"), None]);
-    // From the query, Tab reaches the slots in order.
+    let (window, cx) = pinned_rows(cx, data.path(), &["sample_rust"]);
+    // From the query, Tab reaches the pin, then the footer's menu.
     cx.simulate_keystrokes("tab");
-    assert_eq!(focused_label(cx).as_deref(), Some("Quick slot 1: Alpha"));
+    assert_eq!(focused_label(cx).as_deref(), Some("Pinned 1: Alpha"));
     cx.simulate_keystrokes("tab");
-    assert_eq!(focused_label(cx).as_deref(), Some("Quick slot 2"));
-    let before = settle(&window, cx);
-    cx.simulate_keystrokes("enter");
-    cx.simulate_keystrokes("space");
-    assert_eq!(settle(&window, cx), before, "an empty slot does nothing");
-    assert_eq!(focused_label(cx).as_deref(), Some("Quick slot 2"));
+    assert_eq!(focused_label(cx).as_deref(), Some("Pane menu"));
+    cx.simulate_keystrokes("shift-tab");
+    assert_eq!(focused_label(cx).as_deref(), Some("Pinned 1: Alpha"));
 
     // The system's repeat of a chord held from before is not a press.
     cx.simulate_event(gpui::KeyDownEvent {
@@ -3779,9 +3790,8 @@ fn a_slot_runs_once_per_press_and_an_empty_one_ignores_its_keys(cx: &mut TestApp
         "a second click runs nothing"
     );
 
-    // A press is a press: Enter on the pinned slot, which the press of the
-    // pointer focused, opens it.
-    assert_eq!(focused_label(cx).as_deref(), Some("Quick slot 1: Alpha"));
+    // A press is a press: Enter on the focused pin opens it.
+    assert_eq!(focused_label(cx).as_deref(), Some("Pinned 1: Alpha"));
     cx.simulate_keystrokes("enter");
     let view = settle(&window, cx);
     assert_eq!(
@@ -3811,5 +3821,138 @@ fn a_pin_that_cannot_be_recorded_is_put_back_and_reported(cx: &mut TestAppContex
         view.status
     );
     assert!(cx.debug_bounds("status-error").is_some());
-    assert_eq!(slot_titles(&window, cx), ["", "", "", "", ""]);
+    assert!(slot_titles(&window, cx).is_empty());
+}
+
+/// Seven pins wrap onto a second row of the strip's five columns: the
+/// sixth under the first, the pin hint after the seventh, the strip as
+/// tall as its two rows.
+#[gpui::test]
+fn seven_pins_wrap_onto_a_second_row_of_the_strip(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let (window, cx) = pinned_rows(cx, data.path(), &SEVEN_PINS);
+    assert_eq!(slot_titles(&window, cx), SEVEN_PINS);
+    let strip = cx.debug_bounds("pinned-strip").expect("the strip");
+    let first = cx.debug_bounds("slot-1").expect("the first pin");
+    let fifth = cx.debug_bounds("slot-5").expect("the fifth pin");
+    let sixth = cx.debug_bounds("slot-6").expect("the sixth pin");
+    let seventh = cx.debug_bounds("slot-7").expect("the seventh pin");
+    assert_eq!(fifth.top(), first.top(), "five to the first row");
+    assert!(fifth.left() > first.left());
+    assert_eq!(sixth.left(), first.left(), "the sixth starts the next row");
+    assert_eq!(sixth.top(), first.bottom() + px(8.), "the columns' gap");
+    assert_eq!(seventh.top(), sixth.top());
+    assert_eq!(strip.size.height, px(2. + 80. + 8. + 80. + 6.));
+    let hint = cx.debug_bounds("pin-hint").expect("the pin hint");
+    assert_eq!(hint.top(), sixth.top());
+    assert!(hint.left() > seventh.right());
+}
+
+/// With seven pins, Ctrl+1 to Ctrl+5 are the first five and Ctrl+6 picks
+/// the first result row; the sixth and seventh pins have no number.
+#[gpui::test]
+fn with_seven_pins_ctrl_6_picks_the_first_row_and_the_last_pins_have_no_number(
+    cx: &mut TestAppContext,
+) {
+    let data = tempfile::tempdir().unwrap();
+    let (window, cx) = pinned_rows(cx, data.path(), &SEVEN_PINS);
+    let nodes = accessible_nodes(cx);
+    let fifth = node(&nodes, "Button", "Pinned 5: five");
+    assert_eq!(fifth["keyboard_shortcut"], "Ctrl+5", "{fifth:#}");
+    for label in ["Pinned 6: six", "Pinned 7: seven"] {
+        let pin = node(&nodes, "Button", label);
+        assert!(pin.get("keyboard_shortcut").is_none(), "{pin:#}");
+    }
+
+    cx.simulate_keystrokes("ctrl-6");
+    let view = settle(&window, cx);
+    assert_eq!(
+        (view.screen, view.title.as_str()),
+        (Screen::Command, "Rust sample"),
+        "Ctrl+6 opens the first row, Alpha"
+    );
+}
+
+/// The pin key pins root search's selected result and, pressed again on
+/// the same result, unpins it; focus stays in the query throughout.
+#[gpui::test]
+fn the_pin_key_pins_the_selected_result_and_unpins_it_again(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let (window, cx) = pinned_rows(cx, data.path(), &[]);
+    cx.simulate_keystrokes("down");
+    settle(&window, cx);
+    cx.simulate_keystrokes(TOGGLE_PIN);
+    let view = settle(&window, cx);
+    assert_eq!(view.status, Status::Result("Pinned Bravo".into()));
+    assert_eq!(slot_titles(&window, cx), ["Bravo"]);
+    assert!(query_has_focus(&window, cx));
+    assert!(data.path().join("quick-slots.json").exists());
+
+    cx.simulate_keystrokes(TOGGLE_PIN);
+    let view = settle(&window, cx);
+    assert_eq!(view.status, Status::Result("Unpinned Bravo".into()));
+    assert!(slot_titles(&window, cx).is_empty());
+    assert!(query_has_focus(&window, cx));
+}
+
+/// The move keys move the focused slot one place, focus following it to
+/// its new place; a move past the first place does nothing. The pin key
+/// on a focused slot unpins it, focus going to the slot that took its
+/// place.
+#[gpui::test]
+fn the_move_keys_move_the_focused_slot_and_focus_follows_it(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let (window, cx) = pinned_rows(cx, data.path(), &["one", "two", "three"]);
+    cx.simulate_keystrokes("tab");
+    assert_eq!(focused_label(cx).as_deref(), Some("Pinned 1: one"));
+
+    cx.simulate_keystrokes(MOVE_PIN_DOWN);
+    let view = settle(&window, cx);
+    assert_eq!(view.status, Status::Result("Moved one to place 2".into()));
+    assert_eq!(slot_titles(&window, cx), ["two", "one", "three"]);
+    assert_eq!(focused_label(cx).as_deref(), Some("Pinned 2: one"));
+
+    cx.simulate_keystrokes(MOVE_PIN_UP);
+    settle(&window, cx);
+    assert_eq!(slot_titles(&window, cx), ["one", "two", "three"]);
+    assert_eq!(focused_label(cx).as_deref(), Some("Pinned 1: one"));
+    // Already first: nothing moves.
+    cx.simulate_keystrokes(MOVE_PIN_UP);
+    settle(&window, cx);
+    assert_eq!(slot_titles(&window, cx), ["one", "two", "three"]);
+    assert_eq!(focused_label(cx).as_deref(), Some("Pinned 1: one"));
+
+    cx.simulate_keystrokes(TOGGLE_PIN);
+    let view = settle(&window, cx);
+    assert_eq!(view.status, Status::Result("Unpinned one".into()));
+    assert_eq!(slot_titles(&window, cx), ["two", "three"]);
+    assert_eq!(focused_label(cx).as_deref(), Some("Pinned 1: two"));
+}
+
+/// The pin hint follows three pins, in the fourth column of the strip's
+/// row, a slot's size.
+#[gpui::test]
+fn the_pin_hint_follows_three_pins(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let (_window, cx) = pinned_rows(cx, data.path(), &["one", "two", "three"]);
+    let third = cx.debug_bounds("slot-3").expect("the third pin");
+    let hint = cx.debug_bounds("pin-hint").expect("the pin hint");
+    assert_eq!(hint.top(), third.top());
+    assert_eq!(hint.size.height, third.size.height);
+    // The columns are fractions of the list's width: within a pixel.
+    assert!((hint.size.width - third.size.width).abs() < px(1.));
+    assert!((hint.left() - (third.right() + px(8.))).abs() < px(1.));
+}
+
+/// Five pins fill the strip's row, and the pin hint never adds a row of
+/// its own: it does not show.
+#[gpui::test]
+fn five_pins_leave_no_room_for_the_pin_hint(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let five = ["one", "two", "three", "four", "five"];
+    let (_window, cx) = pinned_rows(cx, data.path(), &five);
+    assert!(cx.debug_bounds("slot-5").is_some());
+    assert!(cx.debug_bounds("pin-hint").is_none());
+    let strip = cx.debug_bounds("pinned-strip").expect("the strip");
+    assert_eq!(strip.size.height, px(2. + 80. + 6.));
 }
