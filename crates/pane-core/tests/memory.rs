@@ -160,10 +160,12 @@ fn memory_peaks_of_the_samples_and_default_extensions() {
         "sample_operations",
         "sample_dependencies",
         "sample_query",
+        "sample_no_view",
         "sample_search",
         "sample_schedule",
         "sample_service",
         "sample_helper",
+        "sample_actions",
     ]
     .map(String::from)
     .into();
@@ -193,7 +195,7 @@ fn memory_peaks_of_the_samples_and_default_extensions() {
                     let runtime = Runtime::start().unwrap();
                     // Its answer does not matter (a command may need data it
                     // has none of here): only that it started and ran.
-                    let _ = block_on(runtime.get_view(&guest(&name)));
+                    let _ = block_on(runtime.render(&guest(&name)));
                 }
             });
         }

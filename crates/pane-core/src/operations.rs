@@ -106,10 +106,14 @@ impl OperationError {
             | CallError::Incompatible(_)
             | CallError::Interface(_)
             | CallError::OlderApiShape(_) => (Incompatible, format!("{title}: {error}")),
-            // A form's rejection answers only `submit-form`, and a live
-            // instance (started just before the call) is never missing, and
-            // only root search's own calls are cancelled.
-            CallError::Form(_) | CallError::ViewClosed | CallError::Cancelled => {
+            // A form's rejection answers only `submit-form`, a live
+            // instance (started just before the call) is never missing, only
+            // root search's own calls are cancelled, and only a command's
+            // tree and event answers are read.
+            CallError::Form(_)
+            | CallError::ViewClosed
+            | CallError::Cancelled
+            | CallError::Unreadable(_) => {
                 unreachable!("an operation call cannot end with {error:?}")
             }
         };
@@ -185,19 +189,7 @@ impl Installed {
             dependency = self.dependency(caller, source, operation, version)?;
             dependency.as_str()
         };
-        // An identity names a package, not a version of it. A repository
-        // may be written in any of its equivalent forms.
-        let key = match SourceSpec::parse(source) {
-            Ok(SourceSpec::Local(path)) if Path::new(&path).is_absolute() => {
-                Some(source.to_owned())
-            }
-            Ok(SourceSpec::Npm(spec)) if spec.version.is_none() => Some(source.to_owned()),
-            Ok(SourceSpec::Git(spec)) if spec.reference.is_none() => {
-                Some(crate::packages::PackageIdentity::git(&spec.repository).key())
-            }
-            _ => None,
-        };
-        let Some(key) = key else {
+        let Some(key) = identity_key(source) else {
             return Err(OperationError::new(
                 NotFound,
                 format!(
@@ -378,6 +370,22 @@ impl Installed {
             .iter()
             .find(|package| component.starts_with(&package.location))
             .map(|package| &package.identity)
+    }
+}
+
+/// The key of the package identity `source` names, as an operation call or
+/// a launch writes it: `local:` and an absolute folder, `npm:` and a
+/// package name, or `git:` and a repository; `None` for anything else. An
+/// identity names a package, not a version of it, and a repository may be
+/// written in any of its equivalent forms.
+pub(crate) fn identity_key(source: &str) -> Option<String> {
+    match SourceSpec::parse(source) {
+        Ok(SourceSpec::Local(path)) if Path::new(&path).is_absolute() => Some(source.to_owned()),
+        Ok(SourceSpec::Npm(spec)) if spec.version.is_none() => Some(source.to_owned()),
+        Ok(SourceSpec::Git(spec)) if spec.reference.is_none() => {
+            Some(crate::packages::PackageIdentity::git(&spec.repository).key())
+        }
+        _ => None,
     }
 }
 

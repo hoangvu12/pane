@@ -101,14 +101,25 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   `crates/pane/tests/repositories.rs`, from a repository served on
   127.0.0.1.
 - `sample-query`, `sample-query-js`, `sample-query-ts`: Echo, the smallest
-  command that takes a query, in Rust, JavaScript and TypeScript:
-  it answers the text the user sends it from root search through its alias
-  or as a fallback ([A command that takes a query](#a-command-that-takes-a-query),
+  command that takes a query, in Rust, JavaScript and TypeScript, a no-view
+  command: it answers the text the user sends it from root search through
+  its alias or as a fallback ([A command that takes a query](#a-command-that-takes-a-query),
   [aliases and fallbacks](../docs/aliases.md)); "fail" is refused and
   "crash" crashes on purpose. Their packages are `packages/sample-query`,
   `packages/sample-query-js` and `packages/sample-query-ts`; held alike by
   `crates/pane-core/tests/aliases.rs`, and the Rust one by
   `crates/pane/tests/aliases.rs`.
+- `sample-no-view`, `sample-no-view-js`, `sample-no-view-ts`: the no-view
+  sample in Rust, JavaScript and TypeScript, one component serving five
+  commands ([No-view commands and the launch record](#no-view-commands-and-the-launch-record)):
+  "Report launch" answers its launch record ("fail" answers an error,
+  "crash" crashes), "Tick" runs every minute on its own schedule in the
+  background, "Last launches" answers what those two last ran with,
+  "Launch" launches the command its text names with context, and "Show
+  launch", a view command, lists its launch record. Their packages are
+  `packages/sample-no-view` and its `-js`/`-ts` copies; held alike by
+  `crates/pane-core/tests/no_view.rs`, and the Rust one by
+  `crates/pane/tests/no_view.rs`.
 - `sample-schedule`, `sample-schedule-js`, `sample-schedule-ts`: the
   schedule sample in Rust, JavaScript and TypeScript, whose Counting
   command declares a `schedule`, so Pane runs its "Run now" item every 60
@@ -118,6 +129,15 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   error" answers an error, and "Crash" traps, each for Pane's checks.
   Their packages are `packages/sample-schedule` and its `-js`/`-ts`
   copies; held alike by `crates/pane-core/tests/schedules.rs`.
+- `sample-actions`, `sample-actions-js`, `sample-actions-ts`: the actions
+  sample in Rust, JavaScript and TypeScript (#137): items with several
+  actions in sections, a destructive one, shortcuts for every system and
+  one per system, one shortcut that is Pane's own Ctrl+K and one that
+  collides once the user gives a Pane key Ctrl+Shift+Y, an item with one
+  action and one with none ([several actions per item](../docs/list-tree.md)).
+  Their packages are `packages/sample-actions` and its `-js`/`-ts`
+  copies; held alike by `crates/pane-core/tests/item_actions.rs`, and the
+  Rust one by `crates/pane/tests/item_actions.rs`.
 - `hello-rust`, `hello-js`, `hello-ts`: one "Say hello" command each, a
   package built in its own folder, as an author's would be, for
   [development mode](../docs/development-mode.md): Pane builds and reloads
@@ -147,42 +167,39 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   was before `item` gained `platforms` and custom views, with its own copy of
   that WIT; Pane's type check refuses it at install and when it loads.
 - `fixtures/mismatched-api`: negative control whose exports all have the
-  names Pane looks for while `item` lacks one field, so only the type check
-  can refuse it.
+  names Pane looks for while `form-error` lacks one field, so only the type
+  check can refuse it.
+- `fixtures/trees`: test fixture whose list tree and answers are JSON
+  written by hand, not by `pane-guest`, with fields Pane does not know, a
+  newer version, a view Pane cannot show and trees and answers it cannot
+  read ([list-tree.md](../docs/list-tree.md)).
 
 ## Writing a Rust command
 
 The [sample](sample-rust/src/lib.rs) is the complete example. A command is a
-`cdylib` crate depending on `pane-guest` that implements four async
-functions and names its custom view type (see [Forms](#forms) and
-[Custom views](#custom-views) for the last two):
+`cdylib` crate depending on `pane-guest` that implements `pane_guest::Command`:
+`render`, its list, whose items' actions are closures, and two functions
+for forms and custom views (see [Forms](#forms) and
+[Custom views](#custom-views)), and names its custom view type. The SDK hands
+Pane the list as a versioned JSON tree and runs an item's closure when the
+user chooses it, then Pane asks for the list again
+([list-tree.md](../docs/list-tree.md)):
 
 ```rust
 #![no_std]
 
-use pane_guest::alloc::{string::String, vec, vec::Vec};
-use pane_guest::{CustomView, FieldValue, FormError, Guest, Item, NoCustomView, View};
+use pane_guest::alloc::{string::String, vec::Vec};
+use pane_guest::{Command, CustomView, FieldValue, FormError, Item, List, NoCustomView};
 
 struct Hello;
 pane_guest::export!(Hello);
 
-impl Guest for Hello {
+impl Command for Hello {
     type CustomView = NoCustomView;
 
-    async fn get_view() -> Result<View, String> {
-        let item = Item {
-            id: "hi".into(),
-            title: "Say hi".into(),
-            subtitle: None,
-            form: None,
-            platforms: None,
-            custom_view: None,
-        };
-        Ok(View { title: "Hello".into(), items: vec![item] })
-    }
-
-    async fn run_action(_item_id: String) -> Result<String, String> {
-        Ok("hi!".into())
+    async fn render() -> Result<List, String> {
+        Ok(List::new("Hello")
+            .item(Item::new("hi", "Say hi").on_action(|| async { Ok("hi!".into()) })))
     }
 
     async fn submit_form(_item_id: String, _values: Vec<FieldValue>) -> Result<String, FormError> {
@@ -307,9 +324,13 @@ cache.set("last-greeting", greeting);
 
 The [JavaScript](sample-js/src/index.js) and
 [TypeScript](sample-ts/src/index.ts) samples are complete examples. A command
-is an npm package whose `main` module exports `command` with four async
-functions (see [Forms](#forms) and [Custom views](#custom-views) for the last
-two). Pane's types come from
+is an npm package whose `main` module exports `command` with `render`, its
+list, whose items' actions are functions (`onAction`), and two functions for
+forms and custom views (see [Forms](#forms) and
+[Custom views](#custom-views)). The SDK hands Pane the list as a versioned
+JSON tree and runs an item's `onAction` when the user chooses it, then Pane
+asks for the list again ([list-tree.md](../docs/list-tree.md)). Pane's types
+come from
 `@pane/extension` (a `file:../js` development dependency); they describe plain
 values, not engine objects:
 
@@ -318,13 +339,20 @@ import type { Command } from "@pane/extension";
 import { waitFor } from "wasi:clocks/monotonic-clock@0.3.0";
 
 export const command: Command = {
-  async getView() {
-    return { title: "Hello", items: [{ id: "hi", title: "Say hi" }] };
-  },
-  async runAction(itemId) {
-    if (itemId !== "hi") throw new Error(`unknown item: ${itemId}`);
-    await waitFor(10_000_000); // 10 ms; the command suspends meanwhile
-    return "hi!";
+  async render() {
+    return {
+      title: "Hello",
+      items: [
+        {
+          id: "hi",
+          title: "Say hi",
+          async onAction() {
+            await waitFor(10_000_000); // 10 ms; the command suspends meanwhile
+            return "hi!";
+          },
+        },
+      ],
+    };
   },
   async submitForm() {
     throw { message: "this command has no forms" };
@@ -337,8 +365,9 @@ export const command: Command = {
 
 Throwing (a rejected promise) shows the error's message, or a thrown string,
 as an error. Returning a value of the wrong type, such as `undefined` from
-`runAction`, traps the guest, which Pane reports and recovers from as for
-Rust. npm dependencies are bundled into the component; the samples use
+an `onAction`, traps the guest, which Pane reports and recovers from as for
+Rust; a list Pane cannot read (a title that is not text, say) is the
+command's failure, not a crash. npm dependencies are bundled into the component; the samples use
 [Zod](https://zod.dev) 4.6.5 (`zod/mini`) and show its validation failure as a
 normal error. Only ECMAScript built-ins are available, not Node.js or browser
 APIs; WASI 0.3 imports declared by [the world](js/wit/world.wit) (currently
@@ -353,7 +382,7 @@ snapshotting the engine, so module top-level code runs at build time, on the
 build machine, and every instance starts from its result. Keep top-level code
 to pure setup such as schemas and constants: secrets, IDs, timestamps, random
 values or anything else meant to differ per instance belong inside
-`getView`/`runAction`. For the same reason, rebuilt components are never
+`render` and the actions. For the same reason, rebuilt components are never
 byte-identical.
 
 Build commands, from the repository root:
@@ -438,9 +467,9 @@ let form = Form {
     ],
     submit_label: "Greet".into(),
 };
-let item = Item { id: "form".into(), title: "Greet someone".into(), subtitle: None, form: Some(form), platforms: None };
+let item = Item::new("form", "Greet someone").form(form);
 
-// In `impl Guest`:
+// In `impl Command`:
 async fn submit_form(item_id: String, values: Vec<FieldValue>) -> Result<String, FormError> {
     let name = values.iter().find(|v| v.id == "name").map_or("", |v| v.value.trim());
     if name.is_empty() {
@@ -791,7 +820,9 @@ due meanwhile. At most one run of a command is asked for at a time; ticks
 that fall due while one runs are coalesced into the next run after it
 answers.
 
-The scheduled run is an ordinary `run-action` call: the guest needs no
+The scheduled run is the item's ordinary action (Pane asks for the
+command's list, then runs the item's action, as choosing it would): the
+guest needs no
 new interface, and everything an action may do — read and save data, call
 helpers, make requests, wait — works the same. See
 [scheduled work](../docs/schedules.md) for the full contract, and the
@@ -929,6 +960,86 @@ history.deleteItems(["7"]); // `delete-items`: `delete` is a JavaScript keyword
 [`sample-clipboard-ts`](sample-clipboard-ts) implement the Clipboard History
 command in JavaScript and TypeScript.
 
+## No-view commands and the launch record
+
+A command's entry in `pane.json` declares its **mode** (ADR 0037):
+`"mode": "view"`, the default when it says nothing, opens a screen, its
+list; `"mode": "no-view"` runs and opens none. Any other value is refused
+at install with the reason. Pane reads the mode from the manifest, so it
+knows at Enter what to do without running the command.
+
+A **no-view command** runs each time it is launched: Enter on its row in
+root search, its alias, a fallback, its global hotkey (which runs it
+without showing Pane's window), its quick slot, another command, or its
+own schedule. Root search, or whatever Pane shows, stays as it is; the
+text it answers is shown as the result, an error as the failure. An error
+it answers never counts towards [pausing](../docs/pausing.md); a crash
+does, as any call's. A `schedule` without an `item` makes Pane run the
+command itself every interval, in the background, showing nothing:
+
+```json
+{ "id": "tick", "title": "Tick", "component": "tick.wasm",
+  "mode": "no-view", "schedule": { "everySeconds": 60 } }
+```
+
+Every command receives its **launch record** on every way in: whether the
+user launched it or Pane did in the background, from where (root search,
+an alias, a fallback, a hotkey, a quick slot, another command, a
+schedule), its arguments (none yet), the text sent through its alias or as
+a fallback, and the JSON context another command passed
+([`wit/commands.wit`](../wit/commands.wit)).
+
+Rust: implement `run` in `pane_guest::Command` (one component may serve
+several commands, told apart by their id in `pane.json`); a view command's
+`render` reads its record with `pane_guest::commands::current()`.
+`render`, `submit_form` and `open_view` have defaults, so a no-view command
+needs none of them:
+
+```rust
+use pane_guest::alloc::{format, string::String};
+use pane_guest::{Command, LaunchRecord, NoCustomView};
+
+struct Toggle;
+pane_guest::export!(Toggle);
+
+impl Command for Toggle {
+    type CustomView = NoCustomView;
+
+    async fn run(command: String, launch: LaunchRecord) -> Result<String, String> {
+        Ok(format!("{command} ran from {}", pane_guest::commands::source_name(launch.source)))
+    }
+}
+```
+
+JavaScript or TypeScript: give the exported `command` a `run(id, launch)`;
+a view command's `render(launch)` receives the record too:
+
+```ts
+import type { Command } from "@pane/extension";
+
+export const command: Command = {
+  async run(id, launch) {
+    return `${id} ran from ${launch.source}`;
+  },
+};
+```
+
+A command **launches another** with `pane:extension/commands`'s `launch`
+(`pane_guest::commands::launch` in Rust, an import of
+`pane:extension/commands@0.1.0` in JavaScript and TypeScript): one of its
+own package by its id in `pane.json`, or one of another installed package
+by that package's identity (`local:` and the absolute folder Pane shows,
+`npm:` and its name, `git:` and its repository), passing JSON context and
+asking nothing. `user-initiated` opens it as if the user had invoked it;
+`background` runs a no-view command without a window and is refused for a
+view command. A target that is not installed, has no such command, or is
+disabled, paused or unavailable on this system is refused with the
+reason, which the caller receives as an error. `launch` answers once the
+launch has started, not when the target has run. The
+[no-view sample](sample-no-view) does all of this in Rust, and its
+[JavaScript](sample-no-view-js) and [TypeScript](sample-no-view-ts) copies
+answer the same.
+
 ## A command that takes a query
 
 The user can give any installed command an alias in Manage extensions, and
@@ -936,43 +1047,32 @@ typing it in root search lists the command first; nothing is needed of the
 command for that. A command that **takes a query** can also be sent text
 from root search: the user types its alias, a space and the text ("ec
 hello"), or makes it a fallback, which is listed below the results for any
-text typed, and invokes that row. Pane calls the command only then, never
-while the user types, and shows its answer as the result (an error as the
-failure); root search stays as it was. Set `"takesQuery": true` on the
-command in `pane.json` and export `pane:extension/query-command`
-([`wit/query.wit`](../wit/query.wit)) beside the command; Pane checks it at
-install without running it. Pane passes the command's id in `pane.json`, so
-one component can serve several such commands, and the text, trimmed and
-never empty. A trap counts towards [pausing](../docs/pausing.md) as any
-call's does. See [aliases and fallbacks](../docs/aliases.md).
+text typed, and invokes that row. Pane launches the command only then,
+never while the user types, with the text, trimmed and never empty, as its
+launch record's **fallback text**. Set `"takesQuery": true` on the command
+in `pane.json`. A no-view command runs with the text, its answer shown as
+the result (an error as the failure) while root search stays as it was; a
+view command opens its screen with it. See
+[aliases and fallbacks](../docs/aliases.md).
 
-Rust (`pane_guest::query`; the component then exports both interfaces), as
-[`sample-query`](sample-query) does:
+Rust, as [`sample-query`](sample-query) does, Echo being a no-view command:
 
 ```rust
-use pane_guest::alloc::{format, string::String};
-
-pane_guest::export!(Echo);
-pane_guest::query::export!(Echo);
-
-impl pane_guest::query::Guest for Echo {
-    async fn run_query(command: String, query: String) -> Result<String, String> {
-        Ok(format!("Echo heard “{query}”"))
+async fn run(command: String, launch: LaunchRecord) -> Result<String, String> {
+    match launch.fallback_text {
+        Some(text) => Ok(format!("Echo heard “{text}”")),
+        None => Ok("Echo heard nothing".into()),
     }
 }
 ```
 
-JavaScript or TypeScript: add `"pane": { "takesQuery": true }` to
-`package.json`, so the build exports the interface, and export
-`queryCommand` from the module, as the [JavaScript](sample-query-js) and
+JavaScript or TypeScript, as the [JavaScript](sample-query-js) and
 [TypeScript](sample-query-ts) query samples do:
 
 ```ts
-import type { QueryCommand } from "@pane/extension";
-
-export const queryCommand: QueryCommand = {
-  async runQuery(command, query) {
-    return `Echo heard “${query}”`;
+export const command: Command = {
+  async run(id, launch) {
+    return launch.fallbackText == null ? "Echo heard nothing" : `Echo heard “${launch.fallbackText}”`;
   },
 };
 ```
@@ -985,7 +1085,8 @@ A command that searches an online service as the user types sets
 `command`. Pane gives it a search field of its own once the user opens it
 and calls `search(command, query)` with the text typed there (trimmed,
 never empty); the results (`id`, `title`, optional `subtitle`) replace the
-command's list, and activating one calls `run-action` with its id. Root
+command's list, and activating one runs it by its id: the SDKs call the
+command's `run_search_result` (Rust) or `runSearchResult` (JS/TS). Root
 search never calls it, so nothing typed there reaches the command or its
 service. Pane waits 150 ms before it starts a search, and stops one it no
 longer needs (the text changed, the user left) where it waits, dropping the
@@ -1088,8 +1189,9 @@ impl GuestCustomView for Picker {
     }
 }
 
-// The item: `custom_view: Some(CustomViewInfo { title: "Pick".into(), label:
-// "Column".into(), role: CustomViewRole::ColorWell })`. In `impl Guest`:
+// The item: `Item::new("pick", "Pick").custom_view(CustomViewInfo { title:
+// "Pick".into(), label: "Column".into(), role: CustomViewRole::ColorWell })`.
+// In `impl Command`:
 type CustomView = Picker;
 
 async fn open_view(_item_id: String) -> Result<CustomView, String> {
@@ -1420,8 +1522,8 @@ function Pane calls with the types it calls it with, and for a command with
 A component built against an older shape of the same `apiVersion` (the
 pre-release API 0.1 changes between slices) is therefore refused at install,
 naming the first mismatch ("it was built for an older extension API shape:
-rebuild it against Pane's current extension API 0.1 (`get-view`: type
-mismatch for field items: expected record of 6 fields, found 4 fields)");
+rebuild it against Pane's current extension API 0.1 (it has no function
+`render`)");
 rebuild it against the current [`wit/extension.wit`](../wit/extension.wit).
 
 Where the component comes from is up to your build. A standalone Rust crate
@@ -1519,11 +1621,11 @@ two stages, and a failure in each is reported differently:
    instances are stopped (an open command, form or custom view of the
    package closes; root search then selects its command), and the new code
    starts: Pane starts each of the package's commands available on this
-   system and asks it for its view (`get-view`). Success shows "Reloaded
+   system and asks it for its view (`render`). Success shows "Reloaded
    Dev". If a command fails to initialize (it traps, or its component
    cannot load or be instantiated), its instances are stopped again and the
    package is reported as failed to start. An error the command returns
-   from `get-view` itself, such as asking the user to sign in first, is an
+   from `render` itself, such as asking the user to sign in first, is an
    ordinary answer and not a failure to start. On a failure to start: the package's row says "Failed to start", a **Retry
    starting <title>** row appears under its Reload row with the diagnostics
    (for a trap, the guest backtrace), which Pane also writes to its standard

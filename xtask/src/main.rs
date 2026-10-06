@@ -56,6 +56,8 @@ const PREBUILT: &[&str] = &[
     "sample_applications_ts",
     "sample_query_js",
     "sample_query_ts",
+    "sample_no_view_js",
+    "sample_no_view_ts",
     "sample_search_js",
     "sample_search_ts",
     "sample_helper_js",
@@ -69,6 +71,8 @@ const PREBUILT: &[&str] = &[
     "sample_schedule_ts",
     "sample_service_js",
     "sample_service_ts",
+    "sample_actions_js",
+    "sample_actions_ts",
 ];
 
 fn main() -> ExitCode {
@@ -159,9 +163,11 @@ fn guests() -> Result<(), String> {
                 "sample_operations",
                 "sample_dependencies",
                 "sample_query",
+                "sample_no_view",
                 "sample_search",
                 "sample_schedule",
                 "sample_service",
+                "sample_actions",
                 "sample_helper",
                 "faulty",
                 "operations_fixture",
@@ -169,6 +175,7 @@ fn guests() -> Result<(), String> {
                 "mismatched_api",
                 "failing_start",
                 "refusing_view",
+                "tree_fixture",
                 "git_greeter",
             ],
         ),
@@ -335,7 +342,7 @@ fn git_sample(root: &Path, out: &Path) -> Result<(), String> {
 /// (package folder in `guests/packages`, component) of each sample package,
 /// and of the default extensions (the calculator, applications and
 /// quicklinks).
-const SAMPLE_PACKAGES: [(&str, &str); 37] = [
+const SAMPLE_PACKAGES: [(&str, &str); 43] = [
     ("sample-rust", "sample_rust"),
     ("sample-settings", "sample_settings"),
     ("sample-js", "sample_js"),
@@ -357,6 +364,9 @@ const SAMPLE_PACKAGES: [(&str, &str); 37] = [
     ("sample-query", "sample_query"),
     ("sample-query-js", "sample_query_js"),
     ("sample-query-ts", "sample_query_ts"),
+    ("sample-no-view", "sample_no_view"),
+    ("sample-no-view-js", "sample_no_view_js"),
+    ("sample-no-view-ts", "sample_no_view_ts"),
     ("sample-search", "sample_search"),
     ("sample-schedule", "sample_schedule"),
     ("sample-service", "sample_service"),
@@ -373,6 +383,9 @@ const SAMPLE_PACKAGES: [(&str, &str); 37] = [
     ("sample-files-ts", "sample_files_ts"),
     ("sample-clipboard-js", "sample_clipboard_js"),
     ("sample-clipboard-ts", "sample_clipboard_ts"),
+    ("sample-actions", "sample_actions"),
+    ("sample-actions-js", "sample_actions_js"),
+    ("sample-actions-ts", "sample_actions_ts"),
 ];
 
 /// Rebuilds `guests/prebuilt/` from the JS/TS sample sources, then refreshes

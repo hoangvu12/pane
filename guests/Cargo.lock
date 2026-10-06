@@ -312,6 +312,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "sample-actions"
+version = "0.1.0"
+dependencies = [
+ "pane-guest",
+]
+
+[[package]]
 name = "sample-dependencies"
 version = "0.1.0"
 dependencies = [
@@ -325,6 +332,13 @@ version = "0.1.0"
 dependencies = [
  "pane-guest",
  "wasip3",
+]
+
+[[package]]
+name = "sample-no-view"
+version = "0.1.0"
+dependencies = [
+ "pane-guest",
 ]
 
 [[package]]
@@ -443,6 +457,14 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "tree-fixture"
+version = "0.1.0"
+dependencies = [
+ "dlmalloc",
+ "wit-bindgen",
 ]
 
 [[package]]

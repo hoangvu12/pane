@@ -42,6 +42,12 @@ impl Searching {
             in_progress: None,
         }
     }
+
+    /// Keeps `list` as the command's own list, shown once the search field
+    /// is cleared: the list drawn again while it holds text.
+    pub(super) fn keep(&mut self, list: CommandList) {
+        self.list = Some(list);
+    }
 }
 
 /// A search started, to be awaited for its answer to be shown.
@@ -79,8 +85,12 @@ impl Launcher {
         let search = state.search_epoch;
         let launcher = self.clone();
         if blank {
+            // Drawn with the record its screen was opened with.
+            let launch = state.launch.clone();
             return Some(Box::pin(async move {
-                let answer = runtime.get_view_with(&component, data.clone()).await;
+                let answer = runtime
+                    .render_launched_with(&component, &launch, data.clone())
+                    .await;
                 launcher.show_listed_again(epoch, search, component, data, answer);
             }));
         }

@@ -11,7 +11,7 @@
 // A promise cannot be cancelled, so the run is left behind when the timer
 // wins; Pane ends the helper's process as soon as the call that started it
 // returns.
-import type { Command, CustomView, Item, View } from "@pane/extension";
+import type { Command, CustomView, Item, List } from "@pane/extension";
 import { run, type HelperError } from "pane:extension/helpers@0.1.0";
 import { set } from "pane:extension/settings@0.1.0";
 import { waitFor } from "wasi:clocks/monotonic-clock@0.3.0";
@@ -35,10 +35,52 @@ async function helperRun(helper: string, args: string[], input: string): Promise
   }
 }
 
-const item = (id: string, title: string, subtitle: string): Item => ({ id, title, subtitle });
+/** Runs the action of the item `itemId`. */
+async function act(itemId: string): Promise<string> {
+  switch (itemId) {
+    case "echo":
+      return helperRun(ECHO, [], "hello from Pane");
+    case "wait": {
+      set(WAITING, "started");
+      // If Pane stops the call meanwhile, the helper's process ends and
+      // nothing after this line runs.
+      const answer = await helperRun(ECHO, ["--wait", "10"], "after waiting");
+      set(WAITING, "finished");
+      return answer;
+    }
+    case "limit": {
+      const slow = helperRun(ECHO, ["--wait", "10"], "too late");
+      const timer = waitFor(LIMIT).then(() => null);
+      const answer = await Promise.race([slow, timer]);
+      // Returning ends the call, and with it the helper's process.
+      return answer ?? "Stopped the helper after one second";
+    }
+    case "long": {
+      // Longer than the thirty seconds Pane once allowed a helper: other
+      // extensions' calls are served while this one waits.
+      const answer = await helperRun(ECHO, ["--wait", "40"], "after a long wait");
+      set(LONG_WAIT, "finished");
+      return answer;
+    }
+    case "fail":
+      return helperRun(ECHO, ["--fail"], "");
+    case "undeclared":
+      return helperRun("absent", [], "");
+    default:
+      throw new Error(`unknown item: ${itemId}`);
+  }
+}
+
+/** An item whose action is `act` with its id. */
+const item = (id: string, title: string, subtitle: string): Item => ({
+  id,
+  title,
+  subtitle,
+  onAction: () => act(id),
+});
 
 export const command: Command = {
-  async getView(): Promise<View> {
+  async render(): Promise<List> {
     return {
       title: "TypeScript helper sample",
       items: [
@@ -62,41 +104,6 @@ export const command: Command = {
         ),
       ],
     };
-  },
-
-  async runAction(itemId: string): Promise<string> {
-    switch (itemId) {
-      case "echo":
-        return helperRun(ECHO, [], "hello from Pane");
-      case "wait": {
-        set(WAITING, "started");
-        // If Pane stops the call meanwhile, the helper's process ends and
-        // nothing after this line runs.
-        const answer = await helperRun(ECHO, ["--wait", "10"], "after waiting");
-        set(WAITING, "finished");
-        return answer;
-      }
-      case "limit": {
-        const slow = helperRun(ECHO, ["--wait", "10"], "too late");
-        const timer = waitFor(LIMIT).then(() => null);
-        const answer = await Promise.race([slow, timer]);
-        // Returning ends the call, and with it the helper's process.
-        return answer ?? "Stopped the helper after one second";
-      }
-      case "long": {
-        // Longer than the thirty seconds Pane once allowed a helper: other
-        // extensions' calls are served while this one waits.
-        const answer = await helperRun(ECHO, ["--wait", "40"], "after a long wait");
-        set(LONG_WAIT, "finished");
-        return answer;
-      }
-      case "fail":
-        return helperRun(ECHO, ["--fail"], "");
-      case "undeclared":
-        return helperRun("absent", [], "");
-      default:
-        throw new Error(`unknown item: ${itemId}`);
-    }
   },
 
   async submitForm(itemId: string): Promise<string> {

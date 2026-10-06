@@ -7,8 +7,8 @@ use core::cell::Cell;
 
 use pane_guest::alloc::{format, string::String, vec, vec::Vec};
 use pane_guest::{
-    CustomView, CustomViewInfo, CustomViewRole, Field, FieldKind, FieldValue, Form, FormError,
-    Frame, Guest, GuestCustomView, Item, Key, Shape, Text, TextField, View, ViewEvent,
+    Command, CustomView, CustomViewInfo, CustomViewRole, Field, FieldKind, FieldValue, Form,
+    FormError, Frame, GuestCustomView, Item, Key, List, Shape, Text, TextField, ViewEvent,
 };
 
 struct Faulty;
@@ -34,14 +34,49 @@ fn grow_to_just_under_the_cap() -> Result<usize, String> {
     Ok(memory_size::<0>() * PAGE)
 }
 
+/// An item titled by its id.
 fn item(id: &str) -> Item {
-    Item {
-        id: id.into(),
-        title: id.into(),
-        subtitle: None,
-        form: None,
-        platforms: None,
-        custom_view: None,
+    Item::new(id, id)
+}
+
+/// An item whose action is [`run`] with its id.
+fn acting(id: &'static str) -> Item {
+    item(id).on_action(move || run(id))
+}
+
+/// Runs the action `id`: "error" is refused, "trap" traps, "grow-near-cap"
+/// and "grow-past-cap" grow the memory to either side of the cap, and
+/// "hold", which no item lists (tests run it by its callback id), holds the
+/// call.
+async fn run(id: &str) -> Result<String, String> {
+    match id {
+        // Holds a stream open to the host (its stdout), with the future of
+        // that write pending, saves `holding` as "started", then waits ten
+        // seconds before closing them and saving "finished". Tests stop it
+        // meanwhile; it is not listed.
+        "hold" => {
+            let (writer, reader) = wasip3::wit_stream::new::<u8>();
+            let written = wasip3::cli::stdout::write_via_stream(reader);
+            pane_guest::settings::set("holding", "started")?;
+            wasip3::clocks::monotonic_clock::wait_for(10_000_000_000).await;
+            drop(writer);
+            let _ = written.await;
+            pane_guest::settings::set("holding", "finished")?;
+            Ok("held".into())
+        }
+        "error" => Err("the guest refused".into()),
+        "trap" => panic!("guest trap"),
+        // Ends just under the cap: Pane lets it.
+        "grow-near-cap" => Ok(format!("grew to {} bytes", grow_to_just_under_the_cap()?)),
+        // Then allocates a mebibyte more, which Pane refuses: the
+        // allocation fails, and the guest traps.
+        "grow-past-cap" => {
+            grow_to_just_under_the_cap()?;
+            let block: Vec<u8> = Vec::with_capacity(1024 * 1024);
+            core::hint::black_box(&block);
+            Ok("allocated past the cap".into())
+        }
+        _ => Ok("fine".into()),
     }
 }
 
@@ -94,10 +129,10 @@ impl GuestCustomView for Counter {
     }
 }
 
-impl Guest for Faulty {
+impl Command for Faulty {
     type CustomView = Counter;
 
-    async fn get_view() -> Result<View, String> {
+    async fn render() -> Result<List, String> {
         // A form whose submission is always refused as a whole.
         let form = Form {
             title: "Refused".into(),
@@ -108,43 +143,33 @@ impl Guest for Faulty {
             }],
             submit_label: "Submit".into(),
         };
-        Ok(View {
-            title: "Faulty".into(),
-            items: vec![
-                item("ok"),
-                item("error"),
-                item("trap"),
-                Item {
-                    form: Some(form.clone()),
-                    ..item("form")
-                },
-                // Declares no operating system, so it is unavailable on
-                // every system; activating it must not open its form.
-                Item {
-                    form: Some(form),
-                    platforms: Some(vec![]),
-                    ..item("nowhere")
-                },
-                Item {
-                    custom_view: Some(CustomViewInfo {
-                        title: "Counter".into(),
-                        label: "Counter".into(),
-                        role: CustomViewRole::ColorWell,
-                    }),
-                    ..item("view")
-                },
-                Item {
-                    custom_view: Some(CustomViewInfo {
-                        title: "Refused view".into(),
-                        label: "Refused".into(),
-                        role: CustomViewRole::ColorWell,
-                    }),
-                    ..item("no-view")
-                },
-                item("grow-near-cap"),
-                item("grow-past-cap"),
-            ],
-        })
+        Ok(List::new("Faulty").items([
+            acting("ok"),
+            acting("error"),
+            acting("trap"),
+            item("form").form(form.clone()),
+            // Declares no operating system, so it is unavailable on every
+            // system; activating it must not open its form.
+            item("nowhere").form(form).platforms([]),
+            item("view").custom_view(CustomViewInfo {
+                title: "Counter".into(),
+                label: "Counter".into(),
+                role: CustomViewRole::ColorWell,
+            }),
+            item("no-view").custom_view(CustomViewInfo {
+                title: "Refused view".into(),
+                label: "Refused".into(),
+                role: CustomViewRole::ColorWell,
+            }),
+            acting("grow-near-cap"),
+            acting("grow-past-cap"),
+        ]))
+    }
+
+    /// A callback no item names runs as an action of that id, so tests can
+    /// run "hold", which is not listed.
+    async fn run_search_result(id: String) -> Result<String, String> {
+        run(&id).await
     }
 
     async fn submit_form(_item_id: String, _values: Vec<FieldValue>) -> Result<String, FormError> {
@@ -152,38 +177,6 @@ impl Guest for Faulty {
             field: None,
             message: "the guest refused the form".into(),
         })
-    }
-
-    async fn run_action(item_id: String) -> Result<String, String> {
-        match item_id.as_str() {
-            // Holds a stream open to the host (its stdout), with the future of
-            // that write pending, saves `holding` as "started", then waits ten
-            // seconds before closing them and saving "finished". Tests stop it
-            // meanwhile; it is not listed.
-            "hold" => {
-                let (writer, reader) = wasip3::wit_stream::new::<u8>();
-                let written = wasip3::cli::stdout::write_via_stream(reader);
-                pane_guest::settings::set("holding", "started")?;
-                wasip3::clocks::monotonic_clock::wait_for(10_000_000_000).await;
-                drop(writer);
-                let _ = written.await;
-                pane_guest::settings::set("holding", "finished")?;
-                Ok("held".into())
-            }
-            "error" => Err("the guest refused".into()),
-            "trap" => panic!("guest trap"),
-            // Ends just under the cap: Pane lets it.
-            "grow-near-cap" => Ok(format!("grew to {} bytes", grow_to_just_under_the_cap()?)),
-            // Then allocates a mebibyte more, which Pane refuses: the
-            // allocation fails, and the guest traps.
-            "grow-past-cap" => {
-                grow_to_just_under_the_cap()?;
-                let block: Vec<u8> = Vec::with_capacity(1024 * 1024);
-                core::hint::black_box(&block);
-                Ok("allocated past the cap".into())
-            }
-            _ => Ok("fine".into()),
-        }
     }
 
     async fn open_view(item_id: String) -> Result<CustomView, String> {
