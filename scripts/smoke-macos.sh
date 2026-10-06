@@ -295,7 +295,7 @@ start_pane --install target/guests/packages/calculator
 key 36; sleep 2   # Install
 type_text '6*7'; sleep 2
 capture 27-answer.png
-check 27-answer.png selected 3000   # the selected answer row
+check 27-answer.png answer   # the selected answer card
 key 36; sleep 1
 capture 28-copied.png   # "Copied 42 to the clipboard"
 command_key a; type_text '42+1'; sleep 2
@@ -1835,7 +1835,7 @@ capture 500-installed-root.png
 check 500-installed-root.png subtitle   # root search: the default extensions' commands are listed
 type_text '6*7'; sleep 2
 capture 501-calculator-answer.png
-check 501-calculator-answer.png selected 3000   # "42", the calculator's selected answer row
+check 501-calculator-answer.png answer   # "42", the calculator's selected answer card
 key 36; sleep 1
 capture 502-calculator-copied.png
 check 502-calculator-copied.png success   # "Copied 42 to the clipboard"
@@ -2032,7 +2032,7 @@ for _ in $(seq 100); do [ ! -e "$binary.old" ] && break; sleep 0.1; done
 [ ! -e "$binary.old" ] || { echo "the old program's file was not removed on the new start"; exit 1; }
 command_key a; type_text '6*7'; sleep 2
 capture 604-answer-after-update.png
-check 604-answer-after-update.png selected 3000   # "42", the calculator's answer
+check 604-answer-after-update.png answer   # "42", the calculator's selected answer card
 key 36; sleep 1
 capture 605-copied-after-update.png
 check 605-copied-after-update.png success   # "Copied 42 to the clipboard"

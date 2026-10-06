@@ -21,6 +21,8 @@ All verification that gates a merge happens on GitHub Actions, paced in tiers so
 
 Two tests fail occasionally without a code cause: the macOS claim-window test in `pane-core`'s `update.rs` (fires only where macOS runs tests) and `command_search.rs`'s `a_service_that_stalls_is_given_up_on_within_the_limits` under runner load. The tests run under cargo-nextest with two retries, which absorbs them. A failure that survives its retries is real: rerun the failed jobs once (`gh run rerun <id> --repo hoangvu12/pane --failed`) before diagnosing.
 
+The Linux clipboard adapter test (`clipboard_adapter_linux.rs`'s `the_watcher_reports_this_tests_changes_until_dropped`) runs in its own Xvfb step under plain `cargo test`, so nothing retries it. Once (release run 37426152516) Xvfb reset the test's first connection ("Pane could not reach the X11 display :99: Connection reset by peer"), before any clipboard work. That panic is the display, not the adapter: rerun the failed job.
+
 ## What is traded
 
 Per branch push, Windows and macOS get compile checks only; their full test runs happen at the verify tier and in the release matrix. The release legs — the app actually launched and screenshotted, the packages built, the renderer's output checked — never run per push: a milestone's native and visual validation is its own open release-validation ticket, fed by the run on `main`.

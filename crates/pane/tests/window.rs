@@ -2669,6 +2669,14 @@ fn actions_filter_has_focus(window: &Entity<LauncherWindow>, cx: &mut VisualTest
     cx.update(|window, cx| filter.focus_handle(cx).is_focused(window))
 }
 
+/// Open actions' default binding on this system (Ctrl+K deletes to the
+/// end of the line in a macOS field).
+const OPEN_ACTIONS: &str = if cfg!(target_os = "macos") {
+    "cmd-k"
+} else {
+    "ctrl-k"
+};
+
 /// The open binding opens the selected result's actions with focus in
 /// their search; Escape closes only the panel, giving focus back to the
 /// query, and changes neither the query nor the selection.
@@ -2683,7 +2691,7 @@ fn the_open_binding_shows_the_selected_results_actions_and_escape_closes_only_th
     let before = settle(&window, cx);
     let target = before.selected;
 
-    cx.simulate_keystrokes("ctrl-k");
+    cx.simulate_keystrokes(OPEN_ACTIONS);
     settle(&window, cx);
     assert!(actions_open(&window, cx));
     assert!(actions_filter_has_focus(&window, cx), "typing filters");
@@ -2727,10 +2735,10 @@ fn the_actions_button_and_the_binding_toggle_one_panel(cx: &mut TestAppContext) 
     settle(&window, cx);
     assert!(!actions_open(&window, cx), "a second click closes it");
 
-    cx.simulate_keystrokes("ctrl-k");
+    cx.simulate_keystrokes(OPEN_ACTIONS);
     settle(&window, cx);
     assert!(actions_open(&window, cx));
-    cx.simulate_keystrokes("ctrl-k");
+    cx.simulate_keystrokes(OPEN_ACTIONS);
     settle(&window, cx);
     assert!(!actions_open(&window, cx), "the binding toggles it too");
 }
@@ -2742,7 +2750,7 @@ fn the_primary_action_runs_on_the_target_from_the_panel(cx: &mut TestAppContext)
     let (window, cx) = three_rows(cx);
     cx.simulate_keystrokes("down");
     settle(&window, cx);
-    cx.simulate_keystrokes("ctrl-k");
+    cx.simulate_keystrokes(OPEN_ACTIONS);
     settle(&window, cx);
     cx.simulate_keystrokes("enter");
     let view = settle(&window, cx);
@@ -2759,7 +2767,7 @@ fn the_primary_action_runs_on_the_target_from_the_panel(cx: &mut TestAppContext)
 #[gpui::test]
 fn typing_filters_the_actions_and_nothing_matching_says_so(cx: &mut TestAppContext) {
     let (window, cx) = three_rows(cx);
-    cx.simulate_keystrokes("ctrl-k");
+    cx.simulate_keystrokes(OPEN_ACTIONS);
     settle(&window, cx);
     cx.simulate_input("zzz");
     let view = settle(&window, cx);
@@ -2776,7 +2784,7 @@ fn typing_filters_the_actions_and_nothing_matching_says_so(cx: &mut TestAppConte
 #[gpui::test]
 fn an_outside_click_closes_the_panel_without_invoking_what_it_covered(cx: &mut TestAppContext) {
     let (window, cx) = three_rows(cx);
-    cx.simulate_keystrokes("ctrl-k");
+    cx.simulate_keystrokes(OPEN_ACTIONS);
     settle(&window, cx);
     let charlie = center_of(cx, "row-Charlie");
     cx.simulate_click(charlie, Modifiers::none());
@@ -2793,7 +2801,7 @@ fn the_pointer_cannot_change_the_panels_target(cx: &mut TestAppContext) {
     let (window, cx) = three_rows(cx);
     let bravo = center_of(cx, "row-Bravo");
     arrive(cx, bravo - gpui::point(px(1.), px(0.)));
-    cx.simulate_keystrokes("ctrl-k");
+    cx.simulate_keystrokes(OPEN_ACTIONS);
     settle(&window, cx);
     cx.simulate_mouse_move(bravo, None::<MouseButton>, Modifiers::none());
     assert_eq!(settle(&window, cx).selected, Some(0));
@@ -2807,7 +2815,7 @@ fn a_target_gone_from_behind_the_panel_runs_nothing(cx: &mut TestAppContext) {
     let (window, cx) = three_rows(cx);
     cx.simulate_keystrokes("down");
     settle(&window, cx);
-    cx.simulate_keystrokes("ctrl-k");
+    cx.simulate_keystrokes(OPEN_ACTIONS);
     settle(&window, cx);
     // Bravo leaves the results behind the open panel.
     let launcher = cx.read_entity(&window, |window, _| window.launcher().clone());
@@ -2834,7 +2842,7 @@ fn with_nothing_selected_the_panel_says_so(cx: &mut TestAppContext) {
     cx.simulate_input("zzzz");
     let view = settle(&window, cx);
     assert_eq!(view.selected, None);
-    cx.simulate_keystrokes("ctrl-k");
+    cx.simulate_keystrokes(OPEN_ACTIONS);
     settle(&window, cx);
     assert!(cx.debug_bounds("actions-empty").is_some());
     assert!(
@@ -2874,7 +2882,7 @@ fn an_installed_commands_alias_action_opens_its_alias_form(cx: &mut TestAppConte
     cx.simulate_input("say");
     settle(&window, cx);
 
-    cx.simulate_keystrokes("ctrl-k");
+    cx.simulate_keystrokes(OPEN_ACTIONS);
     settle(&window, cx);
     assert!(cx.debug_bounds("action-Add Alias…").is_some());
     assert!(cx.debug_bounds("action-group-Pane").is_some());
@@ -3394,7 +3402,7 @@ mod clipboard_split {
         let launcher = world.launcher(cx, &["kept"]);
         let (window, cx) = open_history(cx, launcher);
 
-        cx.simulate_keystrokes("ctrl-k");
+        cx.simulate_keystrokes(super::OPEN_ACTIONS);
         settle(&window, cx);
         assert!(!split_shown(&window, cx));
         // The extension's own rows: retention, exclusions, clearing.
@@ -3488,6 +3496,13 @@ const TOGGLE_PIN_NAME: &str = if cfg!(target_os = "macos") {
     "Shift+Command+F"
 } else {
     "Ctrl+Shift+F"
+};
+
+/// How the slots' Ctrl+digit chords name Ctrl on this system.
+const CTRL: &str = if cfg!(target_os = "macos") {
+    "Control"
+} else {
+    "Ctrl"
 };
 
 /// The move keys on this system: the focused slot one place later, or
@@ -3648,7 +3663,7 @@ fn pinning_from_the_actions_panel_adds_a_slot_whose_chord_opens_it(cx: &mut Test
     let (window, cx) = pinned_rows(cx, data.path(), &[]);
     cx.simulate_keystrokes("down");
     settle(&window, cx);
-    cx.simulate_keystrokes("ctrl-k");
+    cx.simulate_keystrokes(OPEN_ACTIONS);
     settle(&window, cx);
     assert!(cx.debug_bounds("action-Pin").is_some());
     cx.simulate_input("pin");
@@ -3662,7 +3677,11 @@ fn pinning_from_the_actions_panel_adds_a_slot_whose_chord_opens_it(cx: &mut Test
     assert!(data.path().join("quick-slots.json").exists());
     let nodes = accessible_nodes(cx);
     let pinned = node(&nodes, "Button", "Pinned 1: Bravo");
-    assert_eq!(pinned["keyboard_shortcut"], "Ctrl+1", "{pinned:#}");
+    assert_eq!(
+        pinned["keyboard_shortcut"],
+        format!("{CTRL}+1"),
+        "{pinned:#}"
+    );
 
     cx.simulate_keystrokes("ctrl-1");
     let view = settle(&window, cx);
@@ -3716,7 +3735,7 @@ fn a_slots_chord_runs_nothing_while_an_overlay_or_a_composition_has_the_keys(
 
     let data = tempfile::tempdir().unwrap();
     let (window, cx) = pinned_rows(cx, data.path(), &["sample_rust"]);
-    cx.simulate_keystrokes("ctrl-k");
+    cx.simulate_keystrokes(OPEN_ACTIONS);
     settle(&window, cx);
     cx.simulate_keystrokes("ctrl-1");
     let view = settle(&window, cx);
@@ -3793,7 +3812,7 @@ fn pinning_past_five_adds_a_pin_on_a_new_row(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
     let five = ["one", "two", "three", "four", "five"];
     let (window, cx) = pinned_rows(cx, data.path(), &five);
-    cx.simulate_keystrokes("ctrl-k");
+    cx.simulate_keystrokes(OPEN_ACTIONS);
     settle(&window, cx);
     cx.simulate_input("pin");
     settle(&window, cx);
@@ -3823,7 +3842,7 @@ fn a_pinned_results_actions_unpin_it(cx: &mut TestAppContext) {
     cx.simulate_input("alpha");
     let view = settle(&window, cx);
     assert_eq!(view.rows[view.selected.unwrap()].title, "Alpha");
-    cx.simulate_keystrokes("ctrl-k");
+    cx.simulate_keystrokes(OPEN_ACTIONS);
     settle(&window, cx);
     assert!(cx.debug_bounds("action-Unpin").is_some());
     assert!(cx.debug_bounds("action-Pin").is_none());
@@ -3901,7 +3920,7 @@ fn a_pin_that_cannot_be_recorded_is_put_back_and_reported(cx: &mut TestAppContex
     let (window, cx) = pinned_rows(cx, data.path(), &[]);
     // Something that is not a file stands where the record goes.
     std::fs::create_dir(data.path().join("quick-slots.json")).unwrap();
-    cx.simulate_keystrokes("ctrl-k");
+    cx.simulate_keystrokes(OPEN_ACTIONS);
     settle(&window, cx);
     cx.simulate_input("pin");
     settle(&window, cx);
@@ -3951,7 +3970,7 @@ fn with_seven_pins_ctrl_6_picks_the_first_row_and_the_last_pins_have_no_number(
     let (window, cx) = pinned_rows(cx, data.path(), &SEVEN_PINS);
     let nodes = accessible_nodes(cx);
     let fifth = node(&nodes, "Button", "Pinned 5: five");
-    assert_eq!(fifth["keyboard_shortcut"], "Ctrl+5", "{fifth:#}");
+    assert_eq!(fifth["keyboard_shortcut"], format!("{CTRL}+5"), "{fifth:#}");
     for label in ["Pinned 6: six", "Pinned 7: seven"] {
         let pin = node(&nodes, "Button", label);
         assert!(pin.get("keyboard_shortcut").is_none(), "{pin:#}");

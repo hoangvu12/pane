@@ -327,7 +327,7 @@ start_pane --install target/guests/packages/calculator
 "$xdotool" key Return; sleep 2   # Install
 "$xdotool" type --delay 50 '6*7'; sleep 2
 capture 27-answer.png
-check 27-answer.png selected 3000   # the selected answer row
+check 27-answer.png answer   # the selected answer card
 "$xdotool" key Return; sleep 1
 capture 28-copied.png   # "Copied 42 to the clipboard"
 "$xdotool" key ctrl+a; "$xdotool" type --delay 50 '42+1'; sleep 2
@@ -1943,7 +1943,7 @@ capture 500-installed-root.png
 check 500-installed-root.png subtitle   # root search: the default extensions' commands are listed
 "$xdotool" type --delay 50 '6*7'; sleep 2
 capture 501-calculator-answer.png
-check 501-calculator-answer.png selected 3000   # "42", the calculator's selected answer row
+check 501-calculator-answer.png answer   # "42", the calculator's selected answer card
 "$xdotool" key Return; sleep 1
 capture 502-calculator-copied.png
 check 502-calculator-copied.png success   # "Copied 42 to the clipboard"
@@ -2114,7 +2114,7 @@ start_update_pane
 for _ in $(seq 500); do [ ! -e "$update_home/.local/bin/pane.old" ] && break; sleep 0.2; done
 [ ! -e "$update_home/.local/bin/pane.old" ] || { echo "the old program's file was not removed on the new start"; exit 1; }
 "$xdotool" key ctrl+a; "$xdotool" type --delay 50 '6*7'
-capture_until 604-answer-after-update.png selected 30   # "42", the calculator's selected answer row
+capture_until 604-answer-after-update.png answer 30   # "42", the calculator's selected answer card
 "$xdotool" key Return
 capture_until 605-copied-after-update.png success 10   # "Copied 42 to the clipboard"
 wait_for "$update_registry" '"disabled": true' present

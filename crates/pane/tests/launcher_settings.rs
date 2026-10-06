@@ -153,6 +153,24 @@ fn display(id: u64, x: f32, y: f32, width: f32, height: f32, inset: f32) -> Disp
     }
 }
 
+/// Where the launcher of `cx` opens on the layout's second display. The
+/// layout counts physical pixels on Windows and X11, where the test
+/// window (1920×1080 at a scale of 2) is larger than the usable area and
+/// sits at its top left; on macOS it counts AppKit points, where the
+/// window fits and is centered in it.
+fn second_display_origin(placement: &FakePlacement, cx: &mut VisualTestContext) -> Point {
+    if !cfg!(target_os = "macos") {
+        return Point { x: 1980., y: 60. };
+    }
+    let size = cx.update(|window, _| window.bounds().size);
+    placement.layout.borrow().displays[1]
+        .window_bounds(Size {
+            width: size.width.as_f32(),
+            height: size.height.as_f32(),
+        })
+        .origin
+}
+
 /// Opens the Settings window and moves it to the Launcher page by
 /// clicking its sidebar row, ready for the page's own controls.
 fn open_launcher_page(
@@ -337,9 +355,10 @@ fn the_launcher_opens_on_the_chosen_display_and_never_moves_settings(cx: &mut Te
     // placed on it as it opened, in its usable area, which the first
     // recorded move's origin names.
     let default = Shortcut::open_pane_default();
+    let second = second_display_origin(&placement, cx);
     assert_eq!(
         placement.origin(0),
-        Point { x: 1980., y: 60. },
+        second,
         "the pointer's display's usable area"
     );
 
@@ -352,7 +371,7 @@ fn the_launcher_opens_on_the_chosen_display_and_never_moves_settings(cx: &mut Te
     assert_eq!(placement.moves.borrow().len(), before + 1);
     assert_eq!(
         placement.origin(before),
-        Point { x: 1980., y: 60. },
+        second,
         "the default still opens on the display with the mouse"
     );
 
