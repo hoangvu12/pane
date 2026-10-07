@@ -593,6 +593,32 @@ fn categories_and_folders_for_people() {
     assert!(Category::Applications.holds(Path::new("/x/Pane.app"), EntryKind::Folder));
     assert!(Category::Archives.holds(Path::new("/x/a.tar.gz"), EntryKind::File));
     assert!(!Category::Documents.holds(Path::new("/x/song.mp3"), EntryKind::File));
+    // Text and Other (#177): plain text is not a document, and a file of no
+    // category is Other; a folder is never Other.
+    assert!(Category::Text.holds(Path::new("/x/notes.md"), EntryKind::File));
+    assert!(Category::Text.holds(Path::new("/x/main.rs"), EntryKind::File));
+    assert!(!Category::Documents.holds(Path::new("/x/notes.txt"), EntryKind::File));
+    assert!(Category::Documents.holds(Path::new("/x/report.PDF"), EntryKind::File));
+    assert!(Category::Other.holds(Path::new("/x/data.bin"), EntryKind::File));
+    assert!(Category::Other.holds(Path::new("/x/README"), EntryKind::File));
+    assert!(!Category::Other.holds(Path::new("/x/cat.png"), EntryKind::File));
+    assert!(!Category::Other.holds(Path::new("/x/Projects"), EntryKind::Folder));
+    assert_eq!(
+        Category::of(Path::new("/x/setup.exe"), EntryKind::File),
+        Some(Category::Applications)
+    );
+    assert_eq!(
+        Category::of(Path::new("/x/notes.txt"), EntryKind::File),
+        Some(Category::Text)
+    );
+    assert_eq!(
+        Category::of(Path::new("/x/data.bin"), EntryKind::File),
+        Some(Category::Other)
+    );
+    assert_eq!(
+        Category::of(Path::new("/x/Projects"), EntryKind::Folder),
+        None
+    );
 
     let home = Path::new("/home/me");
     assert_eq!(

@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "title": "Files",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "apiVersion": "0.1",
   "icon": "icon.svg",
   "commands": [
@@ -9,7 +9,7 @@
       "id": "files",
       "title": "Search Files",
       "icon": "search.svg",
-      "subtitle": "Finds the files of your home folder as you type, to open, reveal, copy or recycle them",
+      "subtitle": "Finds the files of your home folder: recently used, by name and by type, with a preview",
       "component": "files.wasm",
       "search": true,
       "rootResults": true

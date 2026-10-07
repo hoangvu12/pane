@@ -64,6 +64,7 @@ mod runtime_crash;
 mod samples;
 mod schedules;
 mod search;
+mod search_files;
 mod services;
 mod stopping;
 mod submenus;

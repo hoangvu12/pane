@@ -38,6 +38,10 @@ interface file-index {
     archives,
     /// Programs, scripts, shortcuts, installers and application bundles.
     applications,
+    /// Plain text: notes, data and configuration files, source code.
+    text,
+    /// A file of none of the other categories.
+    other,
   }
 
   /// How results are ordered.

@@ -7,11 +7,19 @@
 //! once open, the command owns the launcher's search field
 //! (`"search": true`) and lists more.
 //!
+//! Installed as Pane's default extension, Search Files is drawn by Pane
+//! itself, as Raycast's File Search is (#177): Pane lists the index for it
+//! — Recently Used before typing, a type dropdown, more rows as the list
+//! scrolls, a detail with an image's preview and the file's Metadata —
+//! and this command's own list is not shown nor its `search` asked. A copy
+//! installed from a folder keeps them: its list says what is searched, and
+//! its `search` answers the best 50 entries.
+//!
 //! Pane's host keeps the index, ranks the entries and checks each again
 //! before acting on it; the extension only asks the index and names the
 //! entries by the ids Pane gave them, never by a path. Pane gives each its
-//! actions (Open, Show in Explorer, Open With…, Copy Path, Copy File, Move
-//! to Recycle Bin) and performs them itself: Enter on a program shows it in
+//! actions (Open, Show in Explorer, Open With…, Copy Path, Copy Name, Copy
+//! File, Move to Recycle Bin) and performs them itself: Enter on a program shows it in
 //! the file manager and only Run runs it.
 #![no_std]
 

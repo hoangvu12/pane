@@ -96,7 +96,7 @@ as `file-index.search` gave it to the package (#175), or of a file of the
 folder granted to the command's package, as `list-folder` gave it, when
 the result is that file. Pane then lists it with the file's own name and folder and gives it
 its own [file actions](files.md#the-file-actions) (Open, Reveal, Open
-With…, Copy Path, Copy File, Move to Recycle Bin; for a program, Enter
+With…, Copy Path, Copy Name, Copy File, Move to Recycle Bin; for a program, Enter
 reveals it and only Run runs it), which Pane performs without calling the
 command; an id Pane did not give is not listed. A search answered while
 that folder was still being listed is asked again once it is, unless a
@@ -104,7 +104,11 @@ newer text stopped it. Installing checks the export, as for the other
 optional exports. A command may set both `"search"` and `"rootResults"`
 (Search Files does): root search then asks it as well, so it declares that
 what is typed there reaches it; a command that searches without saying
-`rootResults` is still never asked by root search. Rust:
+`rootResults` is still never asked by root search. Pane's own Search Files, as its
+registered default extension, is the one command Pane searches for
+itself: Pane lists the file index in its [Search Files view](files.md#search-files)
+(#177), and neither the command's list nor its `search` is shown; a copy
+installed from a folder searches as any command does. Rust:
 `pane_guest::search::Guest` and `pane_guest::search::export!`; JS/TS:
 export `commandSearch` with `"pane": { "search": true }` in `package.json`.
 

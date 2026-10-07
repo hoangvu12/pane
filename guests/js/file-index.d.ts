@@ -16,8 +16,19 @@ declare module "pane:extension/file-index@0.1.0" {
   /** What kind of entry it is; a link is listed, never followed. */
   export type EntryKind = "file" | "folder" | "link";
 
-  /** A kind of file, told from its name's extension. */
-  export type Category = "documents" | "images" | "audio" | "video" | "archives" | "applications";
+  /**
+   * A kind of file, told from its name's extension: `text` is plain text
+   * (notes, data, source code), `other` a file of none of the others.
+   */
+  export type Category =
+    | "documents"
+    | "images"
+    | "audio"
+    | "video"
+    | "archives"
+    | "applications"
+    | "text"
+    | "other";
 
   /**
    * How results are ordered: `relevance` (best match first; for a blank

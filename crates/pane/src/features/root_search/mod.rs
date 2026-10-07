@@ -36,7 +36,7 @@ use crate::{SelectNext, SelectPrevious};
 
 pub(crate) mod layouts;
 
-const CONTEXT: &str = "RootSearch";
+pub(crate) const CONTEXT: &str = "RootSearch";
 /// The query field's placeholder on root search: the reference's "Search
 /// apps, commands, plugins…" in Pane's own terms — root search finds
 /// installed applications and commands, and Pane has extensions, not

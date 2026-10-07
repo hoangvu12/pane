@@ -33,6 +33,8 @@ fn category_of(category: wit::Category) -> Category {
         wit::Category::Video => Category::Video,
         wit::Category::Archives => Category::Archives,
         wit::Category::Applications => Category::Applications,
+        wit::Category::Text => Category::Text,
+        wit::Category::Other => Category::Other,
     }
 }
 

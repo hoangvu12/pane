@@ -82,6 +82,9 @@ pub struct LauncherWindow {
     /// Pane's Clipboard History in the split view, while its command is
     /// open; see [`features::clipboard_history`].
     pub(crate) clipboard: Option<clipboard_history::ClipboardHistory>,
+    /// Pane's Search Files in the split view, while its command is open;
+    /// see [`features::search_files`].
+    pub(crate) files: Option<crate::features::search_files::SearchFiles>,
     /// The footer toast's focus and time; see [`features::toast`].
     pub(crate) toast: toast::ToastControls,
     /// The HUD's window, while one shows; see [`features::hud`].
@@ -203,6 +206,7 @@ impl LauncherWindow {
             menu: None,
             actions: None,
             clipboard: None,
+            files: None,
             toast: toast::ToastControls::new(cx),
             hud: hud::HudWindow::default(),
             confirmation: confirmation::ConfirmationControls::new(cx),
@@ -423,12 +427,17 @@ impl LauncherWindow {
         self.window_requested(WindowRequest::Hud(hud), window, cx);
     }
 
-    fn select_next(&mut self, _: &SelectNext, _: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn select_next(&mut self, _: &SelectNext, _: &mut Window, cx: &mut Context<Self>) {
         self.launcher.move_selection(1);
         cx.notify();
     }
 
-    fn select_previous(&mut self, _: &SelectPrevious, _: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn select_previous(
+        &mut self,
+        _: &SelectPrevious,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.launcher.move_selection(-1);
         cx.notify();
     }
@@ -457,7 +466,7 @@ impl LauncherWindow {
         cx.notify();
     }
 
-    fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
         // The open Actions panel takes Enter from the key press itself, once
         // per press ([`LauncherWindow::panel_keys`]).
         if self.actions.is_some() {
@@ -508,7 +517,7 @@ impl LauncherWindow {
     /// at that submenu instead (#140). A missing action runs nothing, and
     /// the key goes no further. Once per press: the system's repeats of a
     /// held key run nothing more.
-    fn item_action_keys(
+    pub(crate) fn item_action_keys(
         &mut self,
         event: &KeyDownEvent,
         window: &mut Window,
@@ -1178,6 +1187,8 @@ impl LauncherWindow {
         self.sync_root_search(window, cx);
         // After it: the Clipboard History view focuses its own search.
         self.sync_clipboard_history(window, cx);
+        // Search Files keeps root search's field, in its split view.
+        self.sync_search_files(window, cx);
         self.sync_home(cx);
         // Last of all: a confirmation a command waits on keeps the focus
         // over whatever screen is shown (#146).
@@ -1441,7 +1452,7 @@ impl LauncherWindow {
     /// list the Actions button. `action` is the launcher's one
     /// selected-action definition ([`Launcher::selected_action`]): on a
     /// command's list it names the selected item's primary action.
-    fn footer_buttons(
+    pub(crate) fn footer_buttons(
         &self,
         action: &SelectedAction,
         with_actions: bool,
@@ -1609,8 +1620,14 @@ impl Render for LauncherWindow {
         // The toast the footer shows, if any, and its time (#141).
         let toast = self.footer_toast(&view.status);
         self.time_toast(toast.as_ref(), window, cx);
-        // Pane's Clipboard History draws its own split view (#102), with a
-        // confirmation its command asks for over it (#146).
+        // Pane's Clipboard History and Search Files draw their own split
+        // view (#102, #177), with a confirmation the command asks for over
+        // it (#146).
+        if let Some(split) = self.render_search_files(&view, window, cx) {
+            let visuals = crate::settings::launcher_visuals(cx);
+            let asked = self.render_confirmation_layer(&visuals.theme, visuals.material, cx);
+            return split.children(asked);
+        }
         if let Some(split) = self.render_clipboard_history(&view, window, cx) {
             let visuals = crate::settings::launcher_visuals(cx);
             let asked = self.render_confirmation_layer(&visuals.theme, visuals.material, cx);

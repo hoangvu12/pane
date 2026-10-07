@@ -20,6 +20,11 @@
 //! adapter (`crate::features::clipboard_history`) composes the view
 //! through [`compose`] and the parts below.
 //!
+//! Search Files (#177) is the view's second user
+//! (`crate::features::search_files`): its rows are files ([`file_row`]),
+//! with the system's icon and the folder; its detail previews an image
+//! ([`file_image_preview`]) over the file's Metadata ([`info_section`]).
+//!
 //! A window narrower than the reference keeps the view usable: the list
 //! takes at most half the width, the detail the rest, and both scroll.
 
@@ -265,6 +270,108 @@ pub(crate) fn clip_row(
         )
 }
 
+/// What a found file's row shows (Search Files, #177).
+pub(crate) struct FoundFile {
+    pub(crate) title: SharedString,
+    /// Its folder below the home folder (`~/…`).
+    pub(crate) subtitle: SharedString,
+    pub(crate) selected: bool,
+    /// The system's icon for the file, drawn bare.
+    pub(crate) icon: AnyElement,
+}
+
+/// A file's row: a record's row (see [`clip_row`]) with the file's own
+/// icon in the tile's place and its folder, muted and truncating first,
+/// after its title. The caller attaches identity, accessibility and the
+/// click.
+pub(crate) fn file_row(id: impl Into<ElementId>, row: FoundFile, theme: &Theme) -> Stateful<Div> {
+    let geometry = &theme.geometry;
+    let split = &theme.split;
+    let press = pressed(if row.selected {
+        theme.row_selected
+    } else {
+        theme.row_hover
+    });
+    div()
+        .id(id)
+        .active(move |line| line.bg(press))
+        .flex_none()
+        .w_full()
+        .h(geometry.row_min_height)
+        .flex()
+        .items_center()
+        .gap(geometry.row_gap)
+        .px(geometry.row_padding_x)
+        .rounded(geometry.row_radius)
+        .cursor_pointer()
+        .when(!row.selected, |line| {
+            line.hover(|line| line.bg(theme.row_hover))
+        })
+        .when(row.selected, |line| {
+            line.bg(theme.row_selected).shadow(vec![
+                BoxShadow::new(px(0.), px(0.), theme.row_selected_border)
+                    .spread_radius(px(1.))
+                    .inset(),
+            ])
+        })
+        .child(div().flex_none().child(row.icon))
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .flex()
+                .items_baseline()
+                .gap(split.info_gap)
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .max_w(relative(0.7))
+                        .truncate()
+                        .text_size(split.title_size)
+                        .font_weight(theme.typography.medium)
+                        .text_color(theme.text_title)
+                        .child(row.title),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .truncate()
+                        .text_size(split.time_size)
+                        .text_color(theme.text_muted)
+                        .child(row.subtitle),
+                ),
+        )
+}
+
+/// An image file, previewed whole in the preview card (Search Files,
+/// #177): the file at `path`, scaled down to fit the card with its
+/// proportions kept, centered, padded as text is. A copied image's
+/// preview is [`image_preview`] (#167).
+pub(crate) fn file_image_preview(path: PathBuf, theme: &Theme) -> Div {
+    let split = &theme.split;
+    div()
+        .debug_selector(|| "files-preview-image".into())
+        .size_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .p(split.text_padding_y)
+        .child(img(path).size_full().object_fit(ObjectFit::Contain))
+}
+
+/// A file that is no image, in the preview card: its `icon`, large and
+/// centered.
+pub(crate) fn icon_preview(icon: AnyElement) -> Div {
+    div()
+        .debug_selector(|| "files-preview-icon".into())
+        .size_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(icon)
+}
+
 /// The note in the list's place when it lists nothing: centered 13px muted
 /// text, 40 above and below.
 pub(crate) fn empty_note(text: impl Into<SharedString>, theme: &Theme) -> Div {
@@ -414,9 +521,21 @@ pub(crate) struct InfoRow {
 /// The Information under the preview (#166), as Raycast's detail has it:
 /// "Information" over its rows, each a hairline apart, 12px.
 pub(crate) fn information(rows: Vec<InfoRow>, theme: &Theme) -> Div {
+    info_section("Information", "clipboard", rows, theme)
+}
+
+/// A section of facts under the preview: `heading` ("Information",
+/// "Metadata") over its rows, each a hairline apart, 12px. The section is
+/// `<scope>-information` to tests, and each row `<scope>-info-<label>`.
+pub(crate) fn info_section(
+    heading: &'static str,
+    scope: &'static str,
+    rows: Vec<InfoRow>,
+    theme: &Theme,
+) -> Div {
     let split = &theme.split;
     div()
-        .debug_selector(|| "clipboard-information".into())
+        .debug_selector(move || format!("{scope}-information"))
         .flex_none()
         .flex()
         .flex_col()
@@ -430,10 +549,10 @@ pub(crate) fn information(rows: Vec<InfoRow>, theme: &Theme) -> Div {
                 .items_center()
                 .font_weight(theme.typography.medium)
                 .text_color(theme.text_muted)
-                .child("Information"),
+                .child(heading),
         )
         .children(rows.into_iter().map(|row| {
-            let selector = format!("clipboard-info-{}", row.label);
+            let selector = format!("{scope}-info-{}", row.label);
             div()
                 .debug_selector(move || selector)
                 .flex_none()

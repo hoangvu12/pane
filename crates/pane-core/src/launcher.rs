@@ -59,6 +59,7 @@ mod presentation;
 mod programs;
 mod providers;
 mod quick_slots;
+pub mod search_files;
 mod submenus;
 
 use crate::clipboard::{Capture, ClipboardSystem};
@@ -4181,6 +4182,12 @@ impl Launcher {
     /// place). While the command's search field holds text, what it found
     /// stays listed, and `view` is kept for when the text is cleared.
     fn relist(&self, state: &mut State, component: &Path, view: View) {
+        if search_files::browsing(state) {
+            // Search Files lists the file index, not the command's own
+            // list (#177).
+            state.view.title = view.title;
+            return;
+        }
         let extra = looks::remember(state, component, &view.items);
         let list = self.command_list(state, component, view.items);
         let searching = match &state.view.screen {
@@ -4320,6 +4327,16 @@ impl Launcher {
                     state.next_screen();
                     state.view = LauncherView::new(screen, view.title).with_rows(rows);
                     state.reported_unbound = Vec::new();
+                    // Pane's registered Files command lists the file index
+                    // itself (#177): Recently Used, or the text it opened
+                    // with.
+                    let files = search
+                        && match (state.open.clone(), state.open_command.clone()) {
+                            (Some(component), Some(command)) => {
+                                self.begin_search_files(state, &component, &command)
+                            }
+                            _ => false,
+                        };
                     self.report_unbound(state);
                     self.report_extra_accessories(state, extra, true);
                     // A command whose screen is a form (#149) shows it at once;
@@ -4330,6 +4347,8 @@ impl Launcher {
                         // Opened with text in its field ("Search Files for
                         // “…”"): searched at once, as if typed.
                         searching = self.search_in_command(state, &text);
+                    } else if files {
+                        searching = self.ask_files(state, "", 0);
                     }
                 }
                 Err(error) => state.view.status = Status::Error(error.to_string()),

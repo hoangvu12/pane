@@ -66,6 +66,7 @@ pub use http::HttpLimits;
 pub use keyboard::{Binding, Keyboard, KeyboardAction, PaneKeys};
 pub use launch::{LaunchRecord, LaunchSource, LaunchType};
 pub use launcher::clipboard_view;
+pub use launcher::search_files;
 pub use launcher::{
     AliasOutcome, ApplicationUpdate, BuildFailure, CommandPreferences, CommandRegistration,
     ComputedAnswer, CustomViewSnapshot, Development, ExtensionMark, FormField, FormView,

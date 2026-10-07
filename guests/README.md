@@ -786,7 +786,7 @@ what is indexed (it never waits for a walk): the entries whose name, or the
 folders they are in, match the query's words, best first, or for a blank
 query the most recently modified; `options` filter by kind (file, folder,
 link) and by category (documents, images, audio, video, archives,
-applications), sort by relevance or by modified time, and page with `limit`
+applications, text, and other for a file of none of these), sort by relevance or by modified time, and page with `limit`
 (at most 200 per call) and `offset`. Each entry carries the `id` Pane gave
 it for this package, its absolute `path`, `name`, `folder` (below the home
 folder as `~/…`), `kind`, whether opening it would run a `program`, `size`,
@@ -857,8 +857,8 @@ of root search, whose files have an `id` and a `relative` path. An
 Pane shows the file's own name and folder in the row, whatever the result's
 title says, drops an id it did not give, and gives the file its own
 [file actions](../docs/files.md#the-file-actions): Open (Enter), Show in
-Explorer (Ctrl+Enter), Open With…, Copy Path, Copy File and Move to Recycle
-Bin (confirmed), each checking it again first, then closing the window and
+Explorer (Ctrl+Enter), Open With…, Copy Path, Copy Name, Copy File and Move
+to Recycle Bin (confirmed), each checking it again first, then closing the window and
 saying what it did in a HUD; for a program or script, Enter shows it in
 Explorer and only Run runs it. The command is never called for
 them.

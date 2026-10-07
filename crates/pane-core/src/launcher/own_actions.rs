@@ -12,11 +12,11 @@
 //! Pane gave it, never by a path). Pane checks it again before acting, as it
 //! always did before opening one (`crate::files`, and for the file index
 //! `crate::file_index::Indexer::checked`). A folder the index found has
-//! Open (Enter: the file manager), Show in Explorer, Copy Path, Copy File
-//! and Move to Recycle Bin. A document's actions are
+//! Open (Enter: the file manager), Show in Explorer, Copy Path, Copy Name,
+//! Copy File and Move to Recycle Bin. A document's actions are
 //! Open (Enter), Show in Explorer (Ctrl+Enter; Finder or the File Manager
-//! elsewhere), Open With…, Copy Path, Copy File and Move to Recycle Bin
-//! (destructive, confirmed first). File search's own Enter never runs a
+//! elsewhere), Open With…, Copy Path, Copy Name (#177), Copy File and Move
+//! to Recycle Bin (destructive, confirmed first). File search's own Enter never runs a
 //! program by accident (ADR 0037's exception, keeping ADR 0017's intent):
 //! for a program or script, Enter shows it in Explorer, Ctrl+Enter is Open
 //! With…, and only the explicit Run action runs it. Each closes the window
@@ -47,6 +47,7 @@ const REVEAL: &str = "pane.reveal";
 /// Open With…'s submenu; its entries are `pane.open-with/<application id>`.
 const OPEN_WITH: &str = "pane.open-with";
 const COPY_PATH: &str = "pane.copy-path";
+const COPY_NAME: &str = "pane.copy-name";
 const COPY_FILE: &str = "pane.copy-file";
 const TRASH: &str = "pane.trash";
 const COPY_ANSWER: &str = "pane.copy-answer";
@@ -111,6 +112,7 @@ pub(super) fn file_actions(file: &FileRow) -> Vec<Action> {
         vec![action("Open", OPEN), reveal, open_with()]
     };
     actions.push(action("Copy Path", COPY_PATH));
+    actions.push(action("Copy Name", COPY_NAME));
     actions.push(action("Copy File", COPY_FILE));
     actions.push(Action {
         style: ActionStyle::Destructive,
@@ -190,6 +192,7 @@ pub(super) enum Work {
         name: String,
     },
     CopyPath(FileRow),
+    CopyName(FileRow),
     CopyFile(FileRow),
     Trash(FileRow),
     Paste(String),
@@ -217,6 +220,7 @@ pub(super) fn work(own: Own, callback: &str, title: &str) -> Option<Work> {
                 RUN => Some(Work::Run(file)),
                 REVEAL => Some(Work::Reveal(file)),
                 COPY_PATH => Some(Work::CopyPath(file)),
+                COPY_NAME => Some(Work::CopyName(file)),
                 COPY_FILE => Some(Work::CopyFile(file)),
                 TRASH => Some(Work::Trash(file)),
                 _ => None,
@@ -370,6 +374,25 @@ impl Launcher {
                 match copied {
                     Ok(()) => Ended::Hud(COPIED.into()),
                     Err(why) => Ended::Failed(format!("Could not copy the path of {name}: {why}")),
+                }
+            }
+            // The name as the system has it now, once the entry is
+            // checked again (#177).
+            Work::CopyName(file) => {
+                let system = self.system();
+                let name = file.name.clone();
+                let copied = self
+                    .on_file(&file, true, move |path| {
+                        let named = path
+                            .file_name()
+                            .map(|named| named.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| path.display().to_string());
+                        system.copy(&Clip::Text(named), false)
+                    })
+                    .await;
+                match copied {
+                    Ok(()) => Ended::Hud(COPIED.into()),
+                    Err(why) => Ended::Failed(format!("Could not copy the name of {name}: {why}")),
                 }
             }
             Work::CopyFile(file) => {

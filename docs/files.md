@@ -20,11 +20,16 @@ Files (#29, [ADR 0017](adr/0017-host-lists-a-granted-folder-for-an-extension.md)
 That capability stays for other packages, unchanged
 ([The granted folder](#the-granted-folder)); Files no longer uses it.
 
-Not yet (later tickets of #126 and #161): the File search page in Settings
-and the safety valves (churn quarantine, the low-disk floor, pausing for
-sleep, folders that hang) are [#176](https://github.com/hoangvu12/pane/issues/176);
-Search Files' recent files, kind dropdown, detail and paging are
-[#177](https://github.com/hoangvu12/pane/issues/177).
+Search Files works like Raycast's File Search
+([#177](https://github.com/hoangvu12/pane/issues/177), spec
+[#161](https://github.com/hoangvu12/pane/issues/161)): no folder to choose,
+"Recently Used" before typing, a type dropdown, more rows as the list
+scrolls and a detail with an image's preview and the file's Metadata
+([Search Files](#search-files)).
+
+Not yet (a later ticket of #126): the File search page in Settings and the
+safety valves (churn quarantine, the low-disk floor, pausing for sleep,
+folders that hang) are [#176](https://github.com/hoangvu12/pane/issues/176).
 
 ## Where it lives
 
@@ -51,14 +56,22 @@ and one index serves every package that uses it:
   `rebuild_file_index`). The rows and their actions are
   [`launcher/files.rs`](../crates/pane-core/src/launcher/files.rs) and
   [`launcher/own_actions.rs`](../crates/pane-core/src/launcher/own_actions.rs).
+- **Search Files**, [`launcher/search_files.rs`](../crates/pane-core/src/launcher/search_files.rs)
+  (`pane_core::search_files`): Pane's registered Files command listed by
+  Pane from the index, its types, pages, detail and the index's note
+  ([Search Files](#search-files)); drawn by the window's
+  [`features/search_files.rs`](../crates/pane/src/features/search_files.rs)
+  in the split view ([`ui/split_view.rs`](../crates/pane/src/ui/split_view.rs)).
 - **The host interface**, `pane:extension/file-index`
   ([`wit/file-index.wit`](../wit/file-index.wit)): `search` and `status`,
   for any package that declares `"fileIndex": true` ([For authors](#for-authors)).
 - **The default extension**, [`guests/files`](../guests/files) (Rust),
-  package [`guests/packages/files`](../guests/packages/files) (0.7.0,
+  package [`guests/packages/files`](../guests/packages/files) (0.8.0,
   `"fileIndex": true`): its one command, Search Files (id `files`,
-  `"search": true` and `"rootResults": true`), asks the index for the
-  query and answers with the entries' ids. It is not a
+  `"search": true` and `"rootResults": true`), answers root search from the
+  index with the entries' ids. Installed as Pane's default extension, its
+  screen is Pane's own Search Files view; a copy installed from a folder
+  lists what is searched and answers its own field (the best 50). It is not a
   [root provider](root-search.md#root-providers): it has a row and a
   screen of its own.
 - **The window**, [`crates/pane/src/main.rs`](../crates/pane/src/main.rs):
@@ -212,18 +225,67 @@ listed. No use of a file row is recorded for learning (ADR 0030).
 
 ## Search Files
 
-Search Files (#150) is a view command whose search field is the
-launcher's own ([command search](command-search.md)): Enter on its row in
-root search opens it with the field empty above its own list ("What is
-searched", whose subtitle says what the index is doing: "Indexing your
-files… 1204 found so far", "53210 files and folders of your home folder
-are indexed", "File search is off (…)"), and typing lists what the index
-finds (at most 50), each titled with its own name and folder. Opened from
-root search's "Search Files for “plan”" row, the field holds "plan" and
-lists its results at once. A command may set both `"search"` and
-`"rootResults"` (#150): root search asks it, and so does its own field.
-Recent files before typing, the kind dropdown, the detail and paging
-are #177's.
+Search Files works like Raycast's File Search (#177, spec #161; it
+replaces #126's slice 4 as #161 amends it). Pane draws it itself for its
+registered Files default extension (the default extension `files` and its
+command `files`, by their verified identity, never by a title), in the
+split view Clipboard History uses (#102), and lists the index for it
+(`launcher/search_files.rs`); the command's own list and `search` are not
+shown. A copy of Files installed from a folder, and any other command that
+searches, keep the launcher's [command search](command-search.md).
+
+- **No folder to choose**, nothing explained first: Enter on its row in
+  root search opens it on **"Recently Used"**, the most recently modified
+  entries the index holds (files and folders, as Raycast's blank query
+  lists them).
+- **Typing** ranks what the index finds by its own matching
+  ([In root search](#in-root-search)). Opened from root search's "Search
+  Files for “plan”" row, the field holds "plan" and lists its results at
+  once. Escape clears the field (Recently Used comes back, listed in the
+  background), and leaves on an empty field; the back button leaves at
+  once.
+- **The type dropdown** at the search field's right ("Filter by Type"):
+  All Types, Folder, Document, Image, Video, Audio, Archive, Text,
+  Application, Other (`search_files::FileType`). Folder keeps folders; the
+  others keep the index's categories, told from the name's extension by
+  one table on every system (`file_index::Category`): Document is PDF,
+  office and e-book files and web pages; Text is plain text, data,
+  configuration and source files (`txt`, `md`, `csv`, `json`, `yaml`,
+  `toml`, `log`, `rs`, `py`, `js` and the like); Application is programs,
+  scripts, shortcuts, installers and application bundles; Other is a file
+  of none of them (`data.bin`, `README`). The type stays while the text
+  changes.
+- **Pages**: 50 rows at a time (`search_files::PAGE`); the next page loads
+  as the list scrolls within ten rows of its end
+  (`Launcher::load_more_files`), until the index has no more.
+- **Rows**: each file's own name, its folder below the home folder
+  (`~/Documents`) and the system's icon for it (#142, a document's or
+  folder's outline until it is loaded), drawn as they come into view
+  (#165). They are the launcher's own file rows, with
+  [the file actions](#the-file-actions): Enter, Ctrl+Enter and the Actions
+  panel (Ctrl+K) act as on any file row, and Enter on a program shows it
+  and never runs it. A click selects; a double click is Enter.
+- **The detail** beside the list, for the selected file: an image's
+  preview (`png`, `jpg`, `jpeg`, `gif`, `webp`, `bmp`, `tif`, `tiff`,
+  `ico` and `svg`, at most 32 MB, never a link's target), else the file's
+  icon, large; under it the **Metadata**: Name, Where (`~/…`), Type ("PNG
+  Image", "PDF Document", "MD Text", "Folder", "Application"), Size (in the
+  units the file managers use: "532 bytes", "1.2 MB"; not for a folder),
+  Created (where the system records it) and Modified ("Today at 14:02",
+  "Sep 28 at 16:12"), read from the file system when the file is selected
+  (`Launcher::search_files_details`).
+- **The index's state**, over the list or in its place: "Indexing… (1204
+  found so far)" while it is built, with a thin bar under the header while
+  a search or the index is in progress; "File search stopped: <why>" or
+  "File search is off: <why>", with **Open File Search Settings**, which
+  opens Settings at the File search page (#176). While the index is built
+  the list is asked again each second it grew, keeping the selected file
+  selected, until the user scrolled past the first page.
+- **The footer**: the command's icon and title (or the status), the
+  selected file's primary action and Actions.
+
+The window takes the split view's 940×600 while Search Files shows, as for
+Clipboard History.
 
 ## The file actions
 
@@ -237,7 +299,8 @@ Ctrl+Shift+Enter the third, and the Actions panel (Ctrl+K) lists them all.
 | **Open** (Enter): the system's handler for its type | **Show in Explorer** (Enter) | **Open** (Enter): the file manager |
 | **Show in Explorer** (Ctrl+Enter): selected in the file manager | **Open With…** (Ctrl+Enter) | **Show in Explorer** (Ctrl+Enter) |
 | **Open With…**: a submenu of the installed applications, by name | **Run** (Ctrl+Shift+Enter): the system's handler, which runs it | **Copy Path** |
-| **Copy Path**: its path, as text | **Copy Path** | **Copy File** |
+| **Copy Path**: its path, as text | **Copy Path** | **Copy Name** |
+| **Copy Name**: its name, as text (#177) | **Copy Name** | **Copy File** |
 | **Copy File**: the file, as the file manager copies it | **Copy File** | **Move to Recycle Bin** |
 | **Move to Recycle Bin** (destructive): after a confirmation | **Move to Recycle Bin** | |
 
@@ -252,8 +315,8 @@ Manager"; the Recycle Bin is the Trash outside Windows.)
 Each action closes the window after it acts and says what it did in a
 HUD, as the standard actions do: Open, Show in Explorer, Open With… and
 Run ("Opened plan.md", "Showed run.bat in Explorer", "Opened plan.md with
-Notepad", "Ran run.bat"), Copy Path and Copy File ("Copied to
-Clipboard"), and Move to Recycle Bin, once the user confirmed "Move
+Notepad", "Ran run.bat"), Copy Path, Copy Name and Copy File ("Copied
+to Clipboard"), and Move to Recycle Bin, once the user confirmed "Move
 “plan.md” to the Recycle Bin?" (never remembered) ("Moved to Recycle
 Bin"). What fails stays on screen in the status line ("Could not
 open todo.txt: it no longer exists"). Opening and running go through the
@@ -320,8 +383,9 @@ JavaScript and TypeScript) ([author guide](../guests/README.md#panes-file-index)
 - `search` answers at once from what is indexed, never waiting for a walk:
   the entries matching the query (a blank query: the most recently
   modified), filtered by kind (file, folder, link) and category
-  (documents, images, audio, video, archives, applications, told from the
-  name's extension by one table on every system), sorted by relevance or
+  (documents, images, audio, video, archives, applications, text, and
+  other for a file of none of these, told from the name's extension by one
+  table on every system, the one Search Files' dropdown uses), sorted by relevance or
   modified time, paged by `limit` (at most 200 per call) and `offset`. Each
   entry carries its id, absolute path (text, for showing and copying),
   name, folder for people, kind, whether opening it would run a program,
@@ -677,7 +741,7 @@ milestone is merged).
   ([`crates/pane-core/tests/file_actions.rs`](../crates/pane-core/tests/file_actions.rs)),
   for Files and the Rust, JavaScript and TypeScript samples alike: the
   entries listed in the command's own field with their folders, a folder
-  found; a document's six actions acting through the fakes and closing the
+  found; a document's seven actions acting through the fakes and closing the
   window; Move to Recycle Bin confirmed first; a program revealed by Enter,
   Ctrl+Enter its Open With… submenu, only Run running it, in Search Files
   and in root search; root search's Files section with the system's icon
@@ -688,6 +752,28 @@ milestone is merged).
   ([`crates/pane/tests/file_actions.rs`](../crates/pane/tests/file_actions.rs)),
   with real keys over the index: Enter and Ctrl+Enter on a document and on
   a program.
+- **Search Files like Raycast's** (#177;
+  [`crates/pane-core/tests/search_files.rs`](../crates/pane-core/tests/search_files.rs)),
+  with Files acquired as Pane's default extension from a local artifact
+  source, over the real index of a fixture home: it opens with no folder
+  to choose on Recently Used, newest first, each row with an icon; typing
+  ranks by the index; each type of the dropdown keeps only its files (and
+  Folder only folders), with a query too; the detail's Name, Where, Type,
+  Size, Created and Modified, an image previewed and a text file not; pages
+  of 50 loading until the index has no more, the selection kept; the
+  query kept from root search's row; Escape bringing Recently Used back;
+  a document's seven actions with Copy Name copying the name, Enter opening
+  it, and a program shown, not run; the index being built and a stopped
+  index said, the latter leading to the settings; a copy installed from a
+  folder keeping its own search. Unit tests: the types, the sizes, the
+  Type label, the detail's metadata and the notes
+  (`launcher::search_files`), the categories Text and Other
+  (`file_index::indexer`). In the window
+  ([`crates/pane/tests/search_files.rs`](../crates/pane/tests/search_files.rs)):
+  the split view on Recently Used with system icons and the dropdown at
+  the field's right; the dropdown's ten types filtering; an image's
+  preview and the Metadata rows, a text file's icon instead; typing and
+  Escape; Ctrl+K listing Copy Name and Enter showing a program.
 - **The granted folder**
   ([`crates/pane-core/tests/files.rs`](../crates/pane-core/tests/files.rs)),
   with the `folder-files` fixture: the grant, its record and its refusals,
@@ -707,8 +793,16 @@ milestone is merged).
   folder granted to Files under #29 into the roots are #176; until then a
   folder that hangs holds up the walk, and nothing stops indexing on a
   full disk.
-- Search Files has no recent files, kind dropdown, detail or paging yet
-  (#177); `pane:extension/file-index` already offers them to extensions.
+- Search Files' Recently Used is the most recently modified entries, as
+  Raycast's is; Pane records no use of a file (ADR 0030). Created is not
+  indexed: it is read when a file is selected, and Linux's file systems
+  may not record it. An image is previewed whole, as the window decodes
+  it, not as a thumbnail; other files show their icon, without Quick
+  Look. Search Files is drawn by Pane for its own default extension only
+  until #121's List detail and dropdown let any command draw it.
+- The link from Search Files to the File search page opens Settings at a
+  page titled "File Search" (`features::search_files::FILE_SEARCH_PAGE`),
+  #176's page.
 - Matching is by word prefix; a query inside a word ("port" in
   "report") is not found yet, and a query with `/` or `\` is matched word
   by word, not as path segments in order.

@@ -4,7 +4,7 @@
 //! files samples, which give the same answers: the command owns the
 //! launcher's search field and lists what the index finds as the user
 //! types; a document's actions are Open (Enter), Show in Explorer
-//! (Ctrl+Enter), Open With…, Copy Path, Copy File and Move to Recycle Bin
+//! (Ctrl+Enter), Open With…, Copy Path, Copy Name, Copy File and Move to Recycle Bin
 //! (destructive, confirmed), each closing the window and saying what it did
 //! in a HUD; for a program or script, Enter shows it in Explorer,
 //! Ctrl+Enter is Open With… and only Run runs it, in Search Files and in
@@ -391,13 +391,14 @@ fn a_documents_actions_act_through_the_system_and_close_the_window(fixture: &'st
             reveal(),
             "Open With…".to_owned(),
             "Copy Path".to_owned(),
+            "Copy Name".to_owned(),
             "Copy File".to_owned(),
             trash(),
         ]
     );
     let actions = pane.launcher.item_actions().unwrap();
     assert!(actions.actions[2].submenu, "Open With… opens a submenu");
-    assert!(actions.actions[5].destructive);
+    assert!(actions.actions[6].destructive);
     assert_eq!(pane.launcher.selected_action().label, "Open");
 
     // Enter opens it with the system's handler, and the window closes.
@@ -442,6 +443,19 @@ fn a_documents_actions_act_through_the_system_and_close_the_window(fixture: &'st
         .map(|hud| hud.title)
         .collect();
     assert_eq!(huds, ["Copied to Clipboard"]);
+    assert!(pane.closed());
+    // Copy Name copies the name alone (#177).
+    pane.select("todo.txt");
+    pane.run("Copy Name");
+    match pane.system.take().as_slice() {
+        [
+            Done::Copied {
+                clip: Clip::Text(name),
+                concealed: false,
+            },
+        ] => assert_eq!(name, "todo.txt"),
+        other => panic!("{other:?}"),
+    }
     assert!(pane.closed());
     pane.select("todo.txt");
     pane.run("Copy File");
@@ -559,6 +573,7 @@ fn a_program_runs_only_through_run(pane: &Pane, name: &str, path: &Path) {
             "Open With…".to_owned(),
             "Run".to_owned(),
             "Copy Path".to_owned(),
+            "Copy Name".to_owned(),
             "Copy File".to_owned(),
             trash(),
         ]
