@@ -1,19 +1,29 @@
 //! The file index (#126, ADR 0034): the host's index of the names of the
 //! files and folders under the index scope, kept in Pane's cache folder.
-//! This is the measured first slice (#174): the walker, the index engine
-//! and the unprivileged change-journal catch-up, which the indexer
-//! coordinator, the change sources and the launcher's integration (#175)
-//! build on. See docs/files.md for the engine decision and the benchmark.
+//! The measured first slice (#174) built the walker, the index engine and
+//! the unprivileged change-journal catch-up; #175 adds the change sources,
+//! the reconciling walk, the coordinator that keeps the index current while
+//! a package uses it, and the host interface `pane:extension/file-index`.
+//! See docs/files.md.
 //!
 //! - `scope`: the roots and the rules ([`ScopeRules`], [`Scope`]).
 //! - `walker`: the parallel walk at background priority ([`walk`]).
 //! - `store`: the name index ([`FileIndex`]): memory table, write-ahead
 //!   log, segments with `fst` term dictionaries, tombstones, compaction.
 //! - `journal`: the NTFS change journal ([`read_journal`], [`resolve`]).
+//! - `reconcile`: the reconciling walk ([`reconcile()`]).
+//! - `changes`: each system's change source ([`ChangeSource`]).
+//! - `indexer`: the coordinator, the ids it gives and its checks
+//!   ([`Indexer`]).
+//! - `host`: `pane:extension/file-index` for guests.
 
+mod changes;
 mod format;
+mod host;
+mod indexer;
 mod journal;
 mod priority;
+mod reconcile;
 mod scope;
 mod segment;
 mod store;
@@ -37,6 +47,15 @@ pub use store::{
     Bulk, Change, FileIndex, Hit, IndexError, IndexRecord, IndexStats, Opened, PreparedBatch, Query,
 };
 pub use walker::{WalkOptions, WalkReport, walk, walk_folders};
+
+pub use changes::{
+    Caught, CaughtUpBy, ChangeSource, Changed, Sink, SinkClosed, Watching, native as native_changes,
+};
+pub use indexer::{
+    Category, Checked, FIRST_WALK_DELAY, Found, INDEX_DIR, IndexState, IndexStatus, Indexer,
+    IndexerConfig, KnownEntry, MAX_RESULTS, RULES_FILE, SearchOptions, Sort, UserRules, describe,
+};
+pub use reconcile::{Reconciled, reconcile};
 
 /// An entry to index: a path and what the index keeps of it.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -24,13 +24,18 @@ interface root-results {
     /// Pane refuses any other kind of address and explains a system that
     /// cannot open it.
     open-url(string),
-    /// Opens the file with this id, as `files.list-folder` gave it in the
-    /// package's latest listing, with the system's handler for its type.
-    /// Pane shows the file's own name and folder in the row, whatever the
-    /// result's title and subtitle say, checks again when it is invoked
-    /// that it is a regular file inside the granted folder, not a link, and
-    /// refuses programs and scripts. Root search lists these results after
-    /// the results it finds by title.
+    /// Opens the entry with this id, as `file-index.search` gave it to the
+    /// package (wit/file-index.wit), or as `files.list-folder` gave it in
+    /// the package's latest listing of its granted folder, with the
+    /// system's handler for its type (a folder in the file manager). Pane
+    /// shows the entry's own name and folder in the row, whatever the
+    /// result's title and subtitle say, and checks it again when it is
+    /// invoked: still there, of the kind found, not a link, inside the
+    /// folders file search covers (or the granted folder). Enter on a
+    /// program the index found shows it in the file manager and never runs
+    /// it; the granted folder's programs are refused. Root search lists
+    /// these results after the results it finds by title, at most 5 of the
+    /// index's per command, then a row opening the command with the query.
     open-file(string),
   }
 

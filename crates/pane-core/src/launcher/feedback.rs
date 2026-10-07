@@ -213,6 +213,10 @@ impl Launcher {
             match presence {
                 WindowPresence::Shown | WindowPresence::Compact => {
                     confirmations::arm_confirmation(&mut state);
+                    // The file index's first walk waits for this (#175).
+                    if let Some(files) = &state.files {
+                        files.indexer().launcher_shown();
+                    }
                     false
                 }
                 WindowPresence::Hidden => confirmations::leave_confirmation(&mut state),

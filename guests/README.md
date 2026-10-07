@@ -42,14 +42,19 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   ([Root results supplied ahead of the query](#root-results-supplied-ahead-of-the-query),
   [applications](../docs/applications.md)). Its package is
   `packages/applications`; held by `crates/pane-core/tests/applications.rs`.
-- `files`: Pane's file search, a default extension in Rust: the user grants
-  it a folder through Pane's own row, and root search finds its files by
-  name and opens one ([Files of a granted folder](#files-of-a-granted-folder),
-  [files](../docs/files.md)).
-  Its package is `packages/files`; held by `crates/pane-core/tests/files.rs`.
-- `sample-files-js`, `sample-files-ts`: the same host import and `open-file`
-  results in JavaScript and TypeScript; held by
-  `crates/pane-core/tests/files.rs`.
+- `files`: Pane's file search, a default extension in Rust: root search
+  and its Search Files command find the files and folders of the home
+  folder in Pane's file index by name, and Enter opens one
+  ([Pane's file index](#panes-file-index), [files](../docs/files.md)).
+  Its package is `packages/files`; held by
+  `crates/pane-core/tests/file_index.rs` and `file_actions.rs`.
+- `sample-files`, `sample-files-js`, `sample-files-ts`: the same host
+  import and `open-file` results in Rust, JavaScript and TypeScript; held by
+  `crates/pane-core/tests/file_actions.rs`.
+- `fixtures/folder-files`: what Files was before #175, over the folder the
+  user grants its package ([Files of a granted folder](#files-of-a-granted-folder)),
+  keeping that capability covered; held by `crates/pane-core/tests/files.rs`,
+  which writes its `pane.json`.
 - `sample-clipboard-js`, `sample-clipboard-ts`: the Clipboard History
   command in JavaScript and TypeScript, over the same host import
   ([Clipboard history](#clipboard-history)); held by
@@ -767,6 +772,74 @@ module or struct state kept between queries is lost and the next query
 starts a fresh instance. Keep what must last in [settings](#keeping-settings)
 or the [cache](#keeping-content-cache-and-credentials).
 
+### Pane's file index
+
+A command can search the index Pane keeps of the names of the files and
+folders under the user's home folder (and the folders the user adds in
+Settings), which a WASI guest could not walk itself, through
+`pane:extension/file-index` ([`wit/file-index.wit`](../wit/file-index.wit)),
+and answer results that open an entry (`open-file`). The package's
+`pane.json` sets `"fileIndex": true`: Pane keeps the index open, caught up
+and watched exactly while such a package is enabled and not paused, and only
+such a package may search it. `search(query, options)` answers at once from
+what is indexed (it never waits for a walk): the entries whose name, or the
+folders they are in, match the query's words, best first, or for a blank
+query the most recently modified; `options` filter by kind (file, folder,
+link) and by category (documents, images, audio, video, archives,
+applications), sort by relevance or by modified time, and page with `limit`
+(at most 200 per call) and `offset`. Each entry carries the `id` Pane gave
+it for this package, its absolute `path`, `name`, `folder` (below the home
+folder as `~/…`), `kind`, whether opening it would run a `program`, `size`,
+`modified` (seconds since 1970) and `volume`. `status()` says whether the
+index is off, being built (with how many entries it has `found`), current or
+stopped, and why. The path is the extension's to show and copy; Pane opens
+only by the id, which it checks again first (it still exists, is the kind
+indexed, is not a link, is still in the folders file search covers). An
+`open-file` result or a command search result's `file` gives the id; Pane
+shows the entry's own name, its folder and the system's icon in the row,
+and gives it its [file actions](../docs/files.md#the-file-actions): Enter
+opens a document or a folder, and shows a program in the file manager
+(never runs it); only the explicit Run runs one.
+
+```rust
+use pane_guest::file_index::{self, SearchOptions};
+use pane_guest::root::{RootAction, RootResult};
+
+async fn results_for(query: String) -> Result<Vec<RootResult>, String> {
+    Ok(file_index::search(&query, SearchOptions::first(5))?
+        .into_iter()
+        .map(|entry| RootResult {
+            id: entry.path,
+            title: entry.name,
+            subtitle: None,
+            action: RootAction::OpenFile(entry.id),
+        })
+        .collect())
+}
+```
+
+JavaScript or TypeScript: add `"fileIndex": true` to the `"pane"` options
+of `package.json`, so the build imports the interface (a command without it
+does not), and import it (`search` throws an object whose `payload` is the
+reason; WIT's `u64` numbers are `bigint`; declarations in
+[`js/file-index.d.ts`](js/file-index.d.ts)):
+
+```ts
+import { search } from "pane:extension/file-index@0.1.0";
+
+return search(query, { sort: "relevance", limit: 20, offset: 0 }).map((entry) => ({
+  id: entry.path,
+  title: entry.name,
+  action: { tag: "open-file", val: entry.id },
+}));
+```
+
+The [Files](files) default extension works this way (its command, Search
+Files, answers both root search and its own field);
+[`sample-files`](sample-files), [`sample-files-js`](sample-files-js) and
+[`sample-files-ts`](sample-files-ts) do the same in Rust, JavaScript and
+TypeScript.
+
 ### Files of a granted folder
 
 A command can find the files of the one folder the user granted its
@@ -791,11 +864,11 @@ Explorer and only Run runs it. The command is never called for
 them.
 Pane lists the folder under its [scan policy](../docs/files.md#the-scan-policy)
 (`files.limits()` gives its limits); file results are listed after the
-results root search finds by title. The [Files](files) default extension,
-in Rust, works this way (its command, Search Files, answers both root
-search and its own field); [`sample-files-js`](sample-files-js) and
-[`sample-files-ts`](sample-files-ts) do the same in JavaScript and
-TypeScript.
+results root search finds by title. File search itself uses
+[Pane's file index](#panes-file-index) since #175; the granted folder stays
+for a package that wants an exhaustive listing of one folder the user
+chooses (the test fixture [`fixtures/folder-files`](fixtures/folder-files)
+is what Files was before).
 
 In a command's own search field, the result names the file in `file`:
 
@@ -1660,10 +1733,10 @@ longer needs (the text changed, the user left) where it waits, dropping the
 instance with its web request: code after that `await` never runs and
 in-memory state is lost, so make result ids say which result they are. An
 error it answers with (a service down or unreachable) is shown in place of
-results and never pauses the extension. A result may name a file of the
-package's [granted folder](#files-of-a-granted-folder) by its id instead
-(`file`, #150): Pane then lists that file and performs its file actions
-itself. A command may set both `"search"` and `"rootResults"`; root search
+results and never pauses the extension. A result may name an entry of
+[Pane's file index](#panes-file-index) or a file of the package's
+[granted folder](#files-of-a-granted-folder) by its id instead (`file`,
+#150): Pane then lists that file and performs its file actions itself. A command may set both `"search"` and `"rootResults"`; root search
 then asks it too. See [docs/command-search.md](../docs/command-search.md).
 
 **Web requests** go through `wasi:http@0.3.0`'s client, which Pane links for

@@ -4449,6 +4449,7 @@ dependencies = [
  "bytes",
  "crc32fast",
  "flate2",
+ "fsevent-sys",
  "fst",
  "futures",
  "global-hotkey",

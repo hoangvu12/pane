@@ -382,6 +382,11 @@ pub struct Manifest {
     /// in the package's commands, and lists only that folder for it
     /// (`pane:extension/files`).
     pub folder_access: bool,
+    /// The package uses Pane's file index (`"fileIndex": true`): Pane keeps
+    /// the index of the home folder open, caught up and watched while at
+    /// least one enabled, unpaused package says so, and its commands may
+    /// search it (`pane:extension/file-index`, #126).
+    pub file_index: bool,
     /// The preferences the package declares for all its commands
     /// (`"preferences"`; see `preferences`).
     pub preferences: Vec<Preference>,
@@ -622,6 +627,8 @@ struct ManifestJson {
     dependencies: Vec<DependencyJson>,
     #[serde(default)]
     folder_access: bool,
+    #[serde(default)]
+    file_index: bool,
     #[serde(default)]
     preferences: Vec<serde_json::Value>,
 }
@@ -1056,6 +1063,7 @@ impl Manifest {
             helpers,
             dependencies,
             folder_access: json.folder_access,
+            file_index: json.file_index,
             preferences: package_preferences,
         })
     }

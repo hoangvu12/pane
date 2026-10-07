@@ -454,6 +454,40 @@ impl Segment {
         }
     }
 
+    /// The entries in key order from the block holding `key` (or the first
+    /// key after it) on: entries before `key` in that block come first, for
+    /// the caller to skip.
+    pub(crate) fn iter_from(&self, key: &[u8]) -> SegmentIter<'_> {
+        let first_key = |block: usize| -> Option<Vec<u8>> {
+            let mut at = self.block_start(block)?;
+            let mut first = Vec::new();
+            self.decode(&mut at, &mut first)?;
+            Some(first)
+        };
+        let (mut low, mut high) = (0usize, self.block_count);
+        while low + 1 < high {
+            let middle = (low + high) / 2;
+            match first_key(middle) {
+                Some(first) if first.as_slice() <= key => low = middle,
+                _ => high = middle,
+            }
+        }
+        match self.block_start(low) {
+            Some(at) if self.count > 0 => SegmentIter {
+                segment: self,
+                next: low as u32 * BLOCK,
+                at,
+                key: Vec::new(),
+            },
+            _ => SegmentIter {
+                segment: self,
+                next: self.count,
+                at: self.docs,
+                key: Vec::new(),
+            },
+        }
+    }
+
     /// Calls `visit` with each term starting with `prefix` (the exact one
     /// first, if it is a term) and its postings' offset, until it breaks.
     pub(crate) fn terms_with_prefix(

@@ -343,6 +343,8 @@ impl Launcher {
             }
             (None, Err(error)) => (CommandList::default(), Status::Error(error.to_string())),
         };
+        // The system icons of the files the file index found (#142).
+        super::file_search::want_icons(state, &list.entries);
         // Told the folder is still being listed: asked again once it is.
         let listed = match (&status, &owner, &access) {
             (Status::Idle, Some(owner), Some(access)) => access.listed(owner),

@@ -94,6 +94,14 @@ fn create_new(path: &Path, _readers: Readers) -> io::Result<fs::File> {
     OpenOptions::new().write(true).create_new(true).open(path)
 }
 
+/// Creates the folder `dir` (its parent must exist) so that only the user
+/// Pane runs as and SYSTEM can open it or anything created in it, as
+/// [`Readers::OwnerOnly`] files are (Windows).
+#[cfg(windows)]
+pub(crate) fn create_owner_only_dir(dir: &Path) -> io::Result<()> {
+    owner_only::create_dir(dir)
+}
+
 /// Files only the user Pane runs as (and SYSTEM) can open, on Windows.
 #[cfg(windows)]
 mod owner_only {
@@ -161,6 +169,39 @@ mod owner_only {
         // SAFETY: opened above.
         let _ = unsafe { CloseHandle(token) };
         sid
+    }
+
+    /// Creates the folder at `path`, which must not exist yet (its parent
+    /// must), with a protected DACL giving full control to this user and
+    /// SYSTEM only, inherited by everything created in it: the file
+    /// index's folder (#175).
+    pub(crate) fn create_dir(path: &Path) -> io::Result<()> {
+        use ::windows::Win32::Storage::FileSystem::CreateDirectoryW;
+        let sddl = format!("D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;{})", user_sid()?);
+        let sddl: Vec<u16> = sddl.encode_utf16().chain([0]).collect();
+        let mut descriptor = PSECURITY_DESCRIPTOR::default();
+        // SAFETY: `sddl` is NUL-terminated; the descriptor is freed below.
+        unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                PCWSTR(sddl.as_ptr()),
+                SDDL_REVISION_1,
+                &mut descriptor,
+                None,
+            )
+        }
+        .map_err(failed)?;
+        let attributes = SECURITY_ATTRIBUTES {
+            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: descriptor.0,
+            bInheritHandle: false.into(),
+        };
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+        // SAFETY: `wide` is NUL-terminated and `attributes` valid for the
+        // call.
+        let created = unsafe { CreateDirectoryW(PCWSTR(wide.as_ptr()), Some(&attributes)) };
+        // SAFETY: allocated by the conversion above with LocalAlloc.
+        unsafe { LocalFree(Some(HLOCAL(descriptor.0))) };
+        created.map_err(failed)
     }
 
     /// Creates the file at `path`, which must not exist yet, for writing,

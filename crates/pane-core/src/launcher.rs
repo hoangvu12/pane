@@ -86,6 +86,7 @@ use crate::search::{self, Keys, Query};
 mod dependents;
 mod developing;
 mod extensions;
+mod file_search;
 mod files;
 mod install;
 mod looks;
@@ -1072,6 +1073,9 @@ struct Computed {
     command_title: String,
     row: Row,
     entry: Entry,
+    /// A file row, or the row searching all files: listed after what is
+    /// found by title, under "Files".
+    in_files: bool,
 }
 
 /// What activating a row does.
@@ -1290,6 +1294,9 @@ struct Opening {
     no_view: bool,
     /// How it is launched.
     launch: LaunchRecord,
+    /// The text its own search field opens with, for a command that
+    /// searches: root search's "Search Files for “…”" row (#175).
+    initial_search: Option<String>,
 }
 
 impl Opening {
@@ -1302,6 +1309,7 @@ impl Opening {
             search: command.search,
             no_view,
             launch: LaunchRecord::by_user(source),
+            initial_search: None,
         }
     }
 }
@@ -1551,6 +1559,7 @@ impl Launcher {
         // become a root provider are forgotten, with a toast saying so
         // (#164); `with_quick_slots` does the same for its pins.
         launcher.forget_provider_choices();
+        launcher.sync_file_index(&launcher.lock());
         launcher
     }
 
@@ -2251,13 +2260,13 @@ impl Launcher {
             .computed
             .retain(|computed| computed.component != component);
         let files = state.files.clone();
-        state.computed.extend(computed_results(
-            command,
-            owner.as_deref(),
-            files.as_ref(),
-            query,
-            answer,
-        ));
+        let computed = computed_results(command, owner.as_deref(), files.as_ref(), query, answer);
+        // The system icons of the files it found (#142), unless the window
+        // has each row's load as it draws the row (#165).
+        if !looks::loads_as_shown(state) {
+            file_search::want_icons(state, computed.iter().map(|computed| &computed.entry));
+        }
+        state.computed.extend(computed);
         relist_root(state, query);
         Some(listed)
     }
@@ -3229,6 +3238,8 @@ impl Launcher {
     /// Updates root search or the extension list on screen after a package
     /// changed; other screens show no package state.
     fn refresh(&self, state: &mut State) {
+        // The file index runs while a package that uses it may run.
+        self.sync_file_index(state);
         match &state.view.screen {
             Screen::Root { .. } => self.refresh_root(state),
             Screen::Extensions { .. } => self.refresh_extensions(state),
@@ -4221,6 +4232,7 @@ impl Launcher {
             command,
             search,
             launch,
+            initial_search,
             ..
         } = opening;
         // Which command its screen is, for the preferences it reads.
@@ -4246,73 +4258,86 @@ impl Launcher {
             }
             Err(error) => Err(error),
         };
-        let Some(mut state) = self.lock_if_current(epoch) else {
-            return;
-        };
-        let end = data.as_ref().and_then(PackageData::stopped);
-        if end == Some(End::Disabled) {
-            // Disabled while it was opening.
-            state.view.status = Status::Error(disabled(&state, &component));
-            return;
-        }
-        if end == Some(End::Replaced) {
-            // Reloaded or updated while it was opening: the call was stopped,
-            // or its answer came from code that no longer runs. Its package's commands
-            // are in root search again. Unless the reload or update has
-            // reported its outcome meanwhile, this opening is still shown as
-            // running, so it ends here.
-            if state.view.status == Status::Running {
-                state.view.status = Status::Error(
-                    "The extension changed while its command was opening; open it again".into(),
-                );
+        // The launcher is unlocked before the search it opens with runs.
+        let searching = {
+            let Some(mut state) = self.lock_if_current(epoch) else {
+                return;
+            };
+            let end = data.as_ref().and_then(PackageData::stopped);
+            if end == Some(End::Disabled) {
+                // Disabled while it was opening.
+                state.view.status = Status::Error(disabled(&state, &component));
+                return;
             }
-            return;
-        }
-        if end == Some(End::Uninstalled) {
-            // Uninstalled while it was opening: the uninstall reports its
-            // own outcome.
-            return;
-        }
-        if end == Some(End::Paused) {
-            // Paused before it was asked (by its hotkey), or while it was
-            // opening (this opening crashed or could not start, which said
-            // so).
-            if state.view.status == Status::Running {
-                state.view.status = Status::Error(paused(&state, &component));
-            }
-            return;
-        }
-        let state = &mut *state;
-        match result {
-            Ok(view) => {
-                let extra = looks::remember(state, &component, &view.items);
-                let CommandList { rows, entries } =
-                    self.command_list(state, &component, view.items);
-                state.open_command = Some(command.clone());
-                let screen = if search {
-                    state.searching = Some(command_search::Searching::new(command));
-                    Screen::CommandSearch {
-                        query: String::new(),
-                    }
-                } else {
-                    state.searching = None;
-                    Screen::Command
-                };
-                state.entries = entries;
-                state.open = Some(component);
-                state.launch = launch;
-                state.next_screen();
-                state.view = LauncherView::new(screen, view.title).with_rows(rows);
-                state.reported_unbound = Vec::new();
-                self.report_unbound(state);
-                self.report_extra_accessories(state, extra, true);
-                // A command whose screen is a form (#149) shows it at once;
-                // Back from it leaves the command.
-                if let Some(ScreenForm { id, form }) = view.form {
-                    open_form_for(state, FormPurpose::Screen(id), form);
+            if end == Some(End::Replaced) {
+                // Reloaded or updated while it was opening: the call was stopped,
+                // or its answer came from code that no longer runs. Its package's commands
+                // are in root search again. Unless the reload or update has
+                // reported its outcome meanwhile, this opening is still shown as
+                // running, so it ends here.
+                if state.view.status == Status::Running {
+                    state.view.status = Status::Error(
+                        "The extension changed while its command was opening; open it again".into(),
+                    );
                 }
+                return;
             }
-            Err(error) => state.view.status = Status::Error(error.to_string()),
+            if end == Some(End::Uninstalled) {
+                // Uninstalled while it was opening: the uninstall reports its
+                // own outcome.
+                return;
+            }
+            if end == Some(End::Paused) {
+                // Paused before it was asked (by its hotkey), or while it was
+                // opening (this opening crashed or could not start, which said
+                // so).
+                if state.view.status == Status::Running {
+                    state.view.status = Status::Error(paused(&state, &component));
+                }
+                return;
+            }
+            let mut guard = state;
+            let state = &mut *guard;
+            let mut searching = None;
+            match result {
+                Ok(view) => {
+                    let extra = looks::remember(state, &component, &view.items);
+                    let CommandList { rows, entries } =
+                        self.command_list(state, &component, view.items);
+                    state.open_command = Some(command.clone());
+                    let screen = if search {
+                        state.searching = Some(command_search::Searching::new(command));
+                        Screen::CommandSearch {
+                            query: String::new(),
+                        }
+                    } else {
+                        state.searching = None;
+                        Screen::Command
+                    };
+                    state.entries = entries;
+                    state.open = Some(component);
+                    state.launch = launch;
+                    state.next_screen();
+                    state.view = LauncherView::new(screen, view.title).with_rows(rows);
+                    state.reported_unbound = Vec::new();
+                    self.report_unbound(state);
+                    self.report_extra_accessories(state, extra, true);
+                    // A command whose screen is a form (#149) shows it at once;
+                    // Back from it leaves the command.
+                    if let Some(ScreenForm { id, form }) = view.form {
+                        open_form_for(state, FormPurpose::Screen(id), form);
+                    } else if let Some(text) = initial_search.filter(|_| search) {
+                        // Opened with text in its field ("Search Files for
+                        // “…”"): searched at once, as if typed.
+                        searching = self.search_in_command(state, &text);
+                    }
+                }
+                Err(error) => state.view.status = Status::Error(error.to_string()),
+            }
+            searching
+        };
+        if let Some(searching) = searching {
+            searching.await;
         }
     }
 
@@ -4523,7 +4548,7 @@ fn root_rows(state: &State, query: &str) -> (Vec<Row>, Vec<Entry>) {
     let (files, computed): (Vec<&Computed>, Vec<&Computed>) = state
         .computed
         .iter()
-        .partition(|computed| matches!(computed.entry, Entry::File(_)));
+        .partition(|computed| computed.in_files);
     let computed_row = |computed: &Computed| (computed.row.clone(), computed.entry.clone());
     // What the user's alias names comes first, even before computed
     // results; files found for the query follow what is found by title,
@@ -4573,27 +4598,48 @@ fn computed_results(
     let computed = |row: Row, entry: Entry| Computed {
         component: command.component.clone(),
         command_title: command.title.clone(),
+        in_files: matches!(entry, Entry::File(_)),
         row,
         entry,
     };
     match answer {
-        Ok(results) => results
-            .into_iter()
-            .filter_map(|result| {
-                let ComputedResult { listing, action } = result;
-                let (listing, entry) = match action {
-                    RootAction::Copy(text) => (listing, Entry::Copy(text)),
-                    RootAction::OpenUrl(url) => (listing, Entry::OpenUrl(url)),
-                    RootAction::OpenFile(id) => {
-                        let row_id = format!("{}:{}", command.id, listing.id);
-                        let (row, file) =
-                            files::file_row(files?, owner?, &command.component, id, row_id)?;
-                        return Some(computed(row, Entry::File(file)));
-                    }
-                };
-                Some(computed(Row::listed(listing, Some(&command.id)), entry))
-            })
-            .collect(),
+        Ok(results) => {
+            // At most `file_search::ROOT_FILE_ROWS` of the file index's
+            // entries, then a row searching them all (#175).
+            let mut indexed = 0;
+            let mut listed: Vec<Computed> = results
+                .into_iter()
+                .filter_map(|result| {
+                    let ComputedResult { listing, action } = result;
+                    let (listing, entry) = match action {
+                        RootAction::Copy(text) => (listing, Entry::Copy(text)),
+                        RootAction::OpenUrl(url) => (listing, Entry::OpenUrl(url)),
+                        RootAction::OpenFile(id) => {
+                            let row_id = format!("{}:{}", command.id, listing.id);
+                            let (row, file) =
+                                files::file_row(files?, owner?, &command.component, id, row_id)?;
+                            if file.indexed {
+                                if indexed == file_search::ROOT_FILE_ROWS {
+                                    return None;
+                                }
+                                indexed += 1;
+                            }
+                            return Some(computed(row, Entry::File(file)));
+                        }
+                    };
+                    Some(computed(Row::listed(listing, Some(&command.id)), entry))
+                })
+                .collect();
+            if indexed > 0
+                && let Some((row, entry)) = file_search::search_all_row(&command, query)
+            {
+                listed.push(Computed {
+                    in_files: true,
+                    ..computed(row, entry)
+                });
+            }
+            listed
+        }
         Err(error) => {
             let row = Row {
                 id: format!("{}:failed", command.id),

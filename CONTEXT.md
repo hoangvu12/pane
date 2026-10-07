@@ -81,11 +81,11 @@ One entry root search lists for a query and can invoke, such as an extension com
 _Avoid_: Item (an item belongs to a command's own list), search hit
 
 **Result kind**:
-What invoking a root result reaches, shown on its row: Command, Application, File, Link or Fallback. The core derives it from the result's action, never from its title.
+What invoking a root result reaches, shown on its row: Command, Application, File, Folder, Link or Fallback. The core derives it from the result's action, never from its title; Folder is a folder the file index found.
 _Avoid_: Type, category
 
 **Result section**:
-A labelled run of root results: "Commands" over a blank query's results, "Results" with their count over a query's, then "Fallbacks"; a run of computed answers sits under the title of the command that computed them ("Calculator"). Sections only label the list; they never reorder or filter it, and none claims recent use.
+A labelled run of root results: "Commands" over a blank query's results, "Results" with their count over a query's, then "Fallbacks"; a run of computed answers sits under the title of the command that computed them ("Calculator"), and the files found for the query, with the row searching them all, under "Files". Sections only label the list; they never reorder or filter it, and none claims recent use.
 _Avoid_: Group (a shortcut group is a Settings term), suggestions
 
 **Quick slot**:
@@ -140,12 +140,20 @@ _Avoid_: Calculation, conversion, answer card (the card is how it is drawn)
 What root search shows above its fallbacks when nothing else is listed for a query that is not blank: the query, and what the user can do — pick a fallback, install an extension, or offer a command as one on its extension's page in Settings. It selects nothing: a fallback is chosen only by the user.
 _Avoid_: Empty state (a screen's own line when it has no rows), zero state
 
+**File index**:
+The host's index of the names of the files and folders under the index scope, kept in Pane's cache folder, readable by the user only and locked against a second Pane, caught up at start from what the system recorded and kept current from its change notifications while a package that uses it (`"fileIndex": true`) is enabled and not paused. It answers file search: root search's file rows, Search Files, and any package's search through `pane:extension/file-index`, each entry named by an id Pane gave it and checked again before Pane acts on it. Disabling the last package that uses it stops watching at once and keeps it on disk; uninstalling it deletes it.
+_Avoid_: Search index (Windows Search, Spotlight), database, cache (it is kept in the cache folder because it can be rebuilt, but it is the index)
+
+**Index scope**:
+The roots (the home folder, and the folders the user adds) and the rules deciding what under them the file index holds: hidden entries, what ignore files exclude, caches, temporary folders, `node_modules` and the home folder's `AppData` or `Library` left out by default, each a switch, with the user's own excluded folders and patterns; Pane's own folders and the system's recycle and setup folders always left out. Pane's own record, not extension data.
+_Avoid_: Search scope, library, watched folders
+
 **Granted folder**:
-The one folder the user grants a package through Pane's own "Choose folder…" row, which Pane records itself (not as extension data) and lists for that package's commands under the scan policy; they name its files only by the ids Pane gave them, and Pane opens one after checking it again. The Files default extension's root results come from it.
+The one folder the user grants a package through Pane's own "Choose folder…" row, which Pane records itself (not as extension data) and lists for that package's commands under the scan policy; they name its files only by the ids Pane gave them, and Pane opens one after checking it again. No longer what file search uses (that is the file index, since #175): it stays for a package that wants an exhaustive listing of one folder the user chooses.
 _Avoid_: Search scope, library, preopen, the extension's folder setting
 
 **Scan policy**:
-Pane's fixed bounds on listing a granted folder, the same on every system: regular files only, breadth first in name order, at most 8 folders deep, 5,000 files and 20,000 entries, skipping hidden entries, links and unreadable subfolders; a listing that reaches a bound or skips a subfolder says it is partial. A listing is kept for one visit of root search.
+Pane's fixed bounds on listing a granted folder, the same on every system: regular files only, breadth first in name order, at most 8 folders deep, 5,000 files and 20,000 entries, skipping hidden entries, links and unreadable subfolders; a listing that reaches a bound or skips a subfolder says it is partial. A listing is kept for one visit of root search. It bounds a granted folder only, not the file index.
 _Avoid_: Indexer, crawl, whole-disk search
 
 **Indexed result**:

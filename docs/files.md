@@ -1,20 +1,360 @@
 # Files
 
-Added for [#29](https://github.com/hoangvu12/pane/issues/29) (US03, US08,
-US12, US40, US44, US57; T01, T03, T09, T22; G3, G7, as contributions, not
-claims that they pass), and reworked after its security review. A user
-grants one folder, finds its files by typing their names into
-[root search](root-search.md) or into its command, **Search Files** (#150),
-and opens, reveals, copies or recycles one through the file actions Pane
-performs itself. The feature is a **default extension**, Files, which the
-user can disable like any package.
+File search: the user types a file's or a folder's name into
+[root search](root-search.md), or into the **Search Files** command (#150),
+and opens, reveals, copies or recycles it through the file actions Pane
+performs itself. Pane's host keeps an index of the names of the files and
+folders under the user's home folder (the **file index**), caught up at
+start from what the file system recorded while Pane was not running and
+kept current while it runs, so a file is found as quickly as a command
+([#126](https://github.com/hoangvu12/pane/issues/126),
+[ADR 0034](adr/0034-file-search-indexes-the-users-home-folder.md); built by
+[#174](https://github.com/hoangvu12/pane/issues/174) and
+[#175](https://github.com/hoangvu12/pane/issues/175)). The feature is a
+**default extension**, Files, which the user can disable like any package;
+while no enabled package uses the index, Pane neither indexes nor watches
+anything.
+
+Until #175, file search found only the files of one folder the user granted
+Files (#29, [ADR 0017](adr/0017-host-lists-a-granted-folder-for-an-extension.md)).
+That capability stays for other packages, unchanged
+([The granted folder](#the-granted-folder)); Files no longer uses it.
+
+Not yet (later tickets of #126 and #161): the File search page in Settings
+and the safety valves (churn quarantine, the low-disk floor, pausing for
+sleep, folders that hang) are [#176](https://github.com/hoangvu12/pane/issues/176);
+Search Files' recent files, kind dropdown, detail and paging are
+[#177](https://github.com/hoangvu12/pane/issues/177).
 
 ## Where it lives
 
 A pure WASI 0.3 guest cannot read the user's folders (its WASI context
-preopens none) or open a file, so Pane's host does both, and owns every step
-that decides what is reached, as recorded (proposed) in
-[ADR 0017](adr/0017-host-lists-a-granted-folder-for-an-extension.md):
+preopens none) or open a file, and the walk and watching must never run on
+the extension runtime's thread, so the index is the host's, in `pane-core`,
+and one index serves every package that uses it:
+
+- **The index**, [`pane_core::file_index`](../crates/pane-core/src/file_index.rs):
+  the walker, the engine, the scope and the NTFS change journal (#174,
+  [below](#the-engine-and-the-walker)); the reconciling walk
+  (`file_index/reconcile.rs`); one change source per system behind the
+  `ChangeSource` trait (`file_index/changes.rs` and `changes/{ntfs,macos,linux}.rs`);
+  the coordinator, which opens, catches up, walks and watches the index,
+  gives each entry an id and checks it again (`file_index/indexer.rs`,
+  `Indexer`); and the host side of `pane:extension/file-index`
+  (`file_index/host.rs`).
+- **The launcher's side**, [`launcher/file_search.rs`](../crates/pane-core/src/launcher/file_search.rs):
+  which packages use the index, root search's Files section and its
+  "Search Files for “…”" row, the system icons, deleting the index with the
+  last package that used it, and the calls the File search page (#176) and
+  Search Files (#177) build on (`Launcher::file_indexer`,
+  `file_index_status`, `file_search_rules`, `set_file_search_rules`,
+  `rebuild_file_index`). The rows and their actions are
+  [`launcher/files.rs`](../crates/pane-core/src/launcher/files.rs) and
+  [`launcher/own_actions.rs`](../crates/pane-core/src/launcher/own_actions.rs).
+- **The host interface**, `pane:extension/file-index`
+  ([`wit/file-index.wit`](../wit/file-index.wit)): `search` and `status`,
+  for any package that declares `"fileIndex": true` ([For authors](#for-authors)).
+- **The default extension**, [`guests/files`](../guests/files) (Rust),
+  package [`guests/packages/files`](../guests/packages/files) (0.7.0,
+  `"fileIndex": true`): its one command, Search Files (id `files`,
+  `"search": true` and `"rootResults": true`), asks the index for the
+  query and answers with the entries' ids. It is not a
+  [root provider](root-search.md#root-providers): it has a row and a
+  screen of its own.
+- **The window**, [`crates/pane/src/main.rs`](../crates/pane/src/main.rs):
+  `Launcher::with_file_index(IndexerConfig::native(cache, home, own))`
+  with Pane's cache folder, the home folder (`USERPROFILE` on Windows,
+  `HOME` elsewhere) and Pane's data folder, which is never indexed.
+
+Acquiring the package automatically at setup is
+[#51](https://github.com/hoangvu12/pane/issues/51) to
+[#53](https://github.com/hoangvu12/pane/issues/53); until then it is
+installed from its folder like the other default extensions
+(`pane --install target/guests/packages/files`).
+
+## The file index
+
+### When it runs
+
+A package declares in `pane.json` that it uses the index:
+`"fileIndex": true`. The index is opened, caught up and watched only while
+at least one such package is enabled and not paused
+(`Launcher::sync_file_index`, after every change of the packages). When the
+last one is disabled or paused, watching stops at once and the index stays
+on disk; enabling one again catches it up from where it stopped. Uninstalling
+the last one deletes the index. This keeps lazy activation
+([ADR 0005](adr/0005-lazy-activation-and-managed-dependencies.md)) without
+running guest code to learn it.
+
+At start Pane catches the index up (it is cheap); a first full walk, or a
+reconciling walk the catch-up asks for, waits until the launcher is first
+shown (`WindowPresence::Shown`) or 60 seconds after start
+(`file_index::FIRST_WALK_DELAY`), whichever comes first. Meanwhile, and
+while any walk runs, searches answer from what is indexed so far.
+
+One thread of its own per activation ("pane-file-index"), at background
+priority (background mode and EcoQoS on Windows, the background QoS class
+on macOS, nice 19 and the idle I/O class on Linux), does all the writing;
+the walker's threads run at the same priority. A query never runs at
+background priority and never waits for the coordinator.
+
+### Where it is kept
+
+In Pane's cache folder, since it can always be rebuilt:
+`%LOCALAPPDATA%\Pane\cache\file-index` on Windows,
+`~/Library/Caches/Pane/file-index` on macOS and
+`$XDG_CACHE_HOME/pane/file-index` on Linux (`file_index::INDEX_DIR`). The
+folder is readable by the user only: mode 0700 (files 0600) on macOS and
+Linux, and on Windows a protected DACL for the user and SYSTEM, inherited
+by its files, as `credentials.json` is written. It carries a format version;
+an index of another version, or one that cannot be read, is deleted and
+rebuilt, never read. The folder is locked: a second Pane on the same cache
+folder does not index, and its status says "Another Pane is using file
+search on this computer". It is never sent anywhere.
+
+The index records with itself whether a first walk finished, each volume's
+cursor into the system's change records, and the roots and rules it was
+built under, so that changing the rules (even while file search is off) is
+applied the next time it opens.
+
+### The index scope
+
+The **roots** are the home folder (`%USERPROFILE%` on Windows, `$HOME` on
+macOS and Linux) and the folders the user adds. The **rules**, applied by
+the walker, the reconciling walk and every live change alike
+([the walker's rules](#the-engine-and-the-walker)):
+
+- Always left out: Pane's own data and cache folders and the index itself;
+  the system's recycle and setup folders (`$RECYCLE.BIN`,
+  `System Volume Information` and the like); folders tagged with
+  `CACHEDIR.TAG`.
+- Left out by default, each a switch: hidden entries (a leading `.`; the
+  hidden or system attribute on Windows); what `.gitignore` (inside a Git
+  repository), `.ignore`, `.git/info/exclude` and the global Git ignore file
+  exclude, read as Git reads them without running `git`; `node_modules`,
+  folders named `tmp`, `temp`, `cache` or `caches`, `*.tmp` and `*.temp`;
+  the home folder's `AppData` (Windows) or `Library` (macOS); network and
+  removable volumes mounted under a root.
+- The user's own: added roots, excluded folders and excluded patterns (in
+  `.gitignore` syntax).
+
+The user's rules are Pane's own record, not extension data:
+`file-search.json` beside `installed.json`
+(`{"version": 1, "rules": {"addedRoots": [], "excludedFolders": [],
+"excludedPatterns": [], "includeHidden": false, "useIgnoreFiles": true,
+"defaultExclusions": true, "includeOtherVolumes": false}}`,
+`file_index::UserRules`). `Launcher::set_file_search_rules` records and
+applies them without a restart: a removed root's entries go and an added
+root alone is walked; any other change walks every root again. The File
+search page that changes them is #176.
+
+Entries are files and folders, named as the system names them (a name that
+is not valid Unicode is shown with replacement characters and opened by
+its exact name). Links and junctions are indexed as entries and never
+followed. Online-only files (OneDrive, iCloud Drive, File Provider) are
+indexed from their folder's listing alone, so nothing is downloaded. A
+folder that cannot be read is indexed and counted, its contents not. A
+root the user added that is away (an unplugged drive) keeps its entries,
+hidden from searches until it is back (looked at no more than every two
+seconds).
+
+### Catching up and watching
+
+| | Windows | macOS | Linux |
+| --- | --- | --- | --- |
+| Catch-up at start | The NTFS change journal of each root's volume, read without administrator rights from the saved cursor ([below](#the-ntfs-change-journal-without-administrator-rights)), resolved through the folder ids the index holds | FSEvents' history, replayed by one stream over the roots from the saved event id, per volume (by its FSEvents UUID) | A reconciling walk |
+| Live changes | `ReadDirectoryChangesW` on each root (the `notify` crate) | The same FSEvents stream | inotify, one watch per indexed folder, shallowest first |
+| When the records cannot be used | A recreated journal, discarded records, more than a million records, a volume without a journal (FAT, exFAT, a network share) or a refused read: the volume's roots are reconciled | A new volume UUID: its roots are reconciled; a folder FSEvents asks to rescan (history purged or coalesced, events dropped) is reconciled alone; wrapped event ids reconcile every root | The folders past the watch limit (`fs.inotify.max_user_watches`) are reconciled every 5 minutes, and counted in the status |
+
+A **reconciling walk** (`file_index::reconcile`) compares the index's own
+folders with the disk and reads again only a folder whose modified time
+changed (a folder's time changes when an entry is added, removed or renamed
+in it); a folder new to the index is walked whole, and a folder gone takes
+everything under it out. A watcher's overflow reconciles the root it
+concerns.
+
+Live changes are gathered for about 100 ms (`file_index::SETTLE`) and
+applied together: each path reported is looked at again (indexed if it
+exists and the rules admit it, removed otherwise, a new folder walked
+whole), so a change is visible to queries well within a second of the
+system reporting it. While nothing changes, nothing runs, except Linux's
+reconciliation of the folders it cannot watch. The status
+(`Indexer::status`, `Launcher::file_index_status`, and
+`pane:extension/file-index`'s `status`) says whether the index is off,
+building (and how many entries the walk found so far), current or stopped
+and why, how it last caught up (`CaughtUpBy`: the journal, the event
+history, a reconciling walk or a full walk) and when, and how many folders
+could not be read or are not watched.
+
+## In root search
+
+Files answers root search through `root-results`, now from the index: its
+call returns at once from the host and never waits for a walk, so a busy
+disk holds up no other result. A query of one character or more lists:
+
+- at most **5 file rows** per command (`ROOT_FILE_ROWS`), the index's best
+  by its own scoring: an exact name above an exact stem, a name prefix, a
+  word start and then a match in the folders; case and accents ignored
+  ("resume" finds `Résumé.pdf`); the folders' words count ("invoices march"
+  finds `Invoices 2026/march.pdf`); newer entries a little higher; folders
+  found as well as files;
+- then **"Search Files for “<query>”"**, which opens Search Files with the
+  query typed in its own field and searched at once.
+
+They are listed **after** the commands, applications and quicklinks found
+by title, under the section "Files". Each row is the host's, whatever the
+extension's result says: its title is the entry's own name, its subtitle
+its folder (below the home folder as `~/…`), its icon the system's icon for
+the path (#142, a document's or folder's outline until it is loaded), and
+its kind **File**, or **Folder** for a folder. A blank query lists no
+files. A result naming an id the index did not give the package is not
+listed. No use of a file row is recorded for learning (ADR 0030).
+
+## Search Files
+
+Search Files (#150) is a view command whose search field is the
+launcher's own ([command search](command-search.md)): Enter on its row in
+root search opens it with the field empty above its own list ("What is
+searched", whose subtitle says what the index is doing: "Indexing your
+files… 1204 found so far", "53210 files and folders of your home folder
+are indexed", "File search is off (…)"), and typing lists what the index
+finds (at most 50), each titled with its own name and folder. Opened from
+root search's "Search Files for “plan”" row, the field holds "plan" and
+lists its results at once. A command may set both `"search"` and
+`"rootResults"` (#150): root search asks it, and so does its own field.
+Recent files before typing, the kind dropdown, the detail and paging
+are #177's.
+
+## The file actions
+
+Each file, in Search Files and in root search's file results alike, has
+actions Pane performs itself, without calling the extension, as an item of
+a command's list has them: Enter runs the first, Ctrl+Enter the second,
+Ctrl+Shift+Enter the third, and the Actions panel (Ctrl+K) lists them all.
+
+| A document | A program or script | A folder |
+| --- | --- | --- |
+| **Open** (Enter): the system's handler for its type | **Show in Explorer** (Enter) | **Open** (Enter): the file manager |
+| **Show in Explorer** (Ctrl+Enter): selected in the file manager | **Open With…** (Ctrl+Enter) | **Show in Explorer** (Ctrl+Enter) |
+| **Open With…**: a submenu of the installed applications, by name | **Run** (Ctrl+Shift+Enter): the system's handler, which runs it | **Copy Path** |
+| **Copy Path**: its path, as text | **Copy Path** | **Copy File** |
+| **Copy File**: the file, as the file manager copies it | **Copy File** | **Move to Recycle Bin** |
+| **Move to Recycle Bin** (destructive): after a confirmation | **Move to Recycle Bin** | |
+
+File search's own Enter never runs a program by accident
+([ADR 0037](adr/0037-a-command-declares-its-mode-and-host-functions-decide-what-happens-after-it-runs.md)):
+a file that would run a program when opened ([below](#opening)) is shown
+in the file manager, and only its explicit **Run** runs it; choosing Run is
+the confirmation, so nothing more is asked. (On macOS the file manager is
+Finder, so the action is "Show in Finder", elsewhere "Show in File
+Manager"; the Recycle Bin is the Trash outside Windows.)
+
+Each action closes the window after it acts and says what it did in a
+HUD, as the standard actions do: Open, Show in Explorer, Open With… and
+Run ("Opened plan.md", "Showed run.bat in Explorer", "Opened plan.md with
+Notepad", "Ran run.bat"), Copy Path and Copy File ("Copied to
+Clipboard"), and Move to Recycle Bin, once the user confirmed "Move
+“plan.md” to the Recycle Bin?" (never remembered) ("Moved to Recycle
+Bin"). What fails stays on screen in the status line ("Could not
+open todo.txt: it no longer exists"). Opening and running go through the
+launcher's link opener (`LinkOpener::open_file`), the others through its
+system ([`crate::system`](../crates/pane-core/src/system.rs): reveal, open
+with an application, the clipboard, the Recycle Bin), so tests record
+them all.
+
+## Opening
+
+A row names its entry by the id the index gave the package that found it
+(`i<generation>-<n>`, the newest 10,000 kept per package); an id of an
+earlier index (closed, rebuilt or deleted since) or of another package is
+not known ("Pane no longer knows it; search again"). Before every action,
+off the window's thread, the host checks the entry again
+(`Indexer::checked`):
+
+1. The path is not a network path (Windows, before any file system call).
+2. `symlink_metadata`: still there ("it no longer exists"), of the kind
+   indexed ("it is now a folder", "it is now a file"), not a link where a
+   file or folder was indexed ("it is now a link"; a link itself is never
+   opened: "it is a link, which Pane does not follow").
+3. It is still in the index scope ("it is no longer in the folders file
+   search covers"), and its canonical path is under a root's (a folder
+   above it replaced by a link outside: "it is no longer inside the folders
+   file search covers").
+4. Whether it is a **program**: any entry of the types below, the same on
+   every system, or on macOS and Linux a file with an executable bit
+   ([`files::runs_as_program`](../crates/pane-core/src/files.rs)): the
+   Windows types `exe bat cmd com lnk js jse vbs vbe wsf wsh hta msi msp
+   scr pif ps1 cpl reg url`, the macOS types `app command tool terminal
+   workflow` and anything inside an `.app` bundle, and `.desktop` files.
+   A row already knows from the name whether it is one; the executable bit
+   is told at this check, so a document that became a program since it was
+   found is shown in the file manager rather than opened.
+
+Only then is the checked canonical path acted on: Enter hands a document or
+a folder to the system's handler, and shows a program in the file manager;
+Run, Show in Explorer, Open With…, the copies and the Recycle Bin act on a
+program as on any file.
+
+The window's opener, `pane::SystemLinks`, runs the handler the `open` crate
+(5.4.4) names for the system, without a shell:
+
+| System | Handler | A missing handler |
+| --- | --- | --- |
+| Linux | `xdg-open <path>`, else `gio open`, `gnome-open`, `kde-open` | none installed: "no program to open this kind of file is installed"; xdg-open finding none (status 3): "no program to open this kind of file is set up"; the program failing (status 4): "the program for this kind of file refused or failed to open it" |
+| macOS | `/usr/bin/open -- <path>` (Launch Services) | its failure status |
+| Windows | PowerShell with the path in an environment variable (not on its command line), which opens an existing path with `Invoke-Item -LiteralPath`; else `explorer.exe` | its failure status; an unassociated type may show the system's "Open with" dialog |
+
+A handler still running after three seconds counts as having opened the
+file. Tests replace the opener with a recording fake; a launcher given no
+opener says "this Pane has no handler for files".
+
+## For authors
+
+A package that searches the index sets `"fileIndex": true` in `pane.json`;
+its commands call `search(query, options)` and `status()` of
+`pane:extension/file-index`, and answer `open-file` results with the
+entries' ids, or command search results whose `file` is the id
+(`SearchResult { file: Some(id), .. }` in Rust, `{ id, title, file }` in
+JavaScript and TypeScript) ([author guide](../guests/README.md#panes-file-index)):
+
+- `search` answers at once from what is indexed, never waiting for a walk:
+  the entries matching the query (a blank query: the most recently
+  modified), filtered by kind (file, folder, link) and category
+  (documents, images, audio, video, archives, applications, told from the
+  name's extension by one table on every system), sorted by relevance or
+  modified time, paged by `limit` (at most 200 per call) and `offset`. Each
+  entry carries its id, absolute path (text, for showing and copying),
+  name, folder for people, kind, whether opening it would run a program,
+  size, modified time and volume. A package that does not declare
+  `"fileIndex": true` is refused.
+- `status` answers the state (off, building, current, stopped), the
+  entries indexed, the entries the walk in progress found and why.
+
+Rust: `pane_guest::file_index::{search, status}` and
+`RootAction::OpenFile(entry.id)`; JavaScript and TypeScript: `search` and
+`status` from `"pane:extension/file-index@0.1.0"`
+([`guests/js/file-index.d.ts`](../guests/js/file-index.d.ts); WIT's `u64`
+numbers are `bigint`), whose `package.json` sets
+`"pane": { "fileIndex": true }` so that only such a component imports the
+interface, and `{ tag: "open-file", val: entry.id }`. The samples
+[`guests/sample-files`](../guests/sample-files),
+[`guests/sample-files-js`](../guests/sample-files-js) and
+[`guests/sample-files-ts`](../guests/sample-files-ts) do what Files does,
+in root search and in their own field, and give the same answers. A command
+that chooses to open or run an entry explicitly may use the host's open
+functions of ADR 0037 with the path; that is its own explicit action.
+
+## The granted folder
+
+The capability file search used before #175 stays, unchanged, for a
+package that wants an exhaustive listing of one folder the user chooses,
+including a folder the index leaves out
+([ADR 0017](adr/0017-host-lists-a-granted-folder-for-an-extension.md),
+superseded for file search by ADR 0034). Files no longer declares it; the
+test fixture [`guests/fixtures/folder-files`](../guests/fixtures/folder-files),
+what Files was before, keeps it covered. Its own `open-file` results keep
+ADR 0017's refusal to open programs and scripts, since such a package never
+offered a Run action.
 
 - **The grant**, in the core: a package declaring `"folderAccess": true` in
   `pane.json` gets Pane's own "Choose folder…" row; Pane checks the folder
@@ -24,25 +364,13 @@ that decides what is reached, as recorded (proposed) in
 - **The listing**, in the core: `pane:extension/files`
   ([`wit/files.wit`](../wit/files.wit)), `list-folder()` without a path,
   answered at once from the listing Pane makes on the package's own worker.
-- **The file actions**, in the core: a computed root result's action
-  `open-file(id)` ([`wit/root-results.wit`](../wit/root-results.wit)), or a
-  command search result's `file` ([`wit/search.wit`](../wit/search.wit)),
-  names a file by the id Pane gave it; Pane shows its own name for it,
-  gives it its own actions, and checks it again before each
-  ([`launcher/own_actions.rs`](../crates/pane-core/src/launcher/own_actions.rs)).
-- **Default extension**, [`guests/files`](../guests/files) (Rust), package
-  [`guests/packages/files`](../guests/packages/files): its one command,
-  Search Files (id `files`, `"search": true` and `"rootResults": true`),
-  only matches the listing Pane gives it against the text typed and answers
-  with the files' ids.
+- **The file actions** are the ones above, checked again against the grant
+  (`FileAccess::checked_file`): the id in the package's latest listing,
+  that listing's folder still its grant, not a network path, a regular
+  file and not a link, its canonical path inside the grant's, and for Open
+  not a program ("it is a program or script, which opening would run").
 
-Acquiring the package automatically at setup is
-[#51](https://github.com/hoangvu12/pane/issues/51) to
-[#53](https://github.com/hoangvu12/pane/issues/53); until then it is
-installed from its folder like the other default extensions
-(`pane --install target/guests/packages/files`).
-
-## Granting the folder
+### Granting the folder
 
 Every command of a package with `"folderAccess": true` starts with Pane's
 own rows, above the extension's items:
@@ -73,7 +401,7 @@ It is Pane's record, not extension data: the extension never supplies,
 saves or sees the path. It survives restarts and disabling; uninstalling
 the package forgets it, whether or not its saved data is kept.
 
-## The scan policy
+### The scan policy
 
 The same on every system, enforced by the host
 ([`files::walk`](../crates/pane-core/src/files.rs)); the limits are defined
@@ -95,7 +423,7 @@ extensions read them with `files.limits()`:
 - A subfolder (or an entry) that cannot be read is skipped and makes the
   listing **partial**: `truncated` is set, as when a limit is reached.
 
-### When it is listed
+#### When it is listed
 
 `list-folder()` never waits. The first call in a visit of root search
 starts a listing on the package's **own worker thread** (one per package,
@@ -105,7 +433,8 @@ starts, and takes only the newest request. The listing is then **kept for
 the visit**: every later keystroke gets it at once, and only filters it. It
 is dropped when root search is left (a command, Settings › Extensions, a
 preview, a restart of the visit) and when the grant changes, so the next
-visit lists the folder again; there is no index and no file watching.
+visit lists the folder again; this listing keeps no index and watches
+nothing.
 
 Once a listing ends, the commands whose answer waited for it are asked
 again for the query then on screen, **after** every other result of that
@@ -120,251 +449,20 @@ update, pause, uninstall). A new query does not restart it: the new search
 waits for the same listing, and the older search's wait is cancelled. A
 search whose extension was told the folder is listing waits for its own
 visit's listing (or a newer one), even if it ended before the search began
-waiting (Files is then asked again at once); a listing of a visit already
+waiting (the package is then asked again at once); a listing of a visit already
 left that stops late does not end that wait.
 
 **A hung folder** (an unresponsive disk or a network mount the host could
 not tell apart) holds only its package's worker: no new thread is started
 for later requests, which wait (only the newest is kept), other extensions
-are unaffected, and Files lists nothing until the listing returns. With
+are unaffected, and the package lists nothing until the listing returns. With
 UNC paths refused this should be rare; mapped network drives on Windows and
 network mounts on macOS and Linux are not detected.
 
-## In root search
+## The engine and the walker
 
-Files are found by name: a file is listed when each word of the query is in
-its name, and then, after those, when each word is in its name or the
-folders below the granted one ("notes todo" finds `notes/todo.txt`),
-ignoring letter case (Unicode lowercasing, no accent folding), at most 20.
-That matching is the extension's.
-
-Each row is a
-[computed result](root-search.md#results-computed-from-the-query) whose
-title and subtitle are **the host's**, not the extension's: the file's own
-name, and "File in <granted folder's name>/<subfolders>". A result naming an
-id the host did not give in the package's latest listing is not listed.
-File results are listed **after the results found by title** (commands and
-applications), unlike other computed results. A blank query lists no files,
-and none are listed while no folder is granted.
-
-## Search Files
-
-Search Files (#150) is a view command whose search field is the
-launcher's own ([command search](command-search.md)): Enter on its row in
-root search opens it with the field empty above its own list (Pane's
-folder rows, then "What is searched"), and typing lists the granted
-folder's files as root search does (by name, then by folder, at most 20),
-each titled with its own name and "File in <folder>". A newer text stops
-the search before it. Opening the command is a new visit, so the folder is
-listed again then; a search answered while it is still being listed shows
-"Running…" and is asked again once the listing ends, unless a newer text
-(or leaving the command) stopped it first.
-
-A command may set both `"search"` and `"rootResults"` (#150): root search
-asks it, and so does its own field. Root search still never asks a
-command that searches unless it says `rootResults` too.
-
-## The file actions
-
-Each file, in Search Files and in root search's file results alike, has
-actions Pane performs itself, without calling the extension, as an item of
-a command's list has them: Enter runs the first, Ctrl+Enter the second,
-Ctrl+Shift+Enter the third, and the Actions panel (Ctrl+K) lists them all.
-
-| A document | A program or script |
-| --- | --- |
-| **Open** (Enter): the system's handler for its type | **Show in Explorer** (Enter) |
-| **Show in Explorer** (Ctrl+Enter): selected in the file manager | **Open With…** (Ctrl+Enter) |
-| **Open With…**: a submenu of the installed applications, by name | **Run** (Ctrl+Shift+Enter): the system's handler, which runs it |
-| **Copy Path**: its path, as text | **Copy Path** |
-| **Copy File**: the file, as the file manager copies it | **Copy File** |
-| **Move to Recycle Bin** (destructive): after a confirmation | **Move to Recycle Bin** |
-
-File search's own Enter never runs a program by accident (ADR 0037's
-exception, keeping ADR 0017's intent): a file that would run a program
-when opened (below) is shown in the file manager, and only its explicit
-**Run** runs it.
-Whether a file is one is told on the listing's worker, with the listing, so
-a row knows at once what Enter does. (On macOS the file manager is Finder,
-so the action is "Show in Finder", elsewhere "Show in File Manager"; the
-Recycle Bin is the Trash outside Windows.)
-
-Each action closes the window after it acts and says what it did in a
-HUD, as the standard actions do: Open, Show in Explorer, Open With… and
-Run ("Opened plan.md", "Showed run.bat in Explorer", "Opened plan.md with
-Notepad", "Ran run.bat"), Copy Path and Copy File ("Copied to
-Clipboard"), and Move to Recycle Bin, once the user confirmed "Move
-“plan.md” to the Recycle Bin?" (never remembered) ("Moved to Recycle
-Bin"). What fails stays on screen in the status line ("Could not
-open todo.txt: it no longer exists"). Opening and running go through the
-launcher's link opener (`LinkOpener::open_file`), the others through its
-system ([`crate::system`](../crates/pane-core/src/system.rs): reveal, open
-with an application, the clipboard, the Recycle Bin), so tests record
-them all.
-
-## Checking a file again
-
-Before every action, off the window's thread, the host checks the file
-again (`FileAccess::checked_file`):
-
-1. The id is in the package's latest listing, and that listing's folder is
-   still the package's grant.
-2. The path is not a network path (Windows, before any file system call).
-3. `symlink_metadata`: a regular file, not a link ("it is now a link"),
-   still there ("it no longer exists").
-4. Its canonical path is inside the grant's canonical path (a folder above
-   it replaced by a link outside: "it is no longer inside the granted
-   folder").
-5. For Open (Enter on a document) only: it is not a program or script
-   ([`files::runs_as_program`](../crates/pane-core/src/files.rs)), on
-   every system: the Windows types `exe bat cmd com lnk js jse vbs vbe
-   wsf wsh hta msi msp scr pif ps1 cpl reg url`, the macOS types `app
-   command tool terminal workflow` and anything inside an `.app` bundle,
-   `.desktop` files, and on macOS and Linux any file with an executable
-   bit ("it is a program or script, which opening would run"). A document
-   that became a program since it was listed is refused so. Run, Show in Explorer,
-   Open With…, the copies and the Recycle Bin act on a program as on any
-   file.
-
-Only then is the checked canonical path acted on, with the host's name for
-the file in what the status says; root search keeps its query.
-
-The window's opener, `pane::SystemLinks`, runs the handler the `open` crate
-(5.4.4) names for the system, without a shell:
-
-| System | Handler | A missing handler |
-| --- | --- | --- |
-| Linux | `xdg-open <path>`, else `gio open`, `gnome-open`, `kde-open` | none installed: "no program to open this kind of file is installed"; xdg-open finding none (status 3): "no program to open this kind of file is set up"; the program failing (status 4): "the program for this kind of file refused or failed to open it" |
-| macOS | `/usr/bin/open -- <path>` (Launch Services) | its failure status |
-| Windows | PowerShell with the path in an environment variable (not on its command line), which opens an existing path with `Invoke-Item -LiteralPath`; else `explorer.exe` | its failure status; an unassociated type may show the system's "Open with" dialog |
-
-A handler still running after three seconds counts as having opened the
-file. Tests replace the opener with a recording fake; a launcher given no
-opener says "this Pane has no handler for files".
-
-## For authors
-
-A package that lists a granted folder sets `"folderAccess": true` in
-`pane.json`, and its commands call `list-folder()` and answer `open-file`
-results with the ids, or command search results whose `file` is the id
-(`SearchResult { file: Some(id), .. }` in Rust, `{ id, title, file }` in
-JavaScript and TypeScript), in Rust, JavaScript and TypeScript alike
-([author guide](../guests/README.md#files-of-a-granted-folder)):
-`pane_guest::files::list_folder()` and `RootAction::OpenFile(id)` in Rust;
-`listFolder()` from `"pane:extension/files@0.1.0"` and
-`{ tag: "open-file", val: id }` in JavaScript and TypeScript, whose
-`package.json` sets `"pane": { "files": true }` so that only such a
-component imports the interface. The samples
-[`guests/sample-files-js`](../guests/sample-files-js) and
-[`guests/sample-files-ts`](../guests/sample-files-ts) do what Files does,
-in root search and in their own field (`"pane": { "search": true }`), with
-a simpler match (every word in the name), and give the same answers.
-
-## Checks
-
-- Launcher public interface
-  ([`crates/pane-core/tests/files.rs`](../crates/pane-core/tests/files.rs)),
-  with the real Files guest, a recording opener and a controlled fixture
-  folder named "Pane files — ñ" holding "Résumé plan ü.txt", a subfolder, a
-  hidden file and a hidden folder: nothing found before a folder is
-  granted; granting through Pane's row; the grant recorded in
-  `folders.json` by identity (parsed; both paths canonicalized) and not in
-  the extension's settings; a hidden folder refused, keeping the grant;
-  "Stop sharing" removing the files; the files found by name, then by
-  subfolder, case ignored, hidden ones not; Enter opening the Unicode file
-  (the opener's path and the fixture's, both resolved); file results after
-  a command whose title matches; a folder gone since it was granted
-  explained as a row; at Enter, a `.bat` file and an executable script
-  revealed (through a recording system) rather than opened, a removed file, a file replaced by a link and a folder above it
-  replaced by a link outside the grant each refused, and nothing reaching
-  the opener; the grant kept across a restart, hidden while disabled, and
-  forgotten by uninstalling; the JavaScript and TypeScript samples; and
-  the `faulty` fixture naming `/etc/hosts` itself (not listed) and giving
-  each listed file the title "harmless.txt" (shown with the real names,
-  and opened as such).
-- Grants and the policy, on fixture folders: the root, the home folder, a
-  hidden folder, a file, a missing and a relative path refused, and UNC
-  forms on Windows; breadth-first name order; links not listed or followed
-  (macOS and Linux); hidden attributes and junctions (Windows, written, not
-  run); each limit; entries counted while a 50-file folder is read (11
-  checks for a limit of 10); a cancelled listing; an unreadable subfolder
-  making the listing partial (macOS and Linux, unless run as root); program
-  and script types told from documents.
-- The listing, with a folder lister the test holds up (same file): while
-  the Files folder is listing, the applications' result and the
-  calculator's answer are shown, then the files once it is released; one
-  listing per visit, later keystrokes filtering it; a new query waiting for
-  the same listing, the older search ending at once and only the newer
-  query's file shown; leaving root search stopping the listing and the next
-  visit listing again; disabling stopping it, with nothing arriving once it
-  has returned (waited on, not slept); a new grant stopping the old
-  listing. Unit tests in
-  [`pane_core::files`](../crates/pane-core/src/files.rs) hold a left
-  visit's listing until the next visit's is queued and waited for (its late
-  end must not end that wait), and let a listing end before the wait for it
-  is made (the wait must end at once); each race failed a run of the tests
-  above once (#29).
-- Search Files and the file actions (#150), through the launcher
-  ([`crates/pane-core/tests/file_actions.rs`](../crates/pane-core/tests/file_actions.rs)),
-  for Files and the JavaScript and TypeScript samples alike, with a
-  recording opener, system and window: the files listed in the command's
-  own field, a newer text stopping the search waiting for the listing; a
-  document's six actions, each acting through the fakes and closing the
-  window (Copy Path and Copy File with their HUD), Open With… listing the
-  installed applications by name, Move to Recycle Bin confirmed first; a
-  program revealed by Enter, Ctrl+Enter its Open With… submenu, only Run
-  running it, in Search Files and in root search; the command keeping its
-  id. In the window
-  ([`crates/pane/tests/file_actions.rs`](../crates/pane/tests/file_actions.rs)),
-  with real keys: Enter and Ctrl+Enter on a document and on a program.
-- Native GUI smokes, one phase per system (screenshots 220 to 223), with a
-  data folder of its own and a fixture folder "Pane smoke files" (spaces)
-  holding "Résumé plan ü.txt" (non-ASCII) and an executable script or batch
-  file: install Files, Enter on "Choose folder…" (the debug build takes
-  the folder from `PANE_TEST_CHOOSE_FOLDER` instead of showing the picker),
-  type "plan", check the selected row, Enter; then type "runner" and Enter,
-  which must be refused, with the script neither handed over nor run. On
-  Linux the file opens through the real `xdg-open` outside any desktop
-  session, whose only handler for plain text is a script of the smoke's
-  that records the path (XDG_CONFIG_HOME, XDG_DATA_HOME and BROWSER of the
-  smoke's own), and the recorded path, resolved, must be the fixture
-  file's; it ran on Linux X11 on 2026-09-28
-  ([evidence](platforms/linux.md#files-29)). On macOS and Windows the debug
-  build's `PANE_TEST_OPEN_FILE_LOG` makes the opener record the path
-  instead of running `open` or `Invoke-Item` (which could open the user's
-  own program or show the "Open with" dialog), and the recorded path must
-  be the fixture file's; that is written but has not run yet.
-
-## Limits
-
-- One folder per package; no whole-disk index, other scopes, content search,
-  file watching, icons, previews, recent files or ranking beyond name then
-  path.
-- Each visit of root search lists the folder again; a folder at the limits
-  costs up to 20,000 entries per visit, and files beyond the limits are not
-  found.
-- Mapped network drives (Windows) and network mounts (macOS, Linux) are not
-  refused; a hung one holds up only its package's worker.
-- Programs and scripts are revealed by Enter; only their Run action runs
-  them, and it asks nothing more ("Instant file search", #126, settles the
-  rest).
-- A handler slow to fail (over three seconds) is reported as having opened
-  the file.
-- The positive native open ran only on Linux X11 (xdg-open with a recording
-  handler); on macOS and Windows the real handler is not run by the smoke.
-- Screen reader behaviour is unverified, as for all of root search.
-
-## The file index (#126, in progress)
-
-"Instant file search" ([#126](https://github.com/hoangvu12/pane/issues/126),
-[ADR 0034](adr/0034-file-search-indexes-the-users-home-folder.md)) replaces
-the granted folder's listing for file search with an index of the home
-folder that the host keeps. Its first slice
-([#174](https://github.com/hoangvu12/pane/issues/174)) is in
-[`pane_core::file_index`](../crates/pane-core/src/file_index.rs); nothing
-uses it yet (the coordinator, the change sources and root search's rows are
-[#175](https://github.com/hoangvu12/pane/issues/175)), so everything above
-still describes what Files does.
+The measured first slice of #126 ([#174](https://github.com/hoangvu12/pane/issues/174)),
+which the coordinator above builds on:
 
 - **The walker** (`file_index/walker.rs`): every folder under the roots the
   rules admit is listed once, by up to 8 threads of its own at background
@@ -410,12 +508,12 @@ still describes what Files does.
   Unicode is shown with replacement characters and still opened exactly.
   Each entry keeps its kind, size, modified time, file id and volume.
 - **Its folder**: `index.json` (the format version, the live segments, and
-  Pane's record: whether a first walk finished, and each volume's journal
-  cursor), `<n>.seg`, `<n>.wal`, and `lock`, which the index holds locked,
+  Pane's record: whether a first walk finished, each volume's journal
+  cursor, and the roots and rules it was built under), `<n>.seg`, `<n>.wal`, and `lock`, which the index holds locked,
   so a second Pane on the same cache folder gets `IndexError::InUse`. The
   folder is mode 0700 and the files 0600 on macOS and Linux; on Windows
-  they inherit `%LOCALAPPDATA%`'s permissions (a protected DACL as
-  `credentials.json` has is #175's). An index of another `FORMAT_VERSION`,
+  the folder is made with a protected DACL for the user and SYSTEM, which
+  its files inherit (#175). An index of another `FORMAT_VERSION`,
   or one that cannot be read, is deleted and rebuilt, never read. The log
   is handed to the system after each batch but not flushed to the disk: a
   power loss can lose the last changes, which the catch-up finds again from
@@ -519,14 +617,110 @@ folder renamed, a file in it created), and reads them back from the
 cursor; it has not run yet, and is the evidence #174 asks for when run
 without administrator rights (CI's Windows runner is an administrator).
 
-The other systems' equivalents and their limits, for #175:
+The other systems' equivalents are FSEvents' history on macOS (no
+permission beyond reading the folders, and the privacy prompts for Desktop,
+Documents and Downloads) and, on Linux, where no history is readable
+without privileges (fanotify needs `CAP_SYS_ADMIN`), the reconciling walk;
+see [Catching up and watching](#catching-up-and-watching).
 
-- **macOS**: FSEvents replays a volume's history from a saved event id
-  without any permission beyond reading the folders (and the privacy
-  prompts for Desktop, Documents and Downloads); history can be purged or
-  coalesced, which FSEvents reports per folder (`MustScanSubDirs`), and a
-  changed volume UUID means walking again.
-- **Linux**: no history is readable without privileges (fanotify needs
-  `CAP_SYS_ADMIN`); the catch-up is a walk that reads only folders whose
-  modified time changed, and live changes come from inotify, one watch per
-  folder, up to `fs.inotify.max_user_watches`.
+## Checks
+
+Written with #175; none has run yet (tests run once every ticket of the
+milestone is merged).
+
+- **The index through the launcher**
+  ([`crates/pane-core/tests/file_index.rs`](../crates/pane-core/tests/file_index.rs)),
+  with the real Files guest, the real index and the system's own change
+  source over a fixture folder standing for the home folder (the test names
+  it) and a cache folder of the test's own, a recording opener and system,
+  waiting on `Launcher::wait_for_file_index`: typing a file's name lists it
+  under "Files", exact name first, at most five, then "Search Files for
+  “plan”", with its folder `~/Documents`, and Enter opens it; hidden,
+  ignored, `node_modules` and cache-tagged entries absent; a row from the
+  first character and none for a blank query; case, accents and folder
+  words; a folder found, reading Folder; file rows after a command found
+  by title; a program, a script and a shortcut each revealed by Enter and
+  never opened; an entry replaced by a folder since it was found explained,
+  not opened; the first walk waiting until the launcher is shown;
+  disabling Files stopping the index (kept on disk), a file written then
+  found once it is enabled again, and uninstalling deleting the index; a
+  restart catching up what changed while Pane was stopped by the system's
+  records (`CaughtUpBy::Journal` on Windows, `EventHistory` on macOS,
+  `ReconcilingWalk` on Linux), not a full walk; a second Pane on the same
+  cache folder saying file search is in use; the user's rules recorded in
+  `file-search.json` and applied without a restart.
+- **The coordinator through the change source's seam**
+  (`file_index::indexer` unit tests): a fake source the test scripts (what
+  a catch-up finds) and drives (the live changes it reports), with the real
+  index and walker: the first walk waiting to be shown; only a package
+  that uses the index searching it, ids its own and checked again
+  (removed, replaced by a folder, by a link); kinds, categories, sorting
+  and pages; created, moved-in, renamed and deleted entries applied, a
+  hidden one not; an overflow reconciling its folder; disabling stopping
+  the watch and enabling again catching up without walking; records that
+  are gone leading to a reconciling walk with the same result; a restart
+  over the same cache folder; a second index refused; deleting the index
+  forgetting its ids; the user's rules (hidden entries, an added root, an
+  excluded folder, a removed root); an added root away and back; the
+  folders a source cannot watch counted and reconciled every few minutes.
+  `file_index::reconcile` and `store` unit tests cover reading only changed
+  folders, a missing root keeping its entries, and a folder's children
+  across segments and memory.
+- **Per system**: the NTFS journal read without administrator rights
+  (`file_index::journal` tests, #174); inotify reporting a change in a
+  watched folder and a folder added later, and stopping when dropped
+  (`changes::linux` tests); FSEvents replaying a change made before the
+  stream opened from a saved event id, saying the history is done, then
+  reporting a live change (`changes::macos` tests). The watch limit cannot
+  be lowered without root; its fallback is driven through the seam above.
+- **Search Files and the file actions**
+  ([`crates/pane-core/tests/file_actions.rs`](../crates/pane-core/tests/file_actions.rs)),
+  for Files and the Rust, JavaScript and TypeScript samples alike: the
+  entries listed in the command's own field with their folders, a folder
+  found; a document's six actions acting through the fakes and closing the
+  window; Move to Recycle Bin confirmed first; a program revealed by Enter,
+  Ctrl+Enter its Open With… submenu, only Run running it, in Search Files
+  and in root search; root search's Files section with the system's icon
+  and the row opening the command with the query typed; a folder opened in
+  the file manager; a file created while Pane runs found through the
+  system's watcher, and explained at Enter once deleted; the command
+  keeping its id. In the window
+  ([`crates/pane/tests/file_actions.rs`](../crates/pane/tests/file_actions.rs)),
+  with real keys over the index: Enter and Ctrl+Enter on a document and on
+  a program.
+- **The granted folder**
+  ([`crates/pane-core/tests/files.rs`](../crates/pane-core/tests/files.rs)),
+  with the `folder-files` fixture: the grant, its record and its refusals,
+  the scan policy, the listing per visit and its cancellation, the checks
+  at Enter, as since #29.
+- **Native GUI smokes**, one phase per system (screenshots 220 to 224): a
+  debug build's `PANE_TEST_FILE_INDEX_HOME` names a fixture folder for the
+  index to cover instead of the home folder (keeping the index in the
+  phase's data folder); install Files, type "plan" and open the file found,
+  then start Pane again, type "runner" and Enter, which reveals the script
+  and runs nothing. Rewritten for the index with #175; not run yet.
+
+## Limits
+
+- The File search page, the safety valves (churn quarantine, the low-disk
+  floor, pausing for sleep, a folder that hangs) and the migration of a
+  folder granted to Files under #29 into the roots are #176; until then a
+  folder that hangs holds up the walk, and nothing stops indexing on a
+  full disk.
+- Search Files has no recent files, kind dropdown, detail or paging yet
+  (#177); `pane:extension/file-index` already offers them to extensions.
+- Matching is by word prefix; a query inside a word ("port" in
+  "report") is not found yet, and a query with `/` or `\` is matched word
+  by word, not as path segments in order.
+- macOS asks before Pane reads Desktop, Documents and Downloads; Pane does
+  not explain it first yet, nor list a refused folder (#176's page).
+- Linux's catch-up compares folders' modified times in whole seconds: a
+  change within the second a folder was indexed is not seen until the
+  folder changes again, and a file changed in place while Pane was stopped
+  keeps its old size and time until it changes again while Pane runs.
+- The roots and rules an index was built under are recorded as JSON; a
+  root whose path is not valid Unicode cannot be recorded.
+- The benchmark's numbers against Raycast's are not measured yet (#174).
+- A handler slow to fail (over three seconds) is reported as having opened
+  the file. Screen reader behaviour is unverified, as for all of root
+  search.

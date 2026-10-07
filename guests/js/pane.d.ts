@@ -17,6 +17,7 @@
 /// <reference path="./helpers.d.ts" />
 /// <reference path="./programs-host.d.ts" />
 /// <reference path="./files.d.ts" />
+/// <reference path="./file-index.d.ts" />
 /// <reference path="./clipboard.d.ts" />
 
 import type { LaunchRecord } from "pane:extension/commands@0.1.0";
@@ -446,9 +447,10 @@ export interface RootResult {
    * `{ tag: "copy", val: text }` copies `text` to the clipboard;
    * `{ tag: "open-url", val: url }` opens `url`, an `http://` or `https://`
    * address, with the system's handler for web links (Pane refuses others);
-   * `{ tag: "open-file", val: path }` opens the file at `path`, an absolute
-   * path such as one `listFolder` found, with the system's handler for its
-   * type (Pane refuses a relative path, a folder or a missing file).
+   * `{ tag: "open-file", val: id }` opens the entry with `id`, as the file
+   * index's `search()` or `listFolder()` gave it, with the system's handler
+   * for its type, once Pane has checked it again (Enter on a program the
+   * index found shows it in the file manager, never runs it).
    */
   action: RootAction;
 }
@@ -496,9 +498,11 @@ export interface SearchResult {
   title: string;
   subtitle?: string;
   /**
-   * A file of the folder granted to the command's package, by the `id`
-   * `listFolder()` gave it, when the result is that file (as Search Files'
-   * are): Pane lists it with the file's own name and folder, and gives it
+   * An entry of Pane's file index, by the `id` `search()` of
+   * "pane:extension/file-index@0.1.0" gave it, or a file of the folder
+   * granted to the command's package, by the `id` `listFolder()` gave it,
+   * when the result is that file (as Search Files' are): Pane lists it
+   * with the file's own name and folder, and gives it
    * Pane's own file actions (Open, Reveal, Open With…, Copy Path, Copy
    * File, Move to Recycle Bin; for a program, Enter reveals it and only
    * Run runs it), which Pane performs without calling the command.

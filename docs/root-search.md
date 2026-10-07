@@ -20,7 +20,9 @@ commands; [global hotkeys](hotkeys.md) (#32 to #34) open a command from any
 application. [#29](https://github.com/hoangvu12/pane/issues/29) adds
 [file search](files.md) within one folder the user chose, whose file
 results are computed results listed after the title matches, and makes a
-search cancel its pending calls for computed results.
+search cancel its pending calls for computed results;
+[#175](https://github.com/hoangvu12/pane/issues/175) moves file search to
+the host's [file index](files.md) of the home folder (below).
 
 ## What is searched
 
@@ -238,11 +240,11 @@ what they are about.
 
 Each row shows what the launcher knows beyond its title and subtitle, from a read-only presentation (`Launcher::presentation`). That is:
 
-- the row's kind (Command, Application, File, Link or Fallback), taken from what activating it does;
+- the row's kind (Command, Application, File, Folder, Link or Fallback), taken from what activating it does;
 - the alias and the registered global hotkey the user gave its command;
 - the part of its title the query matched, in the accent.
 
-Rows sit under section labels: "Commands" over a blank query's list (root search's own order, with no claim of recent use), "Results" with their count over a query's, a computed answer under the title of the command that computed it ("Calculator"), and the fallbacks under "Fallbacks" (below the no-results notice when nothing else matched). The presentation changes nothing about what is listed, its order, or what a row does.
+Rows sit under section labels: "Commands" over a blank query's list (root search's own order, with no claim of recent use), "Results" with their count over a query's, a computed answer under the title of the command that computed it ("Calculator"), the files found for the query with the row searching them all under "Files" (#175), and the fallbacks under "Fallbacks" (below the no-results notice when nothing else matched). The presentation changes nothing about what is listed, its order, or what a row does.
 
 **A computed answer** (#96) — a computed result whose action copies
 text, such as the calculator's — is drawn as the reference calculator
@@ -261,8 +263,8 @@ fallbacks is listed for a query that is not blank: "Nothing matches
 “…”", then "Pick a fallback below, or install an extension that knows
 about it." (or, with no fallback, where one is offered: Manage
 extensions). It stays above the fallbacks whichever is selected; Pane
-searches commands, applications and a granted folder, so it claims no
-search of the whole computer, and it suggests no extensions, having no
+searches commands, applications and the files of the home folder (and
+the folders the user adds), so it claims no search of the whole computer, and it suggests no extensions, having no
 store to suggest them from.
 
 The query field has keyboard focus whenever root search is on screen: when
@@ -317,7 +319,10 @@ comes from the extension, through the same guest boundary as its command:
   (provisional, pending user confirmation; see
   [current decisions](current-decisions.md) item 10). Those that open a
   file (**open-file**, since #29) are listed **after** the title matches
-  instead, since a folder can hold many files matching a short query.
+  instead, since a folder can hold many files matching a short query; of
+  the file index's entries (#175), at most 5 per command, followed by a
+  row "<command> for “<query>”" when the command searches in its own field
+  (Search Files for “plan”), which opens it with the query typed.
   When each command's results arrive the first row is selected again, unless the user had
   moved the selection, which stays on its row.
 - A computed result has an id (`<command id>:<result id>`), title, optional
@@ -327,10 +332,13 @@ comes from the extension, through the same guest boundary as its command:
   status says "Copied … to the clipboard". **open-url** (since #28): Enter
   opens an address of any scheme (ADR 0037, #145) with the launcher's link
   opener, the system's handler in the window. **open-file** (since
-  #29): Enter opens a file of the package's granted folder, named by the id
-  the host gave it, with the system's handler for its type, once the host
-  has checked it again; the row shows the host's name for the file
-  ([opening a file](files.md#opening-a-file)).
+  #29): Enter opens an entry of the file index (#175) or a file of the
+  package's granted folder, named by the id the host gave it, with the
+  system's handler for its type (a folder in the file manager), once the
+  host has checked it again; the row shows the host's name for the entry,
+  its folder, the system's icon for its path and its kind, File or Folder.
+  Enter on a program the index found shows it in the file manager and
+  never runs it ([files](files.md#opening)).
 - **No result is not a failure**: a query the command cannot answer (words,
   an incomplete or invalid expression) gives no results and the status is
   untouched. An error or crash of the extension is shown as a row titled
@@ -492,7 +500,10 @@ which the core keeps and ranks like titles (the installed applications).
 Since #29 a computed result can come from a provider that searches outside
 Pane per query (the [files](files.md) of a granted folder, listed by the
 host off the extension thread, the command asked again once the listing
-ends), and a search cancels its providers' pending work. What is *not*
+ends), and a search cancels its providers' pending work. Since #175 file
+search's provider asks the host's file index, which answers at once from
+what is indexed and never waits for a walk, so a busy disk holds up no
+other result. What is *not*
 settled here, and is left to the tickets that need it: provider-supplied
 ranks and how they mix with title matching, and online providers, which
 stay inside their own command (US11, T03): nothing in root search queries

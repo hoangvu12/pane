@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "title": "Files",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "apiVersion": "0.1",
   "icon": "icon.svg",
   "commands": [
@@ -9,11 +9,11 @@
       "id": "files",
       "title": "Search Files",
       "icon": "search.svg",
-      "subtitle": "Finds the files of a folder you grant it as you type, to open, reveal, copy or recycle them",
+      "subtitle": "Finds the files of your home folder as you type, to open, reveal, copy or recycle them",
       "component": "files.wasm",
       "search": true,
       "rootResults": true
     }
   ],
-  "folderAccess": true
+  "fileIndex": true
 }

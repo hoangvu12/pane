@@ -90,6 +90,12 @@ pub struct IndexRecord {
     pub built: bool,
     #[serde(default)]
     pub cursors: Vec<JournalCursor>,
+    /// The roots and rules the entries were indexed under (#175): when
+    /// Pane next opens the index under other rules (the user changed them,
+    /// even while file search was off), it brings the entries to the new
+    /// ones first.
+    #[serde(default)]
+    pub rules: Option<super::scope::ScopeRules>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -650,6 +656,62 @@ impl FileIndex {
         None
     }
 
+    /// The entries indexed directly in `folder`, by path: what a
+    /// reconciling walk compares with the folder's listing (#175).
+    pub fn children(&self, folder: &Path) -> Vec<(PathBuf, Meta)> {
+        let mut prefix = path_key(folder);
+        if prefix.last() != Some(&SEPARATOR) {
+            prefix.push(SEPARATOR);
+        }
+        let mut upper = prefix.clone();
+        upper.push(0xFF);
+        let direct = |key: &[u8]| {
+            key.len() > prefix.len()
+                && key.starts_with(&prefix)
+                && !key[prefix.len()..].contains(&SEPARATOR)
+        };
+        let state = read(&self.state);
+        let sources = state.sources();
+        // The newest source holding a key decides it: listed, or hidden.
+        let mut found: BTreeMap<Vec<u8>, Option<Meta>> = BTreeMap::new();
+        for (at, source) in sources.iter().enumerate() {
+            let mut decide = |key: &[u8], seq: u64, meta: Option<Meta>| {
+                if !direct(key) || found.contains_key(key) {
+                    return;
+                }
+                let current = state.is_current(&sources, at, key, seq);
+                found.insert(key.to_vec(), meta.filter(|_| current));
+            };
+            match source {
+                Source::Memory(table) => {
+                    let range = table.by_key.range::<[u8], _>((
+                        Bound::Included(prefix.as_slice()),
+                        Bound::Excluded(upper.as_slice()),
+                    ));
+                    for (key, &id) in range {
+                        let entry = &table.entries[id as usize];
+                        decide(key, entry.seq, entry.meta);
+                    }
+                }
+                Source::Segment(segment) => {
+                    for stored in segment.iter_from(&prefix) {
+                        if stored.key.as_slice() < prefix.as_slice() {
+                            continue;
+                        }
+                        if !stored.key.starts_with(&prefix) {
+                            break;
+                        }
+                        decide(&stored.key, stored.seq, stored.meta);
+                    }
+                }
+            }
+        }
+        found
+            .into_iter()
+            .filter_map(|(key, meta)| Some((key_path(&key), meta?)))
+            .collect()
+    }
+
     /// The entries matching `query.text`, best first: every word of the
     /// query starts a word of the entry's name or of a folder it is in
     /// below its root. Never waits for a walk or a merge.
@@ -1189,9 +1251,10 @@ fn wipe(dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Creates the index folder, readable by the user only on Unix (mode
-/// 0700). On Windows it is inside the user's own `%LOCALAPPDATA%`, whose
-/// permissions it inherits.
+/// Creates the index folder, readable by the user only: mode 0700 on Unix,
+/// and on Windows a protected DACL for the user and SYSTEM, inherited by
+/// its files, as `credentials.json` has (#175). A folder that exists keeps
+/// its permissions on Windows.
 fn create_private_dir(dir: &Path) -> io::Result<()> {
     #[cfg(unix)]
     {
@@ -1204,7 +1267,20 @@ fn create_private_dir(dir: &Path) -> io::Result<()> {
         }
         fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        if dir.is_dir() {
+            return Ok(());
+        }
+        if let Some(parent) = dir.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        match crate::atomic::create_owner_only_dir(dir) {
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+            done => done,
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         fs::create_dir_all(dir)
     }
@@ -1351,6 +1427,49 @@ mod tests {
                 .iter()
                 .all(|name| name != "plan.txt")
         );
+    }
+
+    #[test]
+    fn a_folders_children_are_its_current_direct_entries_across_segments_and_memory() {
+        let fixture = fixture();
+        let (index, _) = fixture.open();
+        let mut bulk = index.bulk().unwrap();
+        bulk.add(index.prepare(sample(&fixture))).unwrap();
+        bulk.finish().unwrap();
+        index
+            .apply(&[
+                Change::Put(fixture.entry("notes/todo.txt", EntryKind::File, 300)),
+                Change::Remove(fixture.path("notes/planning notes.md")),
+            ])
+            .unwrap();
+        let children = |relative: &str| -> Vec<String> {
+            index
+                .children(&fixture.path(relative))
+                .into_iter()
+                .map(|(path, _)| path.file_name().unwrap().to_string_lossy().into_owned())
+                .collect()
+        };
+        assert_eq!(children("notes"), ["todo.txt"]);
+        assert_eq!(children("Invoices 2026"), ["march.pdf"]);
+        let mut top = index
+            .children(&fixture.home)
+            .into_iter()
+            .map(|(path, meta)| (path, meta.kind))
+            .collect::<Vec<_>>();
+        top.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            top,
+            [
+                (fixture.path("Invoices 2026"), EntryKind::Folder),
+                (fixture.path("Résumé plan ü.txt"), EntryKind::File),
+                (fixture.path("notes"), EntryKind::Folder),
+                (fixture.path("plan.txt"), EntryKind::File),
+            ]
+        );
+        index
+            .apply(&[Change::RemoveUnder(fixture.path("notes"))])
+            .unwrap();
+        assert!(children("notes").is_empty());
     }
 
     #[test]
@@ -1524,6 +1643,9 @@ mod tests {
                 journal_id: 7,
                 next_usn: 1234,
             }],
+            rules: Some(super::super::scope::ScopeRules::for_home(
+                fixture.home.clone(),
+            )),
         };
         {
             let (index, _) = fixture.open();

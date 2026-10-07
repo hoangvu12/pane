@@ -87,7 +87,7 @@ pub use tree::{
 pub(crate) mod bindings {
     wasmtime::component::bindgen!({
         path: "../../wit",
-        world: "extension-with-clipboard",
+        world: "extension-with-file-index",
         imports: {
             "pane:extension/operations": store,
             "pane:extension/helpers": store,
@@ -2464,7 +2464,7 @@ impl WasiHttpView for GuestState {
 /// A running guest instance of one component.
 struct Instance {
     store: Store<GuestState>,
-    bindings: bindings::ExtensionWithClipboard,
+    bindings: bindings::ExtensionWithFileIndex,
     /// Its root results export, if it has one.
     root_results: Option<root_bindings::RootResultsProvider>,
     /// Its indexed results export, if it has one.
@@ -2685,6 +2685,11 @@ impl Code {
             |state| state,
         )
         .expect("registering files in a fresh linker cannot conflict");
+        bindings::pane::extension::file_index::add_to_linker::<_, wasmtime::component::HasSelf<_>>(
+            &mut linker,
+            |state| state,
+        )
+        .expect("registering the file index in a fresh linker cannot conflict");
         launching::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| state)
             .expect("registering launching commands in a fresh linker cannot conflict");
         window_host::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| {
@@ -2840,7 +2845,7 @@ impl Code {
                 ))
             })?;
         }
-        bindings::ExtensionWithClipboardPre::new(pre).map_err(interface)?;
+        bindings::ExtensionWithFileIndexPre::new(pre).map_err(interface)?;
         Ok(Checked { network, programs })
     }
 }
@@ -4351,7 +4356,7 @@ impl Host {
             started => started?,
         };
         let bindings =
-            bindings::ExtensionWithClipboard::new(&mut store, &instance).map_err(load)?;
+            bindings::ExtensionWithFileIndex::new(&mut store, &instance).map_err(load)?;
         // Only a command that computes root results exports them.
         let root_results = root_bindings::RootResultsProvider::new(&mut store, &instance).ok();
         // Only a command that supplies results ahead of the query exports

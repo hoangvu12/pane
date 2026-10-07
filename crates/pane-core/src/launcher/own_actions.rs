@@ -8,9 +8,12 @@
 //! "Open With…" opening a submenu of the installed applications. Pane
 //! performs them itself; no extension is called.
 //!
-//! **A file** (ADR 0017: the extension names it by the id Pane gave it,
-//! never by a path). Pane checks it again before acting, as it always
-//! did before opening one (`crate::files`). A document's actions are
+//! **A file** (ADR 0017 and ADR 0034: the extension names it by the id
+//! Pane gave it, never by a path). Pane checks it again before acting, as it
+//! always did before opening one (`crate::files`, and for the file index
+//! `crate::file_index::Indexer::checked`). A folder the index found has
+//! Open (Enter: the file manager), Show in Explorer, Copy Path, Copy File
+//! and Move to Recycle Bin. A document's actions are
 //! Open (Enter), Show in Explorer (Ctrl+Enter; Finder or the File Manager
 //! elsewhere), Open With…, Copy Path, Copy File and Move to Recycle Bin
 //! (destructive, confirmed first). File search's own Enter never runs a
@@ -99,7 +102,10 @@ fn open_with() -> Action {
 /// The actions of `file`, in order (see the module docs).
 pub(super) fn file_actions(file: &FileRow) -> Vec<Action> {
     let reveal = action(format!("Show in {}", file_manager()), REVEAL);
-    let mut actions = if file.program {
+    let mut actions = if file.folder {
+        // A folder opens in the file manager.
+        vec![action("Open", OPEN), reveal]
+    } else if file.program {
         vec![reveal, open_with(), action("Run", RUN)]
     } else {
         vec![action("Open", OPEN), reveal, open_with()]
@@ -271,6 +277,29 @@ impl Launcher {
     /// `epoch` (see the module docs).
     pub(super) async fn do_own(&self, epoch: u64, work: Work) {
         let ended = match work {
+            // Found in the file index: checked again, then opened, or shown
+            // in the file manager if it turned out to be a program (its
+            // executable bit), never run (#175, ADR 0037).
+            Work::Open(file) if file.indexed => {
+                let links = self.links.clone();
+                let system = self.system();
+                let name = file.name.clone();
+                let manager = file_manager();
+                let opened = self
+                    .on_entry(&file, move |checked| {
+                        if checked.program {
+                            system.reveal(&checked.path).map(|()| true)
+                        } else {
+                            links.open_file(&checked.path).map(|()| false)
+                        }
+                    })
+                    .await;
+                match opened {
+                    Ok(false) => Ended::Hud(format!("Opened {name}")),
+                    Ok(true) => Ended::Hud(format!("Showed {name} in {manager}")),
+                    Err(why) => Ended::Failed(format!("Could not open {name}: {why}")),
+                }
+            }
             Work::Open(file) => {
                 let links = self.links.clone();
                 let name = file.name.clone();
@@ -426,12 +455,35 @@ impl Launcher {
         programs: bool,
         act: impl FnOnce(PathBuf) -> Result<(), String> + Send + 'static,
     ) -> Result<(), String> {
+        if file.indexed {
+            // Run, Reveal, Open With…, the copies and the bin act on a
+            // program as on any file; only Enter's Open tells them apart.
+            return self.on_entry(file, move |checked| act(checked.path)).await;
+        }
         let files = self.lock().files.clone();
         let (owner, id) = (file.owner.clone(), file.id.clone());
         off_thread(move || {
             let files =
                 files.ok_or_else(|| String::from("Pane's extension runtime is unavailable"))?;
             act(files.checked_file(&owner, &id, programs)?)
+        })
+        .await
+    }
+
+    /// Checks the file index's entry `file` again, off the calling thread
+    /// (see `crate::file_index::Indexer::checked`), then does `act` with
+    /// what the check found there.
+    async fn on_entry<T: Send + 'static>(
+        &self,
+        file: &FileRow,
+        act: impl FnOnce(crate::file_index::Checked) -> Result<T, String> + Send + 'static,
+    ) -> Result<T, String> {
+        let files = self.lock().files.clone();
+        let (owner, id) = (file.owner.clone(), file.id.clone());
+        off_thread(move || {
+            let files =
+                files.ok_or_else(|| String::from("Pane's extension runtime is unavailable"))?;
+            act(files.indexer().checked(&owner, &id)?)
         })
         .await
     }

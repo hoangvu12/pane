@@ -91,9 +91,10 @@ result has an `id` (passed to `handle-event` as the callback id when
 activated, which the SDKs hand to the command's `run_search_result` /
 `runSearchResult`), a `title` and
 an optional `subtitle`, the fields of a root result without its action,
-and an optional `file` (#150): the id of a file of the folder granted to
-the command's package, as `list-folder` gave it, when the result is that
-file. Pane then lists it with the file's own name and folder and gives it
+and an optional `file` (#150): the id of an entry of Pane's file index,
+as `file-index.search` gave it to the package (#175), or of a file of the
+folder granted to the command's package, as `list-folder` gave it, when
+the result is that file. Pane then lists it with the file's own name and folder and gives it
 its own [file actions](files.md#the-file-actions) (Open, Reveal, Open
 With…, Copy Path, Copy File, Move to Recycle Bin; for a program, Enter
 reveals it and only Run runs it), which Pane performs without calling the

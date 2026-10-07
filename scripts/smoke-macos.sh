@@ -1451,17 +1451,19 @@ moved=$(python3 "$(dirname "$0")/repository_server.py" commit "$out/git-reposito
 python3 "$(dirname "$0")/check_git_record.py" --ref refs/heads/release --unpinned "$PANE_DATA_DIR/extensions/installed.json" "$moved" || { echo "the tracked Git package was not recorded at its moved branch"; exit 1; }
 [ -z "$(ls -A "$PANE_DATA_DIR/extensions/downloads" 2>/dev/null)" ] || { echo "a Git download was left"; exit 1; }
 
-# File search (#29): Files, a default extension (its data folder is this
-# phase's own; Files is selected once installed, and Pane's own "Choose
-# folder…" row is the first of its command). Enter on it would show the
-# system's folder picker; the smoke names the folder in
-# PANE_TEST_CHOOSE_FOLDER instead (a debug build's hook). The fixture folder's
+# File search (#29, #175): Files, a default extension (its data folder is
+# this phase's own), answers from Pane's file index, which covers the home
+# folder; the smoke names a fixture folder for it to cover instead in
+# PANE_TEST_FILE_INDEX_HOME (a debug build's hook, which also keeps the index
+# in the data folder). Installing Files starts the index, and showing the
+# window lets its first walk start. The fixture folder's
 # path has spaces, and a file in it has non-ASCII letters too; typing "plan"
-# lists that file, selected, and Enter hands it to Pane's handler for files,
+# lists that file under "Files", selected, and Enter hands it to Pane's handler for files,
 # which PANE_TEST_OPEN_FILE_LOG (a debug build's hook) makes record the path
 # instead of asking /usr/bin/open, since any application that opened it would
 # be the user's own. Each file action closes the window after it acts
-# (#150), so Pane is started again (the grant is kept) for the next file.
+# (#150), so Pane is started again (the index is caught up from FSEvents'
+# history) for the next file.
 # An executable script in the folder is found, and Enter reveals it in
 # Finder (ADR 0037: file search's Enter never runs a program; only its
 # explicit Run does): it neither runs nor reaches the handler for files.
@@ -1477,13 +1479,11 @@ printf 'todo\n' >"$files_folder/notes/todo.txt"
 printf '#!/bin/sh\ntouch "%s/runner-ran"\n' "$files_fixture" >"$files_folder/notes/runner.sh"
 chmod +x "$files_folder/notes/runner.sh"
 rm -f "$out/opened-file.txt"
-export PANE_TEST_CHOOSE_FOLDER=$files_folder PANE_TEST_OPEN_FILE_LOG=$out/opened-file.txt
+export PANE_TEST_FILE_INDEX_HOME=$files_folder PANE_TEST_OPEN_FILE_LOG=$out/opened-file.txt
 start_pane --install target/guests/packages/files
-key 36; sleep 2   # Install; Files is selected
-key 36; sleep 3   # open Files; "Choose folder…" is selected
-key 36; sleep 2   # the folder PANE_TEST_CHOOSE_FOLDER names
-capture 220-files-folder-granted.png
-check 220-files-folder-granted.png success   # "Files may now list “Pane smoke files”"
+key 36; sleep 3   # Install; the index walks the fixture
+capture 220-files-installed.png
+check 220-files-installed.png success   # "Installed Files"
 key 53; sleep 1
 type_text 'plan'; sleep 3
 capture 221-files-found.png
@@ -1503,9 +1503,9 @@ capture 224-files-program-revealed.png   # evidence only: Finder, Pane hidden
 [ ! -e "$out/opened-file.txt" ] || { echo "the script was handed to the handler"; exit 1; }
 [ ! -e "$files_fixture/runner-ran" ] || { echo "the script ran"; exit 1; }
 osascript -e 'tell application "Finder" to close every window' || true
-python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{220-files-folder-granted,221-files-found,223-files-program-found}.png
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{220-files-installed,221-files-found,223-files-program-found}.png
 stop_pane
-unset PANE_TEST_CHOOSE_FOLDER PANE_TEST_OPEN_FILE_LOG
+unset PANE_TEST_FILE_INDEX_HOME PANE_TEST_OPEN_FILE_LOG
 rm -rf "$files_fixture"
 
 # Searching an online service inside its command: Package search, the Rust

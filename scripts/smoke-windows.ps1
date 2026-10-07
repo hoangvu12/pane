@@ -1618,18 +1618,19 @@ if ($fromGit[0].pinned) { throw "the tracked branch recorded as pinned" }
 $downloads = Join-Path $updateData "extensions/downloads"
 if ((Test-Path $downloads) -and (Get-ChildItem $downloads)) { throw "a Git download was left" }
 
-# File search (#29): Files, a default extension (its data folder is this
-# phase's own; Files is selected once installed, and Pane's own "Choose
-# folder..." row is the first of its command). Enter on it would show the
-# system's folder picker; the smoke names the folder in
-# PANE_TEST_CHOOSE_FOLDER instead (a debug build's hook). The fixture folder's
+# File search (#29, #175): Files, a default extension (its data folder is
+# this phase's own), answers from Pane's file index, which covers the home
+# folder; the smoke names a fixture folder for it to cover instead in
+# PANE_TEST_FILE_INDEX_HOME (a debug build's hook, which also keeps the index
+# in the data folder). Installing Files starts the index, and showing the
+# window lets its first walk start. The fixture folder's
 # path has spaces, and a file in it has non-ASCII letters too; typing "plan"
-# lists that file, selected, and Enter (Open, the file's first action, #150)
+# lists that file under "Files", selected, and Enter (Open, the file's first action, #150)
 # hands it to Pane's handler for files, which PANE_TEST_OPEN_FILE_LOG (a
 # debug build's hook) makes record the path instead of running Invoke-Item,
 # which could show the "Open with" dialog or open the user's own program.
 # Each file action closes the window after it acts, so Pane is started again
-# (the grant is kept) for the next file. A batch file in the folder is
+# (the index is caught up from the change journal) for the next file. A batch file in the folder is
 # found, and Enter reveals it in File Explorer (ADR 0037: file search's
 # Enter never runs a program; only its explicit Run does): it neither runs
 # nor reaches the handler for files, and the window closes as after any
@@ -1647,14 +1648,12 @@ Set-Content -Encoding UTF8 -LiteralPath (Join-Path $filesFolder "notes/todo.txt"
 Set-Content -Encoding ASCII -LiteralPath (Join-Path $filesFolder "notes/runner.bat") "@echo ran > `"$filesFixture\runner-ran`""
 $openLog = Join-Path $OutDir "opened-file.txt"
 if (Test-Path $openLog) { Remove-Item -Force $openLog }
-$env:PANE_TEST_CHOOSE_FOLDER = (Resolve-Path -LiteralPath $filesFolder).Path
+$env:PANE_TEST_FILE_INDEX_HOME = (Resolve-Path -LiteralPath $filesFolder).Path
 $env:PANE_TEST_OPEN_FILE_LOG = $openLog
 $process = Start-Pane "stderr-files.log" @("--install", "target/guests/packages/files")
-Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Files is selected
-Send "{ENTER}"; Start-Sleep -Seconds 3   # open Files; "Choose folder..." is selected
-Send "{ENTER}"; Start-Sleep -Seconds 2   # the folder PANE_TEST_CHOOSE_FOLDER names
-Capture "220-files-folder-granted.png"
-Check "220-files-folder-granted.png" "success"   # "Files may now list "Pane smoke files""
+Send "{ENTER}"; Start-Sleep -Seconds 3   # Install; the index walks the fixture
+Capture "220-files-installed.png"
+Check "220-files-installed.png" "success"   # "Installed Files"
 Send "{ESC}"; Start-Sleep -Seconds 1
 Send "plan"; Start-Sleep -Seconds 3
 Capture "221-files-found.png"
@@ -1684,11 +1683,11 @@ foreach ($window in (New-Object -ComObject Shell.Application).Windows()) {
     try { $path = $window.Document.Folder.Self.Path } catch { continue }
     if ($path -eq $notes) { $window.Quit() }
 }
-$shots = "220-files-folder-granted", "221-files-found", "223-files-program-found" | ForEach-Object { Join-Path $OutDir "$_.png" }
+$shots = "220-files-installed", "221-files-found", "223-files-program-found" | ForEach-Object { Join-Path $OutDir "$_.png" }
 python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: file search changed nothing" }
 Stop-Pane $process
-Remove-Item Env:PANE_TEST_CHOOSE_FOLDER
+Remove-Item Env:PANE_TEST_FILE_INDEX_HOME
 Remove-Item Env:PANE_TEST_OPEN_FILE_LOG
 Remove-Item -Recurse -Force $filesFixture
 

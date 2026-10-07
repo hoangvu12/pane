@@ -34,6 +34,8 @@ pub enum RowKind {
     Application,
     /// A file a command found for the query.
     File,
+    /// A folder the file index found for the query (#175).
+    Folder,
     /// A web address a command answered with.
     Link,
     /// A fallback: a command the user chose to offer any text to.
@@ -47,6 +49,7 @@ impl RowKind {
             RowKind::Command => "Command",
             RowKind::Application => "Application",
             RowKind::File => "File",
+            RowKind::Folder => "Folder",
             RowKind::Link => "Link",
             RowKind::Fallback => "Fallback",
         }
@@ -266,10 +269,12 @@ pub(super) fn want_row_icons(state: &State, index: usize) {
     if !matches!(state.view.screen, Screen::Root { .. }) {
         return;
     }
+    // A file row loads its system icon, not the stand-in it shows until
+    // then (#175).
     if let Some(icon) = state
         .entries
         .get(index)
-        .and_then(|entry| icon(state, row, entry))
+        .and_then(|entry| file_icon(entry).or_else(|| icon(state, row, entry)))
     {
         looks::want_icon(state, None, &icon);
     }
@@ -295,7 +300,8 @@ fn sections(state: &State) -> Vec<Section> {
         })
         .unwrap_or(shown);
     // Only the computed answers name a command: a row is one only when
-    // activating it copies what a command computed.
+    // activating it copies what a command computed. The files found for
+    // the query (with the row searching them all) are labelled "Files".
     let answers: Vec<Option<&str>> = state.view.rows[..shown]
         .iter()
         .zip(&state.entries)
@@ -305,6 +311,8 @@ fn sections(state: &State) -> Vec<Section> {
                 .iter()
                 .find(|computed| computed.row.id == row.id)
                 .map(|computed| computed.command_title.as_str()),
+            Entry::File(_) => Some("Files"),
+            Entry::Open(opening) if opening.initial_search.is_some() => Some("Files"),
             _ => None,
         })
         .collect();
@@ -333,10 +341,15 @@ fn answer(state: &State, row: &Row, entry: &Entry, query: &str) -> Option<Comput
 /// text (whose row's id is the command's after `alias:` or `fallback:`);
 /// or, when it opens an installed application, whichever extension
 /// supplied it, the application's own icon, or its placeholder until it is
-/// there (#172).
+/// there (#172); or, for a file the index found, its system icon (#175).
 fn icon(state: &State, row: &Row, entry: &Entry) -> Option<Icon> {
     if let Entry::OpenApplication { id, .. } = entry {
         return Some(super::application_icons::shown(state, id));
+    }
+    // A file the index found: the system's icon for its path (#142), as
+    // loaded now.
+    if let Some(icon) = file_icon(entry) {
+        return Some(looks::shown_icon(state, &icon));
     }
     let id = match entry {
         Entry::Open(_) | Entry::Unavailable(_) => row.id.as_str(),
@@ -347,6 +360,18 @@ fn icon(state: &State, row: &Row, entry: &Entry) -> Option<Icon> {
         _ => return None,
     };
     looks::icon_of(state, id)
+}
+
+/// The system icon of the file the index found that activating `entry`
+/// opens (#175), before it is loaded: its source and stand-in.
+fn file_icon(entry: &Entry) -> Option<Icon> {
+    match entry {
+        Entry::File(file) => file
+            .path
+            .as_ref()
+            .map(|path| super::file_search::entry_icon(path, file.folder)),
+        _ => None,
+    }
 }
 
 /// What kind of thing activating `entry` from root search reaches.
@@ -361,6 +386,7 @@ pub(super) fn kind(entry: &Entry) -> Option<RowKind> {
         }) => Some(RowKind::Command),
         Entry::OpenApplication { .. } => Some(RowKind::Application),
         Entry::OpenTarget { .. } => Some(RowKind::Link),
+        Entry::File(file) if file.folder => Some(RowKind::Folder),
         Entry::File(_) => Some(RowKind::File),
         Entry::OpenUrl(_) => Some(RowKind::Link),
         // Pane's own rows are its commands.

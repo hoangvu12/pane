@@ -9,12 +9,15 @@ use std::sync::Arc;
 
 use ignore::Match;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
+use serde::{Deserialize, Serialize};
 
 use super::format::{SEPARATOR, path_key};
 
 /// What the user and Pane decide is indexed. Every switch here is a user
-/// setting, and starts as [`ScopeRules::for_home`] says.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// setting, and starts as [`ScopeRules::for_home`] says. The rules an index
+/// was built under are kept with it ([`super::IndexRecord::rules`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ScopeRules {
     /// The folders indexed, with everything under them the rules admit.
     pub roots: Vec<PathBuf>,
