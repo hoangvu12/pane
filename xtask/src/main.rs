@@ -28,6 +28,12 @@
 //!   under `target/dist/` (`--dev` as for `package-linux`; `package.rs`
 //!   assembles the artifacts everywhere and builds the package itself
 //!   only on macOS).
+//! - `file-index-bench`: build the file index's benchmark in release and
+//!   run it with the options that follow (#174; by default a generated
+//!   tree of 450,000 entries; `--home` indexes the real home folder, read
+//!   only; the options are listed in
+//!   `crates/pane-core/examples/file_index_bench.rs`). It runs on demand,
+//!   never in CI.
 
 mod package;
 mod zip;
@@ -85,6 +91,16 @@ const PREBUILT: &[&str] = &[
 
 fn main() -> ExitCode {
     let task = std::env::args().nth(1);
+    if task.as_deref() == Some("file-index-bench") {
+        // Its options are the benchmark's own, passed on as they are.
+        return match file_index_bench(std::env::args().skip(2).collect()) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(message) => {
+                eprintln!("xtask: {message}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     let dev = std::env::args().any(|arg| arg == "--dev");
     // The version a package names its program by, when it is not this
     // workspace's own: dotted numbers, as Pane reads versions.
@@ -117,7 +133,7 @@ fn main() -> ExitCode {
         (_, Err(why)) => Err(why),
         _ => Err("usage: cargo xtask \
              <guests|js-guests|ci|ci-lints|ci-tests|package-linux|package-windows|package-macos> \
-             [--dev] [--package-version <version>]"
+             [--dev] [--package-version <version>], or cargo xtask file-index-bench [options]"
             .into()),
     };
     match result {
@@ -516,4 +532,21 @@ fn ci_tests() -> Result<(), String> {
 fn ci() -> Result<(), String> {
     ci_lints()?;
     ci_tests()
+}
+
+/// Builds the file index's benchmark in release and runs it with `args`.
+fn file_index_bench(args: Vec<String>) -> Result<(), String> {
+    run(cargo()
+        .current_dir(root())
+        .args([
+            "run",
+            "--locked",
+            "--release",
+            "-p",
+            "pane-core",
+            "--example",
+            "file_index_bench",
+            "--",
+        ])
+        .args(args))
 }

@@ -16,6 +16,7 @@ pub mod downloads;
 mod dropdown;
 mod extension_data;
 pub mod feedback;
+pub mod file_index;
 pub mod files;
 mod generation;
 pub mod git;

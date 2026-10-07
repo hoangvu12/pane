@@ -353,3 +353,180 @@ a simpler match (every word in the name), and give the same answers.
 - The positive native open ran only on Linux X11 (xdg-open with a recording
   handler); on macOS and Windows the real handler is not run by the smoke.
 - Screen reader behaviour is unverified, as for all of root search.
+
+## The file index (#126, in progress)
+
+"Instant file search" ([#126](https://github.com/hoangvu12/pane/issues/126),
+[ADR 0034](adr/0034-file-search-indexes-the-users-home-folder.md)) replaces
+the granted folder's listing for file search with an index of the home
+folder that the host keeps. Its first slice
+([#174](https://github.com/hoangvu12/pane/issues/174)) is in
+[`pane_core::file_index`](../crates/pane-core/src/file_index.rs); nothing
+uses it yet (the coordinator, the change sources and root search's rows are
+[#175](https://github.com/hoangvu12/pane/issues/175)), so everything above
+still describes what Files does.
+
+- **The walker** (`file_index/walker.rs`): every folder under the roots the
+  rules admit is listed once, by up to 8 threads of its own at background
+  priority (`file_index/priority.rs`: background mode and EcoQoS on
+  Windows, the background QoS class on macOS, nice 19 and the idle I/O
+  class on Linux). On Windows a folder is read with
+  `GetFileInformationByHandleEx(FileIdBothDirectoryInfo)`, which gives each
+  entry's attributes, size, times and NTFS file id in one call per 64 KB;
+  elsewhere with `read_dir` and each entry's own metadata. Links and
+  junctions (reparse points whose tag names another file) are indexed as
+  entries and never followed; cloud-file placeholders are listed like any
+  entry, so nothing is downloaded. A folder that cannot be read is indexed,
+  counted and named; a walk stops at 5 million entries.
+- **The rules** (`file_index/scope.rs`, `ScopeRules::for_home`): hidden
+  entries (a leading `.`; the hidden or system attribute on Windows);
+  `.gitignore` inside a Git repository, `.ignore` anywhere, the
+  repository's `.git/info/exclude` and the global Git ignore file, matched
+  by ripgrep's `ignore` crate as Git matches them; `node_modules`, folders
+  named `tmp`, `temp`, `cache` or `caches`, `*.tmp` and `*.temp`; the home
+  folder's `AppData` (Windows) or `Library` (macOS); network and FAT or
+  exFAT volumes mounted under a root (Linux); and always the system's
+  recycle and setup folders, folders tagged with `CACHEDIR.TAG` and Pane's
+  own folders. Each but the last is a switch, and the user's folders and
+  `.gitignore`-style patterns add to them. `Scope::admits` applies the same
+  rules to one path, reading the ignore files above it, for changes.
+- **The engine** (`file_index/store.rs`), in the shape of `minidex`: a
+  memory table of recent changes, logged first to a write-ahead log
+  (`file_index/wal.rs`, records with a CRC, a torn tail dropped); immutable
+  segments (`file_index/segment.rs`) holding the entries sorted by path,
+  front-coded in blocks of 16, each with a fixed 4-byte hint (day modified,
+  depth, kind) and the postings of its terms, whose dictionary is an `fst`
+  map read through a memory map; prefix tombstones hiding a deleted or
+  renamed folder's entries in older segments; and a merge of all segments
+  into one, which drops superseded versions, deletions and what tombstones
+  hide, once there are more than 8. A first walk writes segments directly,
+  without the log, and merges them at the end. Terms are the folded words
+  (case and accents ignored, split at camel case and digits) of the name
+  and, separately, of the folders below the root. A query reads, per
+  segment, at most 1,000 candidates matching every word, those with every
+  word in the name first, ranked by their hints, then scores them as #126's
+  "Matching and ranking" describes (`file_index/text.rs`). Keys are the
+  path's exact bytes (WTF-8 on Windows), so a name that is not valid
+  Unicode is shown with replacement characters and still opened exactly.
+  Each entry keeps its kind, size, modified time, file id and volume.
+- **Its folder**: `index.json` (the format version, the live segments, and
+  Pane's record: whether a first walk finished, and each volume's journal
+  cursor), `<n>.seg`, `<n>.wal`, and `lock`, which the index holds locked,
+  so a second Pane on the same cache folder gets `IndexError::InUse`. The
+  folder is mode 0700 and the files 0600 on macOS and Linux; on Windows
+  they inherit `%LOCALAPPDATA%`'s permissions (a protected DACL as
+  `credentials.json` has is #175's). An index of another `FORMAT_VERSION`,
+  or one that cannot be read, is deleted and rebuilt, never read. The log
+  is handed to the system after each batch but not flushed to the disk: a
+  power loss can lose the last changes, which the catch-up finds again from
+  the file system's records, since the cursors are saved only with
+  segments.
+
+### The engine: Pane's own, not the `minidex` crate
+
+Decided on reading `minidex` 0.38.0's source (MIT, by Joao Neves, the
+crate Raycast uses), before the measurement, which is to confirm it:
+
+- **Format.** #126 requires Pane's index format to be Pane's, versioned,
+  and rebuilt on any other version. `minidex` writes its own files, and at
+  0.38 it is pre-1.0 and changing quickly (each release may change them);
+  Pane would version a format it does not control.
+- **What an entry keeps.** `minidex` keys an entry by
+  `path.to_string_lossy()`, so a name that is not valid Unicode cannot be
+  opened from the index; and it keeps kind, modified and accessed times, a
+  category and a volume type, but no size and no file id. The NTFS
+  catch-up resolves journal records by file id and parent folder id, and
+  Search Files shows sizes, so both would need a second store beside it.
+- **Tombstones.** Its prefix tombstones compare paths in ASCII lower case,
+  so deleting `~/Docs` would also hide `~/docs` on a case-sensitive file
+  system (Linux, case-sensitive APFS).
+- **Threads and priority.** It starts its own flush, compaction and
+  recovery threads with its own priority policy; #126 wants Pane's
+  coordinator to own background priority, pausing for sleep and "no
+  periodic work while nothing changes".
+- **Matching.** Its tokenizer and candidate pruning are fixed; #126 wants
+  folding consistent with root search's and weights tuned against Pane's
+  fixtures, with name and folder matches told apart.
+- **Dependencies.** It brings `zstd` (a C library built by `cc`), `fs4`,
+  `arc-swap`, `thiserror` and `log`; Pane's own engine adds only `fst`
+  (no dependencies of its own), `memmap2` (already in the tree) and, for
+  the rules rather than the engine, `ignore`.
+- **The first index.** Its inserts all go through its log; Pane's first
+  walk writes segments directly.
+
+What Pane takes from it is the shape: segments with an FST dictionary, a
+memory table and log, tombstones, compaction, and a compact per-entry hint
+for pruning candidates before reading them.
+
+**The measurement that confirms it** is the benchmark below on the machine
+where Raycast was measured, against the home folder: a first index in less
+than 12.9 s (aiming for half), an index smaller than 61.8 MB, a query's
+95th percentile under 10 ms, and a changed file visible within 10 ms. If
+Pane's engine misses the size or query target, `minidex` 0.38 is measured
+on the same tree behind the same `FileIndex` calls before Pane's is tuned
+further; the result and the decision are recorded in #174's results
+comment.
+
+### The benchmark
+
+`cargo xtask file-index-bench [options]` builds
+[`crates/pane-core/examples/file_index_bench.rs`](../crates/pane-core/examples/file_index_bench.rs)
+in release and runs it; it runs on demand, never in CI. By default it
+generates a home-shaped tree of about 450,000 indexable entries (9 files
+per folder, paths about 8 folders deep, accented names, and, left out by
+the rules, hidden folders, `node_modules` and Git repositories with ignored
+`build` folders and logs) in the system's temporary folder, reused by later
+runs; `--home` indexes the real home folder instead (it writes nothing
+there), `--root <folder>` another folder. It prints, as a table against
+#126's targets and Raycast's numbers:
+
+- the first index, run 1 and the median of the warm runs (`--runs`,
+  default 3), with the walk's own time; run 1 is cold only when it is the
+  first since a restart, or after `--drop-caches` where the system allows
+  it (Linux as root, macOS with `sudo purge`; Windows has no way without
+  administrator rights);
+- the index on disk, and per entry;
+- query latency over a fixed set (`--queries`, default 1,000: whole names,
+  3-letter prefixes, words, folder and name words, one letter), the first
+  pass after opening and a warm pass, with the 50th, 95th and 99th
+  percentiles and per kind;
+- a changed file re-indexed: written, read, applied and found by a query,
+  100 times;
+- on Windows with the generated tree, the catch-up after 10,000 files
+  created: the journal read from a saved cursor, resolved, looked at,
+  applied and found;
+- the time to open the index at start, the private memory it adds while
+  idle, and the peak memory while indexing.
+
+### The NTFS change journal without administrator rights
+
+`file_index::read_journal` opens the volume's root folder (`C:\`) for
+reading attributes only, asks for the journal with
+`FSCTL_QUERY_USN_JOURNAL`, and reads it from a saved cursor with
+`FSCTL_READ_UNPRIVILEGED_USN_JOURNAL` (Windows 10 1709 and later), never
+creating or resizing a journal. It answers the records and the new cursor,
+or why a walk is needed: the journal was recreated (another id), the
+records were already discarded, there are more than a walk would cost, the
+volume keeps none (FAT, exFAT, network shares), or the system refused.
+`file_index::resolve` turns the records into paths through the folder ids
+the index holds (each folder's NTFS file id, read by the walk), following
+renamed folders; a record in a folder the index does not hold resolves to
+nothing. `catch_up_changes` then looks at each path and applies the scope.
+The test
+`file_index::journal::tests::the_journal_is_read_without_administrator_rights_and_resolves_to_paths`
+indexes a temporary folder, makes changes (a file created, one deleted, a
+folder renamed, a file in it created), and reads them back from the
+cursor; it has not run yet, and is the evidence #174 asks for when run
+without administrator rights (CI's Windows runner is an administrator).
+
+The other systems' equivalents and their limits, for #175:
+
+- **macOS**: FSEvents replays a volume's history from a saved event id
+  without any permission beyond reading the folders (and the privacy
+  prompts for Desktop, Documents and Downloads); history can be purged or
+  coalesced, which FSEvents reports per folder (`MustScanSubDirs`), and a
+  changed volume UUID means walking again.
+- **Linux**: no history is readable without privileges (fanotify needs
+  `CAP_SYS_ADMIN`); the catch-up is a walk that reads only folders whose
+  modified time changed, and live changes come from inotify, one watch per
+  folder, up to `fs.inotify.max_user_watches`.
