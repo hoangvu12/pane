@@ -21,9 +21,9 @@ use crate::ui::theme::Theme;
 const WITH_FALLBACKS: &str = "Pick a fallback below, or install an extension that knows about it.";
 
 /// The notice's description while the user has no fallback for the text:
-/// Manage extensions offers a command that takes text as a fallback.
+/// the extension list offers a command that takes text as a fallback.
 const WITHOUT_FALLBACKS: &str =
-    "Install an extension that knows about it, or offer a fallback in Manage extensions.";
+    "Install an extension that knows about it, or offer a fallback in Settings.";
 
 /// What the notice says for `query`: that nothing matches it — root
 /// search looks at commands, applications and a granted folder's files,

@@ -79,7 +79,7 @@ me") and a token ("Sign in"). "Show what Pane keeps" answers with all four.
 
 ## Clearing an extension's cache
 
-Manage extensions lists, after each package's enable/disable row, a row
+Settings › Extensions lists, after each package's enable/disable row, a row
 "Clear cache of <title>" per package, in the same order; its subtitle names
 the source, so copies with the same title can be told apart. Choosing it asks
 first: "Clear the cache of <title>?", the source, and "Pane deletes the data
@@ -114,7 +114,7 @@ require asks about them first and uninstalls them together, with the same
 choice ([#44](https://github.com/hoangvu12/pane/issues/44),
 [dependencies](dependencies.md#uninstalling-a-required-dependency)).
 
-Manage extensions lists, after the Clear cache rows, a row "Uninstall
+Settings › Extensions lists, after the Clear cache rows, a row "Uninstall
 <title>" per package, whose subtitle names the source. Choosing it asks
 first, "Uninstall <title>?", with:
 
@@ -141,7 +141,7 @@ and three rows: **Uninstall and keep saved data** (first, so Enter keeps),
 | Source folder, files elsewhere, remote sessions | untouched | untouched |
 
 Choosing a row applies at once in the launcher: the package leaves root
-search, Manage extensions and the targets of [operations](operations.md)
+search, Settings › Extensions and the targets of [operations](operations.md)
 (a call to it is then "not-found"), its instances and pending calls stop as
 for disable (its generation ends; a call it was serving answers "was
 uninstalled while serving the call"), an open command, form or view of it
@@ -202,7 +202,7 @@ There is no author example or guest API: deleting retained data is done by
 Pane alone, after the extension's code is gone, so an extension has nothing
 to call or handle.
 
-Manage extensions (offered in root search while anything is installed or
+Settings › Extensions (offered in root search while anything is installed or
 retained) lists, last (after the Uninstall and hotkey rows), a row "Delete retained data of
 <title>" per retained identity, in the order they were uninstalled, whose
 subtitle reads "Not installed · keeps 1 setting and 1 content record ·

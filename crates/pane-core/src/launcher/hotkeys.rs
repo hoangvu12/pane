@@ -14,7 +14,7 @@
 //! per-command choices are (see `choices`).
 //!
 //! The records are assigned through two entry points that take the same
-//! checks and write the same record: the hotkey screen in Manage extensions
+//! checks and write the same record: the hotkey screen in the extension list
 //! ([`Launcher::record_hotkey`], which ends that screen's asking), and the
 //! Settings window's Shortcuts page ([`Launcher::set_hotkey`], which leaves
 //! the launcher's screens where they are). A change either entry point
@@ -549,7 +549,7 @@ impl Launcher {
     ///
     /// The change takes effect at once — the hotkey is registered with the
     /// system before the one it replaces is released, and the launcher's
-    /// rows are refreshed, so Manage extensions and the next catalog agree
+    /// rows are refreshed, so the extension list and the next catalog agree
     /// — and the returned future records it; a record that cannot be
     /// written goes back to what was last recorded, with the registration
     /// following it (see [`Launcher::save`]), and its outcome says which it

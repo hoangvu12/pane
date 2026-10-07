@@ -37,7 +37,7 @@ not claimed to match a board the reference does not have.
 | Consumer | Family |
 | --- | --- |
 | Root search, command lists and command search (`app.rs`) | Root result row (`ui::result_row`, 44/r10); no heading line above a command's view, whose icon and title the footer's left shows instead (`ui::footer::command_lead`, #162) |
-| The launcher's confirmations, package previews and Manage extensions screens, their hotkey, pause, build, network and runtime details | Root result row for their choices (a launcher list's own rows), their lines in the 13px body type, the screen heading (`ui::shell::screen_heading`) — except Manage extensions, which has none since #162 and is named in the footer like a command's view |
+| The launcher's confirmations, package previews and Settings › Extensions screens, their hotkey, pause, build, network and runtime details | Root result row for their choices (a launcher list's own rows), their lines in the 13px body type, the screen heading (`ui::shell::screen_heading`) |
 | Status, errors and long errors in the launcher | The footer strip's status (`ui::footer`, #95) |
 | The launcher's form (`extension_views::form`) | Field groups: a text field's well, a choice field's segmented choice, the error as a field description; the submit button |
 | An extension's custom view | The host's frame (`controls::frame`); the extension's drawing keeps its colors |

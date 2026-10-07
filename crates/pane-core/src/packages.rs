@@ -9,7 +9,7 @@
 //! `installed.json`, with whether the user disabled each; reading them back
 //! needs only the manifests, never the guests.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
 use std::io;
@@ -351,6 +351,9 @@ fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Manifest {
     pub title: String,
+    /// What the package does, in a sentence (`"description"`): its page in
+    /// Settings shows it under the title. `None` when it does not say.
+    pub description: Option<String>,
     pub version: Option<String>,
     /// The package's own icon (`"icon"`, #139): a built-in icon or an
     /// image the package ships. `None` for none, which Pane shows as a
@@ -599,6 +602,8 @@ impl ManifestCommand {
 #[serde(rename_all = "camelCase")]
 struct ManifestJson {
     title: String,
+    #[serde(default)]
+    description: Option<String>,
     #[serde(default)]
     version: Option<String>,
     /// Checked by [`icons::parse_manifest_icon`].
@@ -1038,6 +1043,10 @@ impl Manifest {
         let dependencies = parse_dependencies(json.dependencies)?;
         Ok(Manifest {
             title: json.title,
+            description: json
+                .description
+                .map(|description| description.trim().to_owned())
+                .filter(|description| !description.is_empty()),
             version: json.version,
             icon,
             api_version: json.api_version,
@@ -1737,6 +1746,11 @@ pub struct InstalledPackage {
     /// The package's icon and its commands' own, resolved in the managed
     /// copy when it was read (#139).
     icons: PackageIcons,
+    /// The manifest ids of the commands the user turned off on the
+    /// package's page in Settings (#168): a disabled command is not
+    /// offered — no root search row, no results, no alias, hotkey,
+    /// schedule or service — while the rest of its package works.
+    disabled_commands: BTreeSet<String>,
 }
 
 /// An installed package's icon and its commands' own, as Pane draws them.
@@ -1818,6 +1832,8 @@ impl InstalledPackage {
                 package: Icon::letter_of(""),
                 commands: Vec::new(),
             },
+            // Its record says, once loaded (see `Store::installed`).
+            disabled_commands: BTreeSet::new(),
         };
         package.icons = PackageIcons::of(
             package.manifest.as_ref().ok(),
@@ -1892,18 +1908,20 @@ impl InstalledPackage {
     }
 
     /// This package's root providers (see [`InstalledPackage::is_provider`]),
-    /// in manifest order: what its Settings card lists with its switch.
+    /// in manifest order, whether the user turned them off or not: what
+    /// its page in Settings lists with only their switch.
     pub fn providers(&self) -> Vec<CommandRegistration> {
-        self.commands()
+        self.listed_commands()
             .into_iter()
-            .filter(|command| self.is_provider(command.manifest_id()))
+            .filter(|command| command.mode == CommandMode::Provider)
+            .map(|command| command.registration)
             .collect()
     }
 
     /// The commands this package offers to be launched — root search's
     /// rows, pins, aliases, fallbacks, hotkeys and launches from other
     /// commands — each with why it is unavailable on this system, if it
-    /// is: every command but its root providers.
+    /// is: every command the user left on but its root providers.
     pub(crate) fn launchable_commands(&self) -> Vec<(CommandRegistration, Option<String>)> {
         self.available_commands()
             .into_iter()
@@ -1911,11 +1929,47 @@ impl InstalledPackage {
             .collect()
     }
 
-    /// Every command this package declares, root providers included, each
+    /// Every command this package offers, root providers included, each
     /// with why it is unavailable on this system, if it is: first because
     /// the package does not support this system, else because the command
-    /// does not.
+    /// does not. A command the user turned off is not offered (see
+    /// [`InstalledPackage::listed_commands`], which lists it).
     pub(crate) fn available_commands(&self) -> Vec<(CommandRegistration, Option<String>)> {
+        self.listed_commands()
+            .into_iter()
+            .filter(|command| command.enabled)
+            .map(|command| (command.registration, command.unavailable))
+            .collect()
+    }
+
+    /// Whether the user left this package's command with manifest id
+    /// `command` on (#168): every command is, until it is turned off on
+    /// the package's page in Settings.
+    pub fn command_enabled(&self, command: &str) -> bool {
+        !self.disabled_commands.contains(command)
+    }
+
+    /// Turns this package's command with manifest id `command` on or off
+    /// in Pane, without recording it (see [`Store::set_command_enabled`]).
+    pub(crate) fn set_command_enabled(&mut self, command: &str, enabled: bool) {
+        if enabled {
+            self.disabled_commands.remove(command);
+        } else {
+            self.disabled_commands.insert(command.to_owned());
+        }
+    }
+
+    /// The description its manifest gives (#168), if it gives one.
+    pub fn description(&self) -> Option<&str> {
+        self.manifest.as_ref().ok()?.description.as_deref()
+    }
+
+    /// Every command of this package's manifest, in its order, whether
+    /// the user turned it off or not, as the package's page in Settings
+    /// lists them: each with why it is unavailable on this system, if it
+    /// is, and whether it is on. The commands Pane offers are the ones on
+    /// ([`InstalledPackage::commands`]).
+    pub fn listed_commands(&self) -> Vec<ListedCommand> {
         let Ok(manifest) = &self.manifest else {
             return Vec::new();
         };
@@ -1938,22 +1992,54 @@ impl InstalledPackage {
                 let unavailable = package.clone().or_else(|| {
                     platform::unavailable(command.platforms.as_deref(), "this command")
                 });
-                (registration, unavailable)
+                ListedCommand {
+                    registration,
+                    unavailable,
+                    enabled: self.command_enabled(&command.id),
+                    mode: command.mode,
+                }
             })
             .collect()
     }
 }
 
+/// One command of an installed package as its page in Settings lists it
+/// (see [`InstalledPackage::listed_commands`]).
+#[derive(Clone, Debug)]
+pub struct ListedCommand {
+    pub registration: CommandRegistration,
+    /// Why it cannot run on this system, if it cannot.
+    pub unavailable: Option<String>,
+    /// Whether the user left it on (#168).
+    pub enabled: bool,
+    /// How launching it runs it.
+    pub mode: CommandMode,
+}
+
 impl InstalledPackage {
+    /// The commands this package offers — the ones the user left on — each
+    /// beside its manifest entry: what the providers below read their
+    /// declarations from.
+    fn offered_with_manifest<'a>(
+        &self,
+        manifest: &'a Manifest,
+    ) -> Vec<((CommandRegistration, Option<String>), &'a ManifestCommand)> {
+        self.listed_commands()
+            .into_iter()
+            .zip(&manifest.commands)
+            .filter(|(listed, _)| listed.enabled)
+            .map(|(listed, command)| ((listed.registration, listed.unavailable), command))
+            .collect()
+    }
+
     /// The commands of this package that compute root results and can run
     /// on this system; none if the package cannot be read.
     pub(crate) fn root_result_commands(&self) -> Vec<CommandRegistration> {
         let Ok(manifest) = &self.manifest else {
             return Vec::new();
         };
-        self.available_commands()
+        self.offered_with_manifest(manifest)
             .into_iter()
-            .zip(&manifest.commands)
             .filter(|((_, unavailable), command)| command.root_results && unavailable.is_none())
             .map(|((registration, _), _)| registration)
             .collect()
@@ -1965,9 +2051,8 @@ impl InstalledPackage {
         let Ok(manifest) = &self.manifest else {
             return Vec::new();
         };
-        self.available_commands()
+        self.offered_with_manifest(manifest)
             .into_iter()
-            .zip(&manifest.commands)
             .filter(|((_, unavailable), command)| command.indexed_results && unavailable.is_none())
             .map(|((registration, _), _)| registration)
             .collect()
@@ -1981,9 +2066,8 @@ impl InstalledPackage {
         let Ok(manifest) = &self.manifest else {
             return Vec::new();
         };
-        self.available_commands()
+        self.offered_with_manifest(manifest)
             .into_iter()
-            .zip(&manifest.commands)
             .filter(|((_, unavailable), command)| {
                 command.schedule.is_some() && unavailable.is_none()
             })
@@ -2025,9 +2109,8 @@ impl InstalledPackage {
         let Ok(manifest) = &self.manifest else {
             return Vec::new();
         };
-        self.available_commands()
+        self.offered_with_manifest(manifest)
             .into_iter()
-            .zip(&manifest.commands)
             .filter(|((_, unavailable), command)| command.service && unavailable.is_none())
             .map(|((registration, _), _)| registration)
             .collect()
@@ -2151,6 +2234,10 @@ struct RecordJson {
     /// `pane:extension/programs`; absent means none does.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     programs: bool,
+    /// The manifest ids of the commands the user turned off on the
+    /// package's page in Settings; absent means every command is on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    disabled_commands: Vec<String>,
 }
 
 /// An installed [`NpmPackage`] as its record writes it, beside the name its
@@ -2285,7 +2372,7 @@ pub(crate) struct Pause {
 /// Why a command of the paused package titled `title` does not run, or why
 /// a call to it is refused; "The extension" when the title is not known.
 pub(crate) fn paused_reason(title: &str) -> String {
-    format!("{title} is paused after an error; retry it in Manage extensions")
+    format!("{title} is paused after an error; retry it in Settings")
 }
 
 /// What made Pane pause a package.
@@ -2398,6 +2485,7 @@ impl Store {
                     record.git.as_ref(),
                 );
                 package.uses_programs = record.programs;
+                package.disabled_commands = record.disabled_commands.iter().cloned().collect();
                 package
             })
             .collect()
@@ -2486,6 +2574,41 @@ impl Store {
                     .then(|| (PackageIdentity(record.source.clone()), paused.pause.clone()))
             })
             .collect()
+    }
+
+    /// Records whether the command with manifest id `command` of the
+    /// installed package with `identity` is on (#168), keeping the
+    /// package's other records as they are. Writes nothing when the record
+    /// already says so.
+    pub fn set_command_enabled(
+        &mut self,
+        identity: &PackageIdentity,
+        command: &str,
+        enabled: bool,
+    ) -> Result<(), PackageError> {
+        let registry = self
+            .registry
+            .as_mut()
+            .map_err(|reason| PackageError::Storage(reason.clone()))?;
+        let PackageIdentity(source) = identity;
+        let mut updated = registry.clone();
+        let Some(record) = updated.packages.iter_mut().find(|r| &r.source == source) else {
+            return Err(PackageError::NotInstalled(identity.clone()));
+        };
+        let listed = record.disabled_commands.iter().any(|id| id == command);
+        if listed != enabled {
+            return Ok(());
+        }
+        if enabled {
+            record.disabled_commands.retain(|id| id != command);
+        } else {
+            record.disabled_commands.push(command.to_owned());
+            record.disabled_commands.sort();
+        }
+        write_registry(&self.dir, &updated)
+            .map_err(|error| PackageError::Storage(error.to_string()))?;
+        *registry = updated;
+        Ok(())
     }
 
     /// Records that Pane paused the installed package with `identity` for
@@ -2767,6 +2890,7 @@ impl Store {
                     dependencies: dependencies.clone(),
                     network: package.network,
                     programs: package.programs,
+                    disabled_commands: Vec::new(),
                 });
                 true
             }
@@ -2801,6 +2925,13 @@ impl Store {
             git.as_ref(),
         );
         installed.uses_programs = package.programs;
+        // An update keeps the commands the user turned off.
+        installed.disabled_commands = registry
+            .packages
+            .iter()
+            .find(|record| &record.source == local)
+            .map(|record| record.disabled_commands.iter().cloned().collect())
+            .unwrap_or_default();
         Ok(installed)
     }
 }

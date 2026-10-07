@@ -27,7 +27,7 @@ use pane_core::hotkeys::Shortcut;
 use pane_core::tray::TrayAction;
 use pane_core::{
     ComputedAnswer, Launcher, LauncherView, ListPresentation, NextShowing, Row, RowPresentation,
-    Screen, SelectedAction, Status, WindowPresence,
+    Screen, SelectedAction, SettingsTarget, Status, WindowPresence,
 };
 
 use crate::extension_views::{custom_view, form};
@@ -1048,10 +1048,13 @@ impl LauncherWindow {
     /// again after calling this (see [`crate::ui::motion`]).
     pub(crate) fn activate_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.motion.land_at_once();
-        // The Settings root result opens the Settings window; the launcher
-        // itself does nothing (see [`Launcher::selected_opens_settings`]).
-        if self.launcher.selected_opens_settings() {
-            settings::open(&self.launcher, cx);
+        // The Settings root result opens the Settings window, "Manage
+        // Extensions" opens it at the extensions, and the install rows at
+        // its install flow (#168): Settings is where extensions are
+        // installed and managed. The launcher itself does nothing (see
+        // [`Launcher::selected_settings_target`]).
+        if let Some(target) = self.launcher.selected_settings_target() {
+            open_settings_at(&self.launcher, target, cx);
             return;
         }
         if self.launcher.selected_asks_for_folder() {
@@ -1067,69 +1070,6 @@ impl LauncherWindow {
         }
         let pending = self.launcher.activate_selected();
         self.show_until_done(pending, window, cx);
-    }
-
-    /// Activates the root result with `id` in this window, as clicking it
-    /// in root search does: the launcher returns to root search first,
-    /// wherever it is, this window is summoned and focused, and the result
-    /// is selected and activated through the same Enter path
-    /// ([`LauncherWindow::activate_selected`]). The Settings window's
-    /// Extensions page reaches the launcher's own install rows and a
-    /// package's commands through this, so those flows keep running where
-    /// their forms, folder pickers and key capture already live — here,
-    /// with the window they belong to in front.
-    pub(crate) fn activate_root_result(
-        &mut self,
-        id: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        // A click in the Settings window: the view it opens arrives, as a
-        // click on the row would — unless the launcher was hidden, when
-        // the window's first frame draws it settled (see `unhide`).
-        let was_shown = !self.presence.hidden();
-        // Root search is reached as Escape reaches it, one screen back at a
-        // time, wherever the launcher is (a form, a command, the extension
-        // list Settings entered); every `back` moves toward root search,
-        // and at root search this stops.
-        while !matches!(self.launcher.screen(), Screen::Root { .. }) {
-            self.launcher.back();
-        }
-        // Root search may have been left filtered by a query that hides
-        // the row the page drew (Settings lists every root result): it is
-        // shown unfiltered, as a summoned launcher starts, so the row is
-        // there to find.
-        if self
-            .launcher
-            .view()
-            .query()
-            .is_some_and(|query| !query.is_empty())
-        {
-            self.launcher.show_root_search();
-            self.sync_screen(window, cx);
-        }
-        self.unhide(window, cx);
-        window.activate_window();
-        cx.activate(true);
-        let Some(index) = self
-            .launcher
-            .view()
-            .rows
-            .iter()
-            .position(|row| row.id == id)
-        else {
-            // No such root result (the row was disabled or removed since
-            // the page drew it): root search is shown, focused, which is as
-            // far as this reaches.
-            self.sync_screen(window, cx);
-            cx.notify();
-            return;
-        };
-        self.launcher.select(index);
-        self.activate_selected(window, cx);
-        if was_shown {
-            self.motion.pointer_open();
-        }
     }
 
     /// Shows the launcher's state now and again when `pending`, a launcher
@@ -2145,6 +2085,25 @@ const HERO_GLASS_OPACITY: f32 = 0.84;
 /// disabled from Settings), and the screen sync the update runs asks
 /// every window to redraw, Settings included. Focus is not taken: the
 /// flow runs in Settings.
+/// Opens Pane's Settings window, or focuses the one already open, where
+/// `target` says (#168): anywhere, at the Extensions group, or at its
+/// install flow from a folder, npm or Git.
+pub(crate) fn open_settings_at(launcher: &Launcher, target: SettingsTarget, cx: &mut App) {
+    use crate::features::settings::extensions::{InstallSource, TITLE};
+    let install = |source: InstallSource| source.target();
+    let place = match target {
+        SettingsTarget::Settings => {
+            settings::open(launcher, cx);
+            return;
+        }
+        SettingsTarget::Extensions => "",
+        SettingsTarget::InstallFromFolder => install(InstallSource::Folder),
+        SettingsTarget::InstallFromNpm => install(InstallSource::Npm),
+        SettingsTarget::InstallFromGit => install(InstallSource::Git),
+    };
+    settings::open_at(launcher, TITLE, place, cx);
+}
+
 pub(crate) fn launcher_changed_outside(cx: &mut App) {
     for window in cx.windows() {
         let Some(launcher) = window.downcast::<LauncherWindow>() else {

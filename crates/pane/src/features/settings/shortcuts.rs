@@ -2,7 +2,7 @@
 //! by their extensions, searchable, each with its Name, Alias and Hotkey.
 //!
 //! The page is a renderer over [`Launcher::shortcut_catalog`] — one read
-//! of the same records Manage extensions shows — rebuilt on every redraw:
+//! of the same records the extension list shows — rebuilt on every redraw:
 //! a package installed, disabled, enabled, updated or removed, in the
 //! launcher window or in the background, is in the next catalog the page
 //! draws. The window's watcher (see the Settings window's module docs) is
@@ -16,7 +16,7 @@
 //! open, and the change reaches root search at once and is recorded by
 //! the same write the form's submission makes. The Hotkey column records
 //! through [`Launcher::set_hotkey`] — the same checks and the same
-//! `hotkeys.json` the hotkey screen in Manage extensions writes: the
+//! `hotkeys.json` the hotkey screen in the extension list writes: the
 //! cell's click, Enter or Space starts the recorder, which takes the keys
 //! pressed next as the binding being recorded (captured: they do not
 //! navigate or act; Escape cancels, changing nothing), and a Clear button
@@ -729,7 +729,9 @@ impl SettingsWindow {
     /// last one drawn asks for a redraw — the next frame reads the catalog
     /// fresh, so it shows the launcher's packages as they are now.
     pub(crate) fn shortcuts_watched(&mut self, cx: &mut Context<Self>) {
-        if self.pages[self.selected].title != TITLE {
+        // The extension pages list the same records (#168).
+        let title = self.pages[self.selected].title;
+        if title != TITLE && title != super::extensions::TITLE {
             return;
         }
         if Some(self.launcher.shortcut_catalog()) != self.shortcuts.drawn {
@@ -1282,6 +1284,38 @@ fn row_element(
         .child(alias)
         .child(hotkey)
         .into_any_element()
+}
+
+/// The Alias column for `command` as this page draws it — its cell, or the
+/// inline editor in its place while it is edited — for another page that
+/// lists a command's alias the same way: an extension's page (#168).
+pub(super) fn alias_column(
+    this: &mut SettingsWindow,
+    command: &ShortcutCommand,
+    theme: &Theme,
+    cx: &mut Context<SettingsWindow>,
+) -> Div {
+    let editing = this
+        .shortcuts
+        .editing
+        .as_ref()
+        .is_some_and(|editing| editing.command == command.id);
+    if editing {
+        editor_element(this, command, theme, cx)
+    } else {
+        alias_cell(this, command, theme, cx)
+    }
+}
+
+/// The Hotkey column for `command` as this page draws it, for another page
+/// that lists a command's hotkey the same way: an extension's page (#168).
+pub(super) fn hotkey_column(
+    this: &mut SettingsWindow,
+    command: &ShortcutCommand,
+    theme: &Theme,
+    cx: &mut Context<SettingsWindow>,
+) -> Div {
+    hotkey_cell(this, command, theme, cx)
 }
 
 /// What a cell shows as its text: the alias, quoted, or "None" muted.

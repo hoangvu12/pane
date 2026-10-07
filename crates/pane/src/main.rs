@@ -319,7 +319,7 @@ fn main() {
         })
         .detach();
         // Acquiring the default extensions goes on in the background: the
-        // window, root search and Manage extensions stay usable, and the
+        // window, root search and the extension list stay usable, and the
         // status line says what it is doing (the changes channel redraws
         // the window as it goes, as for development builds).
         cx.spawn(async move |_| {

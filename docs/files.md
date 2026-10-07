@@ -103,7 +103,7 @@ started with its first listing) and answers `listing`; the extension
 answers no files yet. The worker waits 100 ms (`files::DEBOUNCE`) before it
 starts, and takes only the newest request. The listing is then **kept for
 the visit**: every later keystroke gets it at once, and only filters it. It
-is dropped when root search is left (a command, Manage extensions, a
+is dropped when root search is left (a command, Settings › Extensions, a
 preview, a restart of the visit) and when the grant changes, so the next
 visit lists the folder again; there is no index and no file watching.
 

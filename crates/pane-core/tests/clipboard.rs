@@ -56,7 +56,7 @@ use system::{Done, RecordingSystem};
 /// What a kept item's row says last.
 const ENTER_PASTES: &str = "Enter pastes it";
 
-const MANAGE_ROW: &str = "Manage extensions…";
+const MANAGE_ROW: &str = "Manage Extensions";
 const TURN_ON: &str = "Turn on clipboard history";
 const TURN_OFF: &str = "Turn off clipboard history";
 const PAUSE: &str = "Pause clipboard history";

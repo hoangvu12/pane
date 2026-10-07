@@ -584,19 +584,24 @@ fn registrations_that_appear_and_go_are_found_and_lost(cx: &mut TestAppContext) 
         "the installed extension's row is found"
     );
 
-    // Enter jumps to it: the Extensions page opens, the row revealed.
+    // Enter jumps to it: the extension's own page opens (#168), its
+    // switch revealed.
     sc.simulate_keystrokes("enter");
     sc.run_until_parked();
     pump(&mut sc);
     assert!(sc.debug_bounds("extensions").is_some(), "the page opened");
     assert!(
+        sc.debug_bounds("extension-page-title-Hello").is_some(),
+        "the extension's page is showing"
+    );
+    assert!(
         sc.debug_bounds("extension-row-Hello").is_some(),
-        "the extension's row is showing"
+        "the extension's switch is showing"
     );
     assert_eq!(
         focused_label(&mut sc).as_deref(),
-        Some("Extensions"),
-        "the sidebar has the keyboard focus, its selected section read"
+        Some("Hello"),
+        "the sidebar has the keyboard focus, its selected entry — the          extension's own, under the Extensions group — read"
     );
 
     // The package is uninstalled: the entry goes, and the same query now
@@ -631,23 +636,12 @@ fn registrations_that_appear_and_go_are_found_and_lost(cx: &mut TestAppContext) 
     );
 }
 
-/// Presses Enter on the install row and answers the folder picker with
-/// `folder`.
+/// Previews the package in `folder` in the launcher window, as the folder
+/// Settings' picker chose is previewed (#168): Enter on the preview then
+/// installs it.
 fn choose_folder(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext, folder: PathBuf) {
-    let launcher = cx.read_entity(window, |window, _| window.launcher().clone());
-    let view = launcher.view();
-    let index = view
-        .rows
-        .iter()
-        .position(|row| row.title == "Install extension from folder…")
-        .expect("the install row");
-    launcher.select(index);
-    cx.simulate_keystrokes("enter");
-    cx.run_until_parked();
-    assert!(cx.did_prompt_for_paths(), "a folder picker opened");
-    cx.simulate_path_prompt_response(move |options| {
-        assert!(options.directories && !options.files && !options.multiple);
-        Some(vec![folder])
+    window.update_in(cx, |launcher, window, cx| {
+        launcher.preview_package(&folder, window, cx);
     });
     settle(window, cx);
 }

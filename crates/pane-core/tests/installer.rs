@@ -386,7 +386,7 @@ fn acquiring_shows_progress_and_leaves_the_core_usable() {
     // Once the default extensions are installed, managing them is offered
     // (the query typed meanwhile is cleared first).
     search(&launcher, "");
-    assert!(titles(&launcher).contains(&"Manage extensions…".to_owned()));
+    assert!(titles(&launcher).contains(&"Manage Extensions".to_owned()));
     search(&launcher, "6*7");
     assert_eq!(titles(&launcher), ["42"]);
 }

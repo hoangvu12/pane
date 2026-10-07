@@ -86,7 +86,7 @@ installed from its folder like the calculator
 - If the applications cannot be listed at all, a row "Applications — Could
   not list: ..." is listed for every query that is not blank; Enter shows
   the whole error. A missing or unreadable location only adds nothing.
-- **Disabled** (Manage extensions), its applications leave root search at
+- **Disabled** (Settings › Extensions), its applications leave root search at
   once, the kept list is dropped, its instance is stopped, nothing looks for
   applications any more, and a list still on its way is discarded; other
   results (commands, the calculator) are untouched. Enabled again, the next

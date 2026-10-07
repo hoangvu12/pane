@@ -1,6 +1,9 @@
 //! Installing a local extension package through the native window, on
-//! GPUI's test platform: the install row opens a folder picker, the chosen
-//! package is previewed, Enter installs it and its command runs.
+//! GPUI's test platform: the chosen package is previewed, Enter installs it
+//! and its command runs; and the extension-management flow's screens as the
+//! launcher window draws them while it holds them (Settings drives the
+//! flow, #168; the install rows' folder picker is Settings', tested in
+//! `settings.rs`).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,7 +16,7 @@ use tempfile::TempDir;
 #[path = "support/settle.rs"]
 mod settle;
 
-use settle::{settle, settle_shown};
+use settle::{enter_flow, settle, settle_shown};
 
 #[path = "support/packages.rs"]
 mod packages;
@@ -23,7 +26,7 @@ use packages::package;
 const INSTALL_ROW: &str = "Install extension from folder…";
 const NPM_ROW: &str = "Install extension from npm…";
 const GIT_ROW: &str = "Install extension from Git…";
-const MANAGE_ROW: &str = "Manage extensions…";
+const MANAGE_ROW: &str = "Manage Extensions";
 const SETTINGS_ROW: &str = "Settings…";
 
 fn open<'a>(
@@ -41,19 +44,18 @@ fn titles(view: &LauncherView) -> Vec<&str> {
     view.rows.iter().map(|row| row.title.as_str()).collect()
 }
 
-/// Presses Enter on the install row and answers the folder picker.
+/// Previews the package in `folder` in the window, as the folder Settings'
+/// picker chose is previewed (#168), or as `pane --install` names one.
 fn choose_folder(
     window: &Entity<LauncherWindow>,
     cx: &mut VisualTestContext,
     folder: Option<PathBuf>,
 ) -> LauncherView {
-    cx.simulate_keystrokes("enter");
-    cx.run_until_parked();
-    assert!(cx.did_prompt_for_paths(), "a folder picker opened");
-    cx.simulate_path_prompt_response(move |options| {
-        assert!(options.directories && !options.files && !options.multiple);
-        folder.map(|folder| vec![folder])
-    });
+    if let Some(folder) = folder {
+        window.update_in(cx, |launcher, window, cx| {
+            launcher.preview_package(&folder, window, cx);
+        });
+    }
     settle(window, cx)
 }
 
@@ -157,8 +159,8 @@ fn only_the_cores_own_screens_have_a_heading_line(cx: &mut TestAppContext) {
 
     cx.simulate_keystrokes("escape");
     settle(&window, cx);
-    cx.simulate_keystrokes("down down down down enter");
-    let view = settle(&window, cx);
+    // The flow Settings drives (#168); the launcher window still draws it.
+    let view = enter_flow(&window, cx);
     assert!(matches!(view.screen, Screen::Extensions { .. }));
     assert_eq!(
         heading_and_footer_command(cx),
@@ -176,16 +178,6 @@ fn only_the_cores_own_screens_have_a_heading_line(cx: &mut TestAppContext) {
         (true, false),
         "a confirmation keeps its heading"
     );
-}
-
-#[gpui::test]
-fn cancelling_the_folder_picker_stays_on_root(cx: &mut TestAppContext) {
-    let data = tempfile::tempdir().unwrap();
-    let (window, cx) = open(cx, &data);
-
-    let view = choose_folder(&window, cx, None);
-
-    assert_eq!((view.query(), &view.status), (Some(""), &Status::Idle));
 }
 
 #[gpui::test]
@@ -232,7 +224,7 @@ fn an_installed_package_is_disabled_and_enabled_from_the_extension_list(cx: &mut
         ]
     );
 
-    cx.simulate_keystrokes("down down down down enter");
+    enter_flow(&window, cx);
     let view = settle(&window, cx);
     assert!(
         matches!(view.screen, Screen::Extensions { .. }),
@@ -270,8 +262,7 @@ fn an_installed_package_is_disabled_and_enabled_from_the_extension_list(cx: &mut
         [INSTALL_ROW, NPM_ROW, GIT_ROW, MANAGE_ROW, SETTINGS_ROW]
     );
 
-    cx.simulate_keystrokes("down down down enter");
-    settle(&window, cx);
+    enter_flow(&window, cx);
     cx.simulate_keystrokes("enter");
     assert_eq!(
         settle(&window, cx).status,
@@ -324,32 +315,22 @@ fn install(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext, folder: 
     settle(window, cx);
 }
 
-/// From root search, clicks Manage extensions… and then the row whose
-/// debug selector is `row`. The pointer moves onto Manage extensions…
-/// first, as a user's does: root search selects the row under a moving
-/// pointer, so the click runs it, where a click with no movement before
-/// it only selects an unselected row.
+/// Enters the extension list (the flow Settings drives, #168) and clicks
+/// the row whose debug selector is `row`. The pointer moves onto the row
+/// first, as a user's does: the list selects the row under a moving
+/// pointer, so the click runs it, where a click with no movement before it
+/// only selects an unselected row.
 fn click_in_extension_list(
     window: &Entity<LauncherWindow>,
     cx: &mut VisualTestContext,
     row: &'static str,
 ) -> LauncherView {
-    let manage = cx
-        .debug_bounds("row-Manage extensions…")
-        .expect("row")
-        .center();
-    for at in [manage - gpui::point(px(1.), px(0.)), manage] {
+    enter_flow(window, cx);
+    let row = cx.debug_bounds(row).expect("row rendered").center();
+    for at in [row - gpui::point(px(1.), px(0.)), row] {
         cx.simulate_mouse_move(at, None::<MouseButton>, Modifiers::none());
     }
-    cx.simulate_click(manage, Modifiers::none());
-    let view = settle(window, cx);
-    assert!(
-        matches!(view.screen, Screen::Extensions { .. }),
-        "the click opened the extension list: {:?}",
-        view.screen
-    );
-    let row = cx.debug_bounds(row).expect("row rendered");
-    cx.simulate_click(row.center(), Modifiers::none());
+    cx.simulate_click(row, Modifiers::none());
     settle(window, cx)
 }
 
@@ -446,7 +427,7 @@ fn an_installed_package_cache_is_cleared_after_confirming(cx: &mut TestAppContex
     let folder = package(&sources.path().join("hello"));
     let (window, cx) = open(cx, &data);
     install(&window, cx, &folder);
-    cx.simulate_keystrokes("down down down down enter");
+    enter_flow(&window, cx);
     let view = settle(&window, cx);
     assert!(matches!(view.screen, Screen::Extensions { .. }));
     assert_eq!(
@@ -537,14 +518,8 @@ fn assert_confirmation_scroll_reset(cx: &mut TestAppContext, height: f32) {
     // the short window even the confirmation has less room than one row.
     cx.simulate_resize(gpui::size(gpui::px(640.), gpui::px(height)));
     launcher.back();
-    let manage = titles(&launcher.view())
-        .iter()
-        .position(|title| *title == MANAGE_ROW)
-        .unwrap();
-    launcher.select(manage);
-    cx.simulate_keystrokes("enter");
     assert!(matches!(
-        settle(&window, cx).screen,
+        enter_flow(&window, cx).screen,
         Screen::Extensions { .. }
     ));
     // The last Uninstall row, which the six hotkey rows follow.
@@ -624,7 +599,7 @@ fn an_installed_package_is_uninstalled_after_choosing_what_to_keep(cx: &mut Test
     let folder = package(&sources.path().join("hello"));
     let (window, cx) = open(cx, &data);
     install(&window, cx, &folder);
-    cx.simulate_keystrokes("down down down down enter");
+    enter_flow(&window, cx);
     settle(&window, cx);
 
     // The fourth row asks first, with a choice about the saved data; Escape
@@ -698,7 +673,7 @@ fn retained_data_is_deleted_from_the_extension_list_after_confirming(cx: &mut Te
     let (window, cx) = open(cx, &data);
     install(&window, cx, &folder);
     // Uninstall it, keeping its saved data.
-    press_enter_on(&window, cx, MANAGE_ROW);
+    enter_flow(&window, cx);
     press_enter_on(&window, cx, "Uninstall Hello");
     let view = press_enter_on(&window, cx, "Uninstall and keep saved data");
     assert_eq!(
@@ -857,7 +832,7 @@ fn uninstalling_a_required_dependency_shows_its_dependent_and_the_choices_in_the
     cx.simulate_resize(gpui::size(gpui::px(640.), gpui::px(420.)));
     launcher.back();
     settle(&window, cx);
-    press_enter_on(&window, cx, MANAGE_ROW);
+    enter_flow(&window, cx);
 
     let view = press_enter_on(&window, cx, "Uninstall Greeter");
     assert_eq!(

@@ -5,7 +5,7 @@
 //! action (the footer's, the same definition and dispatch), then, for a
 //! result a quick slot can hold, pinning it (see `quick_slots`: a slot's
 //! own entries remove and move it), then, for an installed command, the
-//! hotkey and alias configuration Manage extensions already offers, and
+//! hotkey and alias configuration the extension list already offers, and
 //! "Configure Command…" and "Configure Extension…" when the command or its
 //! package declares preferences (the window opens the extension's card in
 //! Settings for them; see `setup`).
@@ -15,7 +15,7 @@
 //!
 //! An alias or hotkey flow opened here returns to the search it came from
 //! — the same rows, the target still selected, the outcome in the status —
-//! where the same flows opened from Manage extensions return there.
+//! where the same flows opened from the extension list return there.
 
 use super::{
     Entry, Launcher, LauncherView, Mode, Screen, SelectedAction, State, Status, quick_slots,
@@ -193,7 +193,7 @@ impl Launcher {
             self.show_alias_form(&mut state, target);
         }
         // Set after the flow opened: opening it clears what a visit from
-        // Manage extensions would otherwise inherit.
+        // the extension list would otherwise inherit.
         state.actions_return = Some(Return {
             view,
             entries,

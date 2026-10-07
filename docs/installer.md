@@ -8,7 +8,7 @@ machine installs Pane from one package, and Pane acquires its default
 extensions itself over the network — [#60](https://github.com/hoangvu12/pane/issues/60)'s
 five, with the calculator the feature the installer slices proved —
 with progress, retries and a cache, while the core (the window,
-root search, the install rows, Manage extensions) stays usable. This is
+root search, the install rows, Settings › Extensions) stays usable. This is
 the internet-first setup the specification chose
 ([decision 20](launcher-design-interview.md)); the installer carries no
 payloads and installs no runtime, and the user installs no Node, Rust,
@@ -253,7 +253,7 @@ acquires each in turn in the background:
 
 The status line says what is happening — "Acquiring the Calculator…" then
 "Acquiring the Calculator: 34% of 116 KiB" — while the window, root
-search, the install rows and Manage extensions stay usable: acquisition
+search, the install rows and Settings › Extensions stay usable: acquisition
 never blocks anything. When every default extension is set up, the status
 line says "Set up the Calculator" (or "Set up Pane's default extensions").
 A default extension that could not be acquired is explained there ("Could
@@ -262,7 +262,7 @@ not set up the Calculator: Pane's downloads at … could not be reached:
 install rows, **Set up Calculator**, which tries again; the row goes once
 what it asked for is there. Starting Pane tries again by itself, so a
 Pane stopped mid-setup recovers, and disabling a default extension (in
-Manage extensions) is the opt-out: a disabled default extension is
+Settings › Extensions) is the opt-out: a disabled default extension is
 installed, so it is never re-acquired or re-enabled.
 
 ## Updating Pane itself

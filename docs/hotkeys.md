@@ -13,7 +13,7 @@ shortcut with the system. The architecture is recorded in
 
 ## Assigning one
 
-In **Manage extensions…**, after each package's state, Reload, Clear cache and Uninstall
+In **Settings › Extensions**, after each package's state, Reload, Clear cache and Uninstall
 rows, every command of an enabled package has a row "Hotkey for
 &lt;command&gt;", subtitled with its hotkey ("Ctrl+Alt+G · Opens it from any
 application"), "None · …", or why it is not active, then its package's source (copies of a package may share titles). Enter opens the hotkey
@@ -118,7 +118,7 @@ cannot assign, read or declare one (no WIT or manifest change).
 
 - Launcher public interface ([`crates/pane-core/tests/hotkeys.rs`](../crates/pane-core/tests/hotkeys.rs)),
   with the real settings-sample guests and a fake system (which shortcuts
-  other applications use is deterministic): assigning in Manage extensions
+  other applications use is deterministic): assigning in Settings › Extensions
   registers it and a press opens the command from root search or from
   another open command; kept and registered again after a restart; changing
   releases the old one; Remove hotkey; disable releases and enable restores,

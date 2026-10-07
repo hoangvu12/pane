@@ -65,7 +65,7 @@ is the command's response. Any `http` or `https` address is allowed,
 including this computer's own services, the local network and link-local
 addresses such as `169.254.169.254`: extensions are trusted code.
 
-Manage extensions says "Uses the network" on a package whose component
+Settings › Extensions says "Uses the network" on a package whose component
 imports `wasi:http` (found when it is installed, updated or reloaded), and
 lists a row per such package, **Network use of …**, whose details list the
 addresses (`host:port`) it tried to reach since Pane started.
@@ -157,7 +157,7 @@ details Enter shows. Texts and names starting with `huge`, `stall` or
   end with the matching errors within short test limits (only the limit a
   case checks is shortened, so a slow machine cannot make another fire
   first); an untrusted
-  certificate is "not trusted"; Manage extensions says which package uses
+  certificate is "not trusted"; Settings › Extensions says which package uses
   the network and lists the address it reached; a manifest saying
   `"search": true` for a component without the export, or
   `"rootResults": true` too for one without that export, is refused at

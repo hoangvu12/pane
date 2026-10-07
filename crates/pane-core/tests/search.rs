@@ -27,7 +27,7 @@ use rows::titles;
 const INSTALL_ROW: &str = "Install extension from folder…";
 const NPM_ROW: &str = "Install extension from npm…";
 const GIT_ROW: &str = "Install extension from Git…";
-const MANAGE_ROW: &str = "Manage extensions…";
+const MANAGE_ROW: &str = "Manage Extensions";
 
 /// A command built into the launcher, backed by the Rust sample.
 fn command(title: &str, subtitle: Option<&str>) -> CommandRegistration {

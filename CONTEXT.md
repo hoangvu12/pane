@@ -32,6 +32,14 @@ _Avoid_: Installer payload (the installer carries none), bundled feature, runtim
 An installed extension whose execution and contributed functionality are switched off, while its settings and unexpired saved data are retained.
 _Avoid_: Uninstalled extension
 
+**Disabled command**:
+A command of an installed extension that the user turned off with its switch on the extension's page: it is not offered — no root search row, no results, alias, hotkey, schedule or service — while the rest of its extension works, and its alias and hotkey are kept for when it is on again. Recorded with its package's record, so it survives restarts, reloads and updates.
+_Avoid_: Hidden command, unlisted command
+
+**Extension page**:
+An installed extension's page in Pane's Settings, under the sidebar's Extensions group: its icon, title, description and source, its enable switch, its preferences, its commands each with its alias, hotkey and switch, and its operations (Check for Update, Reload, Clear Cache, Reset Confirmations, Show Source Folder, Uninstall), which run the launcher's own operations and confirmations. Extensions are managed there; the launcher's built-in **Manage Extensions** command opens Settings at the group, and the launcher has no screen of its own for them (ADR 0043).
+_Avoid_: Manage extensions screen (removed), extension card, extension list (the core's flow the pages drive)
+
 **Extension settings**:
 Values an installed package's commands save through Pane, owned by its package identity and kept while it is disabled, updated or Pane is stopped.
 _Avoid_: Preferences, cache
@@ -57,7 +65,7 @@ Removing an installed package's managed copy, cache and local credentials, and i
 _Avoid_: Disable, delete source
 
 **Retained data**:
-Extension data Pane keeps for a package identity that is not installed, recorded with the title it had; installing the same source again makes it that package's data again. Manage extensions lists it per identity, and the user can delete it there without the extension, which Pane does itself.
+Extension data Pane keeps for a package identity that is not installed, recorded with the title it had; installing the same source again makes it that package's data again. The Extensions group's page in Settings lists it per identity, and the user can delete it there without the extension, which Pane does itself.
 _Avoid_: Orphaned data, leftovers (a leftover is a managed folder awaiting removal)
 
 **Local credential**:
@@ -129,7 +137,7 @@ A computed result whose action copies text, such as the calculator's answer: roo
 _Avoid_: Calculation, conversion, answer card (the card is how it is drawn)
 
 **No-results notice**:
-What root search shows above its fallbacks when nothing else is listed for a query that is not blank: the query, and what the user can do — pick a fallback, install an extension, or offer a command as one in Manage extensions. It selects nothing: a fallback is chosen only by the user.
+What root search shows above its fallbacks when nothing else is listed for a query that is not blank: the query, and what the user can do — pick a fallback, install an extension, or offer a command as one on its extension's page in Settings. It selects nothing: a fallback is chosen only by the user.
 _Avoid_: Empty state (a screen's own line when it has no rows), zero state
 
 **Granted folder**:
@@ -145,7 +153,7 @@ A root result an extension command supplies ahead of the query, such as an insta
 _Avoid_: Index entry, cached result
 
 **Root provider**:
-An extension command whose only job is to answer root search, through its computed or indexed results, declared with `"mode": "provider"` in its package manifest, such as the calculator and Applications. It has no row of its own: it is never launched, cannot be pinned, has no alias, fallback or global hotkey, is offered by neither the Actions panel nor the Shortcuts page, and root search learns nothing about it; its results are root results of their own. Its extension's Settings card lists it with the extension's switch, which turns its results off and on. A provider declaring neither kind of result is refused at install, and what was recorded for a command before it became one is dropped at the next start, with a toast naming it.
+An extension command whose only job is to answer root search, through its computed or indexed results, declared with `"mode": "provider"` in its package manifest, such as the calculator and Applications. It has no row of its own: it is never launched, cannot be pinned, has no alias, fallback or global hotkey, is offered by neither the Actions panel nor the Shortcuts page, and root search learns nothing about it; its results are root results of their own. Its **Extension page** lists it among the commands with only its own switch, which turns its results off and on, as the extension's switch does for all of them. A provider declaring neither kind of result is refused at install, and what was recorded for a command before it became one is dropped at the next start, with a toast naming it.
 _Avoid_: Search provider (any source of matching results), background command, hidden command
 
 **Installed application**:
@@ -277,11 +285,11 @@ An enabled extension Pane stopped running after a failure attributable to it: it
 _Avoid_: Crashed extension, quarantined, disabled (by Pane)
 
 **Extension runtime**:
-The part of Pane that runs every installed extension's code (the Wasmtime engine; the runtime is a thread in Pane's process today), shared by all extensions; the window, root search's own rows and Manage extensions do not depend on it.
+The part of Pane that runs every installed extension's code (the Wasmtime engine; the runtime is a thread in Pane's process today), shared by all extensions; the window, root search's own rows and the extension pages in Settings do not depend on it.
 _Avoid_: Engine (one part of it)
 
 **Runtime crash**:
-A failure of the extension runtime itself, not attributable to any one extension, such as a panic of its thread: every call it held is stopped and none is run again by itself, even if its effect was done and only its answer lost; Pane names and pauses no extension, keeps saved data, ends the native helpers it ran and starts the runtime again, unless it crashed within five minutes before, when it stays stopped until the user restarts it in Manage extensions. Distinct from an extension's crash (a guest trap), which counts towards pausing that extension.
+A failure of the extension runtime itself, not attributable to any one extension, such as a panic of its thread: every call it held is stopped and none is run again by itself, even if its effect was done and only its answer lost; Pane names and pauses no extension, keeps saved data, ends the native helpers it ran and starts the runtime again, unless it crashed within five minutes before, when it stays stopped until the user restarts it from the Extensions group in Settings. Distinct from an extension's crash (a guest trap), which counts towards pausing that extension.
 _Avoid_: Extension crash, paused runtime
 
 **Unresponsive call**:

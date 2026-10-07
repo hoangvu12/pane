@@ -673,8 +673,7 @@ fn panic_message(panic: &(dyn Any + Send)) -> String {
 /// How a call answers when the runtime is stopped: it is not sent.
 pub(super) fn stopped() -> CallError {
     CallError::RuntimeUnavailable(
-        "it stopped after failing and runs nothing until you restart it in Manage extensions"
-            .into(),
+        "it stopped after failing and runs nothing until you restart it in Settings".into(),
     )
 }
 
@@ -717,7 +716,7 @@ fn lost_in(status: &RuntimeStatus) -> CallError {
         }
         RuntimeStatus::Stopped { not_restarted, .. } => format!(
             "{stopped} and was not restarted ({not_restarted}); Pane does not run this again by \
-             itself. Restart it in Manage extensions"
+             itself. Restart it in Settings"
         ),
         RuntimeStatus::Running => format!("{stopped}; Pane does not run this again by itself"),
     })

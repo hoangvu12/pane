@@ -110,6 +110,7 @@ use application_update::{Application, Updates};
 use choices::Record;
 use developing::Developing;
 pub use developing::{BuildFailure, Development};
+pub use extensions::ExtensionMark;
 pub use hotkeys::HotkeyOutcome;
 use hotkeys::{Bindings, OpenPane};
 pub use item_actions::{ItemAction, ItemActions, UnboundShortcut};
@@ -155,8 +156,8 @@ const INSTALL_FROM_GIT: &str = "pane.install-from-git";
 /// repository to install from.
 const GIT_REPOSITORY_FIELD: &str = "repository";
 
-/// The id of the root row that lists installed packages to enable or
-/// disable them.
+/// The id of the root row of Pane's "Manage Extensions" command, which
+/// opens Settings at the extensions (#168).
 const MANAGE_EXTENSIONS: &str = "pane.manage-extensions";
 
 /// The id of the root row that opens Pane's Settings window.
@@ -256,6 +257,22 @@ pub enum Screen {
         command: String,
         details: Vec<String>,
     },
+}
+
+/// Where in Pane's Settings window a root row is handled (see
+/// [`Launcher::selected_settings_target`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingsTarget {
+    /// The Settings window, wherever it is.
+    Settings,
+    /// Its extensions: "Manage Extensions".
+    Extensions,
+    /// Its install flow from a folder.
+    InstallFromFolder,
+    /// Its install flow from npm.
+    InstallFromNpm,
+    /// Its install flow from Git.
+    InstallFromGit,
 }
 
 /// What a confirmation screen asks before Pane acts.
@@ -707,7 +724,7 @@ struct State {
     /// The form on screen, if one is open.
     form: Option<OpenForm>,
     /// The search an alias or hotkey flow returns to when the Actions
-    /// panel opened it; `None` when the flow came from Manage extensions.
+    /// panel opened it; `None` when the flow came from the extension list.
     actions_return: Option<actions::Return>,
     /// The custom view on screen, if one is open.
     custom_view: Option<OpenCustomView>,
@@ -1122,7 +1139,11 @@ enum Entry {
     /// replace its installed copy, as the preview's plan assumed things to
     /// be.
     Install(install::Request, Mode, dependencies::Assumptions),
-    /// Show the installed packages (root).
+    /// Pane's "Manage Extensions" command (root): the launcher window
+    /// opens Settings at the extensions instead (see
+    /// [`Launcher::selected_settings_target`]); activated here, it enters
+    /// the extension-management flow Settings drives
+    /// ([`Launcher::manage_extensions`]).
     Manage,
     /// Nothing in the launcher: the window opens or focuses its Settings
     /// window (root). Which pages Settings offers is the app's, not the
@@ -2306,6 +2327,29 @@ impl Launcher {
         matches!(entry, Some(Entry::Settings))
     }
 
+    /// Where in Pane's Settings window the selected root row is handled,
+    /// if it is handled there (#168): the Settings row opens the window;
+    /// "Manage Extensions" opens it at the extensions; and the install
+    /// rows open its install flow from a folder, npm or Git — Settings is
+    /// where extensions are installed and managed. The launcher window
+    /// asks this before activating the row, and does not activate it when
+    /// it is handled in Settings.
+    pub fn selected_settings_target(&self) -> Option<SettingsTarget> {
+        let state = self.lock();
+        let entry = state
+            .view
+            .selected
+            .and_then(|index| state.entries.get(index))?;
+        match entry {
+            Entry::Settings => Some(SettingsTarget::Settings),
+            Entry::Manage => Some(SettingsTarget::Extensions),
+            Entry::InstallFromFolder => Some(SettingsTarget::InstallFromFolder),
+            Entry::AskNpm => Some(SettingsTarget::InstallFromNpm),
+            Entry::AskGit => Some(SettingsTarget::InstallFromGit),
+            _ => None,
+        }
+    }
+
     /// Leaves an open form or custom view for its command's list, or an open
     /// command, package preview or the extension list for root search. A
     /// custom view is closed. On root search it clears the query. The
@@ -2395,12 +2439,13 @@ impl Launcher {
         true
     }
 
-    /// Shows the extension list, as activating the "Manage extensions…"
-    /// root result does, wherever the launcher now is: the same screen,
-    /// rows and operations the launcher window shows. Pane's Settings
-    /// window enters the flow through this, so both windows reach the same
-    /// operations and records — the confirmations among them — rather than
-    /// Settings growing a management flow of its own. Selecting a row and
+    /// Enters the extension-management flow, wherever the launcher now
+    /// is: the extension list's rows and operations. Pane's Settings
+    /// window, where extensions are managed (#168), enters the flow
+    /// through this, so its pages reach the launcher's own operations and
+    /// records — the confirmations among them — rather than Settings
+    /// growing a management flow of its own. The launcher window draws no
+    /// screen for the list. Selecting a row and
     /// activating it ([`Launcher::select`],
     /// [`Launcher::activate_selected`]) drives it from there, as the
     /// launcher window's Enter does.
@@ -3110,8 +3155,9 @@ impl Launcher {
     /// the parent specification's provisional default reopens what the
     /// user left, when it is still a view there is something to return
     /// to. Root search always is, and so are the screens of Pane's own
-    /// flows (the extension list, a package's preview, their details and
-    /// confirmations); a command's view — its list, its search, a form or
+    /// flows (a package's preview, details and confirmations); the
+    /// extension list is not, since it is the flow Settings drives and the
+    /// launcher window has no screen for it (#168); a command's view — its list, its search, a form or
     /// a custom view of it — is only while the command's package is still
     /// installed and enabled, since a removed or disabled extension
     /// leaves nothing to restore and a reopening launcher returns safely
@@ -3120,6 +3166,9 @@ impl Launcher {
     /// always restorable.
     pub fn restorable_view(&self) -> bool {
         let state = self.lock();
+        if matches!(state.view.screen, Screen::Extensions { .. }) {
+            return false;
+        }
         // Only a command's view has something to lose. A command not
         // installed as a package — one registered with Pane at start —
         // owns nothing that can be removed, so it is always restorable;
@@ -3367,8 +3416,8 @@ impl Launcher {
         {
             let row = Row {
                 id: MANAGE_EXTENSIONS.into(),
-                title: "Manage extensions…".into(),
-                subtitle: Some("Enable or disable installed extensions".into()),
+                title: "Manage Extensions".into(),
+                subtitle: Some("Configure, update and remove extensions in Settings".into()),
                 unavailable: None,
             };
             add(row, Entry::Manage, None, None);

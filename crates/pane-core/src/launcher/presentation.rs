@@ -12,7 +12,7 @@
 //! projection the launcher has no data for is absent, not guessed. Root
 //! search is projected, and an opened command's own list for how its items
 //! look (#139: their icons, tooltips and accessories, see `looks`): the
-//! rows of a command's search results, Manage extensions and the other
+//! rows of a command's search results, the extension list and the other
 //! screens present as they always did, with no kind, alias, hotkey, match,
 //! icon or section.
 

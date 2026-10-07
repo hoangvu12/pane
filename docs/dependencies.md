@@ -131,11 +131,11 @@ them, and lists them under the package's details, each source as declared
   requires" (or "the N extensions it requires").
 - "Requires: …, already installed": used as it is.
 - "Requires: …, which you disabled: it stays disabled, and <title> cannot
-  use it until you enable it in Manage extensions": the package is
+  use it until you enable it in Settings › Extensions": the package is
   installed, the dependency is not enabled, and the status after installing
   says so again. Calls to it answer `disabled`.
 - "Requires: …, installed but it is paused after an error; retry it in
-  Manage extensions": Pane [paused](pausing.md) it; it stays paused, and
+  Settings › Extensions": Pane [paused](pausing.md) it; it stays paused, and
   the status after installing says so again.
 - "Requires (for B): C, …": a dependency of a dependency Pane installs.
 - "Optional: `rust-greeter` from local:../sample-operations, not installed:
@@ -228,7 +228,7 @@ B (…)"). None of the packages ran meanwhile, so none has data to lose.
 ## Disabling a required dependency
 
 Added for [#43](https://github.com/hoangvu12/pane/issues/43) (US30, US31,
-T13). Pressing the row of an enabled package in **Manage extensions** that
+T13). Pressing the row of an enabled package in **Settings › Extensions** that
 enabled packages require does not disable it yet. Pane shows "Disable
 <title> and the extensions that require it?" with:
 
@@ -237,7 +237,7 @@ enabled packages require does not disable it yet. Pane shows "Disable
   <identity>", nearest first, and those in it the user disabled already as
   "Already disabled: …" (they are not changed);
 - "Each keeps its settings and saved data. Enabling <title> again does not
-  enable them: enable each in Manage extensions.";
+  enable them: enable each in Settings › Extensions.";
 - the rows **Disable all N** (N counts the package itself; first and
   selected) and **Cancel** ("Keep them all enabled").
 
@@ -290,7 +290,7 @@ disables only the package given, without asking.
 
 Added for [#44](https://github.com/hoangvu12/pane/issues/44) (US30, US31,
 US61, US63, T13, T20, G4, G5; contributions). Choosing "Uninstall <title>"
-in **Manage extensions** for a package that installed packages require
+in **Settings › Extensions** for a package that installed packages require
 does not show the [single uninstall](extension-data.md#uninstalling-an-extension)
 question. Pane shows "Uninstall <title> and the extensions that require
 it?" with:

@@ -539,7 +539,7 @@ fn a_command_launches_one_of_another_package_but_not_a_disabled_one(fixture: &Fi
         pane.send(&format!("ln {}#report", other.key())),
         answered_error(&format!(
             "{} is disabled; Pane does not enable it to launch its command, enable it in \
-             Manage extensions",
+             Settings",
             fixture.title
         ))
     );

@@ -394,7 +394,7 @@ cache.set("last-greeting", greeting);
 - They behave like settings: owned by the source identity, kept while the
   package is disabled or updated, refused while it is disabled, and each kept
   in its own file (`content.json`, `cache.json`, `credentials.json`).
-- The user can clear an extension's cache in Manage extensions at any time,
+- The user can clear an extension's cache in Settings › Extensions at any time,
   without the extension running: expect any cache value to be missing. Its
   settings, content and credentials are kept.
 - Uninstalling removes the cache and credentials; the user chooses whether
@@ -631,7 +631,7 @@ different: a Rust panic, or in JS/TS resolving with a value of the wrong
 type (or a custom view's `render` throwing), traps the guest. Pane reports it and starts a fresh instance for the next
 call; after three crashes within five minutes, or a component that cannot
 start, Pane pauses the whole package until the user chooses Retry in
-**Manage extensions…** (where "Why <title> is paused" shows the details),
+**Settings › Extensions** (where "Why <title> is paused" shows the details),
 keeping its data ([pausing](../docs/pausing.md)).
 So report expected failures, such as a missing sign-in, as errors, never by
 crashing. The settings samples' **Crash** item shows a crash in each
@@ -1584,7 +1584,7 @@ copies answer the same.
 
 ## A command that takes a query
 
-The user can give any installed command an alias in Manage extensions, and
+The user can give any installed command an alias in Settings › Extensions, and
 typing it in root search lists the command first; nothing is needed of the
 command for that. A command that **takes a query** can also be sent text
 from root search: the user types its alias, a space and the text ("ec
@@ -1653,7 +1653,7 @@ request, whatever its options ask: 10 s to connect, 20 s for the response
 head, 10 s between two pieces of the body, 30 s in all, a body of at most
 4 MiB, and four connections open at once per package; past a limit the
 request fails with an error saying so. Any address is allowed, this
-computer's and the local network's too; Manage extensions shows which
+computer's and the local network's too; Settings › Extensions shows which
 packages use the network and the addresses each tried to reach this
 session. The SDKs wrap it:
 
@@ -1843,7 +1843,7 @@ try {
 ```
 
 `source` is the target's identity exactly as installed: `local:` and the
-absolute folder path it was installed from, the path Manage extensions shows
+absolute folder path it was installed from, the path Settings › Extensions shows
 after "local folder" (the samples ask for it in their form), or the id of a
 dependency your `pane.json` declares ([below](#dependencies-on-other-extensions)),
 which is how a package names the extensions it is written for. Pane starts the target only when it is called, never enables a disabled one,
@@ -2193,22 +2193,25 @@ What installing does:
   guest runs until you open a command or another extension calls one of the
   package's [operations](#operations). A damaged installed copy stays listed
   with its problem.
-- **Disabling.** **Manage extensions…**, the last row of root search once a
-  package is installed, lists every installed package with whether it is
-  enabled and its source, so copies with the same title can be told apart.
-  Enter disables or enables the selected one; only that installation
-  changes. A disabled package's commands leave root search (they are not
+- **Disabling.** Pane's Settings window lists every installed package
+  under its sidebar's **Extensions** group, each with a page of its own
+  (root search's **Manage Extensions** opens it there): the page shows
+  whether the package is enabled and its source, so copies with the same
+  title can be told apart, and its switch disables or enables it; only
+  that installation changes. A single command can be turned off with its
+  own switch on the page, which leaves the rest of the package working. A disabled package's commands leave root search (they are not
   shown greyed out), an open command of it closes, its running instances are
   dropped and it can no longer save settings, so none of its code runs. This
-  happens as soon as you press Enter, before the choice is written; if it
-  cannot be written, the package is enabled again with the reason. Pressing
-  Enter again while the choice is being written does nothing. The choice is
+  happens as soon as you switch it, before the choice is written; if it
+  cannot be written, the package is enabled again with the reason. Switching
+  again while the choice is being written does nothing. The choice is
   recorded in
   `installed.json` (`"disabled": true`) and holds after restarting Pane and
   after an Update. Its settings are kept, and enabling it brings its
   commands back with them. The package stays installed at the same identity;
   choosing its folder again shows it as disabled.
-- **Uninstalling.** **Uninstall <title>** in Manage extensions asks first,
+- **Uninstalling.** **Uninstall** in the Actions menu of the package's page
+  in Settings asks first,
   showing how many settings and content records the package keeps, and
   offers **Uninstall and keep saved data**, **Uninstall and delete saved
   data** or **Cancel**. Either way Pane removes the installed copy, the
@@ -2221,9 +2224,9 @@ What installing does:
 ### Reloading a package while Pane stays open
 
 After rebuilding a component, reload the package instead of restarting
-Pane: in **Manage extensions…**, after the rows that enable or disable each
-package, every enabled package has a **Reload <title>** row. Enter (or a
-click) on it reads the package's source folder again and replaces only that
+Pane: on the package's page in Settings (its sidebar's **Extensions**
+group), the Actions menu of every enabled package from a folder has
+**Reload**. Choosing it reads the package's source folder again and replaces only that
 package; Pane and every other package keep running, including a custom view
 of another package that is open. It works the same for Rust, JavaScript and
 TypeScript packages, since Pane sees only components. A reload goes through
@@ -2269,7 +2272,7 @@ What a reload keeps and what it does not:
 ### Developing a package: build and reload on save
 
 Instead of rebuilding and pressing Reload after each change, choose
-**Develop <title>** in **Manage extensions…** (the last rows, one per
+**Develop** in the Actions menu of the package's page in Settings (one per
 enabled package). Pane then watches the package's source folder and, after
 each save, runs its build there and reloads the package when the build
 succeeds:

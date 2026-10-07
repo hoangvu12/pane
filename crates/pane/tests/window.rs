@@ -24,7 +24,7 @@ mod paint;
 #[path = "../../pane-core/tests/support/artifacts.rs"]
 mod artifacts;
 
-use settle::{settle, settle_shown, until};
+use settle::{enter_flow, settle, settle_shown, until};
 
 #[path = "support/wait.rs"]
 mod wait;
@@ -1310,7 +1310,7 @@ fn a_query_that_matches_nothing_says_so_and_escape_clears_it(cx: &mut TestAppCon
     let nodes = accessible_nodes(cx);
     let notice = node(&nodes, "Note", "Nothing matches “zzz”");
     let description = notice["description"].as_str().unwrap_or_default();
-    assert!(description.contains("Manage extensions"), "{description}");
+    assert!(description.contains("in Settings"), "{description}");
     cx.simulate_keystrokes("enter");
     assert_eq!(settle(&window, cx).status, Status::Idle);
     assert!(cx.debug_bounds("status-idle").is_some(), "nothing failed");
@@ -1989,15 +1989,9 @@ fn the_footer_button_labels_the_action_from_identity_not_the_row_title(cx: &mut 
     let launcher = installed_hello(cx, data.path(), source.path());
     let (window, cx) = open_launcher(cx, launcher);
 
-    let manage = cx
-        .debug_bounds("row-Manage extensions…")
-        .expect("the row is rendered");
-    // The pointer moves onto the row, which selects it, and the click
-    // runs it.
-    arrive(cx, manage.center() - gpui::point(px(1.), px(0.)));
-    cx.simulate_mouse_move(manage.center(), None::<MouseButton>, Modifiers::none());
-    cx.simulate_click(manage.center(), Modifiers::none());
-    settle(&window, cx);
+    // The extension list, which Settings enters (#168): the launcher
+    // window draws its screens while the launcher holds them.
+    enter_flow(&window, cx);
 
     let nodes = accessible_nodes(cx);
     node(&nodes, "ListBoxOption", "Hello");
@@ -2016,16 +2010,7 @@ fn the_footer_button_labels_the_action_from_identity_not_the_row_title(cx: &mut 
     // owned the strip until then) offers to enable it now.
     cx.simulate_keystrokes("escape");
     settle(&window, cx);
-    let manage = cx
-        .debug_bounds("row-Manage extensions…")
-        .expect("the row is rendered");
-    cx.simulate_mouse_move(
-        manage.center() + gpui::point(px(3.), px(0.)),
-        None::<MouseButton>,
-        Modifiers::none(),
-    );
-    cx.simulate_click(manage.center(), Modifiers::none());
-    settle(&window, cx);
+    enter_flow(&window, cx);
 
     let nodes = accessible_nodes(cx);
     node(&nodes, "ListBoxOption", "Hello");

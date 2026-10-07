@@ -39,8 +39,14 @@ for it come first, once they arrive):
 3. an enabled installed package whose managed copy cannot be read, as one row
    explaining the problem;
 4. Pane's own rows: "Install extension from folder…", "Install extension
-   from npm…" ([npm](npm.md)), "Install extension from Git…" ([Git](git.md))
-   and "Manage extensions…".
+   from npm…" ([npm](npm.md)), "Install extension from Git…" ([Git](git.md)),
+   "Manage Extensions" and "Settings…". Extensions are installed and
+   managed in Settings ([ADR 0043](adr/0043-extensions-are-managed-in-settings-one-page-per-extension.md),
+   #168): "Manage Extensions" opens Settings at its Extensions group, and
+   the install rows open its install flow there — the folder picker, or
+   the field for an npm package or a Git repository, then the package's
+   preview with its Install. The launcher itself has no screen for
+   extensions.
 
 For a query that is not blank, a command whose [alias](aliases.md) the
 query is, or starts with, comes before everything (computed results
@@ -117,7 +123,7 @@ result, from the core's `Launcher::result_actions`: its primary action
 command or an indexed result, or "Unpin" once it is pinned (see [the
 pinned home](#the-pinned-home)) and, for an installed command, "Assign
 Hotkey…"/"Change Hotkey…" and "Add Alias…"/"Change Alias…", which open the
-same hotkey screen and alias form Manage extensions does and return to this
+same hotkey screen and alias form the extension list does and return to this
 search when they end. Nothing without a working operation is listed: no new
 window, file manager, quit or hide (#100). Its search field holds focus: typing filters
 the entries by label ("No actions match" when none does), Up and Down move

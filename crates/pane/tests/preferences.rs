@@ -3,7 +3,7 @@
 //! guests`: the Setup screen a command shows before its first run (its
 //! sentence, its fields with their descriptions, the package's help, a
 //! password drawn as dots), submitted with Enter or left with Escape; the
-//! "Needs setup" a row says meanwhile; the controls of an extension's card
+//! "Needs setup" a row says meanwhile; the controls of an extension's page
 //! in Settings › Extensions, each saving as it changes; and the Actions
 //! panel's "Configure Command…" and "Configure Extension…", which open
 //! that card. The core's rules (the other languages, what is kept) are
@@ -297,7 +297,8 @@ fn settings_context(
     VisualTestContext::from_window(AnyWindowHandle::from(*settings), &cx.cx)
 }
 
-/// Opens Settings on its Extensions page, tall enough to reach the card.
+/// Opens Settings on the Preferences sample's page, under the Extensions
+/// group (#168), tall enough to reach its preferences.
 fn open_extensions(cx: &mut VisualTestContext) -> VisualTestContext {
     cx.simulate_keystrokes(settings_shortcut());
     cx.run_until_parked();
@@ -306,6 +307,7 @@ fn open_extensions(cx: &mut VisualTestContext) -> VisualTestContext {
     settings_cx.simulate_resize(gpui::size(px(760.), px(1400.)));
     settings_cx.run_until_parked();
     click(&mut settings_cx, "section-Extensions");
+    click(&mut settings_cx, "extension-entry-Preferences sample");
     settings_cx
 }
 
@@ -450,7 +452,8 @@ fn configure_entries_open_the_extensions_card_in_settings(cx: &mut TestAppContex
     cx.simulate_keystrokes("enter");
     cx.run_until_parked();
 
-    // Settings opened on the Extensions page, at the extension's card.
+    // Settings opened on the extension's page (#168), at the command's
+    // preferences.
     let settings = settings_windows(cx).pop().expect("Settings opened");
     let mut settings_cx = settings_context(&settings, cx);
     settings_cx.run_until_parked();

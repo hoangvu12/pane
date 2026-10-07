@@ -417,7 +417,7 @@ fn to_root(launcher: &Launcher) {
 /// Opens Manage extensions from root search.
 fn manage(launcher: &Launcher) {
     to_root(launcher);
-    activate(launcher, "Manage extensions…");
+    activate(launcher, "Manage Extensions");
     assert!(matches!(launcher.view().screen, Screen::Extensions { .. }));
 }
 
