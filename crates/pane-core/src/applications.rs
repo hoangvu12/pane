@@ -20,7 +20,9 @@
 //! whose id is a digest of the key, and the host keeps the map from each id
 //! to the source that opens it ([`Cached`]), so an id survives an update that
 //! moves the program, and an id from before identities (a source's path)
-//! still finds its application.
+//! still finds its application. Each application is titled as the system
+//! shows it (localized) and carries the other names and words that find it
+//! and what tells it apart from applications of the same name ([`names`]).
 //!
 //! The host's list stays current by itself while a package that asked for
 //! it runs ([`Cached`], ADR 0038): each adapter watches the folders it
@@ -40,6 +42,7 @@ mod app_bundles;
 mod cached;
 mod desktop_entries;
 pub mod identity;
+pub mod names;
 mod plist;
 mod start_menu;
 mod watching;
@@ -51,16 +54,26 @@ pub use identity::{Catalog, Identified, Key, Source};
 pub use start_menu::{Place, Shortcut, ShortcutFolder, ShortcutTarget, StartMenu};
 
 /// An installed application, as an extension receives it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Application {
     /// Its stable id ([`Key::id`]), which identifies it to
     /// [`Applications::open`]: opaque, and the same across updates and
     /// restarts.
     pub id: String,
-    /// Its name, as the system shows it.
+    /// Its name, as the system shows it (localized): its title.
     pub name: String,
     /// Where it was found, for people.
     pub location: String,
+    /// The other names that find it: its untranslated name, another
+    /// source's name, its program's name ([`names::alternate_titles`]).
+    pub alternate_titles: Vec<String>,
+    /// Words that find it besides its names (a desktop entry's
+    /// `Keywords`).
+    pub keywords: Vec<String>,
+    /// What tells it apart from other applications with its name, when
+    /// there are any ([`names::distinctions`]); `None` when it is alone
+    /// with its name.
+    pub distinction: Option<String>,
 }
 
 /// Finds and opens the system's installed applications.

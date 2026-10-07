@@ -81,6 +81,10 @@ export const indexedResults = {
       id: app.id,
       title: `Launch ${app.name}`,
       subtitle: SAMPLE,
+      // Found by its other names (its program's, untranslated) and its
+      // keywords too, as Pane's own Applications results are.
+      alternateTitles: app.alternateTitles.map((name) => `Launch ${name}`),
+      keywords: app.keywords,
       action: { tag: "open-application", val: app.id },
     }));
   },

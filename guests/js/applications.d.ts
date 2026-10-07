@@ -15,10 +15,31 @@ declare module "pane:extension/applications@0.1.0" {
      * are one application with one id. Do not parse it.
      */
     id: string;
-    /** Its name, as the system shows it. */
+    /** Its name, as the system shows it in the user's language. */
     name: string;
     /** Where it was found, for people. */
     location: string;
+    /**
+     * The other names that find it, each different from `name`: its
+     * untranslated name, another shortcut's name, and its program's name
+     * (`code` for `Code.exe`) unless that name is generic, shared with
+     * another application, or the shortcut passes the program arguments
+     * saying what it opens. Give them as an indexed result's
+     * `alternateTitles`.
+     */
+    alternateTitles: string[];
+    /**
+     * Words that find it besides its names (a Linux desktop entry's
+     * `Keywords`). Give them as an indexed result's `keywords`.
+     */
+    keywords: string[];
+    /**
+     * When another installed application has the same `name`, what tells
+     * this one apart (its program's name, else its folder's, else its full
+     * path), to show as a subtitle; `undefined` or `null` when it is alone
+     * with its name.
+     */
+    distinction?: string | null;
   }
 
   /**

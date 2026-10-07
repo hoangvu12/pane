@@ -32,7 +32,10 @@ impl Command for Applications {
 
 impl pane_guest::indexed::Guest for Applications {
     /// One result per installed application: its name, found in root search
-    /// like a command's title, and opening it when invoked.
+    /// like a command's title, as are its other names (untranslated, its
+    /// program's) and its keywords; subtitled "Application", or with what
+    /// tells it apart from another application of its name; opening it when
+    /// invoked.
     async fn results() -> Result<Vec<IndexedResult>, String> {
         Ok(installed()?
             .into_iter()
@@ -40,7 +43,13 @@ impl pane_guest::indexed::Guest for Applications {
                 action: IndexedAction::OpenApplication(application.id.clone()),
                 id: application.id,
                 title: application.name,
-                subtitle: Some("Application".into()),
+                subtitle: Some(
+                    application
+                        .distinction
+                        .unwrap_or_else(|| "Application".into()),
+                ),
+                alternate_titles: application.alternate_titles,
+                keywords: application.keywords,
             })
             .collect())
     }

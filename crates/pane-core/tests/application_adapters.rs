@@ -215,21 +215,101 @@ fn opening_something_that_is_not_an_application_is_refused() {
 }
 
 /// A shortcut reader for fixture files on every system: a file says what
-/// it opens as `target|arguments`; an empty one is a shortcut the shell
-/// could not read.
+/// it opens as `target|arguments`, optionally followed by `|` and the name
+/// Explorer shows for it; an empty one is a shortcut the shell could not
+/// read.
 fn read_fixtures(paths: &[PathBuf]) -> Vec<Option<Shortcut>> {
     paths
         .iter()
         .map(|path| {
             let text = fs::read_to_string(path).ok()?;
-            let (target, arguments) = text.split_once('|').unwrap_or((&text, ""));
+            let mut fields = text.splitn(3, '|');
+            let target = fields.next().unwrap_or_default();
+            let arguments = fields.next().unwrap_or_default();
+            let display_name = fields.next().map(str::to_owned);
             (!target.is_empty()).then(|| Shortcut {
                 target: target.into(),
                 arguments: arguments.into(),
-                app_user_model_id: None,
+                display_name,
+                ..Shortcut::default()
             })
         })
         .collect()
+}
+
+#[test]
+fn shortcuts_are_titled_as_explorer_shows_them_and_found_by_their_programs() {
+    let dir = tempfile::tempdir().unwrap();
+    let programs = dir.path().join("Programs");
+    // Localized by its folder: the file's own name still finds it.
+    write(
+        &programs.join("Paint.lnk"),
+        r"C:\Windows\System32\mspaint.exe||Ứng dụng Vẽ",
+    );
+    write(
+        &programs.join("Visual Studio Code.lnk"),
+        r"C:\VS Code\Code.exe|",
+    );
+    // Generic, and one passing arguments: no program name.
+    write(&programs.join("Game.lnk"), r"C:\Games\One\Launcher.exe|");
+    write(
+        &programs.join("Mail.lnk"),
+        r"C:\Browser\chrome.exe|--app-id=mail",
+    );
+    let menu = StartMenu::new(vec![programs]).with_resolver(read_fixtures);
+
+    let catalog = Catalog::new(menu.sources().unwrap());
+
+    let applications = catalog.applications();
+    let named: Vec<(&str, Vec<&str>)> = applications
+        .iter()
+        .map(|app| {
+            let alternates = app.alternate_titles.iter().map(String::as_str).collect();
+            (app.name.as_str(), alternates)
+        })
+        .collect();
+    assert_eq!(
+        named,
+        [
+            ("Game", vec![]),
+            ("Mail", vec![]),
+            ("Ứng dụng Vẽ", vec!["Paint", "mspaint"]),
+            ("Visual Studio Code", vec!["Code"]),
+        ]
+    );
+}
+
+#[test]
+fn same_name_applications_found_by_an_adapter_are_told_apart() {
+    let dir = tempfile::tempdir().unwrap();
+    let programs = dir.path().join("Programs");
+    write(
+        &programs.join("Python 3.11/Python.lnk"),
+        r"C:\Python311\python.exe|",
+    );
+    write(
+        &programs.join("Python 3.12/Python.lnk"),
+        r"C:\Python312\python.exe|",
+    );
+    write(&programs.join("Editor.lnk"), r"C:\Editor\editor.exe|");
+    let menu = StartMenu::new(vec![programs]).with_resolver(read_fixtures);
+
+    let applications = Catalog::new(menu.sources().unwrap()).applications();
+
+    let distinctions: Vec<(&str, Option<&str>)> = applications
+        .iter()
+        .map(|app| (app.name.as_str(), app.distinction.as_deref()))
+        .collect();
+    assert_eq!(
+        distinctions,
+        [
+            ("Editor", None),
+            ("Python", Some("Python311")),
+            ("Python", Some("Python312")),
+        ]
+    );
+    // Their program's name is their title, and both have it: no alternate.
+    assert!(applications[1].alternate_titles.is_empty());
 }
 
 #[test]
@@ -570,6 +650,96 @@ fn application_bundles_are_identified_by_their_bundle_identifier() {
 }
 
 #[test]
+fn bundles_are_titled_by_their_display_name_and_found_by_their_folder_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let applications = dir.path().join("Applications");
+    fs::create_dir_all(applications.join("Calculator.app")).unwrap();
+    fs::create_dir_all(applications.join("Notes.app")).unwrap();
+    fs::create_dir_all(applications.join("Tool.app")).unwrap();
+    // As Finder names them for a Vietnamese user (with every extension
+    // shown, for Tool).
+    let bundles = AppBundles::new(vec![applications]).with_display_names(|bundle| {
+        match bundle.file_name()?.to_str()? {
+            "Calculator.app" => Some("Máy tính".into()),
+            "Tool.app" => Some("Tool.app".into()),
+            _ => None,
+        }
+    });
+
+    let catalog = Catalog::new(bundles.sources().unwrap());
+
+    let applications = catalog.applications();
+    let named: Vec<(&str, &[String])> = applications
+        .iter()
+        .map(|app| (app.name.as_str(), app.alternate_titles.as_slice()))
+        .collect();
+    assert_eq!(
+        named,
+        [
+            ("Máy tính", &["Calculator".to_owned()][..]),
+            ("Notes", &[][..]),
+            ("Tool", &[][..]),
+        ]
+    );
+}
+
+#[test]
+fn desktop_entries_are_named_and_found_for_the_user_s_locale() {
+    let dir = tempfile::tempdir().unwrap();
+    let apps = dir.path().join("applications");
+    write(
+        &apps.join("org.gnome.Nautilus.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Files\nName[vi]=Tệp\n\
+         Keywords=folder;manager;\nKeywords[vi]=thư mục;\n\
+         Exec=nautilus --new-window %U\n",
+    );
+    write(
+        &apps.join("org.gnome.Terminal.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Terminal\n\
+         Exec=/usr/bin/gnome-terminal\n",
+    );
+    // A web app: the browser's name is not its alternate title.
+    write(
+        &apps.join("mail.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Mail\n\
+         Exec=chromium --profile-directory=Default --app-id=abc\n",
+    );
+    write(
+        &apps.join("chromium.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Chromium Web Browser\n\
+         Exec=chromium %U\n",
+    );
+
+    let vietnamese = DesktopEntries::new(vec![apps.clone()]).with_locale("vi_VN.UTF-8");
+    let applications = Catalog::new(vietnamese.sources().unwrap()).applications();
+
+    let found: Vec<(&str, Vec<&str>, Vec<&str>)> = applications
+        .iter()
+        .map(|app| {
+            (
+                app.name.as_str(),
+                app.alternate_titles.iter().map(String::as_str).collect(),
+                app.keywords.iter().map(String::as_str).collect(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        found,
+        [
+            ("Chromium Web Browser", vec!["chromium"], vec![]),
+            ("Mail", vec![], vec![]),
+            ("Tệp", vec!["Files", "nautilus"], vec!["thư mục"]),
+            ("Terminal", vec!["gnome-terminal"], vec![]),
+        ]
+    );
+
+    // Without a locale: the plain values.
+    let plain = Catalog::new(DesktopEntries::new(vec![apps]).sources().unwrap()).applications();
+    assert_eq!(plain[2].name, "Files");
+    assert_eq!(plain[2].keywords, ["folder", "manager"]);
+}
+
+#[test]
 fn desktop_entries_are_identified_by_their_desktop_file_id() {
     let dir = tempfile::tempdir().unwrap();
     let user = dir.path().join("user/applications");
@@ -664,8 +834,19 @@ mod macos {
         let found = native.installed().unwrap();
         let calculator = found
             .iter()
-            .find(|app| app.name == "Calculator")
+            .find(|app| app.id == Key::Bundle("com.apple.calculator".into()).id())
             .expect("Calculator is in /System/Applications");
+        // Titled as Finder shows it, in the user's language; its folder's
+        // name finds it too when that differs.
+        assert!(
+            calculator.name == "Calculator"
+                || calculator
+                    .alternate_titles
+                    .iter()
+                    .any(|name| name == "Calculator"),
+            "{calculator:?}"
+        );
+        assert!(!calculator.name.ends_with(".app"), "{calculator:?}");
         // Identified by its bundle identifier, and opened by its bundle.
         assert_eq!(
             calculator.id,
@@ -788,6 +969,47 @@ mod windows {
             programs.join("Chat.lnk").to_string_lossy()
         );
         assert_ne!(applications[1].id, id);
+    }
+
+    #[test]
+    fn a_folder_s_localized_names_title_its_shortcuts_as_explorer_shows_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let cmd = PathBuf::from(std::env::var("SystemRoot").unwrap()).join(r"System32\cmd.exe");
+        let programs = dir.path().join("Programs");
+        shortcut_to(&programs.join("Tool.lnk"), &cmd, "");
+        shortcut_to(&programs.join("Plain.lnk"), &cmd, "/k");
+        // The folder's own localized names, in UTF-16 as Windows writes
+        // them; Explorer reads them from a system folder's hidden, system
+        // `desktop.ini`.
+        let ini = "[LocalizedFileNames]\r\nTool.lnk=Công cụ\r\n";
+        let mut bytes = vec![0xFF, 0xFE];
+        bytes.extend(ini.encode_utf16().flat_map(u16::to_le_bytes));
+        fs::write(programs.join("desktop.ini"), bytes).unwrap();
+        let attrib = |arguments: &[&str], path: &Path| {
+            let status = Command::new("attrib")
+                .args(arguments)
+                .arg(path)
+                .status()
+                .unwrap();
+            assert!(status.success(), "attrib failed on {}", path.display());
+        };
+        attrib(&["+s", "+h"], &programs.join("desktop.ini"));
+        attrib(&["+s"], &programs);
+
+        let applications =
+            Catalog::new(StartMenu::new(vec![programs.clone()]).sources().unwrap()).applications();
+
+        let tool = applications
+            .iter()
+            .find(|app| app.name == "Công cụ")
+            .unwrap_or_else(|| panic!("no localized title among {applications:?}"));
+        assert!(
+            tool.alternate_titles.iter().any(|name| name == "Tool"),
+            "{tool:?}"
+        );
+        assert!(applications.iter().any(|app| app.name == "Plain"));
+        // The folder is the test's own: it goes with its attributes.
+        attrib(&["-s"], &programs);
     }
 
     #[test]

@@ -585,13 +585,13 @@ mod tests {
     use crate::applications::Key;
 
     fn source(name: &str, target: &str) -> Source {
-        Source {
-            key: Key::program(target, ""),
-            path: format!(r"C:\Menu\{name}.lnk"),
-            name: name.into(),
-            location: r"C:\Menu".into(),
-            place: 2,
-        }
+        Source::new(
+            Key::program(target, ""),
+            format!(r"C:\Menu\{name}.lnk"),
+            name,
+            r"C:\Menu",
+            2,
+        )
     }
 
     fn names(list: &List) -> Vec<String> {

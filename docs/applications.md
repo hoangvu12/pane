@@ -6,8 +6,10 @@ Added for [#24](https://github.com/hoangvu12/pane/issues/24) (Windows),
 US44; T01, T03, T22; contributions to G2 and G7, not claims that they pass.
 Stable identities were added for [#169](https://github.com/hoangvu12/pane/issues/169),
 the first slice of "Applications done properly"
-([#124](https://github.com/hoangvu12/pane/issues/124)), the live list
-for [#171](https://github.com/hoangvu12/pane/issues/171), its third, and the
+([#124](https://github.com/hoangvu12/pane/issues/124)); localized names,
+alternate titles, keywords and same-name subtitles for
+[#170](https://github.com/hoangvu12/pane/issues/170), its second; the live list
+for [#171](https://github.com/hoangvu12/pane/issues/171), its third; and the
 Desktops, taskbar pins, internet and ClickOnce shortcuts as sources on
 Windows for [#173](https://github.com/hoangvu12/pane/issues/173), its fifth.
 Typing an installed application's name into root search lists it, ranked
@@ -73,11 +75,15 @@ installed from its folder like the calculator
   even while root search is on screen.
 - A blank query lists no application, so root search's empty list stays the
   commands and Pane's own rows.
-- Each application is a root result titled with its name and subtitled
-  "Application", matched and ranked like a command's title
-  ([root search](root-search.md#matching-and-ranking)): "firefox" finds
-  Firefox; an exact or prefix title beats a word inside another title; on
-  the same rank commands come first.
+- Each application is a root result titled with its name as the system
+  shows it ([names](#names)) and subtitled "Application", or with what tells
+  it apart when another application has its name; matched and ranked like
+  a command's title ([root search](root-search.md#matching-and-ranking)):
+  "firefox" finds Firefox; an exact or prefix title beats a word inside
+  another title; on the same rank commands come first. Its alternate
+  titles (its untranslated name, its program's name: `code`, `wt`) find it
+  as its title does and its keywords as its subtitle does; the row shows
+  its title whichever matched.
 - Enter opens it, off the window's thread, and the status says "Opened
   Firefox". A failure stays visible as the status error: "Could not open
   Firefox: cannot find the program firefox", "... not allowed to run ...",
@@ -206,22 +212,74 @@ every system:
   `quick-slots.json` is rewritten with the new id. One whose source is gone
   keeps its slot and says that Applications no longer lists it.
 
+## Names
+
+An application is titled as the system shows it in the user's language,
+and found by the other names people know it by. The rules are pure
+functions in [`names`](../crates/pane-core/src/applications/names.rs),
+tested on every system:
+
+- **Title**, the primary source's name: on Windows the name Explorer shows
+  for the shortcut (the shell's display name, which the folder's
+  `desktop.ini` `LocalizedFileNames` or the shortcut's name resource
+  translate: "Paint" is "Ứng dụng Vẽ" in Vietnamese), falling back to the
+  file name; a packaged app's display name as before. On macOS the
+  bundle's display name as Finder shows it (`NSFileManager`), else its
+  folder name. On Linux the `Name` for the user's messages locale
+  (`$LC_ALL`, `$LC_MESSAGES`, `$LANG`), chosen as the Desktop Entry
+  specification says: `lang_COUNTRY@MODIFIER`, `lang_COUNTRY`,
+  `lang@MODIFIER`, `lang`, then the plain `Name`.
+- **Alternate titles**, matched as the title is: every other name a source
+  of the application has (the untranslated name: the shortcut's file name,
+  the bundle's folder name, the plain `Name`; another shortcut's name),
+  then the **program's name**, the target's file name without `.exe` (or
+  `.bat`, `.cmd`, `.com`) on Windows, the program `Exec` runs on Linux.
+  The program's name is left out when the shortcut passes the program
+  arguments that say what it opens (any argument on Windows; on Linux one
+  that does not start with `-` or carries a value, so `--new-window` does
+  not count but `--app-id=…` does: a browser's web app is not found by
+  "chrome"), when it is a generic name (app, application, bootstrap,
+  bootstrapper, client, config, console, env, game, helper, host, install,
+  installer, launch, launcher, loader, main, program, run, server, service,
+  settings, setup, shell, start, stub, tool, uninstall, uninstaller,
+  update, updater, wrapper, also with an architecture suffix such as
+  `launcher64` or `setup_x64`), or when another application's program has
+  the same name, so it never picks one of them arbitrarily. macOS adds no
+  program name. Each name once, ignoring case, and never the title itself.
+- **Keywords**, matched as the subtitle is: on Linux the entry's
+  `Keywords` for the user's locale (else the plain ones).
+- **Distinction**: applications are grouped by title (ignoring case); in a
+  group of two or more, each gets the first of these that no other in the
+  group has: its program's name, the name of its program's folder (its
+  source's folder when the program is a bare command or there is none), the
+  program's full path, the source's own path. The Applications extension
+  shows it as the subtitle instead of "Application", and a pin holding such
+  an application shows it as its tooltip and accessible description. An
+  application alone with its title has none.
+
+The host gives each application record these names (`name`,
+`alternate-titles`, `keywords`, `distinction`), so every extension using
+the import gets them; an indexed result takes `alternate-titles` and
+`keywords` from any extension ([root search](root-search.md#matching-and-ranking)).
+
 ## Per platform
 
 | | Windows ([#24](https://github.com/hoangvu12/pane/issues/24)) | macOS ([#25](https://github.com/hoangvu12/pane/issues/25)) | Linux ([#26](https://github.com/hoangvu12/pane/issues/26)) |
 | --- | --- | --- | --- |
 | Found in | Shortcuts: shell links (`.lnk`), internet shortcuts (`.url`) whose scheme has a registered handler (its key under `HKEY_CLASSES_ROOT` is marked `URL Protocol` and has a `shell` key: a game launcher's `steam://`, `com.epicgames.launcher://`) and ClickOnce application references (`.appref-ms`), in the Start menu's `%APPDATA%\Microsoft\Windows\Start Menu\Programs` then `%ProgramData%\...\Programs`, with subfolders, and without subfolders on the user's Desktop and every user's (`FOLDERID_Desktop`, `FOLDERID_PublicDesktop`, wherever the shell keeps them) and among the taskbar pins (`%APPDATA%\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar`); then the packaged (AppX/MSIX) apps of the shell's Apps folder (`FOLDERID_AppsFolder`), such as Calculator on Windows 11 | Application bundles (`.app`) in `/Applications`, `/System/Applications` and `~/Applications`, and their subfolders two deep (such as `Utilities`), not inside bundles | Desktop entries (`.desktop`) in `$XDG_DATA_HOME/applications` (default `~/.local/share/applications`) then `applications` in each of `$XDG_DATA_DIRS` (default `/usr/local/share:/usr/share`), with subfolders (Flatpak and Snap add their folders to `XDG_DATA_DIRS`) |
-| Name | The shortcut's file name; a packaged app's display name | The bundle's folder name | The entry's `Name` (not localized `Name[..]`) |
+| Name | The name Explorer shows for the shortcut (localized), else its file name; a packaged app's display name | The bundle's display name as Finder shows it (localized), else its folder name | The entry's `Name` for the messages locale (`Name[vi]`), else the plain `Name` |
+| Also found by | The shortcut's file name, other shortcuts' names, a shell link's target program's name (an internet shortcut or a ClickOnce reference has no program) | The bundle's folder name | The plain `Name`, the `Exec` program's name, `Keywords` for the locale |
 | Identified by | A shell link's target and arguments, version folders wildcarded (an MSI-advertised one's installed program); an internet shortcut's URL; a ClickOnce reference's deployment; a packaged app's package family | The bundle identifier | The desktop file id |
 | Left out | The Startup folders (`Startup` in either Start menu's Programs folder); uninstallers: a shortcut whose name contains "Uninstall" or whose program's name starts with `unins` (`unins000.exe`, `uninstall.exe`); a shell link whose target is missing (broken), empty (a shell item, or an advertised product that is not installed), a folder, or a document rather than a program (a program is `.exe`, `.com`, `.bat`, `.cmd`, `.msc`, `.cpl`, `.vbs`, `.vbe`, `.wsf` or `.wsh`); an internet shortcut to a web page or a document (`http`, `https`, `ftp`, `file`, `mailto`, `news`) or to a scheme nothing handles; folders that are symbolic links or junctions, which are not walked; a shortcut at the same place in the all-users menu (or Desktop) as in the user's; Apps folder items that are not packaged apps (desktop programs, found by their shortcuts) or that have a shortcut's name | Nothing | `Type` other than `Application`, `NoDisplay` or `Hidden` (a hidden entry also hides a lower one with the same desktop file id), no `Exec`, `OnlyShowIn`/`NotShowIn` against `$XDG_CURRENT_DESKTOP`, a `TryExec` program that is missing, an `Exec` line using field codes against the spec (`%i`, `%F` or `%U` inside an argument, more than one of `%f %u %F %U`, an unknown code or a lone `%`: skipped with a line on standard error, not guessed) |
 | Opened by (the primary source) | `ShellExecuteEx` on the shortcut, or on `shell:AppsFolder\<AppUserModelID>` for a packaged app, as Explorer opens them (errors returned, no dialog), with COM initialized for the call and uninitialized after | `/usr/bin/open` on the bundle (Launch Services); its error message is shown | Running the `Exec` program directly (quoting and field codes per the Desktop Entry spec; file and URL codes dropped; `Path` as working folder), in its own process group; a `Terminal=true` entry runs in `$TERMINAL -e`, else the first installed of `x-terminal-emulator -e`, `gnome-terminal --`, `konsole -e`, `xfce4-terminal -x`, `alacritty -e`, `kitty`, `foot`, `xterm -e`, and is refused with an explanation when there is none |
-| Not supported yet | Windows Settings pages and Control Panel items (a later slice of #124) | Localized names (`CFBundleDisplayName`), Spotlight-only locations | D-Bus activation, localized names, desktop actions |
+| Not supported yet | Windows Settings pages and Control Panel items (a later slice of #124) | Spotlight-only locations, program names | D-Bus activation, desktop actions, `GenericName` |
 | Not looked for | Programs known only to their uninstall records (winget installs), game launchers' libraries beyond the `.url` shortcuts they make, folders the user chooses for portable programs | The Desktop, the Dock, internet shortcuts (`.webloc`) and aliases, Spotlight-only locations and System Settings panes: only the bundles in the three Applications folders | The Desktop (`~/Desktop` launchers), panel or dock pins, internet shortcuts (`Type=Link` entries are left out), and D-Bus activation: only the desktop entries in the `applications` data folders |
 | Desktop baseline | Windows 10/11 desktop; CI runs Windows Server 2025 (`windows-2025`) | macOS 15 (`macos-15`, arm64) | freedesktop Desktop Entry 1.5 on any desktop; run on X11 (Xvfb) only, Wayland untested |
 
 The same author-facing contract serves all three: an extension receives
 `application` records (`id`, its stable identity; `name` and `location`,
-its primary source's) and returns `open-application(id)`; only the adapter
+its primary source's; `alternate-titles`, `keywords` and `distinction`,
+[names](#names)) and returns `open-application(id)`; only the adapter
 differs.
 
 ## Checks
@@ -285,10 +343,28 @@ differs.
   a change while the query is blank is listed by the next query of the
   same visit; and disabling Applications stops every watcher and drops the
   list, enabling it looking and watching again.
+- Names through the launcher ([`crates/pane-core/tests/application_names.rs`](../crates/pane-core/tests/application_names.rs)),
+  with the real guest and the host's list over a fake system's sources: a
+  localized title is listed and found, and the untranslated and program
+  names find it showing that title; `code` and `wt` find their
+  applications while `launcher` and `setup` find nothing, a program name
+  two applications share finds neither, and a browser's name finds the
+  browser but not its web app; a desktop entry's program and keywords find
+  it; same-name applications get distinguishing subtitles (program name,
+  else folder) while one alone keeps "Application"; a pin sharing its title
+  carries the distinction (`QuickSlot::detail`) and one alone none; and the
+  JavaScript and TypeScript samples give their results alternate titles
+  and keywords that find them. The pure rules (generic names, program
+  names, arguments, alternate titles and sharing, keywords, distinctions,
+  locale keys and matching) are unit tests of `names`, with the display
+  name and `Name[..]`/`Keywords[..]` reading in `start_menu`, `app_bundles`
+  and `desktop_entries`, and matching alternate titles and keywords in
+  `search`.
 - Window ([`crates/pane/tests/window.rs`](../crates/pane/tests/window.rs)):
   typing a name renders the application's row, which assistive technology
   sees as the selected `ListBoxOption`, and Enter opens it with the field
-  keeping focus.
+  keeping focus; a pinned application sharing its name with another has
+  its distinction as its tile's tooltip and its accessible description.
 - Adapters ([`crates/pane-core/tests/application_adapters.rs`](../crates/pane-core/tests/application_adapters.rs)):
   discovery of each system's fixtures runs on every system (precedence,
   hidden and filtered entries, subfolders, uninstallers, bundles inside
@@ -314,15 +390,23 @@ differs.
   finds an application by its id and by a source's old path; bundles by
   their identifier (a moved copy is the same application) and desktop
   entries by their desktop file id; a shortcut to a packaged app is that
-  app (unit test). On Windows, shortcuts made with `WScript.Shell` to a
+  app (unit test). Names on every system: shortcuts (a fake reader giving
+  Explorer's names) titled by their localized name and found by their file
+  and program names, generic and argument-carrying ones not; same-name
+  shortcuts told apart by their programs' folders; bundles titled by a
+  (fake) display name and found by their folder name; desktop entries named
+  and found for a `vi_VN` locale (`Name[vi]`, `Keywords[vi]`, the `Exec`
+  program, a web app's browser left out). On Windows, shortcuts made with `WScript.Shell` to a
   copied program in two version folders are read by the shell as one
   application, and inbox packaged apps are keyed by their package family;
-  the native list looks in both Desktops and the taskbar pins without
-  their subfolders; a `.url` to a scheme the test registers under the
-  user's classes is found and one to an unregistered scheme is not; an
-  `.appref-ms` is found; and shortcuts the shell makes to a removed
+  a folder's `desktop.ini` `LocalizedFileNames` titles its shortcut as
+  Explorer shows it; the native list looks in both Desktops and the taskbar
+  pins without their subfolders; a `.url` to a scheme the test registers
+  under the user's classes is found and one to an unregistered scheme is
+  not; an `.appref-ms` is found; and shortcuts the shell makes to a removed
   program, a folder, a text file and an uninstaller copy are left out;
-  on macOS, Calculator is identified by `com.apple.calculator`. On its own system each adapter
+  on macOS, Calculator is identified by `com.apple.calculator` and found
+  by its folder name. On its own system each adapter
   opens a harmless application the test makes, which writes a marker file:
   a desktop entry (Linux), a bundle whose program is a shell script (macOS),
   a shortcut to `cmd.exe` made with `WScript.Shell` (Windows). The native
@@ -343,10 +427,17 @@ differs.
 
 ## Limits
 
-- No icons, no localized names, no keywords or aliases (the user's aliases,
-  [#31](aliases.md), are for installed commands only), no frequency
-  ranking; applications are not ranked against commands beyond the title
-  rank.
+- No icons, no aliases (the user's aliases, [#31](aliases.md), are for
+  installed commands only), no frequency ranking; applications are not
+  ranked against commands beyond the title rank, and a match on an
+  alternate title or keyword highlights nothing in the row (scoring and
+  showing them better is "Root search like Raycast",
+  [#122](https://github.com/hoangvu12/pane/issues/122)).
+- A Windows shortcut's localized name is read with what it opens and kept
+  until the shortcut file changes, so a changed `desktop.ini` or display
+  language shows once the shortcut is read again (the live list,
+  [#171](https://github.com/hoangvu12/pane/issues/171), rescans). On Linux
+  the locale is read once, when Pane starts.
 - The host imports are synchronous: the very first scan runs on the
   runtime thread, so a guest call made meanwhile waits for it (later scans
   run on the list's own thread; #29 owns cancellation). A change between

@@ -944,6 +944,7 @@ impl Applications for OneApplication {
             id: "report-writer".into(),
             name: "Report Writer".into(),
             location: "test".into(),
+            ..Application::default()
         }])
     }
 

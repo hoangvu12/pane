@@ -64,6 +64,7 @@ impl Applications for OneApplication {
             id: "/apps/Firefox.app".into(),
             name: "Firefox".into(),
             location: "/apps".into(),
+            ..Application::default()
         }])
     }
 

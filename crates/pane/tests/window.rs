@@ -1539,6 +1539,7 @@ impl pane_core::applications::Applications for TwoApplications {
                 id: format!("/apps/{name}.desktop"),
                 name: name.into(),
                 location: "/apps".into(),
+                ..Default::default()
             })
             .into())
     }
@@ -1579,6 +1580,78 @@ fn typing_an_applications_name_shows_it_and_enter_opens_it(cx: &mut TestAppConte
     assert_eq!(view.status, Status::Result("Opened Firefox".into()));
     assert_eq!(*system.opened.lock().unwrap(), ["/apps/Firefox.desktop"]);
     assert!(query_has_focus(&window, cx), "typing goes on in the field");
+}
+
+/// A system with two applications of one name, which the host tells apart
+/// by their distinctions.
+struct TwoPythons;
+
+impl pane_core::applications::Applications for TwoPythons {
+    fn installed(&self) -> Result<Vec<pane_core::applications::Application>, String> {
+        Ok(["Python311", "Python312"]
+            .map(|folder| pane_core::applications::Application {
+                id: format!("python-{folder}"),
+                name: "Python".into(),
+                location: format!(r"C:\{folder}"),
+                distinction: Some(folder.into()),
+                ..Default::default()
+            })
+            .into())
+    }
+
+    fn open(&self, _id: &str) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+/// A pinned application sharing its name with another says what tells it
+/// apart: as its tile's tooltip, and with its name to assistive
+/// technology.
+#[gpui::test]
+fn a_pin_sharing_its_title_says_what_tells_it_apart(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let runtime = Runtime::start().unwrap();
+    runtime.set_applications(std::sync::Arc::new(TwoPythons));
+    let folder =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/guests/packages/applications");
+    let launcher = Launcher::with_packages(Ok(runtime), vec![], data.path().join("extensions"))
+        .with_quick_slots(data.path());
+    cx.executor().allow_parking();
+    cx.foreground_executor()
+        .block_on(launcher.install_package(&folder));
+    launcher.back();
+    // Pin the second Python, found by its name.
+    cx.foreground_executor()
+        .block_on(launcher.set_query("python"));
+    let rows = launcher.view().rows;
+    let index = rows
+        .iter()
+        .position(|row| row.subtitle.as_deref() == Some("Python312"))
+        .unwrap_or_else(|| panic!("no second Python in {rows:?}"));
+    launcher.select(index);
+    let (change, recorded) =
+        launcher.change_quick_slots(&rows[index].id, pane_core::ResultAction::Pin);
+    assert!(
+        matches!(change, pane_core::SlotChange::Changed(_)),
+        "{change:?}"
+    );
+    cx.foreground_executor().block_on(recorded);
+    cx.foreground_executor().block_on(launcher.set_query(""));
+    let (window, cx) = open_launcher(cx, launcher);
+    settle(&window, cx);
+
+    let nodes = accessible_nodes(cx);
+    let pin = node(&nodes, "Button", "Pinned 1: Python");
+    assert_eq!(pin["description"], "Python312", "{pin:#}");
+
+    let tile = cx.debug_bounds("slot-1").expect("the pin's tile");
+    cx.simulate_mouse_move(tile.center(), None::<MouseButton>, Modifiers::none());
+    cx.executor().advance_clock(Duration::from_millis(700));
+    cx.run_until_parked();
+    assert!(
+        cx.debug_bounds("tooltip-Python312").is_some(),
+        "the tile's tooltip"
+    );
 }
 
 #[gpui::test]

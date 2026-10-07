@@ -556,7 +556,7 @@ export type IndexedAction =
 
 /**
  * One root result a command supplies ahead of the query, which root search
- * matches and ranks by title like commands.
+ * matches and ranks by title (and alternate titles) like commands.
  */
 export interface IndexedResult {
   /** Identifies the result among this command's results. */
@@ -564,6 +564,17 @@ export interface IndexedResult {
   title: string;
   /** A second line under the title; omitted or `null` for none. */
   subtitle?: string | null;
+  /**
+   * Other titles that find the result, matched as its title is (such as an
+   * installed application's `alternateTitles`); the row still shows
+   * `title`. Omitted for none.
+   */
+  alternateTitles?: string[];
+  /**
+   * Words that find the result, matched as its subtitle is (such as an
+   * installed application's `keywords`). Omitted for none.
+   */
+  keywords?: string[];
   action: IndexedAction;
 }
 

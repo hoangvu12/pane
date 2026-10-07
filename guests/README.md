@@ -68,9 +68,11 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   Manage extensions uninstalls.
 - `sample-applications-js`, `sample-applications-ts`: the same host import
   and indexed results in JavaScript and TypeScript: "Launch <name>" for each
-  installed application, and a command listing and opening them
+  installed application, also found as "Launch <alternate title>" and by
+  the application's keywords, and a command listing and opening them
   ([Root results supplied ahead of the query](#root-results-supplied-ahead-of-the-query));
-  held by `crates/pane-core/tests/applications.rs`.
+  held by `crates/pane-core/tests/applications.rs`,
+  `application_identity.rs` and `application_names.rs`.
 - `sample-operations`, `sample-operations-js`, `sample-operations-ts`: each
   package publishes the operation `greet` and has a command that calls
   another's, Rust calling JavaScript and TypeScript and they calling Rust
@@ -881,18 +883,28 @@ impl pane_guest::indexed::Guest for Apps {
                 action: IndexedAction::OpenApplication(app.id.clone()),
                 id: app.id,
                 title: app.name,
-                subtitle: Some("Application".into()),
+                subtitle: Some(app.distinction.unwrap_or_else(|| "Application".into())),
+                alternate_titles: app.alternate_titles,
+                keywords: app.keywords,
             })
             .collect())
     }
 }
 ```
 
+An indexed result's `alternate_titles` find it as its title does and its
+`keywords` as its subtitle does (empty lists for none); the row shows its
+title whichever matched.
+
 `applications::open(&id)` opens one from a command's own action. An
 application's `id` is opaque and stable across its updates and Pane's
 restarts (several shortcuts to one program are one application), so a
 command may keep it in its data and open the application later; do not
-parse it.
+parse it. Its `name` is the one the system shows in the user's language;
+`alternate_titles` holds its other names (untranslated, its program's,
+such as `code`), `keywords` the words that find it (a desktop entry's
+`Keywords`), and `distinction`, when another application has its name,
+what tells it apart (its program's name, folder or path).
 
 JavaScript or TypeScript: add `"pane": { "indexedResults": true }` to
 `package.json`, so the build exports the interface, import the host's
@@ -908,6 +920,9 @@ export const indexedResults: IndexedResults = {
     return installed().map((app) => ({
       id: app.id,
       title: `Launch ${app.name}`,
+      // Optional: other titles and words that find the result.
+      alternateTitles: app.alternateTitles.map((name) => `Launch ${name}`),
+      keywords: app.keywords,
       action: { tag: "open-application", val: app.id },
     }));
   },

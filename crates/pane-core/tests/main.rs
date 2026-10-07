@@ -15,6 +15,7 @@ mod application_adapters;
 mod application_cache;
 mod application_changes;
 mod application_identity;
+mod application_names;
 mod application_update;
 mod applications;
 mod arguments;

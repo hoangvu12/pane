@@ -16,7 +16,7 @@ use std::collections::HashMap;
 
 use sha2::{Digest, Sha256};
 
-use super::Application;
+use super::{Application, names};
 
 /// What identifies an application, whichever source it was found by.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -184,7 +184,8 @@ pub struct Source {
     /// Before identities this was the application's id, so it still names
     /// the application ([`Catalog::find`]).
     pub path: String,
-    /// Its name, as the system shows it.
+    /// Its name, as the system shows it: localized where the system
+    /// localizes it.
     pub name: String,
     /// Where it was found, for people.
     pub location: String,
@@ -193,6 +194,48 @@ pub struct Source {
     /// the all-users Start menu, taskbar pins, then the Apps folder; on
     /// macOS `/Applications`, `/System/Applications`, `~/Applications`.
     pub place: usize,
+    /// Its untranslated name, when the system shows it by another (a
+    /// Windows shortcut's file name, a bundle's folder name, a desktop
+    /// entry's plain `Name`): it still finds the application
+    /// ([`super::names`]).
+    pub untranslated: Option<String>,
+    /// Words that find it besides its names: a desktop entry's `Keywords`
+    /// for the user's locale.
+    pub keywords: Vec<String>,
+    /// The program it runs: a Windows shortcut's target path, or the
+    /// program a desktop entry's `Exec` runs as written (a path or a
+    /// command); `None` when Pane does not know one (a packaged app, a
+    /// bundle). Its name may be an alternate title, and it tells
+    /// same-name applications apart ([`super::names`]).
+    pub program: Option<String>,
+    /// Whether it passes [`Source::program`] arguments that say what it
+    /// opens (a browser's web app), so that the program's name is not one
+    /// of its alternate titles.
+    pub arguments: bool,
+}
+
+impl Source {
+    /// A source found by `name` alone, with no other names, no keywords
+    /// and no program known.
+    pub fn new(
+        key: Key,
+        path: impl Into<String>,
+        name: impl Into<String>,
+        location: impl Into<String>,
+        place: usize,
+    ) -> Source {
+        Source {
+            key,
+            path: path.into(),
+            name: name.into(),
+            location: location.into(),
+            place,
+            untranslated: None,
+            keywords: Vec::new(),
+            program: None,
+            arguments: false,
+        }
+    }
 }
 
 /// Which of `sources`, all of one application, is its primary source, whose
@@ -216,6 +259,14 @@ pub struct Identified {
     pub sources: Vec<Source>,
     /// The index of its primary source in `sources` ([`primary`]).
     pub primary: usize,
+    /// The other names that find it ([`super::names::alternate_titles`]).
+    pub alternate_titles: Vec<String>,
+    /// The words that find it besides its names
+    /// ([`super::names::keywords`]).
+    pub keywords: Vec<String>,
+    /// What tells it apart from the other applications of its title, when
+    /// there are any ([`super::names::distinctions`]).
+    pub distinction: Option<String>,
 }
 
 impl Identified {
@@ -231,6 +282,9 @@ impl Identified {
             id: self.id.clone(),
             name: primary.name.clone(),
             location: primary.location.clone(),
+            alternate_titles: self.alternate_titles.clone(),
+            keywords: self.keywords.clone(),
+            distinction: self.distinction.clone(),
         }
     }
 }
@@ -251,7 +305,8 @@ pub struct Catalog {
 }
 
 impl Catalog {
-    /// The applications `sources` are, grouped by key.
+    /// The applications `sources` are, grouped by key, each with its
+    /// alternate titles, keywords and distinction ([`super::names`]).
     pub fn new(sources: Vec<Source>) -> Catalog {
         let mut catalog = Catalog::default();
         let mut by_key: HashMap<Key, usize> = HashMap::new();
@@ -261,6 +316,9 @@ impl Catalog {
                     id: source.key.id(),
                     sources: Vec::new(),
                     primary: 0,
+                    alternate_titles: Vec::new(),
+                    keywords: Vec::new(),
+                    distinction: None,
                 });
                 catalog.applications.len() - 1
             });
@@ -274,6 +332,18 @@ impl Catalog {
         for (index, application) in catalog.applications.iter_mut().enumerate() {
             application.primary = primary(&application.sources).unwrap_or(0);
             catalog.by_id.insert(application.id.clone(), index);
+        }
+        let alternate_titles = names::alternate_titles(&catalog.applications);
+        let distinctions = names::distinctions(&catalog.applications);
+        for ((application, alternates), distinction) in catalog
+            .applications
+            .iter_mut()
+            .zip(alternate_titles)
+            .zip(distinctions)
+        {
+            application.alternate_titles = alternates;
+            application.keywords = names::keywords(application);
+            application.distinction = distinction;
         }
         catalog
     }
@@ -310,13 +380,8 @@ mod tests {
     use super::*;
 
     fn source(key: Key, path: &str, place: usize) -> Source {
-        Source {
-            key,
-            path: path.into(),
-            name: path.rsplit(['\\', '/']).next().unwrap().into(),
-            location: "here".into(),
-            place,
-        }
+        let name = path.rsplit(['\\', '/']).next().unwrap();
+        Source::new(key, path, name, "here", place)
     }
 
     #[test]

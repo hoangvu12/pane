@@ -88,6 +88,12 @@ ranked by how well the title matches:
 | 5 | (a word is only in the subtitle) | Clear cache, "Delete downloaded files" |
 | 6 | (a word is only in the package title) | a command of package "Downloads" with a subtitle of its own |
 
+An [indexed result](#results-supplied-ahead-of-the-query) may also have
+**alternate titles** (an application's untranslated name or its program's
+name, such as `wt` for Windows Terminal), each matched as the title is,
+the best of them giving the rank, and **keywords**, matched as the subtitle
+is (rank 5). The row still shows its real title (#170).
+
 Results of the same rank keep root search order. A blank query lists every
 root result. The best match is selected after every change of the query;
 searching the same query again changes nothing. Each result's text is
@@ -97,7 +103,8 @@ not on every keystroke.
 Not done, deliberately: typo tolerance, abbreviations ("ts" for TypeScript
 sample), accent folding ("e" finding "é"), locale-aware case folding,
 frequency or recency, per-user ranking, keywords or aliases in the manifest
-(aliases are the user's, [#31](aliases.md)), and ranking results of
+(aliases are the user's, [#31](aliases.md); keywords and alternate titles
+exist only for indexed results), and ranking results of
 different kinds (apps, files) against each other.
 
 ## Host behavior
@@ -148,6 +155,11 @@ Pane lists no suggestions of recent use.
   by its id, or an indexed result (an installed application) by its own id
   under the command that supplies it. A computed answer, a file or Pane's
   own rows cannot be pinned. A fresh installation pins nothing.
+- **Same-title pins:** a pinned indexed result whose title another result
+  of its command shares (two applications of one name) says what tells it
+  apart, its row's subtitle (an application's
+  [distinction](applications.md#names)), as its tile's tooltip, its
+  vertical row's subtitle and its accessible description (#170).
 - **Pinning:** the Actions panel's "Pin" adds the selected result at the
   end of the list ("Pinned …"); there is no slot to choose and nothing is
   replaced. Pinning what is already pinned changes nothing, says so and
@@ -357,7 +369,9 @@ extension, through the same guest boundary as its command:
   subtitle and rank exactly as commands are; on the same rank they come
   after commands.
 - An indexed result has an id (`<command id>:<result id>`), title, optional
-  subtitle and an **action** Pane performs without calling the extension
+  subtitle, **alternate titles** and **keywords** (both lists, empty for
+  none; see [matching](#matching-and-ranking)), and an **action** Pane
+  performs without calling the extension
   again: **open-application**, which opens the application through the
   host's [applications adapter](applications.md), or **open** (#149), which
   opens a target (a URL of any scheme, a file, a folder or an application),

@@ -1,5 +1,6 @@
 //! Root results commands supply ahead of the query, such as the installed
 //! applications, kept by the launcher so that searching only ranks them.
+//! A result's alternate titles and keywords find it too (see `search`).
 //!
 //! Each enabled command with `"indexedResults": true` is asked for its
 //! results once root search is used (a query that is not blank) and they
@@ -239,7 +240,10 @@ fn indexed_result(command: &CommandRegistration, result: IndexedResult) -> RootR
         },
     };
     let row = Row::listed(result.listing, Some(&command.id));
-    let keys = Keys::new(&row.title, row.subtitle.as_deref(), None);
+    // An alternate title finds it as its title does, and a keyword as its
+    // subtitle does; the row shows its title whichever matched.
+    let keys = Keys::new(&row.title, row.subtitle.as_deref(), None)
+        .with_alternates(&result.alternate_titles, &result.keywords);
     RootResult {
         row,
         entry,

@@ -87,13 +87,7 @@ impl Discovery for FakeSystem {
             .lock()
             .unwrap()
             .iter()
-            .map(|name| Source {
-                key: Key::Path(path(name)),
-                path: path(name),
-                name: (*name).into(),
-                location: "/apps".into(),
-                place: 0,
-            })
+            .map(|name| Source::new(Key::Path(path(name)), path(name), *name, "/apps", 0))
             .collect())
     }
 

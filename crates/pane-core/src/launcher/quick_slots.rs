@@ -47,6 +47,7 @@ use super::{CommandRegistration, Entry, Launcher, RootResult, Screen, State, Sta
 use crate::applications::Applications;
 use crate::atomic::{Readers, write_atomically};
 use crate::packages::{InstalledPackage, paused_reason};
+use crate::search::same_text;
 
 /// The record's file name, in Pane's data folder beside `settings.json`.
 const FILE: &str = "quick-slots.json";
@@ -90,6 +91,12 @@ pub struct QuickSlot {
     /// The title to show: the target's own as root search lists it, else
     /// the best name Pane has for it (its command's title, or its id).
     pub title: String,
+    /// What tells the target apart from another result of the same title
+    /// its command lists (two applications of one name): its row's
+    /// subtitle, which for an application is its distinction. Shown as
+    /// the slot's tooltip and said with it; `None` when no other result
+    /// shares its title.
+    pub detail: Option<String>,
     /// What invoking it reaches, once resolved.
     pub kind: Option<RowKind>,
     /// Why it cannot run now — disabled, paused, not installed, not listed
@@ -278,6 +285,9 @@ fn text(arrangement: &Arrangement) -> String {
 /// How a target resolves now.
 struct Resolved {
     title: String,
+    /// What tells it apart from a result of the same title
+    /// ([`QuickSlot::detail`]).
+    detail: Option<String>,
     kind: Option<RowKind>,
     /// What invoking it does, or why it cannot run.
     outcome: Result<Entry, String>,
@@ -334,6 +344,7 @@ fn resolve_command(launcher: &Launcher, state: &State, target: &PinTarget, id: &
         };
         return Resolved {
             title: listed.row.title,
+            detail: None,
             kind: Some(RowKind::Command),
             outcome,
         };
@@ -361,6 +372,7 @@ fn resolve_command(launcher: &Launcher, state: &State, target: &PinTarget, id: &
     };
     Resolved {
         title,
+        detail: None,
         kind: Some(RowKind::Command),
         outcome: Err(reason),
     }
@@ -370,12 +382,14 @@ fn resolve_indexed(state: &State, target: &PinTarget, command: &str) -> Resolved
     let Some((package, registration)) = registered(state, command) else {
         return Resolved {
             title: missing_title(command),
+            detail: None,
             kind: None,
             outcome: Err("Its extension is not installed".into()),
         };
     };
     let unresolved = |reason: String| Resolved {
         title: registration.title.clone(),
+        detail: None,
         kind: None,
         outcome: Err(reason),
     };
@@ -400,8 +414,16 @@ fn resolve_indexed(state: &State, target: &PinTarget, command: &str) -> Resolved
         .results()
         .find(|result| result.pin.as_ref() == Some(target))
     {
+        // Two results of one title (two applications of one name): the
+        // slot says what its row's subtitle says to tell them apart.
+        let theirs = |other: &&RootResult| matches!(&other.pin, Some(PinTarget::Indexed { command: pinned, .. }) if pinned == command);
+        let shared =
+            state.indexes.results().filter(theirs).any(|other| {
+                other.pin != found.pin && same_text(&other.row.title, &found.row.title)
+            });
         return Resolved {
             title: found.row.title.clone(),
+            detail: found.row.subtitle.clone().filter(|_| shared),
             kind: presentation::kind(&found.entry),
             outcome: Ok(found.entry.clone()),
         };
@@ -520,6 +542,7 @@ fn view(launcher: &Launcher, state: &State, target: &PinTarget) -> QuickSlot {
     QuickSlot {
         target: target.clone(),
         title: resolved.title,
+        detail: resolved.detail,
         kind: resolved.kind,
         unavailable: resolved.outcome.err(),
     }

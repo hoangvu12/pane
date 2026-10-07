@@ -297,6 +297,10 @@ pub(crate) enum RootAction {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct IndexedResult {
     pub listing: ResultListing,
+    /// Other titles that find it, as its title does.
+    pub alternate_titles: Vec<String>,
+    /// Words that find it, as its subtitle does.
+    pub keywords: Vec<String>,
     pub action: IndexedAction,
 }
 
@@ -2292,6 +2296,9 @@ impl applications::Host for GuestState {
                 id: application.id,
                 name: application.name,
                 location: application.location,
+                alternate_titles: application.alternate_titles,
+                keywords: application.keywords,
+                distinction: application.distinction,
             })
             .collect())
     }
@@ -3804,6 +3811,8 @@ impl Host {
                     title: result.title,
                     subtitle: result.subtitle,
                 },
+                alternate_titles: result.alternate_titles,
+                keywords: result.keywords,
                 action: match result.action {
                     indexed_results::IndexedAction::OpenApplication(id) => {
                         IndexedAction::OpenApplication(id)

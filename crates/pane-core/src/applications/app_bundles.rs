@@ -3,8 +3,13 @@
 //! bundle is identified by its bundle identifier (`CFBundleIdentifier` in
 //! its `Info.plist`), so moving or renaming it keeps the application; one
 //! without an identifier is identified by its path.
+//!
+//! A bundle is titled with its display name as Finder shows it
+//! (`NSFileManager`'s display name, localized for the user's languages);
+//! its folder name, when it differs, still finds it.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use super::{
     Changes, Discovery, Key, Source, Watch, env_dir, has_extension, id_path, plist, sorted_entries,
@@ -15,10 +20,24 @@ use super::{
 /// `/Applications/Utilities`.
 const MAX_DEPTH: usize = 2;
 
+/// Gives a bundle's display name, as Finder shows it; `None` when there is
+/// none to give.
+type DisplayNames = Arc<dyn Fn(&Path) -> Option<String> + Send + Sync>;
+
 /// The application bundles in some folders.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct AppBundles {
     folders: Vec<PathBuf>,
+    /// Gives each bundle's display name.
+    display_name: DisplayNames,
+}
+
+impl std::fmt::Debug for AppBundles {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppBundles")
+            .field("folders", &self.folders)
+            .finish_non_exhaustive()
+    }
 }
 
 impl AppBundles {
@@ -26,7 +45,10 @@ impl AppBundles {
     /// a bundle in an earlier folder preferred to one with the same
     /// identifier in a later folder.
     pub fn new(folders: Vec<PathBuf>) -> AppBundles {
-        AppBundles { folders }
+        AppBundles {
+            folders,
+            display_name: Arc::new(display_name),
+        }
     }
 
     /// The bundles in `/Applications`, `/System/Applications` and
@@ -38,7 +60,18 @@ impl AppBundles {
             PathBuf::from("/System/Applications"),
         ];
         folders.extend(env_dir("HOME").map(|home| home.join("Applications")));
-        AppBundles { folders }
+        AppBundles::new(folders)
+    }
+
+    /// This, naming bundles with `display_name` instead of Finder, which
+    /// exists only on macOS: what tests use to give bundles localized names
+    /// on every system.
+    pub fn with_display_names(
+        mut self,
+        display_name: impl Fn(&Path) -> Option<String> + Send + Sync + 'static,
+    ) -> AppBundles {
+        self.display_name = Arc::new(display_name);
+        self
     }
 }
 
@@ -56,25 +89,49 @@ fn bundle_key(bundle: &Path) -> Key {
         )
 }
 
-fn collect(dir: &Path, depth: usize, place: usize, found: &mut Vec<Source>) {
-    for entry in sorted_entries(dir) {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        if has_extension(&path, "app") {
-            let Some(name) = path.file_stem() else {
+/// `shown`, a bundle's display name, as a title: trimmed, without the
+/// `.app` Finder shows only when told to show every extension.
+fn shown_name(shown: &str) -> String {
+    let shown = shown.trim();
+    let stem = shown.len().checked_sub(4).and_then(|end| {
+        (shown.is_char_boundary(end) && shown[end..].eq_ignore_ascii_case(".app"))
+            .then(|| &shown[..end])
+    });
+    stem.unwrap_or(shown).trim().to_owned()
+}
+
+impl AppBundles {
+    fn collect(&self, dir: &Path, depth: usize, place: usize, found: &mut Vec<Source>) {
+        for entry in sorted_entries(dir) {
+            let path = entry.path();
+            if !path.is_dir() {
                 continue;
-            };
-            found.push(Source {
-                key: bundle_key(&path),
-                path: path.to_string_lossy().into_owned(),
-                name: name.to_string_lossy().into_owned(),
-                location: dir.display().to_string(),
-                place,
-            });
-        } else if depth < MAX_DEPTH {
-            collect(&path, depth + 1, place, found);
+            }
+            if has_extension(&path, "app") {
+                let Some(folder_name) = path.file_stem() else {
+                    continue;
+                };
+                let folder_name = folder_name.to_string_lossy().into_owned();
+                let shown = (self.display_name)(&path)
+                    .map(|shown| shown_name(&shown))
+                    .filter(|shown| !shown.is_empty());
+                let (name, untranslated) = match shown {
+                    Some(shown) if shown != folder_name => (shown, Some(folder_name)),
+                    _ => (folder_name, None),
+                };
+                found.push(Source {
+                    untranslated,
+                    ..Source::new(
+                        bundle_key(&path),
+                        path.to_string_lossy(),
+                        name,
+                        dir.display().to_string(),
+                        place,
+                    )
+                });
+            } else if depth < MAX_DEPTH {
+                self.collect(&path, depth + 1, place, found);
+            }
         }
     }
 }
@@ -83,7 +140,7 @@ impl Discovery for AppBundles {
     fn sources(&self) -> Result<Vec<Source>, String> {
         let mut found = Vec::new();
         for (place, folder) in self.folders.iter().enumerate() {
-            collect(folder, 0, place, &mut found);
+            self.collect(folder, 0, place, &mut found);
         }
         Ok(found)
     }
@@ -105,6 +162,26 @@ impl Discovery for AppBundles {
             changes,
         )
     }
+}
+
+/// The display name Finder shows for the bundle at `bundle`, localized for
+/// the user's languages.
+#[cfg(target_os = "macos")]
+fn display_name(bundle: &Path) -> Option<String> {
+    use objc2::rc::autoreleasepool;
+    use objc2_foundation::{NSFileManager, NSString};
+
+    autoreleasepool(|_| {
+        let path = NSString::from_str(&bundle.to_string_lossy());
+        let shown = NSFileManager::defaultManager().displayNameAtPath(&path);
+        Some(shown.to_string()).filter(|shown| !shown.trim().is_empty())
+    })
+}
+
+/// Bundles are named by Finder only on macOS: elsewhere, by their folder.
+#[cfg(not(target_os = "macos"))]
+fn display_name(_bundle: &Path) -> Option<String> {
+    None
 }
 
 #[cfg(target_os = "macos")]
@@ -133,4 +210,17 @@ fn open_bundle(path: &Path) -> Result<(), String> {
         "{} is a macOS application bundle; Pane opens those only on macOS",
         path.display()
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_display_name_loses_the_extension_finder_may_show() {
+        assert_eq!(shown_name("Calculator.app"), "Calculator");
+        assert_eq!(shown_name(" Máy tính "), "Máy tính");
+        assert_eq!(shown_name("App"), "App");
+        assert_eq!(shown_name(".app"), "");
+    }
 }

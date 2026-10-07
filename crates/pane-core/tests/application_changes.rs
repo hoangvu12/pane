@@ -102,13 +102,13 @@ impl FakeSystem {
 
 /// The Start menu shortcut `name`, to a program of its own.
 fn shortcut(name: &str) -> Source {
-    Source {
-        key: Key::program(&format!(r"C:\Programs\{name}\{name}.exe"), ""),
-        path: format!(r"C:\Menu\{name}.lnk"),
-        name: name.into(),
-        location: r"C:\Menu".into(),
-        place: 2,
-    }
+    Source::new(
+        Key::program(&format!(r"C:\Programs\{name}\{name}.exe"), ""),
+        format!(r"C:\Menu\{name}.lnk"),
+        name,
+        r"C:\Menu",
+        2,
+    )
 }
 
 impl Discovery for FakeSystem {

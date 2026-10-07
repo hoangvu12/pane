@@ -24,6 +24,14 @@
 //! a document rather than a program, an internet shortcut to a web page or
 //! to a scheme nothing handles, and folders that are symbolic links or
 //! junctions.
+//!
+//! A shell link is titled with the name Explorer shows for it (the shell's
+//! display name, which its folder's localized names translate), its file
+//! name staying an untranslated name that still finds it; its target is
+//! the program whose name may be an alternate title
+//! ([`super::names`]). A packaged app keeps the shell's display name. An
+//! internet shortcut or a ClickOnce reference is titled by its file name
+//! and has no program.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -117,6 +125,11 @@ pub struct Shortcut {
     pub arguments: String,
     /// Its AppUserModelID, when it has one.
     pub app_user_model_id: Option<String>,
+    /// The name Explorer shows for the shortcut file, which the folder's
+    /// own localized names (`desktop.ini`'s `LocalizedFileNames`) or the
+    /// shortcut's localized name resource translate; `None` when the shell
+    /// gives none, and the file's name is shown instead.
+    pub display_name: Option<String>,
 }
 
 /// What a shell link's target is on disk.
@@ -618,8 +631,19 @@ fn sources(
         .zip(opens)
         .filter_map(|(found, opens)| {
             let path = found.path.to_string_lossy().into_owned();
+            let mut program = None;
+            let mut arguments = false;
+            let mut shown = None;
             let key = match opens {
-                Opens::Link(Some(shortcut)) => link_key(&shortcut, &package_key, targets)?,
+                Opens::Link(Some(shortcut)) => {
+                    let key = link_key(&shortcut, &package_key, targets)?;
+                    if matches!(key, Key::Program { .. }) {
+                        program = Some(shortcut.target.trim().to_owned());
+                        arguments = !shortcut.arguments.trim().is_empty();
+                    }
+                    shown = shortcut.display_name.as_deref().map(shown_name);
+                    key
+                }
                 Opens::Link(None) => Key::Path(path.to_lowercase()),
                 Opens::Url(Some(url)) if is_application_url(&url, handles) => {
                     Key::Link(url.to_lowercase())
@@ -627,12 +651,17 @@ fn sources(
                 Opens::ClickOnce(Some(deployment)) => Key::Link(deployment.to_lowercase()),
                 Opens::Url(_) | Opens::ClickOnce(None) => return None,
             };
+            // Titled as Explorer shows it; the file's own name, when the
+            // shell translates it, still finds it.
+            let (name, untranslated) = match shown.filter(|shown| !shown.is_empty()) {
+                Some(shown) if shown != found.name => (shown, Some(found.name)),
+                _ => (found.name, None),
+            };
             Some(Source {
-                key,
-                path,
-                name: found.name,
-                location: found.location,
-                place: found.place as usize,
+                untranslated,
+                arguments,
+                program,
+                ..Source::new(key, path, name, found.location, found.place as usize)
             })
         })
         .collect();
@@ -646,15 +675,27 @@ fn sources(
         if !shortcut_keys.contains(&key) && shortcut_names.contains(&name.to_lowercase()) {
             continue;
         }
-        sources.push(Source {
+        sources.push(Source::new(
             key,
-            path: format!("{APPS_FOLDER}{parsing}"),
+            format!("{APPS_FOLDER}{parsing}"),
             name,
-            location: "Apps folder (packaged apps)".into(),
-            place: Place::PackagedApps as usize,
-        });
+            "Apps folder (packaged apps)",
+            Place::PackagedApps as usize,
+        ));
     }
     sources
+}
+
+/// `display_name`, the name the shell shows for a shortcut, as a title:
+/// trimmed, without the `.lnk` the shell shows only when told to show
+/// every extension.
+fn shown_name(display_name: &str) -> String {
+    let name = display_name.trim();
+    let stem = name.len().checked_sub(4).and_then(|end| {
+        (name.is_char_boundary(end) && name[end..].eq_ignore_ascii_case(".lnk"))
+            .then(|| &name[..end])
+    });
+    stem.unwrap_or(name).trim().to_owned()
 }
 
 impl Discovery for StartMenu {
@@ -916,17 +957,20 @@ fn read_shortcuts(paths: &[PathBuf]) -> Vec<Option<Shortcut>> {
 
 /// What the shortcut at `path` opens, without resolving a target that
 /// moved (which could search the disk): its target as recorded, with
-/// environment variables expanded, its arguments and its AppUserModelID.
+/// environment variables expanded, its arguments and its AppUserModelID;
+/// and the name Explorer shows for it.
 #[cfg(windows)]
 fn read_shortcut(path: &Path) -> windows::core::Result<Shortcut> {
     use std::os::windows::ffi::OsStrExt;
     use windows::Win32::Foundation::PROPERTYKEY;
     use windows::Win32::System::Com::StructuredStorage::{PropVariantClear, PropVariantToString};
     use windows::Win32::System::Com::{
-        CLSCTX_INPROC_SERVER, CoCreateInstance, IPersistFile, STGM_READ,
+        CLSCTX_INPROC_SERVER, CoCreateInstance, CoTaskMemFree, IPersistFile, STGM_READ,
     };
     use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
-    use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
+    use windows::Win32::UI::Shell::{
+        IShellItem, IShellLinkW, SHCreateItemFromParsingName, SIGDN_NORMALDISPLAY, ShellLink,
+    };
     use windows::core::{GUID, Interface, PCWSTR};
 
     /// `PKEY_AppUserModel_ID`.
@@ -969,10 +1013,23 @@ fn read_shortcut(path: &Path) -> windows::core::Result<Shortcut> {
             read.ok()?;
             Some(text(&buffer)).filter(|aumid| !aumid.is_empty())
         });
+        // The name Explorer shows for the file, localized through its
+        // folder's `desktop.ini` or the shortcut's own name resource.
+        let display_name =
+            SHCreateItemFromParsingName::<_, _, IShellItem>(PCWSTR(file.as_ptr()), None)
+                .ok()
+                .and_then(|item| {
+                    let shown = item.GetDisplayName(SIGDN_NORMALDISPLAY).ok()?;
+                    let name = shown.to_string().ok();
+                    CoTaskMemFree(Some(shown.0 as *const _));
+                    name
+                })
+                .filter(|name| !name.trim().is_empty());
         Ok(Shortcut {
             target,
             arguments: text(&arguments),
             app_user_model_id,
+            display_name,
         })
     }
 }
@@ -1245,8 +1302,8 @@ mod tests {
     fn a_desktop_program_s_own_app_user_model_id_does_not_make_it_a_packaged_app() {
         let shortcut = Some(Shortcut {
             target: r"C:\Tool\tool.exe".into(),
-            arguments: String::new(),
             app_user_model_id: Some("Vendor.Tool".into()),
+            ..Shortcut::default()
         });
         let sources = link_sources(
             vec![found("Tool", Place::UserStartMenu)],
@@ -1254,6 +1311,92 @@ mod tests {
             vec![],
         );
         assert_eq!(sources[0].key, Key::program(r"C:\Tool\tool.exe", ""));
+    }
+
+    #[test]
+    fn a_shortcut_is_titled_as_explorer_shows_it_and_its_file_name_still_finds_it() {
+        let localized = Some(Shortcut {
+            target: r"C:\Windows\System32\mspaint.exe".into(),
+            display_name: Some("Ứng dụng Vẽ".into()),
+            ..Shortcut::default()
+        });
+        // Explorer told to show every extension shows `.lnk` too.
+        let with_extension = Some(Shortcut {
+            target: r"C:\Tool\tool.exe".into(),
+            display_name: Some(" Tool.LNK ".into()),
+            ..Shortcut::default()
+        });
+        let unnamed = target(r"C:\Other\other.exe");
+        let sources = link_sources(
+            vec![
+                found("Paint", Place::UserStartMenu),
+                found("Tool", Place::UserStartMenu),
+                found("Other", Place::UserStartMenu),
+            ],
+            vec![localized, with_extension, unnamed],
+            vec![],
+        );
+
+        assert_eq!(sources[0].name, "Ứng dụng Vẽ");
+        assert_eq!(sources[0].untranslated.as_deref(), Some("Paint"));
+        assert_eq!(
+            (sources[1].name.as_str(), &sources[1].untranslated),
+            ("Tool", &None)
+        );
+        assert_eq!(
+            (sources[2].name.as_str(), &sources[2].untranslated),
+            ("Other", &None)
+        );
+    }
+
+    #[test]
+    fn a_shortcut_s_program_and_whether_it_passes_arguments_are_kept() {
+        let browser = r"C:\Browser\chrome.exe";
+        let web_app = Some(Shortcut {
+            target: browser.into(),
+            arguments: "--app-id=mail".into(),
+            ..Shortcut::default()
+        });
+        let packaged = Some(Shortcut {
+            app_user_model_id: Some("Microsoft.WindowsTerminal_8wekyb3d8bbwe!App".into()),
+            ..Shortcut::default()
+        });
+        let sources = link_sources(
+            vec![
+                found("Browser", Place::UserStartMenu),
+                found("Mail", Place::UserStartMenu),
+                found("Terminal", Place::UserStartMenu),
+                found("Broken", Place::UserStartMenu),
+            ],
+            vec![target(browser), web_app, packaged, None],
+            vec![item(
+                "Terminal",
+                "Microsoft.WindowsTerminal_8wekyb3d8bbwe!App",
+            )],
+        );
+
+        assert_eq!(sources[0].program.as_deref(), Some(browser));
+        assert!(!sources[0].arguments);
+        assert_eq!(sources[1].program.as_deref(), Some(browser));
+        assert!(sources[1].arguments);
+        // A packaged app runs no program Pane knows; nor does an unreadable
+        // shortcut.
+        assert_eq!(sources[2].program, None);
+        assert_eq!(sources[3].program, None);
+    }
+
+    #[test]
+    fn a_packaged_app_keeps_the_display_name_the_shell_gives_it() {
+        let sources = link_sources(
+            vec![],
+            vec![],
+            vec![item(
+                "Máy tính",
+                "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+            )],
+        );
+        assert_eq!(sources[0].name, "Máy tính");
+        assert_eq!(sources[0].untranslated, None);
     }
 
     #[test]

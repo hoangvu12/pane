@@ -149,7 +149,7 @@ Pane's fixed bounds on listing a granted folder, the same on every system: regul
 _Avoid_: Indexer, crawl, whole-disk search
 
 **Indexed result**:
-A root result an extension command supplies ahead of the query, such as an installed application; Pane asks for them once root search is used, keeps them, and matches and ranks them by title like commands, for a query that is not blank.
+A root result an extension command supplies ahead of the query, such as an installed application; Pane asks for them once root search is used, keeps them, and matches and ranks them by title like commands, for a query that is not blank. It may also carry alternate titles, matched as its title is, and keywords, matched as its subtitle is; its row still shows its title.
 _Avoid_: Index entry, cached result
 
 **Root provider**:
@@ -157,7 +157,7 @@ An extension command whose only job is to answer root search, through its comput
 _Avoid_: Search provider (any source of matching results), background command, hidden command
 
 **Installed application**:
-A program the operating system lists as installed where Pane looks for it (on Windows the shortcuts in the Start menu, on the Desktops and pinned to the taskbar, including internet shortcuts whose scheme has a handler and ClickOnce references, and packaged apps; application bundles on macOS; desktop entries on Linux); Pane's host finds and opens it for an extension, which a WASI guest cannot do itself. It is identified by what it is, not by where it was found: several shortcuts to one program are one installed application, with one stable id that survives its updates (ADR 0038).
+A program the operating system lists as installed where Pane looks for it (on Windows the shortcuts in the Start menu, on the Desktops and pinned to the taskbar, including internet shortcuts whose scheme has a handler and ClickOnce references, and packaged apps; application bundles on macOS; desktop entries on Linux); Pane's host finds and opens it for an extension, which a WASI guest cannot do itself. It is identified by what it is, not by where it was found: several shortcuts to one program are one installed application, with one stable id that survives its updates (ADR 0038). It is titled as the system shows it in the user's language, also found by its untranslated and program names, and, when it shares its title with another, told apart by its distinction (its program's name, folder or path).
 _Avoid_: App (ambiguous with Pane itself), program
 
 **Quicklink**:

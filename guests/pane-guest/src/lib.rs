@@ -300,6 +300,11 @@ pub mod root {
 /// which Pane finds and opens for the extension: [`applications::installed`] and
 /// [`applications::open`]. An application's `id` is opaque and stable across
 /// its updates and Pane's restarts, so a command may keep it in its data.
+/// Its `name` is the one the system shows in the user's language; its
+/// `alternate_titles` (its untranslated and program names) and `keywords`
+/// find it too, so give them to an [`indexed::IndexedResult`]; its
+/// `distinction`, when another application has its name, tells them apart
+/// as a subtitle.
 pub mod applications {
     wit_bindgen::generate!({
         path: "../../wit",
@@ -379,7 +384,9 @@ pub mod files {
 
 /// Root results a command supplies ahead of the query
 /// (`pane:extension/indexed-results`), such as the installed applications,
-/// which root search matches by title like commands. A command whose
+/// which root search matches by title like commands, by each of an
+/// [`indexed::IndexedResult`]'s `alternate_titles` as by its title, and by
+/// its `keywords` as by its subtitle (empty lists for none). A command whose
 /// `pane.json` entry sets `"indexedResults": true` implements
 /// [`indexed::Guest`] too and calls [`indexed::export!`](crate::indexed::export)
 /// beside [`export!`]:

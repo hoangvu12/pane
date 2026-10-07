@@ -82,11 +82,15 @@ const ALL_USERS_START_MENU: usize = 3;
 fn shortcut(name: &str, place: usize, target: &str, arguments: &str) -> Source {
     let folder = format!(r"C:\Places\{place}");
     Source {
-        key: Key::program(target, arguments),
-        path: format!(r"{folder}\{name}.lnk"),
-        name: name.into(),
-        location: folder,
-        place,
+        program: Some(target.to_owned()),
+        arguments: !arguments.trim().is_empty(),
+        ..Source::new(
+            Key::program(target, arguments),
+            format!(r"{folder}\{name}.lnk"),
+            name,
+            folder,
+            place,
+        )
     }
 }
 
@@ -272,6 +276,7 @@ impl Applications for BeforeIdentities {
                 id: source.path.clone(),
                 name: source.name.clone(),
                 location: source.location.clone(),
+                ..Application::default()
             })
             .collect())
     }
