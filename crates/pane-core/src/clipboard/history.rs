@@ -25,8 +25,18 @@
 //! or kept again, whether the package ran meanwhile or not; and while Pane
 //! runs, a thread of its own removes them when they expire
 //! ([`HistoryStore::keep_expiring`]).
+//!
+//! Pane's own Clipboard History also keeps copied images and files (#167).
+//! An image item names its PNG by the PNG's SHA-256; the PNG is kept in
+//! `clipboard-images/<owner>/<digest>.png` beside the file (the owner's
+//! folder named as its web images are), readable by the user only, as the
+//! file is. It is written before the item is, and every write of the file
+//! then deletes the PNGs no item names any more
+//! ([`HistoryStore::prune_images`]): those of items that expired, were
+//! deleted or cleared, or dropped past [`MAX_ITEMS`], and an owner's whole
+//! folder once its history is removed. A files item keeps only the paths.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -36,14 +46,18 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    CaptureState, Clock, DEFAULT_RETENTION_SECONDS, MAX_EXCLUDED, MAX_ITEMS, MAX_RETENTION_SECONDS,
-    MIN_RETENTION_SECONDS, ProgramName, SystemClock,
+    CaptureState, Clock, CopiedImage, DEFAULT_RETENTION_SECONDS, MAX_EXCLUDED, MAX_ITEMS,
+    MAX_RETENTION_SECONDS, MIN_RETENTION_SECONDS, ProgramName, SystemClock,
 };
 use crate::atomic::{Readers, write_atomically};
 use crate::extension_data::Removal;
 
 /// The history file's name, beside `installed.json`.
 pub(crate) const FILE: &str = "clipboard-history.json";
+
+/// The folder beside the file holding the PNGs of kept images, one folder
+/// per owner.
+pub(crate) const IMAGES_DIR: &str = "clipboard-images";
 
 /// The version of the history file's format.
 const VERSION: u64 = 1;
@@ -64,8 +78,20 @@ pub(crate) fn records_by_default(owner: &str) -> bool {
 }
 
 /// The identity key of Pane's own Clipboard History default extension.
-fn default_owner() -> String {
+pub(crate) fn default_owner() -> String {
     crate::packages::PackageIdentity::default_extension(CLIPBOARD_HISTORY).key()
+}
+
+/// Whether the package whose identity key is `owner` keeps copied images
+/// and files beside text: only Pane's own Clipboard History (#167). Every
+/// other package keeps plain text only, as `wit/clipboard.wit` says.
+pub(crate) fn keeps_images_and_files(owner: &str) -> bool {
+    owner == default_owner()
+}
+
+/// The title of a copied image `width` × `height`: "Image (1920×1080)".
+pub fn image_title(width: u32, height: u32) -> String {
+    format!("Image ({width}×{height})")
 }
 
 /// The history of `owner` while the file holds none for it: recording,
@@ -94,19 +120,51 @@ fn forgettable(owner: &str, history: &PackageHistory) -> bool {
         && history.capture == fresh(owner).capture
 }
 
-/// One kept text.
+/// One kept copy: a text, an image or a list of files.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Item {
     /// Identifies it among the package's items; later items have greater
     /// ids.
     pub id: u64,
+    /// The text copied; for an image its title ([`image_title`]), for
+    /// files their paths, one per line: what a command lists of it
+    /// through `entries` (`wit/clipboard.wit`).
     pub text: String,
+    /// The image copied, if it is one (#167).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<StoredImage>,
+    /// The files copied, by their paths, if it is a list of files (#167).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<PathBuf>,
     /// When it was copied, in milliseconds since the Unix epoch.
     pub copied_at: u64,
     /// The program it was copied from, if the system said.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+}
+
+impl Item {
+    /// Whether it holds what `other` holds: the same text, image or files.
+    fn same_copy(&self, other: &Item) -> bool {
+        self.text == other.text
+            && self.files == other.files
+            && self.image.as_ref().map(|image| &image.digest)
+                == other.image.as_ref().map(|image| &image.digest)
+    }
+}
+
+/// A kept image: its size, and its PNG's size and SHA-256, which names the
+/// PNG's file ([`HistoryStore::image_path`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredImage {
+    pub width: u32,
+    pub height: u32,
+    /// How many bytes its PNG has.
+    pub bytes: u64,
+    /// Its PNG's SHA-256, in lowercase hex.
+    pub digest: String,
 }
 
 /// One package's clipboard history.
@@ -206,20 +264,52 @@ impl PackageHistory {
     /// item with the same text moves to the front instead of being kept
     /// twice, and beyond [`MAX_ITEMS`] the oldest go.
     pub fn add(&mut self, text: &str, source: Option<&str>, now: u64) {
-        self.items.retain(|item| item.text != text);
+        self.keep(text.to_owned(), None, Vec::new(), source, now);
+    }
+
+    /// Keeps the image `image`, copied from `source` at `now`, as the
+    /// newest item, as [`PackageHistory::add`] keeps text: the same image
+    /// (by its PNG's digest) moves to the front.
+    pub fn add_image(&mut self, image: StoredImage, source: Option<&str>, now: u64) {
+        let title = image_title(image.width, image.height);
+        self.keep(title, Some(image), Vec::new(), source, now);
+    }
+
+    /// Keeps the files `files`, copied from `source` at `now`, as the
+    /// newest item, as [`PackageHistory::add`] keeps text: the same files,
+    /// in the same order, move to the front.
+    pub fn add_files(&mut self, files: &[PathBuf], source: Option<&str>, now: u64) {
+        let text = files
+            .iter()
+            .map(|file| file.display().to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.keep(text, None, files.to_vec(), source, now);
+    }
+
+    fn keep(
+        &mut self,
+        text: String,
+        image: Option<StoredImage>,
+        files: Vec<PathBuf>,
+        source: Option<&str>,
+        now: u64,
+    ) {
+        let mut item = Item {
+            id: 0,
+            text,
+            image,
+            files,
+            copied_at: now,
+            source: source.map(str::to_owned),
+        };
+        self.items.retain(|kept| !kept.same_copy(&item));
         let id = self
             .next_id
             .max(self.items.iter().map(|item| item.id + 1).max().unwrap_or(0));
         self.next_id = id + 1;
-        self.items.insert(
-            0,
-            Item {
-                id,
-                text: text.to_owned(),
-                copied_at: now,
-                source: source.map(str::to_owned),
-            },
-        );
+        item.id = id;
+        self.items.insert(0, item);
         self.items.truncate(MAX_ITEMS);
     }
 
@@ -284,6 +374,11 @@ struct State {
 /// Every package's clipboard history, kept in one file.
 pub(crate) struct HistoryStore {
     path: PathBuf,
+    /// The folder of the kept images' PNGs ([`IMAGES_DIR`]).
+    images: PathBuf,
+    /// The PNGs written for a capture still in progress, by their owner's
+    /// folder and digest: not yet named by an item, and not to be pruned.
+    pending_images: Mutex<HashSet<(String, String)>>,
     state: Mutex<State>,
     /// The number of the last change written, held while writing.
     written: Mutex<u64>,
@@ -325,6 +420,8 @@ impl HistoryStore {
         let file = read(&path);
         HistoryStore {
             path,
+            images: dir.join(IMAGES_DIR),
+            pending_images: Mutex::new(HashSet::new()),
             state: Mutex::new(State {
                 file,
                 changes: 0,
@@ -367,6 +464,133 @@ impl HistoryStore {
         self.state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn pending_images(&self) -> MutexGuard<'_, HashSet<(String, String)>> {
+        self.pending_images
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// The name of the folder of `owner`'s kept images, under
+    /// [`IMAGES_DIR`]: named as its web images' folder is.
+    fn image_folder(owner: &str) -> String {
+        crate::icons::web_image_stem(owner)
+    }
+
+    /// Where the PNG of `owner`'s kept image with `digest` is.
+    pub fn image_path(&self, owner: &str, digest: &str) -> PathBuf {
+        self.images
+            .join(HistoryStore::image_folder(owner))
+            .join(format!("{digest}.png"))
+    }
+
+    /// Writes the PNG of `image`, copied for `owner`, where an item naming
+    /// it finds it ([`HistoryStore::image_path`]), unless it is there
+    /// already; until [`HistoryStore::release_image`], no write of the
+    /// file deletes it. Called before the capture that keeps the item,
+    /// with the store unlocked.
+    pub fn keep_image(&self, owner: &str, image: &CopiedImage) -> io::Result<KeptImage> {
+        use sha2::{Digest, Sha256};
+        let digest: String = Sha256::digest(&image.png)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let folder = HistoryStore::image_folder(owner);
+        self.pending_images()
+            .insert((folder.clone(), digest.clone()));
+        let path = self.image_path(owner, &digest);
+        let mut created = false;
+        if !path.is_file() {
+            let written = fs::create_dir_all(self.images.join(&folder))
+                .and_then(|()| write_atomically(&path, &image.png, Readers::OwnerOnly));
+            if let Err(error) = written {
+                self.pending_images().remove(&(folder, digest));
+                return Err(error);
+            }
+            created = true;
+        }
+        Ok(KeptImage {
+            owner: owner.to_owned(),
+            folder,
+            stored: StoredImage {
+                width: image.width,
+                height: image.height,
+                bytes: image.png.len() as u64,
+                digest,
+            },
+            created,
+        })
+    }
+
+    /// Ends what [`HistoryStore::keep_image`] began: the PNG is pruned like
+    /// any other from now on, and deleted at once if the capture did not
+    /// keep it (`used` false) and no item named it before.
+    pub fn release_image(&self, kept: KeptImage, used: bool) {
+        self.pending_images()
+            .remove(&(kept.folder.clone(), kept.stored.digest.clone()));
+        if !used && kept.created {
+            let _ = fs::remove_file(self.image_path(&kept.owner, &kept.stored.digest));
+        }
+    }
+
+    /// Deletes the kept images' PNGs that no item of `file` names, except
+    /// those of a capture in progress, and the folder of an owner left
+    /// with none: run after each write of the file and each sweep, so an
+    /// image goes with its item, however the item went (expired, deleted,
+    /// cleared, dropped past [`MAX_ITEMS`], its history removed). A failure
+    /// is reported on standard error; the next write tries again.
+    fn prune_images(&self, file: &HistoryJson) {
+        let Ok(folders) = fs::read_dir(&self.images) else {
+            return;
+        };
+        let mut named: BTreeMap<String, BTreeSet<&str>> = BTreeMap::new();
+        for (owner, history) in &file.packages {
+            let digests = named.entry(HistoryStore::image_folder(owner)).or_default();
+            for item in &history.items {
+                if let Some(image) = &item.image {
+                    digests.insert(image.digest.as_str());
+                }
+            }
+        }
+        let pending = self.pending_images().clone();
+        for folder in folders.flatten() {
+            let name = folder.file_name().to_string_lossy().into_owned();
+            let Ok(images) = fs::read_dir(folder.path()) else {
+                continue;
+            };
+            // A folder a capture is writing into stays.
+            let mut left = pending.iter().filter(|(of, _)| *of == name).count();
+            for image in images.flatten() {
+                let path = image.path();
+                // A PNG being written (`write_atomically`'s hidden
+                // temporary file) is not touched.
+                if image.file_name().to_string_lossy().starts_with('.') {
+                    left += 1;
+                    continue;
+                }
+                let digest = path
+                    .file_stem()
+                    .map(|stem| stem.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let kept = named
+                    .get(&name)
+                    .is_some_and(|digests| digests.contains(digest.as_str()))
+                    || pending.contains(&(name.clone(), digest));
+                if kept {
+                    left += 1;
+                } else if let Err(error) = fs::remove_file(&path) {
+                    left += 1;
+                    eprintln!(
+                        "Pane could not delete a clipboard image no longer kept, {}: {error}",
+                        path.display()
+                    );
+                }
+            }
+            if left == 0 {
+                let _ = fs::remove_dir(folder.path());
+            }
+        }
     }
 
     /// The state with every expired item removed, and the write that
@@ -563,6 +787,8 @@ impl HistoryStore {
                 .as_ref()
                 .map_err(|reason| Removal::Unreadable(reason.clone()))?;
             if !file.packages.contains_key(owner) {
+                // No item names an image of its: none is kept either.
+                let _ = fs::remove_dir_all(self.images.join(HistoryStore::image_folder(owner)));
                 return Ok(());
             }
             state.deletions += 1;
@@ -603,6 +829,12 @@ impl HistoryStore {
             (next, pending)
         };
         self.write_logged(pending);
+        // Images a capture left behind (Pane stopped between writing a PNG
+        // and its item) go too.
+        let file = self.lock().file.clone();
+        if let Ok(file) = file {
+            self.prune_images(&file);
+        }
         next
     }
 
@@ -654,7 +886,31 @@ impl HistoryStore {
         let text = serde_json::to_string_pretty(&pending.file).map_err(io::Error::other)?;
         write_atomically(&self.path, text.as_bytes(), Readers::OwnerOnly)?;
         *written = pending.change;
+        // The images no item written names any more go with it.
+        self.prune_images(&pending.file);
         Ok(())
+    }
+}
+
+/// A PNG [`HistoryStore::keep_image`] wrote (or found) for a capture in
+/// progress, until [`HistoryStore::release_image`].
+pub(crate) struct KeptImage {
+    owner: String,
+    folder: String,
+    stored: StoredImage,
+    /// Whether this capture wrote it, rather than finding it kept.
+    created: bool,
+}
+
+impl KeptImage {
+    /// The owner it was kept for.
+    pub fn owner(&self) -> &str {
+        &self.owner
+    }
+
+    /// What an item keeping it says of it.
+    pub fn stored(&self) -> &StoredImage {
+        &self.stored
     }
 }
 
@@ -971,6 +1227,123 @@ mod tests {
         // Removed (uninstalled with its data), it records again.
         assert!(reopened.remove(&own).is_ok());
         assert_eq!(reopened.get(&own).unwrap().capture, CaptureState::On);
+    }
+
+    /// An image of `width` × `height` transparent pixels, as copied.
+    fn image(width: u32, height: u32) -> CopiedImage {
+        let pixels = vec![0u8; (width * height * 4) as usize];
+        CopiedImage::from_png(crate::icons::encode_png(width, height, &pixels).unwrap()).unwrap()
+    }
+
+    /// Keeps `image` for Pane's own Clipboard History as a capture does;
+    /// returns where its PNG is.
+    fn capture_image(store: &HistoryStore, image: &CopiedImage) -> PathBuf {
+        let own = default_owner();
+        let kept = store.keep_image(&own, image).unwrap();
+        let path = store.image_path(&own, &kept.stored().digest);
+        let stored = kept.stored().clone();
+        store.capture(store.deletions(), |packages, now| {
+            packages
+                .get_mut(&own)
+                .expect("its fresh history")
+                .add_image(stored, Some("mspaint.exe"), now);
+            true
+        });
+        store.release_image(kept, true);
+        path
+    }
+
+    /// #167: an image is kept as a PNG beside the file, named by its
+    /// digest, and files by their paths; the PNG goes when its item
+    /// expires, and one a capture did not keep goes at once.
+    #[test]
+    fn an_image_is_kept_beside_the_file_and_expires_with_its_item() {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, clock) = store_at(dir.path(), DAY);
+        let own = default_owner();
+        let copied = image(2, 1);
+        let path = capture_image(&store, &copied);
+        assert!(path.starts_with(dir.path().join(IMAGES_DIR)));
+        assert_eq!(fs::read(&path).unwrap(), copied.png);
+        let history = store.get(&own).unwrap();
+        assert_eq!(history.items[0].text, "Image (2×1)");
+        let stored = history.items[0].image.clone().expect("an image item");
+        assert_eq!((stored.width, stored.height), (2, 1));
+        assert_eq!(stored.bytes, copied.png.len() as u64);
+        // The file names the PNG; it does not hold it.
+        let item = &on_disk(dir.path())["packages"][&own]["items"][0];
+        assert_eq!(item["image"]["digest"], stored.digest.as_str());
+        // The same image copied again moves to the front, kept once.
+        capture_image(&store, &copied);
+        assert_eq!(store.get(&own).unwrap().items.len(), 1);
+
+        // Files, by their paths, in the order copied.
+        let files = [PathBuf::from("/notes/a.txt"), PathBuf::from("/notes/b")];
+        store
+            .update(&own, |history| {
+                history.add_files(&files, None, DAY);
+                Ok(())
+            })
+            .unwrap();
+        let items = store.get(&own).unwrap().items;
+        assert_eq!(items[0].files, files);
+        assert_eq!(items[0].text, "/notes/a.txt\n/notes/b");
+        assert!(items[0].image.is_none() && items[1].files.is_empty());
+
+        // Expired by the host's clock, the image's PNG goes with its item.
+        clock.advance(Duration::from_secs(7 * 86_400));
+        assert!(store.get(&own).unwrap().items.is_empty());
+        assert!(!path.exists(), "the expired image's PNG is deleted");
+
+        // A PNG a capture did not keep is deleted at once.
+        let unused = store.keep_image(&own, &image(1, 1)).unwrap();
+        let unused_path = store.image_path(&own, &unused.stored().digest);
+        assert!(unused_path.is_file());
+        store.release_image(unused, false);
+        assert!(!unused_path.exists());
+    }
+
+    /// Deleting an image item, clearing the history or removing it (an
+    /// uninstall that deletes its data) deletes the PNGs too; one left
+    /// behind (Pane stopped between the PNG and its item) goes at the next
+    /// sweep.
+    #[test]
+    fn an_image_goes_with_its_item_deleted_cleared_or_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, _) = store_at(dir.path(), DAY);
+        let own = default_owner();
+        let first = capture_image(&store, &image(1, 2));
+        let second = capture_image(&store, &image(2, 2));
+        let ids: Vec<u64> = store
+            .get(&own)
+            .unwrap()
+            .items
+            .iter()
+            .map(|i| i.id)
+            .collect();
+        store
+            .update(&own, |history| Ok(history.delete(&[ids[1]])))
+            .unwrap();
+        assert!(!first.exists() && second.is_file());
+        store.update(&own, |history| Ok(history.clear())).unwrap();
+        assert!(!second.exists());
+
+        let third = capture_image(&store, &image(3, 2));
+        assert!(third.is_file());
+        assert!(store.remove(&own).is_ok());
+        assert!(!third.parent().unwrap().exists(), "its folder is gone");
+
+        // Left behind: no item names it, and the sweep deletes it.
+        let orphan = store.keep_image(&own, &image(4, 4)).unwrap();
+        let orphan_path = store.image_path(&own, &orphan.stored().digest);
+        drop(orphan);
+        assert!(orphan_path.is_file());
+        // Still pending (its capture never ended): kept until released.
+        store.sweep();
+        assert!(orphan_path.is_file());
+        store.pending_images().clear();
+        store.sweep();
+        assert!(!orphan_path.exists());
     }
 
     #[test]

@@ -27,7 +27,7 @@ actions do with a value.
 | Content | The extension's own durable records, such as notes or history | `content.json` | kept | the user's choice |
 | Cache | Values the extension can compute or download again | `cache.json` | removed | removed |
 | Local credentials (`credentials`) | Secrets kept on this computer, such as a sign-in token | `credentials.json`, readable only by the user (mode 0600 on macOS and Linux; on Windows a protected DACL for the user and SYSTEM only) | kept | removed |
-| Clipboard history (`clipboard-history`, since #35) | The text the user copied while the package kept [clipboard history](clipboard-history.md), and whether it keeps it; written by Pane only | `clipboard-history.json`, readable only by the user, as `credentials.json`; typed and versioned, not key-value | kept | the user's choice |
+| Clipboard history (`clipboard-history`, since #35) | The text the user copied while the package kept [clipboard history](clipboard-history.md), and whether it keeps it (and, for Pane's own Clipboard History, copied images and files, #167); written by Pane only | `clipboard-history.json`, readable only by the user, as `credentials.json`; typed and versioned, not key-value; the images' PNGs in `clipboard-images/`, likewise | kept | the user's choice |
 
 Clipboard history is not a `get`/`set` interface: Pane itself watches the
 clipboard and writes the items for the package, which reads and controls

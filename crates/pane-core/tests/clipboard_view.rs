@@ -21,14 +21,16 @@
 //! the system's clipboard is a fake that never touches the real one.
 
 use std::fs;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use futures::executor::block_on;
 use pane_core::clipboard::{
-    CaptureState, ClipboardSystem, Content, ManualClock, Markers, Observation, Sink, Watch,
+    CaptureState, ClipboardSystem, Content, CopiedImage, MAX_IMAGE_BYTES, ManualClock, Markers,
+    Observation, Sink, Watch,
 };
 use pane_core::clipboard_view::{
-    ClipboardAction, ClipboardBrowse, ClipboardDay, ClipboardFilter, ClipboardKind,
+    ClipboardAction, ClipboardBrowse, ClipboardDay, ClipboardFilter, ClipboardImage, ClipboardKind,
     ClipboardRecord, capture_summary, copied_at_label, copied_line, day_of, information,
     time_label,
 };
@@ -227,11 +229,11 @@ fn search_keeps_the_store_order_and_matches_text_and_source_ignoring_case() {
         ids(&browse.listing(&records, NOW, 0).records),
         ["9", "8", "7", "4", "2"]
     );
-    // The type dropdown: All Types, Text, Links and Colors (#166); every
-    // kept record is text.
+    // The type dropdown: All Types, Text, Images, Files, Links and Colors
+    // (#166, #167); every record here is text.
     assert_eq!(
         ClipboardFilter::ALL.map(ClipboardFilter::label),
-        ["All Types", "Text", "Links", "Colors"]
+        ["All Types", "Text", "Images", "Files", "Links", "Colors"]
     );
     browse.query.clear();
     browse.filter = ClipboardFilter::Text;
@@ -244,10 +246,25 @@ fn search_keeps_the_store_order_and_matches_text_and_source_ignoring_case() {
 }
 
 /// The type dropdown keeps the records of its kind: links and colours are
-/// text recognized as a URL or a colour value, and Text keeps them too.
+/// text recognized as a URL or a colour value, and Text keeps them too;
+/// images and files are kinds of their own (#167).
 #[test]
 fn the_type_dropdown_filters_by_kind() {
     let records = vec![
+        ClipboardRecord::image(
+            "7",
+            ClipboardImage {
+                path: PathBuf::from("shot.png"),
+                width: 640,
+                height: 480,
+            },
+            1_791_183_840_000,
+        ),
+        ClipboardRecord::files(
+            "6",
+            vec![PathBuf::from("/notes/a.txt"), PathBuf::from("/notes/b")],
+            1_791_183_780_000,
+        ),
         record("5", "https://example.com/docs", 1_791_183_720_000, None),
         record("4", "#ff8800", 1_791_183_660_000, None),
         record("3", "rgb(12, 34, 56)", 1_791_183_600_000, None),
@@ -258,6 +275,8 @@ fn the_type_dropdown_filters_by_kind() {
     assert_eq!(
         kinds,
         [
+            ClipboardKind::Image,
+            ClipboardKind::Files,
             ClipboardKind::Link,
             ClipboardKind::Color,
             ClipboardKind::Color,
@@ -272,11 +291,24 @@ fn the_type_dropdown_filters_by_kind() {
         };
         ids(&browse.listing(&records, NOW, 0).records)
     };
-    assert_eq!(listed(ClipboardFilter::All), ["5", "4", "3", "2", "1"]);
+    assert_eq!(
+        listed(ClipboardFilter::All),
+        ["7", "6", "5", "4", "3", "2", "1"]
+    );
     assert_eq!(listed(ClipboardFilter::Text), ["5", "4", "3", "2", "1"]);
+    assert_eq!(listed(ClipboardFilter::Images), ["7"]);
+    assert_eq!(listed(ClipboardFilter::Files), ["6"]);
     assert_eq!(listed(ClipboardFilter::Links), ["5"]);
     assert_eq!(listed(ClipboardFilter::Colors), ["4", "3"]);
-    // The dropdown names its choices by stable ids.
+    // The dropdown's choices, in Raycast's order, named by stable ids.
+    let labels: Vec<&str> = ClipboardFilter::ALL
+        .into_iter()
+        .map(ClipboardFilter::label)
+        .collect();
+    assert_eq!(
+        labels,
+        ["All Types", "Text", "Images", "Files", "Links", "Colors"]
+    );
     for filter in ClipboardFilter::ALL {
         assert_eq!(ClipboardFilter::from_id(filter.id()), Some(filter));
     }
@@ -291,7 +323,8 @@ fn the_type_dropdown_filters_by_kind() {
 }
 
 /// The detail's Information: Source (the program's name, and its path for
-/// its icon where the system gave one), Type, Characters and Copied.
+/// its icon where the system gave one), Type, Characters (text) or
+/// Dimensions (an image), and Copied.
 #[test]
 fn the_information_says_source_type_characters_and_copied() {
     let records = kept();
@@ -299,8 +332,24 @@ fn the_information_says_source_type_characters_and_copied() {
     assert_eq!(info.source.as_deref(), Some("Code"));
     assert_eq!(info.source_path, None, "a file name alone has no icon");
     assert_eq!(info.kind, "Text");
-    assert_eq!(info.characters, records[0].text.chars().count());
+    assert_eq!(info.characters, Some(records[0].text.chars().count()));
+    assert_eq!(info.dimensions, None);
     assert_eq!(info.copied, "Today at 14:02");
+    // An image: its Dimensions, no Characters (#167).
+    let image = ClipboardRecord::image(
+        "11",
+        ClipboardImage {
+            path: PathBuf::from("shot.png"),
+            width: 1920,
+            height: 1080,
+        },
+        NOW,
+    );
+    let info = information(&image, NOW, PLUS_7);
+    assert_eq!(info.kind, "Image");
+    assert_eq!(info.dimensions.as_deref(), Some("1920×1080"));
+    assert_eq!(info.characters, None);
+    assert_eq!(image.title(), "Image (1920×1080)");
     // A program named by its path (Windows) is named by its file, and its
     // path gives its icon.
     let path = if cfg!(windows) {
@@ -314,7 +363,7 @@ fn the_information_says_source_type_characters_and_copied() {
     assert_eq!(info.source.as_deref(), Some(name));
     assert_eq!(info.source_path, Some(std::path::PathBuf::from(path)));
     assert_eq!(info.kind, "Color");
-    assert_eq!(info.characters, 4);
+    assert_eq!(info.characters, Some(4));
     // No source, no Source.
     assert_eq!(information(&records[1], NOW, PLUS_7).source, None);
     // Copied, by local day.
@@ -373,6 +422,10 @@ fn the_selection_stays_in_range_as_the_filter_and_deletion_change_the_list() {
 struct Clipboard {
     sink: Option<Arc<dyn Sink>>,
     written: Vec<String>,
+    /// The images Pane put on the clipboard, as PNGs (#167).
+    images: Vec<Vec<u8>>,
+    /// The files Pane put on the clipboard, a list per write (#167).
+    files: Vec<Vec<PathBuf>>,
 }
 
 /// A system clipboard that records what Pane writes, and reports only the
@@ -431,8 +484,34 @@ impl FakeClipboard {
         true
     }
 
+    /// `content` (an image or files, #167) copied from `source`, if Pane
+    /// watches; whether it did.
+    fn copy_content(&self, content: Content, source: Option<&str>) -> bool {
+        let Some(sink) = self.inner.lock().unwrap().sink.clone() else {
+            return false;
+        };
+        let ticket = sink.reading();
+        sink.observed(
+            ticket,
+            Observation {
+                content,
+                markers: Markers::default(),
+                source: source.map(str::to_owned),
+            },
+        );
+        true
+    }
+
     fn written(&self) -> Vec<String> {
         self.inner.lock().unwrap().written.clone()
+    }
+
+    fn written_images(&self) -> Vec<Vec<u8>> {
+        self.inner.lock().unwrap().images.clone()
+    }
+
+    fn written_files(&self) -> Vec<Vec<PathBuf>> {
+        self.inner.lock().unwrap().files.clone()
     }
 }
 
@@ -454,6 +533,22 @@ impl ClipboardSystem for FakeClipboard {
             return Err(reason.clone());
         }
         self.inner.lock().unwrap().written.push(text.into());
+        Ok(())
+    }
+
+    fn write_image(&self, png: &[u8]) -> Result<(), String> {
+        if let Some(reason) = &self.unavailable {
+            return Err(reason.clone());
+        }
+        self.inner.lock().unwrap().images.push(png.to_vec());
+        Ok(())
+    }
+
+    fn write_files(&self, paths: &[PathBuf]) -> Result<(), String> {
+        if let Some(reason) = &self.unavailable {
+            return Err(reason.clone());
+        }
+        self.inner.lock().unwrap().files.push(paths.to_vec());
         Ok(())
     }
 }
@@ -1025,6 +1120,135 @@ fn paste_pastes_a_record_or_copies_it_where_paste_is_not_available() {
     launcher.delete_clipboard_record(&view, &newest).unwrap();
     block_on(launcher.paste_clipboard_record(&view, &newest));
     assert!(system.take().is_empty());
+}
+
+/// A copied image of `width` × `height` red pixels, as an adapter reports
+/// it.
+fn copied_image(width: u32, height: u32) -> CopiedImage {
+    let pixels: Vec<u8> = [255, 0, 0, 255].repeat((width * height) as usize);
+    let png = pane_core::icons::encode_png(width, height, &pixels).unwrap();
+    CopiedImage::from_png(png).unwrap()
+}
+
+/// #167: a copied image and copied files are kept beside text — the image
+/// as a PNG in the history's own folder, the files as their paths — under
+/// the same rules (a disabled application's are not), listed with their
+/// kinds, titles and the image's file; Copy and Paste put them back as
+/// what they were; an oversized copy is not kept; and an image expires,
+/// its PNG with it.
+#[test]
+fn copied_images_and_files_are_kept_and_put_back_as_what_they_were() {
+    let pane = Pane::new();
+    let system = Arc::new(RecordingSystem::default());
+    let launcher = pane.start().with_system(system.clone());
+    let window = RecordingWindow::attach(&launcher);
+    let identity = PackageIdentity::default_extension("clipboard-history");
+    let image = copied_image(3, 2);
+    let files = vec![
+        pane.data.path().join("report.pdf"),
+        pane.data.path().join("photos"),
+    ];
+    assert!(
+        pane.clipboard
+            .copy_content(Content::Image(image.clone()), Some("mspaint.exe"))
+    );
+    assert!(
+        pane.clipboard
+            .copy_content(Content::Files(files.clone()), Some("explorer.exe"))
+    );
+    // Oversized, or too large to read: skipped.
+    let huge = CopiedImage {
+        png: vec![0; MAX_IMAGE_BYTES + 1],
+        width: 1,
+        height: 1,
+    };
+    assert!(pane.clipboard.copy_content(Content::Image(huge), None));
+    assert!(pane.clipboard.copy_content(Content::TooLarge, None));
+    // A disabled application's image is not kept either.
+    block_on(launcher.set_preference(&identity, "disabledApplications", Some("Snip.exe"))).unwrap();
+    assert!(
+        pane.clipboard
+            .copy_content(Content::Image(copied_image(1, 1)), Some("snip.exe"))
+    );
+
+    open(&launcher, COMMAND);
+    let view = launcher.clipboard_history().unwrap();
+    let kinds: Vec<ClipboardKind> = view.records.iter().map(|r| r.kind).collect();
+    assert_eq!(kinds, [ClipboardKind::Files, ClipboardKind::Image]);
+    let (listed_files, listed_image) = (&view.records[0], &view.records[1]);
+    assert_eq!(listed_files.title(), "report.pdf +1");
+    assert_eq!(listed_files.files, files);
+    assert_eq!(listed_image.title(), "Image (3×2)");
+    let kept = listed_image.image.clone().expect("an image record");
+    assert_eq!((kept.width, kept.height), (3, 2));
+    // The PNG is kept in the history's own folder, beside its file.
+    assert!(
+        kept.path
+            .starts_with(pane.data.path().join("extensions/clipboard-images"))
+    );
+    assert_eq!(fs::read(&kept.path).unwrap(), image.png);
+    // The dropdown keeps each by its kind.
+    let browse = ClipboardBrowse {
+        filter: ClipboardFilter::Images,
+        ..ClipboardBrowse::default()
+    };
+    assert_eq!(
+        ids(&browse.listing(&view.records, view.now, 0).records),
+        [listed_image.id.clone()]
+    );
+
+    // Copy puts each back as what it was.
+    launcher
+        .copy_clipboard_record(&view, &listed_image.id)
+        .unwrap();
+    assert_eq!(pane.clipboard.written_images(), [image.png.clone()]);
+    open(&launcher, COMMAND);
+    let view = launcher.clipboard_history().unwrap();
+    let files_id = view.records[0].id.clone();
+    launcher.copy_clipboard_record(&view, &files_id).unwrap();
+    assert_eq!(pane.clipboard.written_files(), [files.clone()]);
+    assert!(pane.clipboard.written().is_empty(), "no text was written");
+
+    // Paste: where the system can paste, files and an image have no clip
+    // it pastes yet, so they are copied as what they are instead, and
+    // said so.
+    system.support_paste();
+    window.take();
+    open(&launcher, COMMAND);
+    let view = launcher.clipboard_history().unwrap();
+    let image_id = view
+        .records
+        .iter()
+        .find(|record| record.kind == ClipboardKind::Image)
+        .unwrap()
+        .id
+        .clone();
+    block_on(launcher.paste_clipboard_record(&view, &image_id));
+    assert!(system.take().is_empty(), "nothing was pasted");
+    assert_eq!(pane.clipboard.written_images().len(), 2);
+    let huds: Vec<String> = window.huds().into_iter().map(|hud| hud.title).collect();
+    assert_eq!(huds, ["Copied — paste is not available here yet"]);
+
+    // Deleted, its PNG goes with it; expired, the same.
+    let kept_path = kept.path.clone();
+    open(&launcher, COMMAND);
+    assert!(
+        pane.clipboard
+            .copy_content(Content::Image(copied_image(4, 4)), None)
+    );
+    let view = launcher.clipboard_history().unwrap();
+    let newest = view.records[0].image.clone().expect("the new image");
+    assert!(newest.path.is_file());
+    launcher
+        .delete_clipboard_record(&view, &view.records[0].id)
+        .unwrap();
+    assert!(!newest.path.exists(), "a deleted image's PNG is deleted");
+    assert!(kept_path.is_file());
+    pane.clock
+        .advance(std::time::Duration::from_secs(7 * 86_400));
+    assert!(listed(&launcher).is_empty());
+    assert!(!kept_path.exists(), "an expired image's PNG is deleted");
+    drop(window);
 }
 
 #[test]

@@ -18,6 +18,10 @@
 //! [`ClipboardKind::of_text`], [`day_of`], [`time_label`],
 //! [`information`]), so the rules are the same wherever they are drawn.
 //!
+//! A record is text (a link and a colour being text Pane recognizes), a
+//! copied image — drawn from the PNG the history keeps of it
+//! ([`ClipboardImage`]) — or copied files, by their paths (#167).
+//!
 //! The operations are the history's existing ones — copy a record again,
 //! delete it, pause or resume recording, keep history for another time,
 //! clear it (once the user confirms) — and pasting a record into the
@@ -32,9 +36,10 @@
 //! page has the same controls, as preferences whose values are the
 //! history's own (see `clipboard_settings`).
 
+use std::borrow::Cow;
 use std::fmt;
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::own_actions::COPIED;
 use super::{Launcher, Screen, State, Status, owner};
@@ -62,7 +67,8 @@ pub const RETENTIONS: [(u64, &str); 5] = [
 
 /// What a kept record is, as the type dropdown and the Information say.
 /// Links and colours are text Pane recognizes as a URL or a colour value
-/// ([`ClipboardKind::of_text`]); every kind so far is text.
+/// ([`ClipboardKind::of_text`]); an image and files are what the history
+/// kept them as (#167).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ClipboardKind {
     /// Plain text.
@@ -72,6 +78,10 @@ pub enum ClipboardKind {
     Link,
     /// Text that is one colour value (`#ff8800`, `rgb(…)`, `hsl(…)`).
     Color,
+    /// A copied image, kept as a PNG.
+    Image,
+    /// Copied files and folders, kept as their paths.
+    Files,
 }
 
 impl ClipboardKind {
@@ -88,16 +98,20 @@ impl ClipboardKind {
         }
     }
 
-    /// Its name in the Information: "Text", "Link", "Color".
+    /// Its name in the Information: "Text", "Link", "Color", "Image",
+    /// "File".
     pub fn label(self) -> &'static str {
         match self {
             ClipboardKind::Text => "Text",
             ClipboardKind::Link => "Link",
             ClipboardKind::Color => "Color",
+            ClipboardKind::Image => "Image",
+            ClipboardKind::Files => "File",
         }
     }
 
-    /// Whether a record of this kind is text: every kind so far is.
+    /// Whether a record of this kind is text: plain text, a link or a
+    /// colour; an image and files are not.
     pub fn is_text(self) -> bool {
         matches!(
             self,
@@ -166,16 +180,32 @@ pub struct ClipboardRecord {
     /// Opaque: identifies the record among its package's, for its
     /// operations; never reused.
     pub id: String,
-    /// The full stored text.
+    /// The full stored text; for an image its title ("Image (1920×1080)"),
+    /// for files their paths, one per line.
     pub text: String,
-    /// What it is: text, a link or a colour.
+    /// What it is: text, a link, a colour, an image or files.
     pub kind: ClipboardKind,
+    /// The image it is, if it is one (#167).
+    pub image: Option<ClipboardImage>,
+    /// The files it is, by their paths in the order copied, if it is files
+    /// (#167); empty otherwise.
+    pub files: Vec<PathBuf>,
     /// When it was copied, in milliseconds since the Unix epoch.
     pub copied_at: u64,
     /// The program it was copied from, as the system named it — its path
     /// on Windows (`C:\Windows\notepad.exe`), else its file name or
     /// process name (`notepad.exe`) — if it did.
     pub source: Option<String>,
+}
+
+/// A kept image, as the split view draws it: the PNG Pane keeps of it
+/// (its thumbnail and its preview) and its size.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClipboardImage {
+    /// Where its PNG is, in the history's own folder.
+    pub path: PathBuf,
+    pub width: u32,
+    pub height: u32,
 }
 
 impl ClipboardRecord {
@@ -186,24 +216,72 @@ impl ClipboardRecord {
             id: id.into(),
             kind: ClipboardKind::of_text(&text),
             text,
+            image: None,
+            files: Vec::new(),
             copied_at,
             source: None,
         }
     }
 
-    /// The record's title: its first line with text, trimmed; empty for
-    /// text that is all white space.
-    pub fn title(&self) -> &str {
-        self.text
-            .lines()
-            .map(str::trim)
-            .find(|line| !line.is_empty())
-            .unwrap_or("")
+    /// A record of the image `image`, titled by its size, with no source.
+    pub fn image(id: impl Into<String>, image: ClipboardImage, copied_at: u64) -> Self {
+        ClipboardRecord {
+            id: id.into(),
+            text: clipboard::history::image_title(image.width, image.height),
+            kind: ClipboardKind::Image,
+            image: Some(image),
+            files: Vec::new(),
+            copied_at,
+            source: None,
+        }
+    }
+
+    /// A record of the files `files`, with no source.
+    pub fn files(id: impl Into<String>, files: Vec<PathBuf>, copied_at: u64) -> Self {
+        ClipboardRecord {
+            id: id.into(),
+            text: files
+                .iter()
+                .map(|file| file.display().to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+            kind: ClipboardKind::Files,
+            image: None,
+            files,
+            copied_at,
+            source: None,
+        }
+    }
+
+    /// The record's title: for text, its first line with text, trimmed
+    /// (empty for text that is all white space); for an image "Image
+    /// (1920×1080)"; for files the first one's name, with "+2" for two
+    /// more.
+    pub fn title(&self) -> Cow<'_, str> {
+        if let Some(first) = self.files.first() {
+            let name = file_name(first);
+            return match self.files.len() {
+                1 => Cow::Owned(name),
+                count => Cow::Owned(format!("{name} +{}", count - 1)),
+            };
+        }
+        Cow::Borrowed(
+            self.text
+                .lines()
+                .map(str::trim)
+                .find(|line| !line.is_empty())
+                .unwrap_or(""),
+        )
     }
 
     /// How many characters its text has.
     pub fn characters(&self) -> usize {
         self.text.chars().count()
+    }
+
+    /// Its image's width and height, if it is an image.
+    pub fn dimensions(&self) -> Option<(u32, u32)> {
+        self.image.as_ref().map(|image| (image.width, image.height))
     }
 
     /// The name of the program it was copied from, as the Information's
@@ -235,6 +313,15 @@ impl ClipboardRecord {
                 .as_deref()
                 .is_some_and(|source| program_file_name(source).to_lowercase().contains(needle))
     }
+}
+
+/// The name of the file or folder at `path`, as a files record's title and
+/// its preview name it: its last component, or the whole path for a drive
+/// or the root (`C:\`, `/`).
+pub fn file_name(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
 }
 
 /// The clipboard history of the open Clipboard History command, as read
@@ -490,6 +577,19 @@ fn span(seconds: u64) -> String {
     }
 }
 
+/// What pasting `record` puts on the clipboard for the application in front
+/// to paste: its text, or its one file. An image or several files have no
+/// [`Clip`](crate::system::Clip) the system pastes yet: `None`, and Paste
+/// copies them as what they are instead (#167), as where Pane cannot paste.
+fn pasted_clip(record: &ClipboardRecord) -> Option<crate::system::Clip> {
+    match (&record.image, record.files.as_slice()) {
+        (Some(_), _) => None,
+        (None, []) => Some(crate::system::Clip::Text(record.text.clone())),
+        (None, [file]) => Some(crate::system::Clip::File(file.clone())),
+        (None, _) => None,
+    }
+}
+
 /// "1 kept item", "3 kept items".
 pub(super) fn kept_items(count: usize) -> String {
     if count == 1 {
@@ -518,22 +618,43 @@ impl Launcher {
                 (unavailable.clone(), unavailable)
             }
         };
-        let (history, now, unreadable) = match data.clipboard_history() {
+        let store = data.clipboard_history();
+        let (history, now, unreadable) = match &store {
             Ok(store) => match store.get(data.owner()) {
                 Ok(history) => (history, store.now(), None),
                 Err(reason) => (PackageHistory::default(), store.now(), Some(reason)),
             },
-            Err(refusal) => (PackageHistory::default(), 0, Some(refusal)),
+            Err(refusal) => (PackageHistory::default(), 0, Some(refusal.clone())),
         };
         let records = history
             .items
             .iter()
-            .map(|item| ClipboardRecord {
-                id: item.id.to_string(),
-                kind: ClipboardKind::of_text(&item.text),
-                text: item.text.clone(),
-                copied_at: item.copied_at,
-                source: item.source.clone(),
+            .map(|item| {
+                // An image's PNG is where the store keeps it (#167).
+                let image = item.image.as_ref().and_then(|image| {
+                    let store = store.as_ref().ok()?;
+                    Some(ClipboardImage {
+                        path: store.image_path(data.owner(), &image.digest),
+                        width: image.width,
+                        height: image.height,
+                    })
+                });
+                let kind = if image.is_some() {
+                    ClipboardKind::Image
+                } else if !item.files.is_empty() {
+                    ClipboardKind::Files
+                } else {
+                    ClipboardKind::of_text(&item.text)
+                };
+                ClipboardRecord {
+                    id: item.id.to_string(),
+                    kind,
+                    text: item.text.clone(),
+                    image,
+                    files: item.files.clone(),
+                    copied_at: item.copied_at,
+                    source: item.source.clone(),
+                }
             })
             .collect();
         Some(ClipboardHistoryView {
@@ -555,11 +676,13 @@ impl Launcher {
         })
     }
 
-    /// The icon of the program at `path` (a record's
-    /// [`ClipboardRecord::source_path`]) as the Information's Source shows
-    /// it now: the system's icon once Pane extracted it (#142), which it
-    /// starts doing now if it has not; a neutral placeholder until then,
-    /// and for good if the system has none.
+    /// The icon of the program or file at `path` (a record's
+    /// [`ClipboardRecord::source_path`], or one of its
+    /// [`ClipboardRecord::files`], #167) as the Information's Source, a
+    /// files record's row and its preview show it now: the system's icon
+    /// once Pane extracted it (#142), which it starts doing now if it has
+    /// not; a neutral placeholder until then, and for good if the system
+    /// has none.
     pub fn clipboard_source_icon(&self, path: &std::path::Path) -> Icon {
         let icon = Icon {
             source: IconSource::File(path.to_path_buf()),
@@ -614,17 +737,17 @@ impl Launcher {
         let now = self
             .clipboard_history()
             .filter(|now| now.reading.epoch == epoch && now.owner == view.owner);
-        let text = match &now {
+        let clip = match &now {
             None => Err("That clipboard history is no longer shown".to_owned()),
             Some(now) => now
                 .record(id)
-                .map(|record| record.text.clone())
+                .map(pasted_clip)
                 .ok_or_else(|| "That item is no longer kept".to_owned()),
         };
         {
             let mut state = self.lock();
             if state.screen_epoch == epoch {
-                state.view.status = match &text {
+                state.view.status = match &clip {
                     Err(why) => Status::Error(why.clone()),
                     // Running until it is pasted, or copied instead.
                     Ok(_) => Status::Running,
@@ -636,7 +759,7 @@ impl Launcher {
         let id = id.to_owned();
         let launcher = self.clone();
         async move {
-            let Ok(text) = text else {
+            let Ok(clip) = clip else {
                 return;
             };
             let copy = move || {
@@ -646,9 +769,7 @@ impl Launcher {
                 }
                 .copy(&id)
             };
-            launcher
-                .paste_or_copy(epoch, crate::system::Clip::Text(text), Box::new(copy))
-                .await;
+            launcher.paste_or_copy(epoch, clip, Box::new(copy)).await;
         }
     }
 
@@ -831,23 +952,27 @@ impl Launcher {
     }
 }
 
-/// Which records the type dropdown keeps: All Types, Text, Links or
-/// Colors (#166). Links and colours are text, so Text keeps them too.
-/// Images and files join once the history keeps them (#167).
+/// Which records the type dropdown keeps: All Types, Text, Images, Files,
+/// Links or Colors (#166, #167). Links and colours are text, so Text keeps
+/// them too; an image or files are not text.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ClipboardFilter {
     #[default]
     All,
     Text,
+    Images,
+    Files,
     Links,
     Colors,
 }
 
 impl ClipboardFilter {
     /// The filters, in the dropdown's order.
-    pub const ALL: [ClipboardFilter; 4] = [
+    pub const ALL: [ClipboardFilter; 6] = [
         ClipboardFilter::All,
         ClipboardFilter::Text,
+        ClipboardFilter::Images,
+        ClipboardFilter::Files,
         ClipboardFilter::Links,
         ClipboardFilter::Colors,
     ];
@@ -857,17 +982,21 @@ impl ClipboardFilter {
         match self {
             ClipboardFilter::All => "All Types",
             ClipboardFilter::Text => "Text",
+            ClipboardFilter::Images => "Images",
+            ClipboardFilter::Files => "Files",
             ClipboardFilter::Links => "Links",
             ClipboardFilter::Colors => "Colors",
         }
     }
 
     /// Its stable id, as the dropdown names its choice: "all", "text",
-    /// "links", "colors".
+    /// "images", "files", "links", "colors".
     pub fn id(self) -> &'static str {
         match self {
             ClipboardFilter::All => "all",
             ClipboardFilter::Text => "text",
+            ClipboardFilter::Images => "images",
+            ClipboardFilter::Files => "files",
             ClipboardFilter::Links => "links",
             ClipboardFilter::Colors => "colors",
         }
@@ -885,6 +1014,8 @@ impl ClipboardFilter {
         match self {
             ClipboardFilter::All => true,
             ClipboardFilter::Text => record.kind.is_text(),
+            ClipboardFilter::Images => record.kind == ClipboardKind::Image,
+            ClipboardFilter::Files => record.kind == ClipboardKind::Files,
             ClipboardFilter::Links => record.kind == ClipboardKind::Link,
             ClipboardFilter::Colors => record.kind == ClipboardKind::Color,
         }
@@ -1033,7 +1164,7 @@ impl ClipboardBrowse {
 
 /// The Information the detail pane shows under the selected record's
 /// preview, as Raycast's does: where it was copied from, what it is, how
-/// long it is and when it was copied.
+/// long a text is or how large an image is, and when it was copied.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClipboardInformation {
     /// The program it was copied from, by name (`notepad`), if the system
@@ -1042,10 +1173,13 @@ pub struct ClipboardInformation {
     /// That program's full path, where the system gave one: its icon is
     /// drawn beside the name ([`Launcher::clipboard_source_icon`]).
     pub source_path: Option<PathBuf>,
-    /// "Text", "Link", "Color".
+    /// "Text", "Link", "Color", "Image", "File".
     pub kind: &'static str,
-    /// How many characters it has.
-    pub characters: usize,
+    /// How many characters it has, for text (a link and a colour too);
+    /// `None` for an image or files.
+    pub characters: Option<usize>,
+    /// An image's size, "1920×1080"; `None` for anything else (#167).
+    pub dimensions: Option<String>,
     /// When it was copied: "Today at 14:02", "Yesterday at 23:59",
     /// "Thursday at 09:00", "Sep 28 at 16:12".
     pub copied: String,
@@ -1057,7 +1191,10 @@ pub fn information(record: &ClipboardRecord, now: u64, offset_ms: i64) -> Clipbo
         source: record.source_name(),
         source_path: record.source_path(),
         kind: record.kind.label(),
-        characters: record.characters(),
+        characters: record.kind.is_text().then(|| record.characters()),
+        dimensions: record
+            .dimensions()
+            .map(|(width, height)| format!("{width}×{height}")),
         copied: copied_at_label(record.copied_at, now, offset_ms),
     }
 }
@@ -1310,6 +1447,65 @@ mod tests {
         assert!(
             !record.holds("program files"),
             "only the file name is searched"
+        );
+    }
+
+    /// #167: an image is titled and measured by its size, files by the
+    /// first one's name and how many more; neither counts characters, and
+    /// a search finds them by their title or paths.
+    #[test]
+    fn images_and_files_are_titled_by_size_and_first_name() {
+        let image = ClipboardRecord::image(
+            "1",
+            ClipboardImage {
+                path: PathBuf::from("a.png"),
+                width: 1920,
+                height: 1080,
+            },
+            0,
+        );
+        assert_eq!(image.kind, ClipboardKind::Image);
+        assert_eq!(image.title(), "Image (1920×1080)");
+        let info = information(&image, 0, 0);
+        assert_eq!(info.kind, "Image");
+        assert_eq!(info.dimensions.as_deref(), Some("1920×1080"));
+        assert_eq!(info.characters, None);
+        assert!(image.holds("image"));
+
+        let one = ClipboardRecord::files("2", vec![PathBuf::from("/notes/report.pdf")], 0);
+        assert_eq!(one.kind, ClipboardKind::Files);
+        assert_eq!(one.title(), "report.pdf");
+        let three = ClipboardRecord::files(
+            "3",
+            vec![
+                PathBuf::from("/notes/report.pdf"),
+                PathBuf::from("/notes/b.txt"),
+                PathBuf::from("/notes/photos"),
+            ],
+            0,
+        );
+        assert_eq!(three.title(), "report.pdf +2");
+        assert!(three.holds("photos"));
+        let info = information(&three, 0, 0);
+        assert_eq!(
+            (info.kind, info.characters, info.dimensions),
+            ("File", None, None)
+        );
+        assert_eq!(file_name(Path::new("/")), "/");
+
+        // Paste puts text and one file on the clipboard; an image or
+        // several files are copied instead.
+        assert_eq!(
+            pasted_clip(&one),
+            Some(crate::system::Clip::File(PathBuf::from(
+                "/notes/report.pdf"
+            )))
+        );
+        assert_eq!(pasted_clip(&three), None);
+        assert_eq!(pasted_clip(&image), None);
+        assert_eq!(
+            pasted_clip(&ClipboardRecord::text("4", "hi", 0)),
+            Some(crate::system::Clip::Text("hi".into()))
         );
     }
 }

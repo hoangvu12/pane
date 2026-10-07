@@ -15,6 +15,10 @@
 //! (`CanUploadToCloudClipboard` 1). Other systems have no adapter yet
 //! (their unavailability is checked in `clipboard.rs`).
 //!
+//! Copied images (a bitmap alone, as Paint copies one) and files (as File
+//! Explorer copies them) are read as what they are, and Pane puts them
+//! back so (#167).
+//!
 //! A command's copies through Pane's system functions (#145) are checked
 //! here too: a concealed one carries the markers that keep it out of
 //! Pane's own clipboard history and Windows' (Win+V), a plain one none,
@@ -27,8 +31,8 @@ use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use pane_core::clipboard::{
-    ClipboardSystem, Content, Markers, Observation, Sink, Skip, Ticket, WindowsClipboard, accept,
-    program_file_name, testing,
+    ClipboardSystem, Content, Copied, Markers, Observation, Sink, Skip, Ticket, WindowsClipboard,
+    accept, accept_any, program_file_name, testing,
 };
 use pane_core::system::Clip;
 
@@ -67,8 +71,10 @@ impl Sink for Ours {
         let ours = match &observation.content {
             Content::Text(text) => text.starts_with(&self.prefix),
             // Its text was never read: only this process's own copy can be
-            // told apart, by its owner.
-            Content::Withheld => from_here,
+            // told apart, by its owner. So are its images and files (#167).
+            Content::Withheld | Content::Image(_) | Content::Files(_) | Content::TooLarge => {
+                from_here
+            }
             Content::Other => false,
         };
         if ours {
@@ -187,6 +193,43 @@ fn the_listener_reports_this_tests_changes_with_their_markers_until_dropped() {
     WindowsClipboard.write_text(&written).unwrap();
     next("written text", &text(written));
 
+    // #167: a bitmap alone, as Paint copies a picture, is read as an image
+    // (made into a PNG), which Pane's own Clipboard History keeps.
+    let owner = testing::set_bitmap(&bitmap_24()).unwrap();
+    let bitmap = next(
+        "a copied bitmap",
+        &|report| matches!(&report.content, Content::Image(image) if (image.width, image.height) == (2, 2)),
+    );
+    drop(owner);
+    assert!(matches!(accept_any(&bitmap, &[]), Ok(Copied::Image(_))));
+    assert_eq!(accept(&bitmap, &[]), Err(Skip::NotText));
+    // Pane puts a kept image back as an image: its PNG, as it was kept.
+    let png = match &bitmap.content {
+        Content::Image(image) => image.png.clone(),
+        other => panic!("{other:?}"),
+    };
+    WindowsClipboard.write_image(&png).unwrap();
+    next(
+        "the written image",
+        &|report| matches!(&report.content, Content::Image(image) if image.png == png),
+    );
+
+    // Files, as File Explorer copies them (`CF_HDROP`): every path, in
+    // order; Pane puts kept files back as files.
+    let folder = tempfile::tempdir().unwrap();
+    let files = vec![
+        folder.path().join(format!("{prefix}a b.txt")),
+        folder.path().join(format!("{prefix}c")),
+    ];
+    WindowsClipboard.write_files(&files).unwrap();
+    let copied = next("the written files", &|report| {
+        report.content == Content::Files(files.clone())
+    });
+    assert!(matches!(
+        accept_any(&copied, &[]),
+        Ok(Copied::Files(listed)) if listed == files.as_slice()
+    ));
+
     // Once the watch is dropped, nothing more is reported.
     drop(watch);
     while reports.try_recv().is_ok() {}
@@ -196,6 +239,21 @@ fn the_listener_reports_this_tests_changes_with_their_markers_until_dropped() {
         reports.recv_timeout(Duration::from_secs(1)),
         Err(mpsc::RecvTimeoutError::Disconnected)
     ));
+}
+
+/// A 2×2 bitmap (`BITMAPINFOHEADER`, 24 bits a pixel, bottom row first,
+/// each row padded to 4 bytes): red, green over blue, white.
+fn bitmap_24() -> Vec<u8> {
+    let mut dib = Vec::new();
+    for value in [40u32, 2, 2] {
+        dib.extend_from_slice(&value.to_le_bytes());
+    }
+    dib.extend_from_slice(&1u16.to_le_bytes());
+    dib.extend_from_slice(&24u16.to_le_bytes());
+    dib.extend_from_slice(&[0; 24]);
+    dib.extend_from_slice(&[255, 0, 0, 255, 255, 255, 0, 0]);
+    dib.extend_from_slice(&[0, 0, 255, 0, 255, 0, 0, 0]);
+    dib
 }
 
 /// Passes on every report, whoever copied: the system functions' copies

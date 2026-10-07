@@ -391,7 +391,7 @@ impl Launcher {
                 let copied = text.clone();
                 self.paste_or_copy(
                     epoch,
-                    Clip::Text(text),
+                    Some(Clip::Text(text)),
                     Box::new(move || system.copy(&Clip::Text(copied), false)),
                 )
                 .await;
@@ -512,19 +512,25 @@ impl Launcher {
     /// yet, does `fallback` (a copy) instead and says so in a HUD
     /// ([`PASTE_FALLBACK`]), which closes the window too. A failure is said
     /// in the status line of the screen of `epoch`, and in a HUD once the
-    /// window has closed.
+    /// window has closed. With no `clip` — content the system cannot paste
+    /// through [`Clip`], such as a copied image (#167) — it does `fallback`
+    /// as where Pane cannot paste.
     pub(super) async fn paste_or_copy(
         &self,
         epoch: u64,
-        clip: Clip,
+        clip: Option<Clip>,
         fallback: Box<dyn FnOnce() -> Result<(), String> + Send>,
     ) {
         let system = self.system();
         let asked = system.clone();
         // Asked first, so that a paste this system cannot make leaves the
         // window and the clipboard as they were.
-        let pasted = match off_thread(move || asked.can_paste()).await {
-            Ok(()) => {
+        let can_paste = match clip {
+            Some(clip) => off_thread(move || asked.can_paste()).await.map(|()| clip),
+            None => Err(SystemError::NotAvailable(String::new())),
+        };
+        let pasted = match can_paste {
+            Ok(clip) => {
                 // The application that was in front can only come back
                 // once Pane's window has gone.
                 self.close_after_acting();

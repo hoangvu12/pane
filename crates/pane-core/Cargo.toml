@@ -78,6 +78,10 @@ ignore = "0.4"
 # app's install folder through the package functions, a shortcut's icon
 # location and icon resources.
 [target.'cfg(windows)'.dependencies]
+# Putting a kept clipboard image back as a bitmap (`CF_DIB`) beside its PNG
+# (#167): its pixels, decoded (MIT OR Apache-2.0, already in the tree
+# through GPUI's `image`).
+png = "0.18"
 windows = { workspace = true, features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_Storage_Packaging_Appx", "Win32_System_ApplicationInstallationAndServicing", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_DataExchange", "Win32_System_Diagnostics_ToolHelp", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_Threading", "Win32_System_Variant", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_Shell_PropertiesSystem", "Win32_UI_WindowsAndMessaging"] }
 
 # Global hotkeys on X11 (key grabs on the root window) and the X11
@@ -101,9 +105,11 @@ global-hotkey = "0.8"
 # file copies and its trash (#145: NSURL, NSFileManager): pure Rust
 # bindings with no build script, already in the dependency tree through GPUI
 # CE's and global-hotkey's AppKit code. The system icon of a file or an
-# application (#142): NSWorkspace's icon, its images and their PNG.
+# application (#142): NSWorkspace's icon, its images and their PNG. Copied
+# images and files in clipboard history (#167): a copy's pasteboard items
+# (every file URL), and a TIFF made into a PNG and back.
 objc2.workspace = true
-objc2-app-kit = { version = "0.3", default-features = false, features = ["NSControl", "NSMenu", "NSMenuItem", "NSPasteboard", "NSResponder", "NSStatusBar", "NSStatusBarButton", "NSStatusItem", "NSView", "NSButton", "NSWorkspace", "NSImage", "NSImageRep", "NSBitmapImageRep", "objc2-core-foundation"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSControl", "NSMenu", "NSMenuItem", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSStatusBar", "NSStatusBarButton", "NSStatusItem", "NSView", "NSButton", "NSWorkspace", "NSImage", "NSImageRep", "NSBitmapImageRep", "objc2-core-foundation"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSData", "NSDictionary", "NSError", "NSFileManager", "NSString", "NSURL", "std"] }
 # The file index's change source (#175): an FSEvents stream opened from a
 # saved event id, so that FSEvents replays what changed while Pane was not

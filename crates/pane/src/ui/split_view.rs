@@ -10,7 +10,9 @@
 //! status), the buttons on
 //! the right. Its rows are the reference's `.row` with a 13.5px title and
 //! the time in Geist Mono; its section labels, keycaps and footer buttons
-//! are the launcher's own families.
+//! are the launcher's own families. A copied image's row shows its
+//! thumbnail and its preview the image; copied files' row shows the first
+//! one's system icon and its preview lists them (#167).
 //!
 //! Like the rest of this layer it decides nothing: the caller passes the
 //! display values and attaches identity, focus and handlers (a row takes
@@ -21,9 +23,12 @@
 //! A window narrower than the reference keeps the view usable: the list
 //! takes at most half the width, the detail the rest, and both scroll.
 
+use std::path::PathBuf;
+
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, BoxShadow, Div, ElementId, Entity, Hsla, SharedString, Stateful, div, px, relative,
+    AnyElement, BoxShadow, Div, ElementId, Entity, Hsla, ObjectFit, SharedString, Stateful, div,
+    img, px, relative,
 };
 use gpui_elements::editable_text::{EditableTextState, text_input};
 
@@ -168,18 +173,48 @@ pub(crate) struct ClipRow {
     pub(crate) title: SharedString,
     pub(crate) time: SharedString,
     pub(crate) selected: bool,
-    /// The glyph on the row's neutral tile: the record's kind.
-    pub(crate) glyph: Glyph,
+}
+
+/// A text record's mark: `glyph` (its kind) on the row's neutral tile.
+pub(crate) fn kind_mark(glyph: Glyph, theme: &Theme) -> AnyElement {
+    icon::tile(IconTone::Command, glyph, theme).into_any_element()
+}
+
+/// A copied image's mark (#167): the image at `path` (the PNG the history
+/// keeps), filling the row's tile box, its corners the tile's, over the
+/// preview's surface while it loads.
+pub(crate) fn thumbnail_mark(path: PathBuf, theme: &Theme) -> AnyElement {
+    let tile = theme.geometry.tile;
+    div()
+        .debug_selector(|| "clip-thumbnail".into())
+        .flex_none()
+        .size(tile.size)
+        .rounded(tile.radius)
+        .overflow_hidden()
+        .bg(theme.split.preview_fill)
+        .child(
+            img(path)
+                .size(tile.size)
+                .rounded(tile.radius)
+                .object_fit(ObjectFit::Cover),
+        )
+        .into_any_element()
 }
 
 /// A record's row (the reference's `.row`): 44 high, radius 10, 10px
-/// either side, 12 between its mark, its 13.5px/500 title (truncating)
+/// either side, 12 between its `mark` (its kind's tile, an image's
+/// thumbnail or a file's system icon), its 13.5px/500 title (truncating)
 /// and its time in Geist Mono 11.5. The hover wash shows on an unselected
 /// row; the selected one keeps its wash and inset edge. While held, a row
 /// takes the [`pressed`] wash of its hover, or of its selected wash, at
 /// once. The row is `id`; the caller attaches accessibility and the click,
 /// which selects.
-pub(crate) fn clip_row(id: impl Into<ElementId>, row: ClipRow, theme: &Theme) -> Stateful<Div> {
+pub(crate) fn clip_row(
+    id: impl Into<ElementId>,
+    row: ClipRow,
+    mark: AnyElement,
+    theme: &Theme,
+) -> Stateful<Div> {
     let geometry = &theme.geometry;
     let split = &theme.split;
     let press = pressed(if row.selected {
@@ -209,7 +244,7 @@ pub(crate) fn clip_row(id: impl Into<ElementId>, row: ClipRow, theme: &Theme) ->
                     .inset(),
             ])
         })
-        .child(icon::tile(IconTone::Command, row.glyph, theme))
+        .child(mark)
         .child(
             div()
                 .flex_1()
@@ -294,6 +329,78 @@ pub(crate) fn text_preview(text: impl Into<SharedString>, theme: &Theme) -> Div 
         .letter_spacing(split.text_size * split.text_tracking)
         .text_color(theme.text_title)
         .child(text.into())
+}
+
+/// A copied image, previewed (#167): the image at `path` (the PNG the
+/// history keeps) fit inside the card, centred, padded as text is.
+pub(crate) fn image_preview(path: PathBuf, theme: &Theme) -> Div {
+    let split = &theme.split;
+    div()
+        .debug_selector(|| "clipboard-preview-image".into())
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .px(split.text_padding_x)
+        .py(split.text_padding_y)
+        .child(img(path).size_full().object_fit(ObjectFit::Contain))
+}
+
+/// One copied file in a files record's preview: its system `icon`, its
+/// name and the folder it is in.
+pub(crate) struct FileLine {
+    pub(crate) icon: AnyElement,
+    pub(crate) name: SharedString,
+    pub(crate) folder: SharedString,
+}
+
+/// Copied files, previewed (#167): one line each, in the order copied,
+/// with its icon, its name and, muted, the folder it is in; padded as
+/// text is.
+pub(crate) fn files_preview(files: Vec<FileLine>, theme: &Theme) -> Div {
+    let split = &theme.split;
+    let tile = theme.geometry.tile;
+    div()
+        .debug_selector(|| "clipboard-preview-files".into())
+        .flex()
+        .flex_col()
+        .gap(split.info_gap)
+        .px(split.text_padding_x)
+        .py(split.text_padding_y)
+        .children(files.into_iter().map(|file| {
+            let selector = format!("clipboard-preview-file-{}", file.name);
+            div()
+                .debug_selector(move || selector)
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(theme.geometry.row_gap)
+                .child(div().flex_none().size(tile.size).child(file.icon))
+                .child(
+                    div()
+                        .min_w(px(0.))
+                        .flex()
+                        .flex_col()
+                        .child(
+                            div()
+                                .truncate()
+                                .text_size(split.title_size)
+                                .font_weight(theme.typography.medium)
+                                .text_color(theme.text_title)
+                                .child(file.name),
+                        )
+                        .child(
+                            div()
+                                .truncate()
+                                .text_size(split.info_size)
+                                .text_color(theme.text_muted)
+                                .child(file.folder),
+                        ),
+                )
+        }))
 }
 
 /// One row of the Information: its `label` on the left, muted, and its

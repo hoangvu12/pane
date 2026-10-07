@@ -3147,6 +3147,10 @@ mod clipboard_split {
     struct Kept {
         sink: Option<Arc<dyn Sink>>,
         written: Vec<String>,
+        /// The images Pane put on the clipboard, as PNGs (#167).
+        images: Vec<Vec<u8>>,
+        /// The files Pane put on the clipboard, a list per write (#167).
+        files: Vec<Vec<std::path::PathBuf>>,
     }
 
     /// A system clipboard that records what Pane writes and reports only
@@ -3180,8 +3184,34 @@ mod clipboard_split {
             true
         }
 
+        /// `content` (an image or files, #167) copied from `source`:
+        /// whether Pane watched.
+        fn copy_content(&self, content: Content, source: Option<&str>) -> bool {
+            let Some(sink) = self.0.lock().unwrap().sink.clone() else {
+                return false;
+            };
+            let ticket = sink.reading();
+            sink.observed(
+                ticket,
+                Observation {
+                    content,
+                    markers: Markers::default(),
+                    source: source.map(str::to_owned),
+                },
+            );
+            true
+        }
+
         fn written(&self) -> Vec<String> {
             self.0.lock().unwrap().written.clone()
+        }
+
+        fn written_images(&self) -> Vec<Vec<u8>> {
+            self.0.lock().unwrap().images.clone()
+        }
+
+        fn written_files(&self) -> Vec<Vec<std::path::PathBuf>> {
+            self.0.lock().unwrap().files.clone()
         }
     }
 
@@ -3197,6 +3227,16 @@ mod clipboard_split {
 
         fn write_text(&self, text: &str) -> Result<(), String> {
             self.0.lock().unwrap().written.push(text.into());
+            Ok(())
+        }
+
+        fn write_image(&self, png: &[u8]) -> Result<(), String> {
+            self.0.lock().unwrap().images.push(png.to_vec());
+            Ok(())
+        }
+
+        fn write_files(&self, paths: &[std::path::PathBuf]) -> Result<(), String> {
+            self.0.lock().unwrap().files.push(paths.to_vec());
             Ok(())
         }
     }
@@ -3645,6 +3685,95 @@ mod clipboard_split {
             assert!(cx.debug_bounds(row).is_some(), "{row} is shown");
         }
         settle(&window, cx);
+    }
+
+    /// #167: a copied image's row shows its thumbnail and its detail the
+    /// image with its Dimensions; copied files' row shows the first file's
+    /// system icon, titled by its name and how many more, and its detail
+    /// lists them; the dropdown's Images and Files keep each; and Copy puts
+    /// each back as what it was.
+    #[gpui::test]
+    fn images_and_files_show_a_thumbnail_and_a_preview_and_filter_by_type(cx: &mut TestAppContext) {
+        let world = World::new();
+        let launcher = world.launcher(cx, &["alpha"]);
+        let pixels: Vec<u8> = [0, 128, 255, 255].repeat(3 * 2);
+        let png = pane_core::icons::encode_png(3, 2, &pixels).unwrap();
+        let image = pane_core::clipboard::CopiedImage::from_png(png.clone()).unwrap();
+        assert!(
+            world
+                .clipboard
+                .copy_content(Content::Image(image), Some("mspaint.exe"))
+        );
+        world.clock.advance(std::time::Duration::from_secs(60));
+        let files = vec![
+            world.data.path().join("report.pdf"),
+            world.data.path().join("photos"),
+        ];
+        assert!(
+            world
+                .clipboard
+                .copy_content(Content::Files(files.clone()), Some("explorer.exe"))
+        );
+        let (window, cx) = open_history(cx, launcher);
+        settle(&window, cx);
+
+        // The files, newest, selected: the first file's icon on the row,
+        // and the files listed in the preview; no Characters.
+        for drawn in [
+            "clip-report.pdf +1",
+            "icon-clip-file",
+            "clipboard-preview-files",
+            "clipboard-preview-file-report.pdf",
+            "clipboard-preview-file-photos",
+            "clip-Image (3×2)",
+            "clip-thumbnail",
+        ] {
+            assert!(cx.debug_bounds(drawn).is_some(), "{drawn} is drawn");
+        }
+        assert!(cx.debug_bounds("clipboard-info-Characters").is_none());
+        assert!(cx.debug_bounds("clipboard-preview-text").is_none());
+
+        // The image: previewed, with its Dimensions.
+        click(cx, "clip-Image (3×2)");
+        settle(&window, cx);
+        assert!(cx.debug_bounds("clipboard-preview-image").is_some());
+        assert!(cx.debug_bounds("clipboard-info-Dimensions").is_some());
+        assert!(cx.debug_bounds("clipboard-info-Characters").is_none());
+
+        // The dropdown keeps the images, then the files.
+        click(cx, "clipboard-type");
+        settle(&window, cx);
+        click(cx, "clipboard-type-images");
+        settle(&window, cx);
+        assert!(cx.debug_bounds("clip-Image (3×2)").is_some());
+        assert!(cx.debug_bounds("clip-report.pdf +1").is_none());
+        assert!(cx.debug_bounds("clip-alpha").is_none());
+        click(cx, "clipboard-type");
+        settle(&window, cx);
+        click(cx, "clipboard-type-files");
+        settle(&window, cx);
+        assert!(cx.debug_bounds("clip-report.pdf +1").is_some());
+        assert!(cx.debug_bounds("clip-Image (3×2)").is_none());
+        assert!(cx.debug_bounds("clip-alpha").is_none());
+
+        // Copy (Ctrl+Enter) puts the files back as files.
+        cx.simulate_keystrokes("ctrl-enter");
+        copied(&window, cx);
+        assert_eq!(world.clipboard.written_files(), [files]);
+        assert!(world.clipboard.written().is_empty());
+
+        // Shown again, the image copies back as an image.
+        window.update_in(cx, |window, w, cx| {
+            window.tray_selected(TrayAction::OpenPane, w, cx)
+        });
+        settle(&window, cx);
+        click(cx, "clipboard-type");
+        settle(&window, cx);
+        click(cx, "clipboard-type-images");
+        settle(&window, cx);
+        cx.simulate_keystrokes("ctrl-enter");
+        copied(&window, cx);
+        assert_eq!(world.clipboard.written_images(), [png]);
     }
 
     #[gpui::test]

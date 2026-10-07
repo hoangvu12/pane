@@ -13,12 +13,16 @@
 //!
 //! - Typing filters the records by their text and source ("Type to filter
 //!   entries…"); the type dropdown at the search field's right keeps All
-//!   Types, Text, Links or Colors. The search field carries no badge: the
-//!   footer names the command by its icon and title (#162).
+//!   Types, Text, Images, Files, Links or Colors. The search field carries
+//!   no badge: the footer names the command by its icon and title (#162).
 //! - The records are grouped by local day: Today, Yesterday, then dates.
-//! - The detail pane previews the selected record over its Information:
-//!   Source (the application's name and, where Pane knows its path, its
-//!   icon), Type, Characters and Copied.
+//!   A copied image's row shows its thumbnail, titled "Image (W×H)"; a
+//!   files row the first file's system icon, titled by its name ("+N" for
+//!   more) (#167).
+//! - The detail pane previews the selected record — its text, its image,
+//!   or its files with their icons — over its Information: Source (the
+//!   application's name and, where Pane knows its path, its icon), Type,
+//!   Characters (text) or Dimensions (an image), and Copied.
 //! - Up and Down move the selection and keep it in view; a click selects
 //!   (it never copies).
 //! - Enter, or the footer's Paste, pastes the selected record into the
@@ -41,31 +45,33 @@
 //! adapts (see [`crate::ui::split_view`]).
 
 use std::cell::Cell;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::{
-    AnyElement, App, ClickEvent, Context, Div, Entity, EntityInputHandler, Focusable, KeyBinding,
-    Role, SharedString, Subscription, Task, Window, actions, div, prelude::*, px,
+    AnyElement, App, ClickEvent, Context, Div, ElementId, Entity, EntityInputHandler, Focusable,
+    KeyBinding, Role, SharedString, Subscription, Task, Window, actions, div, prelude::*, px,
 };
 use gpui_elements::editable_text::actions::DEFAULT_INPUT_CONTEXT;
 use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged};
 use pane_core::clipboard::CaptureState;
 use pane_core::clipboard_view::{
     ClipboardAction, ClipboardBrowse, ClipboardFilter, ClipboardHistoryView, ClipboardKind,
-    information, local_offset_ms, time_label,
+    ClipboardRecord, file_name, information, local_offset_ms, time_label,
 };
 use pane_core::{Binding, Keyboard, KeyboardAction, LauncherView, Screen, Status};
 
 use crate::app::{KEY_CONTEXT, LauncherWindow};
 use crate::ui::extension_icon::{self, IconSize};
 use crate::ui::footer::{self, ButtonWash};
-use crate::ui::icon::{Glyph, IconTone};
+use crate::ui::icon::{Glyph, IconTone, TileSize};
 use crate::ui::input::TextEditingKeys;
 use crate::ui::keycap::{CapStyle, KeySequence};
 use crate::ui::select::{Choice, Model, Select};
 use crate::ui::shell::{self, SectionLabel};
 use crate::ui::split_view::{self, ClipRow, InfoRow};
+use crate::ui::theme::Theme;
 use crate::ui::virtual_list::{self, ListChild, VirtualList};
 use crate::{
     Back, Confirm, OpenActions, SelectNext, SelectNextPage, SelectPrevious, SelectPreviousPage,
@@ -84,7 +90,8 @@ pub(crate) const DELETE_BINDING: &str = "ctrl-d";
 pub(crate) const PLACEHOLDER: &str = "Type to filter entries…";
 
 /// The type dropdown's debug selector: its trigger is this, a choice's row
-/// `clipboard-type-<id>` (`all`, `text`, `links`, `colors`).
+/// `clipboard-type-<id>` (`all`, `text`, `images`, `files`, `links`,
+/// `colors`).
 pub(crate) const TYPE_SELECT: &str = "clipboard-type";
 
 /// Registers the view's keys: the previous and next result bindings in
@@ -144,12 +151,39 @@ pub(crate) fn empty_note(unreadable: Option<&str>, kept: bool, capture: CaptureS
     }
 }
 
-/// The glyph of a record of `kind` on its row's tile.
+/// The glyph of a record of `kind` on its row's tile. An image's row shows
+/// its thumbnail and a files row the first file's icon instead; their
+/// glyphs stand in only where those are not known.
 fn kind_glyph(kind: ClipboardKind) -> Glyph {
     match kind {
         ClipboardKind::Text => Glyph::Lines,
         ClipboardKind::Link => Glyph::ArrowRight,
         ClipboardKind::Color => Glyph::Sliders,
+        ClipboardKind::Image => Glyph::Monitor,
+        ClipboardKind::Files => Glyph::Folder,
+    }
+}
+
+/// What a listed record's row shows before its title (#167).
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ClipMark {
+    /// Its kind's glyph on the neutral tile.
+    Kind(ClipboardKind),
+    /// An image's thumbnail, from its PNG.
+    Thumbnail(PathBuf),
+    /// The system's icon of the first of its files.
+    File(PathBuf),
+}
+
+impl ClipMark {
+    fn of(record: &ClipboardRecord) -> ClipMark {
+        if let Some(image) = &record.image {
+            ClipMark::Thumbnail(image.path.clone())
+        } else if let Some(file) = record.files.first() {
+            ClipMark::File(file.clone())
+        } else {
+            ClipMark::Kind(record.kind)
+        }
     }
 }
 
@@ -213,7 +247,7 @@ struct ClipFrameRow {
     id: String,
     title: String,
     time: String,
-    kind: ClipboardKind,
+    mark: ClipMark,
 }
 
 /// How often the open view looks at the history for what changed behind
@@ -414,7 +448,7 @@ impl LauncherWindow {
     /// or for the history with none selected.
     fn open_clipboard_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let selected = self.selected_record().and_then(|(view, id)| {
-            let title = view.record(&id)?.title().to_owned();
+            let title = view.record(&id)?.title().into_owned();
             Some((id, title))
         });
         self.open_clipboard_actions(selected, window, cx);
@@ -677,9 +711,9 @@ impl LauncherWindow {
                 .iter()
                 .map(|record| ClipFrameRow {
                     id: record.id.clone(),
-                    title: record.title().to_owned(),
+                    title: record.title().into_owned(),
                     time: time_label(record.copied_at, now, offset),
-                    kind: record.kind,
+                    mark: ClipMark::of(record),
                 })
                 .collect(),
             children: virtual_list::children(false, listing.records.len(), &labels),
@@ -691,7 +725,7 @@ impl LauncherWindow {
                 || last.sections != frame.sections
                 || last.rows.len() != frame.rows.len()
                 || last.rows.iter().zip(&frame.rows).any(|(last, now)| {
-                    last.id != now.id || last.title != now.title || last.kind != now.kind
+                    last.id != now.id || last.title != now.title || last.mark != now.mark
                 })
         });
         if changed || state.list.count() != frame.children.len() {
@@ -764,8 +798,8 @@ impl LauncherWindow {
             )
         };
 
-        // The detail: the selected record's text, as it was copied, over
-        // its Information.
+        // The detail: the selected record as it was copied — its text, its
+        // image or its files — over its Information.
         let detail = selected.map(|record| {
             let info = information(record, now, offset);
             let mut rows = Vec::new();
@@ -792,20 +826,55 @@ impl LauncherWindow {
                 value: info.kind.into(),
                 icon: None,
             });
-            rows.push(InfoRow {
-                label: "Characters",
-                value: info.characters.to_string().into(),
-                icon: None,
-            });
+            if let Some(characters) = info.characters {
+                rows.push(InfoRow {
+                    label: "Characters",
+                    value: characters.to_string().into(),
+                    icon: None,
+                });
+            }
+            if let Some(dimensions) = info.dimensions {
+                rows.push(InfoRow {
+                    label: "Dimensions",
+                    value: dimensions.into(),
+                    icon: None,
+                });
+            }
             rows.push(InfoRow {
                 label: "Copied",
                 value: info.copied.into(),
                 icon: None,
             });
+            let preview = if let Some(image) = &record.image {
+                split_view::image_preview(image.path.clone(), &theme)
+            } else if !record.files.is_empty() {
+                let files = record
+                    .files
+                    .iter()
+                    .enumerate()
+                    .map(|(index, file)| split_view::FileLine {
+                        icon: self.file_icon(
+                            file,
+                            ("clipboard-preview-file-icon", index),
+                            "clipboard-preview-file",
+                            &theme,
+                        ),
+                        name: file_name(file).into(),
+                        folder: file
+                            .parent()
+                            .map(|folder| folder.display().to_string())
+                            .unwrap_or_default()
+                            .into(),
+                    })
+                    .collect();
+                split_view::files_preview(files, &theme)
+            } else {
+                split_view::text_preview(record.text.clone(), &theme)
+            };
             split_view::detail(
                 split_view::preview_card(
                     SharedString::from(format!("clipboard-preview-{}", record.id)).into(),
-                    split_view::text_preview(record.text.clone(), &theme).into_any_element(),
+                    preview.into_any_element(),
                     &theme,
                 )
                 .into_any_element(),
@@ -941,6 +1010,28 @@ impl LauncherWindow {
 }
 
 impl LauncherWindow {
+    /// The system's icon of the file at `path`, at a row tile's size, as a
+    /// files record's row and preview show it (#167): requested only when
+    /// drawn, so a row out of view asks for none. `scope` names it in the
+    /// debug selectors.
+    fn file_icon(
+        &self,
+        path: &Path,
+        id: impl Into<ElementId>,
+        scope: &str,
+        theme: &Theme,
+    ) -> AnyElement {
+        let icon = self.launcher.clipboard_source_icon(path);
+        extension_icon::draw(
+            &crate::features::icons::drawn(&icon, theme),
+            IconSize::of(TileSize::Row, theme),
+            id,
+            scope,
+            theme,
+        )
+        .into_any_element()
+    }
+
     /// The split view's list child at `index` of the frame laid out, as
     /// the list draws it: a day's label or a record's row, with the gap
     /// after it and the list's side padding.
@@ -966,14 +1057,23 @@ impl LauncherWindow {
                     let on = frame.selected == Some(row);
                     let id = record.id.clone();
                     let title = record.title.clone();
+                    let mark = match &record.mark {
+                        ClipMark::Kind(kind) => split_view::kind_mark(kind_glyph(*kind), &theme),
+                        ClipMark::Thumbnail(path) => {
+                            split_view::thumbnail_mark(path.clone(), &theme)
+                        }
+                        ClipMark::File(path) => {
+                            self.file_icon(path, ("clip-file-icon", row), "clip-file", &theme)
+                        }
+                    };
                     split_view::clip_row(
                         ("clip", row),
                         ClipRow {
                             title: title.clone().into(),
                             time: record.time.clone().into(),
                             selected: on,
-                            glyph: kind_glyph(record.kind),
                         },
+                        mark,
                         &theme,
                     )
                     .debug_selector(move || format!("clip-{title}"))
@@ -1028,7 +1128,10 @@ mod tests {
             .into_iter()
             .map(|c| c.label.to_string())
             .collect();
-        assert_eq!(labels, ["All Types", "Text", "Links", "Colors"]);
+        assert_eq!(
+            labels,
+            ["All Types", "Text", "Images", "Files", "Links", "Colors"]
+        );
     }
 
     #[cfg(not(target_os = "macos"))]
