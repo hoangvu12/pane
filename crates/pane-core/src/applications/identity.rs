@@ -36,6 +36,12 @@ pub enum Key {
     Bundle(String),
     /// A Linux desktop file id (`org.gnome.Terminal.desktop`).
     DesktopFile(String),
+    /// A Windows shortcut that opens no program file but a link the system
+    /// hands to its handler, in lowercase: an internet shortcut's (`.url`)
+    /// URL, such as `steam://rungameid/570`, or a ClickOnce application's
+    /// (`.appref-ms`) deployment, so that one link on the Desktop and in the
+    /// Start menu is one application.
+    Link(String),
     /// A source with nothing better to identify it by, by its own path: a
     /// bundle without an identifier, a shortcut whose target Pane could not
     /// read.
@@ -66,6 +72,7 @@ impl Key {
             } => ("package", vec![family.as_str(), app.as_str()]),
             Key::Bundle(identifier) => ("bundle", vec![identifier.as_str()]),
             Key::DesktopFile(id) => ("desktop-file", vec![id.as_str()]),
+            Key::Link(link) => ("link", vec![link.as_str()]),
             Key::Path(path) => ("path", vec![path.as_str()]),
         };
         let mut digest = Sha256::new();
@@ -384,6 +391,10 @@ mod tests {
         // The same text under another kind, or split differently, is
         // another application.
         assert_ne!(id, Key::Bundle("firefox.desktop".into()).id());
+        assert_ne!(
+            Key::Link("steam://rungameid/570".into()).id(),
+            Key::Path("steam://rungameid/570".into()).id()
+        );
         assert_ne!(Key::program("ab", "c").id(), Key::program("a", "bc").id());
         assert_ne!(
             Key::Package {

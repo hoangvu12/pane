@@ -6,7 +6,9 @@ Added for [#24](https://github.com/hoangvu12/pane/issues/24) (Windows),
 US44; T01, T03, T22; contributions to G2 and G7, not claims that they pass.
 Stable identities were added for [#169](https://github.com/hoangvu12/pane/issues/169),
 the first slice of "Applications done properly"
-([#124](https://github.com/hoangvu12/pane/issues/124)).
+([#124](https://github.com/hoangvu12/pane/issues/124)), and the Desktops,
+taskbar pins, internet and ClickOnce shortcuts as sources on Windows for
+[#173](https://github.com/hoangvu12/pane/issues/173), its fifth.
 Typing an installed application's name into root search lists it, ranked
 with commands by title, and Enter (or a click) opens it. The feature is a
 **default extension**, Applications, which the user can disable like any
@@ -109,7 +111,16 @@ every system:
     `app-1.0.9003`, `1.2.3.4`, `v2.0`) becomes a wildcard keeping its
     prefix (`app-*`), so Discord or Slack moving into a new version folder
     stays the same application; different arguments (two browser profiles,
-    two web apps) are different applications.
+    two web apps) are different applications. An MSI-advertised shortcut
+    (Office's, for instance), which names the product it installs rather
+    than a file, is resolved through the Windows Installer
+    (`MsiGetShortcutTargetW`, `MsiGetComponentPathW`) to the program that
+    product installed, so it is one application with any plain shortcut to
+    that program; one whose product is not installed is left out.
+  - Windows internet shortcut (`.url`) or ClickOnce application reference
+    (`.appref-ms`): the URL, or the deployment it names, in lowercase, so a
+    game's `steam://rungameid/...` link on the Desktop and in the Start menu
+    is one application.
   - Windows packaged app: its package family name; a package with several
     apps adds the AppUserModelID for every app after the first (by app id).
     A shortcut whose AppUserModelID is a packaged app's is that app.
@@ -121,9 +132,10 @@ every system:
 - Sources with one key are **one application**: two shortcuts to one
   program are one result. Its **primary** source, whose name is its title
   and which Pane opens, is the one in the most preferred place (on Windows
-  the user's Start menu before every user's, then the Apps folder; on
-  macOS `/Applications`, `/System/Applications`, `~/Applications`), then
-  the shorter path.
+  the user's Desktop, every user's Desktop, the user's Start menu, every
+  user's, the taskbar pins, then the Apps folder, as Explorer prefers a
+  shortcut of the user's own; on macOS `/Applications`,
+  `/System/Applications`, `~/Applications`), then the shorter path.
 - Its **id** is the first 128 bits of a SHA-256 digest of the typed key, as
   32 hexadecimal digits: the same on every start and every machine with the
   same installation. Extensions receive it through the applications import
@@ -143,12 +155,13 @@ every system:
 
 | | Windows ([#24](https://github.com/hoangvu12/pane/issues/24)) | macOS ([#25](https://github.com/hoangvu12/pane/issues/25)) | Linux ([#26](https://github.com/hoangvu12/pane/issues/26)) |
 | --- | --- | --- | --- |
-| Found in | Start menu shortcuts (`.lnk`) in `%APPDATA%\Microsoft\Windows\Start Menu\Programs` then `%ProgramData%\...\Programs`, with subfolders; then the packaged (AppX/MSIX) apps of the shell's Apps folder (`FOLDERID_AppsFolder`), such as Calculator on Windows 11 | Application bundles (`.app`) in `/Applications`, `/System/Applications` and `~/Applications`, and their subfolders two deep (such as `Utilities`), not inside bundles | Desktop entries (`.desktop`) in `$XDG_DATA_HOME/applications` (default `~/.local/share/applications`) then `applications` in each of `$XDG_DATA_DIRS` (default `/usr/local/share:/usr/share`), with subfolders (Flatpak and Snap add their folders to `XDG_DATA_DIRS`) |
+| Found in | Shortcuts: shell links (`.lnk`), internet shortcuts (`.url`) whose scheme has a registered handler (its key under `HKEY_CLASSES_ROOT` is marked `URL Protocol` and has a `shell` key: a game launcher's `steam://`, `com.epicgames.launcher://`) and ClickOnce application references (`.appref-ms`), in the Start menu's `%APPDATA%\Microsoft\Windows\Start Menu\Programs` then `%ProgramData%\...\Programs`, with subfolders, and without subfolders on the user's Desktop and every user's (`FOLDERID_Desktop`, `FOLDERID_PublicDesktop`, wherever the shell keeps them) and among the taskbar pins (`%APPDATA%\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar`); then the packaged (AppX/MSIX) apps of the shell's Apps folder (`FOLDERID_AppsFolder`), such as Calculator on Windows 11 | Application bundles (`.app`) in `/Applications`, `/System/Applications` and `~/Applications`, and their subfolders two deep (such as `Utilities`), not inside bundles | Desktop entries (`.desktop`) in `$XDG_DATA_HOME/applications` (default `~/.local/share/applications`) then `applications` in each of `$XDG_DATA_DIRS` (default `/usr/local/share:/usr/share`), with subfolders (Flatpak and Snap add their folders to `XDG_DATA_DIRS`) |
 | Name | The shortcut's file name; a packaged app's display name | The bundle's folder name | The entry's `Name` (not localized `Name[..]`) |
-| Identified by | The shortcut's target and arguments, version folders wildcarded; a packaged app's package family | The bundle identifier | The desktop file id |
-| Left out | Shortcuts whose name starts with "Uninstall"; a shortcut at the same place in the all-users menu as in the user's; Apps folder items that are not packaged apps (desktop programs, found by their shortcuts) or that have a shortcut's name | Nothing | `Type` other than `Application`, `NoDisplay` or `Hidden` (a hidden entry also hides a lower one with the same desktop file id), no `Exec`, `OnlyShowIn`/`NotShowIn` against `$XDG_CURRENT_DESKTOP`, a `TryExec` program that is missing, an `Exec` line using field codes against the spec (`%i`, `%F` or `%U` inside an argument, more than one of `%f %u %F %U`, an unknown code or a lone `%`: skipped with a line on standard error, not guessed) |
+| Identified by | A shell link's target and arguments, version folders wildcarded (an MSI-advertised one's installed program); an internet shortcut's URL; a ClickOnce reference's deployment; a packaged app's package family | The bundle identifier | The desktop file id |
+| Left out | The Startup folders (`Startup` in either Start menu's Programs folder); uninstallers: a shortcut whose name contains "Uninstall" or whose program's name starts with `unins` (`unins000.exe`, `uninstall.exe`); a shell link whose target is missing (broken), empty (a shell item, or an advertised product that is not installed), a folder, or a document rather than a program (a program is `.exe`, `.com`, `.bat`, `.cmd`, `.msc`, `.cpl`, `.vbs`, `.vbe`, `.wsf` or `.wsh`); an internet shortcut to a web page or a document (`http`, `https`, `ftp`, `file`, `mailto`, `news`) or to a scheme nothing handles; folders that are symbolic links or junctions, which are not walked; a shortcut at the same place in the all-users menu (or Desktop) as in the user's; Apps folder items that are not packaged apps (desktop programs, found by their shortcuts) or that have a shortcut's name | Nothing | `Type` other than `Application`, `NoDisplay` or `Hidden` (a hidden entry also hides a lower one with the same desktop file id), no `Exec`, `OnlyShowIn`/`NotShowIn` against `$XDG_CURRENT_DESKTOP`, a `TryExec` program that is missing, an `Exec` line using field codes against the spec (`%i`, `%F` or `%U` inside an argument, more than one of `%f %u %F %U`, an unknown code or a lone `%`: skipped with a line on standard error, not guessed) |
 | Opened by (the primary source) | `ShellExecuteEx` on the shortcut, or on `shell:AppsFolder\<AppUserModelID>` for a packaged app, as Explorer opens them (errors returned, no dialog), with COM initialized for the call and uninitialized after | `/usr/bin/open` on the bundle (Launch Services); its error message is shown | Running the `Exec` program directly (quoting and field codes per the Desktop Entry spec; file and URL codes dropped; `Path` as working folder), in its own process group; a `Terminal=true` entry runs in `$TERMINAL -e`, else the first installed of `x-terminal-emulator -e`, `gnome-terminal --`, `konsole -e`, `xfce4-terminal -x`, `alacritty -e`, `kitty`, `foot`, `xterm -e`, and is refused with an explanation when there is none |
-| Not supported yet | `.url` and `.appref-ms` shortcuts | Localized names (`CFBundleDisplayName`), Spotlight-only locations | D-Bus activation, localized names, desktop actions |
+| Not supported yet | Windows Settings pages and Control Panel items (a later slice of #124) | Localized names (`CFBundleDisplayName`), Spotlight-only locations | D-Bus activation, localized names, desktop actions |
+| Not looked for | Programs known only to their uninstall records (winget installs), game launchers' libraries beyond the `.url` shortcuts they make, folders the user chooses for portable programs | The Desktop, the Dock, internet shortcuts (`.webloc`) and aliases, Spotlight-only locations and System Settings panes: only the bundles in the three Applications folders | The Desktop (`~/Desktop` launchers), panel or dock pins, internet shortcuts (`Type=Link` entries are left out), and D-Bus activation: only the desktop entries in the `applications` data folders |
 | Desktop baseline | Windows 10/11 desktop; CI runs Windows Server 2025 (`windows-2025`) | macOS 15 (`macos-15`, arm64) | freedesktop Desktop Entry 1.5 on any desktop; run on X11 (Xvfb) only, Wayland untested |
 
 The same author-facing contract serves all three: an extension receives
@@ -207,13 +220,31 @@ differs.
   packaged apps without duplicating shortcuts have unit tests. Identity on
   every system: shortcuts (read by a fake reader) to one program in two
   version folders are one application, opened by the user's own; different
-  arguments two; an unreadable shortcut keyed by its path; the host's list
+  arguments two; a shortcut on the Desktop and in the Start menu to one
+  program is one application, opened by the Desktop's, every user's
+  Desktop and the taskbar pins are found, and a Desktop's subfolder is not
+  looked into; internet shortcuts to a scheme with a (fake) handler are
+  found, one link on the Desktop and in the Start menu once, while those to
+  a scheme nothing handles or to a web page are not, and a ClickOnce
+  reference in UTF-16 is found by its deployment; the Startup folders,
+  uninstallers by name and by program, broken shortcuts (a fake disk),
+  shortcuts to folders and to documents are left out; the macOS and Linux
+  sources Pane does not have are stated in this page's "Not looked for"
+  row; an MSI-advertised shortcut the installer resolved is one application
+  with a plain shortcut to its program, and one whose product is not
+  installed is left out (unit tests, with the parsing of `.url` and
+  `.appref-ms` files and the program, uninstaller and scheme rules); an unreadable shortcut keyed by its path; the host's list
   finds an application by its id and by a source's old path; bundles by
   their identifier (a moved copy is the same application) and desktop
   entries by their desktop file id; a shortcut to a packaged app is that
   app (unit test). On Windows, shortcuts made with `WScript.Shell` to a
   copied program in two version folders are read by the shell as one
   application, and inbox packaged apps are keyed by their package family;
+  the native list looks in both Desktops and the taskbar pins without
+  their subfolders; a `.url` to a scheme the test registers under the
+  user's classes is found and one to an unregistered scheme is not; an
+  `.appref-ms` is found; and shortcuts the shell makes to a removed
+  program, a folder, a text file and an uninstaller copy are left out;
   on macOS, Calculator is identified by `com.apple.calculator`. On its own system each adapter
   opens a harmless application the test makes, which writes a marker file:
   a desktop entry (Linux), a bundle whose program is a shell script (macOS),
@@ -241,10 +272,11 @@ differs.
   every shortcut through the shell, which takes longer than listing the
   folders did (Raycast measured 0.6 to 1.5 s for about 115 applications);
   later scans read only the shortcuts that changed.
-- Shortcuts that are MSI-advertised, broken or to documents are not judged
-  yet (a later slice of #124): one the shell cannot read is keyed by its
-  own path, as before. A pin made before identities is carried over only
-  while its source still exists.
+- A shell link the shell cannot read is keyed by its own path, as before,
+  and listed. A pin made before identities is carried over only while its
+  source still exists. Opening a ClickOnce reference starts the ClickOnce
+  installer's own checks, which may show its dialog; a `.url` opens through
+  the handler the system has for its scheme.
 - Pane does not hide or reset after opening an application; root search
   stays as it was.
 - The adapters trust the host's own listing: `open` accepts any existing

@@ -7,8 +7,10 @@
 //! its own adapter, a [`Discovery`] chosen by [`native`], which reports the
 //! [`Source`]s it finds:
 //!
-//! - Windows: the shortcuts in the Start menu's Programs folders and the
-//!   packaged apps of the Apps folder ([`StartMenu`]);
+//! - Windows: the shortcuts (shell links, internet shortcuts with a
+//!   registered scheme, ClickOnce references) in the Start menu's Programs
+//!   folders, on the Desktops and pinned to the taskbar, and the packaged
+//!   apps of the Apps folder ([`StartMenu`]);
 //! - macOS: the application bundles in the Applications folders ([`AppBundles`]);
 //! - Linux: the XDG desktop entries in the `applications` data folders
 //!   ([`DesktopEntries`]).
@@ -39,7 +41,7 @@ pub use app_bundles::AppBundles;
 pub use cached::Cached;
 pub use desktop_entries::DesktopEntries;
 pub use identity::{Catalog, Identified, Key, Source};
-pub use start_menu::{Place, Shortcut, ShortcutFolder, StartMenu};
+pub use start_menu::{Place, Shortcut, ShortcutFolder, ShortcutTarget, StartMenu};
 
 /// An installed application, as an extension receives it.
 #[derive(Clone, Debug, PartialEq, Eq)]

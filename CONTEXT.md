@@ -149,7 +149,7 @@ An extension command whose only job is to answer root search, through its comput
 _Avoid_: Search provider (any source of matching results), background command, hidden command
 
 **Installed application**:
-A program the operating system lists as installed where Pane looks for it (Start menu shortcuts, application bundles, desktop entries); Pane's host finds and opens it for an extension, which a WASI guest cannot do itself. It is identified by what it is, not by where it was found: several shortcuts to one program are one installed application, with one stable id that survives its updates (ADR 0038).
+A program the operating system lists as installed where Pane looks for it (on Windows the shortcuts in the Start menu, on the Desktops and pinned to the taskbar, including internet shortcuts whose scheme has a handler and ClickOnce references, and packaged apps; application bundles on macOS; desktop entries on Linux); Pane's host finds and opens it for an extension, which a WASI guest cannot do itself. It is identified by what it is, not by where it was found: several shortcuts to one program are one installed application, with one stable id that survives its updates (ADR 0038).
 _Avoid_: App (ambiguous with Pane itself), program
 
 **Quicklink**:

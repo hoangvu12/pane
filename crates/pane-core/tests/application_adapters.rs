@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use pane_core::applications::{
-    AppBundles, Applications, Catalog, DesktopEntries, Discovery, Key, Shortcut, Source, StartMenu,
+    AppBundles, Applications, Catalog, DesktopEntries, Discovery, Key, Place, Shortcut,
+    ShortcutFolder, ShortcutTarget, Source, StartMenu,
 };
 
 fn write(path: &Path, text: &str) {
@@ -308,6 +309,216 @@ fn the_hosts_list_finds_an_application_by_its_id_and_by_its_path_from_before() {
     assert_eq!(host.source("C:\\Gone.lnk"), None);
 }
 
+/// The folders Windows finds shortcuts in, below `root`, each in its place:
+/// the Start menus walked into their subfolders, the Desktops and the
+/// taskbar pins not.
+fn windows_folders(root: &Path) -> Vec<ShortcutFolder> {
+    let folder = |name: &str, place: Place, subfolders: bool| ShortcutFolder {
+        path: root.join(name),
+        place,
+        subfolders,
+    };
+    vec![
+        folder("user/Programs", Place::UserStartMenu, true),
+        folder("everyone/Programs", Place::AllUsersStartMenu, true),
+        folder("user/Desktop", Place::UserDesktop, false),
+        folder("Public/Desktop", Place::AllUsersDesktop, false),
+        folder("user/TaskBar", Place::TaskbarPins, false),
+    ]
+}
+
+/// An internet shortcut to `url`, as Explorer writes them.
+fn internet_shortcut(url: &str) -> String {
+    format!(
+        "[{{000214A0-0000-0000-C000-000000000046}}]\r\nProp3=19,0\r\n[InternetShortcut]\r\nIDList=\r\nURL={url}\r\nIconIndex=0\r\n"
+    )
+}
+
+/// A ClickOnce application reference to `deployment`, in UTF-16 with its
+/// byte order mark, as the ClickOnce installer writes them.
+fn click_once_reference(path: &Path, deployment: &str) {
+    let mut bytes = vec![0xFF, 0xFE];
+    bytes.extend(deployment.encode_utf16().flat_map(u16::to_le_bytes));
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, bytes).unwrap();
+}
+
+#[test]
+fn desktop_shortcuts_and_taskbar_pins_are_applications() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    // On the user's Desktop and in their Start menu: one application, which
+    // Pane opens by the Desktop's shortcut, as Explorer prefers it.
+    write(&root.join("user/Desktop/My Tool.lnk"), r"C:\Tool\tool.exe");
+    write(
+        &root.join("user/Programs/Tool/Tool.lnk"),
+        r"C:\Tool\tool.exe",
+    );
+    // Installed only with a shortcut on every user's Desktop.
+    write(
+        &root.join("Public/Desktop/Viewer.lnk"),
+        r"C:\Viewer\viewer.exe",
+    );
+    // A folder on the Desktop is not looked into.
+    write(
+        &root.join("user/Desktop/Stuff/Inner.lnk"),
+        r"C:\Inner\inner.exe",
+    );
+    // A portable program reachable only from the taskbar.
+    write(
+        &root.join("user/TaskBar/Portable.lnk"),
+        r"D:\Portable\portable.exe",
+    );
+
+    let catalog = Catalog::new(
+        StartMenu::with_folders(windows_folders(root))
+            .with_resolver(read_fixtures)
+            .sources()
+            .unwrap(),
+    );
+
+    let mut titles: Vec<String> = catalog
+        .applications()
+        .into_iter()
+        .map(|app| app.name)
+        .collect();
+    titles.sort();
+    assert_eq!(titles, ["My Tool", "Portable", "Viewer"]);
+    let tool = catalog
+        .find(&Key::program(r"C:\Tool\tool.exe", "").id())
+        .unwrap();
+    assert_eq!(tool.sources.len(), 2);
+    assert_eq!(
+        tool.primary().path,
+        root.join("user/Desktop/My Tool.lnk").to_string_lossy()
+    );
+    let portable = catalog
+        .find(&Key::program(r"D:\Portable\portable.exe", "").id())
+        .unwrap();
+    assert_eq!(portable.primary().place, Place::TaskbarPins as usize);
+}
+
+#[test]
+fn internet_shortcuts_with_a_handled_scheme_and_click_once_references_are_applications() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let game = "steam://rungameid/570";
+    write(
+        &root.join("user/Programs/Steam/Dota 2.url"),
+        &internet_shortcut(game),
+    );
+    write(
+        &root.join("user/Desktop/Dota 2.url"),
+        &internet_shortcut(game),
+    );
+    // A scheme nothing handles, and a web page.
+    write(
+        &root.join("user/Desktop/Unknown.url"),
+        &internet_shortcut("unknown-launcher://game/1"),
+    );
+    write(
+        &root.join("user/Programs/Vendor/Web site.url"),
+        &internet_shortcut("https://example.com/"),
+    );
+    let deployment = "http://apps.example.com/Orders/Orders.application#Orders.application, \
+                      Culture=neutral, PublicKeyToken=0123456789abcdef, processorArchitecture=msil";
+    click_once_reference(
+        &root.join("user/Programs/Example/Orders.appref-ms"),
+        deployment,
+    );
+
+    let menu = StartMenu::with_folders(windows_folders(root))
+        .with_resolver(read_fixtures)
+        .with_handlers(|scheme| matches!(scheme, "steam" | "https"));
+    let catalog = Catalog::new(menu.sources().unwrap());
+
+    let applications = catalog.applications();
+    let titles: Vec<&str> = applications.iter().map(|app| app.name.as_str()).collect();
+    assert_eq!(titles, ["Orders", "Dota 2"]);
+    let game = catalog.find(&Key::Link(game.into()).id()).unwrap();
+    // Found twice, listed once, opened by the Desktop's.
+    assert_eq!(game.sources.len(), 2);
+    assert_eq!(
+        game.primary().path,
+        root.join("user/Desktop/Dota 2.url").to_string_lossy()
+    );
+    assert_eq!(
+        applications[0].id,
+        Key::Link(deployment.to_lowercase()).id()
+    );
+}
+
+#[test]
+fn startup_shortcuts_uninstallers_broken_shortcuts_and_documents_are_left_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let programs = root.join("user/Programs");
+    write(&programs.join("Tool/Tool.lnk"), r"C:\Tool\tool.exe");
+    // Run at sign-in, not listed; a folder of that name deeper down is.
+    write(&programs.join("Startup/Agent.lnk"), r"C:\Agent\agent.exe");
+    write(
+        &root.join("everyone/Programs/StartUp/Updater.lnk"),
+        r"C:\Updater\updater.exe",
+    );
+    write(
+        &programs.join("Vendor/Startup/Helper.lnk"),
+        r"C:\Helper\helper.exe",
+    );
+    // Uninstallers, by name and by program.
+    write(
+        &programs.join("Tool/Uninstall Tool.lnk"),
+        r"C:\Tool\uninstall.exe",
+    );
+    write(
+        &programs.join("Tool/Remove Tool.lnk"),
+        r"C:\Tool\unins000.exe",
+    );
+    // A broken shortcut, a folder and documents.
+    write(&programs.join("Gone.lnk"), r"C:\Gone\gone.exe");
+    write(&root.join("user/Desktop/Projects.lnk"), r"C:\Projects");
+    write(&programs.join("Tool/Read me.lnk"), r"C:\Tool\readme.txt");
+    write(&programs.join("Tool/Manual.lnk"), r"C:\Tool\manual.pdf");
+
+    let menu = StartMenu::with_folders(windows_folders(root))
+        .with_resolver(read_fixtures)
+        .with_targets(|target| match target {
+            r"C:\Gone\gone.exe" => ShortcutTarget::Missing,
+            r"C:\Projects" => ShortcutTarget::Folder,
+            _ => ShortcutTarget::File,
+        });
+    let found = menu.sources().unwrap();
+
+    assert_eq!(names(&found), ["Tool", "Helper"]);
+}
+
+#[test]
+fn the_sources_pane_does_not_have_on_macos_and_linux_are_stated() {
+    // Users of macOS and Linux are told what root search covers there,
+    // rather than finding Windows' extra sources silently missing.
+    let docs = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/applications.md"),
+    )
+    .unwrap();
+    let row = docs
+        .lines()
+        .find(|line| line.starts_with("| Not looked for |"))
+        .expect("docs/applications.md has a \"Not looked for\" row");
+    let cells: Vec<&str> = row.split('|').map(str::trim).collect();
+    // | Not looked for | Windows | macOS | Linux |
+    assert_eq!(cells.len(), 6, "{row}");
+    for (system, cell) in [("macOS", cells[3]), ("Linux", cells[4])] {
+        for source in ["Desktop", "Dock", "internet shortcuts"] {
+            if system == "Linux" && source == "Dock" {
+                continue;
+            }
+            assert!(
+                cell.contains(source),
+                "{system} does not state {source}: {cell}"
+            );
+        }
+    }
+}
+
 #[test]
 fn application_bundles_are_identified_by_their_bundle_identifier() {
     let dir = tempfile::tempdir().unwrap();
@@ -595,6 +806,134 @@ mod windows {
         menu.open(&found[0].path).unwrap();
 
         assert_eq!(wait_for(&marker).trim(), "launched");
+    }
+
+    #[test]
+    fn the_desktops_and_taskbar_pins_are_looked_in_without_their_subfolders() {
+        let menu = StartMenu::from_env();
+        let places: Vec<(Place, bool)> = menu
+            .folders()
+            .iter()
+            .map(|folder| (folder.place, folder.subfolders))
+            .collect();
+        assert_eq!(
+            places,
+            [
+                (Place::UserStartMenu, true),
+                (Place::AllUsersStartMenu, true),
+                (Place::UserDesktop, false),
+                (Place::AllUsersDesktop, false),
+                (Place::TaskbarPins, false),
+            ]
+        );
+        let taskbar = &menu.folders()[4].path;
+        assert!(
+            taskbar.ends_with(r"Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar"),
+            "{}",
+            taskbar.display()
+        );
+    }
+
+    /// A URL scheme registered for the current user while it is held, as a
+    /// game launcher registers its own, removed when dropped.
+    struct Scheme(String);
+
+    impl Scheme {
+        fn register(name: &str) -> Scheme {
+            let key = format!(r"HKCU\Software\Classes\{name}");
+            let reg = |args: &[&str]| {
+                let status = Command::new("reg").args(args).status().unwrap();
+                assert!(status.success(), "reg {args:?} failed");
+            };
+            reg(&["add", &key, "/ve", "/d", "URL:Pane test", "/f"]);
+            reg(&["add", &key, "/v", "URL Protocol", "/d", "", "/f"]);
+            reg(&[
+                "add",
+                &format!(r"{key}\shell\open\command"),
+                "/ve",
+                "/d",
+                r#""C:\Windows\System32\cmd.exe" /c exit "%1""#,
+                "/f",
+            ]);
+            Scheme(key)
+        }
+    }
+
+    impl Drop for Scheme {
+        fn drop(&mut self) {
+            let _ = Command::new("reg").args(["delete", &self.0, "/f"]).status();
+        }
+    }
+
+    #[test]
+    fn an_internet_shortcut_is_found_when_its_scheme_has_a_registered_handler() {
+        let registered = format!("pane-test-{}", std::process::id());
+        let unregistered = format!("pane-unregistered-{}", std::process::id());
+        let _scheme = Scheme::register(&registered);
+        let dir = tempfile::tempdir().unwrap();
+        let programs = dir.path().join("Programs");
+        let game = format!("{registered}://rungameid/570");
+        write(&programs.join("Game.url"), &internet_shortcut(&game));
+        write(
+            &programs.join("Other.url"),
+            &internet_shortcut(&format!("{unregistered}://game/1")),
+        );
+        write(
+            &programs.join("Web site.url"),
+            &internet_shortcut("https://example.com/"),
+        );
+
+        let found = StartMenu::new(vec![programs]).sources().unwrap();
+
+        assert_eq!(names(&found), ["Game"]);
+        assert_eq!(found[0].key, Key::Link(game.to_lowercase()));
+    }
+
+    #[test]
+    fn a_click_once_reference_is_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let programs = dir.path().join("Programs");
+        let deployment = "http://apps.example.com/Orders/Orders.application#Orders.application, \
+                          Culture=neutral, PublicKeyToken=0123456789abcdef, \
+                          processorArchitecture=msil";
+        click_once_reference(&programs.join("Example/Orders.appref-ms"), deployment);
+
+        let found = StartMenu::new(vec![programs]).sources().unwrap();
+
+        assert_eq!(names(&found), ["Orders"]);
+        assert_eq!(found[0].key, Key::Link(deployment.to_lowercase()));
+    }
+
+    #[test]
+    fn broken_shortcuts_folders_documents_and_uninstallers_on_this_disk_are_left_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let cmd = PathBuf::from(std::env::var("SystemRoot").unwrap()).join(r"System32\cmd.exe");
+        let program = dir.path().join(r"Tool\tool.exe");
+        let gone = dir.path().join(r"Gone\gone.exe");
+        let uninstaller = dir.path().join(r"Tool\unins000.exe");
+        let document = dir.path().join(r"Tool\readme.txt");
+        for copy in [&program, &gone, &uninstaller] {
+            fs::create_dir_all(copy.parent().unwrap()).unwrap();
+            fs::copy(&cmd, copy).unwrap();
+        }
+        write(&document, "read me");
+        let desktop = dir.path().join("Desktop");
+        shortcut_to(&desktop.join("Tool.lnk"), &program, "");
+        shortcut_to(&desktop.join("Gone.lnk"), &gone, "");
+        shortcut_to(&desktop.join("Remove Tool.lnk"), &uninstaller, "");
+        shortcut_to(&desktop.join("Read me.lnk"), &document, "");
+        shortcut_to(&desktop.join("Projects.lnk"), &dir.path().join("Tool"), "");
+        // The program the shortcut opens is removed: the shortcut is broken.
+        fs::remove_file(&gone).unwrap();
+
+        let menu = StartMenu::with_folders(vec![ShortcutFolder {
+            path: desktop,
+            place: Place::UserDesktop,
+            subfolders: false,
+        }]);
+        let found = menu.sources().unwrap();
+
+        assert_eq!(names(&found), ["Tool"]);
     }
 
     #[test]
