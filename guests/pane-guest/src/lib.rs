@@ -293,7 +293,8 @@ pub mod root {
 
 /// The applications installed on the system (`pane:extension/applications`),
 /// which Pane finds and opens for the extension: [`applications::installed`] and
-/// [`applications::open`].
+/// [`applications::open`]. An application's `id` is opaque and stable across
+/// its updates and Pane's restarts, so a command may keep it in its data.
 pub mod applications {
     wit_bindgen::generate!({
         path: "../../wit",

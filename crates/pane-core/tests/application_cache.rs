@@ -1,7 +1,9 @@
-//! The cache in front of each system's application adapter: after the first
-//! scan, the list is returned at once and refreshed off the calling thread
-//! (the extension runtime's) when it is older than its maximum age, so a
-//! return to root search never waits for the system's folders.
+//! The host's list in front of each system's application adapter: after the
+//! first scan, the list is returned at once and refreshed off the calling
+//! thread (the extension runtime's) when it is older than its maximum age,
+//! so a return to root search never waits for the system's folders; and an
+//! application's id, or the path that was its id before identities, finds
+//! the source that opens it.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
@@ -9,7 +11,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use pane_core::applications::{Application, Applications, Cached};
+use pane_core::applications::{Applications, Cached, Discovery, Key, Source};
 
 /// A system that counts its scans; a held scan waits until released.
 #[derive(Default)]
@@ -43,8 +45,8 @@ impl CountingSystem {
     }
 }
 
-impl Applications for CountingSystem {
-    fn installed(&self) -> Result<Vec<Application>, String> {
+impl Discovery for CountingSystem {
+    fn sources(&self) -> Result<Vec<Source>, String> {
         let mut held = self.held.lock().unwrap();
         while *held {
             held = self.released.wait(held).unwrap();
@@ -59,16 +61,18 @@ impl Applications for CountingSystem {
             .lock()
             .unwrap()
             .iter()
-            .map(|name| Application {
-                id: format!("/apps/{name}"),
+            .map(|name| Source {
+                key: Key::Path(format!("/apps/{name}")),
+                path: format!("/apps/{name}"),
                 name: (*name).into(),
                 location: "/apps".into(),
+                place: 0,
             })
             .collect())
     }
 
-    fn open(&self, id: &str) -> Result<(), String> {
-        self.opened.lock().unwrap().push(id.into());
+    fn open(&self, path: &str) -> Result<(), String> {
+        self.opened.lock().unwrap().push(path.into());
         Ok(())
     }
 }
@@ -149,12 +153,31 @@ fn a_failed_rescan_keeps_the_list_and_a_failed_first_scan_is_an_error() {
 }
 
 #[test]
-fn opening_goes_to_the_system() {
+fn opening_finds_the_application_by_its_id_or_its_path_from_before() {
     let system = CountingSystem::with(&["Files"]);
-    let cached = Cached::new(system.clone(), Duration::ZERO);
+    let cached = Cached::new(system.clone(), Duration::from_secs(3600));
+    let id = Key::Path("/apps/Files".into()).id();
 
-    cached.open("/apps/Files").unwrap();
-
+    // Nothing was listed yet: the list is made to find the id.
+    cached.open(&id).unwrap();
     assert_eq!(*system.opened.lock().unwrap(), ["/apps/Files"]);
-    assert_eq!(system.scans(), 0, "opening scans nothing");
+    assert_eq!(system.scans(), 1);
+
+    // The path that was its id before identities opens it too, from the
+    // kept list.
+    cached.open("/apps/Files").unwrap();
+    assert_eq!(system.scans(), 1);
+    assert_eq!(cached.current_id("/apps/Files"), Some(id));
+
+    // An id no application has now.
+    assert_eq!(
+        cached.open(&Key::Path("/apps/Gone".into()).id()),
+        Err("it is no longer installed".into())
+    );
+    // A path no application has now: the adapter says why it cannot open it.
+    cached.open("/apps/Gone").unwrap();
+    assert_eq!(
+        *system.opened.lock().unwrap(),
+        ["/apps/Files", "/apps/Files", "/apps/Gone"]
+    );
 }

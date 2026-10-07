@@ -1,9 +1,12 @@
 //! macOS: the application bundles (`.app` folders) in the Applications
-//! folders, opened by the system's `open` command (Launch Services).
+//! folders, opened by the system's `open` command (Launch Services). A
+//! bundle is identified by its bundle identifier (`CFBundleIdentifier` in
+//! its `Info.plist`), so moving or renaming it keeps the application; one
+//! without an identifier is identified by its path.
 
 use std::path::{Path, PathBuf};
 
-use super::{Application, Applications, env_dir, has_extension, id_path, sorted_entries};
+use super::{Discovery, Key, Source, env_dir, has_extension, id_path, plist, sorted_entries};
 
 /// How deep Pane looks into folders that are not bundles, such as
 /// `/Applications/Utilities`.
@@ -16,7 +19,9 @@ pub struct AppBundles {
 }
 
 impl AppBundles {
-    /// The bundles in `folders` and their subfolders (not inside bundles).
+    /// The bundles in `folders` and their subfolders (not inside bundles),
+    /// a bundle in an earlier folder preferred to one with the same
+    /// identifier in a later folder.
     pub fn new(folders: Vec<PathBuf>) -> AppBundles {
         AppBundles { folders }
     }
@@ -34,7 +39,21 @@ impl AppBundles {
     }
 }
 
-fn collect(dir: &Path, depth: usize, found: &mut Vec<Application>) {
+/// The key of the bundle at `bundle`: its identifier, in lowercase, or its
+/// path when its `Info.plist` names none.
+fn bundle_key(bundle: &Path) -> Key {
+    std::fs::read(bundle.join("Contents/Info.plist"))
+        .ok()
+        .and_then(|info| plist::string(&info, "CFBundleIdentifier"))
+        .map(|identifier| identifier.trim().to_lowercase())
+        .filter(|identifier| !identifier.is_empty())
+        .map_or_else(
+            || Key::Path(bundle.to_string_lossy().into_owned()),
+            Key::Bundle,
+        )
+}
+
+fn collect(dir: &Path, depth: usize, place: usize, found: &mut Vec<Source>) {
     for entry in sorted_entries(dir) {
         let path = entry.path();
         if !path.is_dir() {
@@ -44,28 +63,30 @@ fn collect(dir: &Path, depth: usize, found: &mut Vec<Application>) {
             let Some(name) = path.file_stem() else {
                 continue;
             };
-            found.push(Application {
-                id: path.to_string_lossy().into_owned(),
+            found.push(Source {
+                key: bundle_key(&path),
+                path: path.to_string_lossy().into_owned(),
                 name: name.to_string_lossy().into_owned(),
                 location: dir.display().to_string(),
+                place,
             });
         } else if depth < MAX_DEPTH {
-            collect(&path, depth + 1, found);
+            collect(&path, depth + 1, place, found);
         }
     }
 }
 
-impl Applications for AppBundles {
-    fn installed(&self) -> Result<Vec<Application>, String> {
+impl Discovery for AppBundles {
+    fn sources(&self) -> Result<Vec<Source>, String> {
         let mut found = Vec::new();
-        for folder in &self.folders {
-            collect(folder, 0, &mut found);
+        for (place, folder) in self.folders.iter().enumerate() {
+            collect(folder, 0, place, &mut found);
         }
         Ok(found)
     }
 
-    fn open(&self, id: &str) -> Result<(), String> {
-        let path = id_path(id, "app", "an application bundle")?;
+    fn open(&self, path: &str) -> Result<(), String> {
+        let path = id_path(path, "app", "an application bundle")?;
         open_bundle(&path)
     }
 }

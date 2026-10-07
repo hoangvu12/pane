@@ -19,8 +19,14 @@ package pane:extension@0.1.0;
 /// bundles on macOS and desktop entries on Linux.
 interface applications {
   record application {
-    /// Identifies the application to `open`: the shortcut, bundle or desktop
-    /// entry Pane found it by.
+    /// Identifies the application to `open`: an opaque id, stable across
+    /// the application's updates and Pane's restarts, so an extension may
+    /// keep it in its data and open the application later. Pane derives it
+    /// from what the application is (on Windows the program a shortcut
+    /// opens, ignoring version folders, or a packaged app's package family;
+    /// on macOS the bundle identifier; on Linux the desktop file id), so
+    /// several shortcuts to one program are one application. Do not parse
+    /// it.
     id: string,
     /// Its name, as the system shows it.
     name: string,
@@ -33,7 +39,9 @@ interface applications {
   installed: func() -> result<list<application>, string>;
 
   /// Opens (launches) the application with `id`, as `installed` gave it. An
-  /// error explains why the system did not open it.
+  /// id an earlier Pane gave (the path of the shortcut, bundle or desktop
+  /// entry) still opens the application that path belongs to. An error
+  /// explains why the system did not open it.
   open: func(id: string) -> result<_, string>;
 }
 

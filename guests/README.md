@@ -880,7 +880,11 @@ impl pane_guest::indexed::Guest for Apps {
 }
 ```
 
-`applications::open(&id)` opens one from a command's own action.
+`applications::open(&id)` opens one from a command's own action. An
+application's `id` is opaque and stable across its updates and Pane's
+restarts (several shortcuts to one program are one application), so a
+command may keep it in its data and open the application later; do not
+parse it.
 
 JavaScript or TypeScript: add `"pane": { "indexedResults": true }` to
 `package.json`, so the build exports the interface, import the host's

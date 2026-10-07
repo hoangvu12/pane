@@ -1917,22 +1917,34 @@ impl Launcher {
         commands: Vec<(CommandRegistration, Option<PackageData>)>,
     ) {
         for (command, data) in commands {
-            let answer = match self.runtime() {
-                Ok(runtime) => {
+            let (answer, applications) = match self.runtime() {
+                Ok(runtime) => (
                     runtime
                         .indexed_results_with(&command.component, data.clone())
-                        .await
-                }
-                Err(error) => Err(error),
+                        .await,
+                    Some(runtime.applications()),
+                ),
+                Err(error) => (Err(error), None),
             };
-            let mut state = self.lock();
-            let state = &mut *state;
-            if data.as_ref().and_then(PackageData::stopped).is_some() {
-                continue;
-            }
-            state.indexes.answer(&command, answer);
-            if let Some(query) = state.view.query().map(str::to_owned) {
-                relist_root(state, &query);
+            let carried = {
+                let mut state = self.lock();
+                let state = &mut *state;
+                if data.as_ref().and_then(PackageData::stopped).is_some() {
+                    continue;
+                }
+                state.indexes.answer(&command, answer);
+                // Pins made before applications had stable identities
+                // resolve to the results listed for them now.
+                let carried = applications.is_some_and(|applications| {
+                    quick_slots::carry_over(state, &command.id, applications.as_ref())
+                });
+                if let Some(query) = state.view.query().map(str::to_owned) {
+                    relist_root(state, &query);
+                }
+                carried
+            };
+            if carried {
+                self.record_carried_over().await;
             }
         }
     }
@@ -1982,7 +1994,16 @@ impl Launcher {
         name: String,
     ) {
         let system = self.system();
+        let applications = self.runtime().ok().map(|runtime| runtime.applications());
         let opened = off_thread(move || {
+            // An installed application's id is opened by its source.
+            let application = match (application, applications) {
+                (Some(application), Some(applications)) => Some(crate::applications::opener(
+                    applications.as_ref(),
+                    &application,
+                )),
+                (application, _) => application,
+            };
             crate::system::System::open(system.as_ref(), &target, application.as_deref())
         })
         .await;

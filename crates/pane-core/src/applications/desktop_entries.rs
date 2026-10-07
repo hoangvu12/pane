@@ -1,13 +1,15 @@
 //! Linux: the applications the XDG desktop entry specification lists, one
 //! `.desktop` file per application in the `applications` folder of each XDG
-//! data folder, opened by running the program its `Exec` key names.
+//! data folder, opened by running the program its `Exec` key names. An
+//! application is identified by its desktop file id, as the Desktop Entry
+//! specification defines it.
 
 use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use super::{Application, Applications, env_dir, has_extension, id_path, sorted_entries};
+use super::{Discovery, Key, Source, env_dir, has_extension, id_path, sorted_entries};
 
 /// How deep Pane looks into subfolders of an `applications` folder.
 const MAX_DEPTH: usize = 8;
@@ -66,17 +68,17 @@ impl DesktopEntries {
     /// below `root`, `/` becoming `-`) is not `seen` yet.
     fn collect(
         &self,
-        root: &Path,
+        (root, place): (&Path, usize),
         dir: &Path,
         depth: usize,
         seen: &mut HashSet<String>,
-        found: &mut Vec<Application>,
+        found: &mut Vec<Source>,
     ) {
         for entry in sorted_entries(dir) {
             let path = entry.path();
             if path.is_dir() {
                 if depth < MAX_DEPTH {
-                    self.collect(root, &path, depth + 1, seen, found);
+                    self.collect((root, place), &path, depth + 1, seen, found);
                 }
                 continue;
             }
@@ -89,7 +91,7 @@ impl DesktopEntries {
             let id = relative.to_string_lossy().replace(['/', '\\'], "-");
             // The first entry with an id hides the others, even when it is
             // hidden itself: that is how a user removes a system entry.
-            if !seen.insert(id) {
+            if !seen.insert(id.clone()) {
                 continue;
             }
             let Some(desktop) = Entry::read(&path) else {
@@ -104,21 +106,23 @@ impl DesktopEntries {
                 eprintln!("pane: skipped desktop entry {}: {problem}", path.display());
                 continue;
             }
-            found.push(Application {
-                id: path.to_string_lossy().into_owned(),
+            found.push(Source {
+                key: Key::DesktopFile(id),
+                path: path.to_string_lossy().into_owned(),
                 name: desktop.name,
                 location: dir.display().to_string(),
+                place,
             });
         }
     }
 }
 
-impl Applications for DesktopEntries {
-    fn installed(&self) -> Result<Vec<Application>, String> {
+impl Discovery for DesktopEntries {
+    fn sources(&self) -> Result<Vec<Source>, String> {
         let mut seen = HashSet::new();
         let mut found = Vec::new();
-        for folder in &self.folders {
-            self.collect(folder, folder, 0, &mut seen, &mut found);
+        for (place, folder) in self.folders.iter().enumerate() {
+            self.collect((folder, place), folder, 0, &mut seen, &mut found);
         }
         Ok(found)
     }

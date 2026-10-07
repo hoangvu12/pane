@@ -8,7 +8,12 @@
 declare module "pane:extension/applications@0.1.0" {
   /** An installed application. */
   export interface Application {
-    /** Identifies it to `open`: the shortcut, bundle or desktop entry Pane found it by. */
+    /**
+     * Identifies it to `open`: an opaque id, stable across the
+     * application's updates and Pane's restarts, so it can be kept in the
+     * extension's data and opened later. Several shortcuts to one program
+     * are one application with one id. Do not parse it.
+     */
     id: string;
     /** Its name, as the system shows it. */
     name: string;
@@ -25,9 +30,10 @@ declare module "pane:extension/applications@0.1.0" {
   export function installed(): Application[];
 
   /**
-   * Opens (launches) the application with `id`, as `installed` gave it. On
-   * failure it throws an object whose `payload` explains why the system did
-   * not open it.
+   * Opens (launches) the application with `id`, as `installed` gave it (an
+   * id an earlier Pane gave, the path of its shortcut, bundle or desktop
+   * entry, still opens it). On failure it throws an object whose `payload`
+   * explains why the system did not open it.
    */
   export function open(id: string): void;
 }

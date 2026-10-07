@@ -43,7 +43,8 @@ use super::actions::{ResultAction, ResultActionItem, ResultActions};
 use super::choices::split;
 use super::indexed::Listing;
 use super::presentation::{self, RowKind};
-use super::{CommandRegistration, Entry, Launcher, Screen, State, Status, off_thread};
+use super::{CommandRegistration, Entry, Launcher, RootResult, Screen, State, Status, off_thread};
+use crate::applications::Applications;
 use crate::atomic::{Readers, write_atomically};
 use crate::packages::{InstalledPackage, paused_reason};
 
@@ -407,6 +408,82 @@ fn resolve_indexed(state: &State, target: &PinTarget, command: &str) -> Resolved
         Listing::Failed(problem) => problem,
         Listing::Listed => format!("{} no longer lists it", registration.title),
     })
+}
+
+/// What a quick slot pinning one of `command`'s results by `result`, an
+/// id the command no longer lists, holds now, when `result` names an
+/// installed application by another id, such as the path that was its id
+/// before applications had stable identities: the command's result for
+/// that application (the one with its current id, else the one opening
+/// it). `None` when `result` is listed or names no application.
+fn carried(
+    state: &State,
+    command: &str,
+    result: &str,
+    applications: &dyn Applications,
+) -> Option<PinTarget> {
+    let theirs = |found: &&RootResult| matches!(&found.pin, Some(PinTarget::Indexed { command: pinned, .. }) if pinned == command);
+    let listed = |id: &str| {
+        state.indexes.results().filter(theirs).find(
+            |found| matches!(&found.pin, Some(PinTarget::Indexed { result, .. }) if result == id),
+        )
+    };
+    if listed(result).is_some() {
+        return None;
+    }
+    let current = applications
+        .current_id(result)
+        .filter(|current| current != result)?;
+    listed(&current)
+        .or_else(|| {
+            state.indexes.results().filter(theirs).find(
+                |found| matches!(&found.entry, Entry::OpenApplication { id, .. } if *id == current),
+            )
+        })
+        .and_then(|found| found.pin.clone())
+}
+
+/// Carries the quick slots pinning `command`'s results by an id it no
+/// longer lists over to the result now listed for the same application
+/// ([`carried`]), as the command's results arrive: a pin made before
+/// applications had stable identities resolves, and its record is
+/// rewritten. A pin carried to a result already pinned leaves its slot.
+/// Returns whether anything changed, so the caller records it; nothing
+/// changes while the record cannot be read.
+pub(super) fn carry_over(
+    state: &mut State,
+    command: &str,
+    applications: &dyn Applications,
+) -> bool {
+    if state.quick_slots.unreadable.is_some() {
+        return false;
+    }
+    let chosen = std::mem::take(&mut state.quick_slots.chosen);
+    let mut changed = false;
+    let mut kept = Arrangement::with_capacity(chosen.len());
+    for target in chosen {
+        let carried_to = match &target {
+            PinTarget::Indexed {
+                command: pinned,
+                result,
+            } if pinned == command => carried(state, command, result, applications),
+            _ => None,
+        };
+        let target = match carried_to {
+            Some(carried_to) => {
+                changed = true;
+                carried_to
+            }
+            None => target,
+        };
+        if kept.contains(&target) {
+            changed = true;
+            continue;
+        }
+        kept.push(target);
+    }
+    state.quick_slots.chosen = kept;
+    changed
 }
 
 /// The slot holding `target` as it stands in `state`.
@@ -824,6 +901,15 @@ impl Launcher {
             }
         };
         (changed, recording)
+    }
+
+    /// Records the quick slots after [`carry_over`] changed them, off the
+    /// calling thread. A failed write puts back what the record holds,
+    /// whose pins are carried over again when the results next arrive, so
+    /// nothing is said about it.
+    pub(super) async fn record_carried_over(&self) {
+        let writer = self.clone();
+        let _ = off_thread(move || writer.write_quick_slots()).await;
     }
 
     /// Writes the arrangement as it is when the write begins, blocking:

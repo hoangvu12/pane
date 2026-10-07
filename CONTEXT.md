@@ -145,7 +145,7 @@ A root result an extension command supplies ahead of the query, such as an insta
 _Avoid_: Index entry, cached result
 
 **Installed application**:
-A program the operating system lists as installed where Pane looks for it (Start menu shortcuts, application bundles, desktop entries); Pane's host finds and opens it for an extension, which a WASI guest cannot do itself.
+A program the operating system lists as installed where Pane looks for it (Start menu shortcuts, application bundles, desktop entries); Pane's host finds and opens it for an extension, which a WASI guest cannot do itself. It is identified by what it is, not by where it was found: several shortcuts to one program are one installed application, with one stable id that survives its updates (ADR 0038).
 _Avoid_: App (ambiguous with Pane itself), program
 
 **Quicklink**:

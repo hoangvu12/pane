@@ -312,8 +312,16 @@ impl Launcher {
             } => {
                 let system = self.system();
                 let name = file.name.clone();
+                let applications = self.runtime().ok().map(|runtime| runtime.applications());
                 let opened = self
                     .on_file(&file, true, move |path| {
+                        // The installed application is opened by its source.
+                        let application = match &applications {
+                            Some(applications) => {
+                                crate::applications::opener(applications.as_ref(), &application)
+                            }
+                            None => application,
+                        };
                         system.open(&path.to_string_lossy(), Some(application.as_str()))
                     })
                     .await;
