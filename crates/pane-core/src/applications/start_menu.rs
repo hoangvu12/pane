@@ -31,7 +31,10 @@ use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use super::identity::packaged_keys;
-use super::{Discovery, Key, Source, env_dir, has_extension, id_path, sorted_entries};
+use super::{
+    Changes, Discovery, Key, Source, Watch, env_dir, has_extension, id_path, sorted_entries,
+    watching,
+};
 
 /// How deep Pane looks into the Programs folders' subfolders.
 const MAX_DEPTH: usize = 8;
@@ -709,6 +712,33 @@ impl Discovery for StartMenu {
             .unwrap_or("lnk");
         let path = id_path(path, extension, "a Start menu shortcut")?;
         shell_execute(&path.to_string_lossy())
+    }
+
+    /// Watches each shortcut folder (with its subfolders where they are
+    /// looked into) and, when packaged apps are listed, the folder Windows
+    /// makes for each package registered for the user
+    /// (`%LOCALAPPDATA%\Packages`): a package's folder appearing or going
+    /// is an install or a removal, which Windows completes after it, so it
+    /// is looked at again a little later ([`super::Change::Completing`]).
+    fn watch(&self, changes: Changes) -> Result<Watch, String> {
+        let mut folders: Vec<watching::Folder> = self
+            .folders
+            .iter()
+            .map(|folder| {
+                if folder.subfolders {
+                    watching::Folder::walked(folder.path.clone())
+                } else {
+                    watching::Folder::flat(folder.path.clone())
+                }
+            })
+            .collect();
+        if self.packaged {
+            folders.extend(
+                env_dir("LOCALAPPDATA")
+                    .map(|local| watching::Folder::packages(local.join("Packages"))),
+            );
+        }
+        watching::watch(folders, changes)
     }
 }
 

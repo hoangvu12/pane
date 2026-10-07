@@ -9,7 +9,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use super::{Discovery, Key, Source, env_dir, has_extension, id_path, sorted_entries};
+use super::{
+    Changes, Discovery, Key, Source, Watch, env_dir, has_extension, id_path, sorted_entries,
+    watching,
+};
 
 /// How deep Pane looks into subfolders of an `applications` folder.
 const MAX_DEPTH: usize = 8;
@@ -172,6 +175,19 @@ impl Discovery for DesktopEntries {
         // Collected when it exits, so it does not linger as a zombie.
         std::thread::spawn(move || child.wait());
         Ok(())
+    }
+
+    /// Watches the `applications` folders and their subfolders (inotify on
+    /// Linux); one that does not exist yet is watched for from the nearest
+    /// folder above it that does.
+    fn watch(&self, changes: Changes) -> Result<Watch, String> {
+        watching::watch(
+            self.folders
+                .iter()
+                .map(|folder| watching::Folder::walked(folder.clone()))
+                .collect(),
+            changes,
+        )
     }
 }
 

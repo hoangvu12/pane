@@ -6,9 +6,10 @@ Added for [#24](https://github.com/hoangvu12/pane/issues/24) (Windows),
 US44; T01, T03, T22; contributions to G2 and G7, not claims that they pass.
 Stable identities were added for [#169](https://github.com/hoangvu12/pane/issues/169),
 the first slice of "Applications done properly"
-([#124](https://github.com/hoangvu12/pane/issues/124)), and the Desktops,
-taskbar pins, internet and ClickOnce shortcuts as sources on Windows for
-[#173](https://github.com/hoangvu12/pane/issues/173), its fifth.
+([#124](https://github.com/hoangvu12/pane/issues/124)), the live list
+for [#171](https://github.com/hoangvu12/pane/issues/171), its third, and the
+Desktops, taskbar pins, internet and ClickOnce shortcuts as sources on
+Windows for [#173](https://github.com/hoangvu12/pane/issues/173), its fifth.
 Typing an installed application's name into root search lists it, ranked
 with commands by title, and Enter (or a click) opens it. The feature is a
 **default extension**, Applications, which the user can disable like any
@@ -32,7 +33,8 @@ preopened folders) nor start a program. So the split, recorded in
   `Discovery`), which reports the shortcuts, bundles or desktop entries it
   finds; the host turns them into applications with a stable
   [identity](#identity) and keeps that list with the map from each id to
-  what opens it. ADR 0038 ("The host keeps a live application list and an
+  what opens it, [current by itself](#live-list) while a package that asked
+  for it runs. ADR 0038 ("The host keeps a live application list and an
   icon cache") amends ADR 0015's stateless adapter for this. Nothing is
   looked for until a guest asks.
 - **Default extension**, [`guests/applications`](../guests/applications)
@@ -62,14 +64,13 @@ installed from its folder like the calculator
   and the applications as soon as they are found).
 - They are asked for again on the first query after each return to root
   search (at start, after Escape from a command, after an install), keeping
-  the earlier list until the new one arrives. The host keeps its own list
-  too ([`Cached`](../crates/pane-core/src/applications/cached.rs)): only
-  the very first request scans the system's folders on the runtime thread;
-  later ones get the kept list at once, and one older than 10 seconds is
-  rescanned on a thread of its own for the next request. So an application
-  installed while Pane is open is found from the second return to root
-  search after it; there is no file watching. A failed rescan keeps the old
-  list.
+  the earlier list until the new one arrives, and whenever the host's
+  [live list](#live-list) changes. The host keeps its own list
+  ([`Cached`](../crates/pane-core/src/applications/cached.rs)): only the
+  very first request scans the system's folders, on the runtime thread;
+  later ones get the kept list at once, which watchers keep current. So an
+  application installed while Pane is open appears within about a second,
+  even while root search is on screen.
 - A blank query lists no application, so root search's empty list stays the
   commands and Pane's own rows.
 - Each application is a root result titled with its name and subtitled
@@ -87,10 +88,64 @@ installed from its folder like the calculator
   not list: ..." is listed for every query that is not blank; Enter shows
   the whole error. A missing or unreadable location only adds nothing.
 - **Disabled** (Settings › Extensions), its applications leave root search at
-  once, the kept list is dropped, its instance is stopped, nothing looks for
-  applications any more, and a list still on its way is discarded; other
-  results (commands, the calculator) are untouched. Enabled again, the next
-  query looks again.
+  once, the kept list is dropped, every watcher stops, its instance is
+  stopped, nothing looks for applications any more, and a list still on its
+  way is discarded; other results (commands, the calculator) are
+  untouched. Enabled again, the next query looks, and watches, again.
+
+## Live list
+
+The host's list stays current by itself (ADR 0038), replacing the earlier
+10-second rescan. The rules are in
+[`cached`](../crates/pane-core/src/applications/cached.rs) and
+[`watching`](../crates/pane-core/src/applications/watching.rs):
+
+- **Lazy.** The list is built, and its watchers start, when a running
+  package first asks for the installed applications (`installed()`; for
+  the Applications extension, the first query that is not blank). Each
+  component that asked is noted on its package's generation; once no
+  package that asked can run any more (disabled, uninstalled, paused, its
+  code replaced), the list is dropped and every watcher stops
+  (`Applications::release`), until a package asks again. Opening an
+  application by id while no list is kept scans once without keeping or
+  watching anything.
+- **Watchers**, the native file watcher development mode uses (`notify`):
+  on Windows ReadDirectoryChangesW on each shortcut folder (the Start
+  menus with their subfolders; the Desktops and taskbar pins flat), where
+  any file changing counts, `.lnk`, `.url` and `.appref-ms` alike, and, for packaged apps, on
+  `%LOCALAPPDATA%\Packages`, where Windows makes a folder for each package
+  registered for the user: only a package's folder appearing or going
+  counts there, and since Windows completes the registration afterwards,
+  the list is rescanned again five seconds later. On macOS FSEvents on the
+  Applications folders, and on Linux inotify on the `applications` data
+  folders, with their subfolders. A folder that does not exist yet is
+  watched for from the nearest folder above it (only changes on the way to
+  it count), and the watch is made again after each rescan until the
+  folder is watched itself.
+- **Debounce.** Reported changes are rescanned once they settle: half a
+  second after the last one, at most two seconds after the first.
+- **Grace.** A rescan replaces the list by identity. An application whose
+  last source went stays listed (and opens) for five seconds, by the
+  launcher's clock, and leaves only if nothing with its identity came back
+  meanwhile, so an update that removes and reinstalls it never makes it
+  flicker out. A shortcut that now opens another program is that program
+  at once, not a leaving application. A renamed shortcut keeps its
+  application, its id and its pins, with the new title.
+- **Reconciling.** A watcher that lost changes (its buffer overflowed) or
+  failed, a wait that lasted far longer than it could (the system slept, or
+  its clock jumped) and every 30 minutes while the list is kept trigger a
+  full rescan at once. A failed rescan keeps the list.
+- **Telling the launcher.** When the listed applications change, every
+  enabled command with indexed results that asked for the installed
+  applications (the Applications extension, the JavaScript and TypeScript
+  samples, any extension using the import) has its results marked stale.
+  While root search is on screen with a query they are asked for again at
+  once and listed in place (a command being asked is waited for first, its
+  answer possibly predating the change); otherwise at the next query. The
+  selected row stays on the same result wherever it moved, or at the same
+  position if that result left, so the list never jumps under the user. No
+  guest export is added: the guest's `results()` reads the host's current
+  list, which answers at once.
 
 ## Identity
 
@@ -201,13 +256,35 @@ differs.
   (version folders and what is not one, the key and its digest, packaged
   apps' keys, primary election, legacy lookup) are unit tests of
   `identity`, and reading `Info.plist` (XML and binary) of `plist`.
-- Host list ([`crates/pane-core/tests/application_cache.rs`](../crates/pane-core/tests/application_cache.rs)),
-  with a fake system counting scans: a fresh list is not scanned again; an
-  old one comes back at once while the rescan waits, one rescan at a time,
-  and the next request gets the new list; a failed rescan keeps the list and
-  a failed first scan is an error; opening finds the application by its id
-  or its old path (scanning only when nothing is kept), and an id no
-  application has is explained.
+- Live list ([`crates/pane-core/tests/application_cache.rs`](../crates/pane-core/tests/application_cache.rs)),
+  over a fake system whose sources and watcher the test drives, on a
+  manual clock: nothing is scanned or watched until asked, then once; a
+  burst of reported changes is rescanned once after the debounce and told
+  once, and a rescan finding the same applications tells nothing; a
+  removed application stays for its grace by the clock and then leaves,
+  and one reinstalled within it never does; lost changes rescan at once, a
+  completing change again later, and the period reconciles what was never
+  reported; a failed rescan keeps the list and a failed first scan is an
+  error; releasing or dropping the list stops watching, and the next
+  request scans and watches again; a partial watch is made again after a
+  rescan; opening finds the application by its id or its old path (a scan
+  that is not kept when nothing is), and an id no application has is
+  explained. The pure rules (the grace from the first miss, a retargeted
+  shortcut, a renamed one, telling a sleep, judging watcher events, the
+  folder watched for a missing one) are unit tests of `cached` and
+  `watching`.
+- Live list through the launcher ([`crates/pane-core/tests/application_changes.rs`](../crates/pane-core/tests/application_changes.rs)),
+  with the real guest and the host's list over a fake system: nothing is
+  watched until root search is first used; an application installed (a
+  program, or a packaged app whose change completes later) while root
+  search is on screen appears within about a second without leaving it;
+  an uninstalled one leaves after its grace on the launcher's clock, and
+  one reinstalled within it never does; a renamed shortcut changes the
+  title and keeps the pin; a lost change and the period reconcile; the
+  selected row stays on its application, or at its position when it left;
+  a change while the query is blank is listed by the next query of the
+  same visit; and disabling Applications stops every watcher and drops the
+  list, enabling it looking and watching again.
 - Window ([`crates/pane/tests/window.rs`](../crates/pane/tests/window.rs)):
   typing a name renders the application's row, which assistive technology
   sees as the selected `ListBoxOption`, and Enter opens it with the field
@@ -251,7 +328,11 @@ differs.
   a shortcut to `cmd.exe` made with `WScript.Shell` (Windows). The native
   lists are also read on each system: on macOS they must include
   Calculator, on Windows an inbox packaged app (Calculator or Settings)
-  from the Apps folder.
+  from the Apps folder. Each adapter's watcher runs on every system with its native watcher: a
+  shortcut made in a watched Start menu subfolder or Desktop folder, a
+  desktop entry, or a bundle in a temporary folder given to the adapter is
+  reported within two seconds, and an `applications` folder that does not
+  exist yet is reported when it appears.
 - Native GUI smokes, one identical phase on all three systems (screenshots
   44 and 45): install the package, type "pane smoke", check the selected
   row, Enter, check "Opened Pane Smoke App" and that the application the
@@ -268,8 +349,16 @@ differs.
   rank.
 - The host imports are synchronous: the very first scan runs on the
   runtime thread, so a guest call made meanwhile waits for it (later scans
-  run in the background; #29 owns cancellation). On Windows it now reads
-  every shortcut through the shell, which takes longer than listing the
+  run on the list's own thread; #29 owns cancellation). A change between
+  the first scan and the moment the watchers start is found by the next
+  rescan (a later change, or the 30-minute period).
+- Packaged apps are followed through the `Packages` folder, not the
+  system's packaged-app catalog events (`PackageCatalog`), which the
+  specification asked to check first for an unpackaged process and which
+  Pane does not use yet; a Store install appears once its folder is made
+  and is looked at again five seconds later. A registration that takes
+  longer is found by the next change or the period.
+- On Windows a scan reads every shortcut through the shell, which takes longer than listing the
   folders did (Raycast measured 0.6 to 1.5 s for about 115 applications);
   later scans read only the shortcuts that changed.
 - A shell link the shell cannot read is keyed by its own path, as before,

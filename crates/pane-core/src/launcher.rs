@@ -38,6 +38,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 mod acquire;
 mod actions;
 mod aliases;
+mod application_changes;
 mod application_update;
 mod argument_form;
 mod choices;
@@ -1698,6 +1699,15 @@ impl Launcher {
         // launcher's, for every command it runs (see `feedback`).
         if let Ok(runtime) = &self.runtime {
             runtime.set_host_functions(Arc::new(feedback::Hosted(self.downgrade())));
+            // The commands that asked for the installed applications are
+            // asked for their results again when the list changes (see
+            // `application_changes`).
+            let launcher = self.downgrade();
+            runtime.on_applications_changed(move |components| {
+                if let Some(launcher) = launcher.upgrade() {
+                    launcher.applications_changed(components);
+                }
+            });
         }
         let (Ok(runtime), Some(_)) = (&self.runtime, &self.installation) else {
             return;
@@ -1978,6 +1988,16 @@ impl Launcher {
         &self,
         commands: Vec<(CommandRegistration, Option<PackageData>)>,
     ) {
+        self.show_indexed_results_with(commands, relist_root).await;
+    }
+
+    /// [`Launcher::show_indexed_results`], listing root search again with
+    /// `relist`.
+    async fn show_indexed_results_with(
+        &self,
+        commands: Vec<(CommandRegistration, Option<PackageData>)>,
+        relist: fn(&mut State, &str),
+    ) {
         for (command, data) in commands {
             let (answer, applications) = match self.runtime() {
                 Ok(runtime) => (
@@ -2001,7 +2021,7 @@ impl Launcher {
                     quick_slots::carry_over(state, &command.id, applications.as_ref())
                 });
                 if let Some(query) = state.view.query().map(str::to_owned) {
-                    relist_root(state, &query);
+                    relist(state, &query);
                 }
                 carried
             };

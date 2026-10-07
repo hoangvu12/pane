@@ -5,7 +5,10 @@
 //! results once root search is used (a query that is not blank) and they
 //! are kept for later queries, so typing never waits for them. Coming back to
 //! root search marks them stale: the next query asks again, listing the kept
-//! results until the answer replaces them. A disabled or replaced command's
+//! results until the answer replaces them. So does a change of what they
+//! are made from, the installed applications (`application_changes`),
+//! which asks again at once while root search shows a query. A disabled or
+//! replaced command's
 //! results are forgotten at once, and an answer from it arriving afterwards
 //! is discarded.
 
@@ -46,6 +49,25 @@ impl Indexes {
         for index in &mut self.commands {
             index.fresh = false;
         }
+    }
+
+    /// What supplies the results of the command with component
+    /// `component` changed (the installed applications it lists): its kept
+    /// results are marked stale, to be asked for again, unless it is being
+    /// asked now, whose answer may predate the change.
+    pub(super) fn changed(&mut self, component: &Path) -> Refresh {
+        let Some(index) = self
+            .commands
+            .iter_mut()
+            .find(|index| index.component == component)
+        else {
+            return Refresh::NotKept;
+        };
+        if index.asking {
+            return Refresh::Asking;
+        }
+        index.fresh = false;
+        Refresh::Stale
     }
 
     /// Of `commands`, the enabled commands that supply results ahead of the
@@ -169,6 +191,17 @@ impl Indexes {
             .iter()
             .filter_map(|index| index.failure.as_ref())
     }
+}
+
+/// What [`Indexes::changed`] did with a command's kept results.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Refresh {
+    /// It was never asked: its first query asks it.
+    NotKept,
+    /// It is being asked: it is to be marked once it answered.
+    Asking,
+    /// They were marked stale.
+    Stale,
 }
 
 /// Where one command's kept results stand (see [`Indexes::listing`]).

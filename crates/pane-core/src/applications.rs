@@ -22,6 +22,12 @@
 //! moves the program, and an id from before identities (a source's path)
 //! still finds its application.
 //!
+//! The host's list stays current by itself while a package that asked for
+//! it runs ([`Cached`], ADR 0038): each adapter watches the folders it
+//! finds sources in ([`Discovery::watch`]), the list is rescanned once
+//! their changes settle, and an application whose last source went stays
+//! listed for a grace before it leaves.
+//!
 //! Finding is plain file system work and is compiled on every system, so each
 //! adapter's discovery is tested everywhere with fixture folders; opening uses
 //! the system's own launcher and works only on its system.
@@ -36,9 +42,10 @@ mod desktop_entries;
 pub mod identity;
 mod plist;
 mod start_menu;
+mod watching;
 
 pub use app_bundles::AppBundles;
-pub use cached::Cached;
+pub use cached::{Cached, DEBOUNCE, GRACE};
 pub use desktop_entries::DesktopEntries;
 pub use identity::{Catalog, Identified, Key, Source};
 pub use start_menu::{Place, Shortcut, ShortcutFolder, ShortcutTarget, StartMenu};
@@ -84,6 +91,17 @@ pub trait Applications: Send + Sync + 'static {
     fn current_id(&self, _id: &str) -> Option<String> {
         None
     }
+
+    /// Has `changed` called, from a thread of the list's own, each time the
+    /// installed applications change by themselves: a watcher saw an
+    /// install or a removal, an application's grace ended, a rescan found
+    /// something new. A list that never changes by itself never calls it.
+    fn on_change(&self, _changed: Arc<dyn Fn() + Send + Sync>) {}
+
+    /// No package that asked for the installed applications can run any
+    /// more: drop the kept list and stop watching, until the next
+    /// [`Applications::installed`]. It must not block.
+    fn release(&self) {}
 }
 
 /// What the system opens for `application`, an installed application's id
@@ -106,15 +124,75 @@ pub trait Discovery: Send + Sync + 'static {
     /// waiting for it to finish. An error explains why the system did not
     /// open it.
     fn open(&self, path: &str) -> Result<(), String>;
+
+    /// Starts watching the places sources are found in: `changes` is told
+    /// of what changes there, from a thread of the adapter's own, until the
+    /// returned watch is dropped. An adapter that cannot watch says why;
+    /// the host's list then relies on its periodic rescan.
+    fn watch(&self, changes: Changes) -> Result<Watch, String> {
+        let _ = changes;
+        Err("this system's applications are not watched".into())
+    }
 }
 
-/// How old the kept list of applications may get before a guest asking for
-/// it has it rescanned in the background ([`Cached`]).
-pub const RESCAN_AFTER: Duration = Duration::from_secs(10);
+/// What a watcher saw in the places an adapter finds sources in
+/// ([`Discovery::watch`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Change {
+    /// Something changed: the host's list is rescanned once the changes
+    /// settle ([`DEBOUNCE`]).
+    Changed,
+    /// The system began a change it completes later (a packaged app being
+    /// registered or removed): rescanned once the changes settle, and again
+    /// a few seconds later.
+    Completing,
+    /// The watcher lost changes (its buffer overflowed) or failed: the
+    /// whole list is rescanned at once.
+    Lost,
+}
+
+/// Where an adapter tells what its watcher saw.
+pub type Changes = Arc<dyn Fn(Change) + Send + Sync>;
+
+/// Watching an adapter's places: its watchers stop when this is dropped.
+pub struct Watch {
+    _watchers: Box<dyn Send>,
+    complete: bool,
+}
+
+impl Watch {
+    /// A watch of every place, which stops when `watchers` is dropped.
+    pub fn new(watchers: impl Send + 'static) -> Watch {
+        Watch {
+            _watchers: Box::new(watchers),
+            complete: true,
+        }
+    }
+
+    /// A watch missing some places (one that does not exist yet, or could
+    /// not be watched), which stops when `watchers` is dropped: the host's
+    /// list makes it again after each rescan, to watch them once it can.
+    pub fn partial(watchers: impl Send + 'static) -> Watch {
+        Watch {
+            _watchers: Box::new(watchers),
+            complete: false,
+        }
+    }
+
+    /// Whether it watches every place.
+    pub fn complete(&self) -> bool {
+        self.complete
+    }
+}
+
+/// How often the host's list is rescanned in full while it is kept,
+/// whatever its watchers saw, to reconcile a change they missed.
+pub const RECONCILE_EVERY: Duration = Duration::from_secs(30 * 60);
 
 /// This system's adapter, reading the usual locations from the environment,
-/// behind the host's [`Cached`] list of applications by identity, rescanned
-/// in the background once older than [`RESCAN_AFTER`].
+/// behind the host's live [`Cached`] list of applications by identity,
+/// watched while a package that asked for it runs and reconciled every
+/// [`RECONCILE_EVERY`].
 pub fn native() -> Arc<dyn Applications> {
     let adapter: Arc<dyn Discovery> = if cfg!(target_os = "windows") {
         Arc::new(StartMenu::from_env())
@@ -125,7 +203,7 @@ pub fn native() -> Arc<dyn Applications> {
     } else {
         Arc::new(Unsupported)
     };
-    Arc::new(Cached::new(adapter, RESCAN_AFTER))
+    Arc::new(Cached::new(adapter, RECONCILE_EVERY))
 }
 
 /// A system Pane does not find applications on.

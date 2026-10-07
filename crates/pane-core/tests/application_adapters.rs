@@ -985,3 +985,115 @@ fn a_shortcut_is_opened_only_on_windows() {
         "{error}"
     );
 }
+
+/// Each adapter's watcher, on whichever system runs the tests (the native
+/// file watcher: ReadDirectoryChangesW, FSEvents or inotify): a source
+/// made in a watched temporary folder is reported within two seconds, and
+/// a folder that does not exist yet is watched for. Nothing outside the
+/// test's own folders is watched.
+mod watching {
+    use std::sync::{Arc, Mutex, mpsc};
+    use std::time::Duration;
+
+    use pane_core::applications::{
+        AppBundles, Change, Changes, DesktopEntries, Discovery, Place, ShortcutFolder, StartMenu,
+    };
+
+    use super::write;
+
+    /// Where a watch reports, and what it reported.
+    fn sink() -> (Changes, mpsc::Receiver<Change>) {
+        let (send, reported) = mpsc::channel();
+        let send = Mutex::new(send);
+        let changes: Changes = Arc::new(move |change| {
+            let _ = send.lock().unwrap().send(change);
+        });
+        (changes, reported)
+    }
+
+    /// The first change reported, within two seconds.
+    fn within_two_seconds(reported: &mpsc::Receiver<Change>) -> Change {
+        reported
+            .recv_timeout(Duration::from_secs(2))
+            .expect("the watcher reported nothing within two seconds")
+    }
+
+    #[test]
+    fn a_shortcut_made_in_a_watched_start_menu_folder_is_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let programs = dir.path().join("Programs");
+        let desktop = dir.path().join("Desktop");
+        std::fs::create_dir_all(programs.join("Suite")).unwrap();
+        std::fs::create_dir_all(&desktop).unwrap();
+        let menu = StartMenu::with_folders(vec![
+            ShortcutFolder {
+                path: programs.clone(),
+                place: Place::UserStartMenu,
+                subfolders: true,
+            },
+            ShortcutFolder {
+                path: desktop.clone(),
+                place: Place::UserDesktop,
+                subfolders: false,
+            },
+        ]);
+        let (changes, reported) = sink();
+        let watch = menu.watch(changes).unwrap();
+        assert!(watch.complete());
+
+        // In a subfolder of a folder whose subfolders are looked into.
+        write(&programs.join("Suite/Editor.lnk"), "");
+        assert_eq!(within_two_seconds(&reported), Change::Changed);
+        while reported.recv_timeout(Duration::from_millis(300)).is_ok() {}
+
+        write(&desktop.join("Mail.lnk"), "");
+        assert_eq!(within_two_seconds(&reported), Change::Changed);
+    }
+
+    #[test]
+    fn an_application_folder_that_does_not_exist_yet_is_watched_for() {
+        let dir = tempfile::tempdir().unwrap();
+        let applications = dir.path().join("share/applications");
+        let entries = DesktopEntries::new(vec![applications.clone()]);
+        let (changes, reported) = sink();
+        let watch = entries.watch(changes).unwrap();
+        assert!(!watch.complete(), "it does not watch the folder itself yet");
+
+        std::fs::create_dir_all(&applications).unwrap();
+
+        assert_eq!(within_two_seconds(&reported), Change::Changed);
+    }
+
+    #[test]
+    fn a_desktop_entry_made_in_a_watched_applications_folder_is_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let applications = dir.path().join("applications");
+        std::fs::create_dir_all(applications.join("vendor")).unwrap();
+        let entries = DesktopEntries::new(vec![applications.clone()]);
+        let (changes, reported) = sink();
+        let watch = entries.watch(changes).unwrap();
+        assert!(watch.complete());
+
+        write(
+            &applications.join("vendor/editor.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Editor\nExec=editor\n",
+        );
+
+        assert_eq!(within_two_seconds(&reported), Change::Changed);
+    }
+
+    #[test]
+    fn a_bundle_made_in_a_watched_applications_folder_is_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let applications = dir.path().join("Applications");
+        std::fs::create_dir_all(&applications).unwrap();
+        let bundles = AppBundles::new(vec![applications.clone()]);
+        let (changes, reported) = sink();
+        let watch = bundles.watch(changes).unwrap();
+        assert!(watch.complete());
+
+        std::fs::create_dir_all(applications.join("Editor.app/Contents")).unwrap();
+
+        assert_eq!(within_two_seconds(&reported), Change::Changed);
+    }
+}

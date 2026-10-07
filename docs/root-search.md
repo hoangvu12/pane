@@ -348,7 +348,11 @@ extension, through the same guest boundary as its command:
   the answer and ranks it with the other root results on every later query,
   so typing never waits for it; until it answers, the results kept from an
   earlier visit are listed. They are asked again after each return to root
-  search. The guest's work is not cancelled; calls run one at a time (#29).
+  search, and when the host's list of installed applications changes by
+  itself for a command that asked for it: at once while root search shows
+  a query, listed in place with the selected row kept on its result,
+  otherwise at the next query ([applications](applications.md#live-list)).
+  The guest's work is not cancelled; calls run one at a time (#29).
 - They are listed only for a query that is not blank, ranked by title,
   subtitle and rank exactly as commands are; on the same rank they come
   after commands.

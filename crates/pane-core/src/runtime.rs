@@ -50,6 +50,7 @@ use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
 
 use crate::http;
 
+mod application_list;
 pub(crate) mod deadlines;
 mod faults;
 mod host_functions;
@@ -331,9 +332,9 @@ pub(crate) struct Exports {
     pub service: bool,
 }
 
-/// The system's applications as the runtime's guests and the launcher see
-/// them; replaceable, for tests.
-type SharedApplications = Arc<Mutex<Arc<dyn Applications>>>;
+// The system's applications as the runtime's guests and the launcher see
+// them; replaceable, for tests.
+use application_list::SharedApplications;
 
 /// Where the runtime's guests keep clipboard history, once the launcher
 /// said (see [`Runtime::set_clipboard`]); held weakly, since the launcher
@@ -934,7 +935,7 @@ impl Runtime {
 
     fn start_with(cache_dir: Option<PathBuf>) -> Result<Runtime, CallError> {
         let engine = engine(cache_dir.clone())?;
-        let applications: SharedApplications = Arc::new(Mutex::new(crate::applications::native()));
+        let applications = SharedApplications::new(crate::applications::native());
         let code = Arc::new(Code::new(engine));
         let (checks, pending_checks) = std::sync::mpsc::channel::<Check>();
         let checker = code.clone();
@@ -1318,7 +1319,17 @@ impl Runtime {
     /// find and open applications through `applications` from now on,
     /// instead of this system's own ([`crate::applications::native`]).
     pub fn set_applications(&self, applications: Arc<dyn Applications>) {
-        *lock(&self.shared.applications) = applications;
+        self.shared.applications.replace(applications);
+    }
+
+    /// Has `changed` told, with the components that asked for the
+    /// installed applications and may still run, each time the list
+    /// changes by itself (see [`Applications::on_change`]).
+    pub(crate) fn on_applications_changed(
+        &self,
+        changed: impl Fn(Vec<PathBuf>) + Send + Sync + 'static,
+    ) {
+        self.shared.applications.on_change(Arc::new(changed));
     }
 
     /// Has the runtime list granted folders through `folders` from now on,
@@ -1334,7 +1345,7 @@ impl Runtime {
 
     /// Finds and opens the system's applications.
     pub(crate) fn applications(&self) -> Arc<dyn Applications> {
-        lock(&self.shared.applications).clone()
+        self.shared.applications.current()
     }
 
     /// Has the runtime's guests keep clipboard history through `capture`
@@ -2245,7 +2256,7 @@ fn launch_record(launch: &LaunchRecord, command: Option<&str>) -> launching::Lau
 
 impl GuestState {
     fn applications(&self) -> Arc<dyn Applications> {
-        lock(&self.applications).clone()
+        self.applications.current()
     }
 
     /// The granted folders and their listings, for the guest.
@@ -2268,6 +2279,11 @@ impl applications::Host for GuestState {
         if let Some(end) = self.stopped() {
             return Err(stopped_code(end));
         }
+        // The host keeps its list while a package that asked can run.
+        self.applications.asked_by(
+            &self.component,
+            self.data.as_ref().map(PackageData::generation),
+        );
         Ok(self
             .applications()
             .installed()?

@@ -6,7 +6,10 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{Discovery, Key, Source, env_dir, has_extension, id_path, plist, sorted_entries};
+use super::{
+    Changes, Discovery, Key, Source, Watch, env_dir, has_extension, id_path, plist, sorted_entries,
+    watching,
+};
 
 /// How deep Pane looks into folders that are not bundles, such as
 /// `/Applications/Utilities`.
@@ -88,6 +91,19 @@ impl Discovery for AppBundles {
     fn open(&self, path: &str) -> Result<(), String> {
         let path = id_path(path, "app", "an application bundle")?;
         open_bundle(&path)
+    }
+
+    /// Watches the Applications folders and everything in them (FSEvents
+    /// on macOS); one that does not exist yet is watched for from the
+    /// nearest folder above it that does.
+    fn watch(&self, changes: Changes) -> Result<Watch, String> {
+        watching::watch(
+            self.folders
+                .iter()
+                .map(|folder| watching::Folder::walked(folder.clone()))
+                .collect(),
+            changes,
+        )
     }
 }
 
