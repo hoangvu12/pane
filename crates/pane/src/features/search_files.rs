@@ -21,7 +21,7 @@
 //!   folder below the home folder; more rows load as the list scrolls
 //!   toward its end. A line over the list says when the index is being
 //!   built ("Indexing… (N found so far)"), or why it stopped, with a way to
-//!   the File search settings page.
+//!   the File Search page in Settings.
 //! - The detail: an image's preview (another file's large icon) over its
 //!   Metadata: Name, Where, Type, Size, Created and Modified.
 //! - The footer: the command's icon and title (or the launcher's status),
@@ -62,9 +62,10 @@ pub(crate) const PLACEHOLDER: &str = "Search files…";
 /// `files-type-<id>` (`all`, `folder`, `document`, …).
 pub(crate) const TYPE_SELECT: &str = "files-type";
 
-/// The title of the File search page in Settings (#176), where the index's
-/// roots, exclusions and state are.
-pub(crate) const FILE_SEARCH_PAGE: &str = "File Search";
+/// The title of the File Search page in Settings (#176), where the index's
+/// roots, exclusions and state are: that page's own title, so the link
+/// always opens it.
+pub(crate) const FILE_SEARCH_PAGE: &str = crate::features::settings::file_search::TITLE;
 
 /// How many rows from the end of the list a drawn row starts the next
 /// page loading.

@@ -73,6 +73,7 @@ use crate::{FocusNext, FocusPrevious};
 pub(crate) mod about;
 pub(crate) mod appearance;
 pub(crate) mod extensions;
+pub(crate) mod file_search;
 pub(crate) mod general;
 pub(crate) mod keyboard;
 pub(crate) mod launcher;
@@ -194,6 +195,9 @@ pub struct SettingsWindow {
     /// The Extensions page's state (its preferences' text fields), owned
     /// by its module.
     extensions: extensions::State,
+    /// The File Search page's state (its pattern field), owned by its
+    /// module.
+    file_search: file_search::State,
     /// The sidebar's search, owned by its module.
     search: search::State,
 }
@@ -236,6 +240,7 @@ impl SettingsWindow {
                     .update(cx, |window, cx| {
                         window.shortcuts_watched(cx);
                         window.search_watched(cx);
+                        window.file_search_watched(cx);
                     })
                     .is_err()
                 {
@@ -247,14 +252,16 @@ impl SettingsWindow {
         SettingsWindow {
             launcher: launcher.clone(),
             // The sidebar's order: Pane's own pages — General (with the
-            // Appearance section), Launcher, Shortcuts, Keyboard, About —
-            // then the Extensions group, its installed extensions under it
-            // (#168). General is the page the window first shows.
+            // Appearance section), Launcher, Shortcuts, Keyboard, File
+            // Search (#176), About — then the Extensions group, its
+            // installed extensions under it (#168). General is the page the
+            // window first shows.
             pages: vec![
                 general::page(),
                 launcher::page(),
                 shortcuts::page(),
                 keyboard::page(),
+                file_search::page(),
                 about::page(),
                 extensions::page(),
             ],
@@ -272,6 +279,7 @@ impl SettingsWindow {
             shortcuts: shortcuts::State::new(launcher, cx),
             keyboard: keyboard::State::new(window, cx),
             extensions: extensions::State::default(),
+            file_search: file_search::State::default(),
             search: search::State::new(cx),
         }
     }

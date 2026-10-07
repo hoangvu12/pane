@@ -12,6 +12,16 @@
 //! and never wait for a walk. Disabling the last package that uses the
 //! index stops watching at once and keeps the index on disk; uninstalling
 //! it deletes the index ([`Indexer::delete`]).
+//!
+//! The safety valves (#126 "Priority and safety valves", #176), each
+//! listed on the File search page ([`Indexer::problems`]): a folder that
+//! changes constantly is taken out of the index until the user includes it
+//! again (churn quarantine, [`Valves::churn_changes`]); a walk stops at a
+//! ceiling of entries ([`WalkOptions::max_entries`]); indexing stops
+//! writing while the disk holding the cache has too little free space, and
+//! starts again once there is room ([`Valves::free_space_floor`]); and a
+//! folder that does not answer is skipped for the walk
+//! ([`WalkOptions::hung_after`]).
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -56,6 +66,83 @@ pub const RULES_FILE: &str = "file-search.json";
 /// The index's folder in Pane's cache folder.
 pub const INDEX_DIR: &str = "file-index";
 
+/// The free space under which indexing stops writing (#126's proposed
+/// value): 1 GiB on the volume holding Pane's cache.
+pub const FREE_SPACE_FLOOR: u64 = 1 << 30;
+
+/// The safety valves' thresholds (see the module docs); the proposed
+/// values by default, smaller in tests.
+#[derive(Clone)]
+pub struct Valves {
+    /// Changes in one folder within [`Valves::churn_window`] that count
+    /// as constant churn (about 1,000 a minute).
+    pub churn_changes: u64,
+    pub churn_window: Duration,
+    /// Windows of churn in a row that take the folder out of the index
+    /// (3 minutes).
+    pub churn_windows: u32,
+    /// Indexing stops writing while less is free ([`FREE_SPACE_FLOOR`]).
+    pub free_space_floor: u64,
+    /// How often a stop for space looks again.
+    pub space_retry: Duration,
+    /// How the free space of the volume holding a folder is read: the
+    /// system's ([`free_space`]) unless a test says otherwise.
+    pub free_space: Arc<dyn Fn(&Path) -> Option<u64> + Send + Sync>,
+}
+
+impl Default for Valves {
+    fn default() -> Valves {
+        Valves {
+            churn_changes: 1_000,
+            churn_window: Duration::from_secs(60),
+            churn_windows: 3,
+            free_space_floor: FREE_SPACE_FLOOR,
+            space_retry: Duration::from_secs(60),
+            free_space: Arc::new(free_space),
+        }
+    }
+}
+
+/// The space free to this user on the volume holding `path` (or its
+/// nearest existing folder above it); `None` when the system does not say.
+pub fn free_space(path: &Path) -> Option<u64> {
+    let existing = path.ancestors().find(|folder| folder.exists())?;
+    free_space_at(existing)
+}
+
+#[cfg(windows)]
+fn free_space_at(path: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    use windows::core::PCWSTR;
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+    let mut available = 0u64;
+    // SAFETY: `wide` is NUL-terminated and `available` is a u64 the call
+    // writes.
+    unsafe { GetDiskFreeSpaceExW(PCWSTR(wide.as_ptr()), Some(&mut available), None, None) }.ok()?;
+    Some(available)
+}
+
+#[cfg(unix)]
+fn free_space_at(path: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    // SAFETY: a plain C structure, for which all zeroes is a valid value.
+    let mut stats: libc::statvfs = unsafe { std::mem::zeroed() };
+    // SAFETY: a NUL-terminated path and a structure of the call's own type.
+    if unsafe { libc::statvfs(path.as_ptr(), &mut stats) } != 0 {
+        return None;
+    }
+    // The fields' widths differ between systems.
+    #[allow(clippy::unnecessary_cast)]
+    Some((stats.f_bavail as u64).saturating_mul(stats.f_frsize as u64))
+}
+
+#[cfg(not(any(windows, unix)))]
+fn free_space_at(_path: &Path) -> Option<u64> {
+    None
+}
+
 /// How the indexer runs: where the index is kept, what it covers, and how
 /// it learns what changed.
 #[derive(Clone)]
@@ -73,6 +160,8 @@ pub struct IndexerConfig {
     pub walk: WalkOptions,
     /// See [`RECONCILE_UNWATCHED`].
     pub reconcile_unwatched: Duration,
+    /// See [`Valves`].
+    pub valves: Valves,
 }
 
 impl IndexerConfig {
@@ -91,6 +180,7 @@ impl IndexerConfig {
             settle: SETTLE,
             walk: WalkOptions::default(),
             reconcile_unwatched: RECONCILE_UNWATCHED,
+            valves: Valves::default(),
         }
     }
 }
@@ -109,6 +199,11 @@ pub struct UserRules {
     pub use_ignore_files: bool,
     pub default_exclusions: bool,
     pub include_other_volumes: bool,
+    /// Folders Pane took out of the index because they changed constantly
+    /// (churn quarantine, #176), until the user includes them again: left
+    /// out as an excluded folder is, and listed apart on the File search
+    /// page with the reason.
+    pub quarantined: Vec<PathBuf>,
 }
 
 impl Default for UserRules {
@@ -121,6 +216,7 @@ impl Default for UserRules {
             use_ignore_files: true,
             default_exclusions: true,
             include_other_volumes: false,
+            quarantined: Vec::new(),
         }
     }
 }
@@ -135,6 +231,11 @@ impl UserRules {
             }
         }
         rules.excluded_folders = self.excluded_folders.clone();
+        for folder in &self.quarantined {
+            if !rules.excluded_folders.contains(folder) {
+                rules.excluded_folders.push(folder.clone());
+            }
+        }
         rules.excluded_patterns = self.excluded_patterns.clone();
         rules.include_hidden = self.include_hidden;
         rules.use_ignore_files = self.use_ignore_files;
@@ -207,6 +308,107 @@ pub struct IndexStatus {
     pub unwatched: u64,
     /// A walk stopped at the ceiling of 5 million entries.
     pub ceiling_reached: bool,
+    /// Indexing stopped writing: the disk holding Pane's cache has less
+    /// free space than [`Valves::free_space_floor`]. It starts again by
+    /// itself once there is room.
+    pub low_space: bool,
+    /// Folders that did not answer within [`WalkOptions::hung_after`] in
+    /// the last walk, counted, and the first ones named: skipped for that
+    /// walk.
+    pub hung: u64,
+    pub hung_folders: Vec<PathBuf>,
+}
+
+/// What a [`Problem`] is about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ProblemKind {
+    /// A folder that could not be read.
+    Unreadable,
+    /// A folder macOS did not allow Pane to read (Desktop, Documents,
+    /// Downloads).
+    Refused,
+    /// Folders Linux cannot watch (its watch limit was reached).
+    Unwatched,
+    /// A folder taken out of the index because it changed constantly.
+    Churned,
+    /// A folder that did not answer in time.
+    Hung,
+    /// A walk stopped at the ceiling of entries.
+    Ceiling,
+    /// Indexing stopped for want of free space.
+    LowSpace,
+}
+
+/// Something the File search page lists about the index (#176): what
+/// happened, the folder it concerns (if one), why, and what the user can do
+/// about it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Problem {
+    pub kind: ProblemKind,
+    pub folder: Option<PathBuf>,
+    pub reason: String,
+    pub remedy: String,
+}
+
+/// `count` for people: "5 million", "1,000", "12,345".
+pub fn count_words(count: u64) -> String {
+    if count >= 1_000_000 && count % 1_000_000 == 0 {
+        return format!("{} million", count / 1_000_000);
+    }
+    let digits = count.to_string();
+    let mut grouped = String::new();
+    for (at, digit) in digits.chars().enumerate() {
+        if at > 0 && (digits.len() - at) % 3 == 0 {
+            grouped.push(',');
+        }
+        grouped.push(digit);
+    }
+    grouped
+}
+
+/// `bytes` for people, in whole units where they are: "1 GB", "512 MB".
+fn size_words(bytes: u64) -> String {
+    const GB: u64 = 1 << 30;
+    const MB: u64 = 1 << 20;
+    if bytes >= GB {
+        format!("{} GB", (bytes + GB / 2) / GB)
+    } else if bytes >= MB {
+        format!("{} MB", (bytes + MB / 2) / MB)
+    } else {
+        format!("{bytes} bytes")
+    }
+}
+
+/// `span` for people: "1 minute", "10 seconds", "200 ms".
+fn span_words(span: Duration) -> String {
+    let plural = |count: u64, unit: &str| {
+        if count == 1 {
+            format!("1 {unit}")
+        } else {
+            format!("{count} {unit}s")
+        }
+    };
+    let seconds = span.as_secs();
+    if span.subsec_nanos() == 0 && seconds >= 60 && seconds % 60 == 0 {
+        plural(seconds / 60, "minute")
+    } else if span.subsec_nanos() == 0 && seconds > 0 {
+        plural(seconds, "second")
+    } else {
+        format!("{} ms", span.as_millis())
+    }
+}
+
+/// Whether `folder` is one of the folders macOS asks the user about before
+/// Pane may read it: the home folder's Desktop, Documents and Downloads.
+pub fn protected_by_macos(home: Option<&Path>, folder: &Path) -> bool {
+    let Some(home) = home else {
+        return false;
+    };
+    folder.parent() == Some(home)
+        && folder
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| matches!(name, "Desktop" | "Documents" | "Downloads"))
 }
 
 /// How to search.
@@ -408,6 +610,11 @@ struct Inner {
 struct Shared {
     config: Option<IndexerConfig>,
     user_rules: UserRules,
+    /// The folder whose [`RULES_FILE`] records the user's rules, if they
+    /// are recorded: a folder taken out for churn is recorded there too.
+    rules_dir: Option<PathBuf>,
+    /// A folder granted under #29 is being moved into the roots.
+    moving_grants: bool,
     /// The packages that use the index and may run, by identity key.
     users: BTreeSet<String>,
     /// Whether the launcher was shown since Pane started.
@@ -567,6 +774,7 @@ impl Indexer {
         shared.status.state = IndexState::Building;
         shared.status.reason = None;
         shared.status.found = 0;
+        shared.status.low_space = false;
         shared.busy = true;
         let weak = Arc::downgrade(&self.0);
         let thread_stop = stop.clone();
@@ -634,6 +842,27 @@ impl Indexer {
         self.shared().user_rules.clone()
     }
 
+    /// The roots and rules this Pane starts from, before the user's; `None`
+    /// when it keeps no index.
+    pub fn base_rules(&self) -> Option<ScopeRules> {
+        self.shared()
+            .config
+            .as_ref()
+            .map(|config| config.rules.clone())
+    }
+
+    /// Notes that granted folders are being moved into the roots; `false`
+    /// if they already are.
+    pub(crate) fn start_moving_grants(&self) -> bool {
+        let mut shared = self.shared();
+        !std::mem::replace(&mut shared.moving_grants, true)
+    }
+
+    /// Notes that the move [`Indexer::start_moving_grants`] began is done.
+    pub(crate) fn done_moving_grants(&self) {
+        self.shared().moving_grants = false;
+    }
+
     /// The roots and rules in force now (the defaults with the user's
     /// over them); `None` when this Pane keeps no index.
     pub fn rules(&self) -> Option<ScopeRules> {
@@ -642,10 +871,13 @@ impl Indexer {
         Some(shared.user_rules.applied_to(&config.rules))
     }
 
-    /// Applies the user's new `rules`: the index is walked again under them
-    /// (only an added root is walked alone; a removed root's entries go),
-    /// now if a package uses it, else when one next does (the index keeps
-    /// the rules it was built under). Blocking: waits for the coordinator to
+    /// Applies the user's new `rules`: the index is brought to them, changing
+    /// only what they affect where it can (an added root or a folder no
+    /// longer excluded is walked alone; a removed root's or a newly excluded
+    /// folder's entries go; any other change walks every root again), now
+    /// if a package uses it, else when one next does (the index keeps the
+    /// rules it was built under). Not recorded: see
+    /// [`Indexer::change_rules`]. Blocking: waits for the coordinator to
     /// stop first.
     pub fn set_user_rules(&self, rules: UserRules) {
         if self.shared().user_rules == rules {
@@ -656,6 +888,176 @@ impl Indexer {
         // The index's roots changed: it is opened again with them.
         self.close_index();
         self.follow();
+    }
+
+    /// Records the user's rules in `dir`'s [`RULES_FILE`] from now on,
+    /// whatever changes them: the File search page, or a folder taken out
+    /// for churn.
+    pub fn keep_rules_in(&self, dir: PathBuf) {
+        self.shared().rules_dir = Some(dir);
+    }
+
+    /// Records the user's new `rules` (where [`Indexer::keep_rules_in`]
+    /// says) and applies them, as [`Indexer::set_user_rules`] does. The
+    /// folders taken out for churn stay out: only
+    /// [`Indexer::include_again`] puts one back. Blocking.
+    pub fn change_rules(&self, mut rules: UserRules) -> Result<(), String> {
+        let (current, dir) = {
+            let shared = self.shared();
+            (shared.user_rules.clone(), shared.rules_dir.clone())
+        };
+        rules.quarantined = current.quarantined.clone();
+        if rules == current {
+            return Ok(());
+        }
+        if let Some(dir) = &dir {
+            rules.write(dir)?;
+        }
+        self.set_user_rules(rules);
+        Ok(())
+    }
+
+    /// Puts `folder`, taken out of the index for churn, back in: recorded,
+    /// and walked again. Blocking.
+    pub fn include_again(&self, folder: &Path) -> Result<(), String> {
+        let (mut rules, dir) = {
+            let shared = self.shared();
+            (shared.user_rules.clone(), shared.rules_dir.clone())
+        };
+        let before = rules.quarantined.len();
+        rules
+            .quarantined
+            .retain(|quarantined| quarantined != folder);
+        if rules.quarantined.len() == before {
+            return Ok(());
+        }
+        if let Some(dir) = &dir {
+            rules.write(dir)?;
+        }
+        self.set_user_rules(rules);
+        Ok(())
+    }
+
+    /// What the File search page lists about the index (#176): folders that
+    /// could not be read (macOS's refusals apart), are not watched, churned
+    /// or did not answer, a walk stopped at the ceiling, and a stop for
+    /// space, each with why and what to do.
+    pub fn problems(&self) -> Vec<Problem> {
+        let shared = self.shared();
+        let status = &shared.status;
+        let Some(config) = &shared.config else {
+            return Vec::new();
+        };
+        let home = config.rules.home.as_deref();
+        let mut problems = Vec::new();
+        if status.low_space {
+            problems.push(Problem {
+                kind: ProblemKind::LowSpace,
+                folder: None,
+                reason: format!(
+                    "Less than {} is free on the disk that holds Pane's cache, so indexing \
+                     stopped",
+                    size_words(config.valves.free_space_floor)
+                ),
+                remedy: "Free some space; indexing starts again by itself".into(),
+            });
+        }
+        if status.ceiling_reached {
+            problems.push(Problem {
+                kind: ProblemKind::Ceiling,
+                folder: None,
+                reason: format!(
+                    "Indexing stopped at {} entries",
+                    count_words(config.walk.max_entries)
+                ),
+                remedy: "Exclude folders you do not search, then rebuild the index".into(),
+            });
+        }
+        for folder in &shared.user_rules.quarantined {
+            problems.push(Problem {
+                kind: ProblemKind::Churned,
+                folder: Some(folder.clone()),
+                reason: format!(
+                    "It changed more than {} times in {}, {} times in a row, so Pane took it \
+                     out of the index",
+                    count_words(config.valves.churn_changes),
+                    span_words(config.valves.churn_window),
+                    config.valves.churn_windows
+                ),
+                remedy: "Include it again once it is calmer".into(),
+            });
+        }
+        let hung_after = config.walk.hung_after.unwrap_or(super::walker::HUNG_AFTER);
+        for folder in &status.hung_folders {
+            problems.push(Problem {
+                kind: ProblemKind::Hung,
+                folder: Some(folder.clone()),
+                reason: format!(
+                    "It did not answer within {}, so Pane skipped it for this walk",
+                    span_words(hung_after)
+                ),
+                remedy: "Rebuild the index once it answers".into(),
+            });
+        }
+        let named_hung = status.hung_folders.len() as u64;
+        if status.hung > named_hung {
+            problems.push(Problem {
+                kind: ProblemKind::Hung,
+                folder: None,
+                reason: format!(
+                    "{} more folders did not answer in time",
+                    count_words(status.hung - named_hung)
+                ),
+                remedy: "Rebuild the index once they answer".into(),
+            });
+        }
+        for folder in &status.unreadable_folders {
+            if cfg!(target_os = "macos") && protected_by_macos(home, folder) {
+                problems.push(Problem {
+                    kind: ProblemKind::Refused,
+                    folder: Some(folder.clone()),
+                    reason: "macOS did not allow Pane to read it".into(),
+                    remedy: "Allow Pane under System Settings › Privacy & Security › Files and \
+                             Folders, then rebuild the index"
+                        .into(),
+                });
+            } else {
+                problems.push(Problem {
+                    kind: ProblemKind::Unreadable,
+                    folder: Some(folder.clone()),
+                    reason: "Pane cannot read it, so what is in it is not indexed".into(),
+                    remedy: "Make sure your account may open it, then rebuild the index".into(),
+                });
+            }
+        }
+        let named = status.unreadable_folders.len() as u64;
+        if status.unreadable > named {
+            problems.push(Problem {
+                kind: ProblemKind::Unreadable,
+                folder: None,
+                reason: format!(
+                    "{} more folders could not be read",
+                    count_words(status.unreadable - named)
+                ),
+                remedy: "Make sure your account may open them, then rebuild the index".into(),
+            });
+        }
+        if status.unwatched > 0 {
+            problems.push(Problem {
+                kind: ProblemKind::Unwatched,
+                folder: None,
+                reason: format!(
+                    "{} folders are not watched, since the system's limit on watched folders \
+                     was reached; Pane re-checks them every {}",
+                    count_words(status.unwatched),
+                    span_words(config.reconcile_unwatched)
+                ),
+                remedy: "Raise the limit (the fs.inotify.max_user_watches setting) to watch \
+                         them all"
+                    .into(),
+            });
+        }
+        problems
     }
 
     /// Deletes the index (the last package that used it was uninstalled):
@@ -1035,6 +1437,22 @@ struct Coordinator {
     unwatched: Vec<PathBuf>,
     unwatched_reconciled: Instant,
     caught_up: Option<CaughtUpBy>,
+    /// Changes counted per folder, for churn quarantine.
+    churn: HashMap<PathBuf, Churn>,
+    /// The disk holding the index is short of space: nothing is written
+    /// until there is room again.
+    low_space: bool,
+    /// Changes were let go while short of space: every root is reconciled
+    /// once there is room.
+    missed: bool,
+}
+
+/// The changes counted in one folder: in the window that started `since`,
+/// and how many windows in a row before it were busy.
+struct Churn {
+    since: Instant,
+    changes: u64,
+    busy: u32,
 }
 
 impl Coordinator {
@@ -1090,9 +1508,10 @@ impl Coordinator {
         // Built under other rules (the user changed them, or the home
         // folder moved): brought to these first.
         let mut record = index.record();
+        let mut walk_again = Vec::new();
         if record.rules.as_ref() != Some(scope.rules()) {
             if let Some(before) = &record.rules {
-                apply_rule_change(&index, before, scope.rules());
+                walk_again = apply_rule_change(&index, before, scope.rules());
                 record = index.record();
             }
             record.rules = Some(scope.rules().clone());
@@ -1106,12 +1525,15 @@ impl Coordinator {
             started: Instant::now(),
             cursors: Vec::new(),
             full_walk: false,
-            walk: Vec::new(),
+            walk: walk_again,
             reconcile: Vec::new(),
             unwatched: Vec::new(),
             unwatched_reconciled: Instant::now(),
             watching: None,
             caught_up: None,
+            churn: HashMap::new(),
+            low_space: false,
+            missed: false,
             config,
             scope,
             index,
@@ -1124,6 +1546,168 @@ impl Coordinator {
 
     fn stopped(&self) -> bool {
         self.stop.load(Ordering::Relaxed)
+    }
+
+    /// Whether the disk holding the index has room to write (at least
+    /// [`Valves::free_space_floor`] free, or the system does not say). The
+    /// status follows: stopped while there is none, and indexing starts
+    /// again once there is (every root reconciled, if changes were let go
+    /// meanwhile).
+    fn room(&mut self) -> bool {
+        let valves = &self.config.valves;
+        let short = (valves.free_space)(&self.config.dir)
+            .is_some_and(|free| free < valves.free_space_floor);
+        if short && !self.low_space {
+            self.low_space = true;
+            let floor = size_words(valves.free_space_floor);
+            self.status(|shared| {
+                shared.busy = false;
+                shared.status.state = IndexState::Stopped;
+                shared.status.waiting = false;
+                shared.status.low_space = true;
+                shared.status.reason = Some(format!(
+                    "Pane stopped indexing: less than {floor} is free on the disk that holds \
+                     its cache"
+                ));
+            });
+        } else if !short && self.low_space {
+            self.low_space = false;
+            if self.missed {
+                self.missed = false;
+                if !self.full_walk {
+                    self.cursors = self.config.source.cursors(&self.scope);
+                    for root in &self.scope.rules().roots {
+                        if !self.reconcile.contains(root) {
+                            self.reconcile.push(root.clone());
+                        }
+                    }
+                    self.caught_up = Some(CaughtUpBy::ReconcilingWalk);
+                }
+            }
+            self.status(|shared| {
+                shared.status.low_space = false;
+                shared.status.state = IndexState::Building;
+                shared.status.reason = None;
+            });
+        }
+        !short
+    }
+
+    /// Counts the changes `changed` reports, per folder they are in, at
+    /// `now`: the folders that changed more than [`Valves::churn_changes`]
+    /// times in each of [`Valves::churn_windows`] windows in a row, to take
+    /// out of the index. A root itself, and a folder out of the index
+    /// already, is never taken out.
+    fn count_churn(&mut self, changed: &[PathBuf], now: Instant) -> Vec<PathBuf> {
+        let valves = &self.config.valves;
+        if valves.churn_windows == 0 {
+            return Vec::new();
+        }
+        let window = valves.churn_window.max(Duration::from_millis(1));
+        let mut per_folder: HashMap<&Path, u64> = HashMap::new();
+        for path in changed {
+            if let Some(folder) = path.parent() {
+                *per_folder.entry(folder).or_default() += 1;
+            }
+        }
+        let rules = self.scope.rules();
+        let mut churned = Vec::new();
+        for (folder, count) in per_folder {
+            let counted = self.scope.root_of(folder).is_some()
+                && !rules.roots.iter().any(|root| root == folder)
+                && !rules
+                    .excluded_folders
+                    .iter()
+                    .any(|out| folder.starts_with(out));
+            if !counted {
+                continue;
+            }
+            let churn = self.churn.entry(folder.to_path_buf()).or_insert(Churn {
+                since: now,
+                changes: 0,
+                busy: 0,
+            });
+            let elapsed = now.saturating_duration_since(churn.since);
+            if elapsed >= window {
+                let passed = (elapsed.as_nanos() / window.as_nanos()).min(u128::from(u32::MAX));
+                let passed = passed as u32;
+                churn.busy = if passed == 1 && churn.changes > valves.churn_changes {
+                    churn.busy + 1
+                } else {
+                    0
+                };
+                churn.since += window * passed;
+                churn.changes = 0;
+            }
+            churn.changes += count;
+            if churn.changes > valves.churn_changes && churn.busy + 1 >= valves.churn_windows {
+                churned.push(folder.to_path_buf());
+            }
+        }
+        for folder in &churned {
+            self.churn.remove(folder);
+        }
+        if self.churn.len() > 4096 {
+            self.churn
+                .retain(|_, churn| now.saturating_duration_since(churn.since) < window * 2);
+        }
+        churned
+    }
+
+    /// Takes `folder`, which changes constantly, out of the index until the
+    /// user includes it again: its entries go, the rules leave it out from
+    /// now on, and Pane's own record and the File search page say so.
+    fn quarantine(&mut self, folder: PathBuf) {
+        let mut rules = self.scope.rules().clone();
+        if !rules.excluded_folders.contains(&folder) {
+            rules.excluded_folders.push(folder.clone());
+        }
+        let scope = Arc::new(Scope::new(rules));
+        self.scope = scope.clone();
+        let _ = self.index.apply(&[Change::RemoveUnder(folder.clone())]);
+        let mut record = self.index.record();
+        record.rules = Some(scope.rules().clone());
+        let _ = self.index.set_record(record);
+        self.walk.retain(|walked| !walked.starts_with(&folder));
+        self.reconcile.retain(|walked| !walked.starts_with(&folder));
+        self.unwatched.retain(|walked| !walked.starts_with(&folder));
+        let Some(inner) = self.inner.upgrade() else {
+            return;
+        };
+        let (rules, dir) = {
+            let mut shared = lock(&inner.shared);
+            if self.stopped() {
+                return;
+            }
+            if !shared.user_rules.quarantined.contains(&folder) {
+                shared.user_rules.quarantined.push(folder);
+            }
+            shared.scope = Some(scope);
+            inner.changed.notify_all();
+            (shared.user_rules.clone(), shared.rules_dir.clone())
+        };
+        if let Some(dir) = dir {
+            let _ = rules.write(&dir);
+        }
+    }
+
+    /// Notes the folders a walk found not answering: in place of those
+    /// noted before when `replace`, else beside them.
+    fn note_hung(&self, folders: Vec<PathBuf>, replace: bool) {
+        if folders.is_empty() && !replace {
+            return;
+        }
+        self.status(|shared| {
+            if replace {
+                shared.status.hung_folders.clear();
+            }
+            for folder in folders {
+                if !shared.status.hung_folders.contains(&folder) {
+                    shared.status.hung_folders.push(folder);
+                }
+            }
+            shared.status.hung = shared.status.hung_folders.len() as u64;
+        });
     }
 
     /// Changes the status, and tells whoever waits.
@@ -1144,6 +1728,11 @@ impl Coordinator {
         let record = self.index.record();
         if !record.built {
             self.full_walk = true;
+            self.walk.clear();
+        } else if !self.room() {
+            // Short of space: caught up by a reconciling walk once there is
+            // room.
+            self.missed = true;
         } else {
             match self
                 .config
@@ -1159,7 +1748,7 @@ impl Coordinator {
                     note,
                 } => {
                     let _ = self.index.apply(&changes);
-                    self.walk = walk;
+                    self.walk.extend(walk);
                     self.reconcile = reconcile;
                     self.walk_added_roots();
                     self.cursors = cursors;
@@ -1246,7 +1835,12 @@ impl Coordinator {
             if self.stopped() {
                 break;
             }
-            if self.deferred() {
+            // Short of space: looked at again, and indexing starts again
+            // once there is room.
+            if self.low_space && self.room() && !self.deferred() {
+                self.settled();
+            }
+            if self.deferred() && !self.low_space {
                 if self.may_walk() {
                     self.do_walks();
                     continue;
@@ -1257,7 +1851,14 @@ impl Coordinator {
                     shared.busy = false;
                 });
             }
-            let timeout = if self.deferred() {
+            let timeout = if self.low_space {
+                Some(
+                    self.config
+                        .valves
+                        .space_retry
+                        .max(Duration::from_millis(10)),
+                )
+            } else if self.deferred() {
                 Some(
                     self.config
                         .first_walk_delay
@@ -1286,7 +1887,7 @@ impl Coordinator {
                 },
             };
             let Some(first) = first else {
-                if !self.deferred() && !self.unwatched.is_empty() {
+                if !self.low_space && !self.deferred() && !self.unwatched.is_empty() {
                     self.reconcile_unwatched();
                 }
                 continue;
@@ -1313,9 +1914,14 @@ impl Coordinator {
         // Stopped: watching stops now; what is in the log is kept, and the
         // cursors are saved once it is a segment.
         self.watching = None;
+        if self.low_space {
+            // Nothing more is written; changes let go meanwhile are caught
+            // up from the cursors saved before, next time.
+            return;
+        }
         let _ = self.index.flush();
         let mut record = self.index.record();
-        if !self.cursors.is_empty() && record.built {
+        if !self.cursors.is_empty() && record.built && !self.missed {
             record.cursors = self.cursors.clone();
             let _ = self.index.set_record(record);
         }
@@ -1326,11 +1932,16 @@ impl Coordinator {
         let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
         let mut rescan: Vec<PathBuf> = Vec::new();
         let mut stop = false;
+        let now = Instant::now();
+        let mut churned: Vec<PathBuf> = Vec::new();
         for message in batch {
             match message {
                 Message::Stop => stop = true,
                 Message::Shown => {}
-                Message::Changed(Changed::Paths(changed)) => paths.extend(changed),
+                Message::Changed(Changed::Paths(changed)) => {
+                    churned.extend(self.count_churn(&changed, now));
+                    paths.extend(changed);
+                }
                 Message::Changed(Changed::Rescan(folder)) => rescan.push(folder),
                 Message::Changed(Changed::HistoryDone(cursors)) => {
                     self.cursors = cursors;
@@ -1350,7 +1961,16 @@ impl Coordinator {
         if stop || self.stopped() {
             return true;
         }
+        for folder in churned {
+            self.quarantine(folder);
+        }
         if paths.is_empty() && rescan.is_empty() {
+            return false;
+        }
+        if !self.room() {
+            // Nothing is written: what changed is caught up once there is
+            // room.
+            self.missed = true;
             return false;
         }
         self.status(|shared| shared.busy = true);
@@ -1367,6 +1987,7 @@ impl Coordinator {
                 &self.stop,
             );
             changes.extend(reconciled.changes);
+            self.note_hung(reconciled.hung_folders, false);
         }
         let walked = self.walk_new(&new_folders);
         changes.extend(walked);
@@ -1500,17 +2121,27 @@ impl Coordinator {
     /// Runs the walks that waited: the first full walk, then the folders
     /// to walk and to reconcile the catch-up asked for.
     fn do_walks(&mut self) {
+        if !self.room() {
+            return;
+        }
         self.status(|shared| {
             shared.busy = true;
             shared.status.waiting = false;
             shared.status.state = IndexState::Building;
         });
+        let walked_all = self.full_walk;
         if self.full_walk {
             // Taken before the walk starts, so that what changes during it
             // is caught up next time.
             self.cursors = self.config.source.cursors(&self.scope);
-            let report = self.full_walk();
+            let (report, out_of_room) = self.full_walk();
             if self.stopped() {
+                return;
+            }
+            if out_of_room {
+                // The walk was given up: it starts again once there is
+                // room.
+                self.room();
                 return;
             }
             self.full_walk = false;
@@ -1523,16 +2154,18 @@ impl Coordinator {
             if let Some(watching) = &mut self.watching {
                 watching.add_folders(&folders);
             }
+            let ceiling = count_words(self.config.walk.max_entries);
             self.status(|shared| {
                 shared.status.unreadable = report.unreadable;
                 shared.status.unreadable_folders = report.unreadable_folders.clone();
+                shared.status.hung = report.hung;
+                shared.status.hung_folders = report.hung_folders.clone();
                 shared.status.ceiling_reached = report.ceiling_reached;
                 if report.ceiling_reached {
-                    shared.status.reason = Some(
-                        "Pane stopped indexing at 5 million entries; exclude folders to index \
+                    shared.status.reason = Some(format!(
+                        "Pane stopped indexing at {ceiling} entries; exclude folders to index \
                          the rest"
-                            .into(),
-                    );
+                    ));
                 }
             });
         }
@@ -1547,6 +2180,7 @@ impl Coordinator {
                 &self.stop,
             );
             changes.extend(reconciled.changes);
+            self.note_hung(reconciled.hung_folders, !walked_all);
         }
         if !self.walk.is_empty() {
             let folders = std::mem::take(&mut self.walk);
@@ -1562,17 +2196,42 @@ impl Coordinator {
     }
 
     /// The first full walk, written straight into segments; queries see
-    /// each segment as it is written.
-    fn full_walk(&self) -> WalkReport {
+    /// each segment as it is written. Given up (`true`) when the disk
+    /// holding the index runs short of space meanwhile, looked at no more
+    /// than once a second.
+    fn full_walk(&self) -> (WalkReport, bool) {
         let index = &*self.index;
         let scope = &*self.scope;
         let options = &self.config.walk;
         let (batches, received) = std::sync::mpsc::sync_channel::<super::PreparedBatch>(64);
         let inner = self.inner.clone();
         let stop = &*self.stop;
+        let cancel = &AtomicBool::new(false);
+        let out_of_room = &AtomicBool::new(false);
+        let looked = &Mutex::new(Instant::now());
+        let valves = &self.config.valves;
+        let dir = &self.config.dir;
         std::thread::scope(|threads| {
             let walker = threads.spawn(move || {
-                walk(scope, options, stop, &|batch: Vec<Entry>| {
+                walk(scope, options, cancel, &|batch: Vec<Entry>| {
+                    if stop.load(Ordering::Relaxed) {
+                        cancel.store(true, Ordering::Relaxed);
+                    }
+                    {
+                        let mut looked = lock(looked);
+                        if looked.elapsed() >= Duration::from_secs(1) {
+                            *looked = Instant::now();
+                            let short = (valves.free_space)(dir)
+                                .is_some_and(|free| free < valves.free_space_floor);
+                            if short {
+                                out_of_room.store(true, Ordering::Relaxed);
+                                cancel.store(true, Ordering::Relaxed);
+                            }
+                        }
+                    }
+                    if cancel.load(Ordering::Relaxed) {
+                        return;
+                    }
                     let count = batch.len() as u64;
                     let _ = batches.send(index.prepare(batch));
                     if let Some(inner) = inner.upgrade() {
@@ -1590,10 +2249,13 @@ impl Coordinator {
                 }
             }
             let report = walker.join().unwrap_or_default();
-            if let Some(writer) = bulk {
+            let out_of_room = out_of_room.load(Ordering::Relaxed);
+            if let Some(writer) = bulk
+                && !out_of_room
+            {
                 let _ = writer.finish();
             }
-            report
+            (report, out_of_room)
         })
     }
 
@@ -1608,15 +2270,19 @@ impl Coordinator {
             &self.config.walk,
             &self.stop,
         );
-        if !reconciled.changes.is_empty() {
+        if !reconciled.changes.is_empty() && self.room() {
             let _ = self.index.apply(&reconciled.changes);
         }
+        self.note_hung(reconciled.hung_folders, false);
         self.settled();
     }
 
     /// Saves the cursors with the index, once what they cover is in a
     /// segment.
     fn save(&self) {
+        if self.low_space {
+            return;
+        }
         let _ = self.index.flush();
         let mut record: IndexRecord = self.index.record();
         if record.built && !self.cursors.is_empty() {
@@ -1627,6 +2293,11 @@ impl Coordinator {
 
     /// Notes that the index is current, with how it was caught up.
     fn settled(&self) {
+        if self.low_space {
+            // Stopped for space; the status says so.
+            self.status(|shared| shared.busy = false);
+            return;
+        }
         if self.deferred() {
             return;
         }
@@ -1647,10 +2318,13 @@ impl Coordinator {
     }
 }
 
-/// Brings the index, built under the rules `before`, to the rules `after`:
-/// a removed root's entries go; an added root alone is walked as new (the
-/// catch-up finds it not indexed); any other change walks every root again.
-fn apply_rule_change(index: &FileIndex, before: &ScopeRules, after: &ScopeRules) {
+/// Brings the index, built under the rules `before`, to the rules `after`,
+/// changing only what the change affects where it can: a removed root's
+/// entries go; an added root alone is walked as new (the catch-up finds it
+/// not indexed); a folder newly excluded (by the user, or for churn) takes
+/// its entries out; a folder no longer excluded is walked again alone (the
+/// folders answered). Any other change walks every root again.
+fn apply_rule_change(index: &FileIndex, before: &ScopeRules, after: &ScopeRules) -> Vec<PathBuf> {
     let mut changes: Vec<Change> = before
         .roots
         .iter()
@@ -1658,20 +2332,39 @@ fn apply_rule_change(index: &FileIndex, before: &ScopeRules, after: &ScopeRules)
         .cloned()
         .map(Change::RemoveUnder)
         .collect();
-    let only_roots = ScopeRules {
+    let mut walk_again = Vec::new();
+    let only_roots_and_folders = ScopeRules {
         roots: after.roots.clone(),
+        excluded_folders: after.excluded_folders.clone(),
         ..before.clone()
     } == *after;
-    if !only_roots {
+    if only_roots_and_folders {
+        changes.extend(
+            after
+                .excluded_folders
+                .iter()
+                .filter(|folder| !before.excluded_folders.contains(folder))
+                .cloned()
+                .map(Change::RemoveUnder),
+        );
+        walk_again.extend(
+            before
+                .excluded_folders
+                .iter()
+                .filter(|folder| !after.excluded_folders.contains(folder))
+                .cloned(),
+        );
+    } else {
         changes.extend(after.roots.iter().cloned().map(Change::RemoveUnder));
     }
     let _ = index.apply(&changes);
-    if !only_roots {
+    if !only_roots_and_folders {
         let mut record = index.record();
         record.built = false;
         let _ = index.flush();
         let _ = index.set_record(record);
     }
+    walk_again
 }
 
 /// Opens the index in `dir`, trying again for a moment while the index of

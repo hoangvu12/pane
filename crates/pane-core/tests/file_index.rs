@@ -7,7 +7,10 @@
 //! What the index finds and how it ranks, its scope's rules, root search's
 //! Files section and its row searching every file, opening and the program
 //! rule, disabling and uninstalling, restarting over the same cache folder
-//! and a second Pane on it. The coordinator's catch-up, live changes and
+//! and a second Pane on it; and what the File search page (#176) reads and
+//! changes: the status, Rebuild index, turning off Search Files, every
+//! control applied without a restart, a folder taken out for churn included
+//! again, and a folder granted to Files under #29 kept in what is indexed. The coordinator's catch-up, live changes and
 //! fallbacks driven through the change source's seam are its unit tests
 //! (`pane_core::file_index::indexer`), and the actions on each row, in
 //! every language, `file_actions.rs`. The packages are the ones
@@ -20,7 +23,7 @@ use std::time::Duration;
 
 use futures::executor::block_on;
 use pane_core::file_index::{
-    CaughtUpBy, INDEX_DIR, IndexState, IndexerConfig, UserRules, WalkOptions,
+    CaughtUpBy, INDEX_DIR, IndexState, IndexerConfig, ProblemKind, UserRules, WalkOptions,
 };
 use pane_core::{Launcher, LinkOpener, PackageIdentity, Runtime, Status, WindowPresence};
 use tempfile::TempDir;
@@ -521,4 +524,308 @@ fn the_users_rules_are_recorded_and_applied() {
         UserRules::read(&home.dir.path().join("data").join("extensions")),
         rules
     );
+}
+
+// ------------------------------------------------ the File search page (#176)
+
+/// The canonical path of `path`, without Windows' verbatim prefix, as Pane
+/// records a granted folder.
+fn plain(path: &Path) -> PathBuf {
+    let resolved = fs::canonicalize(path).unwrap();
+    let text = resolved.to_string_lossy();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if !rest.starts_with("UNC") => PathBuf::from(rest),
+        _ => resolved,
+    }
+}
+
+/// Searches root search for `query` until the titles under "Files" satisfy
+/// `done`, letting the index settle between tries.
+fn eventually(launcher: &Launcher, query: &str, done: impl Fn(&[String]) -> bool) {
+    let deadline = std::time::Instant::now() + LIMIT;
+    loop {
+        settle(launcher);
+        search(launcher, query);
+        let rows = file_rows(launcher);
+        if done(&rows) {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{query}: {rows:?} ({:?})",
+            launcher.file_index_status()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn lists(name: &'static str) -> impl Fn(&[String]) -> bool {
+    move |rows| rows.iter().any(|row| row == name)
+}
+
+fn lacks(name: &'static str) -> impl Fn(&[String]) -> bool {
+    move |rows| !rows.iter().any(|row| row == name)
+}
+
+/// Changes the user's rules as the File search page does, through the
+/// launcher, and checks they are recorded.
+fn change_rules(home: &Home, launcher: &Launcher, edit: impl FnOnce(&mut UserRules)) {
+    let mut rules = launcher.file_search_rules().unwrap().1;
+    edit(&mut rules);
+    block_on(launcher.set_file_search_rules(rules.clone())).unwrap();
+    assert_eq!(launcher.file_search_rules().unwrap().1, rules);
+    assert_eq!(
+        UserRules::read(&home.dir.path().join("data").join("extensions")),
+        rules
+    );
+}
+
+#[test]
+fn the_status_says_what_is_indexed_and_how_and_when_it_last_caught_up() {
+    let home = Home::new();
+    let before = std::time::SystemTime::now();
+    let (launcher, _runtime) = home.with_files();
+    let status = launcher.file_index_status();
+    assert_eq!(status.state, IndexState::Current);
+    assert!(status.entries >= 10, "{status:?}");
+    let (how, when) = status.caught_up.expect("caught up");
+    assert_eq!(how, CaughtUpBy::FullWalk);
+    assert!(when >= before && when <= std::time::SystemTime::now());
+    assert_eq!(how.describe(), "by indexing every folder");
+    assert!(launcher.file_search_problems().is_empty());
+    assert_eq!(
+        launcher.file_search_packages(),
+        [("Files".to_owned(), None)]
+    );
+    let (effective, rules) = launcher.file_search_rules().unwrap();
+    assert_eq!(effective.roots, [home.home.clone()]);
+    assert_eq!(effective.home.as_deref(), Some(home.home.as_path()));
+    assert_eq!(rules, UserRules::default());
+}
+
+#[test]
+fn rebuilding_the_index_builds_it_again_from_every_folder() {
+    let home = Home::new();
+    let (launcher, _runtime) = home.with_files();
+    block_on(launcher.rebuild_file_index()).unwrap();
+    settle(&launcher);
+    let status = launcher.file_index_status();
+    assert_eq!(status.state, IndexState::Current);
+    assert_eq!(
+        status.caught_up.map(|(by, _)| by),
+        Some(CaughtUpBy::FullWalk)
+    );
+    assert!(home.index_dir().exists());
+    eventually(&launcher, "plan", lists("plan.txt"));
+}
+
+#[test]
+fn turning_off_search_files_stops_the_index_as_disabling_files_does() {
+    let home = Home::new();
+    let (launcher, _runtime) = home.with_files();
+    let command = launcher
+        .packages()
+        .into_iter()
+        .find(|package| package.title() == "Files")
+        .unwrap()
+        .listed_commands()
+        .into_iter()
+        .next()
+        .expect("Search Files")
+        .registration
+        .id;
+    block_on(launcher.set_command_enabled(&command, false)).unwrap();
+    let status = launcher.file_index_status();
+    assert_eq!(status.state, IndexState::Off);
+    assert_eq!(
+        status.reason.as_deref(),
+        Some("no enabled extension uses file search")
+    );
+    assert_eq!(
+        launcher.file_search_packages(),
+        [(
+            "Files".to_owned(),
+            Some("its commands are turned off".to_owned())
+        )]
+    );
+    assert!(home.index_dir().exists(), "kept on disk while off");
+
+    block_on(launcher.set_command_enabled(&command, true)).unwrap();
+    settle(&launcher);
+    assert_eq!(launcher.file_index_status().state, IndexState::Current);
+    eventually(&launcher, "plan", lists("plan.txt"));
+
+    let files = files_identity(&launcher);
+    block_on(launcher.set_enabled(&files, false));
+    assert_eq!(
+        launcher.file_search_packages(),
+        [("Files".to_owned(), Some("it is turned off".to_owned()))]
+    );
+}
+
+#[test]
+fn every_control_of_the_page_changes_what_is_indexed_without_a_restart() {
+    let home = Home::new();
+    let (launcher, _runtime) = home.with_files();
+
+    // A folder added, then removed.
+    let drive = home.dir.path().join("Second drive");
+    fs::create_dir_all(&drive).unwrap();
+    fs::write(drive.join("far plan.txt"), "x").unwrap();
+    change_rules(&home, &launcher, |rules| {
+        rules.added_roots.push(drive.clone())
+    });
+    assert_eq!(
+        launcher.file_search_rules().unwrap().0.roots,
+        [home.home.clone(), drive.clone()]
+    );
+    eventually(&launcher, "far plan", lists("far plan.txt"));
+    change_rules(&home, &launcher, |rules| rules.added_roots.clear());
+    eventually(&launcher, "far plan", lacks("far plan.txt"));
+
+    // A folder excluded, then no longer.
+    let invoices = home.file("Documents/Invoices 2026");
+    change_rules(&home, &launcher, |rules| {
+        rules.excluded_folders.push(invoices.clone())
+    });
+    eventually(&launcher, "march", lacks("march.pdf"));
+    eventually(&launcher, "plan", lists("plan.txt"));
+    change_rules(&home, &launcher, |rules| rules.excluded_folders.clear());
+    eventually(&launcher, "march", lists("march.pdf"));
+
+    // A pattern excluded, then no longer.
+    change_rules(&home, &launcher, |rules| {
+        rules.excluded_patterns.push("*.md".into())
+    });
+    eventually(&launcher, "planning", lacks("planning notes.md"));
+    change_rules(&home, &launcher, |rules| rules.excluded_patterns.clear());
+    eventually(&launcher, "planning", lists("planning notes.md"));
+
+    // The switches.
+    change_rules(&home, &launcher, |rules| rules.include_hidden = true);
+    eventually(&launcher, "hidden plan", lists("hidden plan.txt"));
+    change_rules(&home, &launcher, |rules| rules.include_hidden = false);
+    eventually(&launcher, "hidden plan", lacks("hidden plan.txt"));
+    change_rules(&home, &launcher, |rules| rules.use_ignore_files = false);
+    eventually(&launcher, "plan output", lists("plan output.txt"));
+    change_rules(&home, &launcher, |rules| rules.default_exclusions = false);
+    eventually(&launcher, "plan module", lists("plan module.js"));
+    // Cache-tagged folders stay out whatever the switches say.
+    eventually(&launcher, "plan cached", lacks("plan cached.txt"));
+    change_rules(&home, &launcher, |rules| rules.include_other_volumes = true);
+    assert!(
+        launcher
+            .file_search_rules()
+            .unwrap()
+            .0
+            .include_other_volumes
+    );
+    settle(&launcher);
+    assert_eq!(launcher.file_index_status().state, IndexState::Current);
+}
+
+#[test]
+fn a_folder_taken_out_for_churn_is_listed_and_included_again() {
+    let home = Home::new();
+    let documents = home.file("Documents");
+    let record = home.dir.path().join("data").join("extensions");
+    fs::create_dir_all(&record).unwrap();
+    UserRules {
+        quarantined: vec![documents.clone()],
+        ..UserRules::default()
+    }
+    .write(&record)
+    .unwrap();
+    let (launcher, _runtime) = home.with_files();
+    eventually(&launcher, "plan", lacks("plan.txt"));
+    let problems = launcher.file_search_problems();
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert_eq!(problems[0].kind, ProblemKind::Churned);
+    assert_eq!(problems[0].folder.as_deref(), Some(documents.as_path()));
+    // Changing another rule keeps it out.
+    change_rules(&home, &launcher, |rules| rules.include_hidden = true);
+    assert_eq!(
+        launcher.file_search_rules().unwrap().1.quarantined,
+        [documents.clone()]
+    );
+
+    block_on(launcher.include_in_file_search(documents.clone())).unwrap();
+    eventually(&launcher, "plan", lists("plan.txt"));
+    assert!(launcher.file_search_problems().is_empty());
+    assert!(UserRules::read(&record).quarantined.is_empty());
+}
+
+#[test]
+fn a_folder_granted_to_files_outside_the_home_folder_is_kept_in_what_is_indexed() {
+    let home = Home::new();
+    let key = {
+        let (launcher, runtime) = home.with_files();
+        let key = files_identity(&launcher).key();
+        launcher
+            .file_indexer()
+            .unwrap()
+            .set_users(std::collections::BTreeSet::new());
+        drop(launcher);
+        drop(runtime);
+        key
+    };
+    // Files was granted a folder under #29, outside the home folder.
+    let granted = home.dir.path().join("Second drive");
+    fs::create_dir_all(&granted).unwrap();
+    fs::write(granted.join("far plan.txt"), "x").unwrap();
+    let granted = plain(&granted);
+    let record = home.dir.path().join("data").join("extensions");
+    fs::write(
+        record.join("folders.json"),
+        serde_json::json!({ "version": 1, "folders": { key.clone(): granted } }).to_string(),
+    )
+    .unwrap();
+
+    let (launcher, _runtime) = home.start();
+    assert_eq!(
+        launcher.file_search_rules().unwrap().1.added_roots,
+        [granted.clone()]
+    );
+    assert_eq!(UserRules::read(&record).added_roots, [granted.clone()]);
+    // The grant is forgotten.
+    let grants: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(record.join("folders.json")).unwrap()).unwrap();
+    assert!(grants["folders"].get(&key).is_none(), "{grants}");
+    eventually(&launcher, "far plan", lists("far plan.txt"));
+}
+
+#[test]
+fn a_folder_granted_to_files_that_the_index_covers_is_simply_forgotten() {
+    let home = Home::new();
+    let key = {
+        let (launcher, runtime) = home.with_files();
+        let key = files_identity(&launcher).key();
+        launcher
+            .file_indexer()
+            .unwrap()
+            .set_users(std::collections::BTreeSet::new());
+        drop(launcher);
+        drop(runtime);
+        key
+    };
+    let granted = plain(&home.file("Documents"));
+    let record = home.dir.path().join("data").join("extensions");
+    fs::write(
+        record.join("folders.json"),
+        serde_json::json!({ "version": 1, "folders": { key.clone(): granted } }).to_string(),
+    )
+    .unwrap();
+    let (launcher, _runtime) = home.start();
+    assert!(
+        launcher
+            .file_search_rules()
+            .unwrap()
+            .1
+            .added_roots
+            .is_empty()
+    );
+    let grants: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(record.join("folders.json")).unwrap()).unwrap();
+    assert!(grants["folders"].get(&key).is_none(), "{grants}");
+    eventually(&launcher, "plan", lists("plan.txt"));
 }

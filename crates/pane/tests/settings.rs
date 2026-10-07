@@ -2974,8 +2974,9 @@ fn overridden_segments_take_no_keyboard_focus(cx: &mut TestAppContext) {
     }
 }
 
-/// The six real pages — and only those — are the sidebar's sections, in
+/// The real pages — and only those — are the sidebar's sections, in
 /// order: each opens its page, and the search finds each by its title.
+/// (Six pages and the Extensions group; File Search joined with #176.)
 /// Appearance is a section of the General page, not a page of its own,
 /// and the reference's other labels (Window Manager, Clipboard, Privacy)
 /// add no page.
@@ -2989,6 +2990,7 @@ fn all_six_pages_are_listed_reachable_and_searchable(cx: &mut TestAppContext) {
         "Launcher",
         "Shortcuts",
         "Keyboard",
+        "File Search",
         "About",
         "Extensions",
     ];
@@ -3002,7 +3004,7 @@ fn all_six_pages_are_listed_reachable_and_searchable(cx: &mut TestAppContext) {
         assert!(above.is_none_or(|above| above < top), "{section} in order");
         above = Some(top);
         click_section(&mut settings_cx, section);
-        let page = selector(title.to_lowercase());
+        let page = selector(title.to_lowercase().replace(' ', "-"));
         assert!(
             settings_cx.debug_bounds(page).is_some(),
             "{section} opens its page"

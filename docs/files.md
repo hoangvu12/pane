@@ -9,8 +9,9 @@ start from what the file system recorded while Pane was not running and
 kept current while it runs, so a file is found as quickly as a command
 ([#126](https://github.com/hoangvu12/pane/issues/126),
 [ADR 0034](adr/0034-file-search-indexes-the-users-home-folder.md); built by
-[#174](https://github.com/hoangvu12/pane/issues/174) and
-[#175](https://github.com/hoangvu12/pane/issues/175)). The feature is a
+[#174](https://github.com/hoangvu12/pane/issues/174),
+[#175](https://github.com/hoangvu12/pane/issues/175) and
+[#176](https://github.com/hoangvu12/pane/issues/176)). The feature is a
 **default extension**, Files, which the user can disable like any package;
 while no enabled package uses the index, Pane neither indexes nor watches
 anything.
@@ -27,9 +28,13 @@ Search Files works like Raycast's File Search
 scrolls and a detail with an image's preview and the file's Metadata
 ([Search Files](#search-files)).
 
-Not yet (a later ticket of #126): the File search page in Settings and the
-safety valves (churn quarantine, the low-disk floor, pausing for sleep,
-folders that hang) are [#176](https://github.com/hoangvu12/pane/issues/176).
+What is indexed and how the index is doing are shown and changed on the
+**File Search** page in Settings, which also lists what the index's
+[safety valves](#the-safety-valves) did (#176,
+[below](#the-file-search-page)).
+
+Not yet (a later ticket of #126): pausing indexing while the computer
+sleeps is not done (see [Limits](#limits)).
 
 ## Where it lives
 
@@ -50,9 +55,11 @@ and one index serves every package that uses it:
 - **The launcher's side**, [`launcher/file_search.rs`](../crates/pane-core/src/launcher/file_search.rs):
   which packages use the index, root search's Files section and its
   "Search Files for “…”" row, the system icons, deleting the index with the
-  last package that used it, and the calls the File search page (#176) and
-  Search Files (#177) build on (`Launcher::file_indexer`,
-  `file_index_status`, `file_search_rules`, `set_file_search_rules`,
+  last package that used it, moving a folder granted under #29 into the
+  roots, and the calls the File Search page (#176) and Search Files (#177)
+  build on (`Launcher::file_indexer`, `file_index_status`,
+  `file_search_problems`, `file_search_packages`, `file_search_rules`,
+  `set_file_search_rules`, `include_in_file_search`,
   `rebuild_file_index`). The rows and their actions are
   [`launcher/files.rs`](../crates/pane-core/src/launcher/files.rs) and
   [`launcher/own_actions.rs`](../crates/pane-core/src/launcher/own_actions.rs).
@@ -77,7 +84,9 @@ and one index serves every package that uses it:
 - **The window**, [`crates/pane/src/main.rs`](../crates/pane/src/main.rs):
   `Launcher::with_file_index(IndexerConfig::native(cache, home, own))`
   with Pane's cache folder, the home folder (`USERPROFILE` on Windows,
-  `HOME` elsewhere) and Pane's data folder, which is never indexed.
+  `HOME` elsewhere) and Pane's data folder, which is never indexed; and the
+  File Search page,
+  [`features/settings/file_search.rs`](../crates/pane/src/features/settings/file_search.rs).
 
 Acquiring the package automatically at setup is
 [#51](https://github.com/hoangvu12/pane/issues/51) to
@@ -91,11 +100,13 @@ installed from its folder like the other default extensions
 
 A package declares in `pane.json` that it uses the index:
 `"fileIndex": true`. The index is opened, caught up and watched only while
-at least one such package is enabled and not paused
-(`Launcher::sync_file_index`, after every change of the packages). When the
-last one is disabled or paused, watching stops at once and the index stays
-on disk; enabling one again catches it up from where it stopped. Uninstalling
-the last one deletes the index. This keeps lazy activation
+at least one such package is enabled, not paused, and has a command the user
+left on in Settings (`Launcher::sync_file_index`, after every change of the
+packages): turning off Files' one command, Search Files, stops the index as
+disabling Files does. When the last such package is disabled, paused or has
+its commands turned off, watching stops at once and the index stays on
+disk; turning one on again catches it up from where it stopped.
+Uninstalling the last one deletes the index. This keeps lazy activation
 ([ADR 0005](adr/0005-lazy-activation-and-managed-dependencies.md)) without
 running guest code to learn it.
 
@@ -155,11 +166,26 @@ The user's rules are Pane's own record, not extension data:
 `file-search.json` beside `installed.json`
 (`{"version": 1, "rules": {"addedRoots": [], "excludedFolders": [],
 "excludedPatterns": [], "includeHidden": false, "useIgnoreFiles": true,
-"defaultExclusions": true, "includeOtherVolumes": false}}`,
-`file_index::UserRules`). `Launcher::set_file_search_rules` records and
-applies them without a restart: a removed root's entries go and an added
-root alone is walked; any other change walks every root again. The File
-search page that changes them is #176.
+"defaultExclusions": true, "includeOtherVolumes": false, "quarantined": []}}`,
+`file_index::UserRules`; `quarantined` holds the folders taken out for
+churn). `Launcher::set_file_search_rules` records and applies them without a
+restart, changing only what they affect where it can: a removed root's
+entries go and an added root alone is walked; a newly excluded folder's
+entries go and a folder no longer excluded is walked alone; any other change
+(a pattern, a switch) walks every root again. The folders taken out for
+churn stay out whatever the page sends; only
+`Launcher::include_in_file_search` puts one back. The File Search page is
+what changes them ([below](#the-file-search-page)).
+
+**A folder granted to Files under #29** is kept in what is indexed
+(#126 story 60): when the launcher starts with a file index
+(`Launcher::with_file_index`), and when a package comes to use the index
+while Pane runs (an update of Files), the folder granted to a package that
+declares `"fileIndex": true` is added to the roots if the index would not
+cover it otherwise (it is outside the home folder, or the rules exclude it
+or a folder above it), recorded, and then the grant is forgotten
+(`folders.json` no longer holds it). A granted folder the index already
+covers is simply forgotten.
 
 Entries are files and folders, named as the system names them (a name that
 is not valid Unicode is shown with replacement characters and opened by
@@ -198,6 +224,85 @@ building (and how many entries the walk found so far), current or stopped
 and why, how it last caught up (`CaughtUpBy`: the journal, the event
 history, a reconciling walk or a full walk) and when, and how many folders
 could not be read or are not watched.
+
+## The File Search page
+
+Pane's own page in Settings
+([`features/settings/file_search.rs`](../crates/pane/src/features/settings/file_search.rs)),
+after Keyboard and before About; Settings' search finds the page and its
+controls (Rebuild Index, Add Folder to Index…, Exclude Folder…, Exclude
+Pattern and the switches).
+
+- **Status**: whether the index is up to date, indexing (with how many
+  entries it has found so far), waiting for the launcher to be shown,
+  stopped (with why: another Pane is using file search, the disk is short of
+  space, it could not be opened) or off; how many files and folders it
+  holds; when and how it was last caught up ("Last caught up from the change
+  journal, 5 minutes ago"). On macOS, before the first walk, it says that
+  macOS will ask whether Pane may read Desktop, Documents and Downloads.
+  **Rebuild Index** deletes the index and builds it again.
+- **While file search is off** it says so and why: which extension that
+  uses it is turned off, paused or has its commands turned off, or that
+  none is installed. The rules can still be changed; they apply when it
+  next runs.
+- **Indexed folders**: the home folder, each added folder with Remove, and
+  Add Folder… (the system's folder picker).
+- **Excluded**: each excluded folder and pattern with Remove, Exclude
+  Folder… (the picker) and a field for a pattern in `.gitignore` syntax.
+- **Rules**: switches for hidden files and folders, ignore files, the
+  default exclusions (caches, temporary folders, `node_modules`, `AppData`
+  or `~/Library`) and network and removable drives.
+- **Needs attention** (`Launcher::file_search_problems`,
+  `file_index::Problem`): folders that could not be read; folders macOS did
+  not allow, with how to allow them under System Settings › Privacy &
+  Security › Files and Folders; folders not watched on Linux, with the
+  setting that raises the limit (`fs.inotify.max_user_watches`); folders
+  taken out for churn, each with **Include Again**; folders that did not
+  answer; a walk stopped at the ceiling; a stop for free space. Each says
+  why and what to do.
+
+Every control goes through `Launcher::set_file_search_rules` (or
+`include_in_file_search`, `rebuild_file_index`), off the window's thread;
+a failure is the page's status. The page reads the launcher every frame,
+and Settings' watcher redraws it when the index's status, problems or rules
+change while it shows.
+
+### The safety valves
+
+All four are the coordinator's (`file_index::Indexer`, thresholds in
+`file_index::Valves` and `WalkOptions`; #126's proposed values, smaller in
+tests), and each is listed on the page:
+
+- **Churn quarantine**: the changes each folder reports are counted, per
+  folder they are in, in windows of a minute (`Valves::churn_window`); a
+  folder with more than 1,000 changes (`churn_changes`) in 3 windows in a
+  row (`churn_windows`) is taken out of the index: its entries go, the rules
+  leave it out from then on (it is added to `UserRules::quarantined`,
+  recorded in `file-search.json`, so it stays out after a restart), and its
+  changes are no longer looked at. A root itself is never taken out. Include
+  Again puts it back and walks it alone. Counting costs nothing while
+  nothing changes.
+- **The ceiling**: a walk stops at 5 million entries
+  (`WalkOptions::max_entries`, `file_index::MAX_ENTRIES`) and says so; the
+  index keeps what was walked.
+- **The free-space floor**: before the index is written (a walk, a batch
+  of changes, a reconciling walk), and once a second during a first walk,
+  Pane reads the free space of the volume holding its cache
+  (`GetDiskFreeSpaceExW` on Windows, `statvfs` elsewhere,
+  `file_index::free_space`). Under 1 GiB (`Valves::free_space_floor`,
+  `FREE_SPACE_FLOOR`) indexing stops writing: the status is Stopped and says
+  why, a first walk under way is given up, and changes reported meanwhile
+  are let go. Pane looks again every minute (`space_retry`); once there is
+  room it starts again by itself, walking what was not walked and
+  reconciling every root if changes were let go (the cursors saved before
+  are kept until then).
+- **Hung folders**: each walker thread (and each reconciling walk) lists
+  folders through a helper thread of its own, and waits at most 10 seconds
+  (`WalkOptions::hung_after`, `HUNG_AFTER`) for a folder; one that does not
+  answer is skipped for this walk (indexed, its contents not; a reconciling
+  walk keeps what the index held of it), listed, and its helper left behind
+  to end whenever the system answers it, so a stalled network mount or a
+  dying disk holds up only itself.
 
 ## In root search
 
@@ -278,7 +383,7 @@ searches, keep the launcher's [command search](command-search.md).
   found so far)" while it is built, with a thin bar under the header while
   a search or the index is in progress; "File search stopped: <why>" or
   "File search is off: <why>", with **Open File Search Settings**, which
-  opens Settings at the File search page (#176). While the index is built
+  opens Settings at the [File Search page](#the-file-search-page). While the index is built
   the list is asked again each second it grew, keeping the selected file
   selected, until the user scrolled past the first page.
 - **The footer**: the command's icon and title (or the status), the
@@ -712,7 +817,15 @@ milestone is merged).
   records (`CaughtUpBy::Journal` on Windows, `EventHistory` on macOS,
   `ReconcilingWalk` on Linux), not a full walk; a second Pane on the same
   cache folder saying file search is in use; the user's rules recorded in
-  `file-search.json` and applied without a restart.
+  `file-search.json` and applied without a restart. For the File Search
+  page (#176): the status (state, entries, how and when it last caught
+  up); Rebuild Index walking every folder again; turning off Search Files
+  stopping the index and saying why; every control (an added and removed
+  root, an excluded folder and pattern, each switch) changing what is found
+  without a restart; a folder taken out for churn listed and included
+  again; a folder granted to Files under #29 outside the home folder added
+  to the roots and the grant forgotten, and one the index covers simply
+  forgotten.
 - **The coordinator through the change source's seam**
   (`file_index::indexer` unit tests): a fake source the test scripts (what
   a catch-up finds) and drives (the live changes it reports), with the real
@@ -726,7 +839,16 @@ milestone is merged).
   over the same cache folder; a second index refused; deleting the index
   forgetting its ids; the user's rules (hidden entries, an added root, an
   excluded folder, a removed root); an added root away and back; the
-  folders a source cannot watch counted and reconciled every few minutes.
+  folders a source cannot watch counted, listed and reconciled every few
+  minutes. Each safety valve triggered: a folder churning taken out,
+  listed, recorded, kept out across a rule change and included again, and
+  one busy now and then never taken out; a walk stopped at the ceiling;
+  indexing stopped while the disk is short of space (nothing written, a
+  change let go) and started again by itself once there is room (the walk,
+  then the change caught up); a folder that does not answer skipped and
+  listed without holding up the walk. Excluding a folder takes only it out
+  and including it again walks only it. The walker's own tests hold up a
+  folder's listing to show the walk does not wait for it.
   `file_index::reconcile` and `store` unit tests cover reading only changed
   folders, a missing root keeping its entries, and a folder's children
   across segments and memory.
@@ -774,6 +896,15 @@ milestone is merged).
   the field's right; the dropdown's ten types filtering; an image's
   preview and the Metadata rows, a text file's icon instead; typing and
   Escape; Ctrl+K listing Copy Name and Enter showing a program.
+- **The File Search page in the window**
+  ([`crates/pane/tests/file_search_settings.rs`](../crates/pane/tests/file_search_settings.rs)),
+  over the real Files and index: the status and Rebuild Index; the hidden
+  switch, the pattern field and Remove, Add Folder… and Exclude Folder…
+  through the system's picker (and a cancelled one), each applied without a
+  restart and recorded; the page saying file search is off while Files is
+  disabled, or with no extension that uses it; each valve listed (a churned
+  folder with Include Again, the ceiling, free space, a folder that did not
+  answer); Settings' search finding the page and Rebuild Index.
 - **The granted folder**
   ([`crates/pane-core/tests/files.rs`](../crates/pane-core/tests/files.rs)),
   with the `folder-files` fixture: the grant, its record and its refusals,
@@ -788,11 +919,20 @@ milestone is merged).
 
 ## Limits
 
-- The File search page, the safety valves (churn quarantine, the low-disk
-  floor, pausing for sleep, a folder that hangs) and the migration of a
-  folder granted to Files under #29 into the roots are #176; until then a
-  folder that hangs holds up the walk, and nothing stops indexing on a
-  full disk.
+- Indexing does not pause while the computer sleeps (#126's "Every
+  system" asks it to, and to count only awake time in its time limits); a
+  walk under way when the computer sleeps carries on after it wakes. The
+  churn windows and the hung-folder bound use the system's monotonic clock,
+  which counts time asleep on some systems and not on others.
+- Churn is counted per folder a change is in, not per subtree: a build
+  writing across many folders at once is taken out folder by folder, only
+  where one folder alone changes more than the threshold. A root itself is
+  never taken out.
+- A folder that hangs leaves its helper thread blocked until the system
+  answers it; a mount that never answers keeps one thread per walk that met
+  it.
+- The free space is read on the volume holding the cache, not on the
+  volumes being indexed (which the index never writes to).
 - Search Files' Recently Used is the most recently modified entries, as
   Raycast's is; Pane records no use of a file (ADR 0030). Created is not
   indexed: it is read when a file is selected, and Linux's file systems
@@ -800,14 +940,17 @@ milestone is merged).
   it, not as a thumbnail; other files show their icon, without Quick
   Look. Search Files is drawn by Pane for its own default extension only
   until #121's List detail and dropdown let any command draw it.
-- The link from Search Files to the File search page opens Settings at a
-  page titled "File Search" (`features::search_files::FILE_SEARCH_PAGE`),
-  #176's page.
+- The link from Search Files to the File Search page opens Settings at
+  #176's page: `features::search_files::FILE_SEARCH_PAGE` is that page's
+  title (`features::settings::file_search::TITLE`).
 - Matching is by word prefix; a query inside a word ("port" in
   "report") is not found yet, and a query with `/` or `\` is matched word
   by word, not as path segments in order.
-- macOS asks before Pane reads Desktop, Documents and Downloads; Pane does
-  not explain it first yet, nor list a refused folder (#176's page).
+- macOS asks before Pane reads Desktop, Documents and Downloads; the File
+  Search page says so before the first walk and lists a refused folder
+  with how to allow it, telling a refusal from another unreadable folder by
+  the folder (the home folder's Desktop, Documents or Downloads), not by
+  the system's answer. Unverified on a real Mac.
 - Linux's catch-up compares folders' modified times in whole seconds: a
   change within the second a folder was indexed is not seen until the
   folder changes again, and a file changed in place while Pane was stopped

@@ -4,16 +4,32 @@
 //! entries handed to a sink in batches. Links are indexed, never followed.
 //! On Windows each folder is read with the file ids of its entries in the
 //! same call, so that change-journal records resolve to index entries.
+//!
+//! A folder that does not answer within [`WalkOptions::hung_after`] (a
+//! stalled network mount, a dying disk) is skipped for this walk and
+//! listed ([`WalkReport::hung_folders`]): each walker thread lists through
+//! a helper thread of its own ([`Lister`]), and leaves a helper that hangs
+//! behind, so that the folder holds up only itself (#176).
 
 use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::sync::{Condvar, Mutex};
+use std::time::Duration;
 
 use super::Entry;
 use super::format::{EntryKind, Meta};
 use super::scope::{CACHE_TAG, Candidate, Context, OwnFiles, Scope};
+
+/// The ceiling of a walk (#126's proposed value): it stops after this many
+/// entries, and says so.
+pub const MAX_ENTRIES: u64 = 5_000_000;
+
+/// How long a folder may take to answer before a walk skips it (#126's
+/// "Hung folders").
+pub const HUNG_AFTER: Duration = Duration::from_secs(10);
 
 /// How a walk runs.
 #[derive(Clone, Debug)]
@@ -24,6 +40,10 @@ pub struct WalkOptions {
     pub max_entries: u64,
     /// Run the walk's threads at background priority.
     pub background: bool,
+    /// A folder whose listing takes longer is skipped for this walk and
+    /// listed as not answering ([`HUNG_AFTER`]); `None` waits for every
+    /// folder as long as it takes, listing on the walker's own threads.
+    pub hung_after: Option<Duration>,
 }
 
 impl Default for WalkOptions {
@@ -32,8 +52,9 @@ impl Default for WalkOptions {
             threads: std::thread::available_parallelism()
                 .map_or(4, |n| n.get())
                 .clamp(2, 8),
-            max_entries: 5_000_000,
+            max_entries: MAX_ENTRIES,
             background: true,
+            hung_after: Some(HUNG_AFTER),
         }
     }
 }
@@ -50,9 +71,112 @@ pub struct WalkReport {
     /// are not. At most the first 100 are named.
     pub unreadable: u64,
     pub unreadable_folders: Vec<PathBuf>,
+    /// Folders that did not answer within [`WalkOptions::hung_after`]:
+    /// indexed, their contents skipped for this walk. At most the first 100
+    /// are named.
+    pub hung: u64,
+    pub hung_folders: Vec<PathBuf>,
     /// The walk stopped at [`WalkOptions::max_entries`].
     pub ceiling_reached: bool,
     pub cancelled: bool,
+}
+
+/// Why a folder was not listed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Unlisted {
+    /// The system refused or failed to list it.
+    Unreadable,
+    /// It did not answer in time.
+    Hung,
+}
+
+/// A helper thread that lists folders for one walker thread (or one
+/// reconciling walk), so that a folder that never answers holds up only the
+/// helper: the walker waits [`WalkOptions::hung_after`] and then leaves it
+/// behind, and the helper ends once the system answers it at last.
+pub(crate) struct Lister {
+    asks: Sender<(PathBuf, u64)>,
+    answers: Receiver<io::Result<Vec<Listed>>>,
+}
+
+impl Lister {
+    fn start(background: bool) -> Option<Lister> {
+        let (asks, asked) = channel::<(PathBuf, u64)>();
+        let (answer, answers) = channel();
+        std::thread::Builder::new()
+            .name("pane-file-lister".into())
+            .spawn(move || {
+                if background {
+                    super::priority::lower_current_thread();
+                }
+                for (path, volume) in asked {
+                    #[cfg(test)]
+                    stall_for_tests(&path);
+                    if answer.send(list(&path, volume)).is_err() {
+                        // Left behind: nobody waits for this answer.
+                        break;
+                    }
+                }
+            })
+            .ok()?;
+        Some(Lister { asks, answers })
+    }
+}
+
+/// Lists the folder at `path`, on the volume `volume`, waiting at most
+/// `options.hung_after` for it through `lister` (started here when there is
+/// none, and dropped when it is left behind with a folder that hangs).
+pub(crate) fn list_within(
+    path: &Path,
+    volume: u64,
+    options: &WalkOptions,
+    lister: &mut Option<Lister>,
+) -> Result<Vec<Listed>, Unlisted> {
+    let Some(limit) = options.hung_after else {
+        return list(path, volume).map_err(|_| Unlisted::Unreadable);
+    };
+    if lister.is_none() {
+        *lister = Lister::start(options.background);
+    }
+    let Some(helper) = lister.as_ref() else {
+        // No thread to spare: listed here, as long as it takes.
+        return list(path, volume).map_err(|_| Unlisted::Unreadable);
+    };
+    if helper.asks.send((path.to_path_buf(), volume)).is_err() {
+        *lister = None;
+        return list(path, volume).map_err(|_| Unlisted::Unreadable);
+    }
+    match helper.answers.recv_timeout(limit) {
+        Ok(Ok(listing)) => Ok(listing),
+        Ok(Err(_)) => Err(Unlisted::Unreadable),
+        Err(RecvTimeoutError::Timeout) => {
+            // Left behind; the next folder gets a helper of its own.
+            *lister = None;
+            Err(Unlisted::Hung)
+        }
+        Err(RecvTimeoutError::Disconnected) => {
+            *lister = None;
+            Err(Unlisted::Unreadable)
+        }
+    }
+}
+
+/// Folders whose listing the tests hold up, with how long, standing for a
+/// stalled mount.
+#[cfg(test)]
+pub(crate) static STALLED: Mutex<Vec<(PathBuf, Duration)>> = Mutex::new(Vec::new());
+
+#[cfg(test)]
+fn stall_for_tests(path: &Path) {
+    let stall = STALLED
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .iter()
+        .find(|(stalled, _)| stalled == path)
+        .map(|(_, how_long)| *how_long);
+    if let Some(how_long) = stall {
+        std::thread::sleep(how_long);
+    }
 }
 
 /// One entry of a folder, as listed.
@@ -93,6 +217,7 @@ struct Shared<'a> {
     excluded: AtomicU64,
     ceiling: AtomicBool,
     unreadable: Mutex<(u64, Vec<PathBuf>)>,
+    hung: Mutex<(u64, Vec<PathBuf>)>,
 }
 
 /// Walks every root of `scope` (or, with [`walk_folders`], some folders
@@ -174,6 +299,7 @@ fn run(
         excluded: AtomicU64::new(0),
         ceiling: AtomicBool::new(false),
         unreadable: Mutex::new((0, Vec::new())),
+        hung: Mutex::new((0, Vec::new())),
     };
     std::thread::scope(|threads| {
         for n in 0..options.threads.max(1) {
@@ -196,12 +322,18 @@ fn run(
         .unreadable
         .into_inner()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (hung, hung_folders) = shared
+        .hung
+        .into_inner()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     WalkReport {
         entries: shared.entries.into_inner(),
         folders: shared.folders.into_inner(),
         excluded: shared.excluded.into_inner(),
         unreadable,
         unreadable_folders,
+        hung,
+        hung_folders,
         ceiling_reached: shared.ceiling.into_inner(),
         cancelled: cancel.load(Ordering::Relaxed),
     }
@@ -209,6 +341,8 @@ fn run(
 
 /// Takes jobs until none is left and none is running.
 fn work(shared: &Shared<'_>, sink: &(dyn Fn(Vec<Entry>) + Sync)) {
+    // This thread's helper for listing, started with its first folder.
+    let mut lister = None;
     loop {
         let job = {
             let mut queue = shared
@@ -236,7 +370,7 @@ fn work(shared: &Shared<'_>, sink: &(dyn Fn(Vec<Entry>) + Sync)) {
             shared.wake.notify_all();
             return;
         };
-        let (children, entries) = list_job(shared, job);
+        let (children, entries) = list_job(shared, job, &mut lister);
         if !entries.is_empty() {
             let count = entries.len() as u64;
             let total = shared.entries.fetch_add(count, Ordering::Relaxed) + count;
@@ -261,19 +395,22 @@ fn work(shared: &Shared<'_>, sink: &(dyn Fn(Vec<Entry>) + Sync)) {
 
 /// Lists one folder: the folders under it to list next, and the entries to
 /// index (the folder's own first).
-fn list_job(shared: &Shared<'_>, job: Job) -> (Vec<Job>, Vec<Entry>) {
-    let listing = match list(&job.path, job.meta.volume) {
+fn list_job(shared: &Shared<'_>, job: Job, lister: &mut Option<Lister>) -> (Vec<Job>, Vec<Entry>) {
+    let listing = match list_within(&job.path, job.meta.volume, shared.options, lister) {
         Ok(listing) => listing,
-        Err(_) => {
-            let mut unreadable = shared
-                .unreadable
+        Err(why) => {
+            let counted = match why {
+                Unlisted::Unreadable => &shared.unreadable,
+                Unlisted::Hung => &shared.hung,
+            };
+            let mut counted = counted
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            unreadable.0 += 1;
-            if unreadable.1.len() < 100 {
-                unreadable.1.push(job.path.clone());
+            counted.0 += 1;
+            if counted.1.len() < 100 {
+                counted.1.push(job.path.clone());
             }
-            drop(unreadable);
+            drop(counted);
             shared.folders.fetch_add(1, Ordering::Relaxed);
             return (
                 Vec::new(),
@@ -781,6 +918,7 @@ mod tests {
             threads: 2,
             max_entries: 30,
             background: false,
+            hung_after: None,
         };
         let (report, entries) = walked(&scope, &options);
         assert!(report.ceiling_reached);
@@ -789,6 +927,37 @@ mod tests {
         let report = walk(&scope, &WalkOptions::default(), &cancel, &|_| {});
         assert!(report.cancelled);
         assert_eq!(report.entries, 0);
+    }
+
+    #[test]
+    fn a_folder_that_does_not_answer_is_skipped_for_the_walk_and_listed() {
+        let (_dir, home) = tree(&["fast/one.txt", "stuck/two.txt", "stuck/deeper/three.txt"]);
+        let stuck = home.join("stuck");
+        STALLED
+            .lock()
+            .unwrap()
+            .push((stuck.clone(), std::time::Duration::from_secs(3)));
+        let scope = Scope::new(ScopeRules::for_home(home.clone()));
+        let options = WalkOptions {
+            threads: 2,
+            background: false,
+            hung_after: Some(std::time::Duration::from_millis(200)),
+            ..WalkOptions::default()
+        };
+        let started = std::time::Instant::now();
+        let (report, entries) = walked(&scope, &options);
+        STALLED.lock().unwrap().retain(|(path, _)| *path != stuck);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(3),
+            "the walk did not wait for the folder"
+        );
+        let mut found = relative(&home, &entries);
+        found.sort();
+        // The folder itself is indexed; what is in it is skipped this time.
+        assert_eq!(found, ["", "fast", "fast/one.txt", "stuck"]);
+        assert_eq!(report.hung, 1);
+        assert_eq!(report.hung_folders, [stuck]);
+        assert_eq!(report.unreadable, 0);
     }
 
     #[test]

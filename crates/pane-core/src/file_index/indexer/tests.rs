@@ -5,7 +5,7 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicU64, AtomicUsize};
 
 use super::*;
 use crate::file_index::Entry;
@@ -104,6 +104,11 @@ fn users(owners: &[&str]) -> BTreeSet<String> {
 }
 
 fn fixture() -> Fixture {
+    fixture_with(|_| {})
+}
+
+/// The fixture, its indexer configured as `edit` says.
+fn fixture_with(edit: impl FnOnce(&mut IndexerConfig)) -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     for (file, text) in [
@@ -120,10 +125,9 @@ fn fixture() -> Fixture {
     let index_dir = dir.path().join("cache").join(INDEX_DIR);
     let fake = Arc::new(Fake::default());
     let indexer = Indexer::default();
-    indexer.configure(
-        config(&index_dir, &home, fake.clone()),
-        UserRules::default(),
-    );
+    let mut config = config(&index_dir, &home, fake.clone());
+    edit(&mut config);
+    indexer.configure(config, UserRules::default());
     Fixture {
         _dir: dir,
         home,
@@ -146,13 +150,19 @@ fn config(index_dir: &Path, home: &Path, fake: Arc<Fake>) -> IndexerConfig {
             ..WalkOptions::default()
         },
         reconcile_unwatched: Duration::from_secs(3600),
+        valves: Valves::default(),
     }
 }
 
 impl Fixture {
     /// The fixture indexed: used by a package, shown, settled.
     fn indexed() -> Fixture {
-        let fixture = fixture();
+        Fixture::indexed_with(|_| {})
+    }
+
+    /// The fixture, configured as `edit` says, indexed.
+    fn indexed_with(edit: impl FnOnce(&mut IndexerConfig)) -> Fixture {
+        let fixture = fixture_with(edit);
         fixture.indexer.launcher_shown();
         fixture.indexer.set_users(users(&[OWNER]));
         assert!(fixture.indexer.wait_until_settled(LIMIT));
@@ -407,6 +417,14 @@ fn folders_the_source_cannot_watch_are_counted_and_reconciled_every_few_minutes(
     let deeper = home.join("Deep/Deeper");
     fake.report(Changed::Unwatched(vec![deeper.clone()]));
     until(|| indexer.status().unwatched == 1);
+    // Listed on the File search page, with what raises the limit.
+    let problems = indexer.problems();
+    let unwatched = problems
+        .iter()
+        .find(|problem| problem.kind == ProblemKind::Unwatched)
+        .expect("listed");
+    assert!(unwatched.reason.starts_with("1 folders are not watched"));
+    assert!(unwatched.remedy.contains("fs.inotify.max_user_watches"));
     // A change there is reported by nothing, and found all the same.
     fs::write(deeper.join("unreported plan.txt"), "x").unwrap();
     touch(&deeper);
@@ -650,4 +668,258 @@ fn touch(folder: &Path) {
         .open(folder)
         .and_then(|file| file.set_modified(time))
         .expect("the folder's time is set");
+}
+
+#[test]
+fn a_folder_that_changes_constantly_is_taken_out_until_it_is_included_again() {
+    let fixture = Fixture::indexed_with(|config| {
+        config.valves.churn_changes = 20;
+        config.valves.churn_window = Duration::from_millis(150);
+        config.valves.churn_windows = 3;
+    });
+    let record = fixture._dir.path().join("data");
+    fs::create_dir_all(&record).unwrap();
+    fixture.indexer.keep_rules_in(record.clone());
+    let busy = fixture.home.join("Busy");
+    fs::create_dir_all(&busy).unwrap();
+    let log = busy.join("busy log.txt");
+    fs::write(&log, "x").unwrap();
+    fixture.fake.report(Changed::Paths(vec![busy.clone()]));
+    fixture.settle();
+    assert_eq!(fixture.names("busy log"), ["busy log.txt"]);
+    assert!(fixture.indexer.problems().is_empty());
+
+    // A build writing its log over and over, far more often than the
+    // valve allows, for longer than its windows in a row.
+    until(|| {
+        fixture.fake.report(Changed::Paths(vec![log.clone(); 10]));
+        std::thread::sleep(Duration::from_millis(10));
+        fixture.indexer.user_rules().quarantined == [busy.clone()]
+    });
+    fixture.settle();
+    assert!(
+        fixture.names("busy log").is_empty(),
+        "taken out of the index"
+    );
+    assert_eq!(fixture.names("plan"), ["plan.txt"], "nothing else is");
+    let problems = fixture.indexer.problems();
+    let churned = problems
+        .iter()
+        .find(|problem| problem.kind == ProblemKind::Churned)
+        .expect("listed on the File search page");
+    assert_eq!(churned.folder.as_deref(), Some(busy.as_path()));
+    assert_eq!(
+        churned.reason,
+        "It changed more than 20 times in 150 ms, 3 times in a row, so Pane took it out of the \
+         index"
+    );
+    // Recorded in Pane's own record, so it stays out after a restart.
+    assert_eq!(UserRules::read(&record).quarantined, [busy.clone()]);
+
+    // A change there is no longer looked at.
+    fixture.fake.report(Changed::Paths(vec![log.clone()]));
+    fixture.settle();
+    assert!(fixture.names("busy log").is_empty());
+    // A change of the user's rules keeps it out.
+    fixture
+        .indexer
+        .change_rules(UserRules {
+            include_hidden: true,
+            ..UserRules::default()
+        })
+        .unwrap();
+    fixture.settle();
+    assert_eq!(fixture.indexer.user_rules().quarantined, [busy.clone()]);
+    assert!(fixture.names("busy log").is_empty());
+
+    // Included again: walked again, found, and no longer listed.
+    fixture.indexer.include_again(&busy).unwrap();
+    fixture.settle();
+    assert_eq!(fixture.names("busy log"), ["busy log.txt"]);
+    assert!(
+        fixture
+            .indexer
+            .problems()
+            .iter()
+            .all(|problem| problem.kind != ProblemKind::Churned)
+    );
+    assert!(UserRules::read(&record).quarantined.is_empty());
+    assert!(UserRules::read(&record).include_hidden);
+}
+
+#[test]
+fn a_folder_changing_now_and_then_is_never_taken_out() {
+    let fixture = Fixture::indexed_with(|config| {
+        config.valves.churn_changes = 20;
+        config.valves.churn_window = Duration::from_millis(100);
+        config.valves.churn_windows = 3;
+    });
+    let plan = fixture.home.join("Documents/plan.txt");
+    // Busy in one window, then quiet: never three busy windows in a row.
+    for _ in 0..3 {
+        fixture.fake.report(Changed::Paths(vec![plan.clone(); 30]));
+        fixture.settle();
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    fixture.fake.report(Changed::Paths(vec![plan.clone()]));
+    fixture.settle();
+    assert!(fixture.indexer.user_rules().quarantined.is_empty());
+    assert_eq!(fixture.names("plan"), ["plan.txt"]);
+}
+
+#[test]
+fn a_walk_stops_at_the_ceiling_and_says_so() {
+    let fixture = Fixture::indexed_with(|config| config.walk.max_entries = 3);
+    let status = fixture.indexer.status();
+    assert!(status.ceiling_reached);
+    assert_eq!(status.state, IndexState::Current);
+    assert_eq!(
+        status.reason.as_deref(),
+        Some("Pane stopped indexing at 3 entries; exclude folders to index the rest")
+    );
+    let problems = fixture.indexer.problems();
+    let ceiling = problems
+        .iter()
+        .find(|problem| problem.kind == ProblemKind::Ceiling)
+        .expect("listed on the File search page");
+    assert_eq!(ceiling.reason, "Indexing stopped at 3 entries");
+    assert!(ceiling.remedy.contains("Exclude folders"));
+    // The default is 5 million, as #126 proposes.
+    assert_eq!(WalkOptions::default().max_entries, 5_000_000);
+    assert_eq!(count_words(5_000_000), "5 million");
+}
+
+#[test]
+fn indexing_stops_while_the_disk_is_short_of_space_and_starts_again_by_itself() {
+    let free = Arc::new(AtomicU64::new(0));
+    let seen = free.clone();
+    let fixture = fixture_with(|config| {
+        config.valves.free_space_floor = 1_000;
+        config.valves.space_retry = Duration::from_millis(20);
+        config.valves.free_space = Arc::new(move |_| Some(seen.load(Ordering::SeqCst)));
+    });
+    fixture.indexer.launcher_shown();
+    fixture.indexer.set_users(users(&[OWNER]));
+    fixture.settle();
+    let status = fixture.indexer.status();
+    assert_eq!(status.state, IndexState::Stopped);
+    assert!(status.low_space);
+    assert!(fixture.names("plan").is_empty(), "nothing was written");
+    let problems = fixture.indexer.problems();
+    let low = problems
+        .iter()
+        .find(|problem| problem.kind == ProblemKind::LowSpace)
+        .expect("listed on the File search page");
+    assert!(
+        low.reason.starts_with("Less than 1000 bytes"),
+        "{}",
+        low.reason
+    );
+    // The default floor is 1 GiB, as #126 proposes.
+    assert_eq!(Valves::default().free_space_floor, 1 << 30);
+
+    // Room again: the first walk runs, by itself.
+    free.store(1 << 40, Ordering::SeqCst);
+    until(|| fixture.indexer.status().state == IndexState::Current);
+    fixture.settle();
+    assert_eq!(fixture.names("plan"), ["plan.txt"]);
+    assert!(!fixture.indexer.status().low_space);
+    assert!(fixture.indexer.problems().is_empty());
+
+    // Short again while Pane runs: a change is let go of, and caught up
+    // once there is room.
+    free.store(0, Ordering::SeqCst);
+    let documents = fixture.home.join("Documents");
+    let written = documents.join("while short.txt");
+    fs::write(&written, "x").unwrap();
+    touch(&documents);
+    fixture.fake.report(Changed::Paths(vec![written.clone()]));
+    until(|| fixture.indexer.status().low_space);
+    fixture.settle();
+    assert!(fixture.names("while short").is_empty());
+    free.store(1 << 40, Ordering::SeqCst);
+    until(|| {
+        let status = fixture.indexer.status();
+        status.state == IndexState::Current && !status.low_space
+    });
+    fixture.settle();
+    assert_eq!(fixture.names("while short"), ["while short.txt"]);
+}
+
+#[test]
+fn a_folder_that_does_not_answer_is_skipped_for_the_walk_and_listed() {
+    let fixture = fixture_with(|config| {
+        config.walk.hung_after = Some(Duration::from_millis(200));
+    });
+    let music = fixture.home.join("Music");
+    crate::file_index::walker::STALLED
+        .lock()
+        .unwrap()
+        .push((music.clone(), Duration::from_secs(3)));
+    let started = Instant::now();
+    fixture.indexer.launcher_shown();
+    fixture.indexer.set_users(users(&[OWNER]));
+    fixture.settle();
+    crate::file_index::walker::STALLED
+        .lock()
+        .unwrap()
+        .retain(|(path, _)| *path != music);
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "the walk did not wait for it"
+    );
+    let status = fixture.indexer.status();
+    assert_eq!(status.state, IndexState::Current);
+    assert_eq!(status.hung, 1);
+    assert_eq!(status.hung_folders, [music.clone()]);
+    assert!(fixture.names("song").is_empty(), "skipped for this walk");
+    assert_eq!(fixture.names("plan"), ["plan.txt"]);
+    let problems = fixture.indexer.problems();
+    let hung = problems
+        .iter()
+        .find(|problem| problem.kind == ProblemKind::Hung)
+        .expect("listed on the File search page");
+    assert_eq!(hung.folder.as_deref(), Some(music.as_path()));
+    assert_eq!(
+        hung.reason,
+        "It did not answer within 200 ms, so Pane skipped it for this walk"
+    );
+}
+
+#[test]
+fn excluding_a_folder_takes_only_it_out_and_including_it_walks_only_it() {
+    let fixture = Fixture::indexed();
+    let music = fixture.home.join("Music");
+    fixture.indexer.set_user_rules(UserRules {
+        excluded_folders: vec![music.clone()],
+        ..UserRules::default()
+    });
+    fixture.settle();
+    assert!(fixture.names("song").is_empty());
+    assert_eq!(fixture.names("plan"), ["plan.txt"]);
+    let walked_again = |fixture: &Fixture| {
+        fixture.indexer.status().caught_up.map(|(by, _)| by) == Some(CaughtUpBy::FullWalk)
+    };
+    assert!(!walked_again(&fixture), "not walked again in full");
+    fixture.indexer.set_user_rules(UserRules::default());
+    fixture.settle();
+    assert_eq!(fixture.names("song"), ["song.mp3"]);
+    assert!(!walked_again(&fixture), "only the folder was walked");
+}
+
+#[test]
+fn problems_read_for_people() {
+    assert_eq!(count_words(0), "0");
+    assert_eq!(count_words(1_000), "1,000");
+    assert_eq!(count_words(450_097), "450,097");
+    assert_eq!(count_words(12_345_678), "12,345,678");
+    let home = Path::new("/Users/me");
+    assert!(protected_by_macos(Some(home), &home.join("Documents")));
+    assert!(protected_by_macos(Some(home), &home.join("Downloads")));
+    assert!(!protected_by_macos(Some(home), &home.join("Projects")));
+    assert!(!protected_by_macos(
+        Some(home),
+        &home.join("Documents").join("Desktop")
+    ));
+    assert!(!protected_by_macos(None, &home.join("Desktop")));
 }

@@ -46,14 +46,15 @@ pub use scope::{Admitted, Excluded, Scope, ScopeRules};
 pub use store::{
     Bulk, Change, FileIndex, Hit, IndexError, IndexRecord, IndexStats, Opened, PreparedBatch, Query,
 };
-pub use walker::{WalkOptions, WalkReport, walk, walk_folders};
+pub use walker::{HUNG_AFTER, MAX_ENTRIES, WalkOptions, WalkReport, walk, walk_folders};
 
 pub use changes::{
     Caught, CaughtUpBy, ChangeSource, Changed, Sink, SinkClosed, Watching, native as native_changes,
 };
 pub use indexer::{
-    Category, Checked, FIRST_WALK_DELAY, Found, INDEX_DIR, IndexState, IndexStatus, Indexer,
-    IndexerConfig, KnownEntry, MAX_RESULTS, RULES_FILE, SearchOptions, Sort, UserRules, describe,
+    Category, Checked, FIRST_WALK_DELAY, FREE_SPACE_FLOOR, Found, INDEX_DIR, IndexState,
+    IndexStatus, Indexer, IndexerConfig, KnownEntry, MAX_RESULTS, Problem, ProblemKind, RULES_FILE,
+    SearchOptions, Sort, UserRules, Valves, count_words, describe, free_space, protected_by_macos,
 };
 pub use reconcile::{Reconciled, reconcile};
 

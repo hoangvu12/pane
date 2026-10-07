@@ -34,6 +34,9 @@ pub struct Reconciled {
     pub folders_read: u64,
     /// Folders compared with the index.
     pub folders_compared: u64,
+    /// Folders that did not answer within [`WalkOptions::hung_after`]:
+    /// skipped for this walk, their entries kept as they were (#176).
+    pub hung_folders: Vec<PathBuf>,
 }
 
 /// Compares each of `folders` (folders under the roots of `scope`, or the
@@ -49,6 +52,9 @@ pub fn reconcile(
 ) -> Reconciled {
     let mut known = Admitted::default();
     let mut reconciled = Reconciled::default();
+    // The helper that lists folders, so that one that hangs holds up only
+    // itself.
+    let mut lister = None;
     // Folders new to the index, walked whole at the end.
     let mut new_folders: Vec<PathBuf> = Vec::new();
     let mut pending: Vec<PathBuf> = folders.to_vec();
@@ -105,10 +111,20 @@ pub fn reconcile(
             continue;
         }
         reconciled.folders_read += 1;
+        let listing = match walker::list_within(&folder, on_disk.volume, options, &mut lister) {
+            Ok(listing) => Some(listing),
+            Err(walker::Unlisted::Hung) => {
+                // Skipped for this walk: what the index holds of it stays.
+                reconciled.hung_folders.push(folder.clone());
+                continue;
+            }
+            Err(walker::Unlisted::Unreadable) => None,
+        };
         read_again(
             scope,
             &folder,
             on_disk,
+            listing,
             children,
             &mut known,
             &mut reconciled.changes,
@@ -137,16 +153,17 @@ pub fn reconcile(
     reconciled
 }
 
-/// Reads `folder`, whose time changed, from the disk and compares its
-/// entries with `children`, what the index holds directly in it: entries
-/// gone or no longer admitted are taken out, new or changed ones put in,
-/// new folders walked whole and the folders it still holds compared in
-/// turn.
+/// Compares `listing`, what the disk holds in `folder` whose time changed
+/// (`None` when it could not be read), with `children`, what the index
+/// holds directly in it: entries gone or no longer admitted are taken out,
+/// new or changed ones put in, new folders walked whole and the folders it
+/// still holds compared in turn.
 #[allow(clippy::too_many_arguments)]
 fn read_again(
     scope: &Scope,
     folder: &Path,
     on_disk: Meta,
+    listing: Option<Vec<walker::Listed>>,
     children: Vec<(PathBuf, Meta)>,
     known: &mut Admitted,
     changes: &mut Vec<Change>,
@@ -157,9 +174,9 @@ fn read_again(
         EntryKind::Folder => Change::RemoveUnder(path.to_path_buf()),
         EntryKind::File | EntryKind::Link => Change::Remove(path.to_path_buf()),
     };
-    let listing = match walker::list(folder, on_disk.volume) {
-        Ok(listing) => listing,
-        Err(_) => {
+    let listing = match listing {
+        Some(listing) => listing,
+        None => {
             // Unreadable now: indexed, its contents not, as a walk does.
             changes.push(Change::Put(Entry {
                 path: folder.to_path_buf(),
