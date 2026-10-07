@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use futures::executor::block_on;
 use pane_core::defaults::ArtifactSource;
-use pane_core::{DefaultExtension, Launcher, PackageIdentity, Runtime, Status, Target};
+use pane_core::{DefaultExtension, IconSource, Launcher, PackageIdentity, Runtime, Status, Target};
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -293,15 +293,23 @@ fn a_first_setup_acquires_the_calculator_and_it_answers() {
     assert_eq!(package.identity, identity);
     let record = dirs.record("calculator");
     assert_eq!(record["default"], "calculator");
-    assert_eq!(record["defaultVersion"], "0.4.0");
+    assert_eq!(record["defaultVersion"], "0.5.0");
     assert_eq!(record.get("local"), None);
     assert_eq!(record.get("npm"), None);
-    // The managed copy holds the manifest and the component it names,
-    // installed as a package from a folder is.
+    // The managed copy holds the manifest and the component and tile icon
+    // it names (#163), installed as a package from a folder is, and the
+    // calculator shows that tile from its managed copy.
     assert_eq!(
         files_of(&package.location),
-        ["calculator.wasm", "pane.json"]
+        ["calculator.wasm", "icon.svg", "pane.json"]
     );
+    let icon = launcher.icon_of(&identity.key()).expect("the icon");
+    let IconSource::Image { light, dark } = &icon.source else {
+        panic!("the calculator's icon is not its tile: {icon:?}");
+    };
+    assert!(light.starts_with(&package.location), "{light:?}");
+    assert_eq!(light.file_name().unwrap(), "icon.svg");
+    assert_eq!(dark, light);
     // The payload is cached; nothing is left in the downloads folder.
     assert_eq!(dirs.acquired("calculator").len(), 1);
     dirs.wait_for_no_downloads();
@@ -387,7 +395,7 @@ fn an_interrupted_download_is_tried_again_and_set_up() {
     dirs.publish();
     // The first download of the calculator's payload is interrupted
     // partway: the connection closes after its first bytes.
-    dirs.artifacts.drop_after("calculator-0.4.0.tgz", 16, 1);
+    dirs.artifacts.drop_after("calculator-0.5.0.tgz", 16, 1);
     let launcher = dirs.launcher();
 
     block_on(launcher.acquire_defaults());
@@ -525,18 +533,18 @@ fn a_row_tries_again_and_sets_the_extension_up() {
     // The payload is not there yet: the source answers 404 for it.
     let launcher = dirs.launcher();
     dirs.artifacts
-        .fail_status("calculator-0.4.0.tgz", 404, usize::MAX);
+        .fail_status("calculator-0.5.0.tgz", 404, usize::MAX);
     block_on(launcher.acquire_defaults());
     let error = error_of(&launcher);
     assert!(
-        error.contains("the payload `calculator-0.4.0.tgz` its index names is not there"),
+        error.contains("the payload `calculator-0.5.0.tgz` its index names is not there"),
         "{error}"
     );
     // The helper sample was set up; only the calculator failed.
     assert_eq!(installed(&launcher), ["Helper sample"]);
 
     // The source answers now; the row that tries again sets it up.
-    dirs.artifacts.stop_failing("calculator-0.4.0.tgz");
+    dirs.artifacts.stop_failing("calculator-0.5.0.tgz");
     select_title(&launcher, "Set up Calculator");
     block_on(launcher.activate_selected());
 

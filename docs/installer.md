@@ -62,8 +62,11 @@ runs on and the artifacts an artifact source serves (below):
   else it explains so and stops — the one thing a Windows build alone
   provides.
 - **`artifacts/`** — what an artifact source serves (below): the index
-  `pane-defaults.json` and one tarball per default extension's payload.
-  A real deployment serves this folder at Pane's published downloads; the
+  `pane-defaults.json` and one tarball per default extension's payload:
+  its `pane.json`, the components it names, the images its package's and
+  commands' icons name (the default extensions' tiles, with any `@light`
+  and `@dark` variants, #163) and, for the helper sample, this system's
+  helper file. A real deployment serves this folder at Pane's published downloads; the
   tests and smokes serve it from this computer instead. The payloads are
   built for the system the task ran on, so each system's run of its own
   task serves its own (`windows-x86_64`'s helper file, for instance, from

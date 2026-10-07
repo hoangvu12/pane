@@ -212,7 +212,17 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   recording their hashes and build inputs.
 - `packages`: the samples', the calculator's and applications' package manifests (`pane.json`). `cargo xtask
   guests` puts each one with its built component in
-  `target/guests/packages/<name>/`, a ready-to-install package.
+  `target/guests/packages/<name>/`, a ready-to-install package. The
+  default extensions' packages (`calculator`, `applications`, `files`,
+  `clipboard-history`, `quicklinks`) also hold their tile icons (#163):
+  `icon.svg`, the package's, which a command without an icon of its own
+  shows, and the tiles of Search Files (`files/search.svg`) and of
+  Quicklinks' four commands (`quicklinks/search.svg`, `create.svg`,
+  `import.svg`, `export.svg`). Each is a 28 by 28 SVG, a coloured rounded
+  square (radius 7, the row tile's) with a white symbol, one colour per
+  extension; they read on both themes, so none has `@light` or `@dark`
+  variants. The artwork is Pane's own, under this folder's licences, and
+  is held by `crates/pane/tests/default_icons.rs`.
 - `fixtures/faulty`: test fixture whose actions, form, custom view and root
   results return an error or trap, and whose actions grow its memory to
   just under the 128 MiB cap or past it.

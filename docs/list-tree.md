@@ -297,8 +297,12 @@ A list's images are named relative to the package folder; they belong under
 its `assets` folder, which Pane copies into its managed copy with the
 package (with the files the package's and its commands' icons name). Pane
 draws extensions' icons bare, without a tile behind them; Pane's own rows
-keep their tiles (ADR 0035). A package without an icon of its own shows a
-tile with its title's first letter.
+keep their tiles (ADR 0035). An extension that wants a tile draws it into
+its image, as Pane's default extensions do (#163): each ships an SVG tile
+of the row tile's size, 28 by 28 with a corner radius of 7, a coloured
+rounded square with a white symbol, so it lines up with Pane's own tiles;
+one that ships a bare symbol is drawn bare. A package without an icon of
+its own shows a tile with its title's first letter.
 
 In a tree, an icon Pane cannot read (an unknown source, say) is left out,
 and so is a tint, mask, fallback or tooltip it cannot read: never the

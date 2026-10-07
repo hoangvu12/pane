@@ -14,6 +14,7 @@ mod arguments;
 mod command_search;
 mod compact_pins;
 mod confirmations;
+mod default_icons;
 mod develop;
 mod feedback;
 mod file_actions;
