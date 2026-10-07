@@ -5,7 +5,10 @@ package pane:extension@0.1.0;
 // Results a command computes from root search's query, such as a
 // calculator's answer. Kept apart from extension.wit so a command that
 // computes none is unchanged: only a command whose `pane.json` entry sets
-// `"rootResults": true` exports this interface, beside `command`. Rust
+// `"rootResults": true` exports this interface, beside `command`. A command
+// whose only job is this, such as the calculator, also says `"mode":
+// "provider"` (a root provider, #164): it has no row of its own, and Pane
+// never calls its `render` or `run` to open or run it. Rust
 // commands export it through pane-guest (`pane_guest::root::export!`).
 // The header follows `package`: comments above it would document the package,
 // which extension.wit already does.

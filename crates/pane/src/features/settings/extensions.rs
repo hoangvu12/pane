@@ -258,6 +258,9 @@ pub(crate) struct PackageCard {
     /// The preferences it declares, its package's and its commands', with
     /// their values; `None` when it declares none.
     pub(crate) preferences: Option<PackagePreferences>,
+    /// The titles of its root providers (#164): commands with no row of
+    /// their own that answer root search while the card's switch is on.
+    pub(crate) providers: Vec<String>,
 }
 
 /// What the Extensions page shows, as plain values: what [`render`] reads
@@ -345,6 +348,7 @@ pub(crate) fn gather(
             auto_update: None,
             actions: Vec::new(),
             preferences: None,
+            providers: Vec::new(),
         })
         .collect();
     let mut others = Vec::new();
@@ -626,6 +630,27 @@ fn package_card(
         .cursor_pointer();
     let head = attach(ExtensionsControl::Row(card.id.clone()), head);
     let mut rows = vec![head.into_any_element()];
+    // Its root providers (#164): no row in root search, so they are named
+    // here, where the card's switch turns their results off and on.
+    for provider in &card.providers {
+        let line = if card.enabled {
+            "Answers root search as you type, with no row of its own"
+        } else {
+            "Off while the extension is disabled"
+        };
+        let row = controls::setting_row(
+            provider.clone(),
+            vec![controls::row_line(line, theme.text_muted, theme)],
+            theme,
+        )
+        .id(SharedString::from(format!(
+            "extension-provider-{}-{provider}",
+            card.id
+        )))
+        .debug_selector(|| format!("extension-provider-{provider}"))
+        .aria_label(format!("{provider}: {line}"));
+        rows.push(row.into_any_element());
+    }
     if let Some((id, on)) = &card.auto_update {
         let switch = super::general::switch_row(
             super::general::SwitchRow {
@@ -1003,14 +1028,22 @@ fn render(
     } else {
         Vec::new()
     };
-    // Each card's preferences, and the text fields that edit them.
+    // Each card's preferences, and the text fields that edit them; and its
+    // root providers, listed under its switch (#164).
     for card in &mut packages {
-        card.preferences = this
-            .launcher
-            .packages()
+        let installed = this.launcher.packages();
+        let package = installed
             .iter()
-            .find(|package| package.identity.key() == card.id)
-            .and_then(|package| this.launcher.preferences_of(&package.identity));
+            .find(|package| package.identity.key() == card.id);
+        card.preferences =
+            package.and_then(|package| this.launcher.preferences_of(&package.identity));
+        card.providers = package.map_or_else(Vec::new, |package| {
+            package
+                .providers()
+                .into_iter()
+                .map(|provider| provider.title)
+                .collect()
+        });
     }
     let fields = text_fields(this, &packages, cx);
     // A change that could not be saved says why, where no operation's

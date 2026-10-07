@@ -626,7 +626,8 @@ fn an_invalid_mode_is_refused_at_install_with_the_reason() {
     assert!(
         error.contains(
             "command `report` has the mode \"menu-bar\"; a command's `mode` is \"view\" (it \
-             opens a screen, the default) or \"no-view\" (it runs without one)"
+             opens a screen, the default), \"no-view\" (it runs without one) or \"provider\" \
+             (it only answers root search)"
         ),
         "{error}"
     );

@@ -52,6 +52,7 @@ mod quicklinks;
 mod reload;
 mod repositories;
 mod result_actions;
+mod root_providers;
 mod runtime_cache;
 mod runtime_crash;
 mod samples;

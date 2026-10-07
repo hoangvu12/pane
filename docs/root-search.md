@@ -345,13 +345,40 @@ extension, through the same guest boundary as its command:
   answer still on its way is discarded; enabled again, it is asked with the
   next query.
 
+### Root providers
+
+A command whose only job is to answer root search declares `"mode":
+"provider"` in its `pane.json` entry
+([#164](https://github.com/hoangvu12/pane/issues/164); the
+[author guide](../guests/README.md#root-providers)). Such a **root
+provider** computes results from the query (`"rootResults": true`) or
+supplies them ahead of it (`"indexedResults": true`), and has no row of its
+own: root search never lists it, so typing its name finds nothing of it,
+and it cannot be pinned, has no alias, fallback or hotkey, is not offered by
+the Actions panel or the Shortcuts page, and cannot be launched by another
+command. Its results are listed as any command's are. Its extension's
+card in Settings names it under the extension's switch, which turns its
+results off and on. The calculator and Applications are providers, so
+there is no "Calculator" or "Applications" row.
+
+At install, a provider that declares neither `rootResults` nor
+`indexedResults`, or declares what only a launched command uses (`search`,
+`takesQuery`, `arguments`, a `schedule`), is refused with the reason. A
+command can become a provider after the user recorded choices for it (the
+calculator and Applications had rows before #164, and an update can change
+a command's mode): at the next start, its pins (`quick-slots.json`),
+aliases and fallbacks (`aliases.json`) and hotkey (`hotkeys.json`) are
+removed and those records written, once, and a toast names what was
+removed ("Calculator now only answers root search"). A pinned application,
+an indexed result of Applications, keeps its slot. Until that start, a
+recorded choice for a provider takes no effect.
+
 ### The calculator
 
 The calculator ([`guests/calculator`](../guests/calculator)) is a default
-extension in Rust: package `guests/packages/calculator`, command
-"Calculator", which lists the expressions it understands, and computed
-results for root search. It is not part of the core and can be disabled
-like any package. Acquiring it automatically at setup is
+extension in Rust: package `guests/packages/calculator`, a root provider
+whose command, "Calculator", has no row and computes results for root
+search. It is not part of the core and can be disabled like any package. Acquiring it automatically at setup is
 [#51](https://github.com/hoangvu12/pane/issues/51) to
 [#53](https://github.com/hoangvu12/pane/issues/53); until then it is
 installed from its folder like any package
@@ -516,6 +543,22 @@ results stay, and a fresh instance afterwards; and a package declaring
 `rootResults` whose component lacks the interface refused at install. The
 same computed result ("reverse <text>") in Rust, JavaScript and TypeScript
 ([`samples.rs`](../crates/pane-core/tests/samples.rs)).
+
+For root providers
+([`crates/pane-core/tests/root_providers.rs`](../crates/pane-core/tests/root_providers.rs)),
+with the real calculator and Applications guests and a fake system with
+one application: both declare the provider mode; typing "calc",
+"calculator", "applications" or "appl", or nothing, lists no row of either,
+while "6*7" is still answered under "Calculator" and the application is
+found by name; neither can be given an alias or a hotkey, and the
+Shortcuts catalog lists neither; disabling the calculator stops its answer
+and enabling it brings it back; a provider without `rootResults` or
+`indexedResults`, or with `search`, `takesQuery` or a `schedule`, refused
+at install with the reason; and a data folder seeded with a pin, alias,
+fallback and hotkey for both, from before they became providers, losing
+them at start, with a pinned application kept and a toast naming what
+went, and a second start saying nothing. The toast's wording is unit-tested
+in `launcher/providers.rs`.
 
 Window checks through GPUI's test platform with real key events
 ([`crates/pane/tests/window.rs`](../crates/pane/tests/window.rs)): typing

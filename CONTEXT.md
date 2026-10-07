@@ -144,6 +144,10 @@ _Avoid_: Indexer, crawl, whole-disk search
 A root result an extension command supplies ahead of the query, such as an installed application; Pane asks for them once root search is used, keeps them, and matches and ranks them by title like commands, for a query that is not blank.
 _Avoid_: Index entry, cached result
 
+**Root provider**:
+An extension command whose only job is to answer root search, through its computed or indexed results, declared with `"mode": "provider"` in its package manifest, such as the calculator and Applications. It has no row of its own: it is never launched, cannot be pinned, has no alias, fallback or global hotkey, is offered by neither the Actions panel nor the Shortcuts page, and root search learns nothing about it; its results are root results of their own. Its extension's Settings card lists it with the extension's switch, which turns its results off and on. A provider declaring neither kind of result is refused at install, and what was recorded for a command before it became one is dropped at the next start, with a toast naming it.
+_Avoid_: Search provider (any source of matching results), background command, hidden command
+
 **Installed application**:
 A program the operating system lists as installed where Pane looks for it (Start menu shortcuts, application bundles, desktop entries); Pane's host finds and opens it for an extension, which a WASI guest cannot do itself. It is identified by what it is, not by where it was found: several shortcuts to one program are one installed application, with one stable id that survives its updates (ADR 0038).
 _Avoid_: App (ambiguous with Pane itself), program
@@ -190,7 +194,7 @@ _Avoid_: Network permission (nothing is granted or refused)
 
 **Search provider**:
 A source of matching results for a query, such as applications, files or an online service.
-_Avoid_: The entire search interface
+_Avoid_: The entire search interface, root provider (a command declared to only answer root search)
 
 **Package identity**:
 The identity that distinguishes an installed source package from other packages, independently of its display title or selected release.

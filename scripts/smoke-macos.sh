@@ -330,8 +330,9 @@ stop_pane
 
 # Reload a development package while Pane stays open. Its command starts as
 # the Rust sample; a new build of it is the JavaScript sample. Root lists the
-# three samples, Rust sample, Greeting, Calculator, Call from JavaScript, Call
-# from Rust, Dev sample (the ninth row), the install row, then Manage
+# three samples, Rust sample, Greeting, Call from JavaScript, Call from Rust,
+# Dev sample (the eighth row: Calculator only answers root search), the
+# install row, then Manage
 # extensions… last; the extension list holds the six packages (Dev is the
 # sixth), then their six Reload rows (Reload Dev is the twelfth).
 mkdir -p "$out/dev"
@@ -358,7 +359,7 @@ key 36; sleep 3
 capture 34-reloaded.png
 check 34-reloaded.png success   # "Reloaded Dev"
 key 53; sleep 1
-for ((i = 0; i < 8; i++)); do key 125; done   # Dev sample
+for ((i = 0; i < 7; i++)); do key 125; done   # Dev sample
 key 36; sleep 3
 key 36; sleep 2   # "Say hello"
 capture 35-dev-after.png
@@ -375,7 +376,7 @@ key 36; sleep 2
 capture 36-not-reloaded.png
 check 36-not-reloaded.png error   # "Dev was not reloaded: ..."
 key 53; sleep 1
-for ((i = 0; i < 8; i++)); do key 125; done
+for ((i = 0; i < 7; i++)); do key 125; done
 key 36; sleep 3
 key 36; sleep 2
 capture 37-still-running.png

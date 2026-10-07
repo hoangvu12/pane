@@ -348,8 +348,9 @@ Stop-Pane $process
 
 # Reload a development package while Pane stays open. Its command starts as
 # the Rust sample; a new build of it is the JavaScript sample. Root lists the
-# three samples, Rust sample, Greeting, Calculator, Call from JavaScript, Call
-# from Rust, Dev sample (the ninth row), the install row, then Manage
+# three samples, Rust sample, Greeting, Call from JavaScript, Call from Rust,
+# Dev sample (the eighth row: Calculator only answers root search), the
+# install row, then Manage
 # extensions... last; the extension list holds the six packages (Dev is the
 # sixth), then their six Reload rows (Reload Dev is the twelfth).
 $dev = Join-Path $OutDir "dev"
@@ -377,7 +378,7 @@ Send "{ENTER}"; Start-Sleep -Seconds 3
 Capture "34-reloaded.png"
 Check "34-reloaded.png" "success"   # "Reloaded Dev"
 Send "{ESC}"; Start-Sleep -Seconds 1
-Send "{DOWN 8}"   # Dev sample
+Send "{DOWN 7}"   # Dev sample
 Send "{ENTER}"; Start-Sleep -Seconds 3
 Send "{ENTER}"; Start-Sleep -Seconds 2   # "Say hello"
 Capture "35-dev-after.png"
@@ -395,7 +396,7 @@ Send "{ENTER}"; Start-Sleep -Seconds 2
 Capture "36-not-reloaded.png"
 Check "36-not-reloaded.png" "error"   # "Dev was not reloaded: ..."
 Send "{ESC}"; Start-Sleep -Seconds 1
-Send "{DOWN 8}"
+Send "{DOWN 7}"
 Send "{ENTER}"; Start-Sleep -Seconds 3
 Send "{ENTER}"; Start-Sleep -Seconds 2
 Capture "37-still-running.png"

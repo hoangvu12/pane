@@ -88,6 +88,11 @@ query, trimmed.
 - By command id, so copies of a package from other sources, even with the
   same titles, have their own; each is told apart by its source in Manage
   extensions.
+- A [root provider](root-search.md#root-providers) (#164), such as the
+  calculator, has no row, so it has no alias or fallback: setting one is
+  refused, it has no alias or fallback row, and those recorded before its
+  command became one are forgotten at the next start, with a toast saying
+  so.
 - **Disabling** a package removes its commands' aliases and fallbacks from
   root search at once; they stay recorded, and their rows stay in Manage
   extensions with "Not active: Query sample is disabled". Changing them

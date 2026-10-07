@@ -10,6 +10,7 @@
       "title": "Calculator",
       "subtitle": "Answers arithmetic typed into root search",
       "component": "calculator.wasm",
+      "mode": "provider",
       "rootResults": true
     }
   ]

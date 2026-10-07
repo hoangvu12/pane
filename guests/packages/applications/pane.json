@@ -10,6 +10,7 @@
       "title": "Applications",
       "subtitle": "Finds and opens the applications installed on this system",
       "component": "applications.wasm",
+      "mode": "provider",
       "indexedResults": true
     }
   ]

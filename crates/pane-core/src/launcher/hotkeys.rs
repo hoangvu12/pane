@@ -203,12 +203,14 @@ impl OpenPane {
 }
 
 /// The commands offered by enabled packages, each with why it is
-/// unavailable on this system, if it is.
+/// unavailable on this system, if it is. A root provider is never offered:
+/// no hotkey opens it, and one recorded before it became one stays
+/// unregistered.
 fn offered(packages: &[InstalledPackage]) -> Vec<(CommandRegistration, Option<String>)> {
     packages
         .iter()
         .filter(|package| package.enabled)
-        .flat_map(InstalledPackage::available_commands)
+        .flat_map(InstalledPackage::launchable_commands)
         .collect()
 }
 
@@ -358,7 +360,7 @@ impl Launcher {
             .find_map(|package| {
                 let (offered, _) =
                     package
-                        .available_commands()
+                        .launchable_commands()
                         .into_iter()
                         .find(|(offered, unavailable)| {
                             offered.id == command && unavailable.is_none()
@@ -408,7 +410,7 @@ impl Launcher {
             .filter(|package| package.enabled)
             .flat_map(|package| {
                 package
-                    .available_commands()
+                    .launchable_commands()
                     .into_iter()
                     .map(|(command, unavailable)| (command, unavailable, &package.identity))
             });
@@ -594,6 +596,12 @@ impl Launcher {
                 write: recorded,
             });
         };
+        // A root provider is never launched, so no hotkey opens it (#164).
+        if super::choices::provider_title(state, command).is_some() {
+            return Err(format!(
+                "A hotkey cannot be recorded for {title}: it only answers root search"
+            ));
+        }
         // Recording is offered for a command that is offered and available,
         // as the hotkey screen's rows and the Shortcuts catalog's decide. A
         // catalog the page has not redrawn can still ask after the packages

@@ -132,9 +132,10 @@ fn incomplete_and_invalid_expressions_and_ordinary_words_list_no_answer() {
         assert_eq!(launcher.view().selected, None, "{query}");
         assert_eq!(launcher.view().status, status, "{query}");
     }
-    // Other root results are found as usual.
+    // The calculator is a root provider (#164): typing its name finds no
+    // row of its own.
     search(&launcher, "calc");
-    assert_eq!(titles(&launcher), ["Calculator"]);
+    assert_eq!(titles(&launcher), Vec::<String>::new());
     // Completing the expression answers it.
     search(&launcher, "(1 + 2");
     search(&launcher, "(1 + 2)");
@@ -243,7 +244,8 @@ fn enter_on_the_answer_reports_the_copy_of_its_text() {
     );
     assert_eq!(view.query(), Some("6 * 7"), "root search stays as it was");
     // Other rows copy nothing.
-    search(&launcher, "calc");
+    search(&launcher, "install");
+    assert!(!titles(&launcher).is_empty());
     assert_eq!(launcher.selected_copy(), None);
 }
 

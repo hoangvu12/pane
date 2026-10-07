@@ -280,6 +280,11 @@ pub mod publish {
 /// pane_guest::export!(Calculator);
 /// pane_guest::root::export!(Calculator);
 /// ```
+///
+/// A command whose only job is this, as the calculator's, also says
+/// `"mode": "provider"` (a root provider): it has no row of its own and
+/// Pane never opens or runs it, so its [`Command`](crate::Command) keeps
+/// the defaults (`type CustomView = NoCustomView;` and nothing else).
 pub mod root {
     wit_bindgen::generate!({
         path: "../../wit",
@@ -383,6 +388,11 @@ pub mod files {
 /// pane_guest::export!(Applications);
 /// pane_guest::indexed::export!(Applications);
 /// ```
+///
+/// A command whose only job is this, as Applications', also says `"mode":
+/// "provider"` (a root provider): it has no row of its own, each result it
+/// supplies is its own root result, and Pane never opens or runs it, so
+/// its [`Command`](crate::Command) keeps the defaults.
 pub mod indexed {
     wit_bindgen::generate!({
         path: "../../wit",

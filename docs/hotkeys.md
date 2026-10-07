@@ -83,6 +83,11 @@ released, reaches Pane no more.
   keeps the hotkeys of the copy from `x#y`. A change whose write fails after
   its package was uninstalled does not bring its hotkey back. The record is
   kept as the [aliases](aliases.md)' is.
+- A [root provider](root-search.md#root-providers) (#164), such as the
+  calculator, is never launched, so it has no hotkey: recording one is
+  refused ("it only answers root search"), it has no hotkey row, and a
+  hotkey recorded before its command became one is never registered and is
+  forgotten at the next start, with a toast saying so.
 - A hotkey another application took meanwhile is shown on its row as "Not
   active: another application or the system already uses it" and tried again
   with every change to the installed packages and at the next start; the

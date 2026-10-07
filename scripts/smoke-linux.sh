@@ -364,8 +364,9 @@ stop_pane
 
 # Reload a development package while Pane stays open. Its command starts as
 # the Rust sample; a new build of it is the JavaScript sample. Root lists the
-# three samples, Rust sample, Greeting, Calculator, Call from JavaScript, Call
-# from Rust, Dev sample (the ninth row), the install row, then Manage
+# three samples, Rust sample, Greeting, Call from JavaScript, Call from Rust,
+# Dev sample (the eighth row: Calculator only answers root search), the
+# install row, then Manage
 # extensions… last; the extension list holds the six packages (Dev is the
 # sixth), then their six Reload rows (Reload Dev is the twelfth).
 mkdir -p "$out/dev"
@@ -393,7 +394,7 @@ for ((i = 0; i < 11; i++)); do "$xdotool" key Down; done   # Reload Dev
 capture 34-reloaded.png
 check 34-reloaded.png success   # "Reloaded Dev"
 "$xdotool" key Escape; sleep 1
-for ((i = 0; i < 8; i++)); do "$xdotool" key Down; done   # Dev sample
+for ((i = 0; i < 7; i++)); do "$xdotool" key Down; done   # Dev sample
 "$xdotool" key Return; sleep 3
 "$xdotool" key Return; sleep 2   # "Say hello"
 capture 35-dev-after.png
@@ -410,7 +411,7 @@ for ((i = 0; i < 11; i++)); do "$xdotool" key Down; done
 capture 36-not-reloaded.png
 check 36-not-reloaded.png error   # "Dev was not reloaded: ..."
 "$xdotool" key Escape; sleep 1
-for ((i = 0; i < 8; i++)); do "$xdotool" key Down; done
+for ((i = 0; i < 7; i++)); do "$xdotool" key Down; done
 "$xdotool" key Return; sleep 3
 "$xdotool" key Return; sleep 2
 capture 37-still-running.png

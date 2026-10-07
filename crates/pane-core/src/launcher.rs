@@ -54,6 +54,7 @@ mod network;
 mod own_actions;
 mod presentation;
 mod programs;
+mod providers;
 mod quick_slots;
 mod submenus;
 
@@ -796,6 +797,9 @@ struct State {
     /// as last noted: their rows in root search say "Needs setup" (see
     /// `setup`).
     setup_needed: HashSet<String>,
+    /// What this start forgot because its command is a root provider (see
+    /// `providers`), for the toast naming it.
+    provider_forgotten: providers::Forgotten,
 }
 
 /// What is happening to a package, which stops another change to it
@@ -1409,6 +1413,7 @@ impl Launcher {
             confirmations,
             confirmation_saves: Arc::default(),
             setup_needed: HashSet::new(),
+            provider_forgotten: providers::Forgotten::default(),
         };
         if let (Some(installation), Some(files)) = (&installation, &state.files) {
             files.open_record(&installation.dir);
@@ -1484,6 +1489,10 @@ impl Launcher {
         }
         launcher.report_failures();
         launcher.show_root(&mut launcher.lock(), None);
+        // Aliases, fallbacks and hotkeys recorded for a command that has
+        // become a root provider are forgotten, with a toast saying so
+        // (#164); `with_quick_slots` does the same for its pins.
+        launcher.forget_provider_choices();
         launcher
     }
 
@@ -3201,7 +3210,8 @@ impl Launcher {
                 .paused
                 .is_paused(&package.identity)
                 .then(|| Unavailable::Paused(paused_reason(&title)));
-            for (registration, unavailable) in package.available_commands() {
+            // A root provider has no row: its results answer instead.
+            for (registration, unavailable) in package.launchable_commands() {
                 let unavailable = paused
                     .clone()
                     .or(unavailable.map(Unavailable::OnThisSystem));

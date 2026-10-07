@@ -351,6 +351,11 @@ fn resolve_command(launcher: &Launcher, state: &State, target: &PinTarget, id: &
     let reason = match installed {
         Some(package) if !package.enabled => format!("{} is disabled", package.title()),
         Some(package) if package.manifest.is_err() => format!("{} cannot load", package.title()),
+        // Pinned before it became a root provider (#164): the next start
+        // removes the pin.
+        Some(package) if package.is_provider(split(id).1) => {
+            format!("{title} only answers root search now")
+        }
         Some(package) => format!("{} no longer offers this command", package.title()),
         None => "Its extension is not installed".to_owned(),
     };
@@ -484,6 +489,29 @@ pub(super) fn carry_over(
     }
     state.quick_slots.chosen = kept;
     changed
+}
+
+/// Takes out the slots pinning a root provider (#164), which has no row
+/// and cannot be pinned: one pinned before it became one. An indexed
+/// result it supplies, such as an application, keeps its slot. Whether any
+/// went; each is noted for the toast (see `providers`).
+fn forget_provider_pins(state: &mut State) -> bool {
+    let providers = super::providers::providers(state);
+    let mut gone = Vec::new();
+    state.quick_slots.chosen.retain(|target| match target {
+        PinTarget::Command(id) => match super::providers::title_of(&providers, id) {
+            Some(title) => {
+                gone.push(title.to_owned());
+                false
+            }
+            None => true,
+        },
+        PinTarget::Indexed { .. } => true,
+    });
+    for title in &gone {
+        Launcher::note_provider_pin(state, title);
+    }
+    !gone.is_empty()
 }
 
 /// The slot holding `target` as it stands in `state`.
@@ -654,9 +682,10 @@ impl Launcher {
     /// recorded there is read now. A record that cannot be read leaves
     /// every slot empty, is reported on root search's status line, and is
     /// never replaced. Without this, the slots last until the launcher
-    /// stops.
+    /// stops. A slot pinning a command that has become a root provider is
+    /// taken out and the record written, with a toast saying so (#164).
     pub fn with_quick_slots(self, dir: &Path) -> Self {
-        {
+        let forgot = {
             let mut state = self.lock();
             state.quick_slots = Kept::open(dir);
             let problem = state.quick_slots.unreadable.clone();
@@ -666,6 +695,15 @@ impl Launcher {
             {
                 state.view.status = Status::Error(unreadable_report(&problem));
             }
+            forget_provider_pins(&mut state)
+        };
+        if forgot {
+            // Written now, once: the next start reads the slots without them.
+            if let Err(problem) = self.write_quick_slots() {
+                eprintln!("Pane could not forget the pin of a root provider: {problem}");
+            }
+            let mut state = self.lock();
+            self.show_provider_toast(&mut state);
         }
         self
     }

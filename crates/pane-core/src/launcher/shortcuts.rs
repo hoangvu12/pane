@@ -137,7 +137,13 @@ pub(super) fn catalog(launcher: &Launcher, state: &State) -> ShortcutCatalog {
         // releases it.
         let hotkey_package_inactive = disabled;
         let mut commands = Vec::new();
-        for (registration, unavailable) in package.available_commands() {
+        // A root provider has no alias or hotkey, so the page does not list
+        // it, nor what was recorded for it before it became one (the next
+        // start forgets that).
+        for provider in package.providers() {
+            listed.insert(provider.id);
+        }
+        for (registration, unavailable) in package.launchable_commands() {
             listed.insert(registration.id.clone());
             commands.push(command(
                 state,

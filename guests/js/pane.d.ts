@@ -354,6 +354,11 @@ export interface CustomView {
  * };
  * ```
  *
+ * A root provider (`"mode": "provider"` in `pane.json`) only answers root
+ * search through its `rootResults` or `indexedResults`: Pane never opens or
+ * runs it, so its `command` needs none of these (`export const command:
+ * Command = {}`).
+ *
  * A no-view command (`"mode": "no-view"` in `pane.json`) has `run` instead
  * of `render`:
  *
@@ -461,6 +466,10 @@ export interface RootResult {
  *   async resultsFor(query) { return []; },
  * };
  * ```
+ *
+ * A command whose only job is this, such as the calculator, also says
+ * `"mode": "provider"` (a root provider): it has no row of its own, and
+ * its answers are root search's only trace of it.
  */
 export interface RootResults {
   /**
@@ -571,6 +580,10 @@ export interface IndexedResult {
  *   async results() { return []; },
  * };
  * ```
+ *
+ * A command whose only job is this, such as Applications, also says
+ * `"mode": "provider"` (a root provider): it has no row of its own, and
+ * each result it supplies is its own root result.
  */
 export interface IndexedResults {
   /**

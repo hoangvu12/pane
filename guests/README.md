@@ -911,6 +911,36 @@ The [JavaScript](sample-applications-js) and
 their commands list the applications and open one with `open(id)`; their
 packages in [`packages/`](packages) set `indexedResults`.
 
+## Root providers
+
+A command whose only job is to answer root search, as the
+[calculator](calculator) and [applications](applications) extensions'
+are, declares `"mode": "provider"` in `pane.json` (#164). A **root
+provider** has no row of its own: it is never launched, so it cannot be
+pinned, has no alias, fallback or hotkey, and neither the Actions panel nor
+the Shortcuts page offers it; root search learns nothing about it. Its
+results still answer as a command's would: computed from the query
+(`"rootResults": true`) or supplied ahead of it (`"indexedResults": true`),
+each a root result of its own. Its extension's card in Settings lists it
+under the extension's switch, which turns its results off and on.
+
+```json
+{ "id": "calculator", "title": "Calculator", "component": "calculator.wasm",
+  "mode": "provider", "rootResults": true }
+```
+
+A provider must declare `rootResults` or `indexedResults`, and may not
+declare what only a launched command uses (`search`, `takesQuery`,
+`arguments` or a `schedule`); otherwise the install is refused with the
+reason. It may run a continuing `service` and declare preferences. Its
+component exports the root-results or indexed-results interface beside
+`command` as any other does, but Pane never opens or runs it, so it needs no
+`render` or `run` of its own: in Rust, `impl pane_guest::Command` with only
+`type CustomView = pane_guest::NoCustomView`; in JavaScript or TypeScript,
+`export const command: Command = {}`. Pins, aliases, fallbacks and hotkeys
+recorded for a command before it became a provider (an update that changes
+its mode) are dropped at the next start, with a toast naming them.
+
 ## Scheduled work
 
 A command can declare that Pane runs one of its items on a schedule, so

@@ -35,9 +35,11 @@ preopened folders) nor start a program. So the split, recorded in
   looked for until a guest asks.
 - **Default extension**, [`guests/applications`](../guests/applications)
   (Rust), package [`guests/packages/applications`](../guests/packages/applications):
-  its command, "Applications", lists every installed application (Enter
-  opens one), and it supplies the applications to root search as
-  [indexed results](root-search.md#results-supplied-ahead-of-the-query).
+  its command, "Applications", is a
+  [root provider](root-search.md#root-providers) (#164): it has no row of
+  its own and supplies the applications to root search as
+  [indexed results](root-search.md#results-supplied-ahead-of-the-query),
+  each found by its name and opened by Enter.
 - **Not a native helper** ([ADR 0014](adr/0014-optional-native-extension-helpers.md), #15): listing folders and asking the
   system to open a file are what the host process already does for every
   system; a separately packaged per-OS helper binary would add distribution
@@ -165,7 +167,9 @@ differs.
   being asked; opening and listing failures explained; disabling removes the
   applications, stops the instance and asking while the calculator still
   answers, and enabling brings them back; an answer arriving after
-  disabling discarded; the command's own list; a package declaring
+  disabling discarded; no "Applications" row, each application still found
+  ([`root_providers.rs`](../crates/pane-core/tests/root_providers.rs) covers
+  providers as such); a package declaring
   `indexedResults` without the interface refused at install; and the
   JavaScript and TypeScript author examples
   ([`guests/sample-applications-js`](../guests/sample-applications-js),

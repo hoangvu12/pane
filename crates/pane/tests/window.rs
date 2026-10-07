@@ -1846,14 +1846,11 @@ fn a_running_action_cannot_be_dispatched_again_through_the_footer_button(cx: &mu
     cx.foreground_executor()
         .block_on(launcher.install_package(&folder));
     launcher.back();
+    // The install's result owns the strip; showing root search afresh
+    // leaves the launcher idle, so the strip is the action. (Applications
+    // is a root provider, with no command row to open and leave, #164.)
+    launcher.show_root_search();
     let (window, cx) = open_launcher(cx, launcher);
-
-    // The install's result owns the strip; open the command and come back
-    // so the launcher is idle again and the strip is the action.
-    cx.simulate_keystrokes("enter");
-    settle(&window, cx);
-    cx.simulate_keystrokes("escape");
-    settle(&window, cx);
 
     cx.simulate_input("fire");
     wait_for_rows(&window, cx, &["Firefox"]);

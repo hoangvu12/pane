@@ -506,6 +506,18 @@ pub enum CommandMode {
     /// `"no-view"`: launching it calls its run entry point (`run`) and
     /// opens no screen.
     NoView,
+    /// `"provider"`: a root provider (#164), a command whose only job is
+    /// to answer root search through its `rootResults` or
+    /// `indexedResults`, such as the calculator. It is never launched: it
+    /// has no row in root search, cannot be pinned, has no alias, fallback
+    /// or hotkey, is offered by neither the Actions panel nor the Shortcuts
+    /// page, and nothing opens or runs it (its component needs no `render`
+    /// or `run` of its own; a reload's start check may still ask it, and
+    /// takes its refusal as a start, as it does a no-view command's). Its
+    /// results
+    /// answer while its package is enabled, and its extension's Settings
+    /// card lists it, so the user can still turn it off.
+    Provider,
 }
 
 /// The shortest interval a command's schedule may declare: 1 second.
@@ -541,8 +553,8 @@ pub struct ManifestCommand {
     /// (`"indexedResults": true`), such as the installed applications: its
     /// component then also exports `pane:extension/indexed-results`.
     pub indexed_results: bool,
-    /// Whether it opens a screen or runs without one (`"mode"`; `view` when
-    /// the entry does not say).
+    /// Whether it opens a screen, runs without one, or only answers root
+    /// search (`"mode"`; `view` when the entry does not say).
     pub mode: CommandMode,
     /// Whether the command takes a query (`"takesQuery": true`): text typed
     /// into root search that Pane sends it when the user invokes it through
@@ -904,15 +916,20 @@ impl Manifest {
             let mode = match command.mode.as_deref() {
                 None | Some("view") => CommandMode::View,
                 Some("no-view") => CommandMode::NoView,
+                Some("provider") => CommandMode::Provider,
                 Some(other) => {
                     return Err(invalid(format!(
                         "command `{}` has the mode \"{}\"; a command's `mode` is \"view\" (it \
-                         opens a screen, the default) or \"no-view\" (it runs without one)",
+                         opens a screen, the default), \"no-view\" (it runs without one) or \
+                         \"provider\" (it only answers root search)",
                         command.id,
                         other.escape_debug()
                     )));
                 }
             };
+            if mode == CommandMode::Provider {
+                check_provider(&command)?;
+            }
             let schedule = command
                 .schedule
                 .map(|schedule| parse_schedule(&command.id, mode, schedule))
@@ -1042,6 +1059,45 @@ impl Manifest {
     }
 }
 
+/// Checks the `pane.json` entry of a command that says `"mode":
+/// "provider"` (#164): a root provider answers root search and nothing
+/// else, so it declares `rootResults` or `indexedResults`, and nothing that
+/// only a launched command uses — a search of its own, a query, arguments
+/// or a schedule. A continuing service and preferences are its own and
+/// stay allowed.
+fn check_provider(command: &CommandJson) -> Result<(), PackageError> {
+    let id = &command.id;
+    let refused = |what: &str| {
+        Err(PackageError::InvalidManifest(format!(
+            "command `{id}` is a provider (\"mode\": \"provider\"), which only answers root \
+             search and is never launched, so it cannot {what}"
+        )))
+    };
+    if !command.root_results && !command.indexed_results {
+        return Err(PackageError::InvalidManifest(format!(
+            "command `{id}` is a provider (\"mode\": \"provider\") but declares neither \
+             `rootResults` nor `indexedResults`: a provider only answers root search, so it \
+             needs one of them, or another mode (\"view\" or \"no-view\")"
+        )));
+    }
+    if command.search {
+        return refused("search as the user types into its own field (`search`)");
+    }
+    if command.takes_query {
+        return refused("take a query (`takesQuery`)");
+    }
+    let has_arguments = command.arguments.as_ref().is_some_and(|arguments| {
+        !arguments.is_null() && arguments.as_array().is_none_or(|list| !list.is_empty())
+    });
+    if has_arguments {
+        return refused("ask for arguments (`arguments`)");
+    }
+    if command.schedule.is_some() {
+        return refused("run on a schedule (`schedule`)");
+    }
+    Ok(())
+}
+
 /// The `schedule` of the command with id `id` and `mode`, as `pane.json`
 /// writes it, checked: a view command's names the item whose action runs;
 /// a no-view command's names none, since Pane runs the command itself.
@@ -1066,6 +1122,8 @@ fn parse_schedule(
         )));
     }
     let item = match (mode, schedule.item) {
+        // Refused before, by `check_provider`.
+        (CommandMode::Provider, _) => None,
         (CommandMode::NoView, None) => None,
         (CommandMode::NoView, Some(_)) => {
             return Err(invalid(format!(
@@ -1816,7 +1874,9 @@ impl InstalledPackage {
             .map_or(&self.icons.package, |(_, icon)| icon)
     }
 
-    /// The commands this package offers in root search.
+    /// Every command this package declares, its root providers included:
+    /// what its components serve. Root search lists only
+    /// [`InstalledPackage::launchable_commands`].
     pub fn commands(&self) -> Vec<CommandRegistration> {
         self.available_commands()
             .into_iter()
@@ -1824,9 +1884,37 @@ impl InstalledPackage {
             .collect()
     }
 
-    /// The commands this package offers in root search, each with why it is
-    /// unavailable on this system, if it is: first because the package does
-    /// not support this system, else because the command does not.
+    /// Whether this package's command with manifest id `command` is a root
+    /// provider (`"mode": "provider"`, #164): it answers root search but is
+    /// never launched, so it has no row, pin, alias, fallback or hotkey.
+    pub fn is_provider(&self, command: &str) -> bool {
+        self.mode_of(command) == CommandMode::Provider
+    }
+
+    /// This package's root providers (see [`InstalledPackage::is_provider`]),
+    /// in manifest order: what its Settings card lists with its switch.
+    pub fn providers(&self) -> Vec<CommandRegistration> {
+        self.commands()
+            .into_iter()
+            .filter(|command| self.is_provider(command.manifest_id()))
+            .collect()
+    }
+
+    /// The commands this package offers to be launched — root search's
+    /// rows, pins, aliases, fallbacks, hotkeys and launches from other
+    /// commands — each with why it is unavailable on this system, if it
+    /// is: every command but its root providers.
+    pub(crate) fn launchable_commands(&self) -> Vec<(CommandRegistration, Option<String>)> {
+        self.available_commands()
+            .into_iter()
+            .filter(|(command, _)| !self.is_provider(command.manifest_id()))
+            .collect()
+    }
+
+    /// Every command this package declares, root providers included, each
+    /// with why it is unavailable on this system, if it is: first because
+    /// the package does not support this system, else because the command
+    /// does not.
     pub(crate) fn available_commands(&self) -> Vec<(CommandRegistration, Option<String>)> {
         let Ok(manifest) = &self.manifest else {
             return Vec::new();

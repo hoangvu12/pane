@@ -592,6 +592,12 @@ impl Launcher {
         id
     }
 
+    /// Shows a toast of Pane's own, of no command, with no actions: such as
+    /// the one naming what a start forgot for root providers (#164).
+    pub(super) fn show_own_toast(&self, state: &mut State, toast: Toast) {
+        self.put_toast(state, PathBuf::new(), None, toast);
+    }
+
     /// Shows the error `message` the command `command` in `component`
     /// answered with as a failure toast, with a "Copy Error" action.
     pub(super) fn show_failure(

@@ -47,7 +47,11 @@ interface applications {
 
 /// Root results a command supplies ahead of the query, such as the installed
 /// applications. Root search asks for them once it is first used, keeps
-/// them, and matches and ranks them by title like commands.
+/// them, and matches and ranks them by title like commands. A command whose
+/// only job is this, such as Applications, also says `"mode": "provider"` in
+/// `pane.json` (a root provider, #164): it has no row of its own, each
+/// result it supplies is its own root result, and Pane never calls its
+/// `render` or `run` to open or run it.
 interface indexed-results {
   /// What an `open` result opens, and with what.
   record open-target {
