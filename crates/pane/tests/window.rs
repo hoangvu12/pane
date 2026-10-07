@@ -644,10 +644,13 @@ fn selector(name: &str) -> &'static str {
 }
 
 /// Whether the element with debug selector `element` (such as `row-<title>`)
-/// lies wholly inside the list.
+/// lies wholly inside the list. The list draws only the rows in view and a
+/// few past its edges (#165): a row it did not draw is not visible.
 fn row_is_visible(cx: &mut VisualTestContext, element: &str) -> bool {
     let list = cx.debug_bounds("rows").expect("the list is rendered");
-    let element = cx.debug_bounds(selector(element)).expect("it is rendered");
+    let Some(element) = cx.debug_bounds(selector(element)) else {
+        return false;
+    };
     element.top() >= list.top() && element.bottom() <= list.bottom()
 }
 

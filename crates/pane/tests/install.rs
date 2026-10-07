@@ -498,7 +498,11 @@ fn an_installed_package_cache_is_cleared_after_confirming(cx: &mut TestAppContex
 /// list.
 fn row_is_visible(cx: &mut VisualTestContext, element: &'static str) -> bool {
     let list = cx.debug_bounds("rows").expect("the list is rendered");
-    let element = cx.debug_bounds(element).expect("it is rendered");
+    // The list draws only the rows in view and a few past its edges
+    // (#165): a row it did not draw is not visible.
+    let Some(element) = cx.debug_bounds(element) else {
+        return false;
+    };
     element.top() >= list.top() && element.bottom() <= list.bottom()
 }
 

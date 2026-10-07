@@ -64,6 +64,50 @@ button's hover (`.fbtn:hover`, white 6%) — while root search's row hover
 launcher's lists keep root search's row family: they are the launcher's own
 data rows, not Settings controls.
 
+## Virtualized lists (#165)
+
+Every list the launcher draws lays out and paints only the children in
+view, plus three rows' height of overscan past either edge, whatever its
+length: root search's results, a command's list and the launcher's other
+screens' rows (`app/result_list.rs`), Clipboard History's split view, and
+the Actions panel. They share `ui::virtual_list`: GPUI's `list` element,
+whose children may differ in height (a section label, an answer card, the
+pinned home), measured as they are drawn and taken to be a row high until
+then. A list is measured again, from its top, only when what its children
+show changes (its rows, its sections, its screen) — never when an icon
+arrives, a toast shows or the number hints slide — so nothing moves under
+the user. Up and Down, and Page Down and Page Up (the rows in view, stopping
+at the first and last rows), keep the selection in view; the wheel scrolls
+the list itself and is never undone.
+
+A frame reads the launcher's view and what it draws of the whole list
+(`Launcher::presented_list`: the sections, whether only fallbacks are
+listed, whether a row shows a date) once, and each drawn row's own
+presentation as it draws it (`Launcher::present_row`), which is also when
+the row's web images and system icons start loading: a row out of view
+requests none (`Launcher::load_icons_as_shown`, which the window turns on
+when it opens; an item's actions' icons load as the Actions panel lists
+them). The window's input and screen sync read the screen and the status
+alone (`Launcher::screen`, `Launcher::status`) rather than a copy of the
+whole view, which a long list made costly on every key press.
+
+Each drawn row tells assistive technology its place in the whole list and
+the list's length (`aria-posinset`/`aria-setsize`), since the rows out of
+view are not in the tree; the selected row stays the list's active
+descendant. The Actions panel's list is as high as its entries, up to the
+room the window leaves above the footer. The Settings Shortcuts page, once
+it lists 50 commands or more, draws only the command rows within a view's
+height of the page's view, the others standing in as blocks of their last
+height (`ui::virtual_list::PageWindow`); the row being edited or recorded,
+or holding the focus, is always drawn.
+
+The window tests are `crates/pane/tests/virtual_lists.rs`; its ignored
+`benchmark` measures keystroke-to-frame latency in root search over 11,000
+results and the frame time of scrolling them (targets: 16 ms at the 95th
+percentile, 60 frames per second), run optimized on Windows:
+`CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true cargo test -p pane --release
+--test integration virtual_lists::benchmark -- --ignored --nocapture`.
+
 [Retained prototype evidence](evidence/ui-prototype/README.md) keeps the
 initial proof and subsequent glass follow-up independently recoverable,
 including the authored reference and native captures.

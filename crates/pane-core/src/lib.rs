@@ -69,11 +69,11 @@ pub use launcher::clipboard_view;
 pub use launcher::{
     AliasOutcome, ApplicationUpdate, BuildFailure, CommandPreferences, CommandRegistration,
     ComputedAnswer, CustomViewSnapshot, Development, FormField, FormView, HotkeyOutcome,
-    ItemAction, ItemActions, Launcher, LauncherView, OpenSubmenu, PackagePreferences, PinTarget,
-    PreferenceField, PreferencesTarget, Presentation, Question, QuickSlot, ResultAction,
-    ResultActionItem, ResultActions, Row, RowKind, RowPresentation, Screen, Section,
-    SelectedAction, SetupHeader, ShortcutCatalog, ShortcutCommand, ShortcutGroup, SlotChange,
-    Status, SubmenuState, Unavailable, UnboundShortcut, answer_sections, root_sections,
+    ItemAction, ItemActions, Launcher, LauncherView, ListPresentation, OpenSubmenu,
+    PackagePreferences, PinTarget, PreferenceField, PreferencesTarget, Presentation, Question,
+    QuickSlot, ResultAction, ResultActionItem, ResultActions, Row, RowKind, RowPresentation,
+    Screen, Section, SelectedAction, SetupHeader, ShortcutCatalog, ShortcutCommand, ShortcutGroup,
+    SlotChange, Status, SubmenuState, Unavailable, UnboundShortcut, answer_sections, root_sections,
 };
 pub use links::LinkOpener;
 pub use operations::{MAX_CALL_DEPTH, MAX_OPERATION_JSON};

@@ -28,8 +28,7 @@ use std::time::Duration;
 
 use gpui::{Context, Hsla, Image, ImageFormat, SharedString, rgb_to_hsla, rgba};
 use pane_core::{
-    AccessoryKind, Color, Icon, IconSource, Launcher, Mask, Presentation, ShownAccessory, Tint,
-    Tone,
+    AccessoryKind, Color, Icon, IconSource, Launcher, Mask, ShownAccessory, Tint, Tone,
 };
 
 use crate::app::{LauncherWindow, row_icon};
@@ -266,25 +265,12 @@ pub(crate) fn accessory_look(accessory: &ShownAccessory, theme: &Theme) -> Acces
     }
 }
 
-/// Whether `presentation` shows a date anywhere.
-fn shows_a_date(presentation: &Presentation) -> bool {
-    presentation.rows.iter().any(|row| {
-        row.accessories
-            .iter()
-            .any(|accessory| accessory.kind == AccessoryKind::Date)
-    })
-}
-
 impl LauncherWindow {
-    /// Keeps the dates of the rows on screen current: while
-    /// `presentation` shows one, the window draws again every
-    /// [`DATE_REFRESH`]; otherwise it does not.
-    pub(crate) fn keep_dates_current(
-        &mut self,
-        presentation: &Presentation,
-        cx: &mut Context<Self>,
-    ) {
-        if !shows_a_date(presentation) {
+    /// Keeps the dates of the rows on screen current: while the list
+    /// `shows_a_date`, the window draws again every [`DATE_REFRESH`];
+    /// otherwise it does not.
+    pub(crate) fn keep_dates_current(&mut self, shows_a_date: bool, cx: &mut Context<Self>) {
+        if !shows_a_date {
             self.dates = None;
             return;
         }

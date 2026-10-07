@@ -9,7 +9,7 @@
 //! launcher's search and list screens lay their rows out in.
 
 use gpui::prelude::*;
-use gpui::{AnyElement, Div, Role, SharedString, Stateful, WindowControlArea, div};
+use gpui::{Div, Role, SharedString, Stateful, WindowControlArea, div};
 
 use crate::ui::theme::Theme;
 
@@ -18,25 +18,20 @@ use crate::ui::theme::Theme;
 /// window opens at this size; the user may resize it.
 pub(crate) const LAUNCHER_CLIENT: (f32, f32) = (760., 518.);
 
-/// The result list: the rows' column, inset by the reference root body's
-/// paddings (4 above, 10 at the sides and below) with its 2px gap between
-/// rows, filling the height the header and footer leave and scrolling
-/// past it. The caller names it for assistive technology, tracks its
-/// scroll and adds the rows.
-pub(crate) fn result_list(theme: &Theme) -> Stateful<Div> {
-    let geometry = &theme.geometry;
+/// The result list: the rows' column, filling the height the header and
+/// footer leave. The caller names it for assistive technology and adds
+/// the virtualized list that scrolls inside it (#165; see
+/// [`super::virtual_list`]), inset by the reference root body's paddings
+/// (4 above, 10 at the sides and below) with its 2px gap between rows.
+pub(crate) fn result_list(_theme: &Theme) -> Stateful<Div> {
     div()
         .id("rows")
         .debug_selector(|| "rows".into())
         .role(Role::ListBox)
         .flex_1()
+        .min_h(gpui::px(0.))
         .flex()
         .flex_col()
-        .gap(geometry.row_list_gap)
-        .px(geometry.list_padding_x)
-        .pt(geometry.list_padding_top)
-        .pb(geometry.list_padding_bottom)
-        .overflow_y_scroll()
 }
 
 /// A section label over the result list's rows (see [`section_label`]): its
@@ -46,29 +41,6 @@ pub(crate) struct SectionLabel {
     pub(crate) first: usize,
     pub(crate) label: SharedString,
     pub(crate) note: Option<SharedString>,
-}
-
-/// The result list's children: `rows` in order, each section's label
-/// ahead of its first row. Each label carries the debug selector
-/// `section-<label>`.
-pub(crate) fn with_section_labels(
-    rows: impl IntoIterator<Item = AnyElement>,
-    sections: &[SectionLabel],
-    theme: &Theme,
-) -> Vec<AnyElement> {
-    let mut children = Vec::new();
-    for (index, row) in rows.into_iter().enumerate() {
-        for section in sections.iter().filter(|section| section.first == index) {
-            let debug = format!("section-{}", section.label);
-            children.push(
-                section_label(section.label.clone(), section.note.clone(), theme)
-                    .debug_selector(move || debug)
-                    .into_any_element(),
-            );
-        }
-        children.push(row);
-    }
-    children
 }
 
 /// The list child that shows row `row`: the row comes after every label

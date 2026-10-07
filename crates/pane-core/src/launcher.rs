@@ -115,7 +115,8 @@ pub use item_actions::{ItemAction, ItemActions, UnboundShortcut};
 pub use looks::{AccessoryKind, ShownAccessory, absolute_date, relative_date};
 use pausing::{Pauses, Recorder};
 pub use presentation::{
-    ComputedAnswer, Presentation, RowKind, RowPresentation, Section, answer_sections, root_sections,
+    ComputedAnswer, ListPresentation, Presentation, RowKind, RowPresentation, Section,
+    answer_sections, root_sections,
 };
 pub use quick_slots::{PinTarget, QuickSlot, SlotChange};
 use schedules::Schedules;
@@ -502,10 +503,7 @@ impl LauncherView {
     /// search of an open command that searches as the user types; `None` on
     /// screens without one.
     pub fn search_field(&self) -> Option<&str> {
-        match &self.screen {
-            Screen::Root { query } | Screen::CommandSearch { query } => Some(query),
-            _ => None,
-        }
+        self.screen.search_field()
     }
 
     /// Lines of information under the title, such as a package's source and
@@ -537,6 +535,18 @@ impl LauncherView {
     pub fn custom_view(&self) -> Option<&CustomViewSnapshot> {
         match &self.screen {
             Screen::CustomView(view) => Some(view),
+            _ => None,
+        }
+    }
+}
+
+impl Screen {
+    /// The text of this screen's search field: root search's query, or the
+    /// search of an open command that searches as the user types; `None`
+    /// on a screen without one.
+    pub fn search_field(&self) -> Option<&str> {
+        match self {
+            Screen::Root { query } | Screen::CommandSearch { query } => Some(query),
             _ => None,
         }
     }
@@ -1702,6 +1712,18 @@ impl Launcher {
         self.lock().view.clone()
     }
 
+    /// The screen on show: what the window's keys, focus and screen sync
+    /// ask on every key press, read without copying the view's rows, which
+    /// a long list makes costly (#165).
+    pub fn screen(&self) -> Screen {
+        self.lock().view.screen.clone()
+    }
+
+    /// The status line's state, read without copying the view's rows.
+    pub fn status(&self) -> Status {
+        self.lock().view.status.clone()
+    }
+
     /// The installed packages, as read from their managed copies.
     pub fn packages(&self) -> Vec<InstalledPackage> {
         self.lock().packages.clone()
@@ -2183,6 +2205,41 @@ impl Launcher {
     pub fn presented_view(&self) -> (LauncherView, Presentation) {
         let state = self.lock();
         (state.view.clone(), presentation::presentation(&state))
+    }
+
+    /// The view and what the window draws of its whole list, read
+    /// together (#165): the section labels, whether every row is a
+    /// fallback, whether a row shows a date. A window that draws only the
+    /// rows in view reads this each frame and each drawn row's own
+    /// presentation with [`Launcher::present_row`], so the work behind a
+    /// frame does not grow with the list.
+    pub fn presented_list(&self) -> (LauncherView, ListPresentation) {
+        let state = self.lock();
+        (state.view.clone(), presentation::list_presentation(&state))
+    }
+
+    /// The presentation of the row at `index` as the window draws it now
+    /// (the default for an index past the rows), the same as
+    /// [`Launcher::presentation`] gives it. Once the window said it draws
+    /// only the rows in view ([`Launcher::load_icons_as_shown`]), this also
+    /// starts loading what the row's icons need (#142): the rows out of
+    /// view request none (#165).
+    pub fn present_row(&self, index: usize) -> RowPresentation {
+        let state = self.lock();
+        if looks::loads_as_shown(&state) {
+            presentation::want_row_icons(&state, index);
+        }
+        presentation::row_presentation(&state, index)
+    }
+
+    /// From now on, the icons of an open command's rows, and of its items'
+    /// actions, load as the window draws them — each row's as
+    /// [`Launcher::present_row`] presents it, an item's actions' as the
+    /// Actions panel lists them ([`Launcher::item_actions`]) — rather than
+    /// all as the list opens (#165). The launcher window says so when it
+    /// opens: it draws only the rows in view.
+    pub fn load_icons_as_shown(&self) {
+        looks::load_as_shown(&mut self.lock());
     }
 
     /// The selected row's index; `None` when nothing is selected. Cheaper

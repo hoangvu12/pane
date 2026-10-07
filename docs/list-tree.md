@@ -261,7 +261,8 @@ command's in `pane.json`. It is one of:
   the response's head, 10 s between two pieces of its body, 30 s in all, a
   4 MiB body), and keeps it as the package's extension cache, so it is not
   downloaded again after a restart and "Clear cache" removes it. A list
-  never waits for one: its fallback (or, without one, a neutral image
+  never waits for one, and a row's image is downloaded once its row comes
+  into view (#165): its fallback (or, without one, a neutral image
   glyph) shows until the image arrives, and stays if the download fails,
   is over the limits or is not an image (PNG, JPEG, GIF, WebP, BMP, ICO or
   SVG). Rows naming the same URL share one download. The SDKs' favicon

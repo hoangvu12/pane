@@ -307,9 +307,10 @@ pub(crate) fn tabs(
 }
 
 /// The list column: 360 wide (at most half a narrower window's), its rule
-/// on the right, padded 2 above, 8 either side and 10 below, its children
-/// 2px apart, scrolling with no scroll bar. The caller adds the section
-/// labels and rows, and tracks its scroll.
+/// on the right. The caller adds the virtualized list that scrolls inside
+/// it, with no scroll bar (#165; see [`super::virtual_list`]), padded 2
+/// above, 8 either side and 10 below, its children 2px apart: the section
+/// labels and rows.
 pub(crate) fn list(theme: &Theme) -> Stateful<Div> {
     let split = &theme.split;
     div()
@@ -318,15 +319,11 @@ pub(crate) fn list(theme: &Theme) -> Stateful<Div> {
         .flex_none()
         .w(split.list_width)
         .max_w(relative(split.list_max_share))
+        .min_h(px(0.))
         .flex()
         .flex_col()
-        .gap(theme.geometry.row_list_gap)
-        .pt(split.list_padding_top)
-        .px(split.list_padding_x)
-        .pb(split.list_padding_bottom)
         .border_r_1()
         .border_color(theme.hairline_soft)
-        .overflow_y_scroll()
 }
 
 /// What a record's row shows.

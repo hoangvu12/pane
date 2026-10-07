@@ -32,6 +32,8 @@ actions!(
     [
         SelectNext,
         SelectPrevious,
+        SelectNextPage,
+        SelectPreviousPage,
         Confirm,
         Back,
         FocusNext,
@@ -65,6 +67,12 @@ pub(crate) fn bind_keys_with(
     cx.bind_keys([
         KeyBinding::new("tab", FocusNext, Some(app::KEY_CONTEXT)),
         KeyBinding::new("shift-tab", FocusPrevious, Some(app::KEY_CONTEXT)),
+        // Page Down and Page Up move the selection by the rows in view
+        // (#165), also while the query field has focus, which does not
+        // take them; a binding the Keyboard page records for them wins,
+        // registered after.
+        KeyBinding::new("pagedown", SelectNextPage, Some(app::KEY_CONTEXT)),
+        KeyBinding::new("pageup", SelectPreviousPage, Some(app::KEY_CONTEXT)),
     ]);
     let text_editing = ui::input::bind_text_editing(cx);
     extension_views::form::bind_keys(cx, &text_editing);

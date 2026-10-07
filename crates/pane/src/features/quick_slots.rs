@@ -175,7 +175,7 @@ impl LauncherWindow {
     pub(crate) fn sync_home(&mut self, cx: &mut Context<Self>) {
         let pins = self.launcher.quick_slots().len();
         self.ensure_slot_focus(pins, cx);
-        let on_root = matches!(self.launcher.view().screen, Screen::Root { .. });
+        let on_root = matches!(self.launcher.screen(), Screen::Root { .. });
         let was = std::mem::replace(&mut self.home.on_root, on_root);
         if on_root && !was {
             let resolving = self.launcher.resolve_quick_slots();
@@ -232,7 +232,7 @@ impl LauncherWindow {
     /// keys: only on root search, with no overlay open and no composition
     /// in the query field.
     fn slot_keys_act(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if !matches!(self.launcher.view().screen, Screen::Root { .. })
+        if !matches!(self.launcher.screen(), Screen::Root { .. })
             || self.actions.is_some()
             || self.menu.is_some()
         {
@@ -401,7 +401,7 @@ impl LauncherWindow {
         }
         self.activate_quick_slot(index, window, cx);
         self.arm_arrival();
-        if matches!(self.launcher.view().screen, Screen::Root { .. }) {
+        if matches!(self.launcher.screen(), Screen::Root { .. }) {
             self.query.focus(window, cx);
         }
     }

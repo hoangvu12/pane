@@ -39,6 +39,7 @@ mod system;
 mod tray;
 mod unresponsive;
 mod update;
+mod virtual_lists;
 mod web_icons;
 mod window;
 

@@ -210,7 +210,7 @@ impl LauncherWindow {
         }
         self.activate_quick_slot(index, window, cx);
         self.arm_arrival();
-        if matches!(self.launcher.view().screen, Screen::Root { .. }) {
+        if matches!(self.launcher.screen(), Screen::Root { .. }) {
             self.query.focus(window, cx);
         }
     }

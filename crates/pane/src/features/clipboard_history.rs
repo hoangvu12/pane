@@ -35,11 +35,12 @@
 //! own size again once it leaves. Where the window is smaller the view
 //! adapts (see [`crate::ui::split_view`]).
 
+use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::{
-    App, ClickEvent, Context, Div, Entity, EntityInputHandler, Focusable, KeyBinding, Role,
-    ScrollHandle, SharedString, Subscription, Task, Toggled, Window, actions, div, prelude::*, px,
+    AnyElement, App, ClickEvent, Context, Div, Entity, EntityInputHandler, Focusable, KeyBinding,
+    Role, SharedString, Subscription, Task, Toggled, Window, actions, div, prelude::*, px,
 };
 use gpui_elements::editable_text::actions::DEFAULT_INPUT_CONTEXT;
 use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged};
@@ -57,7 +58,10 @@ use crate::ui::input::TextEditingKeys;
 use crate::ui::keycap::{CapStyle, KeySequence};
 use crate::ui::shell::{self, SectionLabel};
 use crate::ui::split_view::{self, ClipRow};
-use crate::{Back, Confirm, OpenActions, SelectNext, SelectPrevious};
+use crate::ui::virtual_list::{self, ListChild, VirtualList};
+use crate::{
+    Back, Confirm, OpenActions, SelectNext, SelectNextPage, SelectPrevious, SelectPreviousPage,
+};
 
 actions!(clipboard_history, [DeleteRecord, CopyRecord]);
 
@@ -153,7 +157,11 @@ pub(crate) struct ClipboardHistory {
     /// Whether the command's own list — its management controls — shows
     /// in place of the split view.
     managing: bool,
-    list_scroll: ScrollHandle,
+    /// The list, drawn virtually (#165): only the records in view are laid
+    /// out and painted.
+    list: VirtualList,
+    /// What the list's children are drawn from, as the last frame read it.
+    frame: Option<Rc<ClipFrame>>,
     /// Whether the next frame scrolls the list to the selected record.
     reveal: bool,
     /// Whether the footer shows the outcome of the last operation this
@@ -167,6 +175,26 @@ pub(crate) struct ClipboardHistory {
     /// Redraws the view when the history changes behind it (see
     /// [`REFRESH`]); dropped, and so stopped, with the view.
     _watching: Task<()>,
+}
+
+/// What a frame draws in the split view's list: its children are drawn
+/// from it as the list lays them out.
+struct ClipFrame {
+    /// The records listed, in order.
+    rows: Vec<ClipFrameRow>,
+    /// Their days' labels.
+    sections: Vec<SectionLabel>,
+    /// The list's children: the day labels and the records.
+    children: Vec<ListChild>,
+    /// The selected record's index in `rows`.
+    selected: Option<usize>,
+}
+
+/// A listed record as its row shows it.
+struct ClipFrameRow {
+    id: String,
+    title: String,
+    time: String,
 }
 
 /// How often the open view looks at the history for what changed behind
@@ -227,7 +255,11 @@ impl ClipboardHistory {
             browse: ClipboardBrowse::default(),
             query,
             managing: false,
-            list_scroll: ScrollHandle::new(),
+            list: {
+                let geometry = &crate::settings::launcher_visuals(cx).theme.geometry;
+                VirtualList::new(geometry.row_min_height + geometry.row_list_gap)
+            },
+            frame: None,
             reveal: false,
             outcome: false,
             _typing: typing,
@@ -275,7 +307,7 @@ impl LauncherWindow {
             return;
         }
         let kept = matches!(
-            self.launcher.view().screen,
+            self.launcher.screen(),
             Screen::Form(_) | Screen::CustomView(_)
         );
         if !kept && self.clipboard.take().is_some() {
@@ -336,6 +368,29 @@ impl LauncherWindow {
 
     fn clipboard_previous(&mut self, _: &SelectPrevious, _: &mut Window, cx: &mut Context<Self>) {
         self.step_clipboard(-1, cx);
+    }
+
+    /// Page Down: the selection moves by the records in view (#165).
+    fn clipboard_next_page(&mut self, _: &SelectNextPage, _: &mut Window, cx: &mut Context<Self>) {
+        let page = self
+            .clipboard
+            .as_ref()
+            .map_or(1, |history| history.list.page());
+        self.step_clipboard(isize::try_from(page).unwrap_or(isize::MAX), cx);
+    }
+
+    /// Page Up: the selection moves back by the records in view.
+    fn clipboard_previous_page(
+        &mut self,
+        _: &SelectPreviousPage,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let page = self
+            .clipboard
+            .as_ref()
+            .map_or(1, |history| history.list.page());
+        self.step_clipboard(-isize::try_from(page).unwrap_or(isize::MAX), cx);
     }
 
     /// Moves the selection `delta` records, keeping it in view.
@@ -485,19 +540,51 @@ impl LauncherWindow {
                 note: None,
             })
             .collect();
-        if state.reveal {
+        // The list's frame: what its children are drawn from as it lays
+        // them out (#165). The list is measured again, from its top, only
+        // when the records or their days changed, not as their times
+        // tick.
+        let frame = ClipFrame {
+            rows: listing
+                .records
+                .iter()
+                .map(|record| ClipFrameRow {
+                    id: record.id.clone(),
+                    title: record.title().to_owned(),
+                    time: time_label(record.copied_at, now, offset),
+                })
+                .collect(),
+            children: virtual_list::children(false, listing.records.len(), &labels),
+            sections: labels,
+            selected: listing.selected,
+        };
+        let changed = state.frame.as_ref().is_none_or(|last| {
+            last.children != frame.children
+                || last.sections != frame.sections
+                || last.rows.len() != frame.rows.len()
+                || last
+                    .rows
+                    .iter()
+                    .zip(&frame.rows)
+                    .any(|(last, now)| last.id != now.id || last.title != now.title)
+        });
+        if changed || state.list.count() != frame.children.len() {
+            state.list.reset(frame.children.len());
+        }
+        if state.reveal || changed {
             if let Some(selected) = listing.selected {
                 state
-                    .list_scroll
-                    .scroll_to_item(shell::child_of_row(&labels, selected));
+                    .list
+                    .reveal(virtual_list::child_of_row(false, &frame.sections, selected));
             }
             state.reveal = false;
         }
+        state.frame = Some(Rc::new(frame));
         let selected = listing.selected_record();
         let show_outcome = state.outcome;
         let filter = state.browse.filter;
         let query = state.query.clone();
-        let list_scroll = state.list_scroll.clone();
+        let list_state = state.list.state().clone();
 
         // The header: back, the command's chip, the search, the capture —
         // which is offered only while the history can be read, since its
@@ -562,49 +649,39 @@ impl LauncherWindow {
         };
         let tabs = split_view::tabs(tabs, Some((caption.into(), caption_color)), &theme);
 
-        // The list: the day sections and their records, or why none.
-        let rows = listing.records.iter().enumerate().map(|(index, record)| {
-            let on = listing.selected == Some(index);
-            let id = record.id.clone();
-            let title = record.title().to_owned();
-            split_view::clip_row(
-                ("clip", index),
-                ClipRow {
-                    title: title.clone().into(),
-                    time: time_label(record.copied_at, now, offset).into(),
-                    selected: on,
-                    glyph: Glyph::Lines,
-                },
-                &theme,
-            )
-            .debug_selector(move || format!("clip-{title}"))
-            .role(Role::ListBoxOption)
-            .aria_label(record.title().to_owned())
-            .aria_selected(on)
-            .when(on, |row| row.aria_active_descendant())
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                if let Some(history) = this.clipboard.as_mut() {
-                    history.browse.select(id.clone());
-                    history.outcome = false;
-                    cx.notify();
-                }
-            }))
-            .into_any_element()
-        });
-        let rows: Vec<gpui::AnyElement> = rows.collect();
+        // The list: the day sections and their records, drawn virtually
+        // (#165), or why none.
         let list = split_view::list(&theme)
             .role(Role::ListBox)
-            .aria_label("Clipboard history")
-            .track_scroll(&list_scroll);
+            .aria_label("Clipboard history");
+        let split = &theme.split;
         let list = if listing.records.is_empty() {
             let note = empty_note(
                 history.unreadable.as_deref(),
                 !history.records.is_empty(),
                 history.capture,
             );
-            list.child(split_view::empty_note(note, &theme))
+            list.child(
+                div()
+                    .pt(split.list_padding_top)
+                    .px(split.list_padding_x)
+                    .pb(split.list_padding_bottom)
+                    .child(split_view::empty_note(note, &theme)),
+            )
         } else {
-            list.children(shell::with_section_labels(rows, &labels, &theme))
+            list.child(
+                gpui::list(
+                    list_state,
+                    cx.processor(|this, index, _: &mut Window, cx| {
+                        this.render_clip_child(index, cx)
+                    }),
+                )
+                .flex_1()
+                .min_h(px(0.))
+                .w_full()
+                .pt(split.list_padding_top)
+                .pb(split.list_padding_bottom),
+            )
         };
 
         // The preview: the selected record's text, as it was copied, and
@@ -778,6 +855,8 @@ impl LauncherWindow {
             .key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::clipboard_next))
             .on_action(cx.listener(Self::clipboard_previous))
+            .on_action(cx.listener(Self::clipboard_next_page))
+            .on_action(cx.listener(Self::clipboard_previous_page))
             .on_action(cx.listener(Self::clipboard_confirm))
             .on_action(cx.listener(Self::clipboard_back))
             .on_action(cx.listener(Self::clipboard_manage))
@@ -794,6 +873,73 @@ impl LauncherWindow {
             .text_color(theme.text_title)
             .child(content);
         Some(visuals.material.panel(&theme, root))
+    }
+}
+
+impl LauncherWindow {
+    /// The split view's list child at `index` of the frame laid out, as
+    /// the list draws it: a day's label or a record's row, with the gap
+    /// after it and the list's side padding.
+    fn render_clip_child(&mut self, index: usize, cx: &mut Context<Self>) -> AnyElement {
+        let Some(frame) = self
+            .clipboard
+            .as_ref()
+            .and_then(|history| history.frame.clone())
+        else {
+            return div().into_any_element();
+        };
+        let theme = crate::settings::launcher_visuals(cx).theme;
+        let child = match frame.children.get(index) {
+            Some(&ListChild::Label(at)) => {
+                let section = &frame.sections[at];
+                let debug = format!("section-{}", section.label);
+                shell::section_label(section.label.clone(), section.note.clone(), &theme)
+                    .debug_selector(move || debug)
+                    .into_any_element()
+            }
+            Some(&ListChild::Row(row)) => match frame.rows.get(row) {
+                Some(record) => {
+                    let on = frame.selected == Some(row);
+                    let id = record.id.clone();
+                    let title = record.title.clone();
+                    split_view::clip_row(
+                        ("clip", row),
+                        ClipRow {
+                            title: title.clone().into(),
+                            time: record.time.clone().into(),
+                            selected: on,
+                            glyph: Glyph::Lines,
+                        },
+                        &theme,
+                    )
+                    .debug_selector(move || format!("clip-{title}"))
+                    .role(Role::ListBoxOption)
+                    .aria_label(record.title.clone())
+                    .aria_selected(on)
+                    .aria_position_in_set(row + 1)
+                    .aria_size_of_set(frame.rows.len())
+                    .when(on, |row| row.aria_active_descendant())
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        if let Some(history) = this.clipboard.as_mut() {
+                            history.browse.select(id.clone());
+                            history.outcome = false;
+                            cx.notify();
+                        }
+                    }))
+                    .into_any_element()
+                }
+                None => div().into_any_element(),
+            },
+            Some(ListChild::Head) | None => div().into_any_element(),
+        };
+        let last = index + 1 >= frame.children.len();
+        virtual_list::item(
+            child,
+            last,
+            theme.geometry.row_list_gap,
+            theme.split.list_padding_x,
+        )
+        .into_any_element()
     }
 }
 
