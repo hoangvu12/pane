@@ -763,10 +763,11 @@ of root search, whose files have an `id` and a `relative` path. An
 `file` (a command that sets `"search": true` too, as Search Files does);
 Pane shows the file's own name and folder in the row, whatever the result's
 title says, drops an id it did not give, and gives the file its own
-[file actions](../docs/files.md#the-file-actions): Open (Enter), Reveal in
+[file actions](../docs/files.md#the-file-actions): Open (Enter), Show in
 Explorer (Ctrl+Enter), Open With…, Copy Path, Copy File and Move to Recycle
-Bin (confirmed), each checking it again first; for a program or script,
-Enter reveals it and only Run runs it. The command is never called for
+Bin (confirmed), each checking it again first, then closing the window and
+saying what it did in a HUD; for a program or script, Enter shows it in
+Explorer and only Run runs it. The command is never called for
 them.
 Pane lists the folder under its [scan policy](../docs/files.md#the-scan-policy)
 (`files.limits()` gives its limits); file results are listed after the
@@ -1209,10 +1210,11 @@ command has, whatever its mode ([wit/feedback.wit](../wit/feedback.wit), ADR
   is hidden, and answers true only for the primary button (Escape, a click
   outside it or the window losing the focus answer false). Other packages'
   calls are served while it waits. Given a `remember` key, it offers "Don't
-  ask again" (Space or a click ticks it): the answer given with a button
-  while it is ticked is remembered per package and key, across restarts,
-  disabling and updates, and later confirmations with that key answer at
-  once; "Reset confirmations" on the extension's card in Settings ›
+  ask again" (Space or a click ticks it): confirmed with the primary
+  button while it is ticked, it is remembered per package and key, across
+  restarts, disabling and updates, and later confirmations with that key
+  answer true at once (a dismissal is never remembered, so the user is
+  asked again); "Reset confirmations" on the extension's card in Settings ›
   Extensions forgets them, as uninstalling does. In a call no window was
   shown for (a background launch, a schedule, a service) it answers an error
   saying a confirmation is not available there.
@@ -1438,8 +1440,8 @@ command's together; no `#`), a `type` (`text`, `password`, `checkbox`,
 `description`, a `placeholder`, `required` and a `default`: a value, or one
 per system (`{ "windows": …, "macos": …, "linux": … }`). A checkbox may
 have a `label` and its default is `true` or `false`; a dropdown needs its
-`options`, each a `value` and a `title`, and its default must be one of
-them. A duplicate name, an unknown type or a dropdown default not among its
+`options`, each a value, or a `value` with a `title` (as an argument's
+are), and its default must be one of them. A duplicate name, an unknown type or a dropdown default not among its
 options refuses the package at install, with the reason.
 
 A command reads its **effective values**: its package's preferences, then
@@ -1455,7 +1457,10 @@ which answers the values as JSON.
 A **required** preference with no value and no default is unset. Before a
 launch by the user, Pane checks: with any unset, it shows the **Setup
 screen** instead, the extension's title, "Set these up before using
-<command>", only the unset fields with their descriptions, and the
+<command>", only the unset fields with their descriptions, each with the
+control its extension's card in Settings has (a checkbox and a dropdown a
+choice, a password hidden as it is typed, a file, folder or application
+a path with "Choose…", which opens the system's picker), and the
 package's `HELP.md` beside them. Submitting saves the values and launches
 the command as it was launched; Escape launches nothing. A stored value
 that no longer fits counts as unset: a dropdown value no longer among the
@@ -1976,9 +1981,12 @@ for await (const line of process.lines()) toast.update({ style: "animated", titl
 A program belongs to the call that started it: Pane ends it, and every
 process it started (a Job Object on Windows, a process group elsewhere),
 when the call returns or is dropped, when the package is disabled,
-reloaded, updated, paused or uninstalled, and when Pane quits; what a
-program leaves running also ends when it exits. Open a program with the
-system instead to have it outlive the command. A `run` keeps at most 16 MiB
+reloaded, updated, paused or uninstalled, and when Pane quits. What a
+program leaves running when it exits runs on, in its tree, until then, not
+just until the program's exit; Pane stops reading the program's output
+once it exited (after two seconds for what is still in its pipes), so a
+process it left holding its output does not hold up the answer. Open a
+program with the system instead to have it outlive the command. A `run` keeps at most 16 MiB
 of each stream; a program writing more is ended and the run fails
 (`too-much-output`). Read a spawned program's streams as it writes: one
 that writes much more than the command reads waits. A component that
