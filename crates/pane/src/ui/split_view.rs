@@ -1,25 +1,25 @@
 //! The split view: the reference's clipboard board (#102) — a list of
-//! records beside a preview of the selected one — as presentation only.
+//! records beside the selected one's detail — as presentation only, as
+//! Raycast's Clipboard History draws it (#166).
 //!
-//! The view is 940×600 in the reference: a 64px header (the back button,
-//! the command's chip, the search field and the capture button), a 46px
-//! strip of tabs with a caption on the right, the body — a 360px list with
-//! its rule on the right, beside a pane whose 12px padding holds the
-//! preview card — and a 52px footer: the clock and the copied line on the
-//! left, the buttons on the right. Its rows are the reference's `.row`
-//! with a 13.5px title and the time in Geist Mono; its section labels,
-//! keycaps and footer buttons are the launcher's own families.
+//! The view is 940×600: a 64px header (the back button, the search field
+//! and the type dropdown at its right), the body — a 360px list with its
+//! rule on the right, beside the detail pane, whose 12px padding holds the
+//! preview card over the record's Information — and a 52px footer: the
+//! open command's icon and title on the left (#162; or the launcher's
+//! status), the buttons on
+//! the right. Its rows are the reference's `.row` with a 13.5px title and
+//! the time in Geist Mono; its section labels, keycaps and footer buttons
+//! are the launcher's own families.
 //!
 //! Like the rest of this layer it decides nothing: the caller passes the
-//! display values and attaches identity, focus and handlers (a tab and a
-//! row take their id, so they can keep a press). The launcher's
-//! Clipboard History adapter (`crate::features::clipboard_history`)
-//! composes the view through [`compose`] and the parts below. The board's
-//! source tones and its code, color, link and image previews are not
-//! drawn: Pane keeps text alone and guesses no kind of it (#100).
+//! display values and attaches identity, focus and handlers (a row takes
+//! its id, so it can keep a press). The launcher's Clipboard History
+//! adapter (`crate::features::clipboard_history`) composes the view
+//! through [`compose`] and the parts below.
 //!
 //! A window narrower than the reference keeps the view usable: the list
-//! takes at most half the width, the preview the rest, and both scroll.
+//! takes at most half the width, the detail the rest, and both scroll.
 
 use gpui::prelude::*;
 use gpui::{
@@ -31,27 +31,23 @@ use crate::ui::icon::{self, Glyph, IconTone};
 use crate::ui::theme::{Theme, pressed};
 
 /// The split view's client size in the reference, in logical pixels: the
-/// clipboard board's 940×600 (64 header + 46 tabs + 438 body + 52 footer).
+/// clipboard board's 940×600.
 pub(crate) const SPLIT_CLIENT: (f32, f32) = (940., 600.);
 
-/// The whole view: `header`, `tabs`, the body — `list` beside the preview
-/// pane holding `preview`, if a record is selected — and `footer` (see
+/// The whole view: `header`, the body — `list` beside the detail pane
+/// holding `detail`, if a record is selected — and `footer` (see
 /// [`footer`]).
 pub(crate) fn compose(
     header: Div,
-    tabs: Div,
     list: AnyElement,
-    preview: Option<AnyElement>,
+    detail: Option<AnyElement>,
     footer: AnyElement,
-    theme: &Theme,
 ) -> Div {
-    let split = &theme.split;
     div()
         .size_full()
         .flex()
         .flex_col()
         .child(header)
-        .child(tabs)
         .child(
             div().flex_1().min_h(px(0.)).flex().child(list).child(
                 div()
@@ -60,20 +56,20 @@ pub(crate) fn compose(
                     .min_w(px(0.))
                     .flex()
                     .flex_col()
-                    .p(split.preview_padding)
-                    .when_some(preview, |pane, preview| pane.child(preview)),
+                    .when_some(detail, |pane, detail| pane.child(detail)),
             ),
         )
         .child(footer)
 }
 
-/// The header: `back`, `chip`, the search `field` taking the room left,
-/// and `capture`, 12px apart in a 64px row with its rule below.
+/// The header: `back`, the search `field` taking the room left, and the
+/// type `dropdown` at its right, 12px apart in a 64px row with its rule
+/// below. No badge or chip sits on the field: the command shows in the
+/// footer.
 pub(crate) fn header(
     back: AnyElement,
-    chip: Div,
     field: AnyElement,
-    capture: Option<AnyElement>,
+    dropdown: AnyElement,
     theme: &Theme,
 ) -> Div {
     let split = &theme.split;
@@ -88,9 +84,13 @@ pub(crate) fn header(
         .border_b_1()
         .border_color(theme.hairline_soft)
         .child(back)
-        .child(chip)
         .child(field)
-        .when_some(capture, |header, capture| header.child(capture))
+        .child(
+            div()
+                .debug_selector(|| "clipboard-type-dropdown".into())
+                .flex_none()
+                .child(dropdown),
+        )
 }
 
 /// The back button's chrome: 32 square, radius 8, the left arrow. The
@@ -111,58 +111,6 @@ pub(crate) fn back_button(theme: &Theme) -> Div {
             split.back_glyph,
             split.back_text,
         ))
-}
-
-/// The neutral tile's inset ring and top highlight (the reference's
-/// `.tile`), on a tile of any fill.
-fn tile_edges(theme: &Theme) -> Vec<BoxShadow> {
-    vec![
-        BoxShadow::new(px(0.), px(0.), theme.tile_border)
-            .spread_radius(px(1.))
-            .inset(),
-        BoxShadow::new(px(0.), px(1.), theme.tile_highlight).inset(),
-    ]
-}
-
-/// The command's chip: its 20px clipboard tile and `title`.
-pub(crate) fn chip(title: impl Into<SharedString>, theme: &Theme) -> Div {
-    let split = &theme.split;
-    div()
-        .debug_selector(|| "clipboard-chip".into())
-        .flex_none()
-        .flex()
-        .items_center()
-        .gap(split.chip_gap)
-        .h(split.chip_height)
-        .pl(split.chip_padding_left)
-        .pr(split.chip_padding_right)
-        .rounded(split.chip_radius)
-        .bg(split.chip_fill)
-        .shadow(vec![
-            BoxShadow::new(px(0.), px(0.), split.chip_edge)
-                .spread_radius(px(1.))
-                .inset(),
-        ])
-        .text_size(split.chip_size)
-        .font_weight(theme.typography.medium)
-        .text_color(theme.text_title)
-        .child(
-            div()
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
-                .size(split.chip_tile)
-                .rounded(split.chip_tile_radius)
-                .bg(split.chip_tile_fill)
-                .shadow(tile_edges(theme))
-                .child(icon::glyph(
-                    Glyph::Clipboard,
-                    split.chip_glyph,
-                    theme.tile_foreground,
-                )),
-        )
-        .child(div().whitespace_nowrap().child(title.into()))
 }
 
 /// The search field: the editable text element `input` (the caller's own
@@ -194,118 +142,6 @@ pub(crate) fn search_field(
     )
 }
 
-/// The capture button (the reference's Pause): `glyph` and `label` in a
-/// footer button's chrome, in the accent while `pressed` (paused). The
-/// caller attaches its click.
-pub(crate) fn capture_button(
-    label: impl Into<SharedString>,
-    glyph: Glyph,
-    pressed: bool,
-    theme: &Theme,
-) -> Stateful<Div> {
-    let geometry = &theme.geometry;
-    let color = if pressed {
-        theme.accent_text
-    } else {
-        theme.footer_button_text
-    };
-    div()
-        .id("clipboard-capture")
-        .debug_selector(|| "clipboard-capture".into())
-        .flex_none()
-        .h(geometry.action_height)
-        .flex()
-        .items_center()
-        .gap(geometry.action_gap)
-        .px(geometry.action_padding_x)
-        .rounded(geometry.action_radius)
-        .text_size(theme.typography.footer_size)
-        .font_weight(theme.typography.medium)
-        .text_color(color)
-        .hover(|button| button.bg(theme.control_hover))
-        .active(|button| button.bg(crate::ui::theme::pressed(theme.control_hover)))
-        .cursor_pointer()
-        .child(icon::glyph(glyph, theme.split.capture_glyph, color))
-        .child(div().whitespace_nowrap().child(label.into()))
-}
-
-/// A tab, `id`: `label`, chosen or not (`on`). While held it takes the
-/// [`pressed`] wash of its hover, or of its chosen wash, at once. The
-/// caller attaches its click.
-pub(crate) fn tab(
-    id: impl Into<ElementId>,
-    label: impl Into<SharedString>,
-    on: bool,
-    theme: &Theme,
-) -> Stateful<Div> {
-    let split = &theme.split;
-    let tab = div()
-        .id(id)
-        .flex_none()
-        .flex()
-        .items_center()
-        .h(split.tab_height)
-        .px(split.tab_padding_x)
-        .rounded(split.tab_radius)
-        .text_size(split.tab_size)
-        .font_weight(theme.typography.medium)
-        .cursor_pointer()
-        .child(label.into());
-    if on {
-        tab.bg(split.tab_on)
-            .text_color(split.tab_on_text)
-            .shadow(vec![
-                BoxShadow::new(px(0.), px(0.), split.tab_on_edge)
-                    .spread_radius(px(1.))
-                    .inset(),
-            ])
-            .active(|tab| tab.bg(pressed(split.tab_on)))
-    } else {
-        tab.text_color(split.tab_text)
-            .hover(|tab| tab.bg(split.tab_hover).text_color(split.tab_hover_text))
-            .active(|tab| {
-                tab.bg(pressed(split.tab_hover))
-                    .text_color(split.tab_hover_text)
-            })
-    }
-}
-
-/// The tab strip: `tabs` from the left, 4px apart, and the caption — what
-/// is kept, as `caption` says it, in its color — on the right.
-pub(crate) fn tabs(
-    tabs: Vec<AnyElement>,
-    caption: Option<(SharedString, Hsla)>,
-    theme: &Theme,
-) -> Div {
-    let split = &theme.split;
-    div()
-        .flex_none()
-        .h(split.tabs_height)
-        .flex()
-        .items_center()
-        .gap(split.tabs_gap)
-        .px(split.tabs_padding_x)
-        .border_b_1()
-        .border_color(theme.hairline_soft)
-        .children(tabs)
-        .child(div().flex_1().min_w(px(0.)))
-        .when_some(caption, |strip, (text, color)| {
-            strip.child(
-                div()
-                    .debug_selector(|| "clipboard-caption".into())
-                    .flex_initial()
-                    .min_w(px(0.))
-                    .flex()
-                    .items_center()
-                    .gap(split.caption_gap)
-                    .text_size(split.caption_size)
-                    .text_color(color)
-                    .child(icon::glyph(Glyph::Shield, split.caption_glyph, color).flex_none())
-                    .child(div().min_w(px(0.)).truncate().child(text)),
-            )
-        })
-}
-
 /// The list column: 360 wide (at most half a narrower window's), its rule
 /// on the right. The caller adds the virtualized list that scrolls inside
 /// it, with no scroll bar (#165; see [`super::virtual_list`]), padded 2
@@ -332,7 +168,7 @@ pub(crate) struct ClipRow {
     pub(crate) title: SharedString,
     pub(crate) time: SharedString,
     pub(crate) selected: bool,
-    /// The glyph on the row's neutral tile.
+    /// The glyph on the row's neutral tile: the record's kind.
     pub(crate) glyph: Glyph,
 }
 
@@ -409,6 +245,19 @@ pub(crate) fn empty_note(text: impl Into<SharedString>, theme: &Theme) -> Div {
         .child(text.into())
 }
 
+/// The detail pane's content: `preview` (the card) filling what
+/// `information` leaves, padded 12.
+pub(crate) fn detail(preview: AnyElement, information: Div, theme: &Theme) -> Div {
+    div()
+        .flex_1()
+        .min_h(px(0.))
+        .flex()
+        .flex_col()
+        .p(theme.split.preview_padding)
+        .child(preview)
+        .child(information)
+}
+
 /// The preview card around `content`: filling the pane, radius 12, black
 /// 24% with a white 7% inset ring, clipping its content and scrolling a
 /// long one. `id` names the record previewed, so another record's preview
@@ -434,7 +283,6 @@ pub(crate) fn preview_card(id: ElementId, content: AnyElement, theme: &Theme) ->
 
 /// Plain text, previewed as it was copied: its lines and spaces kept,
 /// wrapping within the card, 20px at line height 1.5, padded 28 by 30.
-/// Pane previews every record so: it guesses no other kind.
 pub(crate) fn text_preview(text: impl Into<SharedString>, theme: &Theme) -> Div {
     let split = &theme.split;
     div()
@@ -448,57 +296,95 @@ pub(crate) fn text_preview(text: impl Into<SharedString>, theme: &Theme) -> Div 
         .child(text.into())
 }
 
-/// A line under a preview's content, in the muted ink after the clock:
-/// when and where the selected record was copied. (It was the footer's
-/// left until the footer named the open command there, #162.)
-pub(crate) fn preview_note(text: impl Into<SharedString>, theme: &Theme) -> Div {
-    let split = &theme.split;
-    div()
-        .debug_selector(|| "clipboard-preview-copied".into())
-        .flex()
-        .items_center()
-        .gap(split.footer_lead_gap)
-        .px(split.text_padding_x)
-        .pb(split.text_padding_y)
-        .text_size(theme.typography.footer_size)
-        .text_color(theme.text_muted)
-        .child(icon::glyph(Glyph::Clock, split.footer_glyph, theme.text_muted).flex_none())
-        .child(div().min_w(px(0.)).child(text.into()))
+/// One row of the Information: its `label` on the left, muted, and its
+/// `value` on the right, after `icon` if it has one.
+pub(crate) struct InfoRow {
+    pub(crate) label: &'static str,
+    pub(crate) value: SharedString,
+    pub(crate) icon: Option<AnyElement>,
 }
 
-/// The footer's left side while a status shows: the clock and `text`, the
-/// launcher's status, in `color`, on one line.
-pub(crate) fn footer_lead(text: impl Into<SharedString>, color: Hsla, theme: &Theme) -> Div {
+/// The Information under the preview (#166), as Raycast's detail has it:
+/// "Information" over its rows, each a hairline apart, 12px.
+pub(crate) fn information(rows: Vec<InfoRow>, theme: &Theme) -> Div {
     let split = &theme.split;
     div()
-        .debug_selector(|| "clipboard-copied".into())
+        .debug_selector(|| "clipboard-information".into())
+        .flex_none()
+        .flex()
+        .flex_col()
+        .mt(split.info_margin_top)
+        .text_size(split.info_size)
+        .child(
+            div()
+                .flex_none()
+                .h(split.info_row_height)
+                .flex()
+                .items_center()
+                .font_weight(theme.typography.medium)
+                .text_color(theme.text_muted)
+                .child("Information"),
+        )
+        .children(rows.into_iter().map(|row| {
+            let selector = format!("clipboard-info-{}", row.label);
+            div()
+                .debug_selector(move || selector)
+                .flex_none()
+                .h(split.info_row_height)
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(split.info_gap)
+                .border_t_1()
+                .border_color(theme.hairline_soft)
+                .child(
+                    div()
+                        .flex_none()
+                        .text_color(theme.text_muted)
+                        .child(row.label),
+                )
+                .child(
+                    div()
+                        .min_w(px(0.))
+                        .flex()
+                        .items_center()
+                        .gap(split.info_gap)
+                        .text_color(theme.text_title)
+                        .when_some(row.icon, |value, icon| {
+                            value.child(div().flex_none().size(split.info_icon).child(icon))
+                        })
+                        .child(div().min_w(px(0.)).truncate().child(row.value)),
+                )
+        }))
+}
+
+/// The launcher's status — the outcome of what was just done — in `color`,
+/// on one line: what the footer's left side shows in place of the open
+/// command's icon and title until the user moves on.
+pub(crate) fn footer_status(text: impl Into<SharedString>, color: Hsla, theme: &Theme) -> Div {
+    div()
+        .debug_selector(|| "clipboard-status".into())
         .flex_initial()
         .min_w(px(0.))
-        .flex()
-        .items_center()
-        .gap(split.footer_lead_gap)
         .whitespace_nowrap()
         .text_size(theme.typography.footer_size)
         .text_color(color)
-        .child(icon::glyph(Glyph::Clock, split.footer_glyph, color).flex_none())
         .child(div().min_w(px(0.)).truncate().child(text.into()))
 }
 
 /// The footer's buttons, left to right, as the reference orders them:
-/// `primary` (the selected record's, with the accent key) and `secondary`
-/// (its other actions, in order), the rule, then `more`; the rule only with
-/// a button before it.
+/// `primary` (the selected record's, with the accent key), the rule, then
+/// `more` (Actions); the rule only with a button before it.
 pub(crate) fn footer_buttons(
     primary: Option<AnyElement>,
-    secondary: Vec<AnyElement>,
     more: AnyElement,
     theme: &Theme,
 ) -> Vec<AnyElement> {
-    let rule = (primary.is_some() || !secondary.is_empty())
+    let rule = primary
+        .is_some()
         .then(|| crate::ui::footer::divider(theme).into_any_element());
     primary
         .into_iter()
-        .chain(secondary)
         .chain(rule)
         .chain(std::iter::once(more))
         .collect()
@@ -506,11 +392,13 @@ pub(crate) fn footer_buttons(
 
 /// The footer: 52 high with its rule above and the footer's wash, `lead`
 /// on the left and `buttons` (the launcher's footer buttons and rule) on
-/// the right, 4px apart.
+/// the right, 4px apart. It holds the Actions panel, anchored above it,
+/// when the caller adds it.
 pub(crate) fn footer(lead: Div, buttons: Vec<AnyElement>, theme: &Theme) -> Div {
     let split = &theme.split;
     let geometry = &theme.geometry;
     div()
+        .relative()
         .flex_none()
         .h(split.footer_height)
         .flex()

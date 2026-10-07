@@ -577,11 +577,6 @@ impl LauncherWindow {
         {
             return;
         }
-        // Clipboard History's own list, shown from its split view: back to
-        // the split view first.
-        if self.leave_clipboard_controls(window, cx) {
-            return;
-        }
         // The Keyboard page's escape behavior: hide from wherever the
         // launcher is, or go back one level and hide from an empty root
         // search.
@@ -1676,7 +1671,7 @@ impl Render for LauncherWindow {
         self.time_toast(toast.as_ref(), window, cx);
         // Pane's Clipboard History draws its own split view (#102), with a
         // confirmation its command asks for over it (#146).
-        if let Some(split) = self.render_clipboard_history(&view, cx) {
+        if let Some(split) = self.render_clipboard_history(&view, window, cx) {
             let visuals = crate::settings::launcher_visuals(cx);
             let asked = self.render_confirmation_layer(&visuals.theme, visuals.material, cx);
             return split.children(asked);

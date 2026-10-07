@@ -439,6 +439,9 @@ pub(in crate::launcher) fn selected_action(state: &State) -> SelectedAction {
         }
         (_, Some(Entry::DeleteRetained(_))) => acting("Delete retained data"),
         (_, Some(Entry::ClearCache(_))) => acting("Clear cache"),
+        (_, Some(Entry::AskClearClipboardHistory(_) | Entry::ClearClipboardHistory(_))) => {
+            acting("Clear history")
+        }
         (_, Some(Entry::DisableAll(..))) => acting("Disable all"),
         (_, Some(Entry::Cancel)) => acting("Cancel"),
         // Nothing is selected: the screen's own action, which cannot run

@@ -41,6 +41,7 @@ mod aliases;
 mod application_update;
 mod argument_form;
 mod choices;
+mod clipboard_settings;
 pub mod clipboard_view;
 mod command_search;
 mod confirmations;
@@ -263,6 +264,9 @@ pub enum Question {
     /// Whether to clear the cache of the installed package with this
     /// identity.
     ClearCache(PackageIdentity),
+    /// Whether to clear the history of Pane's own Clipboard History, the
+    /// installed package with this identity (#166).
+    ClearClipboardHistory(PackageIdentity),
     /// Whether to uninstall the installed package with this identity, and
     /// whether to keep its saved data.
     Uninstall(PackageIdentity),
@@ -1167,6 +1171,12 @@ enum Entry {
     ResetConfirmations(PackageIdentity),
     /// Clear this installed package's cache (confirmation).
     ClearCache(PackageIdentity),
+    /// Ask whether to clear the history of Pane's own Clipboard History,
+    /// this installed package (extension list, #166).
+    AskClearClipboardHistory(PackageIdentity),
+    /// Clear the history of Pane's own Clipboard History, this installed
+    /// package (confirmation).
+    ClearClipboardHistory(PackageIdentity),
     /// Ask for the keys of the hotkey of the command with this id
     /// (extension list).
     AskHotkey(String),
@@ -2539,6 +2549,14 @@ impl Launcher {
                 self.show_clear_cache(state, &identity);
                 Pending::Nothing
             }
+            Entry::AskClearClipboardHistory(identity) => {
+                self.show_clear_clipboard_history(state, &identity);
+                Pending::Nothing
+            }
+            Entry::ClearClipboardHistory(identity) => {
+                self.clear_clipboard_history_of(state, &identity);
+                Pending::Nothing
+            }
             Entry::ResetConfirmations(identity) => {
                 self.reset_confirmations_row(state, &identity);
                 Pending::Nothing
@@ -3700,6 +3718,9 @@ impl Launcher {
         };
         match question.clone() {
             Question::ClearCache(identity) => self.show_extensions_at_clear_cache(state, &identity),
+            Question::ClearClipboardHistory(identity) => {
+                self.show_extensions_at_clear_clipboard_history(state, &identity)
+            }
             Question::Uninstall(identity) | Question::UninstallDependents(identity) => self
                 .show_extensions_at(
                     state,

@@ -1,4 +1,4 @@
-//! Clipboard History in the split view (#102): the launcher window's
+//! Clipboard History in the split view (#102, #166): the launcher window's
 //! adapter between the core's read-only projection
 //! ([`pane_core::Launcher::clipboard_history`]) and the split view's
 //! components ([`crate::ui::split_view`]).
@@ -6,28 +6,33 @@
 //! The view shows only while Pane's registered Clipboard History command
 //! is open on its own list; every other command, a similarly titled one
 //! included, keeps the generic list. The adapter owns what the user does
-//! in the view — the query, the tab and the selected record
+//! in the view — the query, the type chosen and the selected record
 //! ([`ClipboardBrowse`]) — and reads the records anew each frame, so a
 //! record deleted or expired is gone from the list at once and a stale
 //! selection falls back to the first record listed.
 //!
-//! - Typing searches the records' text and source; the tabs are All and
-//!   Text, the kinds Pane keeps.
+//! - Typing filters the records by their text and source ("Type to filter
+//!   entries…"); the type dropdown at the search field's right keeps All
+//!   Types, Text, Links or Colors. The search field carries no badge: the
+//!   footer names the command by its icon and title (#162).
+//! - The records are grouped by local day: Today, Yesterday, then dates.
+//! - The detail pane previews the selected record over its Information:
+//!   Source (the application's name and, where Pane knows its path, its
+//!   icon), Type, Characters and Copied.
 //! - Up and Down move the selection and keep it in view; a click selects
 //!   (it never copies).
 //! - Enter, or the footer's Paste, pastes the selected record into the
 //!   application that was in front, closing the window (#150); where Pane
 //!   cannot paste yet, it copies the record instead and a HUD says so.
-//!   Ctrl+Enter, or the footer's Copy, copies it again, closing the window
-//!   with a "Copied to Clipboard" HUD as every Copy action does; Ctrl+D (as
-//!   Explorer deletes), or the footer's Delete, deletes it — never Delete
-//!   alone, which edits the search. Copy and Delete are the history's
-//!   existing operations; the core revalidates all three first.
-//! - The header's button turns capture on, pauses or resumes it, and says
-//!   which is in force; the caption under it says what is kept, as it is.
-//! - Ctrl+K (the Open actions binding), or the footer's Manage, routes to
-//!   the command's own list: retention, exclusions, clearing, turning off
-//!   and deleting, as they always were. Escape comes back.
+//!   Ctrl+Enter copies it again, closing the window with a "Copied to
+//!   Clipboard" HUD as every Copy action does; Ctrl+D (as Explorer
+//!   deletes) deletes it — never Delete alone, which edits the search.
+//! - Ctrl+K (the Open actions binding), or the footer's Actions, opens the
+//!   Actions panel over the view: the record's Paste, Copy and Delete, then
+//!   Pause or Resume Recording, Clear History… (which asks first), Keep
+//!   History For, and Disabled Applications…, which opens the extension's
+//!   page in Settings ([`pane_core::clipboard_view::ClipboardHistoryView::actions`]).
+//!   The core revalidates every one of them.
 //! - Escape clears the query, then leaves for root search; the back
 //!   button leaves at once.
 //!
@@ -35,29 +40,32 @@
 //! own size again once it leaves. Where the window is smaller the view
 //! adapts (see [`crate::ui::split_view`]).
 
+use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::{
     AnyElement, App, ClickEvent, Context, Div, Entity, EntityInputHandler, Focusable, KeyBinding,
-    Role, SharedString, Subscription, Task, Toggled, Window, actions, div, prelude::*, px,
+    Role, SharedString, Subscription, Task, Window, actions, div, prelude::*, px,
 };
 use gpui_elements::editable_text::actions::DEFAULT_INPUT_CONTEXT;
 use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged};
 use pane_core::clipboard::CaptureState;
 use pane_core::clipboard_view::{
-    ClipboardBrowse, ClipboardFilter, ClipboardHistoryView, copied_line, local_offset_ms,
-    time_label,
+    ClipboardAction, ClipboardBrowse, ClipboardFilter, ClipboardHistoryView, ClipboardKind,
+    information, local_offset_ms, time_label,
 };
 use pane_core::{Binding, Keyboard, KeyboardAction, LauncherView, Screen, Status};
 
 use crate::app::{KEY_CONTEXT, LauncherWindow};
+use crate::ui::extension_icon::{self, IconSize};
 use crate::ui::footer::{self, ButtonWash};
 use crate::ui::icon::{Glyph, IconTone};
 use crate::ui::input::TextEditingKeys;
 use crate::ui::keycap::{CapStyle, KeySequence};
+use crate::ui::select::{Choice, Model, Select};
 use crate::ui::shell::{self, SectionLabel};
-use crate::ui::split_view::{self, ClipRow};
+use crate::ui::split_view::{self, ClipRow, InfoRow};
 use crate::ui::virtual_list::{self, ListChild, VirtualList};
 use crate::{
     Back, Confirm, OpenActions, SelectNext, SelectNextPage, SelectPrevious, SelectPreviousPage,
@@ -71,6 +79,13 @@ pub(crate) const CONTEXT: &str = "ClipboardHistory";
 /// The keys that delete the selected record: explicit, and not a text
 /// edit in the search field (Delete and Shift+Delete edit text there).
 pub(crate) const DELETE_BINDING: &str = "ctrl-d";
+
+/// The search field's placeholder, Raycast's.
+pub(crate) const PLACEHOLDER: &str = "Type to filter entries…";
+
+/// The type dropdown's debug selector: its trigger is this, a choice's row
+/// `clipboard-type-<id>` (`all`, `text`, `links`, `colors`).
+pub(crate) const TYPE_SELECT: &str = "clipboard-type";
 
 /// Registers the view's keys: the previous and next result bindings in
 /// its search field, above the field's own caret keys (as root search's
@@ -112,41 +127,44 @@ pub(crate) fn delete_keys() -> KeySequence {
 
 /// What the view lists in place of records when it lists none: why, as
 /// it actually is — the history cannot be read (`unreadable`), the query
-/// or tab keeps none of the records there are (`kept`), or nothing is
+/// or type keeps none of the records there are (`kept`), or nothing is
 /// kept, for the reason `capture` gives.
 pub(crate) fn empty_note(unreadable: Option<&str>, kept: bool, capture: CaptureState) -> String {
     if let Some(reason) = unreadable {
         return reason.to_owned();
     }
     if kept {
-        return "No items match. Try another search or filter.".into();
+        return "No entries match. Try another search or type.".into();
     }
     match capture {
-        CaptureState::Off => {
-            "Clipboard history is off. Turn it on to keep the text you copy on this computer."
-                .into()
+        CaptureState::Off | CaptureState::Paused => {
+            "Nothing is kept. Recording is paused until you resume it (Ctrl+K).".into()
         }
-        CaptureState::Paused => "Nothing is kept. History is paused until you resume it.".into(),
-        CaptureState::On => "Nothing kept yet. Text you copy from now on is listed here.".into(),
+        CaptureState::On => "Nothing copied yet. What you copy from now on is listed here.".into(),
     }
 }
 
-/// The capture button for `capture`: what pressing it does, its glyph,
-/// and whether it shows pressed (paused).
-pub(crate) fn capture_control(capture: CaptureState) -> (&'static str, Glyph, bool) {
-    match capture {
-        CaptureState::On => ("Pause", Glyph::Pause, false),
-        CaptureState::Paused => ("Resume", Glyph::ActionRun, true),
-        CaptureState::Off => ("Turn on", Glyph::ActionRun, false),
+/// The glyph of a record of `kind` on its row's tile.
+fn kind_glyph(kind: ClipboardKind) -> Glyph {
+    match kind {
+        ClipboardKind::Text => Glyph::Lines,
+        ClipboardKind::Link => Glyph::ArrowRight,
+        ClipboardKind::Color => Glyph::Sliders,
     }
 }
 
-/// The search field's placeholder over `count` records.
-pub(crate) fn placeholder(count: usize) -> String {
-    match count {
-        1 => "Search 1 item…".into(),
-        count => format!("Search {count} items…"),
-    }
+/// The type dropdown's choices: the filters, in order.
+fn type_choices() -> Vec<Choice> {
+    ClipboardFilter::ALL
+        .into_iter()
+        .map(|filter| Choice {
+            id: filter.id().into(),
+            label: filter.label().into(),
+            subtitle: None,
+            keywords: Vec::new(),
+            unavailable_reason: None,
+        })
+        .collect()
 }
 
 /// The split view's state, owned by the launcher window while Pane's
@@ -154,9 +172,10 @@ pub(crate) fn placeholder(count: usize) -> String {
 pub(crate) struct ClipboardHistory {
     browse: ClipboardBrowse,
     query: Entity<EditableTextState>,
-    /// Whether the command's own list — its management controls — shows
-    /// in place of the split view.
-    managing: bool,
+    /// The type chosen, shared with the dropdown's live model.
+    chosen: Rc<Cell<ClipboardFilter>>,
+    /// The type dropdown at the search field's right.
+    types: Entity<Select>,
     /// The list, drawn virtually (#165): only the records in view are laid
     /// out and painted.
     list: VirtualList,
@@ -165,11 +184,10 @@ pub(crate) struct ClipboardHistory {
     /// Whether the next frame scrolls the list to the selected record.
     reveal: bool,
     /// Whether the footer shows the outcome of the last operation this
-    /// view ran (the launcher's status), rather than when the selected
-    /// record was copied: until the user moves on — selects, types or
-    /// changes the tab. (Copying a record again while history is on keeps
-    /// the copy as the newest record, so the outcome is not tied to an
-    /// id.)
+    /// view ran (the launcher's status), rather than the command's icon
+    /// and title: until the user moves on — selects, types or changes the type.
+    /// (Copying a record again while recording keeps the copy as the
+    /// newest record, so the outcome is not tied to an id.)
     outcome: bool,
     _typing: Subscription,
     /// Redraws the view when the history changes behind it (see
@@ -195,18 +213,27 @@ struct ClipFrameRow {
     id: String,
     title: String,
     time: String,
+    kind: ClipboardKind,
 }
 
 /// How often the open view looks at the history for what changed behind
-/// it: a copy kept, a record expired, capture changed from elsewhere. The
-/// history tells the window nothing itself, and a stale list or preview
-/// must not stay on screen (a stale selection never acts: the core
-/// revalidates every operation).
+/// it: a copy kept, a record expired, recording changed from elsewhere
+/// (Settings). The history tells the window nothing itself, and a stale
+/// list or preview must not stay on screen (a stale selection never acts:
+/// the core revalidates every operation).
 const REFRESH: Duration = Duration::from_secs(1);
 
 /// What of the history the view shows that can change behind it: how many
-/// records, the newest and the oldest, the capture and whether it reads.
-type Fingerprint = (usize, Option<String>, Option<String>, CaptureState, bool);
+/// records, the newest and the oldest, the recording, the retention and
+/// whether it reads.
+type Fingerprint = (
+    usize,
+    Option<String>,
+    Option<String>,
+    CaptureState,
+    u64,
+    bool,
+);
 
 fn fingerprint(view: &ClipboardHistoryView) -> Fingerprint {
     (
@@ -214,12 +241,13 @@ fn fingerprint(view: &ClipboardHistoryView) -> Fingerprint {
         view.records.first().map(|record| record.id.clone()),
         view.records.last().map(|record| record.id.clone()),
         view.capture,
+        view.retention_seconds,
         view.unreadable.is_some(),
     )
 }
 
 impl ClipboardHistory {
-    fn new(cx: &mut Context<LauncherWindow>) -> ClipboardHistory {
+    fn new(window: &mut Window, cx: &mut Context<LauncherWindow>) -> ClipboardHistory {
         let query = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
         query.focus_handle(cx).tab_stop(true);
         let typing = cx.subscribe(&query, |this, input, _: &TextChanged, cx| {
@@ -231,6 +259,42 @@ impl ClipboardHistory {
                 history.moved();
                 cx.notify();
             }
+        });
+        let chosen = Rc::new(Cell::new(ClipboardFilter::All));
+        let committed = chosen.clone();
+        let commit_to = chosen.clone();
+        let this = cx.entity().downgrade();
+        let types = cx.new(|cx| {
+            Select::new(
+                "Type",
+                "Filter by Type",
+                TYPE_SELECT,
+                Rc::new(move |cx: &App| {
+                    let visuals = crate::settings::launcher_visuals(cx);
+                    Model {
+                        theme: visuals.theme,
+                        material: visuals.material,
+                        choices: type_choices(),
+                        committed: Some(committed.get().id().into()),
+                    }
+                }),
+                Rc::new(move |id: &str, _: &mut Window, cx: &mut App| {
+                    let Some(filter) = ClipboardFilter::from_id(id) else {
+                        return;
+                    };
+                    commit_to.set(filter);
+                    this.update(cx, |this, cx| {
+                        if let Some(history) = this.clipboard.as_mut() {
+                            history.browse.filter = filter;
+                            history.moved();
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+                }),
+                window,
+                cx,
+            )
         });
         let watching = cx.spawn(async move |this, cx| {
             let mut seen: Option<Fingerprint> = None;
@@ -254,7 +318,8 @@ impl ClipboardHistory {
         ClipboardHistory {
             browse: ClipboardBrowse::default(),
             query,
-            managing: false,
+            chosen,
+            types,
             list: {
                 let geometry = &crate::settings::launcher_visuals(cx).theme.geometry;
                 VirtualList::new(geometry.row_min_height + geometry.row_list_gap)
@@ -268,7 +333,7 @@ impl ClipboardHistory {
     }
 
     /// The user moved on: the list keeps the selection in view, and the
-    /// footer says when the selected record was copied again.
+    /// footer shows the command again.
     fn moved(&mut self) {
         self.reveal = true;
         self.outcome = false;
@@ -276,13 +341,11 @@ impl ClipboardHistory {
 }
 
 impl LauncherWindow {
-    /// Test support: whether the split view shows (rather than the
-    /// command's own list, or another screen).
+    /// Test support: whether the split view shows (rather than another
+    /// screen).
     #[doc(hidden)]
     pub fn clipboard_split_shown(&self) -> bool {
-        self.clipboard
-            .as_ref()
-            .is_some_and(|history| !history.managing)
+        self.clipboard.is_some()
     }
 
     /// Test support: the split view's search field.
@@ -291,15 +354,21 @@ impl LauncherWindow {
         self.clipboard.as_ref().map(|history| history.query.clone())
     }
 
+    /// Test support: the type the split view's dropdown keeps.
+    #[doc(hidden)]
+    pub fn clipboard_filter(&self) -> Option<ClipboardFilter> {
+        self.clipboard.as_ref().map(|history| history.browse.filter)
+    }
+
     /// Makes the split view follow the launcher's screen: it opens, with
     /// its search focused and the window at the view's size, when the
     /// launcher shows Pane's Clipboard History command, and closes, giving
     /// the window back its own size, once the launcher leaves the command
-    /// (a form or custom view opened from its list keeps it).
+    /// (a form or custom view opened from it keeps it).
     pub(crate) fn sync_clipboard_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.launcher.clipboard_history().is_some() {
             if self.clipboard.is_none() {
-                let history = ClipboardHistory::new(cx);
+                let history = ClipboardHistory::new(window, cx);
                 window.focus(&history.query.focus_handle(cx), cx);
                 self.clipboard = Some(history);
                 self.fit_window(split_view::SPLIT_CLIENT, window, cx);
@@ -331,35 +400,24 @@ impl LauncherWindow {
         self.place_sized(size, window, cx);
     }
 
-    /// Leaves the command's own list for the split view, if it shows:
-    /// whether it did. Escape takes this before leaving the command.
-    pub(crate) fn leave_clipboard_controls(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let Some(history) = self.clipboard.as_mut().filter(|history| history.managing) else {
-            return false;
-        };
-        history.managing = false;
-        let field = history.query.focus_handle(cx);
-        window.focus(&field, cx);
-        cx.notify();
-        true
-    }
-
-    /// The command's own list in place of the split view: its management
-    /// controls, as they always were.
-    fn open_clipboard_controls(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(history) = self.clipboard.as_mut() {
-            history.managing = true;
-            window.focus(&self.focus_handle, cx);
-            cx.notify();
+    /// The Open actions binding in the view: opens the Actions panel for
+    /// the selected record and the history, or closes it.
+    fn clipboard_actions(&mut self, _: &OpenActions, window: &mut Window, cx: &mut Context<Self>) {
+        if self.actions_open() {
+            self.close_actions(window, cx);
+        } else {
+            self.open_clipboard_panel(window, cx);
         }
     }
 
-    fn clipboard_manage(&mut self, _: &OpenActions, window: &mut Window, cx: &mut Context<Self>) {
-        self.open_clipboard_controls(window, cx);
+    /// Opens the Actions panel for the selected record (by id and title),
+    /// or for the history with none selected.
+    fn open_clipboard_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let selected = self.selected_record().and_then(|(view, id)| {
+            let title = view.record(&id)?.title().to_owned();
+            Some((id, title))
+        });
+        self.open_clipboard_actions(selected, window, cx);
     }
 
     fn clipboard_next(&mut self, _: &SelectNext, _: &mut Window, cx: &mut Context<Self>) {
@@ -460,10 +518,20 @@ impl LauncherWindow {
     /// nothing with none selected.
     pub(crate) fn paste_selected_record(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some((view, id)) = self.selected_record() {
-            let pending = self.launcher.paste_clipboard_record(&view, &id);
-            self.note_outcome(cx);
-            self.show_until_done(pending, window, cx);
+            self.paste_record(&view, &id, window, cx);
         }
+    }
+
+    fn paste_record(
+        &mut self,
+        view: &ClipboardHistoryView,
+        id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let pending = self.launcher.paste_clipboard_record(view, id);
+        self.note_outcome(cx);
+        self.show_until_done(pending, window, cx);
     }
 
     /// Copies the selected record again, through the core's revalidated
@@ -481,26 +549,82 @@ impl LauncherWindow {
     /// selected next.
     pub(crate) fn delete_selected_record(&mut self, cx: &mut Context<Self>) {
         if let Some((view, id)) = self.selected_record() {
-            self.launcher.delete_clipboard_record(&view, &id).ok();
-            // The record selected next comes into view.
-            if let Some(history) = self.clipboard.as_mut() {
-                history.reveal = true;
-            }
-            self.note_outcome(cx);
+            self.delete_record(&view, &id, cx);
         }
     }
 
-    /// Turns capture on, pauses or resumes it, as the capture button says.
-    fn toggle_clipboard_capture(&mut self, cx: &mut Context<Self>) {
+    fn delete_record(&mut self, view: &ClipboardHistoryView, id: &str, cx: &mut Context<Self>) {
+        self.launcher.delete_clipboard_record(view, id).ok();
+        // The record selected next comes into view.
+        if let Some(history) = self.clipboard.as_mut() {
+            history.reveal = true;
+        }
+        self.note_outcome(cx);
+    }
+
+    /// Runs `action`, chosen in the Actions panel, on the record `record`
+    /// (by id) the panel opened for, and on the history: each through the
+    /// core's revalidated operation.
+    pub(crate) fn run_clipboard_action(
+        &mut self,
+        action: ClipboardAction,
+        record: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(view) = self.launcher.clipboard_history() else {
             return;
         };
-        let next = match view.capture {
-            CaptureState::On => CaptureState::Paused,
-            CaptureState::Paused | CaptureState::Off => CaptureState::On,
-        };
-        self.launcher.set_clipboard_capture(&view, next).ok();
-        self.note_outcome(cx);
+        match (action, record) {
+            (ClipboardAction::Paste, Some(id)) => self.paste_record(&view, &id, window, cx),
+            (ClipboardAction::Copy, Some(id)) => {
+                self.launcher.copy_clipboard_record(&view, &id).ok();
+                self.note_outcome(cx);
+            }
+            (ClipboardAction::Delete, Some(id)) => self.delete_record(&view, &id, cx),
+            (ClipboardAction::Paste | ClipboardAction::Copy | ClipboardAction::Delete, None) => {}
+            (ClipboardAction::PauseRecording, _) => {
+                self.launcher
+                    .set_clipboard_capture(&view, CaptureState::Paused)
+                    .ok();
+                self.note_outcome(cx);
+            }
+            (ClipboardAction::ResumeRecording, _) => {
+                self.launcher
+                    .set_clipboard_capture(&view, CaptureState::On)
+                    .ok();
+                self.note_outcome(cx);
+            }
+            (ClipboardAction::KeepFor(seconds), _) => {
+                self.launcher.set_clipboard_retention(&view, seconds).ok();
+                self.note_outcome(cx);
+            }
+            // Asks first, over the view; the outcome shows once answered.
+            (ClipboardAction::ClearHistory, _) => {
+                let cleared = self.launcher.clear_clipboard_history(&view);
+                self.note_outcome(cx);
+                cx.spawn_in(window, async move |this, cx| {
+                    cleared.await.ok();
+                    this.update(cx, |this, cx| {
+                        if let Some(history) = this.clipboard.as_mut() {
+                            history.reveal = true;
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+                })
+                .detach();
+            }
+            // The extension's page in Settings, where its preferences are.
+            (ClipboardAction::DisabledApplications, _) => {
+                crate::features::settings::open_at(
+                    &self.launcher,
+                    crate::features::settings::extensions::TITLE,
+                    &view.owner.key(),
+                    cx,
+                );
+            }
+        }
     }
 
     /// Shows the outcome of the operation just run in the footer, until
@@ -519,6 +643,7 @@ impl LauncherWindow {
     pub(crate) fn render_clipboard_history(
         &mut self,
         view: &LauncherView,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Div> {
         if !self.clipboard_split_shown() {
@@ -530,13 +655,15 @@ impl LauncherWindow {
         let now = history.now;
         let offset = local_offset_ms(now);
         let state = self.clipboard.as_mut()?;
+        // The dropdown's choice, as its model reads it.
+        state.chosen.set(state.browse.filter);
         let listing = state.browse.listing(&history.records, now, offset);
         let labels: Vec<SectionLabel> = listing
             .sections
             .iter()
             .map(|section| SectionLabel {
                 first: section.first,
-                label: section.day.label().into(),
+                label: section.label.clone().into(),
                 note: None,
             })
             .collect();
@@ -552,6 +679,7 @@ impl LauncherWindow {
                     id: record.id.clone(),
                     title: record.title().to_owned(),
                     time: time_label(record.copied_at, now, offset),
+                    kind: record.kind,
                 })
                 .collect(),
             children: virtual_list::children(false, listing.records.len(), &labels),
@@ -562,11 +690,9 @@ impl LauncherWindow {
             last.children != frame.children
                 || last.sections != frame.sections
                 || last.rows.len() != frame.rows.len()
-                || last
-                    .rows
-                    .iter()
-                    .zip(&frame.rows)
-                    .any(|(last, now)| last.id != now.id || last.title != now.title)
+                || last.rows.iter().zip(&frame.rows).any(|(last, now)| {
+                    last.id != now.id || last.title != now.title || last.kind != now.kind
+                })
         });
         if changed || state.list.count() != frame.children.len() {
             state.list.reset(frame.children.len());
@@ -582,28 +708,12 @@ impl LauncherWindow {
         state.frame = Some(Rc::new(frame));
         let selected = listing.selected_record();
         let show_outcome = state.outcome;
-        let filter = state.browse.filter;
         let query = state.query.clone();
+        let types = state.types.clone();
         let list_state = state.list.state().clone();
 
-        // The header: back, the command's chip, the search, the capture —
-        // which is offered only while the history can be read, since its
-        // label says the state in force.
-        let (capture_label, capture_glyph, paused) = capture_control(history.capture);
-        let capture = history.unreadable.is_none().then(|| {
-            split_view::capture_button(capture_label, capture_glyph, paused, &theme)
-                .role(Role::Button)
-                .aria_label(capture_label)
-                .aria_toggled(if paused {
-                    Toggled::True
-                } else {
-                    Toggled::False
-                })
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.toggle_clipboard_capture(cx);
-                }))
-                .into_any_element()
-        });
+        // The header: back, the search — with no badge on it — and the type
+        // dropdown at its right.
         let header = split_view::header(
             split_view::back_button(&theme)
                 .id("clipboard-back")
@@ -614,40 +724,10 @@ impl LauncherWindow {
                     this.back(&Back, window, cx);
                 }))
                 .into_any_element(),
-            split_view::chip(history.title.clone(), &theme),
-            split_view::search_field(&query, placeholder(history.records.len()), &theme)
-                .into_any_element(),
-            capture,
+            split_view::search_field(&query, PLACEHOLDER, &theme).into_any_element(),
+            types.into_any_element(),
             &theme,
         );
-
-        // The tabs, and what is kept, as it is.
-        let tabs = ClipboardFilter::ALL
-            .into_iter()
-            .map(|choice| {
-                let on = choice == filter;
-                let tab_id = SharedString::from(format!("clipboard-tab-{}", choice.label()));
-                split_view::tab(tab_id, choice.label(), on, &theme)
-                    .debug_selector(move || format!("clipboard-tab-{}", choice.label()))
-                    .role(Role::Tab)
-                    .aria_selected(on)
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        if let Some(history) = this.clipboard.as_mut() {
-                            history.browse.filter = choice;
-                            history.moved();
-                            cx.notify();
-                        }
-                    }))
-                    .into_any_element()
-            })
-            .collect();
-        // What is kept, as it is; or why it cannot be told.
-        let (caption, caption_color) = match &history.unreadable {
-            Some(reason) => (reason.clone(), theme.warning),
-            None if history.problem.is_some() => (history.summary(), theme.warning),
-            None => (history.summary(), theme.text_muted),
-        };
-        let tabs = split_view::tabs(tabs, Some((caption.into(), caption_color)), &theme);
 
         // The list: the day sections and their records, drawn virtually
         // (#165), or why none.
@@ -684,21 +764,52 @@ impl LauncherWindow {
             )
         };
 
-        // The preview: the selected record's text, as it was copied, and
-        // under it when and where it was copied (the footer's left names
-        // the command, #162).
-        let preview = selected.map(|record| {
-            let content = div()
-                .flex()
-                .flex_col()
-                .child(split_view::text_preview(record.text.clone(), &theme))
-                .child(split_view::preview_note(
-                    copied_line(record, now, offset),
+        // The detail: the selected record's text, as it was copied, over
+        // its Information.
+        let detail = selected.map(|record| {
+            let info = information(record, now, offset);
+            let mut rows = Vec::new();
+            if let Some(source) = info.source {
+                let icon = info.source_path.as_deref().map(|path| {
+                    let icon = self.launcher.clipboard_source_icon(path);
+                    extension_icon::draw(
+                        &crate::features::icons::drawn(&icon, &theme),
+                        IconSize::small(theme.split.info_icon),
+                        ("clipboard-source-icon", 0usize),
+                        "clipboard-source-icon",
+                        &theme,
+                    )
+                    .into_any_element()
+                });
+                rows.push(InfoRow {
+                    label: "Source",
+                    value: source.into(),
+                    icon,
+                });
+            }
+            rows.push(InfoRow {
+                label: "Type",
+                value: info.kind.into(),
+                icon: None,
+            });
+            rows.push(InfoRow {
+                label: "Characters",
+                value: info.characters.to_string().into(),
+                icon: None,
+            });
+            rows.push(InfoRow {
+                label: "Copied",
+                value: info.copied.into(),
+                icon: None,
+            });
+            split_view::detail(
+                split_view::preview_card(
+                    SharedString::from(format!("clipboard-preview-{}", record.id)).into(),
+                    split_view::text_preview(record.text.clone(), &theme).into_any_element(),
                     &theme,
-                ));
-            split_view::preview_card(
-                SharedString::from(format!("clipboard-preview-{}", record.id)).into(),
-                content.into_any_element(),
+                )
+                .into_any_element(),
+                split_view::information(rows, &theme),
                 &theme,
             )
             .into_any_element()
@@ -706,8 +817,8 @@ impl LauncherWindow {
 
         // The footer: the command's icon and title, as Raycast's footer
         // names the open command (#162), or the outcome of what was just
-        // done, then Delete, Copy and Manage.
-        // A toast the command showed speaks where the outcome would (#141).
+        // done, then Paste and Actions. A toast the command showed speaks
+        // where the outcome would (#141).
         let toast = self.footer_toast(&view.status).map(|shown| {
             let (selector, color) = super::toast::style_look(shown.toast.style, &theme);
             (selector, shown.toast.text(), color)
@@ -724,7 +835,7 @@ impl LauncherWindow {
         let (selector, lead) = match &status {
             Some((selector, text, color)) => (
                 *selector,
-                split_view::footer_lead(text.clone(), *color, &theme),
+                split_view::footer_status(text.clone(), *color, &theme),
             ),
             None => {
                 let icon = match self.launcher.open_command_id() {
@@ -740,11 +851,10 @@ impl LauncherWindow {
         let keyboard = crate::settings::keyboard_of(cx);
         let invoke =
             crate::keyboard::binding_keys(keyboard.binding(KeyboardAction::InvokeSelectedAction));
-        let manage_keys =
+        let actions_keys =
             crate::keyboard::binding_keys(keyboard.binding(KeyboardAction::OpenActions));
-        // Paste (Enter), Copy and Delete act on the selected record: with
-        // none, there is no primary action at all.
-        let copyable = history.copy_unavailable.is_none();
+        // Paste (Enter) acts on the selected record: with none, there is no
+        // primary action at all.
         let paste = selected.map(|_| {
             footer::footer_button(
                 "clipboard-paste",
@@ -763,90 +873,44 @@ impl LauncherWindow {
             }))
             .into_any_element()
         });
-        let copy_caps = copy_keys();
-        let copy = selected.map(|_| {
-            footer::footer_button(
-                "clipboard-copy",
-                "Copy",
-                &copy_caps,
-                CapStyle::Regular,
-                ButtonWash::Hover,
-                &theme,
-            )
-            .role(Role::Button)
-            .aria_label("Copy")
-            .aria_keyshortcuts(copy_caps.name())
-            // Where this Pane cannot write the clipboard the button is
-            // dimmed and inert, as the launcher's own unavailable primary
-            // action is; Enter still asks, and the core says why not.
-            .when(copyable, |button| {
-                button
-                    .cursor_pointer()
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.copy_selected_record(cx);
-                    }))
-            })
-            .when(!copyable, |button| {
-                button.opacity(0.5).cursor_default().aria_disabled(true)
-            })
-            .into_any_element()
-        });
-        let delete_caps = delete_keys();
-        let delete = selected.map(|_| {
-            footer::footer_button(
-                "clipboard-delete",
-                "Delete",
-                &delete_caps,
-                CapStyle::Regular,
-                ButtonWash::Hover,
-                &theme,
-            )
-            .role(Role::Button)
-            .aria_label("Delete")
-            .aria_keyshortcuts(delete_caps.name())
-            .cursor_pointer()
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.delete_selected_record(cx);
-            }))
-            .into_any_element()
-        });
-        let manage = footer::footer_button(
-            "clipboard-manage",
-            "Manage",
-            &manage_keys,
+        let more = footer::footer_button(
+            "clipboard-actions",
+            "Actions",
+            &actions_keys,
             CapStyle::Regular,
             ButtonWash::Hover,
             &theme,
         )
         .role(Role::Button)
-        .aria_label("Manage clipboard history")
-        .aria_keyshortcuts(manage_keys.name())
+        .aria_label("Actions")
+        .aria_keyshortcuts(actions_keys.name())
         .cursor_pointer()
         .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-            this.open_clipboard_controls(window, cx);
+            if this.actions_open() {
+                this.close_actions(window, cx);
+            } else {
+                this.open_clipboard_panel(window, cx);
+            }
         }))
         .into_any_element();
-        let buttons = split_view::footer_buttons(
-            paste,
-            copy.into_iter().chain(delete).collect(),
-            manage,
-            &theme,
-        );
+        let buttons = split_view::footer_buttons(paste, more, &theme);
         let footer = split_view::footer(lead, buttons, &theme)
             .id("status")
             .role(Role::Status)
             .when_some(status.map(|(_, text, _)| text), |footer, text| {
                 footer.aria_label(text)
             })
-            .debug_selector(move || selector.into());
+            .debug_selector(move || selector.into())
+            // The Actions panel, over the footer as the launcher's is.
+            .when_some(self.render_actions_layer(window, cx), |footer, panel| {
+                footer.child(panel)
+            });
 
         let content = split_view::compose(
             header,
-            tabs,
             list.into_any_element(),
-            preview,
+            detail,
             footer.into_any_element(),
-            &theme,
         )
         .key_context(CONTEXT)
         .on_action(cx.listener(Self::clipboard_delete))
@@ -859,7 +923,7 @@ impl LauncherWindow {
             .on_action(cx.listener(Self::clipboard_previous_page))
             .on_action(cx.listener(Self::clipboard_confirm))
             .on_action(cx.listener(Self::clipboard_back))
-            .on_action(cx.listener(Self::clipboard_manage))
+            .on_action(cx.listener(Self::clipboard_actions))
             .on_action(cx.listener(Self::return_to_root))
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::open_settings))
@@ -908,7 +972,7 @@ impl LauncherWindow {
                             title: title.clone().into(),
                             time: record.time.clone().into(),
                             selected: on,
-                            glyph: Glyph::Lines,
+                            glyph: kind_glyph(record.kind),
                         },
                         &theme,
                     )
@@ -948,15 +1012,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_controls_say_what_they_do() {
-        assert_eq!(capture_control(CaptureState::On).0, "Pause");
+    fn the_view_says_why_it_lists_nothing() {
         assert_eq!(
-            capture_control(CaptureState::Paused),
-            ("Resume", Glyph::ActionRun, true)
+            empty_note(None, true, CaptureState::On),
+            "No entries match. Try another search or type."
         );
-        assert_eq!(capture_control(CaptureState::Off).0, "Turn on");
-        assert_eq!(placeholder(1), "Search 1 item…");
-        assert_eq!(placeholder(3), "Search 3 items…");
+        assert!(empty_note(None, false, CaptureState::Paused).contains("paused"));
+        assert!(empty_note(None, false, CaptureState::On).starts_with("Nothing copied yet"));
+        assert_eq!(
+            empty_note(Some("Cannot read"), false, CaptureState::On),
+            "Cannot read"
+        );
+        assert_eq!(PLACEHOLDER, "Type to filter entries…");
+        let labels: Vec<String> = type_choices()
+            .into_iter()
+            .map(|c| c.label.to_string())
+            .collect();
+        assert_eq!(labels, ["All Types", "Text", "Links", "Colors"]);
     }
 
     #[cfg(not(target_os = "macos"))]

@@ -2,12 +2,19 @@
 
 Added for [#35](https://github.com/hoangvu12/pane/issues/35) (Windows):
 US65, US66, US70, US71; T10, T21, T22; contributions to G5 and G7, not
-claims that they pass. Once the user turns it on, Pane keeps the text they
-copy on this computer, and the **Clipboard History** default extension lists
-it, newest first; Enter on an item pastes it, and its other actions copy
-or delete it (#150). It starts
-off, can be paused, resumed and turned off again, and disabling the
-extension stops it too.
+claims that they pass. Pane keeps the text the user copies on this
+computer, and the **Clipboard History** default extension lists it, newest
+first; Enter on an item pastes it, and its other actions copy or delete it
+(#150). Since [#166](https://github.com/hoangvu12/pane/issues/166) it
+records **from the first start**, with no step to turn it on
+([ADR 0042](adr/0042-clipboard-history-records-from-the-first-start.md),
+amending ADR 0020): recording can be paused and resumed, disabling the
+extension stops all observation, copies an application marks as concealed
+are skipped as before, and the user can name **Disabled Applications**
+whose copies are never recorded. Its view looks like Raycast's: a type
+dropdown at the search field's right, the records grouped by day, and the
+selected record's Information beside them; its controls are in the Actions
+panel and on the extension's Settings page.
 [#36](https://github.com/hoangvu12/pane/issues/36) added expiry and the
 remaining deletion controls (US67, US68, US69; T10, T21; G5, again
 contributions): items are kept for 7 days unless the user chooses another
@@ -18,9 +25,10 @@ of them with history turned off can be deleted ([Deleting](#deleting)).
 adapter and [#37](https://github.com/hoangvu12/pane/issues/37) the macOS
 (pasteboard) adapter, so the package declares Windows, macOS and Linux,
 the three systems with an adapter. The architecture is recorded in
-[ADR 0020](adr/0020-host-keeps-clipboard-history-for-an-extension.md)
-and, for expiry, [ADR 0023](adr/0023-host-expires-clipboard-history-by-its-own-clock.md)
-(both proposed).
+[ADR 0020](adr/0020-host-keeps-clipboard-history-for-an-extension.md),
+for expiry [ADR 0023](adr/0023-host-expires-clipboard-history-by-its-own-clock.md)
+(both proposed), and for recording from the first start
+[ADR 0042](adr/0042-clipboard-history-records-from-the-first-start.md).
 
 ## Where it lives
 
@@ -34,7 +42,11 @@ and, for expiry, [ADR 0023](adr/0023-host-expires-clipboard-history-by-its-own-c
   [extension data](extension-data.md) whatever the extension does.
 - **Default extension**, [`guests/clipboard-history`](../guests/clipboard-history)
   (Rust), package [`guests/packages/clipboard-history`](../guests/packages/clipboard-history):
-  its command, "Clipboard History", shows the controls and the kept items.
+  its command, "Clipboard History", which Pane draws in its own split view
+  ([Behavior](#behavior)); its own list (what a copy installed from
+  another source shows) is Pause or Resume Recording and the kept items.
+  Its `pane.json` declares the three preferences its Settings page shows
+  ([Settings](#settings)).
   It declares the three systems with an adapter
   (`"platforms": ["windows", "macos", "linux"]`), so its command runs
   wherever Pane runs. Rust commands use the import through
@@ -43,9 +55,12 @@ and, for expiry, [ADR 0023](adr/0023-host-expires-clipboard-history-by-its-own-c
   ([`guests/js/clipboard.d.ts`](../guests/js/clipboard.d.ts)), and only
   then, as for `files`. The samples
   [`sample-clipboard-js`](../guests/sample-clipboard-js) and
-  [`sample-clipboard-ts`](../guests/sample-clipboard-ts) implement the same
-  command in JavaScript and TypeScript, and the launcher tests run the same
-  checks on all three.
+  [`sample-clipboard-ts`](../guests/sample-clipboard-ts) implement the
+  whole contract's controls in their own lists (turning on, retention,
+  exclusions, clearing, recent deletion, turning off and deleting) in
+  JavaScript and TypeScript, and the launcher tests run the contract's
+  checks on both; a sample's history starts off, as every package's but
+  Pane's own does.
 - **System adapter** behind one small trait
   ([`pane_core::clipboard`](../crates/pane-core/src/clipboard.rs)), chosen
   by `clipboard::native()`: the Windows listener, the Linux watcher of the
@@ -62,39 +77,81 @@ installed from its folder (`pane --install target/guests/packages/clipboard-hist
 
 ## Behavior
 
-The command's rows, in order:
+Pane's own Clipboard History opens in its split view (#102), as
+Raycast's does (#166):
 
-| Row | Enter |
-| --- | --- |
-| "Turn on clipboard history" (off), "Pause clipboard history" (on) or "Resume clipboard history" (paused), subtitled with the state, the number kept and, if Pane cannot watch the clipboard, why | turns it on, pauses or resumes it; each row does only that, so pressing it again before the command is opened anew changes nothing more |
-| "Turn off clipboard history", while on or paused | turns it off: nothing is kept and Pane stops watching for it; the kept items stay until cleared (or expire) |
-| "Keep items for 7 days" (the retention now), subtitled "Older items are deleted, also while Pane is stopped or the extension is disabled · Enter changes it" | a form choosing 1 hour, 1 day, 7 days, 30 days or 90 days, listing the retention now first, which is chosen when it opens, so submitting it unchanged (Enter twice) changes nothing; items already older are deleted at once ("Items are kept for 1 hour; deleted 1 older item") |
-| "Exclude a program" | a form taking a program's file name, such as `KeePass.exe` |
-| "Stop excluding keepass.exe", one per excluded program | removes the exclusion |
-| "Clear clipboard history", while items are kept | deletes every kept item; whether history is kept does not change |
-| "Turn off and delete clipboard history", while items are kept and history is on or paused | turns history off and deletes every kept item at once ("Clipboard history is off; deleted 2 kept items"): the spec's **Disable and delete history** |
-| "Delete recent items", while items are kept | a form choosing the last 15 minutes, hour or day; deletes the items copied then ("Deleted 2 kept items") |
-| One row per kept item, newest first: its first line with content (at most 80 characters), subtitled "5 min ago · from notepad.exe · 2 lines · Enter pastes it" | its actions (#150), in place of #36's "Copy it again / Delete it" form: **Paste** (Enter) pastes it into the application that was in front before Pane, which closes the window, or, where Pane cannot paste yet (#125), copies it again instead, closes the window and shows "Copied — paste is not available here yet" in a HUD; **Copy** (Ctrl+Enter) puts its text on the clipboard again, closes the window and shows "Copied to Clipboard" (the copy is a change like any other, so it moves to the front); **Delete** (Ctrl+Shift+Enter), destructive and last, deletes that item alone ("Deleted the kept item"), or says "That item is no longer kept" |
-| "Nothing kept yet", while on and empty | nothing |
+- **The header**: the back button, the search field ("Type to filter
+  entries…", matching the text and the program it was copied from), with
+  no badge or chip on it, and a **type dropdown** at its right: All Types,
+  Text, Links, Colors. Links and colours are text Pane recognizes as one
+  URL (`https://…`, `mailto:…`, `www.…`) or one colour value (`#rgb`,
+  `#rrggbb`, `#rrggbbaa`, `rgb(…)`, `hsl(…)`), the whole text trimmed; Text
+  keeps them too. Images and Files join the dropdown once the history keeps
+  them ([#167](https://github.com/hoangvu12/pane/issues/167)).
+- **The list**: the kept records, newest first, grouped by local day:
+  Today, Yesterday, then each earlier day by its date ("Thursday, Oct 1";
+  "Wednesday, Dec 31, 2025" for another year). A row shows the first line
+  of text and the time (today's and yesterday's as 14:02, the week
+  before's as Thu, older ones as Sep 28).
+- **The detail**: the selected record's text, as it was copied, over its
+  **Information**: Source (the program's name, and its icon where the
+  system gave its path, as Windows does), Type (Text, Link, Color),
+  Characters, and Copied ("Today at 14:02", "Yesterday at 23:59", "Thursday
+  at 09:00", "Sep 28 at 16:12").
+- **The footer**: the command's chip on the left (or the outcome of what
+  was just done, until the user moves on), then Paste and Actions.
 
-The rows are the command's view when it opens: after an action the status
-line answers, and the rows change the next time the command is opened.
+Its keys are the kept items' actions (#150): **Enter** (the footer's
+Paste) pastes the selected record into the application in front through
+Pane's system, closing the window, or where Pane cannot paste yet copies
+it through the history's own copy and shows "Copied — paste is not
+available here yet"; **Ctrl+Enter** (Copy) copies it again, closes the
+window and shows "Copied to Clipboard" in a HUD, as every Copy action
+does; **Ctrl+D** (Delete) deletes it. **Ctrl+K** (the footer's Actions)
+opens the Actions panel: the record's Paste, Copy to Clipboard and Delete
+Entry; Pause Recording (or Resume Recording) and Clear History…, which
+asks first ("Clear Clipboard History?") and deletes every record while
+recording goes on; Keep History For (1 Hour, 1 Day, 7 Days, 30 Days, 90
+Days, the one in force marked current); and Disabled Applications…, which
+opens the extension's page in Settings. Each revalidates the reading
+first (`Launcher::paste_clipboard_record`, `copy_clipboard_record`,
+`delete_clipboard_record`, `set_clipboard_capture`,
+`set_clipboard_retention`, `clear_clipboard_history`). The command's own
+management list (turn on, retention and exclusion forms, clearing rows) is
+gone.
 
-Pane's own Clipboard History opens in its split view (#102), the records
-beside a preview; its keys are the kept items' actions (#150): **Enter**
-(the footer's Paste) pastes the selected record into the application in
-front through Pane's system, closing the window, or where Pane cannot
-paste yet copies it through the history's own copy and shows "Copied —
-paste is not available here yet"; **Ctrl+Enter** (Copy) copies it again,
-closes the window and shows "Copied to Clipboard" in a HUD, as every Copy
-action does; **Ctrl+D** (Delete) deletes it. Each revalidates the
-reading first (`Launcher::paste_clipboard_record`,
-`copy_clipboard_record`, `delete_clipboard_record`). Manage (Ctrl+K)
-shows the rows above.
+## Settings
 
-- **Off until turned on.** A new package, and one never turned on, keeps
-  nothing and Pane does not watch the clipboard at all: no listener is
-  registered with the system. Turning it on starts the watch at once.
+The extension's page in Settings shows three preferences, which its
+`pane.json` declares and Pane's [preferences](../crates/pane-core/src/preferences.rs)
+controls draw, but whose values are the history's own state, read from it
+and written to it by the host (`launcher::clipboard_settings`), so the
+page, the Actions panel and what the host honours never disagree:
+
+| Preference | Control | Is |
+| --- | --- | --- |
+| Keep History For (`keepHistoryFor`) | 1 Hour, 1 Day, 7 Days, 30 Days, 90 Days | the retention ([Expiry](#expiry)) |
+| Recording (`pauseRecording`) | a switch, "Pause Recording" | paused (or off) while on; recording while off |
+| Disabled Applications (`disabledApplications`) | the applications' file names, separated by commas, and "Add…", the system's application picker, which adds the chosen application's file name | the programs whose copies are not recorded ([What is kept](#behavior)) |
+
+`applications` is a preference type of its own (#166): a list of
+applications by their file names. The page's card also has **Clear
+history**, an operation of the extension (the extension list's
+`clear-clipboard-history:<identity key>` row), which asks first, as
+clearing a cache does, and deletes every kept item. Only Pane's registered
+Clipboard History is so: another package declaring preferences of these
+names keeps them as settings. A disabled extension's history cannot be
+changed from its page until it is enabled again.
+
+- **Recording from the first start.** Pane's own Clipboard History records
+  as soon as it is installed and enabled: while `clipboard-history.json`
+  holds no history for it, it is on, and Pane watches the clipboard. Any
+  other package that uses the capability, and a copy of this package
+  installed from another source, starts off and records once it is turned
+  on (`set-capture`). Pausing it stops the watch at once; paused, it stays
+  paused across restarts (the file says so), and so does a history turned
+  off through the contract. Uninstalling it and deleting its saved data
+  forgets that, so a reinstall records again.
 - **Watched exactly while kept.** Pane watches the clipboard while at least
   one installed package's history is on and the package runs (it is enabled
   and not [paused](pausing.md) after a failure). Pausing the history,
@@ -142,10 +199,13 @@ shows the rows above.
     on Linux never: [the X11 clipboard has no such
     formats](#sensitive-markers), so only an excluded program keeps a
     marked copy out);
-  - not copied from an excluded program, matched by the owning process's
-    file name, ignoring case, with or without its extension (`KeePass`
-    excludes `KeePass.exe`) — where the system names the owner: on
-    Windows the process whose window owns the clipboard, on Linux the
+  - not copied from a disabled application (the contract's excluded
+    programs), matched by the owning program's file name, ignoring case,
+    with or without its extension (`KeePass` excludes `KeePass.exe`) —
+    where the system names the owner: on Windows the program of the
+    process whose window owns the clipboard (Pane keeps its full path,
+    which gives the Information its icon; a guest is given its file
+    name), on Linux the
     process the owner window's `_NET_WM_PID` names (the file `/proc`
     shows, or the process's name) or the window's `WM_CLASS` (usually the
     program's name), and a window that says neither has an unknown owner.
@@ -182,8 +242,9 @@ then Pane deletes it ([ADR 0023](adr/0023-host-expires-clipboard-history-by-its-
   so disabling and enabling the package, pausing, turning history off and
   on or restarting Pane does not give it more time. Copying the same text
   again keeps it as a new copy, with its new time.
-- **Configurable and finite.** The command offers 1 hour, 1 day, 7 days,
-  30 days and 90 days; the host accepts any time from 1 minute to 365 days
+- **Configurable and finite.** The Actions panel and the Settings page
+  offer 1 hour, 1 day, 7 days, 30 days and 90 days; the host accepts any
+  time from 1 minute to 365 days
   (`set-retention`), so history never grows without end. A shorter
   retention deletes the items already older at once; a longer one keeps
   the kept items, and those copied later, longer (what expired stays gone).
@@ -197,10 +258,10 @@ then Pane deletes it ([ADR 0023](adr/0023-host-expires-clipboard-history-by-its-
 
 | Control | Deletes | Afterwards |
 | --- | --- | --- |
-| Enter on an item, "Delete it" | that item | history stays as it was |
-| "Delete recent items" | the items copied in the last 15 minutes, hour or day | history stays as it was |
-| "Clear clipboard history" | every item | history stays on (or paused): what is copied next is kept |
-| "Turn off and delete clipboard history" | every item | history is off: nothing more is kept, also after a restart, until it is turned on |
+| Delete Entry (Ctrl+D, or the Actions panel) | that item | history stays as it was |
+| A sample's "Delete recent items" (`delete-items`) | the items copied in the last 15 minutes, hour or day | history stays as it was |
+| Clear History (the Actions panel, or the Settings page's Clear history), once confirmed | every item | recording stays as it was: what is copied next is kept |
+| A sample's "Turn off and delete clipboard history" (`turn-off-and-clear`) | every item | history is off: nothing more is kept, also after a restart, until it is turned on |
 | Expiry | each item once its retention passed | unchanged |
 | Uninstall and delete saved data, Delete retained data | every item and every choice | the package keeps nothing |
 
@@ -350,10 +411,28 @@ capture stays local by default all the same.
   reading the store, and ending with it. Tests wait for the expiry thread
   by its own word (a sweep begun after the last change ended), never by
   sleeping or polling.
+- Pane's own Clipboard History through the launcher
+  ([`crates/pane-core/tests/clipboard_view.rs`](../crates/pane-core/tests/clipboard_view.rs),
+  #166), acquired as the default extension over a fake system clipboard:
+  a fresh data folder records the first copy with no turn-on, disabling
+  stops it, and paused it stays paused across a restart; concealed copies
+  and copies from a disabled application (by its file name or its path)
+  are not recorded; the Settings page's preferences read and change the
+  history (pause, keep for 1 hour, disabled applications) and its Clear
+  history row asks, then clears; the Actions panel's entries, Clear
+  History asking first (dismissed, nothing changes); the type dropdown's
+  filters, the day groups with their dates and the Information. The
+  history store's unit tests: Pane's own history on while the file holds
+  none, and off or paused kept so. The window tests
+  ([`crates/pane/tests/window.rs`](../crates/pane/tests/window.rs)): no
+  badge or tabs, the dropdown filtering by type, the day sections and the
+  Information, the Actions panel pausing, resuming, copying, deleting and
+  clearing (after the confirmation).
 - Launcher public interface ([`crates/pane-core/tests/clipboard.rs`](../crates/pane-core/tests/clipboard.rs)),
-  with the real Clipboard History guest and the JavaScript and TypeScript
-  samples alike, and a fake system clipboard (a copy of each package
-  declaring every system): nothing watched or kept until turned on, then
+  with the JavaScript and TypeScript samples, and a fake system clipboard
+  (a copy of each package declaring every system), and the Rust package's
+  own list (a copy: Resume Recording, its items, Pause Recording): for the
+  samples, nothing watched or kept until turned on, then
   kept, on disk too with mode 0600; markers, blank, other and long content;
   excluding and including a program through the form; pause and resume,
   also across a restart; turning it off keeping the items; a read still
@@ -378,7 +457,8 @@ capture stays local by default all the same.
   extension.
 - Windows adapter ([`crates/pane-core/tests/clipboard_adapter.rs`](../crates/pane-core/tests/clipboard_adapter.rs),
   Windows only) against the real clipboard, with text only the test puts
-  there: plain text reported with its owner (the test's own process), each
+  there: plain text reported with its owner (the test's own program, by
+  its full path), each
   of the four markers read and withholding the text, `CanIncludeInClipboardHistory`
   1 allowing it, a written text reported, and nothing once the watch is
   dropped. It **replaces what is on the clipboard** and does not put it
@@ -458,7 +538,8 @@ capture stays local by default all the same.
   the first pasteboard item's text is read (a copy of several files that
   offers their paths as text keeps the first), and no program can be
   excluded, because the pasteboard names none.
-- Text only; no images, files or rich text, and no text longer than 32 KiB.
+- Text only; no images, files or rich text, and no text longer than 32 KiB
+  (#167 adds images and files).
   On Linux only `UTF8_STRING` and `STRING` (Latin-1) are read: a copy
   offered only as `COMPOUND_TEXT` or a `text/plain` MIME target is kept as
   no text, and text is read lossily and ends at its first NUL, as the
@@ -474,12 +555,21 @@ capture stays local by default all the same.
   ahead is kept until then, and setting the time back keeps items longer.
 - Paste is not available on any system yet (#125 brings it to Windows),
   so Enter copies the item and says so; the native smokes still drive
-  #36's form and need updating to the actions (#150 did not run them).
+  the turn-on row and #36's forms, which #166 removed from Pane's own
+  Clipboard History: they need updating to its recording from the first
+  start and its Actions panel (neither #150 nor #166 ran them).
+- Recording from the first start is Pane's own Clipboard History's alone;
+  the contract's documentation (`wit/clipboard.wit`,
+  `guests/js/clipboard.d.ts`) still says every package starts off, which
+  holds for every other package.
+- A link or colour is recognized from the whole text only: a sentence
+  holding a URL is text.
 - A disabled package's history cannot be deleted without enabling it
   (uninstalling, or its expiry, can); a retained one has Delete retained
   data.
-- The command's rows are read when it opens; they do not change while it is
-  open, even as text is copied.
+- A sample's rows are read when its command opens; they do not change
+  while it is open, even as text is copied. Pane's own view looks again
+  every second.
 - More than one package may keep history; each keeps its own, and Pane
   watches once for all of them.
 - The files are replaced atomically but not locked (as every kind of

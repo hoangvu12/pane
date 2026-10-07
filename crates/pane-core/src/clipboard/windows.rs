@@ -391,8 +391,9 @@ fn read(window: HWND, formats: Formats) -> Result<(u32, Observation), String> {
     Ok((sequence, observation))
 }
 
-/// The file name of the process whose window owns the clipboard, if the
-/// system says.
+/// The full path of the program of the process whose window owns the
+/// clipboard, if the system says: its file name decides an exclusion, and
+/// the path lets the history show the program's icon.
 fn owner_program() -> Option<String> {
     // SAFETY: no arguments.
     let owner = unsafe { GetClipboardOwner() }.ok()?;
@@ -423,7 +424,7 @@ fn owner_program() -> Option<String> {
     let _ = unsafe { CloseHandle(handle) };
     queried.ok()?;
     let path = String::from_utf16_lossy(&name[..length as usize]);
-    path.rsplit(['\\', '/']).next().map(str::to_owned)
+    (!path.trim().is_empty()).then_some(path)
 }
 
 /// Puts `text` on the clipboard, replacing what was there, with each of

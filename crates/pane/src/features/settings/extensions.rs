@@ -394,6 +394,8 @@ pub(crate) fn gather(
                     // Shown while the extension has answers remembered
                     // for "Don't ask again" (#146).
                     "reset-confirmations" => "Reset confirmations".to_owned(),
+                    // Pane's own Clipboard History (#166).
+                    "clear-clipboard-history" => "Clear history".to_owned(),
                     // The title without the extension's name.
                     _ => row
                         .title
@@ -816,19 +818,29 @@ fn preference_row(
         | PreferenceKind::Password
         | PreferenceKind::File
         | PreferenceKind::Folder
-        | PreferenceKind::Application => {
+        | PreferenceKind::Application
+        | PreferenceKind::Applications => {
             let well = fields
                 .get(&field_key(package, &key))
                 .map(|input| text_well(field, input, theme));
             let choose = matches!(
                 preference.kind,
-                PreferenceKind::File | PreferenceKind::Folder | PreferenceKind::Application
+                PreferenceKind::File
+                    | PreferenceKind::Folder
+                    | PreferenceKind::Application
+                    | PreferenceKind::Applications
             )
             .then(|| {
                 let selector = format!("preference-choose-{key}");
+                // A list's picker adds an application to it.
+                let label = if preference.kind == PreferenceKind::Applications {
+                    "Add…"
+                } else {
+                    "Choose…"
+                };
                 let button = controls::ghost_button(
                     SharedString::from(selector.clone()),
-                    "Choose…",
+                    label,
                     true,
                     theme,
                 )
@@ -1241,7 +1253,7 @@ fn choose_path(
 ) {
     let pick = match kind {
         PreferenceKind::Folder => PathKind::Folder,
-        PreferenceKind::Application => PathKind::Application,
+        PreferenceKind::Application | PreferenceKind::Applications => PathKind::Application,
         _ => PathKind::File,
     };
     let picked = cx.prompt_for_paths(path_prompt(pick));
@@ -1255,15 +1267,52 @@ fn choose_path(
         };
         let path = path.to_string_lossy().into_owned();
         this.update(cx, |this, cx| {
-            if let Some((input, _)) = this.extensions.fields.get(&field_key(&package, &key)) {
-                let input = input.clone();
-                input.update(cx, |input, cx| input.emplace(&path, cx));
+            let field = this
+                .extensions
+                .fields
+                .get(&field_key(&package, &key))
+                .map(|(input, _)| input.clone());
+            // A list of applications gains the application's file name;
+            // any other path preference becomes the path.
+            let value = if kind == PreferenceKind::Applications {
+                let file = std::path::Path::new(&path)
+                    .file_name()
+                    .map_or_else(|| path.clone(), |name| name.to_string_lossy().into_owned());
+                let listed = field
+                    .as_ref()
+                    .map(|input| input.read(cx).as_str().trim().to_owned())
+                    .unwrap_or_default();
+                appended(&listed, &file)
+            } else {
+                path
+            };
+            if let Some(input) = field {
+                input.update(cx, |input, cx| input.emplace(&value, cx));
             }
-            save_preference(this, &package, &key, &path, cx);
+            save_preference(this, &package, &key, &value, cx);
         })
         .ok();
     })
     .detach();
+}
+
+/// The list of applications `listed` (file names, separated by commas)
+/// with `file` added at its end, unless it names it already (ignoring
+/// case).
+fn appended(listed: &str, file: &str) -> String {
+    let names: Vec<&str> = listed
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .collect();
+    if names.iter().any(|name| name.eq_ignore_ascii_case(file)) {
+        return names.join(", ");
+    }
+    names
+        .into_iter()
+        .chain(std::iter::once(file))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The system's picker for a path of `kind`, as a file, folder or
@@ -1353,4 +1402,23 @@ fn open_in_launcher(id: &str, cx: &mut Context<SettingsWindow>) {
             .ok();
     }
     cx.notify();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An applications list's picker adds the application once (#166).
+    #[test]
+    fn an_application_is_added_to_a_list_once() {
+        assert_eq!(appended("", "KeePass.exe"), "KeePass.exe");
+        assert_eq!(
+            appended("KeePass.exe, ", "1Password.exe"),
+            "KeePass.exe, 1Password.exe"
+        );
+        assert_eq!(
+            appended("KeePass.exe,1Password.exe", "keepass.EXE"),
+            "KeePass.exe, 1Password.exe"
+        );
+    }
 }

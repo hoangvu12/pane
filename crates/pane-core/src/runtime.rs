@@ -2375,7 +2375,12 @@ impl clipboard_history::Host for GuestState {
                 text: item.text,
                 copied_at: item.copied_at,
                 age_seconds: now.saturating_sub(item.copied_at) / 1000,
-                source: item.source,
+                // The program's file name, as the contract says, also where
+                // Pane keeps its path (Windows).
+                source: item
+                    .source
+                    .as_deref()
+                    .map(|source| clipboard::program_file_name(source).to_owned()),
             })
             .collect())
     }

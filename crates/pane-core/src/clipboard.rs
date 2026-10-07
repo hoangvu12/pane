@@ -1,7 +1,10 @@
 //! Clipboard history: text the user copies, which Pane keeps for a package
-//! that asked for it through `pane:extension/clipboard-history`, only after
-//! the user turned it on, and never while it is paused or the package does
-//! not run (disabled, paused after a failure, uninstalled).
+//! that asked for it through `pane:extension/clipboard-history`, while its
+//! recording is on, and never while it is paused or the package does not
+//! run (disabled, paused after a failure, uninstalled). Pane's own
+//! Clipboard History default extension records from the first start; any
+//! other package's recording is off until the package turns it on (see
+//! `history::records_by_default`).
 //!
 //! What is kept, and what is not, is decided here, the same on every system
 //! ([`accept`]): only plain text ([`Content::Text`]) of at most
@@ -138,8 +141,11 @@ pub enum Content {
 pub struct Observation {
     pub content: Content,
     pub markers: Markers,
-    /// The file name of the program that owns the clipboard, such as
-    /// `notepad.exe`, if the system says which it is.
+    /// The program that owns the clipboard, if the system says which it
+    /// is: its full path where the system gives one (Windows:
+    /// `C:\Windows\notepad.exe`), else its file name or process name
+    /// (`notepad.exe`). [`program_file_name`] reads the file name of
+    /// either.
     pub source: Option<String>,
 }
 
@@ -215,16 +221,27 @@ impl ProgramName {
         &self.0
     }
 
-    /// Whether the program `source` (a file name) is this one: the same
-    /// file name, or the same name without its extension, ignoring case,
-    /// so `KeePass` excludes `KeePass.exe`.
+    /// Whether the program `source` (a file name, or a path, whose file
+    /// name counts) is this one: the same file name, or the same name
+    /// without its extension, ignoring case, so `KeePass` excludes
+    /// `KeePass.exe` and `C:\Program Files\KeePass\KeePass.exe`.
     pub fn names(&self, source: &str) -> bool {
-        let source = source.trim().to_lowercase();
+        let source = program_file_name(source).trim().to_lowercase();
         let stem = source
             .rsplit_once('.')
             .map_or(source.as_str(), |(stem, _)| stem);
         source == self.0 || stem == self.0
     }
+}
+
+/// The file name of the program `source` names: the last part of a path
+/// (an observation's source is the program's path where the system gives
+/// one, as Windows does), or `source` itself.
+pub fn program_file_name(source: &str) -> &str {
+    source
+        .rsplit(['\\', '/'])
+        .find(|part| !part.is_empty())
+        .unwrap_or(source)
 }
 
 impl From<String> for ProgramName {
@@ -244,7 +261,8 @@ impl From<ProgramName> for String {
 #[serde(rename_all = "lowercase")]
 pub enum CaptureState {
     /// Never turned on, or turned off: nothing is kept. Every package
-    /// starts so.
+    /// starts so, except Pane's own Clipboard History, which starts
+    /// [`CaptureState::On`] (see `history::records_by_default`).
     #[default]
     Off,
     /// Text copied is kept while the package runs.
@@ -809,6 +827,20 @@ mod tests {
             Err(Skip::Excluded(ProgramName::from("1password".to_string())))
         );
         assert_eq!(accept(&from("note", "notepad.exe"), &excluded), Ok("note"));
+        // A program named by its path (Windows names the owner so, #166)
+        // is matched by its file name.
+        assert_eq!(
+            accept(
+                &from(
+                    "secret",
+                    r"C:\Program Files\KeePass Password Safe 2\KeePass.exe"
+                ),
+                &excluded
+            ),
+            Err(Skip::Excluded(ProgramName::from("keepass.exe".to_string())))
+        );
+        assert_eq!(program_file_name("/usr/bin/keepassxc"), "keepassxc");
+        assert_eq!(program_file_name("notepad.exe"), "notepad.exe");
         // A program the system does not name is not excluded.
         assert_eq!(accept(&text("note"), &excluded), Ok("note"));
         // Only the whole name counts.

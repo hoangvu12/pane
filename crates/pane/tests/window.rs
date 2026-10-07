@@ -3060,10 +3060,14 @@ fn a_window_that_stops_drawing_settles_its_arrival_on_the_next_frame_it_draws(
     assert_eq!(settle_frames(cx), 0, "the shown frame asked for nothing");
 }
 
-/// Pane's Clipboard History in the split view (#102), through the window:
-/// the real default extension from `cargo xtask guests`, acquired from an
-/// artifact source on 127.0.0.1, over a fake system clipboard that never
-/// touches the real one.
+/// Pane's Clipboard History in the split view (#102, #166), through the
+/// window: the real default extension from `cargo xtask guests`, acquired
+/// from an artifact source on 127.0.0.1, over a fake system clipboard that
+/// never touches the real one. It records from the first start; the search
+/// field has no badge and no tabs follow it, a type dropdown at its right
+/// filters by kind, rows are grouped by day, the detail shows the record's
+/// Information, and the Actions panel (Ctrl+K) holds the record's and the
+/// history's actions.
 mod clipboard_split {
     use std::fs;
     use std::sync::{Arc, Mutex};
@@ -3199,7 +3203,8 @@ mod clipboard_split {
         }
 
         /// Pane with Clipboard History acquired as its default extension,
-        /// history on and `texts` copied in order (the last newest).
+        /// recording from the first start, and `texts` copied in order (the
+        /// last newest), a minute apart.
         fn launcher(&self, cx: &mut TestAppContext, texts: &[&str]) -> Launcher {
             cx.executor().allow_parking();
             let launcher = Launcher::with_packages(
@@ -3218,11 +3223,6 @@ mod clipboard_split {
             .with_clipboard(Arc::new(self.clipboard.clone()));
             cx.foreground_executor()
                 .block_on(launcher.acquire_defaults());
-            open_command(cx, &launcher, COMMAND);
-            let view = launcher.clipboard_history().expect("the history is shown");
-            launcher
-                .set_clipboard_capture(&view, CaptureState::On)
-                .unwrap();
             for text in texts {
                 assert!(self.clipboard.copy(text, Some("notepad.exe")));
                 self.clock.advance(std::time::Duration::from_secs(60));
@@ -3320,8 +3320,8 @@ mod clipboard_split {
         click(cx, "clip-first");
         settle(&window, cx);
         assert!(world.clipboard.written().is_empty(), "a click only selects");
-        // Paste is the primary action, beside Copy and Delete.
-        for button in ["clipboard-paste", "clipboard-copy", "clipboard-delete"] {
+        // Paste is the primary action, beside Actions.
+        for button in ["clipboard-paste", "clipboard-actions"] {
             assert!(cx.debug_bounds(button).is_some(), "{button} is drawn");
         }
 
@@ -3340,8 +3340,9 @@ mod clipboard_split {
 
     /// Clipboard History draws no heading line above its content (#162):
     /// the footer's left names the command by its icon and title, as
-    /// Raycast's does, and when and where the selected record was copied
-    /// is said under its preview. Its day's section label stays.
+    /// Raycast's does, and when the selected record was copied is said in
+    /// its Information under the preview (#166). Its day's section label
+    /// stays.
     #[gpui::test]
     fn the_footer_names_clipboard_history_and_no_heading_is_drawn(cx: &mut TestAppContext) {
         let world = World::new();
@@ -3360,8 +3361,8 @@ mod clipboard_split {
             "the command's own icon, drawn as its package ships it"
         );
         assert!(
-            cx.debug_bounds("clipboard-preview-copied").is_some(),
-            "when and where it was copied, under the preview"
+            cx.debug_bounds("clipboard-info-Copied").is_some(),
+            "when it was copied, in the Information under the preview"
         );
     }
 
@@ -3380,7 +3381,7 @@ mod clipboard_split {
     }
 
     #[gpui::test]
-    fn the_keys_move_the_selection_and_the_footer_copies_and_deletes(cx: &mut TestAppContext) {
+    fn the_keys_move_the_selection_and_the_actions_copy_and_delete(cx: &mut TestAppContext) {
         let world = World::new();
         let launcher = world.launcher(cx, &["first", "second", "third"]);
         let (window, cx) = open_history(cx, launcher);
@@ -3391,8 +3392,11 @@ mod clipboard_split {
         cx.simulate_keystrokes("down down down up ctrl-d");
         settle(&window, cx);
         assert_eq!(listed(&window, cx), ["third", "first"]);
-        // The footer's Delete does the same.
-        click(cx, "clipboard-delete");
+        // The Actions panel's Delete Entry does the same.
+        cx.simulate_keystrokes(super::OPEN_ACTIONS);
+        settle(&window, cx);
+        assert!(cx.debug_bounds("actions-panel").is_some());
+        click(cx, "action-Delete Entry");
         settle(&window, cx);
         assert_eq!(listed(&window, cx), ["first"]);
 
@@ -3408,7 +3412,9 @@ mod clipboard_split {
         });
         settle(&window, cx);
         assert!(split_shown(&window, cx), "the view is restored");
-        click(cx, "clipboard-copy");
+        cx.simulate_keystrokes(super::OPEN_ACTIONS);
+        settle(&window, cx);
+        click(cx, "action-Copy to Clipboard");
         copied(&window, cx);
         assert_eq!(world.clipboard.written(), ["first", "first"]);
     }
@@ -3429,7 +3435,7 @@ mod clipboard_split {
         assert!(cx.debug_bounds("clipboard-empty").is_some());
         assert!(cx.debug_bounds("clipboard-preview-text").is_none());
         assert!(
-            cx.debug_bounds("clipboard-copy").is_none(),
+            cx.debug_bounds("clipboard-paste").is_none(),
             "no primary action"
         );
         cx.simulate_keystrokes("enter");
@@ -3447,7 +3453,7 @@ mod clipboard_split {
     }
 
     #[gpui::test]
-    fn the_capture_button_pauses_and_resumes_the_actual_history(cx: &mut TestAppContext) {
+    fn the_actions_panel_pauses_and_resumes_recording(cx: &mut TestAppContext) {
         let world = World::new();
         let launcher = world.launcher(cx, &["kept"]);
         let (window, cx) = open_history(cx, launcher);
@@ -3459,8 +3465,22 @@ mod clipboard_split {
                     .map(|view| view.capture)
             })
         };
+        assert_eq!(capture(&window, cx), Some(CaptureState::On));
 
-        click(cx, "clipboard-capture");
+        cx.simulate_keystrokes(super::OPEN_ACTIONS);
+        settle(&window, cx);
+        // The history's own actions, beside the record's.
+        for entry in [
+            "action-Paste",
+            "action-Copy to Clipboard",
+            "action-Delete Entry",
+            "action-Pause Recording",
+            "action-Clear History…",
+            "action-Disabled Applications…",
+        ] {
+            assert!(cx.debug_bounds(entry).is_some(), "{entry} is listed");
+        }
+        click(cx, "action-Pause Recording");
         settle(&window, cx);
         assert_eq!(capture(&window, cx), Some(CaptureState::Paused));
         assert!(
@@ -3468,37 +3488,105 @@ mod clipboard_split {
             "nothing is watched"
         );
 
-        click(cx, "clipboard-capture");
+        cx.simulate_keystrokes(super::OPEN_ACTIONS);
+        settle(&window, cx);
+        click(cx, "action-Resume Recording");
         settle(&window, cx);
         assert_eq!(capture(&window, cx), Some(CaptureState::On));
         assert!(world.clipboard.copy("again", None));
     }
 
+    /// Clear History asks first, over the view, then deletes every record.
     #[gpui::test]
-    fn manage_routes_to_the_commands_own_controls_and_escape_comes_back(cx: &mut TestAppContext) {
+    fn clear_history_asks_then_clears(cx: &mut TestAppContext) {
         let world = World::new();
-        let launcher = world.launcher(cx, &["kept"]);
+        let launcher = world.launcher(cx, &["one", "two"]);
         let (window, cx) = open_history(cx, launcher);
-
         cx.simulate_keystrokes(super::OPEN_ACTIONS);
         settle(&window, cx);
-        assert!(!split_shown(&window, cx));
-        // The extension's own rows: retention, exclusions, clearing.
-        for row in [
-            "row-Exclude a program",
-            "row-Clear clipboard history",
-            "row-Turn off and delete clipboard history",
-        ] {
-            assert!(cx.debug_bounds(row).is_some(), "{row} is drawn");
-        }
-
-        cx.simulate_keystrokes("escape");
+        click(cx, "action-Clear History…");
         settle(&window, cx);
-        assert!(split_shown(&window, cx), "Escape returns to the split view");
-        assert_eq!(
-            cx.read_entity(&window, |window, _| window.launcher().view().screen),
-            Screen::Command
+        assert!(cx.debug_bounds("confirmation").is_some(), "it asks first");
+        click(cx, "confirmation-primary");
+        settle(&window, cx);
+        assert!(listed(&window, cx).is_empty());
+        assert!(cx.debug_bounds("clipboard-empty").is_some());
+    }
+
+    /// No badge on the search field and no tabs under it (#166): the
+    /// footer names the command (#162), and the type dropdown at the
+    /// field's right keeps All Types, Text, Links or Colors.
+    #[gpui::test]
+    fn the_type_dropdown_filters_and_the_field_has_no_badge_or_tabs(cx: &mut TestAppContext) {
+        let world = World::new();
+        let launcher = world.launcher(cx, &["alpha", "https://example.com", "#ff8800"]);
+        let (window, cx) = open_history(cx, launcher);
+        for gone in [
+            "clipboard-tab-All",
+            "clipboard-tab-Text",
+            "clipboard-capture",
+        ] {
+            assert!(cx.debug_bounds(gone).is_none(), "{gone} is gone");
+        }
+        let lead = cx
+            .debug_bounds("footer-command")
+            .expect("the footer names the command");
+        let back = cx.debug_bounds("clipboard-back").expect("the back button");
+        assert!(
+            lead.origin.y > back.origin.y + back.size.height,
+            "the command is named in the footer, not on the search field"
         );
+        assert!(cx.debug_bounds("clipboard-type").is_some());
+
+        click(cx, "clipboard-type");
+        settle(&window, cx);
+        click(cx, "clipboard-type-links");
+        settle(&window, cx);
+        assert_eq!(
+            cx.read_entity(&window, |window, _| window.clipboard_filter()),
+            Some(pane_core::clipboard_view::ClipboardFilter::Links)
+        );
+        assert!(cx.debug_bounds("clip-https://example.com").is_some());
+        assert!(cx.debug_bounds("clip-alpha").is_none());
+        assert!(cx.debug_bounds("clip-#ff8800").is_none());
+
+        click(cx, "clipboard-type");
+        settle(&window, cx);
+        click(cx, "clipboard-type-colors");
+        settle(&window, cx);
+        assert!(cx.debug_bounds("clip-#ff8800").is_some());
+        assert!(cx.debug_bounds("clip-https://example.com").is_none());
+
+        click(cx, "clipboard-type");
+        settle(&window, cx);
+        click(cx, "clipboard-type-all");
+        settle(&window, cx);
+        for row in ["clip-alpha", "clip-https://example.com", "clip-#ff8800"] {
+            assert!(cx.debug_bounds(row).is_some(), "{row} is listed");
+        }
+    }
+
+    /// Rows are grouped by day, and the detail shows the selected record's
+    /// Information: Source, Type, Characters and Copied.
+    #[gpui::test]
+    fn rows_are_grouped_by_day_and_the_detail_shows_the_information(cx: &mut TestAppContext) {
+        let world = World::new();
+        let launcher = world.launcher(cx, &["yesterday's"]);
+        world.clock.advance(std::time::Duration::from_secs(86_400));
+        assert!(world.clipboard.copy("today's", Some("notepad.exe")));
+        let (window, cx) = open_history(cx, launcher);
+        assert!(cx.debug_bounds("section-Today").is_some());
+        assert!(cx.debug_bounds("section-Yesterday").is_some());
+        assert!(cx.debug_bounds("clipboard-information").is_some());
+        for row in [
+            "clipboard-info-Source",
+            "clipboard-info-Type",
+            "clipboard-info-Characters",
+            "clipboard-info-Copied",
+        ] {
+            assert!(cx.debug_bounds(row).is_some(), "{row} is shown");
+        }
+        settle(&window, cx);
     }
 
     #[gpui::test]
@@ -3516,7 +3604,7 @@ mod clipboard_split {
         let (window, cx) = open_launcher(cx, launcher);
         settle(&window, cx);
         assert!(!split_shown(&window, cx));
-        assert!(cx.debug_bounds("row-Turn on clipboard history").is_some());
+        assert!(cx.debug_bounds("row-Resume Recording").is_some());
         assert!(cx.debug_bounds("clipboard-list").is_none());
     }
 }

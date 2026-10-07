@@ -63,6 +63,7 @@ use gpui::{
 };
 use gpui_elements::editable_text::actions::DEFAULT_INPUT_CONTEXT;
 use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged, text_input};
+use pane_core::clipboard_view::{ClipboardAction, ClipboardActionItem};
 use pane_core::{
     Icon, ItemActions, KeyboardAction, OpenSubmenu, PinnedLayout, ResultAction, ResultActions,
     RowKind, Screen, SlotChange, SubmenuState,
@@ -257,6 +258,9 @@ enum Subject {
     Slot,
     /// The selected item of a command's list.
     Item,
+    /// Pane's own Clipboard History view: its selected record, and the
+    /// history (#166).
+    Clipboard,
 }
 
 impl Subject {
@@ -264,7 +268,7 @@ impl Subject {
     /// action.
     fn group(self) -> &'static str {
         match self {
-            Subject::Result | Subject::Item => PANE_GROUP,
+            Subject::Result | Subject::Item | Subject::Clipboard => PANE_GROUP,
             Subject::Slot => SLOT_GROUP,
         }
     }
@@ -279,6 +283,8 @@ pub(crate) enum EntryKind {
     Item(usize),
     /// The entry at this index of the submenu shown (#140).
     Entry(usize),
+    /// One of the Clipboard History view's actions (#166).
+    Clipboard(ClipboardAction),
     /// What a submenu says instead of entries: that it is loading, or why
     /// the command could not give them. It runs nothing, and the filter
     /// keeps it.
@@ -418,6 +424,55 @@ fn submenu_entries(submenu: &OpenSubmenu) -> Vec<PanelEntry> {
     }
 }
 
+/// The Clipboard History view's `actions` as the panel's entries (#166):
+/// Paste with the invoke binding's accent caps, Copy and Delete with the
+/// view's own keys, the rest under their sections.
+pub(crate) fn clipboard_entries(
+    actions: &[ClipboardActionItem],
+    invoke: &KeySequence,
+) -> Vec<PanelEntry> {
+    actions
+        .iter()
+        .map(|item| {
+            let (glyph, keys) = match item.action {
+                ClipboardAction::Paste => {
+                    (Glyph::ActionRun, Some((invoke.clone(), CapStyle::Accent)))
+                }
+                ClipboardAction::Copy => (
+                    Glyph::Clipboard,
+                    Some((
+                        crate::features::clipboard_history::copy_keys(),
+                        CapStyle::Regular,
+                    )),
+                ),
+                ClipboardAction::Delete => (
+                    Glyph::WindowClose,
+                    Some((
+                        crate::features::clipboard_history::delete_keys(),
+                        CapStyle::Regular,
+                    )),
+                ),
+                ClipboardAction::PauseRecording => (Glyph::Pause, None),
+                ClipboardAction::ResumeRecording => (Glyph::Record, None),
+                ClipboardAction::ClearHistory => (Glyph::Reset, None),
+                ClipboardAction::KeepFor(_) => (Glyph::Clock, None),
+                ClipboardAction::DisabledApplications => (Glyph::Shield, None),
+            };
+            PanelEntry {
+                kind: EntryKind::Clipboard(item.action),
+                label: item.label.clone(),
+                available: item.available,
+                destructive: item.destructive,
+                submenu: false,
+                section: item.section.clone().map(SharedString::from),
+                glyph,
+                icon: None,
+                keys,
+            }
+        })
+        .collect()
+}
+
 /// The entries whose label holds `query`, ignoring case and the spaces
 /// around it; all of them for a blank one. Filtering flattens the
 /// sections (see [`panel_children`]). A submenu's note stays.
@@ -550,6 +605,37 @@ impl LauncherWindow {
         }
     }
 
+    /// Opens the Actions panel of Pane's own Clipboard History view (#166)
+    /// for the record selected there (`selected`, its id and title), or
+    /// for the history with none: the record's actions and the history's.
+    pub(crate) fn open_clipboard_actions(
+        &mut self,
+        selected: Option<(String, String)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(view) = self.launcher.clipboard_history() else {
+            return;
+        };
+        let (target, title) = match selected {
+            Some((id, title)) => (id, title),
+            None => (String::new(), view.title.clone()),
+        };
+        let record = Some(target.as_str()).filter(|id| !id.is_empty());
+        let entries = clipboard_entries(&view.actions(record), &invoke_keys(cx));
+        self.open_panel(
+            Some(Opened {
+                target,
+                title,
+                kind: None,
+                subject: Subject::Clipboard,
+                entries,
+            }),
+            window,
+            cx,
+        );
+    }
+
     /// Opens the panel over `opened`, with focus in its search field.
     fn open_panel(&mut self, opened: Option<Opened>, window: &mut Window, cx: &mut Context<Self>) {
         let screen = self.launcher.screen();
@@ -661,6 +747,12 @@ impl LauncherWindow {
                     .filter(|live| live.target == opened.target)
                     .map(|live| item_entries(&live, &invoke)),
             },
+            // The history as it is now: a record deleted or expired behind
+            // the panel loses its own actions.
+            Subject::Clipboard => self.launcher.clipboard_history().map(|view| {
+                let record = Some(opened.target.as_str()).filter(|id| !id.is_empty());
+                clipboard_entries(&view.actions(record), &invoke)
+            }),
         };
         Some(live.unwrap_or_else(|| {
             opened
@@ -877,7 +969,7 @@ impl LauncherWindow {
                 self.close_actions(window, cx);
                 self.show_until_done(pending, window, cx);
             }
-            EntryKind::Result(_) | EntryKind::Note => {}
+            EntryKind::Result(_) | EntryKind::Clipboard(_) | EntryKind::Note => {}
         }
     }
 
@@ -897,6 +989,16 @@ impl LauncherWindow {
         };
         let action = match entry.kind {
             EntryKind::Result(action) => action,
+            // The Clipboard History view's own (#166): run on the record the
+            // panel opened for, which the core revalidates.
+            EntryKind::Clipboard(action) => {
+                if entry.available {
+                    self.close_actions(window, cx);
+                    let record = Some(target).filter(|id| !id.is_empty());
+                    self.run_clipboard_action(action, record, window, cx);
+                }
+                return;
+            }
             EntryKind::Item(_) | EntryKind::Entry(_) | EntryKind::Note => {
                 self.choose_item_entry(&target, &entry, window, cx);
                 return;
@@ -905,7 +1007,7 @@ impl LauncherWindow {
         let ready = match subject {
             Subject::Result => self.launcher.result_action_ready(&target, action),
             Subject::Slot => self.launcher.quick_slot_action_ready(&target, action),
-            Subject::Item => false,
+            Subject::Item | Subject::Clipboard => false,
         };
         if !ready {
             return;
@@ -1015,7 +1117,7 @@ impl LauncherWindow {
             .map(|submenu| submenu.title.clone())
             .or_else(|| opened.map(|opened| opened.title.clone()));
         let icon = opened
-            .filter(|opened| opened.subject != Subject::Item)
+            .filter(|opened| matches!(opened.subject, Subject::Result | Subject::Slot))
             .map(|opened| row_icon(&opened.target));
         let label = match (opened, &submenu) {
             (Some(opened), Some(submenu)) => {

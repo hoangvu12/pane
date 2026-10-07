@@ -58,6 +58,12 @@ impl Launcher {
             rows.push(row);
             entries.push(entry);
         }
+        // Pane's own Clipboard History's Clear History (#166): the card
+        // shows "Clear history" among its buttons.
+        for (row, entry) in self.clipboard_rows(state) {
+            rows.push(row);
+            entries.push(entry);
+        }
         for (row, entry) in self
             .network_rows(state)
             .into_iter()

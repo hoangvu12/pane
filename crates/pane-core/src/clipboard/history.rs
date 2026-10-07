@@ -48,6 +48,52 @@ pub(crate) const FILE: &str = "clipboard-history.json";
 /// The version of the history file's format.
 const VERSION: u64 = 1;
 
+/// The id of Pane's Clipboard History default extension, whose history
+/// records from the first start.
+const CLIPBOARD_HISTORY: &str = "clipboard-history";
+
+/// Whether the package whose identity key is `owner` records what is
+/// copied before anyone turned its history on: only Pane's own Clipboard
+/// History default extension does (ADR 0042, amending ADR 0020); every
+/// other package's history is off until the package turns it on. Its
+/// history, while the file holds none for it, is on (and nothing more);
+/// one the user turned off, or paused, stays so, since the file then
+/// holds it (see [`HistoryStore`]).
+pub(crate) fn records_by_default(owner: &str) -> bool {
+    owner == default_owner()
+}
+
+/// The identity key of Pane's own Clipboard History default extension.
+fn default_owner() -> String {
+    crate::packages::PackageIdentity::default_extension(CLIPBOARD_HISTORY).key()
+}
+
+/// The history of `owner` while the file holds none for it: recording,
+/// for Pane's own Clipboard History; otherwise off and empty.
+pub(crate) fn fresh(owner: &str) -> PackageHistory {
+    PackageHistory {
+        capture: if records_by_default(owner) {
+            CaptureState::On
+        } else {
+            CaptureState::Off
+        },
+        ..PackageHistory::default()
+    }
+}
+
+/// Whether the file need not keep `history` of `owner` at all: it is what
+/// the owner's history is while the file holds none ([`fresh`]) and no
+/// item was ever kept, so no id could be given twice once it is gone. A
+/// Clipboard History turned off is kept (as an entry with no capture), so
+/// it does not record again at the next start.
+fn forgettable(owner: &str, history: &PackageHistory) -> bool {
+    history.items.is_empty()
+        && history.next_id == 0
+        && history.excluded.is_empty()
+        && history.retention_seconds.is_none()
+        && history.capture == fresh(owner).capture
+}
+
 /// One kept text.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -91,12 +137,6 @@ impl PackageHistory {
     /// Whether nothing is kept: no items, and every choice as it starts.
     pub fn is_empty(&self) -> bool {
         !self.has_choices() && self.items.is_empty()
-    }
-
-    /// Whether the file need not keep it at all: nothing is kept and no
-    /// item was ever kept, so no id could be given twice once it is gone.
-    fn is_forgettable(&self) -> bool {
-        self.is_empty() && self.next_id == 0
     }
 
     /// Whether the user chose anything for it: keeping history, excluded
@@ -345,7 +385,10 @@ impl HistoryStore {
             let (state, pending) = self.expired();
             let file = state.file.as_ref().map_err(Clone::clone)?;
             (
-                file.packages.get(owner).cloned().unwrap_or_default(),
+                file.packages
+                    .get(owner)
+                    .cloned()
+                    .unwrap_or_else(|| fresh(owner)),
                 pending,
             )
         };
@@ -353,17 +396,26 @@ impl HistoryStore {
         Ok(history)
     }
 
-    /// The owners whose capture is on.
+    /// The owners whose capture is on: those the file says so of, and Pane's
+    /// own Clipboard History while the file holds no history for it
+    /// ([`records_by_default`]), whether or not it is installed (the watch
+    /// also asks that the package runs).
     pub fn capturing_owners(&self) -> Vec<String> {
         let state = self.lock();
         let Ok(file) = &state.file else {
             return Vec::new();
         };
-        file.packages
+        let mut owners: Vec<String> = file
+            .packages
             .iter()
             .filter(|(_, history)| history.capture == CaptureState::On)
             .map(|(owner, _)| owner.clone())
-            .collect()
+            .collect();
+        let default = default_owner();
+        if !file.packages.contains_key(&default) {
+            owners.push(default);
+        }
+        owners
     }
 
     /// How many times items were deleted.
@@ -387,7 +439,11 @@ impl HistoryStore {
         let now = self.now();
         let (mut state, expired) = self.expired();
         let file = state.file.as_ref().map_err(Clone::clone)?;
-        let before = file.packages.get(owner).cloned().unwrap_or_default();
+        let before = file
+            .packages
+            .get(owner)
+            .cloned()
+            .unwrap_or_else(|| fresh(owner));
         let mut history = before.clone();
         let answer = match change(&mut history) {
             Ok(answer) if history != before => answer,
@@ -406,7 +462,7 @@ impl HistoryStore {
         history.expire(now);
         let capture_changed = history.capture != before.capture;
         let pending = state.change(|file| {
-            if history.is_forgettable() {
+            if forgettable(owner, &history) {
                 file.packages.remove(owner);
             } else {
                 file.packages.insert(owner.to_owned(), history);
@@ -463,7 +519,22 @@ impl HistoryStore {
             match &state.file {
                 Ok(file) if state.deletions == deletions => {
                     let mut packages = file.packages.clone();
+                    // Pane's own Clipboard History records while the file
+                    // holds no history for it yet.
+                    let default = default_owner();
+                    if !packages.contains_key(&default) {
+                        let history = fresh(&default);
+                        packages.insert(default.clone(), history);
+                    }
                     if change(&mut packages, now) {
+                        // Kept only once it keeps something: a package that
+                        // is not installed leaves no entry behind.
+                        if packages
+                            .get(&default)
+                            .is_some_and(|history| forgettable(&default, history))
+                        {
+                            packages.remove(&default);
+                        }
                         (Some(state.change(|file| file.packages = packages)), true)
                     } else {
                         (expired, false)
@@ -704,9 +775,9 @@ impl State {
     fn expire(&mut self, now: u64) -> Option<Pending> {
         let file = self.file.as_mut().ok()?;
         let mut expired = 0;
-        file.packages.retain(|_, history| {
+        file.packages.retain(|owner, history| {
             expired += history.expire(now);
-            !history.is_forgettable()
+            !forgettable(owner, history)
         });
         (expired > 0).then(|| self.change(|_| {}))
     }
@@ -843,6 +914,63 @@ mod tests {
                 .unwrap()
                 .contains("\"version\": 2")
         );
+    }
+
+    /// ADR 0042: Pane's own Clipboard History records from the first start,
+    /// with nothing in the file; turned off or paused, it stays so.
+    #[test]
+    fn panes_own_clipboard_history_records_until_it_is_turned_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, _) = store_at(dir.path(), DAY);
+        let own = default_owner();
+        assert!(records_by_default(&own) && !records_by_default("a"));
+        // Nothing written yet: it records, and the others do not.
+        assert_eq!(store.get(&own).unwrap().capture, CaptureState::On);
+        assert_eq!(store.get("a").unwrap().capture, CaptureState::Off);
+        assert_eq!(store.capturing_owners(), [own.clone()]);
+        // A capture keeps the copy for it.
+        store.capture(store.deletions(), |packages, now| {
+            let history = packages.get_mut(&own).expect("its fresh history");
+            assert_eq!(history.capture, CaptureState::On);
+            history.add("first", Some("notepad.exe"), now);
+            true
+        });
+        assert_eq!(texts(&store.get(&own).unwrap()), ["first"]);
+        // A capture that keeps nothing for it leaves no entry for it.
+        let other = tempfile::tempdir().unwrap();
+        let (fresh_store, _) = store_at(other.path(), DAY);
+        fresh_store.capture(fresh_store.deletions(), |packages, now| {
+            packages
+                .entry("a".into())
+                .or_default()
+                .add("a's", None, now);
+            true
+        });
+        assert!(on_disk(other.path())["packages"].get(&own).is_none());
+
+        // Turned off, it stays off: the file keeps saying so.
+        store
+            .update(&own, |history| {
+                history.capture = CaptureState::Off;
+                history.clear();
+                Ok(())
+            })
+            .unwrap();
+        let reopened = HistoryStore::open(dir.path());
+        assert_eq!(reopened.get(&own).unwrap().capture, CaptureState::Off);
+        assert!(!reopened.capturing_owners().contains(&own));
+        // Paused, the same.
+        store
+            .update(&own, |history| {
+                history.capture = CaptureState::Paused;
+                Ok(())
+            })
+            .unwrap();
+        let reopened = HistoryStore::open(dir.path());
+        assert_eq!(reopened.get(&own).unwrap().capture, CaptureState::Paused);
+        // Removed (uninstalled with its data), it records again.
+        assert!(reopened.remove(&own).is_ok());
+        assert_eq!(reopened.get(&own).unwrap().capture, CaptureState::On);
     }
 
     #[test]

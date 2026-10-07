@@ -1106,6 +1106,11 @@ it was copied (7 days unless `set-retention(seconds)` chose 1 minute to
 not: `entries()` never lists an expired item, so a command needs no expiry
 of its own. The [Clipboard History](clipboard-history)
 default extension is the example; see [clipboard history](../docs/clipboard-history.md).
+It is the one package whose history records from the first start, without
+calling `set-capture` (ADR 0042), and Pane draws its command in a view of
+its own, whose controls (pause, retention, disabled applications, clearing)
+are Pane's; its own list is only Pause or Resume Recording and the items.
+The JavaScript and TypeScript samples show the whole contract's controls.
 Only Windows has a clipboard adapter so far, so its package declares
 `"platforms": ["windows"]`.
 

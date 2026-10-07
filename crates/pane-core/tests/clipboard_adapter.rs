@@ -28,7 +28,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use pane_core::clipboard::{
     ClipboardSystem, Content, Markers, Observation, Sink, Skip, Ticket, WindowsClipboard, accept,
-    testing,
+    program_file_name, testing,
 };
 use pane_core::system::Clip;
 
@@ -63,7 +63,7 @@ impl Sink for Ours {
         let from_here = observation
             .source
             .as_deref()
-            .is_some_and(|source| source.to_lowercase() == self.program);
+            .is_some_and(|source| program_file_name(source).to_lowercase() == self.program);
         let ours = match &observation.content {
             Content::Text(text) => text.starts_with(&self.prefix),
             // Its text was never read: only this process's own copy can be
@@ -123,10 +123,14 @@ fn the_listener_reports_this_tests_changes_with_their_markers_until_dropped() {
     drop(owner);
     assert_eq!(accept(&plain, &[]), Ok(plain_text.as_str()));
     assert_eq!(plain.markers, Markers::default());
-    assert_eq!(
-        plain.source.map(|source| source.to_lowercase()),
-        Some(program)
+    // The owner is named by its program's full path (#166), whose file
+    // name is this test's.
+    let source = plain.source.clone().expect("the owner is named");
+    assert!(
+        std::path::Path::new(&source).is_absolute(),
+        "{source} is a full path"
     );
+    assert_eq!(program_file_name(&source).to_lowercase(), program);
 
     // Each marker a password manager sets is read, and withholds the text.
     let hidden = (HISTORY, 0);
