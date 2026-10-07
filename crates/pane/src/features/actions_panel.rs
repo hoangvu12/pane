@@ -12,6 +12,18 @@
 //! drawn in the destructive color. Choosing one runs it on the item the
 //! panel opened for, if that is still the selected item.
 //!
+//! An action that leads to further choices opens its submenu in place (#140,
+//! [`pane_core::Launcher::open_submenu`]): it shows a chevron, Enter or a
+//! click opens it, and the panel's header then names the submenu. Its
+//! entries are drawn as the item's actions are (sections, keycaps, the
+//! destructive style; an entry's own shortcut runs it while that submenu is
+//! shown). Entries the command gives when the submenu opens show a loading
+//! entry until it answers, and an error entry if it fails, keeping the
+//! panel open. Typing filters the level shown, and Escape steps back one
+//! level, giving back the filter and selection it had; from the item's
+//! actions it closes the panel. Enter on an item's action that opens a
+//! submenu, its chord or its shortcut opens the panel at that submenu.
+//!
 //! What it lists is the core's ([`pane_core::Launcher::result_actions`]):
 //! the result's primary action — the footer's, the same dispatch — then
 //! pinning it (or unpinning it, once it is pinned), then, for an installed
@@ -33,26 +45,30 @@
 //!
 //! Its search field holds focus: typing filters the entries by label, the
 //! arrows move the selection over what is listed, Enter runs it, a click
-//! runs the entry clicked, and Escape (or Tab) closes the panel only,
-//! giving focus back to the query field. A mouse-down outside the panel
-//! closes it and is consumed, so the result it covered is never invoked.
-//! The panel opens and closes at once: the reference authors no motion
-//! for it.
+//! runs the entry clicked, Escape closes the panel only (or steps back out
+//! of a submenu), and Tab closes it from any level, giving focus back to
+//! the query field. A mouse-down outside the panel closes it, from any
+//! level, and is consumed, so the result it covered is never invoked.
+//! Enter chooses once per press, so a held key's repeats never run what a
+//! submenu it opened lists, and a double click's second click runs nothing.
+//! The panel opens and closes at once: the reference authors no motion for
+//! it.
 
 use gpui::{
     AnyElement, App, ClickEvent, Context, Div, Entity, FocusHandle, Focusable, KeyBinding,
-    MouseDownEvent, MouseMoveEvent, Role, SharedString, Stateful, Subscription, Window, actions,
-    div, prelude::*, px,
+    KeyDownEvent, MouseDownEvent, MouseMoveEvent, Role, SharedString, Stateful, Subscription,
+    Window, actions, div, prelude::*, px,
 };
 use gpui_elements::editable_text::actions::DEFAULT_INPUT_CONTEXT;
 use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged, text_input};
 use pane_core::{
-    ItemActions, KeyboardAction, PinnedLayout, ResultAction, ResultActions, RowKind, Screen,
-    SlotChange,
+    Icon, ItemActions, KeyboardAction, OpenSubmenu, PinnedLayout, ResultAction, ResultActions,
+    RowKind, Screen, SlotChange, SubmenuState,
 };
 
 use crate::app::{LauncherWindow, row_icon};
 use crate::features::quick_slots;
+use crate::ui::extension_icon::{self, IconSize};
 use crate::ui::icon::{Glyph, IconTone, TileSize, glyph, tile_at};
 use crate::ui::input::TextEditingKeys;
 use crate::ui::keycap::{CapStyle, KeySequence, key_sequence};
@@ -61,7 +77,7 @@ use crate::ui::theme::{Theme, pressed};
 
 actions!(
     actions_panel,
-    [NextAction, PreviousAction, ChooseAction, CloseActions]
+    [NextAction, PreviousAction, StepBack, CloseActions]
 );
 
 /// The panel's key context.
@@ -87,6 +103,12 @@ pub(crate) const MOVE_LEFT: &str = "Move Left";
 pub(crate) const MOVE_RIGHT: &str = "Move Right";
 /// What assistive technology hears of a destructive entry, after its label.
 pub(crate) const DESTRUCTIVE: &str = "Destructive";
+/// What assistive technology hears of an entry that opens a submenu.
+pub(crate) const OPENS_SUBMENU: &str = "Opens a submenu";
+/// What a submenu says while the command is asked for its entries.
+pub(crate) const LOADING: &str = "Loading…";
+/// What a submenu without entries says.
+pub(crate) const NO_ENTRIES: &str = "Nothing to choose here";
 
 /// The keys the quick slot entries show, the launcher's own fixed keys for
 /// them: the pin key on Pin and Unpin, and a move key on each move — the
@@ -118,7 +140,11 @@ impl SlotKeys {
             ResultAction::Pin | ResultAction::Unpin => Some(&self.toggle_pin),
             ResultAction::MovePinUp => Some(&self.earlier),
             ResultAction::MovePinDown => Some(&self.later),
-            ResultAction::Invoke | ResultAction::Hotkey | ResultAction::Alias => None,
+            ResultAction::Invoke
+            | ResultAction::Hotkey
+            | ResultAction::Alias
+            | ResultAction::ConfigureCommand
+            | ResultAction::ConfigureExtension => None,
         }
     }
 }
@@ -145,15 +171,17 @@ fn pins_horizontal(cx: &App) -> bool {
 }
 
 /// Registers the panel's keys: Up and Down in its search field, above the
-/// field's own caret keys, and Enter, Escape and Tab in the panel, above
-/// the launcher's confirm, back and focus traversal.
+/// field's own caret keys, and Escape and Tab in the panel, above the
+/// launcher's back and focus traversal. Enter is not bound: the panel takes
+/// it from the key press itself ([`LauncherWindow::panel_keys`]), which says
+/// whether it is a held key's repeat, and the launcher's confirm hands it on
+/// while the panel is open.
 pub(crate) fn bind_keys(cx: &mut App, _: &TextEditingKeys) {
     let field = format!("{CONTEXT} > {DEFAULT_INPUT_CONTEXT}");
     cx.bind_keys([
         KeyBinding::new("down", NextAction, Some(&field)),
         KeyBinding::new("up", PreviousAction, Some(&field)),
-        KeyBinding::new("enter", ChooseAction, Some(CONTEXT)),
-        KeyBinding::new("escape", CloseActions, Some(CONTEXT)),
+        KeyBinding::new("escape", StepBack, Some(CONTEXT)),
         KeyBinding::new("tab", CloseActions, Some(CONTEXT)),
         KeyBinding::new("shift-tab", CloseActions, Some(CONTEXT)),
     ]);
@@ -169,8 +197,18 @@ pub(crate) struct ActionsPanel {
     filter: Entity<EditableTextState>,
     /// The selected entry, an index into what the filter lists.
     selected: usize,
+    /// The filter's text and the selection of each level above the one
+    /// shown, outermost first: what stepping back out of a submenu gives
+    /// back.
+    above: Vec<(String, usize)>,
+    /// The selection to keep when the filter's text is next replaced (by
+    /// stepping into or out of a submenu), instead of the first entry.
+    keep_selection: Option<usize>,
     /// What had focus when the panel opened, restored when it closes.
     restore: Option<FocusHandle>,
+    /// Whether it opened over root search rather than a command's list:
+    /// the screen it belongs to (see [`LauncherWindow::actions_belong_to`]).
+    on_root: bool,
     _filtering: Subscription,
     /// Closes the panel when the window loses activation.
     _deactivation: Subscription,
@@ -219,6 +257,12 @@ pub(crate) enum EntryKind {
     Result(ResultAction),
     /// The action at this index of the item's actions.
     Item(usize),
+    /// The entry at this index of the submenu shown (#140).
+    Entry(usize),
+    /// What a submenu says instead of entries: that it is loading, or why
+    /// the command could not give them. It runs nothing, and the filter
+    /// keeps it.
+    Note,
 }
 
 /// One entry the panel lists.
@@ -229,13 +273,19 @@ pub(crate) struct PanelEntry {
     pub(crate) label: String,
     /// Whether it can run now.
     pub(crate) available: bool,
-    /// Whether it is drawn in the destructive style.
+    /// Whether it is drawn in the destructive style: a destructive action,
+    /// or a submenu's error.
     pub(crate) destructive: bool,
+    /// Whether choosing it opens a submenu: a chevron follows it.
+    pub(crate) submenu: bool,
     /// The label of its section; entries of one section follow each other,
     /// and an untitled section has none.
     pub(crate) section: Option<SharedString>,
     /// Its glyph.
     pub(crate) glyph: Glyph,
+    /// The icon an item's action or a submenu's entry gives (#139), drawn
+    /// in its glyph's place; `None` keeps the glyph.
+    pub(crate) icon: Option<Icon>,
     /// The keys shown at its right, in their caps' style.
     pub(crate) keys: Option<(KeySequence, CapStyle)>,
 }
@@ -261,8 +311,10 @@ fn result_entries(
                 label: item.label.clone(),
                 available: item.available,
                 destructive: false,
+                submenu: false,
                 section: (!invoking).then(|| group.into()),
                 glyph: action_glyph(item.action, primary),
+                icon: None,
                 keys: if invoking {
                     Some((invoke.clone(), CapStyle::Accent))
                 } else {
@@ -297,22 +349,65 @@ fn item_entries(actions: &ItemActions, invoke: &KeySequence) -> Vec<PanelEntry> 
                 label: action.title.clone(),
                 available: true,
                 destructive: action.destructive,
+                submenu: action.submenu,
                 section: action.section.clone().map(SharedString::from),
                 glyph: Glyph::ActionRun,
+                icon: action.icon.clone(),
                 keys,
             }
         })
         .collect()
 }
 
+/// `submenu`'s entries as the panel lists them (#140): each with its own
+/// shortcut's caps when Pane binds it (the action chords are the item's
+/// actions'), or the one entry saying it is loading or why it failed.
+fn submenu_entries(submenu: &OpenSubmenu) -> Vec<PanelEntry> {
+    let note = |label: String, glyph, destructive| PanelEntry {
+        kind: EntryKind::Note,
+        label,
+        available: false,
+        destructive,
+        submenu: false,
+        section: None,
+        glyph,
+        icon: None,
+        keys: None,
+    };
+    match &submenu.state {
+        SubmenuState::Loading => vec![note(LOADING.to_owned(), Glyph::Clock, false)],
+        SubmenuState::Failed(why) => vec![note(why.clone(), Glyph::SearchNone, true)],
+        SubmenuState::Listed(entries) => entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| PanelEntry {
+                kind: EntryKind::Entry(index),
+                label: entry.title.clone(),
+                available: true,
+                destructive: entry.destructive,
+                submenu: entry.submenu,
+                section: entry.section.clone().map(SharedString::from),
+                glyph: Glyph::ActionRun,
+                icon: entry.icon.clone(),
+                keys: entry
+                    .shortcut
+                    .as_ref()
+                    .map(|shortcut| (crate::keyboard::binding_keys(shortcut), CapStyle::Regular)),
+            })
+            .collect(),
+    }
+}
+
 /// The entries whose label holds `query`, ignoring case and the spaces
 /// around it; all of them for a blank one. Filtering flattens the
-/// sections (see [`panel_children`]).
+/// sections (see [`panel_children`]). A submenu's note stays.
 fn matching(entries: Vec<PanelEntry>, query: &str) -> Vec<PanelEntry> {
     let query = query.trim().to_lowercase();
     entries
         .into_iter()
-        .filter(|entry| entry.label.to_lowercase().contains(&query))
+        .filter(|entry| {
+            entry.kind == EntryKind::Note || entry.label.to_lowercase().contains(&query)
+        })
         .collect()
 }
 
@@ -348,7 +443,12 @@ impl LauncherWindow {
             self.open_slot_actions(slot, window, cx);
             return;
         }
-        if commands_list(&self.launcher.view().screen) {
+        // A command's list, or a row of root search whose actions Pane
+        // performs itself (a file, a computed answer: #150).
+        let screen = self.launcher.view().screen;
+        let own_row =
+            matches!(screen, Screen::Root { .. }) && self.launcher.item_actions().is_some();
+        if commands_list(&screen) || own_row {
             let invoke = invoke_keys(cx);
             let opened = self.launcher.item_actions().map(|actions| Opened {
                 target: actions.target.clone(),
@@ -438,10 +538,12 @@ impl LauncherWindow {
             return;
         }
         self.close_open_menu(window, cx);
+        // A panel opens on the item's own actions, with no submenu open.
+        self.launcher.close_submenus();
         let filter = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
         let filtering = cx.subscribe(&filter, |this, _, _: &TextChanged, cx| {
             if let Some(panel) = this.actions.as_mut() {
-                panel.selected = 0;
+                panel.selected = panel.keep_selection.take().unwrap_or(0);
             }
             cx.notify();
         });
@@ -456,19 +558,36 @@ impl LauncherWindow {
             opened,
             filter,
             selected: 0,
+            above: Vec::new(),
+            keep_selection: None,
             restore,
+            on_root: matches!(screen, Screen::Root { .. }),
             _filtering: filtering,
             _deactivation: deactivation,
         });
         cx.notify();
     }
 
-    /// Closes the Actions panel, if it is open, giving focus back to what
-    /// had it. Whether it was open.
+    /// Whether an open Actions panel still belongs on `screen`: the kind of
+    /// screen it opened over (root search, or a command's list) is still
+    /// shown. A background change that leaves it there (a web image
+    /// arriving, #142) keeps the panel open; a screen that replaced it (a
+    /// hotkey pressed, a change from Settings) does not.
+    pub(crate) fn actions_belong_to(&self, screen: &Screen) -> bool {
+        self.actions.as_ref().is_some_and(|panel| {
+            item_list(screen) && panel.on_root == matches!(screen, Screen::Root { .. })
+        })
+    }
+
+    /// Closes the Actions panel, if it is open, from whatever level it
+    /// shows, giving focus back to what had it. Whether it was open.
     pub(crate) fn close_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let Some(panel) = self.actions.take() else {
             return false;
         };
+        // Its submenus close with it: an answer still on its way is
+        // discarded.
+        self.launcher.close_submenus();
         if let Some(restore) = panel.restore {
             window.focus(&restore, cx);
         }
@@ -512,11 +631,14 @@ impl LauncherWindow {
                         &slot_keys,
                     )
                 }),
-            Subject::Item => self
-                .launcher
-                .item_actions()
-                .filter(|live| live.target == opened.target)
-                .map(|live| item_entries(&live, &invoke)),
+            Subject::Item => match self.shown_submenu() {
+                Some(submenu) => Some(submenu_entries(&submenu)),
+                None => self
+                    .launcher
+                    .item_actions()
+                    .filter(|live| live.target == opened.target)
+                    .map(|live| item_entries(&live, &invoke)),
+            },
         };
         Some(live.unwrap_or_else(|| {
             opened
@@ -528,6 +650,17 @@ impl LauncherWindow {
                 })
                 .collect()
         }))
+    }
+
+    /// The submenu the panel shows over its item, if one is open (#140).
+    fn shown_submenu(&self) -> Option<OpenSubmenu> {
+        let opened = self.actions.as_ref()?.opened.as_ref()?;
+        if opened.subject != Subject::Item {
+            return None;
+        }
+        self.launcher
+            .submenu()
+            .filter(|submenu| submenu.target == opened.target)
     }
 
     /// What the filter lists now.
@@ -558,14 +691,172 @@ impl LauncherWindow {
         }
     }
 
-    fn actions_choose(&mut self, _: &ChooseAction, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(index) = self.actions.as_ref().map(|panel| panel.selected) {
-            self.run_action(index, window, cx);
+    /// A key pressed while the panel is open, before its search field sees
+    /// it: Enter chooses the selected entry, once per press, so a held
+    /// Enter's repeats never run what the submenu it opened lists; and while
+    /// a submenu is shown, an entry's own shortcut runs that entry (or opens
+    /// its submenu), whether or not the filter lists it (#140).
+    pub(crate) fn panel_keys(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(selected) = self.actions.as_ref().map(|panel| panel.selected) else {
+            return;
+        };
+        let Ok(pressed) = crate::keyboard::binding_of(&event.keystroke) else {
+            return;
+        };
+        if pressed.id() == "enter" {
+            cx.stop_propagation();
+            if !event.is_held {
+                self.run_action(selected, window, cx);
+            }
+            return;
         }
+        let Some(submenu) = self.shown_submenu() else {
+            return;
+        };
+        let Some(entry) = submenu
+            .bound_to(&pressed)
+            .and_then(|index| submenu_entries(&submenu).into_iter().nth(index))
+        else {
+            return;
+        };
+        cx.stop_propagation();
+        if !event.is_held {
+            self.choose_item_entry(&submenu.target, &entry, window, cx);
+        }
+    }
+
+    /// Escape: steps back out of the submenu shown to the level above it,
+    /// giving back the filter's text and the selection it had there; from
+    /// the item's actions (or a result's), closes the panel.
+    fn actions_back(&mut self, _: &StepBack, window: &mut Window, cx: &mut Context<Self>) {
+        let above = self.actions.as_mut().and_then(|panel| panel.above.pop());
+        let Some((query, selected)) = above else {
+            self.close_actions(window, cx);
+            return;
+        };
+        self.launcher.close_submenu();
+        if let Some(panel) = self.actions.as_mut() {
+            panel.selected = selected;
+            panel.keep_selection = Some(selected);
+            let filter = panel.filter.clone();
+            filter.update(cx, |filter, cx| filter.emplace(&query, cx));
+        }
+        cx.notify();
     }
 
     fn actions_close(&mut self, _: &CloseActions, window: &mut Window, cx: &mut Context<Self>) {
         self.close_actions(window, cx);
+    }
+
+    /// Opens the submenu of the action at `index` of the level the panel
+    /// shows for the item `target` (#140): its entries replace the level
+    /// shown, with an empty filter and the first entry selected, and the
+    /// level shown is kept for Escape to give back. For entries the command
+    /// gives when the submenu opens, the panel shows the loading entry
+    /// until it answers, then draws the answer. Nothing happens if the
+    /// action opens no submenu, or the item is no longer selected.
+    pub(crate) fn enter_submenu(
+        &mut self,
+        target: &str,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let depth =
+            |launcher: &pane_core::Launcher| launcher.submenu().map_or(0, |open| open.depth);
+        let before = depth(&self.launcher);
+        let pending = self.launcher.open_submenu(target, index);
+        if depth(&self.launcher) <= before {
+            return;
+        }
+        let Some(panel) = self.actions.as_mut() else {
+            return;
+        };
+        let query = panel.query(cx);
+        panel.above.push((query, panel.selected));
+        panel.selected = 0;
+        panel.keep_selection = Some(0);
+        let filter = panel.filter.clone();
+        filter.update(cx, |filter, cx| filter.emplace("", cx));
+        // An answer the command gives later is drawn when it arrives.
+        cx.spawn_in(window, async move |this, cx| {
+            pending.await;
+            this.update_in(cx, |_, _, cx| cx.notify()).ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Opens the Actions panel at the submenu of the selected item's action
+    /// at `index`: what Enter, an action chord or the action's shortcut does
+    /// from the list for an action that opens a submenu (#140). Escape then
+    /// steps back to the item's actions.
+    pub(crate) fn open_item_submenu(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.actions.is_none() {
+            self.open_actions(window, cx);
+        }
+        let target = self
+            .actions
+            .as_ref()
+            .and_then(|panel| panel.opened.as_ref())
+            .filter(|opened| opened.subject == Subject::Item)
+            .map(|opened| opened.target.clone());
+        if let Some(target) = target {
+            self.enter_submenu(&target, index, window, cx);
+        }
+    }
+
+    /// Chooses `entry`, one of the item `target`'s actions or an entry of
+    /// the submenu shown: opens its submenu, or runs it once on the item the
+    /// panel opened for, if that is still selected, closing the panel. A
+    /// note, or an entry that cannot run, does nothing.
+    fn choose_item_entry(
+        &mut self,
+        target: &str,
+        entry: &PanelEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !entry.available {
+            return;
+        }
+        match entry.kind {
+            EntryKind::Item(index) | EntryKind::Entry(index) if entry.submenu => {
+                self.enter_submenu(target, index, window, cx);
+            }
+            // On root search, a row's first action is Enter's: the window
+            // copies a computed answer itself (#150), as Enter does.
+            EntryKind::Item(0) if matches!(self.launcher.view().screen, Screen::Root { .. }) => {
+                self.close_actions(window, cx);
+                self.press_primary_action(window, cx);
+            }
+            EntryKind::Item(index) => {
+                // The core runs it only on the item the panel opened for,
+                // still selected.
+                self.close_actions(window, cx);
+                let pending = self.launcher.run_item_action(target, index);
+                self.show_until_done(pending, window, cx);
+            }
+            EntryKind::Entry(index) => {
+                // Started before the panel closes, which closes the
+                // submenus: the core closes them itself as the entry starts,
+                // so a repeat of the choice runs nothing.
+                let pending = self.launcher.run_submenu_entry(target, index);
+                self.close_actions(window, cx);
+                self.show_until_done(pending, window, cx);
+            }
+            EntryKind::Result(_) | EntryKind::Note => {}
+        }
     }
 
     /// Runs the listed entry `index`, once, if the core still has the
@@ -584,14 +875,8 @@ impl LauncherWindow {
         };
         let action = match entry.kind {
             EntryKind::Result(action) => action,
-            EntryKind::Item(index) => {
-                // The core runs it only on the item the panel opened for,
-                // still selected, and not while another action runs.
-                if entry.available {
-                    self.close_actions(window, cx);
-                    let pending = self.launcher.run_item_action(&target, index);
-                    self.show_until_done(pending, window, cx);
-                }
+            EntryKind::Item(_) | EntryKind::Entry(_) | EntryKind::Note => {
+                self.choose_item_entry(&target, &entry, window, cx);
                 return;
             }
         };
@@ -617,6 +902,28 @@ impl LauncherWindow {
                 self.close_actions(window, cx);
                 if self.launcher.open_result_action(&target, action) {
                     self.navigate_forward(window, cx);
+                }
+            }
+            // The extension's card in Settings › Extensions, at the
+            // command's preferences or the package's (#143).
+            ResultAction::ConfigureCommand | ResultAction::ConfigureExtension => {
+                self.close_actions(window, cx);
+                if let Some((identity, command)) = self.launcher.preferences_target(&target) {
+                    let anchor = match action {
+                        ResultAction::ConfigureCommand => {
+                            crate::features::settings::extensions::command_preferences_anchor(
+                                &identity.key(),
+                                &command,
+                            )
+                        }
+                        _ => identity.key(),
+                    };
+                    crate::features::settings::open_at(
+                        &self.launcher,
+                        crate::features::settings::extensions::TITLE,
+                        &anchor,
+                        cx,
+                    );
                 }
             }
             ResultAction::Pin
@@ -666,20 +973,26 @@ impl LauncherWindow {
         let filtering = !panel.query(cx).trim().is_empty();
         let item_without_actions = opened
             .is_some_and(|opened| opened.subject == Subject::Item && opened.entries.is_empty());
+        // A submenu names itself in the header, as the panel's context.
+        let submenu = self.shown_submenu();
+        let empty_note = match (&submenu, filtering) {
+            (Some(_), false) => NO_ENTRIES,
+            (None, false) if item_without_actions => NO_ACTIONS,
+            _ => NO_MATCH,
+        };
         let surface = compose(
             PanelView {
-                title: opened.map(|opened| opened.title.as_str()),
+                title: submenu
+                    .as_ref()
+                    .map(|submenu| submenu.title.as_str())
+                    .or_else(|| opened.map(|opened| opened.title.as_str())),
                 icon: opened
                     .filter(|opened| opened.subject != Subject::Item)
                     .map(|opened| row_icon(&opened.target)),
                 listed: &listed,
                 filtering,
                 selected: panel.selected,
-                empty_note: if item_without_actions {
-                    NO_ACTIONS
-                } else {
-                    NO_MATCH
-                },
+                empty_note,
                 filter: &panel.filter,
             },
             theme,
@@ -694,26 +1007,34 @@ impl LauncherWindow {
                     }
                 }))
                 .on_click(cx.listener(
-                    move |this, _: &ClickEvent, window, cx| {
-                        this.run_action(index, window, cx);
+                    move |this, event: &ClickEvent, window, cx| {
+                        // A double click's second click runs nothing more:
+                        // not the entry of the submenu its first one opened.
+                        if event.click_count() <= 1 {
+                            this.run_action(index, window, cx);
+                        }
                     },
                 ))
             },
         );
         let surface = surface
             .key_context(CONTEXT)
+            .capture_key_down(cx.listener(Self::panel_keys))
             .on_action(cx.listener(Self::actions_next))
             .on_action(cx.listener(Self::actions_previous))
-            .on_action(cx.listener(Self::actions_choose))
+            .on_action(cx.listener(Self::actions_back))
             .on_action(cx.listener(Self::actions_close))
             .on_mouse_down_out(cx.listener(|this, _: &MouseDownEvent, window, cx| {
                 this.close_actions(window, cx);
                 cx.stop_propagation();
             }))
             .role(Role::Dialog)
-            .aria_label(match opened {
-                Some(opened) => format!("Actions for {}", opened.title),
-                None => "Actions".to_owned(),
+            .aria_label(match (opened, &submenu) {
+                (Some(opened), Some(submenu)) => {
+                    format!("{}, actions for {}", submenu.title, opened.title)
+                }
+                (Some(opened), None) => format!("Actions for {}", opened.title),
+                (None, _) => "Actions".to_owned(),
             });
         Some(anchored(surface, theme).into_any_element())
     }
@@ -849,6 +1170,7 @@ fn action_glyph(action: ResultAction, primary: Glyph) -> Glyph {
         | ResultAction::Unpin
         | ResultAction::MovePinUp
         | ResultAction::MovePinDown => Glyph::ActionPin,
+        ResultAction::ConfigureCommand | ResultAction::ConfigureExtension => Glyph::Sliders,
     }
 }
 
@@ -874,16 +1196,7 @@ pub(crate) fn list_children(
             }
             PanelChild::Entry(index) => {
                 let entry = &listed[index];
-                let row = action_row(
-                    index,
-                    entry.glyph,
-                    entry.label.clone(),
-                    entry.keys.as_ref().map(|(keys, style)| (keys, *style)),
-                    index == selected,
-                    entry.available,
-                    entry.destructive,
-                    theme,
-                );
+                let row = action_row(index, entry, index == selected, theme);
                 let row = if entry.available {
                     attach(row, index)
                 } else {
@@ -900,20 +1213,27 @@ pub(crate) fn list_children(
 /// the right in their caps' style; the 11% wash when selected, the 6% one
 /// on hover. A destructive entry draws its glyph and label in the
 /// destructive color, and says so to assistive technology; the keys are
-/// also the row's shortcut there.
-#[allow(clippy::too_many_arguments)]
+/// also the row's shortcut there. An entry that opens a submenu ends in a
+/// chevron (#140). A submenu's note (loading, or its error) is not dimmed
+/// as an unavailable entry is, but runs nothing either.
 pub(crate) fn action_row(
     index: usize,
-    glyph_of: Glyph,
-    label: impl Into<SharedString>,
-    keys: Option<(&KeySequence, CapStyle)>,
+    entry: &PanelEntry,
     selected: bool,
-    available: bool,
-    destructive: bool,
     theme: &Theme,
 ) -> Stateful<Div> {
     let geometry = &theme.geometry.actions;
-    let label: SharedString = label.into();
+    let glyph_of = entry.glyph;
+    let label: SharedString = entry.label.clone().into();
+    let keys = entry.keys.as_ref().map(|(keys, style)| (keys, *style));
+    let (available, destructive) = (entry.available, entry.destructive);
+    let note = entry.kind == EntryKind::Note;
+    let description = match (destructive && !note, entry.submenu) {
+        (true, true) => Some(format!("{DESTRUCTIVE}, {}", OPENS_SUBMENU.to_lowercase())),
+        (true, false) => Some(DESTRUCTIVE.to_owned()),
+        (false, true) => Some(OPENS_SUBMENU.to_owned()),
+        (false, false) => None,
+    };
     let debug = format!("action-{label}");
     div()
         .id(("action", index))
@@ -936,7 +1256,9 @@ pub(crate) fn action_row(
         .role(Role::MenuItem)
         .aria_label(label.clone())
         .aria_selected(selected)
-        .when(destructive, |row| row.aria_description(DESTRUCTIVE))
+        .when_some(description, |row, description| {
+            row.aria_description(description)
+        })
         .when_some(keys, |row, (keys, _)| row.aria_keyshortcuts(keys.name()))
         .when(selected, |row| row.bg(theme.action_selected))
         .when(!selected && available, |row| {
@@ -952,9 +1274,20 @@ pub(crate) fn action_row(
             });
             row.active(move |row| row.bg(press))
         })
-        .when(!available, |row| row.opacity(0.5).aria_disabled(true))
-        .child(
-            glyph(
+        .when(!available && !note, |row| row.opacity(0.5))
+        .when(!available, |row| row.aria_disabled(true))
+        .child(match &entry.icon {
+            // The action's own icon (#139), at the glyph's size, its web
+            // image or system icon as it is now (#142).
+            Some(icon) => extension_icon::draw(
+                &crate::features::icons::drawn(icon, theme),
+                IconSize::small(geometry.glyph_size),
+                ("action-icon", index),
+                &format!("action-{label}"),
+                theme,
+            )
+            .into_any_element(),
+            None => glyph(
                 glyph_of,
                 geometry.glyph_size,
                 if destructive {
@@ -963,11 +1296,17 @@ pub(crate) fn action_row(
                     theme.action_icon
                 },
             )
-            .flex_none(),
-        )
+            .flex_none()
+            .into_any_element(),
+        })
         .child(div().flex_1().min_w(px(0.)).truncate().child(label))
         .when_some(keys, |row, (keys, style)| {
             row.child(key_sequence(keys, style, theme))
+        })
+        .when(entry.submenu, |row| {
+            row.child(
+                glyph(Glyph::ChevronRight, geometry.glyph_size, theme.action_icon).flex_none(),
+            )
         })
 }
 
@@ -1147,6 +1486,13 @@ pub(crate) fn dimmer(theme: &Theme) -> Div {
 /// Whether `screen` is an open command's list, whose items have actions.
 pub(crate) fn commands_list(screen: &Screen) -> bool {
     matches!(screen, Screen::Command | Screen::CommandSearch { .. })
+}
+
+/// Whether the selected row of `screen` may have actions of its own, which
+/// Enter, the action chords and shortcuts run: an open command's list, or
+/// root search, whose files and computed answers have Pane's own (#150).
+pub(crate) fn item_list(screen: &Screen) -> bool {
+    commands_list(screen) || matches!(screen, Screen::Root { .. })
 }
 
 /// The invoke binding's keys as they are bound now: the primary action's.

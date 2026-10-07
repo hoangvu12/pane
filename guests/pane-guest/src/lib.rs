@@ -3,19 +3,24 @@
 //! An extension implements [`Command`] and calls [`export!`]: its screen is
 //! a [`List`] of [`Item`]s whose actions are closures, which the SDK hands
 //! Pane as the versioned JSON tree of ADR 0036's envelope (`render` and
-//! `handle-event`) and runs when the user chooses them; or, for a no-view
+//! `handle-event`) and runs when the user chooses them; its items may have
+//! icons, accessories and tooltips ([`icon`]). Or, for a no-view
 //! command, [`Command::run`] runs each time it is launched. Every command
 //! receives its launch record and may launch another command with
-//! [`commands`]. It may keep
+//! [`commands`]. It tells the user what happened with a toast or a HUD
+//! ([`feedback`]), and may close Pane's window or pop back to root search
+//! ([`window`]); Pane shows nothing of an action's answer. It may keep
 //! values between runs with [`settings`], and its own records, disposable
-//! values and secrets with [`content`], [`cache`] and [`credentials`]. It
+//! values and secrets with [`content`], [`cache`] and [`credentials`], and
+//! read the preferences its package declares with [`preferences`]. It
 //! may compute results from root search's query with [`root`], run a continuing
 //! service while its package's code may run with [`service`], call
 //! operations other packages publish with [`operations::call`], serve those
 //! its own package publishes with [`publish`], find and open installed
 //! applications with [`applications`], supply root results ahead of the
 //! query with [`indexed`], run its package's native helpers with
-//! [`helpers`], list the files of a folder with [`files`], search as the
+//! [`helpers`] and the system's own programs with [`programs`], list the
+//! files of a folder with [`files`], search as the
 //! user types into its own search field with [`search`], make web
 //! requests with [`http`] and keep clipboard history with
 //! [`clipboard_history`]. The crate is
@@ -49,11 +54,86 @@ pub use exports::pane::extension::command::{
     FormError, Frame, GuestCustomView, Key, Platform, Point, Rect, Shape, Text, TextField,
     ViewEvent,
 };
-pub use list::{Action, Command, Item, List, Modifier, Shortcut};
+pub use list::{Action, Command, Item, List, Modifier, Shortcut, Submenu};
 pub use pane::extension::commands::{LaunchRecord, LaunchSource, LaunchType};
 
+pub mod actions;
+pub mod feedback;
+pub mod icon;
 mod list;
+pub mod system;
+pub use icon::{Accessory, Color, Icon, Mask, Tint, Tone};
 pub use pane::extension::{cache, content, credentials, operations, settings};
+
+/// Pane's launcher window, as the command that runs in it sees it
+/// (`pane:extension/window`): [`window::close`] hides it, choosing what its
+/// next showing shows ([`window::PopToRootType`]) and whether root search's
+/// query is emptied; [`window::pop_to_root`] returns to root search with
+/// the window open; [`window::clear_search`] empties the search field on
+/// screen. Each answers whether a window was shown for the call: in a
+/// background launch, a schedule or a service, it does nothing and answers
+/// false.
+///
+/// ```ignore
+/// use pane_guest::window::{PopToRootType, close};
+///
+/// close(true, PopToRootType::Immediate);
+/// ```
+pub mod window {
+    pub use crate::pane::extension::window::{PopToRootType, clear_search, close, pop_to_root};
+}
+
+/// The preferences the command's package declares in `pane.json` under
+/// `preferences`, for the whole extension or for one command, as the user
+/// set them in Pane (`pane:extension/preferences`): on the Setup screen
+/// before the command's first run, and on the extension's card in
+/// Settings. Pane stores them; a command only reads them, as a type of its
+/// own that serde deserializes. A checkbox's value is a `bool`, every other
+/// kind's a `String`; a preference with no value and no default is absent,
+/// so declare an optional one as an `Option`:
+///
+/// ```ignore
+/// #[derive(serde::Deserialize)]
+/// #[serde(rename_all = "camelCase")]
+/// struct Preferences {
+///     api_key: String,
+///     units: String,
+///     greeting: Option<String>,
+///     verbose: bool,
+/// }
+///
+/// let preferences: Preferences = pane_guest::preferences::values()?;
+/// ```
+pub mod preferences {
+    use alloc::string::String;
+    use serde::de::DeserializeOwned;
+
+    /// The effective preference values of the command Pane is running:
+    /// its package's preferences, then its own, each the value the user set
+    /// or else its declared default. An error says why Pane refused, or
+    /// why they do not deserialize into `T`.
+    pub fn values<T: DeserializeOwned>() -> Result<T, String> {
+        read(None)
+    }
+
+    /// Like [`values`], for the command with id `command` (in `pane.json`)
+    /// of the same package: for a component serving several commands, in a
+    /// call Pane makes for no command in particular (its root results).
+    pub fn values_of<T: DeserializeOwned>(command: &str) -> Result<T, String> {
+        read(Some(command))
+    }
+
+    /// The effective values as Pane sends them, a JSON object's text.
+    pub fn json(command: Option<&str>) -> Result<String, String> {
+        crate::pane::extension::preferences::values(command)
+    }
+
+    fn read<T: DeserializeOwned>(command: Option<&str>) -> Result<T, String> {
+        let text = json(command)?;
+        serde_json::from_str(&text)
+            .map_err(|error| alloc::format!("the preferences do not fit their type: {error}"))
+    }
+}
 
 /// How the command was launched, and launching another command
 /// (`pane:extension/commands`). A no-view command's [`Command::run`]
@@ -68,11 +148,15 @@ pub use pane::extension::{cache, content, credentials, operations, settings};
 /// let own = CommandRef { source: None, command: "report".into() };
 /// launch(&own, LaunchType::Background, &[], Some(r#"{"from":"launch"}"#))?;
 /// ```
+///
+/// [`commands::set_subtitle`] replaces the subtitle the command's own row
+/// shows in root search (`Some("3 unread")`), until it is set again; `None`
+/// gives back the one its `pane.json` entry declares.
 pub mod commands {
     use core::cell::RefCell;
 
     pub use crate::pane::extension::commands::{
-        ArgumentValue, CommandRef, LaunchRecord, LaunchSource, LaunchType, launch,
+        ArgumentValue, CommandRef, LaunchRecord, LaunchSource, LaunchType, launch, set_subtitle,
     };
 
     /// The launch record of the call in progress.
@@ -87,8 +171,11 @@ pub mod commands {
     /// The launch record of the command's screen being drawn (in
     /// [`Command::render`](crate::Command::render), and in the actions of
     /// the list it drew), or of the run in progress: how the command was
-    /// launched, and with what. A launch by the user from root search with
-    /// nothing more before Pane has said.
+    /// launched, and with what. Its `command` is the id in `pane.json` of
+    /// the command launched, so that a component serving several view
+    /// commands draws the screen of the one opened. A launch by the user
+    /// from root search with nothing more (and no command) before Pane has
+    /// said.
     pub fn current() -> LaunchRecord {
         CURRENT.0.borrow().clone().unwrap_or(LaunchRecord {
             launch_type: LaunchType::UserInitiated,
@@ -96,6 +183,7 @@ pub mod commands {
             arguments: alloc::vec::Vec::new(),
             fallback_text: None,
             context: None,
+            command: alloc::string::String::new(),
         })
     }
 
@@ -123,6 +211,18 @@ pub mod commands {
             LaunchSource::Command => "command",
             LaunchSource::Schedule => "schedule",
         }
+    }
+}
+
+impl LaunchRecord {
+    /// The value of the command's argument `name` (`"arguments"` in its
+    /// `pane.json` entry), if it has one: an optional argument left empty
+    /// is absent.
+    pub fn argument(&self, name: &str) -> Option<&str> {
+        self.arguments
+            .iter()
+            .find(|argument| argument.name == name)
+            .map(|argument| argument.value.as_str())
     }
 }
 
@@ -290,7 +390,9 @@ pub mod indexed {
         default_bindings_module: "pane_guest::indexed",
     });
 
-    pub use exports::pane::extension::indexed_results::{Guest, IndexedAction, IndexedResult};
+    pub use exports::pane::extension::indexed_results::{
+        Guest, IndexedAction, IndexedResult, OpenTarget,
+    };
 }
 
 /// A command that searches as the user types into its own search field
@@ -343,6 +445,7 @@ pub mod service {
 }
 
 pub mod http;
+pub mod programs;
 
 /// The custom view type of a command that has none: `type CustomView =
 /// NoCustomView;` in its [`Command`] implementation, with an `open_view`

@@ -433,7 +433,12 @@ pub(super) fn pin_of_selected(state: &State) -> Option<PinTarget> {
     let row = state.view.rows.get(index)?;
     if !matches!(
         state.entries.get(index),
-        Some(Entry::Open(_) | Entry::Unavailable(_) | Entry::OpenApplication { .. })
+        Some(
+            Entry::Open(_)
+                | Entry::Unavailable(_)
+                | Entry::OpenApplication { .. }
+                | Entry::OpenTarget { .. }
+        )
     ) {
         return None;
     }
@@ -505,7 +510,11 @@ fn change(
     let refused = (SlotChange::Refused, String::new());
     let quick_slot_action = !matches!(
         action,
-        ResultAction::Invoke | ResultAction::Hotkey | ResultAction::Alias
+        ResultAction::Invoke
+            | ResultAction::Hotkey
+            | ResultAction::Alias
+            | ResultAction::ConfigureCommand
+            | ResultAction::ConfigureExtension
     );
     if !quick_slot_action || !matches!(state.view.screen, Screen::Root { .. }) {
         return refused;
@@ -554,7 +563,11 @@ fn change(
                 format!("Moved {title} to place {}", moved_to + 1),
             )
         }
-        ResultAction::Invoke | ResultAction::Hotkey | ResultAction::Alias => refused,
+        ResultAction::Invoke
+        | ResultAction::Hotkey
+        | ResultAction::Alias
+        | ResultAction::ConfigureCommand
+        | ResultAction::ConfigureExtension => refused,
     }
 }
 
@@ -673,7 +686,7 @@ impl Launcher {
                 opening.launch.source = crate::launch::LaunchSource::QuickSlot;
                 Some(Entry::Open(opening))
             }
-            Some(entry @ Entry::OpenApplication { .. }) => Some(entry),
+            Some(entry @ (Entry::OpenApplication { .. } | Entry::OpenTarget { .. })) => Some(entry),
             _ => None,
         };
         match &entry {
@@ -700,6 +713,11 @@ impl Launcher {
                 Some(Entry::OpenApplication { id, name }) => {
                     launcher.open_application(epoch, id, name).await
                 }
+                Some(Entry::OpenTarget {
+                    target,
+                    application,
+                    name,
+                }) => launcher.open_target(epoch, target, application, name).await,
                 _ => {}
             }
         }
@@ -728,6 +746,7 @@ impl Launcher {
         // Named as the footer names the same row's primary action.
         let primary = match shown.kind {
             Some(RowKind::Application) => "Open application",
+            Some(RowKind::Link) => "Open link",
             _ => "Open command",
         };
         let mut items = vec![ResultActionItem {

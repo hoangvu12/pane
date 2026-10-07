@@ -10,6 +10,16 @@
 //! and Ctrl+K lists them all in Pane's Actions panel, in their sections, each
 //! with its [`Shortcut`] if Pane binds it.
 //!
+//! An action may open a [`Submenu`] instead of running a closure
+//! ([`Action::submenu`]): further choices the panel lists in place, each an
+//! action of its own. Its entries are given with the list
+//! ([`Submenu::new`]), or by a closure Pane calls each time the submenu
+//! opens ([`Submenu::lazy`]). A submenu's entries are named after the action
+//! that opens it and their place (`<callback>/0`, `<callback>/1`, ...); the
+//! closure of a lazy submenu is named as an action would be, and Pane hands
+//! that name to `handle-event` to ask for the entries, which the SDK answers
+//! as `{"entries": [...]}`.
+//!
 //! An item's first action is named by the item's id and its later ones by
 //! the id and their place (`<id>#1`, `<id>#2`, ...), so the same action has
 //! the same callback in every drawing of the list. Pane draws the list again
@@ -23,6 +33,11 @@
 //! Pane calls [`Command::run`] each time it is launched. Both receive the
 //! command's launch record: `run` as its argument, `render` through
 //! [`commands::current`](crate::commands::current).
+//!
+//! An action, a run and a search result answer success or an error. Pane
+//! shows nothing of a success: the command tells the user what happened
+//! with a toast or a HUD ([`crate::feedback`]), or closes the window
+//! ([`crate::window`]). An error is shown as a failure toast.
 
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
@@ -44,12 +59,25 @@ use wit::{
 /// The version of the tree this SDK writes (`docs/list-tree.md`).
 const TREE_VERSION: u32 = 1;
 
-/// What an action answers: text shown to the user as the result, or an
-/// error shown as the failure.
-type Answer = Pin<Box<dyn Future<Output = Result<String, String>>>>;
+/// What an action answers: success, or an error shown as a failure toast.
+pub(crate) type Answer = Pin<Box<dyn Future<Output = Result<(), String>>>>;
 
 /// What an action runs, once, when the user chooses it.
 type Run = Box<dyn FnOnce() -> Answer>;
+
+/// What a lazy submenu's closure answers: its entries, or an error Pane
+/// shows as the submenu's one entry.
+type Entries = Pin<Box<dyn Future<Output = Result<Vec<Action>, String>>>>;
+
+/// What a lazy submenu runs, once, when it opens.
+type Load = Box<dyn FnOnce() -> Entries>;
+
+/// A callback of the list drawn last, by its id: an action's closure, or a
+/// lazy submenu's.
+enum Callback {
+    Run(Run),
+    Open(Load),
+}
 
 /// A modifier key held with a [`Shortcut`]'s key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -159,31 +187,114 @@ impl Shortcut {
     }
 }
 
-/// One of an item's actions: what it is called, where the Actions panel
-/// lists it, how it is drawn, its shortcut, and the closure it runs.
+/// One of an item's actions, or an entry of a [`Submenu`]: what it is
+/// called, where the Actions panel lists it, how it is drawn (its icon, its
+/// style), its shortcut, and the closure it runs or the submenu it opens.
 pub struct Action {
     title: Option<String>,
     section: Option<String>,
     destructive: bool,
     shortcut: Option<Shortcut>,
-    run: Run,
+    icon: Option<crate::icon::Icon>,
+    does: Does,
+}
+
+/// What choosing an action does.
+enum Does {
+    Run(Run),
+    Open(Submenu),
+}
+
+/// Further choices an action opens in place in the Actions panel, such as
+/// "Open With…" or "Move to List…": a title, which the panel shows while it
+/// is open, and entries, each an [`Action`] of its own (a closure, or a
+/// further submenu). The panel filters them as the user types, and an
+/// entry's shortcut works while its submenu is shown.
+pub struct Submenu {
+    title: String,
+    entries: SubmenuEntries,
+}
+
+/// Where a submenu's entries come from.
+enum SubmenuEntries {
+    Given(Vec<Action>),
+    Asked(Load),
+}
+
+impl Submenu {
+    /// A submenu titled `title` whose entries are given with the list: add
+    /// them with [`Submenu::entry`] and [`Submenu::entries`].
+    pub fn new(title: impl Into<String>) -> Submenu {
+        Submenu {
+            title: title.into(),
+            entries: SubmenuEntries::Given(Vec::new()),
+        }
+    }
+
+    /// A submenu titled `title` whose entries `load` gives when the user
+    /// opens it, each time: Pane shows it loading until `load` answers, and
+    /// an error as its one entry.
+    pub fn lazy<F, A>(title: impl Into<String>, load: F) -> Submenu
+    where
+        F: FnOnce() -> A + 'static,
+        A: Future<Output = Result<Vec<Action>, String>> + 'static,
+    {
+        Submenu {
+            title: title.into(),
+            entries: SubmenuEntries::Asked(Box::new(move || Box::pin(load()) as Entries)),
+        }
+    }
+
+    /// This submenu with `entry` after its entries (a lazy one becomes one
+    /// whose entries are given).
+    pub fn entry(mut self, entry: Action) -> Submenu {
+        if let SubmenuEntries::Given(entries) = &mut self.entries {
+            entries.push(entry);
+        } else {
+            self.entries = SubmenuEntries::Given(alloc::vec![entry]);
+        }
+        self
+    }
+
+    /// This submenu with `entries` after its entries (see
+    /// [`Submenu::entry`]).
+    pub fn entries(self, entries: impl IntoIterator<Item = Action>) -> Submenu {
+        entries.into_iter().fold(self, Submenu::entry)
+    }
 }
 
 impl Action {
     /// An action titled `title` that runs `run` when the user chooses it.
-    /// The text it answers is shown as the result; an error is shown as
-    /// the failure. Pane draws the list again afterwards.
+    /// An error it answers is shown as a failure toast; on success it
+    /// tells the user what happened itself ([`crate::feedback`]). Pane
+    /// draws the list again afterwards.
     pub fn new<F, A>(title: impl Into<String>, run: F) -> Action
     where
         F: FnOnce() -> A + 'static,
-        A: Future<Output = Result<String, String>> + 'static,
+        A: Future<Output = Result<(), String>> + 'static,
     {
         Action {
             title: Some(title.into()),
             section: None,
             destructive: false,
             shortcut: None,
-            run: Box::new(move || Box::pin(run()) as Answer),
+            icon: None,
+            does: Does::Run(Box::new(move || Box::pin(run()) as Answer)),
+        }
+    }
+
+    /// An action titled `title` that opens `submenu` in the Actions panel
+    /// when the user chooses it ("Open With…"), instead of running a
+    /// closure. Enter, a chord or its shortcut open the panel at it when it
+    /// is one of an item's actions.
+    pub fn submenu(title: impl Into<String>, submenu: Submenu) -> Action {
+        Action {
+            title: Some(title.into()),
+            section: None,
+            destructive: false,
+            shortcut: None,
+            icon: None,
+            does: Does::Open(submenu),
         }
     }
 
@@ -206,12 +317,30 @@ impl Action {
         self.shortcut = Some(shortcut);
         self
     }
+
+    /// This action with `icon` beside it in the Actions panel (#139), in
+    /// place of Pane's glyph: drawn as an item's icon is, a web image or a
+    /// system icon showing its fallback until it loaded.
+    pub fn icon(mut self, icon: crate::icon::Icon) -> Action {
+        self.icon = Some(icon);
+        self
+    }
 }
 
-/// A command's list view: its title and items, in order.
+/// A command's screen: a list view, its title and items in order, or a
+/// form that is the whole screen ([`List::form`]).
 pub struct List {
     title: String,
     items: Vec<Item>,
+    form: Option<ScreenForm>,
+}
+
+/// A form that is a command's whole screen, with the values its fields
+/// start with.
+struct ScreenForm {
+    id: String,
+    form: Form,
+    values: Vec<(String, String)>,
 }
 
 impl List {
@@ -220,7 +349,36 @@ impl List {
         List {
             title: title.into(),
             items: Vec::new(),
+            form: None,
         }
+    }
+
+    /// A screen that is `form` rather than a list, as a command such as
+    /// "Create Quicklink" opens: the user fills it in at once, submitting
+    /// it calls [`Command::submit_form`] with `id`, and Back (Escape)
+    /// leaves the command. Its fields start empty (a choice with its first
+    /// option), or with the values [`List::value`] gives them. A list's
+    /// items given to it are ignored.
+    pub fn form(id: impl Into<String>, form: Form) -> List {
+        List {
+            title: form.title.clone(),
+            items: Vec::new(),
+            form: Some(ScreenForm {
+                id: id.into(),
+                form,
+                values: Vec::new(),
+            }),
+        }
+    }
+
+    /// For a form screen ([`List::form`]): the field `field` starts with
+    /// `value`, a text field's text or the id of the option chosen first.
+    /// A list ignores it.
+    pub fn value(mut self, field: impl Into<String>, value: impl Into<String>) -> List {
+        if let Some(screen) = &mut self.form {
+            screen.values.push((field.into(), value.into()));
+        }
+        self
     }
 
     /// This list with `item` after its items.
@@ -247,6 +405,8 @@ pub struct Item {
     form: Option<Form>,
     platforms: Option<Vec<Platform>>,
     custom_view: Option<CustomViewInfo>,
+    /// Its icon, tooltips and accessories (`crate::icon`, #139).
+    pub(crate) look: crate::icon::Look,
 }
 
 impl Item {
@@ -262,6 +422,7 @@ impl Item {
             form: None,
             platforms: None,
             custom_view: None,
+            look: crate::icon::Look::default(),
         }
     }
 
@@ -273,21 +434,23 @@ impl Item {
 
     /// This item with an untitled action after its actions, which runs
     /// when the user chooses it: the item's primary action when it is the
-    /// first, which Pane names "Run item". The text it answers is shown as
-    /// the result; an error is shown as the failure. Pane draws the list
-    /// again afterwards. [`Item::action`] gives an action a title, a
-    /// section, a style and a shortcut.
+    /// first, which Pane names "Run item". An error it answers is shown as
+    /// a failure toast; on success it tells the user what happened itself
+    /// ([`crate::feedback`]). Pane draws the list again afterwards.
+    /// [`Item::action`] gives an action a title, a section, a style and a
+    /// shortcut.
     pub fn on_action<F, A>(mut self, action: F) -> Item
     where
         F: FnOnce() -> A + 'static,
-        A: Future<Output = Result<String, String>> + 'static,
+        A: Future<Output = Result<(), String>> + 'static,
     {
         self.actions.push(Action {
             title: None,
             section: None,
             destructive: false,
             shortcut: None,
-            run: Box::new(move || Box::pin(action()) as Answer),
+            icon: None,
+            does: Does::Run(Box::new(move || Box::pin(action()) as Answer)),
         });
         self
     }
@@ -344,9 +507,10 @@ impl Item {
 ///     type CustomView = pane_guest::NoCustomView;
 ///
 ///     async fn render() -> Result<List, String> {
-///         Ok(List::new("Hello").item(
-///             Item::new("greet", "Say hello").on_action(|| async { Ok("Hello".into()) }),
-///         ))
+///         Ok(List::new("Hello").item(Item::new("greet", "Say hello").on_action(|| async {
+///             pane_guest::feedback::show_toast(Toast::success("Hello"));
+///             Ok(())
+///         })))
 ///     }
 ///     // submit_form, open_view ...
 /// }
@@ -358,8 +522,9 @@ impl Item {
 /// impl pane_guest::Command for Toggle {
 ///     type CustomView = pane_guest::NoCustomView;
 ///
-///     async fn run(command: String, launch: LaunchRecord) -> Result<String, String> {
-///         Ok("Toggled".into())
+///     async fn run(command: String, launch: LaunchRecord) -> Result<(), String> {
+///         pane_guest::feedback::show_hud("Toggled", ToastStyle::Success);
+///         Ok(())
 ///     }
 /// }
 /// ```
@@ -381,11 +546,14 @@ pub trait Command: 'static {
     /// component can serve several commands), launched as `launch` says:
     /// how (by the user or in the background, and from where), with any
     /// text sent through its alias or as a fallback, and any context
-    /// another command passed. The text it answers is shown as the result,
-    /// and an error is shown as the failure.
+    /// another command passed. Pane shows nothing of a success: the command
+    /// tells the user what happened with a toast or a HUD
+    /// ([`crate::feedback`]). An error is shown as a failure toast with a
+    /// "Copy Error" action, and a toast left in the animated style is
+    /// hidden once the run ends.
     /// Pane calls it only for a command whose `pane.json` entry says
     /// `"mode": "no-view"`; without it, that is an error.
-    fn run(command: String, launch: LaunchRecord) -> impl Future<Output = Result<String, String>> {
+    fn run(command: String, launch: LaunchRecord) -> impl Future<Output = Result<(), String>> {
         let _ = launch;
         async move {
             Err(format!(
@@ -396,9 +564,9 @@ pub trait Command: 'static {
 
     /// Runs the search result with `id` the user chose, for a command that
     /// searches as the user types (`pane_guest::search`): its id is the
-    /// callback Pane hands back. The text is shown as the result. Without
-    /// it, choosing an id no item names is an error.
-    fn run_search_result(id: String) -> impl Future<Output = Result<String, String>> {
+    /// callback Pane hands back. An error is shown as a failure toast.
+    /// Without it, choosing an id no item names is an error.
+    fn run_search_result(id: String) -> impl Future<Output = Result<(), String>> {
         async move { Err(format!("unknown action: {id}")) }
     }
 
@@ -438,24 +606,39 @@ impl<T: Command> wit::Guest for T {
 
     async fn run(command: String, launch: LaunchRecord) -> Result<String, String> {
         crate::commands::set_current(launch.clone());
-        let status = <T as Command>::run(command, launch).await?;
-        Ok(answer(&status))
+        <T as Command>::run(command, launch).await?;
+        Ok(ANSWER.into())
     }
 
     async fn handle_event(callback: String, _details: String) -> Result<String, String> {
-        let action = match take(&callback) {
-            Some(action) => Some(action),
+        // A toast's action, which stays the toast's while it shows.
+        if let Some(action) = crate::feedback::toast_action(&callback) {
+            action().await?;
+            return Ok(ANSWER.into());
+        }
+        let found = match take(&callback) {
+            Some(found) => Some(found),
             None => {
-                // A fresh instance: the list names its actions once drawn.
+                // A fresh instance, or a lazy submenu opened again: the list
+                // names its callbacks once drawn.
                 remember(<T as Command>::render().await?);
                 take(&callback)
             }
         };
-        let status = match action {
-            Some(action) => action().await?,
-            None => <T as Command>::run_search_result(callback).await?,
-        };
-        Ok(answer(&status))
+        match found {
+            Some(Callback::Run(action)) => {
+                action().await?;
+                Ok(ANSWER.into())
+            }
+            Some(Callback::Open(load)) => {
+                let entries = load().await?;
+                Ok(entries_answer(&callback, entries))
+            }
+            None => {
+                <T as Command>::run_search_result(callback).await?;
+                Ok(ANSWER.into())
+            }
+        }
     }
 
     async fn submit_form(item_id: String, values: Vec<FieldValue>) -> Result<String, FormError> {
@@ -467,17 +650,29 @@ impl<T: Command> wit::Guest for T {
     }
 }
 
-/// The answer object of `handle-event` and `run` for `status`, the text
-/// shown as the result: `{"status": ...}`.
-fn answer(status: &str) -> String {
-    let mut answer = String::from("{\"status\":");
-    string(&mut answer, status);
+/// The answer object of `handle-event` and `run`: empty, since Pane shows
+/// nothing of an answer.
+const ANSWER: &str = "{}";
+
+/// The answer of `handle-event` for the lazy submenu `callback` opened:
+/// `{"entries": [...]}`, its entries named `<callback>/<n>` and kept beside
+/// the list's callbacks until the list is drawn again.
+fn entries_answer(callback: &str, entries: Vec<Action>) -> String {
+    let mut callbacks = ACTIONS.0.borrow_mut();
+    let mut answer = String::from("{\"entries\":");
+    write_actions(
+        &mut answer,
+        entries,
+        &|index| format!("{callback}/{index}"),
+        &mut callbacks,
+    );
     answer.push('}');
     answer
 }
 
-/// The actions of the list the instance drew last, by callback id.
-struct Actions(RefCell<BTreeMap<String, Run>>);
+/// The callbacks of the list the instance drew last (and of the lazy
+/// submenus opened since), by callback id.
+struct Actions(RefCell<BTreeMap<String, Callback>>);
 
 // SAFETY: a component's code runs on one thread, and no borrow of the map
 // is held across an `await`.
@@ -485,9 +680,10 @@ unsafe impl Sync for Actions {}
 
 static ACTIONS: Actions = Actions(RefCell::new(BTreeMap::new()));
 
-/// The action named `callback` in the list drawn last, taken out: Pane
-/// draws the list again after it runs.
-fn take(callback: &str) -> Option<Run> {
+/// The callback named `callback` in the list drawn last, taken out: Pane
+/// draws the list again after an action runs, and a lazy submenu opened
+/// again draws it first to find its closure.
+fn take(callback: &str) -> Option<Callback> {
     ACTIONS.0.borrow_mut().remove(callback)
 }
 
@@ -496,6 +692,14 @@ fn take(callback: &str) -> Option<Run> {
 fn remember(list: List) -> String {
     let mut actions = ACTIONS.0.borrow_mut();
     actions.clear();
+    if let Some(screen) = list.form {
+        let mut tree = format!("{{\"version\":{TREE_VERSION},\"view\":{{\"type\":\"form\",\"id\":");
+        string(&mut tree, &screen.id);
+        tree.push(',');
+        write_form_fields(&mut tree, &screen.form, &screen.values);
+        tree.push_str("}}");
+        return tree;
+    }
     let mut tree = format!("{{\"version\":{TREE_VERSION},\"view\":{{\"type\":\"list\",\"title\":");
     string(&mut tree, &list.title);
     tree.push_str(",\"items\":[");
@@ -512,39 +716,22 @@ fn remember(list: List) -> String {
             string(&mut tree, subtitle);
         }
         if !item.actions.is_empty() {
-            tree.push_str(",\"actions\":[");
-            for (index, action) in item.actions.into_iter().enumerate() {
-                if index > 0 {
-                    tree.push(',');
-                }
-                // The item's id names its first action's callback, and the
-                // id and their place its later ones'.
-                let callback = if index == 0 {
-                    item.id.clone()
-                } else {
-                    format!("{}#{index}", item.id)
-                };
-                tree.push_str("{\"onAction\":");
-                string(&mut tree, &callback);
-                if let Some(title) = &action.title {
-                    tree.push_str(",\"title\":");
-                    string(&mut tree, title);
-                }
-                if let Some(section) = &action.section {
-                    tree.push_str(",\"section\":");
-                    string(&mut tree, section);
-                }
-                if action.destructive {
-                    tree.push_str(",\"style\":\"destructive\"");
-                }
-                if let Some(shortcut) = &action.shortcut {
-                    tree.push_str(",\"shortcut\":");
-                    write_shortcut(&mut tree, shortcut);
-                }
-                tree.push('}');
-                actions.insert(callback, action.run);
-            }
-            tree.push(']');
+            tree.push_str(",\"actions\":");
+            // The item's id names its first action's callback, and the id
+            // and their place its later ones'.
+            let id = item.id.clone();
+            write_actions(
+                &mut tree,
+                item.actions,
+                &|index| {
+                    if index == 0 {
+                        id.clone()
+                    } else {
+                        format!("{id}#{index}")
+                    }
+                },
+                &mut actions,
+            );
         }
         if let Some(form) = &item.form {
             tree.push_str(",\"form\":");
@@ -581,15 +768,94 @@ fn remember(list: List) -> String {
             );
             tree.push('}');
         }
+        crate::icon::write_look(&mut tree, &item.look);
         tree.push('}');
     }
     tree.push_str("]}}");
     tree
 }
 
+/// Writes `actions` as the tree's JSON array, naming each one's callback
+/// `name(place)` and keeping its closure (or its lazy submenu's) in
+/// `callbacks` by that name. A submenu given with the list names its
+/// entries after the action that opens it: `<name>/0`, `<name>/1`, ...
+fn write_actions(
+    tree: &mut String,
+    actions: Vec<Action>,
+    name: &dyn Fn(usize) -> String,
+    callbacks: &mut BTreeMap<String, Callback>,
+) {
+    tree.push('[');
+    for (index, action) in actions.into_iter().enumerate() {
+        if index > 0 {
+            tree.push(',');
+        }
+        let callback = name(index);
+        let Action {
+            title,
+            section,
+            destructive,
+            shortcut,
+            icon,
+            does,
+        } = action;
+        tree.push('{');
+        match does {
+            Does::Run(run) => {
+                tree.push_str("\"onAction\":");
+                string(tree, &callback);
+                callbacks.insert(callback.clone(), Callback::Run(run));
+            }
+            Does::Open(submenu) => {
+                tree.push_str("\"submenu\":{\"title\":");
+                string(tree, &submenu.title);
+                match submenu.entries {
+                    SubmenuEntries::Given(entries) => {
+                        tree.push_str(",\"entries\":");
+                        let opener = callback.clone();
+                        write_actions(
+                            tree,
+                            entries,
+                            &|place| format!("{opener}/{place}"),
+                            callbacks,
+                        );
+                    }
+                    SubmenuEntries::Asked(load) => {
+                        tree.push_str(",\"onOpen\":");
+                        string(tree, &callback);
+                        callbacks.insert(callback.clone(), Callback::Open(load));
+                    }
+                }
+                tree.push('}');
+            }
+        }
+        if let Some(title) = &title {
+            tree.push_str(",\"title\":");
+            string(tree, title);
+        }
+        if let Some(section) = &section {
+            tree.push_str(",\"section\":");
+            string(tree, section);
+        }
+        if destructive {
+            tree.push_str(",\"style\":\"destructive\"");
+        }
+        if let Some(shortcut) = &shortcut {
+            tree.push_str(",\"shortcut\":");
+            write_shortcut(tree, shortcut);
+        }
+        if let Some(icon) = &icon {
+            tree.push_str(",\"icon\":");
+            crate::icon::write_icon(tree, icon);
+        }
+        tree.push('}');
+    }
+    tree.push(']');
+}
+
 /// Writes `shortcut` as the tree's JSON: `{"modifiers": [...], "key": ...}`
 /// for every system, or such an object per system.
-fn write_shortcut(tree: &mut String, shortcut: &Shortcut) {
+pub(crate) fn write_shortcut(tree: &mut String, shortcut: &Shortcut) {
     if let Some(keys) = &shortcut.every {
         write_keys(tree, keys);
         return;
@@ -631,7 +897,15 @@ fn write_keys(tree: &mut String, keys: &Keys) {
 
 /// Writes `form` as the tree's JSON.
 fn write_form(tree: &mut String, form: &Form) {
-    tree.push_str("{\"title\":");
+    tree.push('{');
+    write_form_fields(tree, form, &[]);
+    tree.push('}');
+}
+
+/// Writes `form`'s title, submit label and fields as members of a JSON
+/// object, each field with the value `values` gives it, if any.
+fn write_form_fields(tree: &mut String, form: &Form, values: &[(String, String)]) {
+    tree.push_str("\"title\":");
     string(tree, &form.title);
     tree.push_str(",\"submitLabel\":");
     string(tree, &form.submit_label);
@@ -644,6 +918,10 @@ fn write_form(tree: &mut String, form: &Form) {
         string(tree, &field.id);
         tree.push_str(",\"label\":");
         string(tree, &field.label);
+        if let Some((_, value)) = values.iter().find(|(id, _)| *id == field.id) {
+            tree.push_str(",\"value\":");
+            string(tree, value);
+        }
         match &field.kind {
             FieldKind::Text(text) => {
                 tree.push_str(",\"kind\":\"text\"");
@@ -669,7 +947,7 @@ fn write_form(tree: &mut String, form: &Form) {
         }
         tree.push('}');
     }
-    tree.push_str("]}");
+    tree.push(']');
 }
 
 /// Writes `text` as a JSON string.

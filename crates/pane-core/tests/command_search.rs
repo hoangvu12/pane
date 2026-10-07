@@ -10,6 +10,8 @@
 //! While a command's call waits on the service, Pane serves other calls
 //! (#136): the calculator, another package, answers root search meanwhile.
 
+#[path = "support/feedback.rs"]
+mod feedback;
 #[path = "support/service.rs"]
 mod service;
 #[path = "support/unreachable.rs"]
@@ -21,6 +23,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::task::{Poll, Waker};
 use std::time::{Duration, Instant};
 
+use feedback::shown;
 use futures::executor::block_on;
 use pane_core::{
     Fault, HttpLimits, Launcher, PackageIdentity, Runtime, RuntimeStatus, SavedData, Screen, Status,
@@ -232,8 +235,10 @@ impl Pane {
         block_on(self.launcher.set_query(text));
     }
 
+    /// The error shown: a search's in the status line, or an action's
+    /// failure toast.
     fn error(&self) -> String {
-        match self.view().status {
+        match shown(&self.launcher) {
             Status::Error(message) => message,
             other => panic!("expected an error, found {other:?}"),
         }
@@ -330,7 +335,7 @@ fn the_service_results_are_listed_and_open_their_details() {
         // Enter asks the service for the package's details.
         pane.activate("aurora-cli");
         assert_eq!(
-            pane.view().status,
+            shown(&pane.launcher),
             Status::Result(
                 "aurora-cli 0.9.3 (Apache-2.0): Command-line parsing with subcommands".into()
             ),
@@ -1027,7 +1032,10 @@ fn a_crash_of_the_runtime_ends_a_search_with_an_error_not_its_results() {
 }
 
 #[test]
-fn a_command_cannot_both_search_inside_itself_and_answer_root_search() {
+fn a_command_that_searches_inside_itself_and_answers_root_search_needs_both_exports() {
+    // A command may do both (Search Files does, #150), as long as its
+    // component exports both interfaces: the search sample exports no root
+    // results, so saying it computes them is refused for that alone.
     let sources = tempfile::tempdir().unwrap();
     let data = tempfile::tempdir().unwrap();
     let folder = package(RUST.package, &sources.path().join("both"));
@@ -1043,12 +1051,10 @@ fn a_command_cannot_both_search_inside_itself_and_answer_root_search() {
         panic!("installed: {:?}", launcher.view().status);
     };
     assert!(
-        message.contains(
-            "command `packages` sets both `search` and `rootResults`: a command that \
-             searches inside itself is never asked by root search"
-        ),
+        message.contains("its manifest says it computes root results, but it does not export"),
         "{message}"
     );
+    assert!(!message.contains("sets both"), "{message}");
 }
 
 #[test]

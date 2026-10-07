@@ -52,8 +52,10 @@ use crate::http;
 
 pub(crate) mod deadlines;
 mod faults;
+mod host_functions;
 mod memory;
 mod supervisor;
+mod system_functions;
 mod tree;
 
 use deadlines::Doing;
@@ -74,7 +76,12 @@ pub use memory::peaks::memory_peak;
 pub(crate) use supervisor::CRASH_WINDOW;
 use supervisor::{NotSent, Shared};
 pub use supervisor::{RuntimeFailure, RuntimeStatus};
-pub use tree::{Action, ActionStyle, Answer, Item, TREE_VERSION, View};
+pub(crate) use tree::read_shortcut;
+pub use tree::{Accessory, AccessoryContent, ItemLook, MAX_ACCESSORIES};
+pub use tree::{
+    Action, ActionKind, ActionStyle, ActionSubmenu, Answer, Item, ScreenForm, SubmenuEntries,
+    TREE_VERSION, View,
+};
 
 pub(crate) mod bindings {
     wasmtime::component::bindgen!({
@@ -83,12 +90,19 @@ pub(crate) mod bindings {
         imports: {
             "pane:extension/operations": store,
             "pane:extension/helpers": store,
+            // A program's waits run off the runtime thread, which awaits
+            // them without holding the guest (`programs`).
+            "pane:extension/programs": store,
             // Saving waits for the file to be written, off the runtime
             // thread, which awaits it.
             "pane:extension/settings.set": async,
             "pane:extension/content.set": async,
             "pane:extension/cache.set": async,
             "pane:extension/credentials.set": async,
+            // The system functions wait for the system (a handler
+            // starting, the clipboard held by another program), off the
+            // runtime thread, which awaits them.
+            "pane:extension/system": async,
         },
         exports: { default: async | store },
     });
@@ -143,8 +157,12 @@ mod operations_bindings {
 
 use bindings::exports::pane::extension::command;
 use bindings::pane::extension::commands as launching;
+use bindings::pane::extension::preferences as preference_values;
 use bindings::pane::extension::{
     applications, cache, clipboard_history, content, credentials, settings,
+};
+use bindings::pane::extension::{
+    feedback as feedback_host, system as system_host, window as window_host,
 };
 use indexed_bindings::exports::pane::extension::indexed_results;
 use root_bindings::exports::pane::extension::root_results;
@@ -152,6 +170,7 @@ use root_bindings::exports::pane::extension::root_results;
 use crate::applications::Applications;
 use crate::clipboard::{self, Capture, CaptureState};
 use crate::extension_data::{DataKind, PackageData};
+use crate::feedback::HostFunctions;
 use crate::files::{FileAccess, Folders};
 use crate::generation::{End, Fence, Generation, Registration};
 use crate::helpers;
@@ -197,7 +216,14 @@ pub(crate) struct ResultListing {
 }
 
 /// One thing a command's search found, listed as a row of the command.
-pub(crate) type SearchResult = ResultListing;
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SearchResult {
+    pub listing: ResultListing,
+    /// The id of the file of the package's granted folder the result is,
+    /// when it is one (Search Files): Pane lists it as that file, with its
+    /// own actions.
+    pub file: Option<String>,
+}
 
 /// Stops a search that is no longer needed: when it is stopped or dropped,
 /// the search is not started if it has not been, and stopped where its guest
@@ -278,6 +304,13 @@ pub(crate) struct IndexedResult {
 pub(crate) enum IndexedAction {
     /// Open the installed application with this id.
     OpenApplication(String),
+    /// Open `target` (a URL of any scheme, a file, a folder or an
+    /// application) with the system's handler, or with `application`, as
+    /// the `system.open` host function does.
+    Open {
+        target: String,
+        application: Option<String>,
+    },
 }
 
 /// What a component exports besides `command`, as its package manifest
@@ -314,6 +347,44 @@ type SharedDirectory = Arc<Mutex<Option<Directory>>>;
 /// What starts the commands guests launch (`pane:extension/commands`),
 /// once the launcher has said: the launcher's own.
 type SharedLaunches = Arc<Mutex<Option<Launches>>>;
+
+/// What the window and feedback host functions guests call do
+/// (`wit/feedback.wit`, and `commands.set-subtitle`), once the launcher has
+/// said: the launcher's own.
+type SharedHostFunctions = Arc<Mutex<Option<Arc<dyn HostFunctions>>>>;
+
+/// What a call into a guest is for, as the host functions it calls see it
+/// (`crate::feedback::Caller`): the command it runs for, if Pane knows it,
+/// and whether a window was shown for it. Set as the call starts; any other
+/// call (an operation, a root search's ask, a service's cycle) has none.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CallFor {
+    /// The manifest id of the command the call runs for.
+    pub(crate) command: Option<String>,
+    /// Whether a window was shown for the call: the user launched the
+    /// command or works in its screen; not a background launch or a
+    /// schedule.
+    pub(crate) windowed: bool,
+}
+
+impl CallFor {
+    /// A call for `command` (if known) launched as `launch` says: with a
+    /// window unless in the background.
+    fn launched(command: Option<String>, launch: &LaunchRecord) -> CallFor {
+        CallFor {
+            command,
+            windowed: !launch.is_background(),
+        }
+    }
+
+    /// A call the user makes in the command's screen: with a window.
+    fn in_window(command: Option<String>) -> CallFor {
+        CallFor {
+            command,
+            windowed: true,
+        }
+    }
+}
 
 /// What Pane shows of an item's custom view besides the view's drawing.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -464,13 +535,22 @@ pub struct Field {
     pub id: String,
     pub label: String,
     pub kind: FieldKind,
+    /// What the field starts with: a text field's text, or the id of the
+    /// option chosen first; `None` for an empty text field, or the first
+    /// option.
+    pub value: Option<String>,
 }
 
 /// What a field holds.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FieldKind {
-    /// A single-line text field, which starts empty.
+    /// A single-line text field, which starts with the field's value, else
+    /// empty.
     Text { placeholder: Option<String> },
+    /// A single-line text field whose text is concealed while it is typed:
+    /// a password argument in Pane's argument form. An extension's form
+    /// has none yet.
+    Password { placeholder: Option<String> },
     /// Exactly one of these options; the first starts chosen.
     Choice(Vec<Choice>),
 }
@@ -655,17 +735,32 @@ struct Check {
 pub(crate) struct Checked {
     /// It imports `wasi:http`: its code can make web requests.
     pub network: bool,
+    /// It imports `pane:extension/programs`: its code can run system
+    /// programs.
+    pub programs: bool,
+}
+
+impl std::ops::BitOrAssign for Checked {
+    /// What a package's components can do together.
+    fn bitor_assign(&mut self, other: Checked) {
+        self.network |= other.network;
+        self.programs |= other.programs;
+    }
 }
 
 enum Request {
     Render {
         component: PathBuf,
+        /// The manifest id of the command whose screen it draws, if known.
+        command: Option<String>,
         launch: LaunchRecord,
         data: Option<PackageData>,
         reply: oneshot::Sender<Result<View, CallError>>,
     },
     HandleEvent {
         component: PathBuf,
+        /// The manifest id of the command whose event it is, if known.
+        command: Option<String>,
         callback: String,
         details: String,
         data: Option<PackageData>,
@@ -673,6 +768,8 @@ enum Request {
     },
     RunItem {
         component: PathBuf,
+        /// The manifest id of the command whose item it runs, if known.
+        command: Option<String>,
         item_id: String,
         launch: LaunchRecord,
         data: Option<PackageData>,
@@ -905,6 +1002,13 @@ impl Runtime {
         *lock(&self.shared.search_timer) = Some(Arc::new(timer));
     }
 
+    /// The runtime's web requests: their limits and what each package
+    /// reached, which Pane's downloads of extensions' web images share
+    /// (#142).
+    pub(crate) fn network(&self) -> Arc<http::Network> {
+        self.shared.network.clone()
+    }
+
     /// `host:port` of every address the package with identity key `owner`
     /// tried to reach this session, sorted.
     pub(crate) fn contacted(&self, owner: &str) -> Vec<String> {
@@ -980,7 +1084,8 @@ impl Runtime {
         component: &Path,
         launch: &LaunchRecord,
     ) -> Result<View, CallError> {
-        self.render_launched_with(component, launch, None).await
+        self.render_launched_with(component, None, launch, None)
+            .await
     }
 
     /// Runs the no-view command with manifest id `command` in `component`
@@ -1029,7 +1134,7 @@ impl Runtime {
         callback: &str,
         details: &str,
     ) -> Result<Answer, CallError> {
-        self.handle_event_with(component, callback, details, None)
+        self.handle_event_with(component, None, callback, details, None)
             .await
     }
 
@@ -1049,15 +1154,17 @@ impl Runtime {
         component: &Path,
         data: Option<PackageData>,
     ) -> Result<View, CallError> {
-        self.render_launched_with(component, &LaunchRecord::default(), data)
+        self.render_launched_with(component, None, &LaunchRecord::default(), data)
             .await
     }
 
-    /// Like [`Runtime::render_launched`]; the command reads and saves
-    /// `data`.
+    /// Like [`Runtime::render_launched`], for the command with manifest id
+    /// `command` (if known: its host functions act for it); the command
+    /// reads and saves `data`.
     pub(crate) async fn render_launched_with(
         &self,
         component: &Path,
+        command: Option<&str>,
         launch: &LaunchRecord,
         data: Option<PackageData>,
     ) -> Result<View, CallError> {
@@ -1065,6 +1172,7 @@ impl Runtime {
         self.call(
             Request::Render {
                 component: component.to_path_buf(),
+                command: command.map(str::to_owned),
                 launch: launch.clone(),
                 data,
                 reply,
@@ -1074,10 +1182,13 @@ impl Runtime {
         .await
     }
 
-    /// Like [`Runtime::handle_event`]; the command reads and saves `data`.
+    /// Like [`Runtime::handle_event`], for the command with manifest id
+    /// `command` (if known: its host functions act for it); the command
+    /// reads and saves `data`.
     pub(crate) async fn handle_event_with(
         &self,
         component: &Path,
+        command: Option<&str>,
         callback: &str,
         details: &str,
         data: Option<PackageData>,
@@ -1086,6 +1197,7 @@ impl Runtime {
         self.call(
             Request::HandleEvent {
                 component: component.to_path_buf(),
+                command: command.map(str::to_owned),
                 callback: callback.to_owned(),
                 details: details.to_owned(),
                 data,
@@ -1103,16 +1215,18 @@ impl Runtime {
         item_id: &str,
         data: Option<PackageData>,
     ) -> Result<Answer, CallError> {
-        self.run_item_launched_with(component, item_id, &LaunchRecord::default(), data)
+        self.run_item_launched_with(component, None, item_id, &LaunchRecord::default(), data)
             .await
     }
 
-    /// Like [`Runtime::run_item_with`], drawing the list with the launch
-    /// record `launch`: a scheduled item's run draws it with its
-    /// schedule's.
+    /// Like [`Runtime::run_item_with`], for the command with manifest id
+    /// `command` (if known: its host functions act for it), drawing the
+    /// list with the launch record `launch`: a scheduled item's run draws it
+    /// with its schedule's.
     pub(crate) async fn run_item_launched_with(
         &self,
         component: &Path,
+        command: Option<&str>,
         item_id: &str,
         launch: &LaunchRecord,
         data: Option<PackageData>,
@@ -1121,6 +1235,7 @@ impl Runtime {
         self.call(
             Request::RunItem {
                 component: component.to_path_buf(),
+                command: command.map(str::to_owned),
                 item_id: item_id.to_owned(),
                 launch: launch.clone(),
                 data,
@@ -1442,6 +1557,29 @@ impl Runtime {
         self.shared.helpers.running()
     }
 
+    /// The process ids of the system programs guests run now (not the
+    /// processes those started), not yet ended and reaped, in no particular
+    /// order. A diagnostic for tests and logs, like
+    /// [`Runtime::helper_processes`].
+    pub fn program_processes(&self) -> Vec<u32> {
+        self.shared.helpers.running_programs()
+    }
+
+    /// The programs the installed package with the identity key `owner`
+    /// ran this session, by path, in order; " (elevated)" follows one run
+    /// elevated.
+    pub(crate) fn programs_run(&self, owner: &str) -> Vec<String> {
+        self.shared.helpers.programs_run(owner)
+    }
+
+    /// Finds the programs guests name by a bare name on what `search_path`
+    /// answers, asked at each call, instead of the system's search path:
+    /// for tests, whose programs are in a folder of their own.
+    #[doc(hidden)]
+    pub fn set_program_search_path(&self, search_path: crate::programs::runner::SearchPath) {
+        self.shared.helpers.set_search_path(search_path);
+    }
+
     /// Ends every native helper process guests started, waiting until each
     /// is reaped, for Pane quitting: its threads stop with it, and nothing
     /// would end them otherwise. The calls that ran them answer that they
@@ -1450,9 +1588,10 @@ impl Runtime {
         self.shared.helpers.stop_all();
     }
 
-    /// Pane is quitting: ends every native helper ([`Runtime::stop_helpers`])
-    /// and stops the runtime thread, dropping every call in progress with
-    /// its instance, so whatever a call waits on (a helper, a web request, a
+    /// Pane is quitting: ends every native helper and system program, with
+    /// the processes each started ([`Runtime::stop_helpers`]), and stops the
+    /// runtime thread, dropping every call in progress with its instance,
+    /// so whatever a call waits on (a helper, a program, a web request, a
     /// clock) ends now rather than with the process. Calls asked for
     /// afterwards answer that the runtime stopped.
     pub fn quit(&self) {
@@ -1509,6 +1648,15 @@ impl Runtime {
     /// launch is refused.
     pub(crate) fn set_launches(&self, launches: Launches) {
         *lock(&self.shared.launches) = Some(launches);
+    }
+
+    /// Has `host_functions` carry out the window and feedback host
+    /// functions guests call from now on, also for calls already queued and
+    /// on a restarted runtime thread. Until then a window function answers
+    /// that no window was shown, a toast or a HUD is shown nowhere, and a
+    /// subtitle is refused.
+    pub(crate) fn set_host_functions(&self, host_functions: Arc<dyn HostFunctions>) {
+        *lock(&self.shared.host_functions) = Some(host_functions);
     }
 
     /// Tells `health` of each later failure of a call into an installed
@@ -1781,15 +1929,27 @@ pub(crate) struct GuestState {
     directory: SharedDirectory,
     /// Starts the commands the guest launches.
     launches: SharedLaunches,
-    /// The runtime's helper processes; those of this instance are ended
-    /// with it.
+    /// Carries out the window and feedback host functions the guest calls.
+    host_functions: SharedHostFunctions,
+    /// What the call the guest runs now is for, as its host functions see
+    /// it.
+    call: CallFor,
+    /// The runtime's helper processes and system programs; those of this
+    /// instance are ended with it.
     helpers: Helpers,
-    /// Identifies this instance as the owner of the helpers it starts.
+    /// Identifies this instance as the owner of the helpers and programs it
+    /// starts.
     owner: u64,
+    /// The programs the call running now spawned (`programs`).
+    pub(crate) programs: crate::programs::Processes,
     /// The runtime thread running the instance: its host calls are marked
     /// there, and once Pane gave up on it (a runtime hang), its fence is
     /// closed and the instance is stopped ([`GuestState::stopped`]).
     watch: Arc<Watch>,
+    /// The command, by its id in `pane.json`, Pane last opened, ran or
+    /// asked in this instance: whose preferences `pane:extension/
+    /// preferences` reads when the guest names none.
+    command: Option<String>,
 }
 
 impl Drop for GuestState {
@@ -1846,6 +2006,18 @@ impl GuestState {
                     })
                 })
                 .await
+        }
+    }
+
+    /// Whose a system program the guest runs is: this instance's, its
+    /// generation's and its runtime thread's, noted for its package.
+    pub(crate) fn program_owner(&self) -> crate::programs::runner::Owner {
+        crate::programs::runner::Owner {
+            helpers: self.helpers.clone(),
+            owner: self.owner,
+            generation: self.generation().cloned(),
+            fence: Some(self.watch.fence().clone()),
+            package: self.owner(),
         }
     }
 
@@ -1916,6 +2088,70 @@ data_host!(content, DataKind::Content);
 data_host!(cache, DataKind::Cache);
 data_host!(credentials, DataKind::LocalCredentials);
 
+impl preference_values::Host for GuestState {
+    /// The effective preference values of `command` of the guest's own
+    /// package, as JSON (see `crate::preferences::values_json`): read from
+    /// the package's manifest and Pane's record of the values, a short
+    /// host call.
+    fn values(&mut self, command: Option<String>) -> Result<String, String> {
+        let _host = self.host();
+        if let Some(end) = self.stopped() {
+            return Err(stopped_code(end));
+        }
+        let owner = self.owner().ok_or(
+            "only installed packages declare preferences; this command is built into Pane",
+        )?;
+        let directory = lock(&self.directory)
+            .clone()
+            .ok_or("this Pane keeps no preferences")?;
+        let installed = directory();
+        let package = installed
+            .packages
+            .iter()
+            .find(|package| package.identity.key() == owner)
+            .ok_or("the extension is no longer installed")?;
+        let manifest = package
+            .manifest
+            .as_ref()
+            .map_err(|error| format!("{} cannot load: {error}", package.title()))?;
+        let command = match command
+            .or_else(|| self.call.command.clone())
+            .or_else(|| self.command.clone())
+        {
+            Some(command) => command,
+            None => {
+                let mut serving = manifest.commands.iter().filter(|declared| {
+                    package.location.join(&declared.component) == self.component
+                });
+                match (serving.next(), serving.next()) {
+                    (Some(only), None) => only.id.clone(),
+                    _ => {
+                        return Err(
+                            "this component serves several commands; name the command whose \
+                             preferences to read"
+                                .into(),
+                        );
+                    }
+                }
+            }
+        };
+        if !manifest
+            .commands
+            .iter()
+            .any(|declared| declared.id == command)
+        {
+            return Err(format!("{} has no command `{command}`", manifest.title));
+        }
+        let stored = installed
+            .data
+            .as_ref()
+            .map(|data| data.preference_values(&package.identity))
+            .unwrap_or_default();
+        let declared = crate::preferences::declared(manifest, &command);
+        Ok(crate::preferences::values_json(&declared, &stored))
+    }
+}
+
 impl launching::Host for GuestState {
     /// Hands the launch to the launcher, which starts it or says why it
     /// will not, and never waits for the target to run (see
@@ -1951,10 +2187,17 @@ impl launching::Host for GuestState {
             context,
         })
     }
+
+    /// Hands the subtitle to the launcher, which keeps it for the command
+    /// the call runs for (see `host_functions`).
+    fn set_subtitle(&mut self, subtitle: Option<String>) -> Result<(), String> {
+        self.set_command_subtitle(subtitle)
+    }
 }
 
-/// `launch` as the guest's bindings carry it.
-fn launch_record(launch: &LaunchRecord) -> launching::LaunchRecord {
+/// `launch`, of the command with manifest id `command` (empty when Pane
+/// does not know it), as the guest's bindings carry it.
+fn launch_record(launch: &LaunchRecord, command: Option<&str>) -> launching::LaunchRecord {
     launching::LaunchRecord {
         launch_type: match launch.launch_type {
             LaunchType::UserInitiated => launching::LaunchType::UserInitiated,
@@ -1979,6 +2222,7 @@ fn launch_record(launch: &LaunchRecord) -> launching::LaunchRecord {
             .collect(),
         fallback_text: launch.fallback_text.clone(),
         context: launch.context.clone(),
+        command: command.unwrap_or_default().to_owned(),
     }
 }
 
@@ -2304,6 +2548,8 @@ struct Host {
     directory: SharedDirectory,
     /// Starts the commands guests launch.
     launches: SharedLaunches,
+    /// Carries out the window and feedback host functions guests call.
+    host_functions: SharedHostFunctions,
     /// The helper processes guests started.
     helpers: Helpers,
     /// Told of each failure of a call into an installed package's code.
@@ -2369,6 +2615,11 @@ impl Code {
             |state| state,
         )
         .expect("registering helpers in a fresh linker cannot conflict");
+        bindings::pane::extension::programs::add_to_linker::<_, crate::programs::Calls>(
+            &mut linker,
+            |state| state,
+        )
+        .expect("registering system programs in a fresh linker cannot conflict");
         bindings::pane::extension::files::add_to_linker::<_, wasmtime::component::HasSelf<_>>(
             &mut linker,
             |state| state,
@@ -2376,6 +2627,23 @@ impl Code {
         .expect("registering files in a fresh linker cannot conflict");
         launching::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| state)
             .expect("registering launching commands in a fresh linker cannot conflict");
+        window_host::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| {
+            state
+        })
+        .expect("registering the window functions in a fresh linker cannot conflict");
+        // Toasts and HUDs answer at once; `confirm` waits for the user with
+        // the store's accessor, as helpers do.
+        feedback_host::add_to_linker::<_, host_functions::Confirms>(&mut linker, |state| state)
+            .expect("registering toasts, HUDs and confirmations in a fresh linker cannot conflict");
+        system_host::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| {
+            state
+        })
+        .expect("registering the system functions in a fresh linker cannot conflict");
+        preference_values::add_to_linker::<_, wasmtime::component::HasSelf<_>>(
+            &mut linker,
+            |state| state,
+        )
+        .expect("registering preferences in a fresh linker cannot conflict");
         Code { engine, linker }
     }
 
@@ -2463,10 +2731,13 @@ impl Code {
     /// so no guest code runs.
     fn check(&self, path: &Path, exports: Exports) -> Result<Checked, CallError> {
         let component = self.compile(path)?;
-        let network = component
-            .component_type()
+        let ty = component.component_type();
+        let network = ty
             .imports(&self.engine)
             .any(|(name, _)| name.starts_with("wasi:http/"));
+        let programs = ty
+            .imports(&self.engine)
+            .any(|(name, _)| name.starts_with(crate::programs::PROGRAMS_INTERFACE));
         let interface = |error: wasmtime::Error| CallError::Interface(format!("{error:#}"));
         let pre = self.linker.instantiate_pre(&component).map_err(interface)?;
         if exports.root_results {
@@ -2510,7 +2781,7 @@ impl Code {
             })?;
         }
         bindings::ExtensionWithClipboardPre::new(pre).map_err(interface)?;
-        Ok(Checked { network })
+        Ok(Checked { network, programs })
     }
 }
 
@@ -2537,6 +2808,7 @@ impl Host {
             nudge,
             directory: shared.directory.clone(),
             launches: shared.launches.clone(),
+            host_functions: shared.host_functions.clone(),
             helpers: shared.helpers.clone(),
             health: shared.health.clone(),
             faults,
@@ -2599,21 +2871,30 @@ impl Host {
         let task: Task<'a> = match request {
             Request::Render {
                 component,
+                command,
                 launch,
                 data,
                 reply,
             } => Box::pin(async move {
-                let _ = reply.send(self.render_tree(&component, &launch, data).await);
+                let call = CallFor::launched(command, &launch);
+                let _ = reply.send(self.render_tree(&component, call, &launch, data).await);
             }),
             Request::HandleEvent {
                 component,
+                command,
                 callback,
                 details,
                 data,
                 reply,
             } => Box::pin(async move {
                 let result = self
-                    .handle_event(&component, callback.clone(), details, data)
+                    .handle_event(
+                        &component,
+                        CallFor::in_window(command),
+                        callback.clone(),
+                        details,
+                        data,
+                    )
                     .await;
                 // An injected fault may lose this answer, after the action
                 // ran.
@@ -2622,12 +2903,16 @@ impl Host {
             }),
             Request::RunItem {
                 component,
+                command,
                 item_id,
                 launch,
                 data,
                 reply,
             } => Box::pin(async move {
-                let result = self.run_item(&component, &item_id, &launch, data).await;
+                let call = CallFor::launched(command, &launch);
+                let result = self
+                    .run_item(&component, call, &item_id, &launch, data)
+                    .await;
                 self.faults.before_answer(&item_id);
                 let _ = reply.send(result);
             }),
@@ -2909,26 +3194,32 @@ impl Host {
     async fn render_tree(
         &self,
         path: &Path,
+        call: CallFor,
         launch: &LaunchRecord,
         data: Option<PackageData>,
     ) -> Result<View, CallError> {
         let chain = self.chain();
         let _turn = self.turn_for(path, &chain).await?;
-        self.render_in_turn(path, launch, data, &chain).await
+        self.render_in_turn(path, call, launch, data, &chain).await
     }
 
-    /// [`Host::render_tree`] in `chain`, which holds `path`'s turn.
+    /// [`Host::render_tree`] in `chain`, which holds `path`'s turn. The
+    /// host functions the guest calls act as `call` says.
     async fn render_in_turn(
         &self,
         path: &Path,
+        call: CallFor,
         launch: &LaunchRecord,
         data: Option<PackageData>,
         chain: &Chain,
     ) -> Result<View, CallError> {
         self.instance(path, data).await?;
-        let launch = launch_record(launch);
+        let named = launch.command.as_deref().or(call.command.as_deref());
+        self.note_command(path, named);
+        let launch = launch_record(launch, named);
         let result = self
             .run_guest(path, chain, async |instance| {
+                instance.store.data_mut().call = call;
                 let command = instance.bindings.pane_extension_command();
                 instance
                     .store
@@ -2954,9 +3245,12 @@ impl Host {
         let chain = self.chain();
         let _turn = self.turn_for(path, &chain).await?;
         self.instance(path, data).await?;
-        let launch = launch_record(launch);
+        let call = CallFor::launched(Some(command.clone()), launch);
+        self.note_command(path, Some(&command));
+        let launch = launch_record(launch, Some(&command));
         let result = self
             .run_guest(path, &chain, async |instance| {
+                instance.store.data_mut().call = call;
                 let exported = instance.bindings.pane_extension_command();
                 instance
                     .store
@@ -2973,20 +3267,23 @@ impl Host {
     async fn handle_event(
         &self,
         path: &Path,
+        call: CallFor,
         callback: String,
         details: String,
         data: Option<PackageData>,
     ) -> Result<Answer, CallError> {
         let chain = self.chain();
         let _turn = self.turn_for(path, &chain).await?;
-        self.handle_event_in_turn(path, callback, details, data, &chain)
+        self.handle_event_in_turn(path, call, callback, details, data, &chain)
             .await
     }
 
-    /// [`Host::handle_event`] in `chain`, which holds `path`'s turn.
+    /// [`Host::handle_event`] in `chain`, which holds `path`'s turn. The
+    /// host functions the guest calls act as `call` says.
     async fn handle_event_in_turn(
         &self,
         path: &Path,
+        call: CallFor,
         callback: String,
         details: String,
         data: Option<PackageData>,
@@ -2995,6 +3292,7 @@ impl Host {
         self.instance(path, data).await?;
         let result = self
             .run_guest(path, chain, async |instance| {
+                instance.store.data_mut().call = call;
                 let command = instance.bindings.pane_extension_command();
                 instance
                     .store
@@ -3015,6 +3313,7 @@ impl Host {
     async fn run_item(
         &self,
         path: &Path,
+        call: CallFor,
         item_id: &str,
         launch: &LaunchRecord,
         data: Option<PackageData>,
@@ -3022,7 +3321,7 @@ impl Host {
         let chain = self.chain();
         let _turn = self.turn_for(path, &chain).await?;
         let view = self
-            .render_in_turn(path, launch, data.clone(), &chain)
+            .render_in_turn(path, call.clone(), launch, data.clone(), &chain)
             .await?;
         let Some(item) = view.items.iter().find(|item| item.id == item_id) else {
             return Err(CallError::Guest(format!("unknown item: {item_id}")));
@@ -3032,7 +3331,13 @@ impl Host {
                 "the item {item_id} has no action"
             )));
         };
-        self.handle_event_in_turn(path, action.callback.clone(), "{}".into(), data, &chain)
+        let Some(callback) = action.callback() else {
+            return Err(CallError::Guest(format!(
+                "the item {item_id}'s first action opens a submenu, which only the Actions \
+                 panel shows"
+            )));
+        };
+        self.handle_event_in_turn(path, call, callback.to_owned(), "{}".into(), data, &chain)
             .await
     }
 
@@ -3052,6 +3357,7 @@ impl Host {
             .collect();
         let result = self
             .run_guest(path, &chain, async |instance| {
+                instance.store.data_mut().call = CallFor::in_window(None);
                 let command = instance.bindings.pane_extension_command();
                 instance
                     .store
@@ -3080,6 +3386,7 @@ impl Host {
         self.instance(path, data).await?;
         let result = self
             .run_guest(path, &chain, async |instance| {
+                instance.store.data_mut().call = CallFor::in_window(None);
                 let command = instance.bindings.pane_extension_command();
                 instance
                     .store
@@ -3121,6 +3428,7 @@ impl Host {
         let resource = open.resource;
         let result = self
             .run_guest(&path, &chain, async |instance| {
+                instance.store.data_mut().call = CallFor::in_window(None);
                 let custom_view = instance.bindings.pane_extension_command().custom_view();
                 instance
                     .store
@@ -3320,6 +3628,7 @@ impl Host {
         let chain = self.chain();
         let _turn = self.turn_for(path, &chain).await?;
         self.instance(path, data).await?;
+        self.note_command(path, Some(&command));
         let service = self
             .instances
             .borrow()
@@ -3375,6 +3684,7 @@ impl Host {
             Err(()) => return Err(CallError::Cancelled),
         };
         self.instance(path, data).await?;
+        self.note_command(path, Some(&id));
         let search = self
             .instances
             .borrow()
@@ -3389,6 +3699,7 @@ impl Host {
                 path,
                 &chain,
                 async |instance| {
+                    instance.store.data_mut().call = CallFor::in_window(Some(id.clone()));
                     instance
                         .store
                         .run_concurrent(async |store| search.call_search(store, id, query).await)
@@ -3404,10 +3715,13 @@ impl Host {
         let results = self.settle(path, result, CallError::Guest)?;
         Ok(results
             .into_iter()
-            .map(|result| ResultListing {
-                id: result.id,
-                title: result.title,
-                subtitle: result.subtitle,
+            .map(|result| SearchResult {
+                listing: ResultListing {
+                    id: result.id,
+                    title: result.title,
+                    subtitle: result.subtitle,
+                },
+                file: result.file,
             })
             .collect())
     }
@@ -3456,6 +3770,10 @@ impl Host {
                     indexed_results::IndexedAction::OpenApplication(id) => {
                         IndexedAction::OpenApplication(id)
                     }
+                    indexed_results::IndexedAction::Open(open) => IndexedAction::Open {
+                        target: open.target,
+                        application: open.application,
+                    },
                 },
             })
             .collect())
@@ -3544,6 +3862,9 @@ impl Host {
             .take()
             .unwrap_or_else(|| operations::channel().1);
         instance.store.data_mut().serving = true;
+        // No command and no window unless the call says otherwise (see
+        // `CallFor`): an operation's or a root search's call has none.
+        instance.store.data_mut().call = CallFor::default();
         let mut cancelled = std::pin::pin!(cancelled);
         let faults = self.faults.clone();
         let watch = self.watch.clone();
@@ -3600,10 +3921,13 @@ impl Host {
             }
         };
         instance.store.data_mut().serving = false;
-        // A helper runs no longer than the call that started it: one the
-        // guest left running when its call ended is ended too.
-        let state = instance.store.data();
+        // A helper or a program runs no longer than the call that started
+        // it: one the guest left running when its call ended is ended too,
+        // with what it started, and the ids of those it spawned name
+        // nothing more.
+        let state = instance.store.data_mut();
         state.helpers.stop_owned_by(state.owner);
+        state.programs.clear();
         // A call the guest sent but did not wait for before its call ended
         // has no frame to serve it.
         while let Ok(stranded) = calls.try_recv() {
@@ -3835,6 +4159,18 @@ impl Host {
         }
     }
 
+    /// Notes that the call `path`'s instance runs next is for `command`,
+    /// when the call names one: the command whose preferences the guest
+    /// reads when it names none (`pane:extension/preferences`). Called once
+    /// the instance is live, in the call's turn.
+    fn note_command(&self, path: &Path, command: Option<&str>) {
+        if let Some(command) = command
+            && let Some(instance) = self.instances.borrow_mut().get_mut(path)
+        {
+            instance.store.data_mut().command = Some(command.to_owned());
+        }
+    }
+
     /// Makes sure `path` has a live instance in the generation of `data`,
     /// instantiating it on first use. A call whose generation has ended (its
     /// package was disabled, reloaded or updated since it was asked for) gets
@@ -3900,9 +4236,13 @@ impl Host {
                 clipboard: self.clipboard.clone(),
                 directory: self.directory.clone(),
                 launches: self.launches.clone(),
+                host_functions: self.host_functions.clone(),
+                call: CallFor::default(),
                 owner: self.helpers.new_owner(),
+                programs: crate::programs::Processes::default(),
                 helpers: self.helpers.clone(),
                 watch: self.watch.clone(),
+                command: None,
             },
         );
         store.limiter(|state| state);
@@ -4212,7 +4552,7 @@ mod tests {
             let (runtime, component) = (runtime.clone(), component.clone());
             std::thread::spawn(move || {
                 // Not listed: the fixture runs it as a callback no item names.
-                block_on(runtime.handle_event_with(&component, "hold", "{}", Some(owned)))
+                block_on(runtime.handle_event_with(&component, None, "hold", "{}", Some(owned)))
             })
         };
         let started = Instant::now();
@@ -4436,12 +4776,7 @@ mod tests {
         let saved_note =
             block_on(runtime.run_item_with(&component, "note", Some(packages.owned_by(&identity))));
 
-        assert_eq!(
-            saved_note,
-            Ok(Answer {
-                status: Some("Saved a note".into())
-            })
-        );
+        assert_eq!(saved_note, Ok(Answer::default()));
         assert!(lock(&reported).is_empty(), "{:?}", lock(&reported));
         assert_eq!(runtime.status(), RuntimeStatus::Running);
         assert_eq!(runtime.abandoned_threads(), 0);
@@ -4607,9 +4942,7 @@ mod tests {
         assert_eq!(block_on(runtime.running()), vec![component.clone()]);
         assert_eq!(
             block_on(runtime.run_item_with(&component, "note", Some(current))),
-            Ok(Answer {
-                status: Some("Saved a note".into())
-            })
+            Ok(Answer::default())
         );
         assert_eq!(
             saved(&packages, &identity, "slow-save").as_deref(),

@@ -250,6 +250,11 @@ impl Schedules {
                 continue;
             }
             for (command, schedule) in package.scheduled_commands() {
+                // Its required preferences are unset: it does not run, and
+                // says "Needs setup" instead (see `setup`); not a failure.
+                if launcher.needs_setup(package, command.manifest_id()) {
+                    continue;
+                }
                 let manifest_id = command.manifest_id().to_owned();
                 wanted.insert(
                     command.id,
@@ -397,11 +402,15 @@ fn start_run(schedules: &Arc<Schedules>, launcher: &WeakLauncher, key: String, r
 /// shows nothing.
 fn run_once(schedules: Weak<Schedules>, launcher: WeakLauncher, key: String, run: Run) {
     let alive = launcher.upgrade();
-    let scheduled = LaunchRecord::scheduled();
+    let scheduled = LaunchRecord {
+        command: Some(run.command.clone()),
+        ..LaunchRecord::scheduled()
+    };
     let answer = match (&alive, &run.item) {
         (Some(launcher), Some(item)) => match launcher.runtime() {
             Ok(runtime) => Some(futures::executor::block_on(runtime.run_item_launched_with(
                 &run.component,
+                Some(run.command.as_str()),
                 item,
                 &scheduled,
                 run.data.clone(),
@@ -419,6 +428,9 @@ fn run_once(schedules: Weak<Schedules>, launcher: WeakLauncher, key: String, run
                     &scheduled,
                     run.data.clone(),
                 ));
+                // Nothing will finish a toast the run left in progress.
+                launcher.clear_animated_toast(&mut launcher.lock(), &run.component);
+                launcher.changed();
             }
             None
         }
@@ -443,12 +455,14 @@ fn run_once(schedules: Weak<Schedules>, launcher: WeakLauncher, key: String, run
     }
 }
 
-/// Shows `answer`, of the run of the command in `component`, where its
-/// screen is the one on display, as an action's answer is shown; a
-/// generation that ended while it ran means it is not shown, and the
-/// command's screen having been left means it is not either. The screen's
-/// epoch, when the command handled the run and its list is to be asked for
-/// again.
+/// Shows what `answer`, of the run of the command in `component`, calls
+/// for where its screen is the one on display, as an action's answer is
+/// shown: nothing for an answer (the command shows a toast or a HUD if it
+/// has something to say), a failure toast for an error it answered with,
+/// and Pane's own error otherwise; a generation that ended while it ran
+/// means it is not shown, and the command's screen having been left means
+/// it is not either. The screen's epoch, when the command handled the run
+/// and its list is to be asked for again.
 fn show(
     launcher: &Launcher,
     component: &Path,
@@ -469,13 +483,18 @@ fn show(
         if !shown {
             return None;
         }
-        let ended = stopped(&state, component, data);
+        let state = &mut *state;
+        let ended = stopped(state, component, data);
         let list_again = (handled && ended.is_none()).then_some(state.screen_epoch);
-        state.view.status = match (ended, answer) {
-            (Some(problem), _) => Status::Error(problem),
-            (None, Ok(answer)) => answer.status.map_or(Status::Idle, Status::Result),
-            (None, Err(error)) => Status::Error(error.to_string()),
-        };
+        let command = state.open_command.clone();
+        match (ended, answer) {
+            (Some(problem), _) => state.view.status = Status::Error(problem),
+            (None, Ok(_)) => {}
+            (None, Err(CallError::Guest(message))) => {
+                launcher.show_failure(state, component, command.as_deref(), message);
+            }
+            (None, Err(error)) => state.view.status = Status::Error(error.to_string()),
+        }
         list_again
     };
     launcher.changed();

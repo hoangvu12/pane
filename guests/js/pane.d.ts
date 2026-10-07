@@ -9,10 +9,13 @@
 // never sees the JSON or the callback ids.
 /// <reference path="./wasi.d.ts" />
 /// <reference path="./commands.d.ts" />
+/// <reference path="./feedback-host.d.ts" />
+/// <reference path="./system-host.d.ts" />
 /// <reference path="./data.d.ts" />
 /// <reference path="./operations.d.ts" />
 /// <reference path="./applications.d.ts" />
 /// <reference path="./helpers.d.ts" />
+/// <reference path="./programs-host.d.ts" />
 /// <reference path="./files.d.ts" />
 /// <reference path="./clipboard.d.ts" />
 
@@ -43,12 +46,13 @@ export interface Item {
   subtitle?: string | null;
   /**
    * Runs when the user chooses the item: an untitled action before the
-   * item's `actions`, which Pane names "Run item". The text it resolves
-   * with is shown as the result; throwing shows the error as the failure.
-   * Pane then asks for the list again (`render`). Omitted or `null` for
-   * none.
+   * item's `actions`, which Pane names "Run item". Pane shows nothing of
+   * what it resolves with: it tells the user what happened itself, with a
+   * toast or a HUD (`@pane/extension/feedback`); throwing shows the error
+   * as a failure toast. Pane then asks for the list again (`render`).
+   * Omitted or `null` for none.
    */
-  onAction?: (() => Promise<string>) | null;
+  onAction?: (() => Promise<void>) | null;
   /**
    * The item's actions, in order (after `onAction`, if it is given): the
    * first is its primary action (Enter), the second its secondary action
@@ -75,20 +79,76 @@ export interface Item {
    * when `form` is set. Omitted or `null` for none.
    */
   customView?: CustomViewInfo | null;
+  /** Drawn before the title (#139); omitted or `null` for none. */
+  icon?: Icon | null;
+  /** Shown while the pointer rests on the title: all of it, say. */
+  titleTooltip?: string | null;
+  /** Shown while the pointer rests on the subtitle. */
+  subtitleTooltip?: string | null;
+  /**
+   * On the right of the row, in order: text, a relative date, a coloured
+   * tag (#139). A row shows the first three.
+   */
+  accessories?: Accessory[] | null;
 }
+
+import type { Accessory, Icon } from "./icons";
+export type {
+  Accessory,
+  AccessoryOptions,
+  Color,
+  Icon,
+  IconObject,
+  IconOptions,
+  Tint,
+  Tone,
+} from "./icons";
 
 /** An operating system Pane runs on. */
 export type Platform = "windows" | "macos" | "linux";
 
 /**
- * One of an item's actions. Choosing it runs `onAction`; the text it
- * resolves with is shown as the result, and throwing shows the error as the
- * failure. Pane then asks for the list again (`render`).
+ * One of an item's actions, or an entry of a submenu. Choosing it runs
+ * `onAction`, which tells the user what happened itself, with a toast or a
+ * HUD (`@pane/extension/feedback`); throwing shows the error as a failure
+ * toast. Pane then asks for the list again (`render`). An action with a
+ * `submenu` instead opens that submenu in the Actions panel.
  */
-export interface Action {
+export type Action = CallbackAction | SubmenuAction;
+
+/** An action that runs `onAction` when the user chooses it. */
+export interface CallbackAction extends ActionBase {
+  onAction: () => Promise<void>;
+  submenu?: never;
+}
+
+/**
+ * An action that opens `submenu` in place in the Actions panel ("Open
+ * With…"). As one of an item's actions, Enter, its chord or its shortcut
+ * open the panel at it.
+ */
+export interface SubmenuAction extends ActionBase {
+  submenu: Submenu;
+  onAction?: never;
+}
+
+/**
+ * Further choices an action opens in the Actions panel: a title, which the
+ * panel shows while it is open, and its entries, each an action of its own.
+ * The entries are given with the list (`entries`), or `onOpen` resolves with
+ * them each time the user opens the submenu: Pane shows it loading until
+ * then, and what `onOpen` throws as its one entry. The panel filters the
+ * entries as the user types, and an entry's shortcut works while its
+ * submenu is shown.
+ */
+export type Submenu =
+  | { title: string; entries: Action[]; onOpen?: never }
+  | { title: string; onOpen: () => Promise<Action[]>; entries?: never };
+
+/** What every action has, whatever choosing it does. */
+export interface ActionBase {
   /** What the footer and the Actions panel call it. */
   title: string;
-  onAction: () => Promise<string>;
   /**
    * The title of its section in the Actions panel; consecutive actions with
    * the same section are one section. Omitted or `null` for an untitled one.
@@ -104,6 +164,12 @@ export interface Action {
    * or `null` for none.
    */
   shortcut?: Shortcut | null;
+  /**
+   * The icon the Actions panel draws beside it in place of Pane's glyph,
+   * as an item's icon is drawn (a web image or a system icon shows its
+   * fallback until it loaded). Omitted or `null` for Pane's glyph.
+   */
+  icon?: Icon | null;
 }
 
 /**
@@ -278,7 +344,10 @@ export interface CustomView {
  * ```ts
  * export const command: Command = {
  *   async render(launch) {
- *     return { title: "Hello", items: [{ id: "greet", title: "Say hello", onAction: async () => "Hello" }] };
+ *     return {
+ *       title: "Hello",
+ *       items: [{ id: "greet", title: "Say hello", onAction: async () => { showToast({ title: "Hello" }); } }],
+ *     };
  *   },
  *   async submitForm(id, values) { ... },
  *   async openView(id) { return new MyView(); },
@@ -290,7 +359,7 @@ export interface CustomView {
  *
  * ```ts
  * export const command: Command = {
- *   async run(id, launch) { return `Launched from ${launch.source}`; },
+ *   async run(id, launch) { showHUD(`Launched from ${launch.source}`); },
  * };
  * ```
  *
@@ -299,9 +368,12 @@ export interface CustomView {
  * `runSearchResult`, `openView` and a view's `handleEvent` an `Error`'s
  * message, or a thrown string as is; from `submitForm` a {@link FormError}
  * object as is, and an `Error` or string as a message about the whole form.
- * Resolving with a value of the wrong type, such as an action resolving with
- * `undefined` instead of a string, is a crash: Pane reports it and starts a
- * fresh instance for the next call, and repeated crashes pause the extension.
+ * An action, `run` and `runSearchResult` resolve with nothing: Pane shows
+ * nothing of what they resolve with (text is let through and ignored).
+ * Resolving with a value of the wrong type, such as an action resolving
+ * with `null` or a number, or a provider's `results` resolving with a
+ * string, is a crash: Pane reports it and starts a fresh instance for the
+ * next call, and repeated crashes pause the extension.
  * A crash closes any open custom view, whose state was in the old instance.
  * A list Pane cannot read, such as one whose title is not a string, is the
  * command's failure, which Pane reports, not a crash.
@@ -319,19 +391,21 @@ export interface Command {
    * one component can serve several commands), launched as `launch` says:
    * how (by the user or in the background, and from where), with any text
    * sent through its alias or as a fallback, and any context another
-   * command passed. The text it resolves with is shown as the result;
-   * throwing shows the error as the failure, which never counts towards
-   * pausing the extension. Pane calls it only for a command whose
-   * `pane.json` entry says `"mode": "no-view"`; without it, that is an
-   * error.
+   * command passed. Pane shows nothing of what it resolves with: it tells
+   * the user what happened with a toast or a HUD
+   * (`@pane/extension/feedback`). Throwing shows the error as a failure
+   * toast with a "Copy Error" action, which never counts towards pausing
+   * the extension, and a toast left animated is hidden once it ends. Pane
+   * calls it only for a command whose `pane.json` entry says `"mode":
+   * "no-view"`; without it, that is an error.
    */
-  run?(command: string, launch: LaunchRecord): Promise<string>;
+  run?(command: string, launch: LaunchRecord): Promise<void>;
   /**
    * Runs the search result with id `id` the user chose, for a command that
-   * searches as the user types ({@link CommandSearch}); the text is shown as
-   * the result. Without it, choosing a result is an error.
+   * searches as the user types ({@link CommandSearch}); throwing shows the
+   * error as a failure toast. Without it, choosing a result is an error.
    */
-  runSearchResult?(id: string): Promise<string>;
+  runSearchResult?(id: string): Promise<void>;
   /**
    * Handle the submitted form of the item with `itemId`. `values` holds every
    * field of the form, in order. The text is shown as the result; a thrown
@@ -412,6 +486,15 @@ export interface SearchResult {
   id: string;
   title: string;
   subtitle?: string;
+  /**
+   * A file of the folder granted to the command's package, by the `id`
+   * `listFolder()` gave it, when the result is that file (as Search Files'
+   * are): Pane lists it with the file's own name and folder, and gives it
+   * Pane's own file actions (Open, Reveal, Open With…, Copy Path, Copy
+   * File, Move to Recycle Bin; for a program, Enter reveals it and only
+   * Run runs it), which Pane performs without calling the command.
+   */
+  file?: string;
 }
 
 /**
@@ -452,9 +535,15 @@ export interface CommandSearch {
 /**
  * What invoking an indexed result does; Pane performs it.
  * `{ tag: "open-application", val: id }` opens the installed application
- * with `id`, as `open` in `pane:extension/applications@0.1.0` does.
+ * with `id`, as `open` in `pane:extension/applications@0.1.0` does;
+ * `{ tag: "open", val: { target, application } }` opens `target` (a URL of
+ * any scheme, a file, a folder or an application) with the system's
+ * handler, or with `application`, as `open` in `@pane/extension/system`
+ * does.
  */
-export type IndexedAction = { tag: "open-application"; val: string };
+export type IndexedAction =
+  | { tag: "open-application"; val: string }
+  | { tag: "open"; val: { target: string; application?: string | null } };
 
 /**
  * One root result a command supplies ahead of the query, which root search

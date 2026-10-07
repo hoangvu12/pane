@@ -27,12 +27,24 @@
 //! A held key's repeats and a double click's second click never run an
 //! action again: the window ignores them, as it does for root search's
 //! quick slots. Calls into one instance still run one after another.
+//!
+//! An action may open a submenu instead of calling the command back (#140,
+//! see `submenus`): Enter, a chord or its shortcut then open the Actions
+//! panel at that submenu, which the window does; the launcher runs nothing.
+//!
+//! The rows Pane lists itself with actions of its own (#150: a file of a
+//! granted folder, in root search or Search Files, and a computed answer)
+//! have them as an item has, on root search too, and Pane performs them
+//! instead of calling a command (see `own_actions`).
 
+use std::borrow::Cow;
 use std::future::Future;
+use std::pin::Pin;
 
-use super::{Entry, Launcher, Screen, State, Status, owner};
+use super::{Entry, Launcher, Screen, State, Status, looks, own_actions, owner};
+use crate::icons::Icon;
 use crate::keyboard::{Binding, PaneKeys};
-use crate::runtime::{Action, ActionStyle};
+use crate::runtime::{Action, ActionStyle, SubmenuEntries};
 
 /// What an action without a title is called.
 const UNTITLED: &str = "Run item";
@@ -74,6 +86,12 @@ pub struct ItemAction {
     pub shortcut: Option<Binding>,
     /// Why its shortcut is not bound, when it has one Pane does not bind.
     pub unbound: Option<String>,
+    /// Whether choosing it opens a submenu (#140) rather than calling the
+    /// command back: the panel draws a chevron beside it.
+    pub submenu: bool,
+    /// The icon the panel draws beside it (#139), as it is now: a web image
+    /// or a system icon once it loaded, its fallback until then (#142).
+    pub icon: Option<Icon>,
 }
 
 /// The actions of the selected item in an open command's list.
@@ -93,21 +111,33 @@ impl ItemActions {
     /// and the spaces around it; all of them for a blank one. Filtering
     /// flattens the sections: the panel shows what matches as one list.
     pub fn matching(&self, query: &str) -> Vec<usize> {
-        let query = query.trim().to_lowercase();
-        self.actions
-            .iter()
-            .enumerate()
-            .filter(|(_, action)| action.title.to_lowercase().contains(&query))
-            .map(|(index, _)| index)
-            .collect()
+        matching(&self.actions, query)
     }
 
     /// The index of the action `binding` runs, if one of them has it bound.
     pub fn bound_to(&self, binding: &Binding) -> Option<usize> {
-        self.actions
-            .iter()
-            .position(|action| action.shortcut.as_ref() == Some(binding))
+        bound_to(&self.actions, binding)
     }
+}
+
+/// The indexes of `actions` whose title holds `query`, ignoring case and
+/// the spaces around it; all of them for a blank one.
+pub(super) fn matching(actions: &[ItemAction], query: &str) -> Vec<usize> {
+    let query = query.trim().to_lowercase();
+    actions
+        .iter()
+        .enumerate()
+        .filter(|(_, action)| action.title.to_lowercase().contains(&query))
+        .map(|(index, _)| index)
+        .collect()
+}
+
+/// The index of the action of `actions` that `binding` runs, if one of them
+/// has it bound.
+pub(super) fn bound_to(actions: &[ItemAction], binding: &Binding) -> Option<usize> {
+    actions
+        .iter()
+        .position(|action| action.shortcut.as_ref() == Some(binding))
 }
 
 /// An action shortcut in the open command's list that Pane does not bind,
@@ -142,11 +172,15 @@ impl Launcher {
     /// their shortcuts as Pane binds them now; `None` off a command's list,
     /// with nothing selected, or for a row that has no actions of its own
     /// (an item with none, a form, a custom view, a search result, a
-    /// folder row).
+    /// folder row). A row Pane lists with actions of its own (a file of a
+    /// granted folder, a computed answer; see `own_actions`) has them on
+    /// root search too.
     pub fn item_actions(&self) -> Option<ItemActions> {
         let state = self.lock();
         let listed = selected_listed(&state)?;
-        Some(item_actions(listed, &state.pane_keys))
+        let mut actions = item_actions(&listed, &state.pane_keys);
+        actions.actions = looks::with_action_icons(&state, &listed.actions, actions.actions);
+        Some(actions)
     }
 
     /// The shortcuts of the open command's list that Pane does not bind,
@@ -158,37 +192,63 @@ impl Launcher {
 
     /// Runs the action at `index` of the item `target`, as the Actions
     /// panel chooses it: only if `target` is still the selected item and it
-    /// has that action. Await the returned future to apply the answer;
-    /// nothing happens otherwise.
+    /// has that action, one that calls the command back (one that opens a
+    /// submenu is [`Launcher::open_submenu`]'s). Await the returned future
+    /// to apply the answer; nothing happens otherwise.
     pub fn run_item_action(
         &self,
         target: &str,
         index: usize,
     ) -> impl Future<Output = ()> + Send + 'static {
         let state = self.lock();
-        let callback = selected_listed(&state)
+        let chosen = selected_listed(&state)
             .filter(|listed| listed.id == target)
-            .and_then(|listed| listed.actions.get(index))
-            .map(|action| action.callback.clone());
-        self.run_callback(state, callback)
+            .and_then(|listed| callback_of(listed.actions.get(index)?));
+        self.run_chosen(state, chosen)
     }
 
     /// Runs the action at `index` of the selected item: 1 for Ctrl+Enter
     /// (the secondary action), 2 for Ctrl+Shift+Enter, or the index of the
     /// action a shortcut runs ([`ItemActions::bound_to`]). Nothing happens
-    /// for an action the item does not have. (The primary action is
+    /// for an action the item does not have, or one that opens a submenu
+    /// (the window opens the Actions panel at it). (The primary action is
     /// [`Launcher::activate_selected`]'s, as Enter's.)
     pub fn run_selected_action(&self, index: usize) -> impl Future<Output = ()> + Send + 'static {
         let state = self.lock();
-        let callback = selected_listed(&state)
-            .and_then(|listed| listed.actions.get(index))
-            .map(|action| action.callback.clone());
-        self.run_callback(state, callback)
+        let chosen =
+            selected_listed(&state).and_then(|listed| callback_of(listed.actions.get(index)?));
+        self.run_chosen(state, chosen)
+    }
+
+    /// Runs `chosen`, an action's callback and title, of the selected row:
+    /// one of Pane's own on a row Pane acts on itself (see `own_actions`),
+    /// else the open command's, as [`Launcher::run_callback`] does.
+    pub(super) fn run_chosen(
+        &self,
+        mut state: std::sync::MutexGuard<'_, State>,
+        chosen: Option<(String, String)>,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        if let Some(own) = own_actions::selected(&state) {
+            let work =
+                chosen.and_then(|(callback, title)| own_actions::work(own, &callback, &title));
+            if let Some(work) = &work {
+                own_actions::begin(&mut state, work);
+            }
+            let epoch = state.screen_epoch;
+            drop(state);
+            let launcher = self.clone();
+            return Box::pin(async move {
+                if let Some(work) = work {
+                    launcher.do_own(epoch, work).await;
+                }
+            });
+        }
+        Box::pin(self.run_callback(state, chosen.map(|(callback, _)| callback)))
     }
 
     /// Has the open command handle `callback`, if there is one, the way
     /// activating a row runs an action.
-    fn run_callback(
+    pub(super) fn run_callback(
         &self,
         mut state: std::sync::MutexGuard<'_, State>,
         callback: Option<String>,
@@ -227,22 +287,34 @@ impl Launcher {
     }
 }
 
-/// The selected row's item with its actions, on an open command's list.
-fn selected_listed(state: &State) -> Option<&Listed> {
+/// The callback and the title of `action`, when it calls back rather than
+/// open a submenu.
+fn callback_of(action: &Action) -> Option<(String, String)> {
+    Some((action.callback()?.to_owned(), title(action)))
+}
+
+/// The selected row's item with its actions: an item of an open command's
+/// list, or a row Pane lists with actions of its own (see `own_actions`),
+/// on root search too.
+pub(super) fn selected_listed(state: &State) -> Option<Cow<'_, Listed>> {
+    let index = state.view.selected?;
+    if let Some(own) = own_actions::listed(state, index) {
+        return Some(Cow::Owned(own));
+    }
     if !matches!(
         state.view.screen,
         Screen::Command | Screen::CommandSearch { .. }
     ) {
         return None;
     }
-    match state.entries.get(state.view.selected?)? {
-        Entry::Actions(listed) => Some(listed),
+    match state.entries.get(index)? {
+        Entry::Actions(listed) => Some(Cow::Borrowed(listed)),
         _ => None,
     }
 }
 
 /// What action `action` is called.
-fn title(action: &Action) -> String {
+pub(super) fn title(action: &Action) -> String {
     action
         .title
         .clone()
@@ -252,9 +324,19 @@ fn title(action: &Action) -> String {
 
 /// `listed`'s actions, their shortcuts bound against `keys`.
 fn item_actions(listed: &Listed, keys: &PaneKeys) -> ItemActions {
+    ItemActions {
+        target: listed.id.clone(),
+        title: listed.title.clone(),
+        actions: bind(&listed.actions, keys),
+    }
+}
+
+/// `actions`, an item's or one submenu's entries, as the Actions panel
+/// lists them: their shortcuts bound against `keys`, a shortcut an earlier
+/// one of them already has left unbound.
+pub(super) fn bind(actions: &[Action], keys: &PaneKeys) -> Vec<ItemAction> {
     let mut bound: Vec<(Binding, String)> = Vec::new();
-    let actions = listed
-        .actions
+    actions
         .iter()
         .map(|action| {
             let title = title(action);
@@ -287,19 +369,18 @@ fn item_actions(listed: &Listed, keys: &PaneKeys) -> ItemActions {
                 title,
                 shortcut,
                 unbound,
+                submenu: action.submenu().is_some(),
+                // Set by `looks::with_action_icons` where the panel lists
+                // them.
+                icon: None,
             }
         })
-        .collect();
-    ItemActions {
-        target: listed.id.clone(),
-        title: listed.title.clone(),
-        actions,
-    }
+        .collect()
 }
 
 /// Whether `binding` is a key a search field types or moves with: one held
 /// with no modifier but Shift, other than a function key.
-fn types(binding: &Binding) -> bool {
+pub(super) fn types(binding: &Binding) -> bool {
     let (control, alt, _shift, platform, function) = binding.modifiers();
     let key = binding.key();
     let function_key =
@@ -323,26 +404,51 @@ fn unbound(state: &State) -> Vec<UnboundShortcut> {
             _ => None,
         })
         .flat_map(|listed| {
-            let actions = item_actions(listed, &state.pane_keys);
-            listed
-                .actions
-                .iter()
-                .zip(actions.actions)
-                .filter_map(|(given, action)| {
-                    Some(UnboundShortcut {
-                        item: listed.title.clone(),
-                        shortcut: given
-                            .shortcut
-                            .as_ref()
-                            .and_then(|shortcut| shortcut.as_ref().ok())
-                            .map(Binding::to_string),
-                        why: action.unbound?,
-                        action: action.title,
-                    })
-                })
-                .collect::<Vec<_>>()
+            let mut found = Vec::new();
+            unbound_in(
+                &listed.title,
+                "",
+                &listed.actions,
+                &state.pane_keys,
+                &mut found,
+            );
+            found
         })
         .collect()
+}
+
+/// Adds the unbound shortcuts of `actions`, the item `item`'s actions or
+/// the entries of one of its submenus given at once (named after `path`,
+/// "Open With… › "), to `found`, in order, those of each submenu after the
+/// action that opens it. A submenu the command is asked for when it opens
+/// has no entries to look at until then.
+fn unbound_in(
+    item: &str,
+    path: &str,
+    actions: &[Action],
+    keys: &PaneKeys,
+    found: &mut Vec<UnboundShortcut>,
+) {
+    for (given, action) in actions.iter().zip(bind(actions, keys)) {
+        let named = format!("{path}{}", action.title);
+        if let Some(why) = action.unbound {
+            found.push(UnboundShortcut {
+                item: item.to_owned(),
+                action: named.clone(),
+                shortcut: given
+                    .shortcut
+                    .as_ref()
+                    .and_then(|shortcut| shortcut.as_ref().ok())
+                    .map(Binding::to_string),
+                why,
+            });
+        }
+        if let Some(submenu) = given.submenu()
+            && let SubmenuEntries::Given(entries) = &submenu.entries
+        {
+            unbound_in(item, &format!("{named} › "), entries, keys, found);
+        }
+    }
 }
 
 /// The status line's report of `unbound`, for a developed package.
@@ -366,10 +472,11 @@ mod tests {
     fn action(title: &str, shortcut: Option<&str>) -> Action {
         Action {
             title: Some(title.into()),
-            callback: title.into(),
+            kind: crate::runtime::ActionKind::Callback(title.into()),
             section: None,
             style: ActionStyle::Default,
             shortcut: shortcut.map(Binding::parse),
+            icon: None,
         }
     }
 
