@@ -60,6 +60,7 @@ export const command = {
         id: app.id,
         title: app.name,
         subtitle: app.location,
+        icon: { application: app.icon },
         onAction: () => act(app.id),
       })),
     };

@@ -14,6 +14,8 @@ mod aliases;
 mod application_adapters;
 mod application_cache;
 mod application_changes;
+mod application_icon_adapters;
+mod application_icons;
 mod application_identity;
 mod application_names;
 mod application_update;

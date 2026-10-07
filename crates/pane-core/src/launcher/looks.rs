@@ -370,10 +370,14 @@ impl Launcher {
     /// in its manifest>`, as root search, quick slots and the Shortcuts
     /// page name it), or of the installed package with key `id` (#139):
     /// the command's own, else its package's, else its package's
-    /// first-letter tile. `None` for anything else, such as Pane's own
-    /// rows, which keep their tiles.
+    /// first-letter tile. A root row opening an installed application
+    /// (`<command id>:<result id>`, as a quick slot pins it) shows the
+    /// application's own icon, or its placeholder until it is there
+    /// (#172). `None` for anything else, such as Pane's own rows, which
+    /// keep their tiles.
     pub fn icon_of(&self, id: &str) -> Option<Icon> {
-        icon_of(&self.lock(), id)
+        let state = self.lock();
+        icon_of(&state, id).or_else(|| super::application_icons::of_row(&state, id))
     }
 
     /// The id of the command whose view is open, on its list, its search,

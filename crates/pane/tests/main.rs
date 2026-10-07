@@ -10,6 +10,7 @@
 #![allow(clippy::duplicate_mod)]
 
 mod aliases;
+mod application_icons;
 mod arguments;
 mod command_search;
 mod compact_pins;

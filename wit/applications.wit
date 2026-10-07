@@ -53,6 +53,13 @@ interface applications {
     /// folder's name, else its full path. None when it is alone with its
     /// name. Show it as a subtitle.
     distinction: option<string>,
+    /// Its own icon, for an item to show: name it as the item's icon with
+    /// `{"application": icon}` in the tree (docs/list-tree.md, "Icons";
+    /// `Icon::application` in Rust, `{ application: app.icon }` in
+    /// JavaScript). Pane extracts the icon in the background and keeps it;
+    /// the icon's fallback (or a neutral placeholder) shows until it is
+    /// there. An opaque reference, like `id`: do not parse it.
+    icon: string,
   }
 
   /// The installed applications, in no particular order. A location that is

@@ -39,6 +39,7 @@ mod acquire;
 mod actions;
 mod aliases;
 mod application_changes;
+mod application_icons;
 mod application_update;
 mod argument_form;
 mod choices;
@@ -735,6 +736,9 @@ struct State {
     /// The web images and system icons rows show, loaded in the background
     /// (see `icon_loads`).
     icon_loads: icon_loads::IconLoads,
+    /// The installed applications' own icons, which their rows draw bare
+    /// (see `application_icons`, #172).
+    application_icons: application_icons::ApplicationIcons,
     /// The clock dates are shown relative to: the system's, or the one a
     /// test gave the launcher ([`Launcher::with_clock`]).
     clock: Arc<dyn crate::clipboard::Clock>,
@@ -1391,10 +1395,19 @@ impl Launcher {
             .and_then(|installation| updates::UpdateControls::open(&installation.dir))
             .unwrap_or_default();
         let developing = Arc::new(Developing::new(None, None));
-        // A web image or a system icon that loaded redraws its row: the
-        // window is told through development's shared configuration, as
-        // the launcher's other background work tells it.
+        // A web image, a system icon or an application's icon that loaded
+        // redraws its row: the window is told through development's shared
+        // configuration, as the launcher's other background work tells it.
         let told = Arc::downgrade(&developing);
+        let told_icons = told.clone();
+        let application_icons = application_icons::ApplicationIcons::new(
+            runtime.as_ref().ok(),
+            Arc::new(move || {
+                if let Some(developing) = told_icons.upgrade() {
+                    developing.changed();
+                }
+            }),
+        );
         let icon_loads = icon_loads::IconLoads::new(
             installation
                 .as_ref()
@@ -1406,6 +1419,8 @@ impl Launcher {
                 }
             }),
         );
+        // An extension's list may name an application's own icon (#172).
+        icon_loads.set_application_icons(application_icons.cache.clone());
         let mut state = State {
             // Replaced by root search below.
             view: LauncherView::new(Screen::Command, ""),
@@ -1424,6 +1439,7 @@ impl Launcher {
             custom_view: None,
             looks: looks::Looks::default(),
             icon_loads,
+            application_icons,
             clock: Arc::new(crate::clipboard::SystemClock),
             screen_epoch: 0,
             packages,
@@ -2015,6 +2031,8 @@ impl Launcher {
                     continue;
                 }
                 state.indexes.answer(&command, answer);
+                // Their applications' icons are refreshed (#172).
+                application_icons::listed(state);
                 // Pins made before applications had stable identities
                 // resolve to the results listed for them now.
                 let carried = applications.is_some_and(|applications| {
@@ -2044,6 +2062,7 @@ impl Launcher {
         state
             .indexes
             .retain(|component| indexing.iter().any(|kept| kept == component));
+        application_icons::listed(state);
     }
 
     /// Opens the installed application `id`, named `name`, off the calling

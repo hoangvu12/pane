@@ -16,6 +16,9 @@
 //! - a **system icon**: the icon the system shows for a file or an
 //!   application, by its path, which the host extracts (#142, see
 //!   [`crate::system_icons`]);
+//! - an **installed application's own icon**, by the icon reference the
+//!   applications import returns with it (#172, see
+//!   [`crate::applications::icons`]);
 //! - a generated **first-letter tile**, which a package without an icon of
 //!   its own gets.
 //!
@@ -87,6 +90,11 @@ pub enum IconSource {
     /// once resolved (a leading `~` is the user's home folder); a path that
     /// does not exist draws the fallback.
     File(PathBuf),
+    /// The own icon of the installed application with this icon reference
+    /// ([`crate::applications::icon_reference`], #172), which the host
+    /// keeps in its cache of the applications' icons; its fallback (or a
+    /// neutral placeholder) shows until it is there.
+    Application(String),
     /// A generated tile showing this letter: the icon of a package that
     /// has none of its own.
     Letter(char),
@@ -244,6 +252,10 @@ impl Icon {
                 (is_data_url(&url) || is_web_url(&url)).then_some(IconSource::Url(url))
             }
             IconSource::File(path) => system_path(&path).map(IconSource::File),
+            IconSource::Application(reference) => {
+                let reference = reference.trim();
+                (!reference.is_empty()).then(|| IconSource::Application(reference.to_owned()))
+            }
             IconSource::Letter(letter) => Some(IconSource::Letter(letter)),
         };
         match source {
@@ -293,7 +305,11 @@ pub(crate) fn parse_manifest_icon(value: &Value, what: &str) -> Result<Icon, Str
 /// Checks that `icon` and its fallbacks name only sources a manifest may:
 /// a built-in icon or an image the package ships.
 fn check_manifest_sources(icon: &Icon) -> Result<(), String> {
-    if let IconSource::Url(_) | IconSource::File(_) | IconSource::Letter(_) = icon.source {
+    if let IconSource::Url(_)
+    | IconSource::File(_)
+    | IconSource::Application(_)
+    | IconSource::Letter(_) = icon.source
+    {
         return Err(
             "is not a built-in icon's name or an image the package ships, which a package's \
              and a command's icon are"
@@ -478,11 +494,17 @@ fn parse_at(value: &Value, depth: usize, strict: bool) -> Result<Icon, String> {
         }
         sources.push(IconSource::File(PathBuf::from(file.trim())));
     }
+    if let Some(reference) = text("application")? {
+        if reference.trim().is_empty() {
+            return Err("gives an empty `application` icon reference".into());
+        }
+        sources.push(IconSource::Application(reference.trim().to_owned()));
+    }
     let source = match sources.len() {
         0 => {
             return Err(
-                "names nothing to draw: give `builtin`, `path`, `light` and `dark`, `url` or \
-                 `file`"
+                "names nothing to draw: give `builtin`, `path`, `light` and `dark`, `url`, \
+                 `file` or `application`"
                     .into(),
             );
         }
@@ -1276,6 +1298,28 @@ mod tests {
         let error = parse_manifest_icon(&json!({"file": "/bin/sh"}), "the package").unwrap_err();
         assert!(error.contains("not a built-in icon's name"), "{error}");
         assert!(parse(&json!({"file": " "})).unwrap_err().contains("empty"));
+    }
+
+    #[test]
+    fn an_application_icon_names_its_reference_and_a_manifest_cannot() {
+        let folder = tempfile::tempdir().unwrap();
+        let icon = parse(&json!({"application": " 0123abcd ", "fallback": "category"})).unwrap();
+        assert_eq!(icon.source, IconSource::Application("0123abcd".into()));
+        let resolved = icon.resolved(folder.path()).unwrap();
+        assert_eq!(resolved.source, IconSource::Application("0123abcd".into()));
+        assert!(resolved.fallback.is_some());
+        assert!(
+            parse(&json!({"application": " "}))
+                .unwrap_err()
+                .contains("empty")
+        );
+        assert!(
+            parse(&json!({"application": "a", "file": "/b"}))
+                .unwrap_err()
+                .contains("more than one")
+        );
+        let error = parse_manifest_icon(&json!({"application": "a"}), "the package").unwrap_err();
+        assert!(error.contains("not a built-in icon's name"), "{error}");
     }
 
     #[test]

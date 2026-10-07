@@ -237,7 +237,9 @@ pub(super) struct Shared {
     /// The threads made to hang, for releasing them.
     #[cfg(any(test, debug_assertions))]
     hung: Mutex<Vec<Arc<Faults>>>,
-    cache_dir: Option<PathBuf>,
+    /// Where compiled code, and the installed applications' icons, are
+    /// kept; `None` for a runtime keeping no disposable data.
+    pub(super) cache_dir: Option<PathBuf>,
     current: Mutex<Current>,
 }
 

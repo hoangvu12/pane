@@ -55,6 +55,7 @@ async function render(): Promise<List> {
       id: app.id,
       title: app.name,
       subtitle: app.location,
+      icon: { application: app.icon },
       onAction: () => act(app.id),
     })),
   };

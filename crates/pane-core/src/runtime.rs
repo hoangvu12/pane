@@ -338,7 +338,7 @@ pub(crate) struct Exports {
 
 // The system's applications as the runtime's guests and the launcher see
 // them; replaceable, for tests.
-use application_list::SharedApplications;
+pub(crate) use application_list::SharedApplications;
 
 /// Where the runtime's guests keep clipboard history, once the launcher
 /// said (see [`Runtime::set_clipboard`]); held weakly, since the launcher
@@ -1352,6 +1352,20 @@ impl Runtime {
         self.shared.applications.current()
     }
 
+    /// What finds the system's applications, as it is replaced
+    /// ([`Runtime::set_applications`]), without keeping the runtime: the
+    /// worker refreshing their icons holds it (#172).
+    pub(crate) fn applications_handle(&self) -> SharedApplications {
+        self.shared.applications.clone()
+    }
+
+    /// The folder of disposable data this runtime was started with
+    /// ([`Runtime::start_with_cache`]), which also holds the installed
+    /// applications' icons (#172); `None` when it keeps none.
+    pub(crate) fn cache_folder(&self) -> Option<PathBuf> {
+        self.shared.cache_dir.clone()
+    }
+
     /// Has the runtime's guests keep clipboard history through `capture`
     /// from now on; until then they are told that this Pane does not watch
     /// the clipboard.
@@ -2293,6 +2307,7 @@ impl applications::Host for GuestState {
             .installed()?
             .into_iter()
             .map(|application| applications::Application {
+                icon: crate::applications::icon_reference(&application.id),
                 id: application.id,
                 name: application.name,
                 location: application.location,

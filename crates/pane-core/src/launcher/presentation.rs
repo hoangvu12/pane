@@ -78,8 +78,10 @@ pub struct RowPresentation {
     pub needs_setup: bool,
     /// The row's icon, drawn bare (#139): an installed command's in root
     /// search (its own, its package's, or its package's first-letter
-    /// tile), or an item's in an opened command's list. `None` for Pane's
-    /// own rows, which keep their tiles, and an item without one.
+    /// tile), an installed application's own (#172, or its placeholder
+    /// until it is there), or an item's in an opened command's list.
+    /// `None` for Pane's own rows, which keep their tiles, and an item
+    /// without one.
     pub icon: Option<Icon>,
     /// Shown when the pointer rests on the row's title (an item's).
     pub title_tooltip: Option<String>,
@@ -328,8 +330,14 @@ fn answer(state: &State, row: &Row, entry: &Entry, query: &str) -> Option<Comput
 
 /// The icon of root search's `row`, when activating it (`entry`) reaches
 /// an installed command: opening it, saying why it cannot, or sending it
-/// text (whose row's id is the command's after `alias:` or `fallback:`).
+/// text (whose row's id is the command's after `alias:` or `fallback:`);
+/// or, when it opens an installed application, whichever extension
+/// supplied it, the application's own icon, or its placeholder until it is
+/// there (#172).
 fn icon(state: &State, row: &Row, entry: &Entry) -> Option<Icon> {
+    if let Entry::OpenApplication { id, .. } = entry {
+        return Some(super::application_icons::shown(state, id));
+    }
     let id = match entry {
         Entry::Open(_) | Entry::Unavailable(_) => row.id.as_str(),
         Entry::Send(_) => row

@@ -30,6 +30,12 @@
 //! their changes settle, and an application whose last source went stays
 //! listed for a grace before it leaves.
 //!
+//! The host also keeps each application's own icon ([`icons`], #172): it
+//! extracts it at 256 pixels in the background into a cache in Pane's cache
+//! folder, and returns an icon reference with each application
+//! ([`icon_reference`]), so root search, quick slots and any extension's
+//! list draw it.
+//!
 //! Finding is plain file system work and is compiled on every system, so each
 //! adapter's discovery is tested everywhere with fixture folders; opening uses
 //! the system's own launcher and works only on its system.
@@ -41,6 +47,7 @@ use std::time::Duration;
 mod app_bundles;
 mod cached;
 mod desktop_entries;
+pub mod icons;
 pub mod identity;
 pub mod names;
 mod plist;
@@ -115,6 +122,25 @@ pub trait Applications: Send + Sync + 'static {
     /// more: drop the kept list and stop watching, until the next
     /// [`Applications::installed`]. It must not block.
     fn release(&self) {}
+
+    /// What the icon of the application `id` is extracted from
+    /// ([`icons`]): its primary source's path, or, for a packaged app also
+    /// found by a shortcut, its `shell:AppsFolder\<AppUserModelID>`, whose
+    /// logo has light and dark variants. `None` when `id` names no
+    /// application this host knows. It may scan the system's folders, so
+    /// call it off the window's thread.
+    fn icon_source(&self, id: &str) -> Option<String> {
+        self.source(id)
+    }
+}
+
+/// The icon reference of the installed application `id`, which the host
+/// returns with it (`icon` in `wit/applications.wit`): an extension shows
+/// the application's own icon by naming it as an item's icon,
+/// `{"application": <reference>}` (`docs/list-tree.md`, "Icons"). Opaque to
+/// extensions, like the id.
+pub fn icon_reference(id: &str) -> String {
+    id.to_owned()
 }
 
 /// What the system opens for `application`, an installed application's id

@@ -905,6 +905,11 @@ parse it. Its `name` is the one the system shows in the user's language;
 such as `code`), `keywords` the words that find it (a desktop entry's
 `Keywords`), and `distinction`, when another application has its name,
 what tells it apart (its program's name, folder or path).
+Its `icon` is a reference to the application's own icon, which
+Pane extracts and keeps: a command's list shows it with
+`Item::new(..).icon(Icon::application(app.icon))` (`icon: { application:
+app.icon }` in JavaScript and TypeScript), and root search draws it for every result that opens an
+application ([applications](../docs/applications.md#icons)).
 
 JavaScript or TypeScript: add `"pane": { "indexedResults": true }` to
 `package.json`, so the build exports the interface, import the host's

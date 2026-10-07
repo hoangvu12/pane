@@ -40,6 +40,13 @@ declare module "pane:extension/applications@0.1.0" {
      * with its name.
      */
     distinction?: string | null;
+    /**
+     * Its own icon, for an item to show: `icon: { application: app.icon }`.
+     * Pane extracts it in the background and keeps it; the icon's fallback
+     * (or a neutral placeholder) shows until it is there. An opaque
+     * reference, like `id`.
+     */
+    icon: string;
   }
 
   /**

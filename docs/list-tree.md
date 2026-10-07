@@ -274,7 +274,15 @@ command's in `pane.json`. It is one of:
   `shell:AppsFolder\<id>` too): a document's kind's, an application's own,
   drawn bare. Pane extracts it in the background and keeps it in its own
   folder; a path that does not exist shows the fallback. The SDKs' file
-  icon helper gives it a document as its fallback.
+  icon helper gives it a document as its fallback;
+- **`{"application": "<icon>"}`**: an installed application's own icon
+  (#172), by the `icon` reference `pane:extension/applications` returns
+  with it ([applications](applications.md#icons)), drawn bare. The host
+  extracts it in the background and keeps it in its cache of the
+  applications' icons, with a packaged app's light and dark variants; its
+  fallback (or a neutral placeholder) shows until it is there and if it
+  cannot be extracted. A package's or a command's icon in `pane.json`
+  cannot be one.
 
 Any icon may also have:
 

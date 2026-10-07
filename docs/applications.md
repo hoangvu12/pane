@@ -9,8 +9,9 @@ the first slice of "Applications done properly"
 ([#124](https://github.com/hoangvu12/pane/issues/124)); localized names,
 alternate titles, keywords and same-name subtitles for
 [#170](https://github.com/hoangvu12/pane/issues/170), its second; the live list
-for [#171](https://github.com/hoangvu12/pane/issues/171), its third; and the
-Desktops, taskbar pins, internet and ClickOnce shortcuts as sources on
+for [#171](https://github.com/hoangvu12/pane/issues/171), its third; their own
+icons for [#172](https://github.com/hoangvu12/pane/issues/172), its fourth; and
+the Desktops, taskbar pins, internet and ClickOnce shortcuts as sources on
 Windows for [#173](https://github.com/hoangvu12/pane/issues/173), its fifth.
 Typing an installed application's name into root search lists it, ranked
 with commands by title, and Enter (or a click) opens it. The feature is a
@@ -36,9 +37,9 @@ preopened folders) nor start a program. So the split, recorded in
   finds; the host turns them into applications with a stable
   [identity](#identity) and keeps that list with the map from each id to
   what opens it, [current by itself](#live-list) while a package that asked
-  for it runs. ADR 0038 ("The host keeps a live application list and an
-  icon cache") amends ADR 0015's stateless adapter for this. Nothing is
-  looked for until a guest asks.
+  for it runs, and an [icon](#icons) cache. ADR 0038 ("The host keeps a
+  live application list and an icon cache") amends ADR 0015's stateless
+  adapter for this. Nothing is looked for until a guest asks.
 - **Default extension**, [`guests/applications`](../guests/applications)
   (Rust), package [`guests/packages/applications`](../guests/packages/applications):
   its command, "Applications", is a
@@ -77,7 +78,8 @@ installed from its folder like the calculator
   commands and Pane's own rows.
 - Each application is a root result titled with its name as the system
   shows it ([names](#names)) and subtitled "Application", or with what tells
-  it apart when another application has its name; matched and ranked like
+  it apart when another application has its name, and drawn with its own
+  [icon](#icons); matched and ranked like
   a command's title ([root search](root-search.md#matching-and-ranking)):
   "firefox" finds Firefox; an exact or prefix title beats a word inside
   another title; on the same rank commands come first. Its alternate
@@ -262,6 +264,90 @@ The host gives each application record these names (`name`,
 the import gets them; an indexed result takes `alternate-titles` and
 `keywords` from any extension ([root search](root-search.md#matching-and-ranking)).
 
+## Icons
+
+Every application row in root search, and a quick slot pinning one, shows
+the application's own icon, drawn bare, without the tile Pane's own rows
+keep (decision 2, [ADR 0035](adr/0035-the-launcher-borrows-raycasts-polish-within-the-accepted-ui.md)).
+The host extracts and keeps the icons (ADR 0038,
+[`icons`](../crates/pane-core/src/applications/icons.rs)):
+
+- **Extraction**, at 256 pixels so the icon stays sharp at any scale, one
+  adapter per system (`IconExtractor`, `NativeExtractor`):
+  - Windows desktop programs: the shell's image of the application's
+    primary source (`IShellItemImageFactory`, icon only). Above 48 pixels,
+    an image whose visible content (pixels not almost transparent) spans
+    less than half its width and less than half its height is a small icon
+    the shell padded into the jumbo size, and is rejected for the next
+    source: the shortcut's own icon location (`IShellLinkW`, extracted at
+    256 pixels, which the system scales from its closest size), then the
+    shortcut's target program's shell image, and finally the shell's file
+    information icon (32 pixels), drawn as it is. Only when every source
+    fails is a padded image kept. An internet shortcut's (`.url`) padded
+    image is rejected for the icon its `IconFile` and `IconIndex` name; a
+    ClickOnce reference (`.appref-ms`) has only the shell's images (its
+    deployed program's icon is not looked for).
+  - Windows packaged apps: the logo the package's manifest names for the
+    app (`Square44x44Logo`, else `Square150x150Logo`, else the package's
+    `Logo`), in the package's install folder found through
+    `GetPackagesByPackageFamily` and `GetPackagePathByFullName`. Of its
+    variants, the target size closest to 256 pixels (the smallest at least
+    that large, else the largest), unplated, for the dark theme, and the
+    `lightunplated` one for the light theme when the package ships it;
+    else a plated target size, else the largest scale, else the file as
+    named ([`appx`](../crates/pane-core/src/applications/icons/appx.rs)).
+    A packaged app also found by a shortcut still draws the package's
+    logo. A package Pane cannot read is drawn as the shell draws it.
+  - macOS: the workspace's icon of the bundle (`NSWorkspace`), its largest
+    image up to 512 pixels, as Finder and the Dock show it.
+  - Linux: the desktop entry's `Icon`, a file when it is an absolute path,
+    else looked up by the freedesktop Icon Theme specification in the
+    user's current theme (GTK's `gtk-icon-theme-name`, else KDE's
+    `[Icons] Theme`), the themes it inherits, then `hicolor`, in
+    `~/.icons` and the `icons` of the data folders, then the legacy
+    `pixmaps` folders; within a theme an SVG of a scalable folder, or the
+    PNG closest to 256 pixels
+    ([`theme`](../crates/pane-core/src/applications/icons/theme.rs)).
+- **The cache**: `application-icons` in Pane's cache folder (beside the
+  compiled extension code: `%LOCALAPPDATA%\Pane\cache`,
+  `~/Library/Caches/Pane`, `$XDG_CACHE_HOME/pane`), not extension data and
+  not a managed copy. Each icon is a PNG (or a Linux theme's SVG) named by
+  a digest of the application's id and its source's fingerprint (the
+  source's path, size and modification time; a packaged app's manifest's),
+  a dark variant beside it, written atomically, with an index
+  (`index.json`). An index that cannot be read is deleted with every image
+  and rebuilt; images the index does not name are removed. It holds at
+  most 64 MiB and 10,000 icons, the least recently drawn going first.
+  Deleting it loses nothing but the time to extract the icons again.
+- **Refreshing**: a single worker thread at low priority (Windows'
+  background mode, a lower `nice` on Linux, the background band on macOS)
+  extracts eight icons at a time. After each start it re-extracts once
+  every application root search lists; an icon a row on screen wants goes
+  first, drawn from the cache at once when its source's fingerprint has
+  not changed, and extracted at once when it has. A failed extraction is
+  remembered until the next start, and the row keeps its placeholder (or
+  the icon kept from before). Disabling the Applications extension drops
+  its applications from the refresh with its results. Extraction never
+  runs on the window's thread or the extension runtime's.
+- **Drawing**: asking what a row shows only looks at what the cache keeps,
+  so typing never waits for an icon. Until the icon is there the row draws
+  a neutral placeholder in the same box (the application glyph, faded, in
+  the secondary tone, without a tile), so nothing moves when the icon
+  arrives. The window draws a packaged app's light or dark variant as the
+  launcher's theme is (System following the system). Icons are decorative:
+  assistive technology reads an application's row by its title and
+  subtitle. Root search draws an application's icon for every indexed
+  result whose action opens an application, whichever extension supplied
+  it.
+- **For extensions**: the applications import returns an `icon` reference
+  with each application. An extension's list shows the application's icon
+  by naming it as an item's icon, `{"application": <icon>}`
+  ([list tree](list-tree.md#icons); `Icon::application` in Rust,
+  `{ application: app.icon }` in JavaScript and TypeScript), its fallback
+  (or a neutral placeholder) showing until it is there. The JavaScript and
+  TypeScript samples do; the Applications extension, a root provider, has
+  no list of its own.
+
 ## Per platform
 
 | | Windows ([#24](https://github.com/hoangvu12/pane/issues/24)) | macOS ([#25](https://github.com/hoangvu12/pane/issues/25)) | Linux ([#26](https://github.com/hoangvu12/pane/issues/26)) |
@@ -269,6 +355,7 @@ the import gets them; an indexed result takes `alternate-titles` and
 | Found in | Shortcuts: shell links (`.lnk`), internet shortcuts (`.url`) whose scheme has a registered handler (its key under `HKEY_CLASSES_ROOT` is marked `URL Protocol` and has a `shell` key: a game launcher's `steam://`, `com.epicgames.launcher://`) and ClickOnce application references (`.appref-ms`), in the Start menu's `%APPDATA%\Microsoft\Windows\Start Menu\Programs` then `%ProgramData%\...\Programs`, with subfolders, and without subfolders on the user's Desktop and every user's (`FOLDERID_Desktop`, `FOLDERID_PublicDesktop`, wherever the shell keeps them) and among the taskbar pins (`%APPDATA%\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar`); then the packaged (AppX/MSIX) apps of the shell's Apps folder (`FOLDERID_AppsFolder`), such as Calculator on Windows 11 | Application bundles (`.app`) in `/Applications`, `/System/Applications` and `~/Applications`, and their subfolders two deep (such as `Utilities`), not inside bundles | Desktop entries (`.desktop`) in `$XDG_DATA_HOME/applications` (default `~/.local/share/applications`) then `applications` in each of `$XDG_DATA_DIRS` (default `/usr/local/share:/usr/share`), with subfolders (Flatpak and Snap add their folders to `XDG_DATA_DIRS`) |
 | Name | The name Explorer shows for the shortcut (localized), else its file name; a packaged app's display name | The bundle's display name as Finder shows it (localized), else its folder name | The entry's `Name` for the messages locale (`Name[vi]`), else the plain `Name` |
 | Also found by | The shortcut's file name, other shortcuts' names, a shell link's target program's name (an internet shortcut or a ClickOnce reference has no program) | The bundle's folder name | The plain `Name`, the `Exec` program's name, `Keywords` for the locale |
+| Icon | The shell's 256-pixel image, padded small icons rejected for the shortcut's icon location, its target or the file information icon (an internet shortcut's `IconFile`); a packaged app's manifest logo with light and dark variants | The workspace's icon of the bundle | The entry's `Icon` in the user's icon theme, its parents, `hicolor`, then `pixmaps` |
 | Identified by | A shell link's target and arguments, version folders wildcarded (an MSI-advertised one's installed program); an internet shortcut's URL; a ClickOnce reference's deployment; a packaged app's package family | The bundle identifier | The desktop file id |
 | Left out | The Startup folders (`Startup` in either Start menu's Programs folder); uninstallers: a shortcut whose name contains "Uninstall" or whose program's name starts with `unins` (`unins000.exe`, `uninstall.exe`); a shell link whose target is missing (broken), empty (a shell item, or an advertised product that is not installed), a folder, or a document rather than a program (a program is `.exe`, `.com`, `.bat`, `.cmd`, `.msc`, `.cpl`, `.vbs`, `.vbe`, `.wsf` or `.wsh`); an internet shortcut to a web page or a document (`http`, `https`, `ftp`, `file`, `mailto`, `news`) or to a scheme nothing handles; folders that are symbolic links or junctions, which are not walked; a shortcut at the same place in the all-users menu (or Desktop) as in the user's; Apps folder items that are not packaged apps (desktop programs, found by their shortcuts) or that have a shortcut's name | Nothing | `Type` other than `Application`, `NoDisplay` or `Hidden` (a hidden entry also hides a lower one with the same desktop file id), no `Exec`, `OnlyShowIn`/`NotShowIn` against `$XDG_CURRENT_DESKTOP`, a `TryExec` program that is missing, an `Exec` line using field codes against the spec (`%i`, `%F` or `%U` inside an argument, more than one of `%f %u %F %U`, an unknown code or a lone `%`: skipped with a line on standard error, not guessed) |
 | Opened by (the primary source) | `ShellExecuteEx` on the shortcut, or on `shell:AppsFolder\<AppUserModelID>` for a packaged app, as Explorer opens them (errors returned, no dialog), with COM initialized for the call and uninitialized after | `/usr/bin/open` on the bundle (Launch Services); its error message is shown | Running the `Exec` program directly (quoting and field codes per the Desktop Entry spec; file and URL codes dropped; `Path` as working folder), in its own process group; a `Terminal=true` entry runs in `$TERMINAL -e`, else the first installed of `x-terminal-emulator -e`, `gnome-terminal --`, `konsole -e`, `xfce4-terminal -x`, `alacritty -e`, `kitty`, `foot`, `xterm -e`, and is refused with an explanation when there is none |
@@ -279,8 +366,8 @@ the import gets them; an indexed result takes `alternate-titles` and
 The same author-facing contract serves all three: an extension receives
 `application` records (`id`, its stable identity; `name` and `location`,
 its primary source's; `alternate-titles`, `keywords` and `distinction`,
-[names](#names)) and returns `open-application(id)`; only the adapter
-differs.
+[names](#names); `icon`, the reference that shows its own [icon](#icons))
+and returns `open-application(id)`; only the adapter differs.
 
 ## Checks
 
@@ -360,6 +447,40 @@ differs.
   name and `Name[..]`/`Keywords[..]` reading in `start_menu`, `app_bundles`
   and `desktop_entries`, and matching alternate titles and keywords in
   `search`.
+- Icons through the launcher ([`crates/pane-core/tests/application_icons.rs`](../crates/pane-core/tests/application_icons.rs)),
+  with the real guest, the host's list over a fake system and a fake
+  extraction: a row shows its application's own icon, and the placeholder
+  until it is extracted, decorative; a packaged app keeps its light and
+  dark icons, from the package even when a shortcut is its primary source;
+  after a restart the kept icon draws without extracting and the refresh
+  extracts it once per start, however often root search lists it; a
+  changed source is extracted again at once and its old image removed; a
+  failure keeps the placeholder and is not tried again that start; an
+  unreadable cache is rebuilt and stray images removed; the cache is
+  bounded by count and by bytes, the least recently drawn going first; a
+  row on screen goes before the background refresh; a pinned
+  application's slot shows its icon; disabling the extension stops the
+  refresh; the JavaScript and TypeScript samples show an application's
+  icon by the import's reference; and the
+  host gives that reference and the icon's source. The visible-content
+  check, the batch order, the manifest's logo and its variants, the icon
+  theme lookup and an internet shortcut's icon file are unit tests of
+  `icons`, `appx`, `theme` and the Windows extractor.
+- Icon adapters ([`crates/pane-core/tests/application_icon_adapters.rs`](../crates/pane-core/tests/application_icon_adapters.rs)):
+  on every system, a desktop entry's icon is found in a fixture `hicolor`
+  theme on the data folders, at the size closest to 256, after a theme
+  that is not there. On Windows, the command interpreter's icon extracts
+  at 256 pixels filling its box; a shortcut whose own icon file holds only
+  a 16-pixel image is drawn by a fallback filling its box, and its
+  fingerprint follows the shortcut; an inbox packaged app (Calculator or
+  Settings) yields its light and dark logos. On macOS, Calculator's bundle
+  icon is at least 256 pixels.
+- Window ([`crates/pane/tests/application_icons.rs`](../crates/pane/tests/application_icons.rs)):
+  an application's row draws the placeholder bare while its icon is held
+  back, then its own icon in the same box, the dark file in the dark theme
+  and the light one in the light; Pane's own row keeps its tile; a pinned
+  application's slot draws its icon; assistive technology reads the row by
+  its title and subtitle.
 - Window ([`crates/pane/tests/window.rs`](../crates/pane/tests/window.rs)):
   typing a name renders the application's row, which assistive technology
   sees as the selected `ListBoxOption`, and Enter opens it with the field
@@ -427,7 +548,7 @@ differs.
 
 ## Limits
 
-- No icons, no aliases (the user's aliases, [#31](aliases.md), are for
+- No aliases (the user's aliases, [#31](aliases.md), are for
   installed commands only), no frequency ranking; applications are not
   ranked against commands beyond the title rank, and a match on an
   alternate title or keyword highlights nothing in the row (scoring and
@@ -459,6 +580,18 @@ differs.
   the handler the system has for its scheme.
 - Pane does not hide or reset after opening an application; root search
   stays as it was.
+- Icons: a shortcut's own icon location is extracted at 256 pixels as the
+  system scales it from the closest size the file has, so a small icon
+  there is drawn enlarged rather than padded. ClickOnce references are
+  drawn by the shell's image of their file; their deployed program's icon
+  is not looked for. While no list is kept (no package asked for the
+  applications yet, as when only a pinned slot shows one), finding what an
+  icon is extracted from scans the system's folders without keeping or
+  watching them.
+  The first refresh after a start extracts every application's icon once
+  in the background (Raycast measured about 7 seconds for about 125
+  icons); the timing on Pane's runners is to be recorded with the resource
+  measurements.
 - The adapters trust the host's own listing: `open` accepts any existing
   shortcut, bundle or desktop entry path, which any trusted extension could
   pass (Q9's trust model).

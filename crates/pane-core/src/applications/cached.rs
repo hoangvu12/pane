@@ -365,6 +365,26 @@ impl Applications for Cached {
             .map(|application| application.id.clone())
     }
 
+    fn icon_source(&self, id: &str) -> Option<String> {
+        // As `primary_path`: the kept list, else a scan that is not kept.
+        let catalog = match self.kept() {
+            Some(catalog) => catalog,
+            None => Arc::new(Catalog::new(self.inner.sources().ok()?)),
+        };
+        let application = catalog.find(id)?;
+        // A packaged app's own logo, with its light and dark variants, over
+        // the shell's image of a shortcut to it.
+        let packaged = matches!(application.primary().key, super::Key::Package { .. })
+            .then(|| {
+                application
+                    .sources
+                    .iter()
+                    .find(|source| source.path.starts_with(r"shell:AppsFolder\"))
+            })
+            .flatten();
+        Some(packaged.unwrap_or(application.primary()).path.clone())
+    }
+
     fn on_change(&self, changed: Arc<dyn Fn() + Send + Sync>) {
         lock(&self.shared.listeners).push(changed);
     }
