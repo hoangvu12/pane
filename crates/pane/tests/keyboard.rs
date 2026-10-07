@@ -27,6 +27,11 @@ use tempfile::TempDir;
 #[path = "support/settle.rs"]
 mod settle;
 
+// Pane registers no sample command (#162): the tests that drive the
+// samples register them themselves.
+#[path = "support/samples.rs"]
+mod samples;
+
 #[path = "../../pane-core/tests/support/service.rs"]
 mod service;
 
@@ -93,7 +98,7 @@ fn open_sample<'a>(
 ) -> (gpui::Entity<LauncherWindow>, &'a mut VisualTestContext) {
     open_launcher(
         cx,
-        Launcher::new(Runtime::start(), pane::sample_commands()),
+        Launcher::new(Runtime::start(), samples::sample_commands()),
         data,
     )
 }
@@ -300,7 +305,7 @@ fn a_rebind_takes_effect_at_once_is_saved_and_survives_a_restart(cx: &mut TestAp
     fresh.update(pane::bind_keys);
     let (window, fresh_cx) = fresh.add_window_view(|window, cx| {
         LauncherWindow::new(
-            Launcher::new(Runtime::start(), pane::sample_commands()),
+            Launcher::new(Runtime::start(), samples::sample_commands()),
             window,
             cx,
         )
@@ -806,7 +811,7 @@ fn escape_clears_the_query_then_hides_the_launcher_which_keeps_running(cx: &mut 
     let data = tempfile::tempdir().unwrap();
     let system = Arc::new(FakeSystem::default());
     let launcher =
-        Launcher::new(Runtime::start(), pane::sample_commands()).with_hotkeys(system.clone());
+        Launcher::new(Runtime::start(), samples::sample_commands()).with_hotkeys(system.clone());
     let (window, cx) = open_launcher(cx, launcher, Some(data.path()));
     let handle = handle_of(cx);
 
@@ -931,7 +936,7 @@ fn window_local_actions_stay_in_their_windows(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
     let system = Arc::new(FakeSystem::default());
     let launcher =
-        Launcher::new(Runtime::start(), pane::sample_commands()).with_hotkeys(system.clone());
+        Launcher::new(Runtime::start(), samples::sample_commands()).with_hotkeys(system.clone());
     let (window, cx) = open_launcher(cx, launcher, Some(data.path()));
     let handle = handle_of(cx);
 
@@ -1162,7 +1167,7 @@ fn escape_set_to_hide_hides_from_any_screen_and_the_reopening_decides_what_shows
         "{ \"version\": 1, \"reopening\": \"after-90-seconds\" }",
     )
     .unwrap();
-    let launcher = Launcher::new(Runtime::start(), pane::sample_commands())
+    let launcher = Launcher::new(Runtime::start(), samples::sample_commands())
         .with_hotkeys(Arc::new(FakeSystem::default()));
     let (window, cx) = open_launcher(cx, launcher, Some(data.path()));
     let default = Shortcut::open_pane_default();
@@ -1453,7 +1458,7 @@ fn the_behavior_choices_are_applied_by_a_fresh_application(cx: &mut TestAppConte
     let mut fresh = cx.cx.new_app();
     init_settings(Some(data.path()), &mut fresh);
     fresh.update(pane::bind_keys);
-    let launcher = Launcher::new(Runtime::start(), pane::sample_commands())
+    let launcher = Launcher::new(Runtime::start(), samples::sample_commands())
         .with_hotkeys(Arc::new(FakeSystem::default()));
     let (window, fresh_cx) =
         fresh.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));

@@ -28,7 +28,10 @@ Root search lists **root results**, in this order when the query is empty
 (for a query that is not blank, the [computed results](#results-computed-from-the-query)
 for it come first, once they arrive):
 
-1. the commands built into this Pane build (the three samples);
+1. the commands built into this Pane build: none in any build since
+   [#162](https://github.com/hoangvu12/pane/issues/162) (the Rust,
+   JavaScript and TypeScript samples are installed by hand with
+   `pane --install`, and a test registers its own);
 2. the commands of each enabled installed package, in install order, and,
    for a query that is not blank only, the [results supplied ahead of the
    query](#results-supplied-ahead-of-the-query), such as the installed
@@ -201,6 +204,19 @@ mark — then, while the panel is open, the hint "Type to filter actions ·
 Esc goes back" — and at its right the primary action and the Actions
 button, whose keys say how each is pressed. While a status shows, its
 message takes the strip and the buttons step aside.
+
+**An opened command** has no heading line above its content
+([#162](https://github.com/hoangvu12/pane/issues/162)): its list, its
+search, a form or a custom view opened from it, Clipboard History and
+Manage extensions start with their content, as Raycast's views do. The
+footer's left names it instead, after the Pane mark, while no hint or
+status takes that place: the command's icon (its own, as its package
+ships it; Pane's tile for Pane's own screens) and the screen's title — the
+command's on its list, a form's or a custom view's on those ("Search
+Files", "Clipboard History"). Section labels inside a list ("Today",
+"Commands") stay. The core's own screens — a package's preview, a
+confirmation, the details and hotkey screens — keep the heading that says
+what they are about.
 
 Each row shows what the launcher knows beyond its title and subtitle, from a read-only presentation (`Launcher::presentation`). That is:
 

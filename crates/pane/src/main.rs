@@ -114,13 +114,13 @@ fn main() {
             .detach();
         }
         // The quick slots' record, beside the host settings in the same
-        // data folder (#101).
+        // data folder (#101). Pane registers no command of its build's
+        // own: every root row comes from an installed package (the
+        // samples are installed by hand, #162).
         let launcher = match pane::data_dir() {
-            Some(dir) => {
-                Launcher::with_packages(runtime, pane::sample_commands(), dir.join("extensions"))
-                    .with_quick_slots(&dir)
-            }
-            None => Launcher::new(runtime, pane::sample_commands()),
+            Some(dir) => Launcher::with_packages(runtime, Vec::new(), dir.join("extensions"))
+                .with_quick_slots(&dir),
+            None => Launcher::new(runtime, Vec::new()),
         }
         .with_link_opener(Arc::new(pane::SystemLinks))
         // What commands copy, open, reveal and recycle reaches the system's

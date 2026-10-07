@@ -52,7 +52,7 @@ use pane_core::{Binding, Keyboard, KeyboardAction, LauncherView, Screen, Status}
 
 use crate::app::{KEY_CONTEXT, LauncherWindow};
 use crate::ui::footer::{self, ButtonWash};
-use crate::ui::icon::Glyph;
+use crate::ui::icon::{Glyph, IconTone};
 use crate::ui::input::TextEditingKeys;
 use crate::ui::keycap::{CapStyle, KeySequence};
 use crate::ui::shell::{self, SectionLabel};
@@ -607,19 +607,29 @@ impl LauncherWindow {
             list.children(shell::with_section_labels(rows, &labels, &theme))
         };
 
-        // The preview: the selected record's text, as it was copied.
+        // The preview: the selected record's text, as it was copied, and
+        // under it when and where it was copied (the footer's left names
+        // the command, #162).
         let preview = selected.map(|record| {
+            let content = div()
+                .flex()
+                .flex_col()
+                .child(split_view::text_preview(record.text.clone(), &theme))
+                .child(split_view::preview_note(
+                    copied_line(record, now, offset),
+                    &theme,
+                ));
             split_view::preview_card(
                 SharedString::from(format!("clipboard-preview-{}", record.id)).into(),
-                split_view::text_preview(record.text.clone(), &theme).into_any_element(),
+                content.into_any_element(),
                 &theme,
             )
             .into_any_element()
         });
 
-        // The footer: when and where the selected record was copied (or
-        // the outcome of what was just done to it), then Delete, Copy and
-        // Manage.
+        // The footer: the command's icon and title, as Raycast's footer
+        // names the open command (#162), or the outcome of what was just
+        // done, then Delete, Copy and Manage.
         // A toast the command showed speaks where the outcome would (#141).
         let toast = self.footer_toast(&view.status).map(|shown| {
             let (selector, color) = super::toast::style_look(shown.toast.style, &theme);
@@ -639,17 +649,16 @@ impl LauncherWindow {
                 *selector,
                 split_view::footer_lead(text.clone(), *color, &theme),
             ),
-            None => (
-                "status-idle",
-                split_view::footer_lead(
-                    selected.map_or_else(
-                        || "Nothing selected".to_owned(),
-                        |record| copied_line(record, now, offset),
-                    ),
-                    theme.text_muted,
-                    &theme,
-                ),
-            ),
+            None => {
+                let icon = match self.launcher.open_command_id() {
+                    Some(id) => crate::features::icons::row_icon_of(&self.launcher, &id, &theme),
+                    None => (IconTone::Command, Glyph::Clipboard).into(),
+                };
+                (
+                    "status-idle",
+                    footer::command_lead(&icon, history.title.clone(), &theme),
+                )
+            }
         };
         let keyboard = crate::settings::keyboard_of(cx);
         let invoke =

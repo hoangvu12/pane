@@ -199,9 +199,13 @@ applications, quicklinks, files and clipboard history
 ([#60](https://github.com/hoangvu12/pane/issues/60), the user's recorded
 choice): all five enabled by default and each individually disableable,
 with clipboard history's capture still off until the user turns it on.
-A development build acquires the prebuilt-helper sample with them, so a
-payload carrying a native helper is acquired and its prebuilt helper
-runs with no developer tool.
+Every build acquires the same five: no sample is a default extension
+([#162](https://github.com/hoangvu12/pane/issues/162)). Until #162 a
+development build also acquired the prebuilt-helper sample; an install
+that acquired it keeps it as an ordinary installed package (Pane removes
+nothing it acquired), which the user can uninstall, and no later first
+setup acquires it again. The samples stay installable by hand
+(`pane --install target/guests/packages/<name>`).
 
 At first setup, and whenever a default extension is missing, Pane
 acquires each in turn in the background:
@@ -454,16 +458,20 @@ PANE_ARTIFACTS=http://127.0.0.1:$(cat /tmp/port)/ cargo run -p pane
   tests (both storage methods, and every refusal), and the tarball the
   Linux package is, by the npm tarball reader's own unit tests.
 - `crates/pane-core/tests/installer.rs`: the acquisition through the
-  launcher's public interface — a first setup installing the calculator
-  and the helper sample as managed copies with the default identity and
-  the record in `installed.json`; progress on the status line while the
+  launcher's public interface, over a default set of its own (the
+  calculator and the helper sample, a payload carrying a native helper)
+  — a first setup installing both as managed copies with the default
+  identity and the record in `installed.json`; progress on the status line while the
   core stays usable; an interrupted download recovered by retry; the
   cache reused, a damaged entry replaced; an unreachable source leaving
   the core usable with the row that tries again, and the row setting the
   extension up once the source works; the helper running from the managed
   copy with mode 0755; a payload that does not match its integrity, and
   one for another platform, explained and not installed; a restart
-  fetching nothing; a disabled default extension not re-acquired. These
+  fetching nothing; a disabled default extension not re-acquired; a
+  default extension that left the build's default set (the helper
+  sample, #162) kept installed, fetched for nothing and uninstallable,
+  and not brought back once uninstalled. These
   run on every system, so the Windows and macOS acquisitions need no
   test of their own: it is the same code (the one Windows-only piece is
   the `.exe` helper-name rule, checked by the runner's unit tests).
@@ -473,8 +481,10 @@ PANE_ARTIFACTS=http://127.0.0.1:$(cat /tmp/port)/ cargo run -p pane
   the package is built and installed on a clean machine — a fresh home
   folder on Linux and macOS, a fresh user profile on Windows — and the
   installed Pane, started with a PATH that holds nothing at all, acquires
-  both payloads from the controlled source and answers "6*7" with 42,
-  its helper echoing for this system. (The install script itself runs
+  the five default extensions' payloads from the controlled source and
+  answers "6*7" with 42. (A helper running from an acquired payload is
+  `installer.rs`'s, above; the smokes run the helper sample installed
+  with `--install`.) (The install script itself runs
   with `/usr/bin:/bin` on Linux and macOS, so the fresh home stays clean
   while the script's tools resolve; on Windows it runs with the empty
   PATH, its PowerShell script needing nothing from one. What is checked,
@@ -519,11 +529,12 @@ PANE_ARTIFACTS=http://127.0.0.1:$(cat /tmp/port)/ cargo run -p pane
   at once. Acquiring the certificate, signing and notarizing are
   prerequisites for a release, like the others here.
 - **The artifact this build serves is built for the system it ran on.**
-  The helper sample's payload declares the one helper target its file was
-  built for (`linux-x86_64`, `windows-x86_64` and `macos-aarch64` on CI,
-  `linux-aarch64` on an arm64 checkout; the sample's manifest names them
-  all, and the packaging rewrites it to the target whose file the build
-  assembled); a real deployment must build every supported target and
+  A payload that carries helpers declares the one helper target its file
+  was built for (`linux-x86_64`, `windows-x86_64` and `macos-aarch64` on
+  CI, `linux-aarch64` on an arm64 checkout; the package's manifest names
+  them all, and the packaging rewrites it to the target whose file the
+  build assembled; none of today's five default extensions carries a
+  helper); a real deployment must build every supported target and
   serve one payload whose manifest names them all, or serve one payload
   per system at a per-system index.
 - **One package per system**, built where it runs; cross-building and

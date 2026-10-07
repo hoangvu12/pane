@@ -336,6 +336,28 @@ impl Launcher {
         icon_of(&self.lock(), id)
     }
 
+    /// The id of the command whose view is open, on its list, its search,
+    /// a form or a custom view of it: `<package key>#<id in its
+    /// manifest>` for an installed command, as [`Launcher::icon_of`]
+    /// takes it, or the registration's own id for a command registered
+    /// with the launcher. The footer shows the open command's icon and
+    /// title where a heading line once was (#162). `None` while no
+    /// command is open.
+    pub fn open_command_id(&self) -> Option<String> {
+        let state = self.lock();
+        let component = state.open.as_ref()?;
+        let command = state.open_command.as_deref()?;
+        if let Some(package) = owner(&state.packages, component) {
+            return Some(package.identity.command_id(command));
+        }
+        self.commands
+            .iter()
+            .find(|registration| {
+                &registration.component == component && registration.manifest_id() == command
+            })
+            .map(|registration| registration.id.clone())
+    }
+
     /// While the open command's package is developed, says in the status
     /// line which of its items have more accessories than a row draws
     /// (`extra`, as [`remember`] answered), when that changed since it last

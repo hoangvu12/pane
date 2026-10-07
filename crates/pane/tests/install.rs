@@ -105,6 +105,79 @@ fn a_chosen_package_is_previewed_installed_and_run(cx: &mut TestAppContext) {
     );
 }
 
+/// Whether the screen shown draws a heading line above its content, and
+/// whether the footer's left names a command (its debug selectors).
+fn heading_and_footer_command(cx: &mut VisualTestContext) -> (bool, bool) {
+    (
+        cx.debug_bounds("screen-heading").is_some(),
+        cx.debug_bounds("footer-command").is_some(),
+    )
+}
+
+/// No heading line above an extension's view or Manage extensions (#162):
+/// an installed command's list starts with its content, and the footer's
+/// left names it by its own icon, as its package ships it, and its
+/// title; Manage extensions is named there too. The core's own screens,
+/// a package's preview and a confirmation, keep the heading that says
+/// what they are about.
+#[gpui::test]
+fn only_the_cores_own_screens_have_a_heading_line(cx: &mut TestAppContext) {
+    let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let folder = package(&sources.path().join("hello"));
+    let (window, cx) = open(cx, &data);
+    settle(&window, cx);
+    assert_eq!(
+        heading_and_footer_command(cx),
+        (false, false),
+        "root search"
+    );
+
+    let view = choose_folder(&window, cx, Some(folder));
+    assert!(matches!(view.screen, Screen::Package { .. }));
+    assert!(
+        heading_and_footer_command(cx).0,
+        "a package's preview keeps its heading"
+    );
+    cx.simulate_keystrokes("enter");
+    settle(&window, cx);
+
+    cx.simulate_keystrokes("enter");
+    let view = settle(&window, cx);
+    assert_eq!(view.screen, Screen::Command);
+    assert_eq!(
+        heading_and_footer_command(cx),
+        (false, true),
+        "the installed command's list"
+    );
+    assert!(
+        cx.debug_bounds("icon-footer-command").is_some(),
+        "the command's own icon names it in the footer"
+    );
+    assert!(cx.debug_bounds("footer-command-title").is_some());
+
+    cx.simulate_keystrokes("escape");
+    settle(&window, cx);
+    cx.simulate_keystrokes("down down down down enter");
+    let view = settle(&window, cx);
+    assert!(matches!(view.screen, Screen::Extensions { .. }));
+    assert_eq!(
+        heading_and_footer_command(cx),
+        (false, true),
+        "Manage extensions"
+    );
+
+    // "Clear cache of Hello" asks first, on a screen titled with its
+    // question.
+    cx.simulate_keystrokes("down down enter");
+    let view = settle(&window, cx);
+    assert!(matches!(view.screen, Screen::Confirm { .. }));
+    assert_eq!(
+        heading_and_footer_command(cx),
+        (true, false),
+        "a confirmation keeps its heading"
+    );
+}
+
 #[gpui::test]
 fn cancelling_the_folder_picker_stays_on_root(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();

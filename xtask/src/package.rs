@@ -56,19 +56,18 @@ use sha2::{Digest, Sha256, Sha512};
 use crate::zip;
 
 /// The default extensions whose payloads the artifacts describe, and the
-/// assembled package each is packed from: the release's default set
-/// (#60, the user's recorded choice — the calculator, applications,
-/// quicklinks, files and clipboard history) plus the helper sample, the
-/// prebuilt-helper fixture development builds acquire with them. The ids
-/// are the ones Pane's application build acquires
-/// (`pane::default_extensions`).
-const DEFAULTS: [(&str, &str); 6] = [
+/// assembled package each is packed from: the default set (#60, the
+/// user's recorded choice — the calculator, applications, quicklinks,
+/// files and clipboard history), the same in every build. The helper
+/// sample is no default extension (#162): it is installed by hand, with
+/// `pane --install target/guests/packages/sample-helper`. The ids are the
+/// ones Pane's application build acquires (`pane::default_extensions`).
+const DEFAULTS: [(&str, &str); 5] = [
     ("calculator", "calculator"),
     ("applications", "applications"),
     ("quicklinks", "quicklinks"),
     ("files", "files"),
     ("clipboard-history", "clipboard-history"),
-    ("helper-sample", "sample-helper"),
 ];
 
 /// The pane program's version, as the package names it: this workspace's
@@ -382,8 +381,9 @@ fn application_entry(version: &str, package: &Path, packed: &[u8], target: &str)
 /// files it names — the components of its commands, the packaged images
 /// its package's and commands' icons name with the `@light` and `@dark`
 /// variants the package has (#163, the default extensions' tiles), and
-/// the helper file for this system — exactly what Pane installs from it. The helper
-/// sample's manifest is rewritten to name this system's helper target
+/// the helper file for this system — exactly what Pane installs from it. A
+/// manifest that declares helpers is rewritten to name this system's helper
+/// target
 /// alone, since the build assembles the helper for the system it runs on;
 /// nothing else in the assembled folder is packed, so a file a helper run
 /// left beside its program never travels.
@@ -438,7 +438,7 @@ fn payload_files(source: &Path, _id: &str) -> Result<Vec<(String, Vec<u8>)>, Str
         let file = format!("helpers/{target}/pane-echo{}", exe_suffix());
         if read(&file).is_err() {
             return Err(format!(
-                "the helper sample ships no {file}; `cargo xtask guests` builds it for the \
+                "the payload ships no {file}; `cargo xtask guests` builds its helper for the \
                  system it runs on"
             ));
         }
@@ -955,6 +955,30 @@ mod tests {
         assert!(
             manifest.get("helpers").is_none(),
             "the manifest gained a helpers field: {manifest}"
+        );
+    }
+
+    /// The artifacts describe the default set alone: the five default
+    /// extensions, and no sample (#162), whose payload a first setup
+    /// would otherwise acquire.
+    #[test]
+    fn the_artifacts_describe_the_default_set_without_the_samples() {
+        let ids: Vec<&str> = DEFAULTS.iter().map(|(id, _)| *id).collect();
+        assert_eq!(
+            ids,
+            [
+                "calculator",
+                "applications",
+                "quicklinks",
+                "files",
+                "clipboard-history"
+            ]
+        );
+        assert!(
+            DEFAULTS
+                .iter()
+                .all(|(_, package)| !package.starts_with("sample-")),
+            "a sample is packed as a default extension: {DEFAULTS:?}"
         );
     }
 

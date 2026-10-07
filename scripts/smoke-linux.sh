@@ -142,6 +142,34 @@ stop_pane() {
   pane_pid=
 }
 
+# Waits until file $1 contains text $2 ("present") or no longer does ("absent").
+# Waits up to a tenth of a second times `tries` (100 by default) for
+# `grep -e $2 $1` to be found (present) or gone (absent).
+wait_for() {
+  local tries=${4:-100}
+  for _ in $(seq "$tries"); do
+    if grep -q "$2" "$1" 2>/dev/null; then [ "$3" = present ] && return; else [ "$3" = absent ] && return; fi
+    sleep 0.1
+  done
+  echo "$1: $2 is not $3"; exit 1
+}
+
+# The Rust, JavaScript and TypeScript samples are no commands of Pane's
+# own (#162): installed with `pane --install` into a data folder of their
+# own, they are root's first three rows, in install order (Rust sample,
+# JavaScript sample, TypeScript sample), then Pane's install rows. The
+# first phase and the root search phase run there.
+export PANE_DATA_DIR=$out/samples-data
+rm -rf "$PANE_DATA_DIR"
+for sample in sample-rust sample-js sample-ts; do
+  start_pane --install "target/guests/packages/$sample"
+  "$xdotool" windowfocus --sync "$window"
+  "$xdotool" key Return   # Install
+  # 120 s: the install reads and checks the whole package, which a loaded
+  # runner can take past the 10 s default.
+  wait_for "$PANE_DATA_DIR/extensions/installed.json" "$sample" present 1200; sleep 1
+  stop_pane
+done
 start_pane
 capture 1-root.png
 check 1-root.png hint   # the hint line: text renders
@@ -178,9 +206,34 @@ check 8-form-result.png success   # the guest's answer
 "$xdotool" key Escape key Escape; sleep 1
 stop_pane
 
+# Root search, over the samples' data folder still: typing narrows root to
+# the matching commands and Enter opens the best match. "typescr" matches
+# only TypeScript sample, whose "Wait briefly" answers exactly as in step
+# 4. A query that matches nothing shows no results, and Enter then opens
+# nothing.
+start_pane
+"$xdotool" windowfocus --sync "$window"
+"$xdotool" type --delay 50 typescr; sleep 1
+capture 24-search.png
+"$xdotool" key Return; sleep 3
+"$xdotool" key Down key Return; sleep 2
+capture 25-search-result.png
+check 25-search-result.png success   # the TypeScript guest's answer
+python3 "$(dirname "$0")/check_screenshot.py" --same "$out/4-result-2.png" "$out/25-search-result.png"
+"$xdotool" key Escape; sleep 1
+"$xdotool" type --delay 50 zzz; sleep 1
+"$xdotool" key Return; sleep 1
+capture 26-no-results.png
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{1-root,24-search,25-search-result,26-no-results}.png
+stop_pane
+
+# The phases below share $out/data, which starts with nothing installed:
+# root lists no sample until one is installed.
+export PANE_DATA_DIR=$out/data
+
 # Install the assembled Rust sample package (the folder the picker would
-# return), then run its command. Root lists the three samples, the installed
-# command, then the install and Manage extensions… rows.
+# return), then run its command. Root lists the installed command, then
+# the install and Manage extensions… rows.
 start_pane --install target/guests/packages/sample-rust
 "$xdotool" windowfocus --sync "$window"
 capture 9-package.png
@@ -194,7 +247,7 @@ capture 11-installed-result.png
 check 11-installed-result.png success   # the installed guest's answer
 stop_pane
 
-# The installed command is still listed after a restart.
+# The installed command is still listed after a restart, root's first row.
 start_pane
 capture 12-restarted.png
 check 12-restarted.png hint
@@ -235,9 +288,9 @@ check 15-no-compatible-package.png error   # "Not available on Linux: ..."
 stop_pane
 
 # Install the settings sample, save a choice with it, then disable it in
-# Manage extensions. Root lists the three samples, Rust sample, Greeting, the
-# install rows, then Manage extensions… and Settings… last; the extension
-# list holds Rust sample, then Settings sample.
+# Manage extensions. Root lists Rust sample, Greeting, the install rows,
+# then Manage extensions… and Settings… last; the extension list holds
+# Rust sample, then Settings sample.
 start_pane --install target/guests/packages/sample-settings
 "$xdotool" windowfocus --sync "$window"
 "$xdotool" key Return; sleep 2   # Install; Greeting is selected
@@ -268,7 +321,7 @@ manage_extensions
 capture 19-enabled.png
 check 19-enabled.png success   # "Enabled Settings sample"
 "$xdotool" key Escape; sleep 1
-for ((i = 0; i < 4; i++)); do "$xdotool" key Down; done   # Greeting
+"$xdotool" key Down   # Greeting, after Rust sample
 "$xdotool" key Return; sleep 3
 "$xdotool" key Down key Down key Return; sleep 2   # "Greet me"
 capture 20-greeted.png
@@ -296,26 +349,6 @@ click_at "$x" "$y"; sleep 1
 capture 23-color-click.png
 check 23-color-click.png 1b5e20 3000   # dark green
 "$xdotool" key Escape key Escape; sleep 1
-stop_pane
-
-# Root search: typing narrows root to the matching commands and Enter opens
-# the best match. "typescr" matches only TypeScript sample, whose "Wait
-# briefly" answers exactly as in step 4. A query that matches nothing shows
-# no results, and Enter then opens nothing.
-start_pane
-"$xdotool" windowfocus --sync "$window"
-"$xdotool" type --delay 50 typescr; sleep 1
-capture 24-search.png
-"$xdotool" key Return; sleep 3
-"$xdotool" key Down key Return; sleep 2
-capture 25-search-result.png
-check 25-search-result.png success   # the TypeScript guest's answer
-python3 "$(dirname "$0")/check_screenshot.py" --same "$out/4-result-2.png" "$out/25-search-result.png"
-"$xdotool" key Escape; sleep 1
-"$xdotool" type --delay 50 zzz; sleep 1
-"$xdotool" key Return; sleep 1
-capture 26-no-results.png
-python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{1-root,24-search,25-search-result,26-no-results}.png
 stop_pane
 
 # The calculator, a default extension: an expression typed into root search
@@ -363,10 +396,10 @@ python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{31-operations-t
 stop_pane
 
 # Reload a development package while Pane stays open. Its command starts as
-# the Rust sample; a new build of it is the JavaScript sample. Root lists the
-# three samples, Rust sample, Greeting, Call from JavaScript, Call from Rust,
-# Dev sample (the eighth row: Calculator only answers root search), the
-# install row, then Manage
+# the Rust sample; a new build of it is the JavaScript sample. Root lists
+# Rust sample, Greeting, Call from JavaScript, Call from Rust, Dev sample
+# (the fifth row: Calculator only answers root search), the install row,
+# then Manage
 # extensions… last; the extension list holds the six packages (Dev is the
 # sixth), then their six Reload rows (Reload Dev is the twelfth).
 mkdir -p "$out/dev"
@@ -394,7 +427,7 @@ for ((i = 0; i < 11; i++)); do "$xdotool" key Down; done   # Reload Dev
 capture 34-reloaded.png
 check 34-reloaded.png success   # "Reloaded Dev"
 "$xdotool" key Escape; sleep 1
-for ((i = 0; i < 7; i++)); do "$xdotool" key Down; done   # Dev sample
+for ((i = 0; i < 4; i++)); do "$xdotool" key Down; done   # Dev sample
 "$xdotool" key Return; sleep 3
 "$xdotool" key Return; sleep 2   # "Say hello"
 capture 35-dev-after.png
@@ -411,7 +444,7 @@ for ((i = 0; i < 11; i++)); do "$xdotool" key Down; done
 capture 36-not-reloaded.png
 check 36-not-reloaded.png error   # "Dev was not reloaded: ..."
 "$xdotool" key Escape; sleep 1
-for ((i = 0; i < 7; i++)); do "$xdotool" key Down; done
+for ((i = 0; i < 4; i++)); do "$xdotool" key Down; done
 "$xdotool" key Return; sleep 3
 "$xdotool" key Return; sleep 2
 capture 37-still-running.png
@@ -438,7 +471,7 @@ grep -q '"start-attempted": "yes"' "$out/data/extensions/settings.json" || { ech
 # sixth shows all four.
 start_pane
 "$xdotool" windowfocus --sync "$window"
-for ((i = 0; i < 4; i++)); do "$xdotool" key Down; done   # Greeting
+"$xdotool" key Down   # Greeting, after Rust sample
 "$xdotool" key Return; sleep 3
 for ((i = 0; i < 3; i++)); do "$xdotool" key Down; done
 "$xdotool" key Return; sleep 2   # "Save a note"
@@ -466,7 +499,7 @@ check 41-confirm-clear-cache.png details   # what is deleted and what is kept
 capture 42-cache-cleared.png
 check 42-cache-cleared.png success   # "Cleared the cache of Settings sample"
 "$xdotool" key Escape; sleep 1
-for ((i = 0; i < 4; i++)); do "$xdotool" key Down; done   # Greeting
+"$xdotool" key Down   # Greeting, after Rust sample
 "$xdotool" key Return; sleep 3
 for ((i = 0; i < 5; i++)); do "$xdotool" key Down; done
 "$xdotool" key Return; sleep 2   # "Show what Pane keeps"
@@ -703,17 +736,6 @@ if grep -q '"paused"' "$PANE_DATA_DIR/extensions/installed.json"; then echo "pau
 # fixed time.
 export PANE_DATA_DIR=$out/retained-data
 rm -rf "$PANE_DATA_DIR"
-# Waits until file $1 contains text $2 ("present") or no longer does ("absent").
-# Waits up to a tenth of a second times `tries` (100 by default) for
-# `grep -e $2 $1` to be found (present) or gone (absent).
-wait_for() {
-  local tries=${4:-100}
-  for _ in $(seq "$tries"); do
-    if grep -q "$2" "$1" 2>/dev/null; then [ "$3" = present ] && return; else [ "$3" = absent ] && return; fi
-    sleep 0.1
-  done
-  echo "$1: $2 is not $3"; exit 1
-}
 registry=$PANE_DATA_DIR/extensions/installed.json
 start_pane --install target/guests/packages/sample-settings
 "$xdotool" windowfocus --sync "$window"
@@ -918,9 +940,9 @@ beats=$(stat -c %s "$alive"); sleep 0.5
 # it while Pane keeps running; a save that does not build keeps the working
 # code and shows the error; two saves in a row (the second while the first
 # builds) end with the newer greeting; after "Stop developing", a save builds
-# nothing. Each sample has a data folder of its own, so root lists the three
-# built-in samples, then its command, the install and Manage extensions…
-# rows. The JavaScript and TypeScript samples need the JS toolchain
+# nothing. Each sample has a data folder of its own, so root lists its
+# command first, then the install and Manage extensions… rows. The
+# JavaScript and TypeScript samples need the JS toolchain
 # (guests/README.md) and are skipped without it.
 set_greeting() {   # set_greeting <source file> <line replacing the greeting's>
   python3 - "$1" "$2" <<'PY'
@@ -951,8 +973,8 @@ wait_failed() {   # wait_failed <failures before>
   done
   echo "Pane did not report the failed build"; exit 1
 }
-say_hello() {   # from root: open the developed command, the 4th row, and run its item
-  "$xdotool" key Down Down Down Return; sleep 3
+say_hello() {   # from root: open the developed command, the first row, and run its item
+  "$xdotool" key Return; sleep 3
   "$xdotool" key Return; sleep 2
 }
 develop_sample() {   # develop_sample <sample> <title> <component> <source> <first frame> <greeting line> <broken line>
@@ -1867,12 +1889,11 @@ stop_pane
 # — a fresh home folder, a PATH that holds nothing at all, so no Rust,
 # Node, npm, Git or compiler can be reached — and Pane, started from what
 # the install script installed, acquires its default extensions (the
-# calculator, and the prebuilt-helper sample with it) from the artifact
-# source this smoke serves on 127.0.0.1 (scripts/artifact_server.py, the
-# payloads `cargo xtask package-linux` assembled; nothing reaches the
-# network or Pane's published downloads). The calculator answers "6*7"
-# with 42, and the helper sample's pane-echo runs: a prebuilt program
-# from the acquired payload, no developer tool anywhere. The package is
+# five of #60; no sample is one, #162) from the artifact source this
+# smoke serves on 127.0.0.1 (scripts/artifact_server.py, the payloads
+# `cargo xtask package-linux` assembled; nothing reaches the network or
+# Pane's published downloads). The calculator answers "6*7" with 42, with
+# no developer tool anywhere. The package is
 # the development profile, because only a development build takes its
 # artifact source from PANE_ARTIFACTS; a release build uses Pane's
 # published downloads, which no controlled source may replace.
@@ -1951,9 +1972,9 @@ wait_recorded() {
   exit 1
 }
 kill -0 "$pane_pid" 2>/dev/null || { echo "the installed Pane exited during setup"; exit 1; }
-# The release's default set (#60): all five, plus the helper sample a
-# development build acquires with them.
-for default_ in calculator applications quicklinks files clipboard-history helper-sample; do
+# The default set (#60): all five, in every build; no sample is
+# acquired (#162).
+for default_ in calculator applications quicklinks files clipboard-history; do
   wait_recorded "\"default\": \"$default_\""
 done
 sleep 1
@@ -1965,21 +1986,16 @@ check 501-calculator-answer.png answer   # "42", the calculator's selected answe
 "$xdotool" key Return; sleep 1
 capture 502-calculator-copied.png
 check 502-calculator-copied.png success   # "Copied 42 to the clipboard"
-"$xdotool" key ctrl+a; "$xdotool" type --delay 50 helper; sleep 1
-"$xdotool" key Return; sleep 2   # Helper sample
-"$xdotool" key Return; sleep 3   # "Echo through the helper"
-capture 503-helper-echoed.png
-check 503-helper-echoed.png success   # "Echoed \"hello from Pane\" on Linux x86-64"
-[ -n "$(ls "$installed"/packages/*/helpers/*/pane-echo)" ] \
-  || { echo "the acquired payload's helper was not installed"; exit 1; }
-[ -z "$(pgrep -f pane-echo)" ] || { echo "a helper is still running"; exit 1; }
+if grep -q '"default": "helper-sample"' "$installed/installed.json"; then
+  echo "a sample was acquired as a default extension"; exit 1
+fi
 # The payload the calculator acquired is kept, exactly its one current
 # entry. GNU wc prints a bare count, but the padding is trimmed anyway,
 # as the macOS smoke's does: one wording, and no platform's wc formatting
 # can fail it.
 [ "$(ls "$installed/acquired/calculator" | wc -l | tr -d ' ')" = 1 ] || { echo "the calculator's payload is not cached"; exit 1; }
 [ -z "$(ls -A "$installed/downloads" 2>/dev/null)" ] || { echo "downloads were left behind"; exit 1; }
-python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{500-installed-root,501-calculator-answer,503-helper-echoed}.png
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{500-installed-root,501-calculator-answer}.png
 stop_pane
 kill "$artifact_server_pid"; wait "$artifact_server_pid" 2>/dev/null || true; artifact_server_pid=
 # The program files go again: the evidence is the screenshots, the
@@ -2004,7 +2020,8 @@ rm -f "$home/.local/bin/pane" "$unpack/pane/pane"
 # used the next time Pane starts (Pane never restarts itself). The new
 # Pane, started again, reports 99.0.0, with the old version's data (the
 # calculator acquired at first setup) and the extension the user
-# disabled kept, and with nothing of the update left in the bin folder.
+# disabled (Clipboard History) kept, and with nothing of the update left
+# in the bin folder.
 cargo xtask package-linux --dev --package-version 99.0.0 >/dev/null
 newer=$(ls target/dist/pane-99.0.0-linux-*-dev.tar.gz | head -1)
 older=$(ls target/dist/pane-0.1.0-linux-*-dev.tar.gz | head -1)
@@ -2062,7 +2079,7 @@ done
 [ "$(grep -c pane-defaults.json "$update_log" 2>/dev/null || true)" -ge 3 ] \
   || { echo "Pane never checked for its own update"; exit 1; }
 wait_for "$update_registry" '"default": "calculator"' present 6000
-wait_for "$update_registry" '"default": "helper-sample"' present 6000
+wait_for "$update_registry" '"default": "clipboard-history"' present 6000
 # The check has told the user what it found; nothing has been downloaded.
 capture_until 600-notification.png success 30   # "Pane 99.0.0 is available" (or the setup's own outcome)
 "$xdotool" key ctrl+a; "$xdotool" type --delay 50 update; sleep 1
@@ -2071,13 +2088,13 @@ check 601-offered.png selected 3000   # the row, selected
 # Taking no action downloads nothing: no package was asked for.
 [ -z "$(grep "\.tar\.gz" "$update_log")" ] || { echo "a package was downloaded without the user choosing it"; exit 1; }
 
-# Disable the Helper sample first: an extension the user disabled before
+# Disable Clipboard History first: an extension the user disabled before
 # the update must stay disabled after it.
 "$xdotool" key ctrl+a; "$xdotool" type --delay 50 manage; sleep 1
 "$xdotool" key Return; sleep 1   # Manage extensions…
-# The Helper sample is the sixth extension now (#60's set is listed
-# first), so five Downs reach it.
-"$xdotool" key Down Down Down Down Down Return; sleep 2   # Helper sample: disabled
+# Clipboard History is the fifth extension (#60's set is listed in the
+# order it is acquired), so four Downs reach it.
+"$xdotool" key Down Down Down Down Return; sleep 2   # Clipboard History: disabled
 wait_for "$update_registry" '"disabled": true' present 600
 "$xdotool" key Escape; sleep 1
 
@@ -2124,7 +2141,7 @@ stop_pane
 
 # The next start runs the new version: it reports 99.0.0, removes what
 # the update left, and the old version's data is kept — the calculator
-# answers and the Helper sample stays disabled.
+# answers and Clipboard History stays disabled.
 version=$("$update_program" --version) || { echo "the new pane --version failed"; exit 1; }
 [ "$version" = "Pane 99.0.0" ] || { echo "the new program reports the wrong version: $version"; exit 1; }
 start_update_pane

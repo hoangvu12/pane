@@ -451,9 +451,26 @@ pub(crate) fn text_preview(text: impl Into<SharedString>, theme: &Theme) -> Div 
         .child(text.into())
 }
 
-/// The footer's left side: the clock and `text` — when and where the
-/// selected record was copied, or the launcher's status — in `color`, on
-/// one line.
+/// A line under a preview's content, in the muted ink after the clock:
+/// when and where the selected record was copied. (It was the footer's
+/// left until the footer named the open command there, #162.)
+pub(crate) fn preview_note(text: impl Into<SharedString>, theme: &Theme) -> Div {
+    let split = &theme.split;
+    div()
+        .debug_selector(|| "clipboard-preview-copied".into())
+        .flex()
+        .items_center()
+        .gap(split.footer_lead_gap)
+        .px(split.text_padding_x)
+        .pb(split.text_padding_y)
+        .text_size(theme.typography.footer_size)
+        .text_color(theme.text_muted)
+        .child(icon::glyph(Glyph::Clock, split.footer_glyph, theme.text_muted).flex_none())
+        .child(div().min_w(px(0.)).child(text.into()))
+}
+
+/// The footer's left side while a status shows: the clock and `text`, the
+/// launcher's status, in `color`, on one line.
 pub(crate) fn footer_lead(text: impl Into<SharedString>, color: Hsla, theme: &Theme) -> Div {
     let split = &theme.split;
     div()

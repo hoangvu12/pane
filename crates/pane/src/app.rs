@@ -1524,6 +1524,26 @@ impl LauncherWindow {
         ))
     }
 
+    /// The footer's left at rest on a screen with no heading line (#162):
+    /// the open command's icon and the screen's title — the command's own
+    /// on its list and search, a form's or a custom view's on those — or,
+    /// over Manage extensions, its row's tile and title. `None` on every
+    /// other screen: root search has no title, and the core's own screens
+    /// (a preview, a confirmation, the details screens) keep their
+    /// heading, which says what they ask.
+    pub(crate) fn footer_command(&self, view: &LauncherView, theme: &Theme) -> Option<Div> {
+        let id = match &view.screen {
+            Screen::Command
+            | Screen::CommandSearch { .. }
+            | Screen::Form(_)
+            | Screen::CustomView(_) => self.launcher.open_command_id()?,
+            Screen::Extensions { .. } => MANAGE_EXTENSIONS_ROW.to_owned(),
+            _ => return None,
+        };
+        let icon = crate::features::icons::row_icon_of(&self.launcher, &id, theme);
+        Some(footer::command_lead(&icon, view.title.clone(), theme))
+    }
+
     /// Arms the next view change to arrive, for a pointer open: the click
     /// that ran it calls this after the activation (which disarms, as every
     /// keyboard open does), and the screen change it causes uses it up.
@@ -1675,6 +1695,9 @@ impl Render for LauncherWindow {
             | Screen::RuntimeDetails { .. }
             | Screen::BuildDetails { .. } => "",
         };
+        // The footer's left at rest on a screen with no heading line: the
+        // open command (#162). Read before the rows move out of the view.
+        let footer_command = self.footer_command(&view, &theme);
         // A confirmation, and a package preview offering Install or Update
         // (an npm or Git package's has several more lines), keep their choices in
         // view.
@@ -1804,16 +1827,26 @@ impl Render for LauncherWindow {
             })
             .children(rows);
         // The launcher decides what an item opens; its screen says which.
-        // The search screens carry their own header (the query field);
-        // every other screen keeps its heading. Root search has no extra
-        // title — the reference's launcher has none. The heading is
-        // computed before the body dispatch, which moves the screen.
-        // It is also the non-search screens' drag region: with the native
-        // title bar hidden, the heading is the one place outside the
-        // editable field to grab the window by, and a long heading
-        // truncates instead of eating the list.
+        // Root search has no title — the reference's launcher has none —
+        // and neither has an extension's view (its list, its search, a
+        // form or a custom view of it) nor Manage extensions: they start
+        // with their content, as Raycast's do, and the footer's left names
+        // the open command instead (#162). The core's own screens (a
+        // package's preview, a confirmation, the details and hotkey
+        // screens) keep their heading, which says what they are about. The
+        // heading and the footer's command are computed before the body
+        // dispatch, which moves the screen. A heading is also its screen's
+        // drag region (the footer's command is the others'): with the
+        // native title bar hidden, it is a place outside the editable
+        // field to grab the window by, and a long heading truncates
+        // instead of eating the list.
         let heading = match &view.screen {
-            Screen::Root { .. } => None,
+            Screen::Root { .. }
+            | Screen::Command
+            | Screen::CommandSearch { .. }
+            | Screen::Form(_)
+            | Screen::CustomView(_)
+            | Screen::Extensions { .. } => None,
             _ => Some(shell::screen_heading(view.title.clone(), &theme)),
         };
         // Whether the result list is what scrolls: a form and a custom
@@ -1989,8 +2022,11 @@ impl Render for LauncherWindow {
                                 (None, Some(text)) => {
                                     footer::status_message(text, &theme).into_any_element()
                                 }
+                                // At rest: the open Actions panel's hint,
+                                // else the open command's icon and title
+                                // (#162).
                                 (None, None) => footer::hint_slot(
-                                    self.footer_hint(with_actions, &theme),
+                                    self.footer_hint(with_actions, &theme).or(footer_command),
                                     &theme,
                                 )
                                 .into_any_element(),
@@ -2157,22 +2193,25 @@ pub(crate) fn section_label(section: &pane_core::Section) -> shell::SectionLabel
     }
 }
 
+/// The id of Pane's own Manage extensions… row, whose tile the footer
+/// shows over the screen it opens.
+const MANAGE_EXTENSIONS_ROW: &str = "pane.manage-extensions";
+
 /// What the row of a command whose required preferences are unset says in
 /// its kind's place: only the user, through the Setup screen, runs it.
 pub(crate) const NEEDS_SETUP: &str = "Needs setup";
 
-/// The icon presentation for a row, chosen by the row's stable id: the
-/// built-in rows and this build's sample commands are known identities,
-/// each with a reference tone and glyph; everything else is a plain
-/// command. No presentation is inferred from a title's text.
+/// The icon presentation for a row, chosen by the row's stable id: Pane's
+/// own rows are known identities, each with a reference tone and glyph;
+/// everything else is a plain command. No presentation is inferred from a
+/// title's text. (The samples are installed packages now, #162, drawn
+/// with their package's icon.)
 pub(crate) fn row_icon(id: &str) -> (IconTone, Glyph) {
     match id {
-        "rust-sample" => (IconTone::Term, Glyph::Prompt),
-        "javascript-sample" | "typescript-sample" => (IconTone::Code, Glyph::Code),
         "pane.install-from-folder" => (IconTone::Folder, Glyph::Folder),
         "pane.install-from-npm" => (IconTone::Web, Glyph::Blocks),
         "pane.install-from-git" => (IconTone::Term, Glyph::Terminal),
-        "pane.manage-extensions" => (IconTone::Command, Glyph::Blocks),
+        MANAGE_EXTENSIONS_ROW => (IconTone::Command, Glyph::Blocks),
         "pane.settings" => (IconTone::Command, Glyph::Gear),
         _ => (IconTone::Command, Glyph::Prompt),
     }

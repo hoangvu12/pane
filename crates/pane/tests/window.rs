@@ -13,6 +13,11 @@ mod platforms;
 #[path = "support/settle.rs"]
 mod settle;
 
+// Pane registers no sample command (#162): the tests that drive the
+// samples register them themselves.
+#[path = "support/samples.rs"]
+mod samples;
+
 #[path = "support/paint.rs"]
 mod paint;
 
@@ -591,7 +596,7 @@ fn assistive_technology_sees_the_forms_labelled_controls_and_values(cx: &mut Tes
 
 #[gpui::test]
 fn the_launcher_offers_the_rust_javascript_and_typescript_samples(cx: &mut TestAppContext) {
-    let (window, cx) = open_with(cx, pane::sample_commands());
+    let (window, cx) = open_with(cx, samples::sample_commands());
     let root = settle(&window, cx);
     let titles: Vec<&str> = root.rows.iter().map(|row| row.title.as_str()).collect();
     // Pane's own Settings row is listed last, whatever is installed (its
@@ -652,7 +657,7 @@ fn row_is_visible(cx: &mut VisualTestContext, element: &str) -> bool {
 /// (the panel's inner edge is an inset ring that takes no layout space).
 #[gpui::test]
 fn the_launcher_divides_its_reference_client_edge_to_edge(cx: &mut TestAppContext) {
-    let (window, cx) = open_with(cx, pane::sample_commands());
+    let (window, cx) = open_with(cx, samples::sample_commands());
     cx.simulate_resize(pane::launcher_client_size());
     let view = settle(&window, cx);
     assert_eq!(view.status, Status::Idle);
@@ -951,6 +956,74 @@ fn open_color(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) {
     assert_eq!(view.title, "Choose a color");
 }
 
+/// Asserts that the screen shown has no heading line above its content
+/// and that the footer's left, at rest, names it: the command's icon and
+/// the screen's title, inside the footer strip and left of its buttons
+/// (#162).
+fn assert_named_in_the_footer(cx: &mut VisualTestContext, what: &str) {
+    assert!(
+        cx.debug_bounds("screen-heading").is_none(),
+        "{what}: a heading line above the content"
+    );
+    let lead = cx
+        .debug_bounds("footer-command")
+        .unwrap_or_else(|| panic!("{what}: the footer names no command"));
+    let strip = cx
+        .debug_bounds("status-idle")
+        .unwrap_or_else(|| panic!("{what}: the footer is not at rest"));
+    assert!(
+        strip.contains(&lead.center()),
+        "{what}: the command's name is not in the footer: {lead:?} outside {strip:?}"
+    );
+    assert!(
+        lead.center().x < strip.center().x,
+        "{what}: the command's name is not on the footer's left"
+    );
+    assert!(
+        cx.debug_bounds("footer-command-title").is_some(),
+        "{what}: the footer shows no title"
+    );
+}
+
+/// An extension's views start with their content (#162): its list, a form
+/// and a custom view opened from it draw no heading line, and the footer's
+/// left names the open command instead, as Raycast's footer does. Root
+/// search has neither, and its section label stays.
+#[gpui::test]
+fn an_extension_view_has_no_heading_and_the_footer_names_it(cx: &mut TestAppContext) {
+    let (window, cx) = open(cx, &RUST);
+    settle(&window, cx);
+    assert!(cx.debug_bounds("screen-heading").is_none());
+    assert!(
+        cx.debug_bounds("footer-command").is_none(),
+        "root search names no command in its footer"
+    );
+    assert!(
+        cx.debug_bounds("section-Commands").is_some(),
+        "root search's section label stays"
+    );
+
+    cx.simulate_keystrokes("enter");
+    let view = settle(&window, cx);
+    assert_eq!(view.screen, Screen::Command);
+    assert_named_in_the_footer(cx, "the command's list");
+
+    cx.simulate_keystrokes("down down down down enter");
+    let view = settle(&window, cx);
+    assert!(matches!(view.screen, Screen::Form(_)), "{:?}", view.screen);
+    assert_eq!(view.title, "Greet someone");
+    assert_named_in_the_footer(cx, "a form");
+}
+
+/// A custom view opened from an extension's list has no heading line
+/// either; the footer's left names it (#162).
+#[gpui::test]
+fn a_custom_view_has_no_heading_and_the_footer_names_it(cx: &mut TestAppContext) {
+    let (window, cx) = open(cx, &RUST);
+    open_color(&window, cx);
+    assert_named_in_the_footer(cx, "a custom view");
+}
+
 /// Waits until the open view shows `expected` as its value, which it does
 /// once the guest's answer to the last event has arrived.
 fn wait_for_color(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext, expected: &str) {
@@ -1128,7 +1201,7 @@ fn query_has_focus(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) 
 fn typing_in_root_search_narrows_the_results_and_enter_opens_the_best_match(
     cx: &mut TestAppContext,
 ) {
-    let (window, cx) = open_with(cx, pane::sample_commands());
+    let (window, cx) = open_with(cx, samples::sample_commands());
     assert!(
         query_has_focus(&window, cx),
         "root search opens ready to type"
@@ -1151,7 +1224,7 @@ fn typing_in_root_search_narrows_the_results_and_enter_opens_the_best_match(
 
 #[gpui::test]
 fn arrow_keys_move_through_the_matches_while_the_query_keeps_focus(cx: &mut TestAppContext) {
-    let (window, cx) = open_with(cx, pane::sample_commands());
+    let (window, cx) = open_with(cx, samples::sample_commands());
     cx.simulate_input("script");
     assert_eq!(
         row_titles(&window, cx),
@@ -1179,7 +1252,7 @@ fn the_production_scenario_edits_searches_selects_opens_and_back_navigates(
     // launcher, its query field, its search, its selection and its
     // navigation — edits, searches, selects, opens and back-navigates
     // through the real sample components.
-    let (window, cx) = open_with(cx, pane::sample_commands());
+    let (window, cx) = open_with(cx, samples::sample_commands());
     assert!(
         query_has_focus(&window, cx),
         "root search opens ready to type"
@@ -1221,7 +1294,7 @@ fn the_production_scenario_edits_searches_selects_opens_and_back_navigates(
 
 #[gpui::test]
 fn a_query_that_matches_nothing_says_so_and_escape_clears_it(cx: &mut TestAppContext) {
-    let (window, cx) = open_with(cx, pane::sample_commands());
+    let (window, cx) = open_with(cx, samples::sample_commands());
     cx.simulate_input("zzz");
     let view = settle(&window, cx);
     assert!(view.rows.is_empty());
@@ -1251,7 +1324,7 @@ fn a_query_that_matches_nothing_says_so_and_escape_clears_it(cx: &mut TestAppCon
 
 #[gpui::test]
 fn coming_back_to_root_search_starts_an_empty_search_with_focus(cx: &mut TestAppContext) {
-    let (window, cx) = open_with(cx, pane::sample_commands());
+    let (window, cx) = open_with(cx, samples::sample_commands());
     cx.simulate_input("rust");
     cx.simulate_keystrokes("enter");
     assert_eq!(settle(&window, cx).screen, Screen::Command);
@@ -1307,7 +1380,7 @@ fn input_method_composition_searches_root(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn assistive_technology_sees_the_search_field_and_the_selected_result(cx: &mut TestAppContext) {
-    let (window, cx) = open_with(cx, pane::sample_commands());
+    let (window, cx) = open_with(cx, samples::sample_commands());
     cx.simulate_input("script");
     settle(&window, cx);
 
@@ -1755,7 +1828,7 @@ fn the_footer_button_submits_the_form_like_enter(cx: &mut TestAppContext) {
 /// would be — but a click dispatches nothing.
 #[gpui::test]
 fn the_footer_button_cannot_run_an_action_with_nothing_selected(cx: &mut TestAppContext) {
-    let (window, cx) = open_with(cx, pane::sample_commands());
+    let (window, cx) = open_with(cx, samples::sample_commands());
     cx.simulate_input("zzz");
     let view = settle(&window, cx);
     assert_eq!(view.selected, None);
@@ -3259,6 +3332,33 @@ mod clipboard_split {
         assert_eq!(
             cx.read_entity(&window, |window, _| window.hud()).as_deref(),
             Some(pane_core::system::PASTE_FALLBACK)
+        );
+    }
+
+    /// Clipboard History draws no heading line above its content (#162):
+    /// the footer's left names the command by its icon and title, as
+    /// Raycast's does, and when and where the selected record was copied
+    /// is said under its preview. Its day's section label stays.
+    #[gpui::test]
+    fn the_footer_names_clipboard_history_and_no_heading_is_drawn(cx: &mut TestAppContext) {
+        let world = World::new();
+        let launcher = world.launcher(cx, &["first"]);
+        let (_window, cx) = open_history(cx, launcher);
+        assert!(cx.debug_bounds("screen-heading").is_none());
+        assert!(cx.debug_bounds("section-Today").is_some());
+        let lead = cx
+            .debug_bounds("footer-command")
+            .expect("the footer names the command");
+        let strip = cx.debug_bounds("status-idle").expect("the footer at rest");
+        assert!(strip.contains(&lead.center()), "{lead:?} outside {strip:?}");
+        assert!(lead.center().x < strip.center().x, "on the footer's left");
+        assert!(
+            cx.debug_bounds("icon-footer-command").is_some(),
+            "the command's own icon, drawn as its package ships it"
+        );
+        assert!(
+            cx.debug_bounds("clipboard-preview-copied").is_some(),
+            "when and where it was copied, under the preview"
         );
     }
 

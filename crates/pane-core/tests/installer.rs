@@ -41,8 +41,10 @@ use feedback::shown;
 use guests::guests;
 use rows::{select_title, titles};
 
-/// The default extensions Pane's application build acquires, as the tests
-/// take them: the calculator, and the prebuilt-helper sample with it.
+/// The default set the tests acquire: the calculator, and the
+/// prebuilt-helper sample with it, a payload carrying a native helper.
+/// Pane's own build no longer acquires the sample (#162); the core still
+/// acquires whatever default set it is given, helpers included.
 fn defaults() -> Vec<DefaultExtension> {
     vec![
         DefaultExtension {
@@ -474,6 +476,66 @@ fn a_cached_payload_is_reused_and_a_damaged_one_is_replaced() {
     );
     search(&launcher, "6*7");
     assert_eq!(titles(&launcher), ["42"]);
+}
+
+/// A default extension a build no longer acquires stays what it became:
+/// an installed package (#162, the helper sample leaving Pane's default
+/// set). A Pane whose default set is the calculator alone, started over
+/// data that acquired the helper sample before, keeps it installed and
+/// listed, downloads nothing for it, and lets the user uninstall it, after
+/// which no first setup brings it back.
+#[test]
+fn a_default_extension_that_left_the_default_set_stays_until_uninstalled() {
+    let dirs = Dirs::new();
+    dirs.publish();
+    let launcher = dirs.launcher();
+    block_on(launcher.acquire_defaults());
+    assert_eq!(installed(&launcher), ["Calculator", "Helper sample"]);
+    drop(launcher);
+
+    // The next build's default set no longer has the helper sample.
+    let calculator_only = || {
+        Launcher::with_packages(Ok(dirs.runtime.clone()), vec![], dirs.packages_dir())
+            .with_defaults(
+                ArtifactSource::local(dirs.artifacts.url()).unwrap(),
+                vec![DefaultExtension {
+                    id: "calculator".into(),
+                    title: "Calculator".into(),
+                }],
+            )
+    };
+    let downloaded = dirs.artifacts.payload_requests().len();
+    let launcher = calculator_only();
+    block_on(launcher.acquire_defaults());
+    assert_eq!(
+        installed(&launcher),
+        ["Calculator", "Helper sample"],
+        "Pane removes nothing it acquired"
+    );
+    assert_eq!(dirs.record("helper-sample")["default"], "helper-sample");
+    assert_eq!(dirs.artifacts.payload_requests().len(), downloaded);
+    search(&launcher, "helper");
+    assert!(
+        titles(&launcher)
+            .iter()
+            .any(|title| title == "Helper sample"),
+        "its command is still in root search: {:?}",
+        titles(&launcher)
+    );
+
+    // The user uninstalls it, as any installed package.
+    let identity = PackageIdentity::default_extension("helper-sample");
+    block_on(launcher.uninstall(&identity, pane_core::SavedData::Delete));
+    assert_eq!(installed(&launcher), ["Calculator"]);
+    drop(launcher);
+    let launcher = calculator_only();
+    block_on(launcher.acquire_defaults());
+    assert_eq!(
+        installed(&launcher),
+        ["Calculator"],
+        "a first setup does not bring it back"
+    );
+    assert_eq!(dirs.artifacts.payload_requests().len(), downloaded);
 }
 
 #[test]

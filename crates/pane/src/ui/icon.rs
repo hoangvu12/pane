@@ -61,7 +61,6 @@ pub(crate) enum Glyph {
     Search,
     Terminal,
     Prompt,
-    Code,
     Folder,
     Blocks,
     /// A clipboard: clipboard history.
@@ -136,7 +135,6 @@ impl Glyph {
         Glyph::Search,
         Glyph::Terminal,
         Glyph::Prompt,
-        Glyph::Code,
         Glyph::Folder,
         Glyph::Blocks,
         Glyph::Clipboard,
@@ -168,7 +166,6 @@ impl Glyph {
             Glyph::Search => glyph_svg!("search"),
             Glyph::Terminal => glyph_svg!("terminal"),
             Glyph::Prompt => glyph_svg!("prompt"),
-            Glyph::Code => glyph_svg!("code"),
             Glyph::Folder => glyph_svg!("folder"),
             Glyph::Blocks => glyph_svg!("blocks"),
             Glyph::Clipboard => glyph_svg!("clipboard"),
@@ -258,7 +255,6 @@ fn embolden(svg: &str) -> String {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum IconTone {
     Term,
-    Code,
     Web,
     Folder,
     Command,
@@ -275,7 +271,6 @@ fn color(hex: u32) -> Hsla {
 fn app_tone(tone: IconTone) -> Option<(Hsla, Hsla, Hsla)> {
     let (top, bottom, glyph) = match tone {
         IconTone::Term => (0x4A4D55FF, 0x1C1E22FF, 0xC8F5B4FF),
-        IconTone::Code => (0x45A3F5FF, 0x1D62C8FF, 0xFFFFFFFF),
         IconTone::Web => (0xFFA24DFF, 0xE2530FFF, 0xFFFFFFFF),
         IconTone::Folder => (0x74B6FFFF, 0x2F78DEFF, 0xFFFFFFFF),
         IconTone::Command => return None,

@@ -26,6 +26,11 @@ use pane_core::{Launcher, Runtime, SavedData};
 #[path = "support/settle.rs"]
 mod settle;
 
+// Pane registers no sample command (#162): the tests that drive the
+// samples register them themselves.
+#[path = "support/samples.rs"]
+mod samples;
+
 #[path = "support/paint.rs"]
 mod paint;
 
@@ -87,7 +92,7 @@ type Opened<'a> = (
 /// window's keyboard focus on the sidebar's sections, as a user opening
 /// Settings from the shortcut has.
 fn open(cx: &mut TestAppContext) -> Opened<'_> {
-    let launcher = Launcher::new(Runtime::start(), pane::sample_commands());
+    let launcher = Launcher::new(Runtime::start(), samples::sample_commands());
     cx.executor().allow_parking();
     cx.update(pane::bind_keys);
     let (window, cx) = cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));

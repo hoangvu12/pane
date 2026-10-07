@@ -107,14 +107,16 @@ pub(crate) fn section_label(label: SharedString, note: Option<SharedString>, the
         })
 }
 
-/// A launcher screen's heading (every screen but the search screens, whose
-/// header is the query field): the screen's `title` in the row title's
-/// 14/500, 20px in from either side and 12px above and below, truncating
-/// rather than eating the screen. It is also the screen's drag region:
-/// with the native title bar hidden, it is the one place outside an
-/// editable field to grab the window by (#99).
+/// A launcher screen's heading (the core's own screens: a package's
+/// preview, a confirmation, the details and hotkey screens; root search,
+/// an extension's views and Manage extensions have none, #162): the
+/// screen's `title` in the row title's 14/500, 20px in from either side
+/// and 12px above and below, truncating rather than eating the screen. It
+/// is also the screen's drag region: with the native title bar hidden, it
+/// is a place outside an editable field to grab the window by (#99).
 pub(crate) fn screen_heading(title: impl Into<SharedString>, theme: &Theme) -> Div {
     div()
+        .debug_selector(|| "screen-heading".into())
         .flex_none()
         .px(theme.geometry.search_padding_x)
         .py(theme.geometry.screen_padding_y)

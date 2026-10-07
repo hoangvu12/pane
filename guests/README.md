@@ -13,7 +13,12 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   the same color picker, compute the same root result ("reverse <text>"), and
   give the same answers and errors; the contract
   tests in `crates/pane-core/tests/samples.rs` and `crates/pane/tests/window.rs`
-  hold each of them to that.
+  hold each of them to that. None of the samples is built into Pane or
+  acquired as a default extension: install one by hand with
+  `pane --install target/guests/packages/<name>` (from a checkout,
+  `cargo run -p pane -- --install target/guests/packages/sample-rust`), into
+  a data folder of your own with `PANE_DATA_DIR` if you like; the tests and
+  smokes that drive the samples register or install them themselves.
 - `sample-settings`, `sample-settings-js`, `sample-settings-ts`: the same
   command in Rust, JavaScript and TypeScript, which keeps a chosen greeting
   style in Pane's settings ([Keeping settings](#keeping-settings)) and one
@@ -57,7 +62,10 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   helper, and a slow run that disabling or reloading stops. Their packages
   are `packages/sample-helper`, `packages/sample-helper-js` and
   `packages/sample-helper-ts`; held alike by
-  `crates/pane-core/tests/helpers.rs`.
+  `crates/pane-core/tests/helpers.rs`. The helper sample is no default
+  extension (it was one in development builds until #162); a Pane that
+  acquired it before keeps it as an ordinary installed package, which
+  Manage extensions uninstalls.
 - `sample-applications-js`, `sample-applications-ts`: the same host import
   and indexed results in JavaScript and TypeScript: "Launch <name>" for each
   installed application, and a command listing and opening them
@@ -208,7 +216,7 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   (`pane.d.ts`) and the WIT world JS/TS commands are built against.
 - `prebuilt`: the JS and TS sample components (both samples in each
   language), committed so that tests and
-  `cargo run -p pane` need no JavaScript toolchain, with `manifest.json`
+  installing a sample need no JavaScript toolchain, with `manifest.json`
   recording their hashes and build inputs.
 - `packages`: the samples', the calculator's and applications' package manifests (`pane.json`). `cargo xtask
   guests` puts each one with its built component in
@@ -307,10 +315,10 @@ cargo xtask guests
 cd guests && cargo build --release --target wasm32-wasip2
 ```
 
-To try a rebuilt sample in the launcher, `cargo run -p pane` from the root; set
-`PANE_EXTENSIONS_DIR` to a directory containing `sample_rust.wasm`,
-`sample_js.wasm` and `sample_ts.wasm` to use different builds. To run your
-own command, make it a package and install it; see
+To try a rebuilt sample in the launcher, install its assembled package from
+the root: `cargo run -p pane -- --install target/guests/packages/sample-rust`
+(or `sample-js`, `sample-ts`), then Enter; Pane builds no sample in. To run
+your own command, make it a package and install it the same way; see
 [Packaging and installing a local extension](#packaging-and-installing-a-local-extension).
 
 Toolchain used: Rust 1.98.1, `wit-bindgen` 0.62.0, `wasip3` 0.9.0+wasi-0.3.0;

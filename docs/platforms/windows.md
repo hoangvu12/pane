@@ -58,7 +58,7 @@ Screenshots, cropped to the window (and inspected):
 
 | Step | Evidence |
 | --- | --- |
-| Root search lists the three sample commands | [1-root.png](evidence/windows/1-root.png) |
+| Root search lists the three samples, installed first into a data folder of their own (#162) | [1-root.png](evidence/windows/1-root.png) |
 | Rust command opened; action result "Waited 50 ms inside the Rust guest" | [2-command-0.png](evidence/windows/2-command-0.png), [2-result-0.png](evidence/windows/2-result-0.png) |
 | JavaScript command; "Waited 50 ms inside the JavaScript guest" | [3-command-1.png](evidence/windows/3-command-1.png), [3-result-1.png](evidence/windows/3-result-1.png) |
 | TypeScript command; "Waited 50 ms inside the TypeScript guest" | [4-command-2.png](evidence/windows/4-command-2.png), [4-result-2.png](evidence/windows/4-result-2.png) |
@@ -553,9 +553,9 @@ can't be ruled out from the log.
 | The installed command answers ("Hello from the Rust guest") | [11-installed-result.png](evidence/windows/11-installed-result.png) |
 | Still listed after a restart | [12-restarted.png](evidence/windows/12-restarted.png) |
 
-The installed copy has the same title as the built-in Rust sample, so the
-screenshots can't show which copy opened; the core tests prove the installed
-copy runs. In these screenshots the root list is taller than the window and its
+Since #162 Pane registers no sample command: the first phase installs the
+three samples into a data folder of their own, and this phase's data folder
+lists the installed Rust sample alone, so the screenshots show that copy. In these screenshots the root list is taller than the window and its
 last row is cut off; since #19 the list scrolls to keep the selected row
 visible.
 
@@ -584,15 +584,15 @@ checked with `Get-Command` of cargo, rustc, node, npm, git, cc, clang and
 make; a running process's own environment cannot be read on Windows, so
 what is checked is the environment `Start-Process` hands the child),
 pointed at the controlled source with `PANE_ARTIFACTS`. It acquires the
-calculator and the helper sample by itself (`installed.json` must record
-both under `"default"`), root search lists their commands, "6*7" answers
-42 and Enter copies it, and the Helper sample's "Echo through the helper"
-runs the payload's prebuilt `pane-echo.exe` ("Echoed \"hello from Pane\"
-on Windows x86-64"), from the managed copy, with no developer tool
-reachable. The acquired payloads must be cached, the downloads folder
-empty, and no helper process left running. The program files are removed
-again at the phase's end, so the uploaded evidence is the screenshots and
-records (frames 500 to 503), not the program. CI builds the
+five default extensions by itself (`installed.json` must record each under
+`"default"`, and no sample: the helper sample left the default set with
+#162, and a helper running from an acquired payload is
+`crates/pane-core/tests/installer.rs`'s), root search lists their
+commands, "6*7" answers 42 and Enter copies it, with no developer tool
+reachable. The acquired payloads must be cached and the downloads folder
+empty. The program files are removed again at the phase's end, so the
+uploaded evidence is the screenshots and records (frames 500 to 502), not
+the program. CI builds the
 release-profile package after the smoke and uploads it with the artifacts
 of the job (`windows-package`).
 
@@ -624,10 +624,9 @@ README answers is answered.
 
 | Step | Evidence |
 | --- | --- |
-| The clean machine's Pane acquired both default extensions and lists their commands | pending CI (frame 500) |
+| The clean machine's Pane acquired the five default extensions, and no sample (#162), and lists their commands | pending CI (frame 500) |
 | "6*7" answers 42 | pending CI (frame 501) |
 | Enter copies the answer | pending CI (frame 502) |
-| The helper sample's prebuilt helper answers | pending CI (frame 503) |
 
 ## Installing a Pane application update by the user's choice (#54)
 
@@ -648,9 +647,10 @@ background, checks the index for a newer version of itself: the offer
 appears as **Update Pane to 99.0.0** in root search (frame 601; the
 status line tells what was found, frame 600). The artifact server's log
 must hold **no request for the package** until the row is chosen —
-nothing is downloaded, installed or restarted automatically. The Helper
-sample is disabled first, so an extension the user disabled before the
-update must stay disabled after it. Choosing the row with a **damaged
+nothing is downloaded, installed or restarted automatically. Clipboard
+History is disabled first (the Helper sample was, until #162 took it out
+of the default set), so an extension the user disabled before the update
+must stay disabled after it. Choosing the row with a **damaged
 package** is explained (its bytes do not match the sha512 its entry
 gives, frame 602) with the program, the data and the folder untouched
 and the row ready to try again; then the real choice downloads the
@@ -660,7 +660,7 @@ staging folder gone (frame 603, and hash checks of both programs against
 the two packages' own files). The next start runs the new version: it
 reports `Pane 99.0.0`, removes `pane.exe.old` at start, the calculator
 still answers "6*7" with 42 from the old version's acquired payload
-(frames 604 and 605), and the disabled Helper sample stays disabled —
+(frames 604 and 605), and the disabled Clipboard History stays disabled —
 Pane's data was never touched. Pane itself was never restarted by the
 update: the smoke stops the old process and starts the new program
 itself, exactly as the user would.

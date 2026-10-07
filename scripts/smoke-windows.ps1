@@ -128,6 +128,35 @@ function Stop-Pane($process) {
     $process.WaitForExit()
 }
 
+# Waits until $file contains $text ($present) or no longer does (-not
+# $present), trying $tries times (100 by default: 10 seconds; the first
+# setup of the installed Pane needs far more, as a payload's components
+# are checked one at a time).
+function Wait-For($file, $text, [bool]$present, $tries = 100) {
+    for ($i = 0; $i -lt $tries; $i++) {
+        $found = (Test-Path $file) -and (Select-String -Quiet -SimpleMatch $text $file)
+        if ($found -eq $present) { return }
+        Start-Sleep -Milliseconds 100
+    }
+    throw "${file}: $text is not $(if ($present) { 'present' } else { 'absent' })"
+}
+
+# The Rust, JavaScript and TypeScript samples are no commands of Pane's
+# own (#162): installed with `pane --install` into a data folder of their
+# own, they are root's first three rows, in install order (Rust sample,
+# JavaScript sample, TypeScript sample), then Pane's install rows. The
+# first phase and the root search phase run there.
+$samplesData = Join-Path $OutDir "samples-data"
+if (Test-Path $samplesData) { Remove-Item -Recurse -Force $samplesData }
+$env:PANE_DATA_DIR = $samplesData
+foreach ($sample in "sample-rust", "sample-js", "sample-ts") {
+    $process = Start-Pane "stderr-install-$sample.log" @("--install", "target/guests/packages/$sample")
+    Send "{ENTER}"   # Install
+    # 120 s: the install reads and checks the whole package, which a loaded
+    # runner can take past the 10 s default.
+    Wait-For (Join-Path $samplesData "extensions/installed.json") $sample $true 1200; Start-Sleep -Seconds 1
+    Stop-Pane $process
+}
 $process = Start-Pane "stderr.log"
 Capture "1-root.png"
 Check "1-root.png" "hint"   # the hint line: text renders
@@ -161,9 +190,36 @@ Check "8-form-result.png" "success"   # the guest's answer
 Send "{ESC}{ESC}"; Start-Sleep -Seconds 1
 Stop-Pane $process
 
+# Root search, over the samples' data folder still: typing narrows root to
+# the matching commands and Enter opens the best match. "typescr" matches
+# only TypeScript sample, whose "Wait briefly" answers exactly as in step
+# 4. A query that matches nothing shows no results, and Enter then opens
+# nothing.
+$process = Start-Pane "stderr-search.log"
+Send "typescr"; Start-Sleep -Seconds 1
+Capture "24-search.png"
+Send "{ENTER}"; Start-Sleep -Seconds 3
+Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2
+Capture "25-search-result.png"
+Check "25-search-result.png" "success"   # the TypeScript guest's answer
+python "$PSScriptRoot/check_screenshot.py" --same (Join-Path $OutDir "4-result-2.png") (Join-Path $OutDir "25-search-result.png")
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the searched command is not the TypeScript sample" }
+Send "{ESC}"; Start-Sleep -Seconds 1
+Send "zzz"; Start-Sleep -Seconds 1
+Send "{ENTER}"; Start-Sleep -Seconds 1
+Capture "26-no-results.png"
+$shots = "1-root", "24-search", "25-search-result", "26-no-results" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: root search showed the same window twice" }
+Stop-Pane $process
+
+# The phases below share $data, which starts with nothing installed:
+# root lists no sample until one is installed.
+$env:PANE_DATA_DIR = $data
+
 # Install the assembled Rust sample package (the folder the picker would
-# return), then run its command. Root lists the three samples, the installed
-# command, then the install and Manage extensions rows.
+# return), then run its command. Root lists the installed command, then
+# the install and Manage extensions rows.
 $process = Start-Pane "stderr-install.log" @("--install", "target/guests/packages/sample-rust")
 Capture "9-package.png"
 Check "9-package.png" "details"   # the package's identity and compatibility lines
@@ -176,7 +232,7 @@ Capture "11-installed-result.png"
 Check "11-installed-result.png" "success"   # the installed guest's answer
 Stop-Pane $process
 
-# The installed command is still listed after a restart.
+# The installed command is still listed after a restart, root's first row.
 $process = Start-Pane "stderr-restart.log"
 Capture "12-restarted.png"
 Check "12-restarted.png" "hint"
@@ -217,9 +273,9 @@ Check "15-no-compatible-package.png" "error"   # "Not available on Windows: ..."
 Stop-Pane $process
 
 # Install the settings sample, save a choice with it, then disable it in
-# Manage extensions. Root lists the three samples, Rust sample, Greeting, the
-# install rows, then Manage extensions… and Settings… last; the extension
-# list holds Rust sample, then Settings sample.
+# Manage extensions. Root lists Rust sample, Greeting, the install rows,
+# then Manage extensions… and Settings… last; the extension list holds
+# Rust sample, then Settings sample.
 $process = Start-Pane "stderr-settings.log" @("--install", "target/guests/packages/sample-settings")
 Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Greeting is selected
 Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greeting
@@ -249,7 +305,7 @@ Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Secon
 Capture "19-enabled.png"
 Check "19-enabled.png" "success"   # "Enabled Settings sample"
 Send "{ESC}"; Start-Sleep -Seconds 1
-Send "{DOWN 4}"   # Greeting
+Send "{DOWN}"   # Greeting, after Rust sample
 Send "{ENTER}"; Start-Sleep -Seconds 3
 Send "{DOWN}{DOWN}{ENTER}"; Start-Sleep -Seconds 2   # "Greet me"
 Capture "20-greeted.png"
@@ -275,28 +331,6 @@ Click-At $x $y; Start-Sleep -Seconds 1
 Capture "23-color-click.png"
 Check "23-color-click.png" "1b5e20" 3000   # dark green
 Send "{ESC}{ESC}"; Start-Sleep -Seconds 1
-Stop-Pane $process
-
-# Root search: typing narrows root to the matching commands and Enter opens
-# the best match. "typescr" matches only TypeScript sample, whose "Wait
-# briefly" answers exactly as in step 4. A query that matches nothing shows
-# no results, and Enter then opens nothing.
-$process = Start-Pane "stderr-search.log"
-Send "typescr"; Start-Sleep -Seconds 1
-Capture "24-search.png"
-Send "{ENTER}"; Start-Sleep -Seconds 3
-Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2
-Capture "25-search-result.png"
-Check "25-search-result.png" "success"   # the TypeScript guest's answer
-python "$PSScriptRoot/check_screenshot.py" --same (Join-Path $OutDir "4-result-2.png") (Join-Path $OutDir "25-search-result.png")
-if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the searched command is not the TypeScript sample" }
-Send "{ESC}"; Start-Sleep -Seconds 1
-Send "zzz"; Start-Sleep -Seconds 1
-Send "{ENTER}"; Start-Sleep -Seconds 1
-Capture "26-no-results.png"
-$shots = "1-root", "24-search", "25-search-result", "26-no-results" | ForEach-Object { Join-Path $OutDir "$_.png" }
-python "$PSScriptRoot/check_screenshot.py" --distinct @shots
-if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: root search showed the same window twice" }
 Stop-Pane $process
 
 # The calculator, a default extension: an expression typed into root search
@@ -347,10 +381,10 @@ if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the operation's answe
 Stop-Pane $process
 
 # Reload a development package while Pane stays open. Its command starts as
-# the Rust sample; a new build of it is the JavaScript sample. Root lists the
-# three samples, Rust sample, Greeting, Call from JavaScript, Call from Rust,
-# Dev sample (the eighth row: Calculator only answers root search), the
-# install row, then Manage
+# the Rust sample; a new build of it is the JavaScript sample. Root lists
+# Rust sample, Greeting, Call from JavaScript, Call from Rust, Dev sample
+# (the fifth row: Calculator only answers root search), the install row,
+# then Manage
 # extensions... last; the extension list holds the six packages (Dev is the
 # sixth), then their six Reload rows (Reload Dev is the twelfth).
 $dev = Join-Path $OutDir "dev"
@@ -378,7 +412,7 @@ Send "{ENTER}"; Start-Sleep -Seconds 3
 Capture "34-reloaded.png"
 Check "34-reloaded.png" "success"   # "Reloaded Dev"
 Send "{ESC}"; Start-Sleep -Seconds 1
-Send "{DOWN 7}"   # Dev sample
+Send "{DOWN 4}"   # Dev sample
 Send "{ENTER}"; Start-Sleep -Seconds 3
 Send "{ENTER}"; Start-Sleep -Seconds 2   # "Say hello"
 Capture "35-dev-after.png"
@@ -396,7 +430,7 @@ Send "{ENTER}"; Start-Sleep -Seconds 2
 Capture "36-not-reloaded.png"
 Check "36-not-reloaded.png" "error"   # "Dev was not reloaded: ..."
 Send "{ESC}"; Start-Sleep -Seconds 1
-Send "{DOWN 7}"
+Send "{DOWN 4}"
 Send "{ENTER}"; Start-Sleep -Seconds 3
 Send "{ENTER}"; Start-Sleep -Seconds 2
 Capture "37-still-running.png"
@@ -423,7 +457,7 @@ if (-not (Select-String -Quiet -SimpleMatch '"start-attempted": "yes"' (Join-Pat
 # fifth items save a note (content) and sign in (a local credential), and its
 # sixth shows all four.
 $process = Start-Pane "stderr-kept.log"
-Send "{DOWN 4}"   # Greeting
+Send "{DOWN}"   # Greeting
 Send "{ENTER}"; Start-Sleep -Seconds 3
 Send "{DOWN 3}"
 Send "{ENTER}"; Start-Sleep -Seconds 2   # "Save a note"
@@ -450,7 +484,7 @@ Send "{ENTER}"; Start-Sleep -Seconds 2   # "Clear cache"
 Capture "42-cache-cleared.png"
 Check "42-cache-cleared.png" "success"   # "Cleared the cache of Settings sample"
 Send "{ESC}"; Start-Sleep -Seconds 1
-Send "{DOWN 4}"   # Greeting
+Send "{DOWN}"   # Greeting
 Send "{ENTER}"; Start-Sleep -Seconds 3
 Send "{DOWN 5}"
 Send "{ENTER}"; Start-Sleep -Seconds 2   # "Show what Pane keeps"
@@ -675,18 +709,6 @@ if (Select-String -Quiet -SimpleMatch '"paused"' (Join-Path $data "extensions/in
 $data = Join-Path $OutDir "retained-data"
 if (Test-Path $data) { Remove-Item -Recurse -Force $data }
 $env:PANE_DATA_DIR = $data
-# Waits until $file contains $text ($present) or no longer does (-not
-# $present), trying $tries times (100 by default: 10 seconds; the first
-# setup of the installed Pane needs far more, as a payload's components
-# are checked one at a time).
-function Wait-For($file, $text, [bool]$present, $tries = 100) {
-    for ($i = 0; $i -lt $tries; $i++) {
-        $found = (Test-Path $file) -and (Select-String -Quiet -SimpleMatch $text $file)
-        if ($found -eq $present) { return }
-        Start-Sleep -Milliseconds 100
-    }
-    throw "${file}: $text is not $(if ($present) { 'present' } else { 'absent' })"
-}
 $registry = Join-Path $data "extensions/installed.json"
 $process = Start-Pane "stderr-retained.log" @("--install", "target/guests/packages/sample-settings")
 Send "{ENTER}"   # Install; Greeting is selected
@@ -921,9 +943,9 @@ if ((Get-Item $alive.FullName).Length -ne $beats) { throw "the helper still beat
 # it while Pane keeps running; a save that does not build keeps the working
 # code and shows the error; two saves in a row (the second while the first
 # builds) end with the newer greeting; after "Stop developing", a save builds
-# nothing. Each sample has a data folder of its own, so root lists the three
-# built-in samples, then its command, the install and Manage extensions
-# rows. The JavaScript and TypeScript samples need the JS toolchain
+# nothing. Each sample has a data folder of its own, so root lists its
+# command first, then the install and Manage extensions rows. The
+# JavaScript and TypeScript samples need the JS toolchain
 # (guests/README.md) and are skipped without it.
 function Set-Greeting($path, $line) {
     $text = [IO.File]::ReadAllText($path)
@@ -957,9 +979,9 @@ function Wait-Failed($log, $before) {
     }
     throw "Pane did not report the failed build"
 }
-# From root: open the developed command, the 4th row, and run its item.
+# From root: open the developed command, the first row, and run its item.
 function Say-Hello {
-    Send "{DOWN 3}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 3
+    Send "{ENTER}"; Start-Sleep -Seconds 3
     Send "{ENTER}"; Start-Sleep -Seconds 2
 }
 function Shots-Differ($first, $second, $what) {
@@ -2007,13 +2029,12 @@ if ((History-Field "retentionSeconds") -ne "3600") { throw "retention: $(History
 # shortcut touch nothing of the runner's user) and a PATH that holds
 # nothing at all, so no Rust, Node, npm, Git or compiler can be reached —
 # and Pane, started from what the install script installed, acquires its
-# default extensions (the calculator, and the prebuilt-helper sample with
-# it) from the artifact source this smoke serves on 127.0.0.1
+# default extensions (the five of #60; no sample is one, #162) from the
+# artifact source this smoke serves on 127.0.0.1
 # (scripts/artifact_server.py, the payloads `cargo xtask package-windows`
 # assembled; nothing reaches the network or Pane's published downloads).
-# The calculator answers "6*7" with 42, and the helper sample's pane-echo
-# runs: a prebuilt program from the acquired payload, no developer tool
-# anywhere. The package is the development profile, because only a
+# The calculator answers "6*7" with 42, with no developer tool anywhere.
+# The package is the development profile, because only a
 # development build takes its artifact source from PANE_ARTIFACTS; a
 # release build uses Pane's published downloads, which no controlled
 # source may replace. (The program files are removed again at the end of
@@ -2076,9 +2097,9 @@ try {
     # Generous: a slow runner may take a while to check every payload's
     # components (120 s each).
     if ($process.HasExited) { throw "the installed Pane exited during setup" }
-    # The release's default extensions (#60): all five, plus the helper
-    # sample a development build acquires with them.
-    foreach ($default in "calculator", "applications", "quicklinks", "files", "clipboard-history", "helper-sample") {
+    # The default extensions (#60): all five, in every build; no sample
+    # is acquired (#162).
+    foreach ($default in "calculator", "applications", "quicklinks", "files", "clipboard-history") {
         Wait-For (Join-Path $extensions "installed.json") ('"default": "' + $default + '"') $true 1200
     }
     Start-Sleep -Seconds 1
@@ -2090,19 +2111,13 @@ try {
     Send "{ENTER}"; Start-Sleep -Seconds 1
     Capture "502-calculator-copied.png"
     Check "502-calculator-copied.png" "success"   # "Copied 42 to the clipboard"
-    Send "^a"; Send "helper"; Start-Sleep -Seconds 1
-    Send "{ENTER}"; Start-Sleep -Seconds 2   # Helper sample
-    Send "{ENTER}"; Start-Sleep -Seconds 3   # "Echo through the helper"
-    Capture "503-helper-echoed.png"
-    Check "503-helper-echoed.png" "success"   # 'Echoed "hello from Pane" on Windows x86-64'
-    if (-not (Get-ChildItem (Join-Path $extensions "packages\*\helpers\*\pane-echo.exe") -ErrorAction SilentlyContinue)) {
-        throw "the acquired payload's helper was not installed"
+    if (Select-String -Quiet -SimpleMatch '"default": "helper-sample"' (Join-Path $extensions "installed.json")) {
+        throw "a sample was acquired as a default extension"
     }
-    if (Get-Process -Name "pane-echo" -ErrorAction SilentlyContinue) { throw "a helper is still running" }
     if ((Get-ChildItem (Join-Path $extensions "acquired\calculator")).Count -ne 1) { throw "the calculator's payload is not cached" }
     $downloads = Join-Path $extensions "downloads"
     if ((Test-Path $downloads) -and (Get-ChildItem $downloads)) { throw "downloads were left behind" }
-    $shots = "500-installed-root", "501-calculator-answer", "503-helper-echoed" | ForEach-Object { Join-Path $OutDir "$_.png" }
+    $shots = "500-installed-root", "501-calculator-answer" | ForEach-Object { Join-Path $OutDir "$_.png" }
     python "$PSScriptRoot/check_screenshot.py" --distinct @shots
     if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the installed Pane changed nothing" }
     Stop-Pane $process
@@ -2135,8 +2150,8 @@ try {
 # version is used the next time Pane starts (Pane never restarts itself).
 # The new Pane, started again, reports 99.0.0, with the old version's
 # data (the calculator acquired at first setup) and the extension the
-# user disabled kept, and with nothing of the update left in the install
-# folder.
+# user disabled (Clipboard History) kept, and with nothing of the update
+# left in the install folder.
 cargo xtask package-windows --dev --package-version 99.0.0
 if ($LASTEXITCODE -ne 0) { throw "the update package was not built" }
 $older = Get-ChildItem "target/dist/pane-0.1.0-windows-*-dev.zip" | Select-Object -First 1
@@ -2185,8 +2200,8 @@ try {
     # First setup: the default extensions are acquired (one index read
     # per payload), and Pane's own check reads the index once more.
     if ($process.HasExited) { throw "the installed Pane exited during setup" }
-    # The release's default set (#60) plus the helper sample.
-    foreach ($default in "calculator", "applications", "quicklinks", "files", "clipboard-history", "helper-sample") {
+    # The default set (#60).
+    foreach ($default in "calculator", "applications", "quicklinks", "files", "clipboard-history") {
         Wait-For $registry ('"default": "' + $default + '"') $true 1200
     }
     # The check has read the index (its request is the third): the offer
@@ -2207,13 +2222,13 @@ try {
     # Taking no action downloads nothing: no package was asked for.
     if (Select-String -SimpleMatch ".zip" $serverLog) { throw "a package was downloaded without the user choosing it" }
 
-    # Disable the Helper sample first: an extension the user disabled
+    # Disable Clipboard History first: an extension the user disabled
     # before the update must stay disabled after it.
     Send "^a"; Send "manage"; Start-Sleep -Seconds 1
     Send "{ENTER}"; Start-Sleep -Seconds 1   # Manage extensions…
-    # The Helper sample is the sixth extension now (#60's set is listed
-    # first), so five Downs reach it.
-    Send "{DOWN 5}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2   # Helper sample: disabled
+    # Clipboard History is the fifth extension (#60's set is listed in the
+    # order it is acquired), so four Downs reach it.
+    Send "{DOWN 4}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2   # Clipboard History: disabled
     Wait-For $registry '"disabled": true' $true
     Send "{ESC}"; Start-Sleep -Seconds 1
 
@@ -2263,7 +2278,7 @@ try {
 
     # The next start runs the new version: it reports 99.0.0, removes what
     # the update left, and the old version's data is kept — the
-    # calculator answers and the Helper sample stays disabled.
+    # calculator answers and Clipboard History stays disabled.
     $version = Join-Path $OutDir "update-version.txt"
     $check = Start-Process -FilePath $installed -ArgumentList "--version" -Wait -PassThru -RedirectStandardOutput $version
     if ($check.ExitCode -ne 0) { throw "the new pane.exe --version failed" }

@@ -58,7 +58,7 @@ Screenshots (inspected, not machine-asserted):
 
 | Step | Evidence |
 | --- | --- |
-| Root search lists the three sample commands | [1-root.png](evidence/linux-x11/1-root.png) |
+| Root search lists the three samples, installed first into a data folder of their own (#162) | [1-root.png](evidence/linux-x11/1-root.png) |
 | Rust command opened; action result "Waited 50 ms inside the Rust guest" | [2-command-0.png](evidence/linux-x11/2-command-0.png), [2-result-0.png](evidence/linux-x11/2-result-0.png) |
 | JavaScript command; "Waited 50 ms inside the JavaScript guest" | [3-command-1.png](evidence/linux-x11/3-command-1.png), [3-result-1.png](evidence/linux-x11/3-result-1.png) |
 | TypeScript command; "Waited 50 ms inside the TypeScript guest" | [4-command-2.png](evidence/linux-x11/4-command-2.png), [4-result-2.png](evidence/linux-x11/4-result-2.png) |
@@ -82,7 +82,7 @@ same Xvfb/lavapipe setup), all screenshot checks passed:
 | Step | Evidence |
 | --- | --- |
 | Package screen: source folder, version, commands, compatibility, Install | `9-package.png` (not committed: it shows the local checkout path) |
-| Installed; root lists the samples, the installed "Rust sample", then the install row; status "Installed Rust sample" | [10-installed.png](evidence/linux-x11/10-installed.png) |
+| Installed; root lists the installed "Rust sample" (the samples are no built-in commands since #162), then the install row; status "Installed Rust sample" | [10-installed.png](evidence/linux-x11/10-installed.png) |
 | The installed command answers "Hello from the Rust guest" | [11-installed-result.png](evidence/linux-x11/11-installed-result.png) |
 | After a restart the installed command is still listed | [12-restarted.png](evidence/linux-x11/12-restarted.png) |
 
@@ -925,16 +925,15 @@ development tool is configured. The installed Pane
 nothing at all (an empty folder, checked by `command -v` of cargo, rustc,
 node, npm, git, cc, clang and make, and by reading the running process's
 `PATH`), pointed at the controlled source with `PANE_ARTIFACTS`. It
-acquires the calculator and the helper sample by itself
-(`installed.json` must record both under `"default"`), root search lists
-their commands, "6*7" answers 42 and Enter copies it, and the Helper
-sample's "Echo through the helper" runs the payload's prebuilt `pane-echo`
-("Echoed \"hello from Pane\" on Linux x86-64"), from the managed copy,
-with no developer tool reachable. The acquired payloads must be cached,
-the downloads folder empty, and no helper process left running. The
-program files are removed again at the phase's end, so the uploaded
-evidence is the screenshots and records (frames 500 to 503), not the
-program.
+acquires the five default extensions by itself (`installed.json` must
+record each under `"default"`, and no sample: the helper sample left the
+default set with #162, and a helper running from an acquired payload is
+`crates/pane-core/tests/installer.rs`'s), root search lists their
+commands, "6*7" answers 42 and Enter copies it, with no developer tool
+reachable. The acquired payloads must be cached and the downloads folder
+empty. The program files are removed again at the phase's end, so the
+uploaded evidence is the screenshots and records (frames 500 to 502),
+not the program.
 
 **Recorded 2026-09-29, this machine (Ubuntu aarch64, no display — the GUI
 cannot run here):** what ran locally is everything short of the GUI: the
@@ -950,10 +949,9 @@ runner provides.
 
 | Step | Evidence |
 | --- | --- |
-| The clean machine's Pane acquired both default extensions and lists their commands | pending CI (frame 500) |
+| The clean machine's Pane acquired the five default extensions, and no sample (#162), and lists their commands | pending CI (frame 500) |
 | "6*7" answers 42 | pending CI (frame 501) |
 | Enter copies the answer | pending CI (frame 502) |
-| The helper sample's prebuilt helper answers | pending CI (frame 503) |
 
 
 ### Installing a Pane application update by the user's choice (#56)
@@ -977,9 +975,10 @@ the same background, checks the index for a newer version of itself: the
 offer appears as **Update Pane to 99.0.0** in root search (frame 601;
 the status line tells what was found, frame 600). The artifact server's
 log must hold **no request for the package** until the row is chosen —
-nothing is downloaded, installed or restarted automatically. The Helper
-sample is disabled first, so an extension the user disabled before the
-update must stay disabled after it. Choosing the row with a **damaged
+nothing is downloaded, installed or restarted automatically. Clipboard
+History is disabled first (the Helper sample was, until #162 took it out
+of the default set), so an extension the user disabled before the update
+must stay disabled after it. Choosing the row with a **damaged
 package** is explained (its bytes do not match the sha512 its entry
 gives, frame 602) with the program, the data and the bin folder
 untouched and the row ready to try again; then the real choice
@@ -991,7 +990,7 @@ and swaps the running program — the old `~/.local/bin/pane` renamed
 packages' own files). The next start runs the new version: it reports
 `Pane 99.0.0`, removes `pane.old` at start, the calculator still
 answers "6*7" with 42 from the old version's acquired payload (frames
-604 and 605), and the disabled Helper sample stays disabled — Pane's
+604 and 605), and the disabled Clipboard History stays disabled — Pane's
 data was never touched. The desktop entry the install script put in
 `~/.local/share/applications` keeps naming the same program file, which
 the swap leaves in place, so it never points anywhere else. Pane itself

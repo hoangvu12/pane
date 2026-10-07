@@ -30,6 +30,11 @@ use tempfile::TempDir;
 #[path = "support/settle.rs"]
 mod settle;
 
+// Pane registers no sample command (#162): the tests that drive the
+// samples register them themselves.
+#[path = "support/samples.rs"]
+mod samples;
+
 #[path = "support/paint.rs"]
 mod paint;
 
@@ -142,7 +147,7 @@ type Opened<'a> = (
 fn open_launcher(cx: &mut TestAppContext) -> Opened<'_> {
     let links = Arc::new(RecordedLinks::default());
     let launcher =
-        Launcher::new(Runtime::start(), pane::sample_commands()).with_link_opener(links.clone());
+        Launcher::new(Runtime::start(), samples::sample_commands()).with_link_opener(links.clone());
     // Guest replies arrive from the real runtime thread, outside the test
     // scheduler's deterministic control.
     cx.executor().allow_parking();
@@ -155,7 +160,7 @@ fn open_launcher(cx: &mut TestAppContext) -> Opened<'_> {
 fn open_refusing(
     cx: &mut TestAppContext,
 ) -> (gpui::Entity<LauncherWindow>, &mut VisualTestContext) {
-    let launcher = Launcher::new(Runtime::start(), pane::sample_commands())
+    let launcher = Launcher::new(Runtime::start(), samples::sample_commands())
         .with_link_opener(Arc::new(RefusingLinks));
     cx.executor().allow_parking();
     cx.update(pane::bind_keys);
