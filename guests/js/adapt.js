@@ -43,6 +43,9 @@
 //   with a `message`, or the text of anything else. A submenu's `onOpen`
 //   resolving with something other than a list is such an error too.
 //
+// What a handler throws is also logged, with its stack, to the package's
+// extension log (console.js), where its author sees it.
+//
 // A crash is then only what a crash should be: an action, `run` or
 // `runSearchResult` resolving with a value (it resolves with nothing; text,
 // which Pane no longer shows, is let through), a provider resolving with a
@@ -50,6 +53,7 @@
 // error to answer with). A list Pane cannot read (a title that is not text,
 // say) is the command's failure, which Pane reports, not a crash.
 
+import { logThrown } from "./console.js";
 import { look } from "./look.js";
 
 /** The version of the tree the adapter writes (docs/list-tree.md). */
@@ -90,6 +94,7 @@ function adapted(target, name, error, then = (value) => value) {
     try {
       value = await handler.apply(target, args);
     } catch (thrown) {
+      logThrown(thrown);
       throw error(thrown);
     }
     return then(value);
@@ -271,6 +276,7 @@ export function adaptCommand(command) {
         }
         value = await command.run(id, launch);
       } catch (thrown) {
+        logThrown(thrown);
         throw message(thrown);
       }
       return answer(value);
@@ -283,6 +289,7 @@ export function adaptCommand(command) {
         try {
           value = await ofToast();
         } catch (thrown) {
+          logThrown(thrown);
           throw message(thrown);
         }
         return answer(value);
@@ -311,6 +318,7 @@ export function adaptCommand(command) {
           throw new Error(`unknown action: ${callback}`);
         }
       } catch (thrown) {
+        logThrown(thrown);
         throw message(thrown);
       }
       return answer(value);

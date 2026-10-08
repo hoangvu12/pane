@@ -64,6 +64,7 @@ use crate::develop::{
     Build, BuildJob, BuildOutcome, BuildOutput, BuildStop, Builder, components, first_error,
     is_save, stage_package,
 };
+use crate::extension_log::{ExtensionLogs, LogLevel, LogLine};
 use crate::packages::{InstalledPackage, Manifest, PackageIdentity, canonical};
 
 mod sources;
@@ -90,6 +91,8 @@ const DETAIL_LINES: usize = 60;
 /// package's development folder.
 const BUILD_LOG: &str = "build.log";
 const FAILED_LOG: &str = "failed-build.log";
+/// The extension log of the development session, beside the build's.
+pub(super) const EXTENSION_LOG: &str = "extension.log";
 
 /// A package being developed, as [`Launcher::development`] reports it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -153,6 +156,9 @@ pub(super) struct Developing {
     /// The id of the next session, so that a session's thread can tell
     /// whether its package is still developed by it.
     next: AtomicU64,
+    /// Every package's extension log, which a developed package's also
+    /// writes to a file.
+    pub(super) logs: ExtensionLogs,
 }
 
 /// The builder local packages are built with on save, and the sender that
@@ -188,7 +194,11 @@ enum Signal {
 }
 
 impl Developing {
-    pub(super) fn new(builder: Option<Arc<dyn Builder>>, changes: Option<ChangeSender>) -> Self {
+    pub(super) fn new(
+        builder: Option<Arc<dyn Builder>>,
+        changes: Option<ChangeSender>,
+        logs: ExtensionLogs,
+    ) -> Self {
         // The configuration is held behind a lock so that
         // `with_development`, which runs after the launcher was built,
         // reconfigures this same Arc rather than replacing it: the
@@ -198,6 +208,7 @@ impl Developing {
             config: Mutex::new(DevelopmentConfig { builder, changes }),
             sessions: Mutex::new(HashMap::new()),
             next: AtomicU64::new(1),
+            logs,
         }
     }
 
@@ -245,16 +256,20 @@ impl Developing {
     /// returns, and each session's thread drops its watcher. Never waits
     /// for a build. Returns whether a package was developed.
     pub(super) fn end(&self, which: Option<&PackageIdentity>) -> bool {
-        let ended: Vec<Session> = {
+        let ended: Vec<(PackageIdentity, Session)> = {
             let mut sessions = self.sessions();
             match which {
-                Some(identity) => sessions.remove(identity).into_iter().collect(),
-                None => sessions.drain().map(|(_, session)| session).collect(),
+                Some(identity) => sessions.remove_entry(identity).into_iter().collect(),
+                None => sessions.drain().collect(),
             }
         };
-        for session in &ended {
+        for (identity, session) in &ended {
             session.stop.stop();
             let _ = session.signals.send(Signal::Stop);
+            let owner = identity.key();
+            self.logs
+                .pane(&owner, 0, LogLevel::Info, "Development stopped");
+            self.logs.stop_developing(&owner);
         }
         !ended.is_empty()
     }
@@ -350,6 +365,35 @@ impl Launcher {
     /// The development of the package with `identity`, if it is developed.
     pub fn development(&self, identity: &PackageIdentity) -> Option<Development> {
         self.developing.report(identity)
+    }
+
+    /// The lines Pane keeps of the extension log of the package with
+    /// `identity`, oldest first: what its code wrote and Pane's messages
+    /// about it. While it is developed, its most recent
+    /// [`DEVELOPED_LINES`](crate::extension_log::DEVELOPED_LINES); otherwise
+    /// only a small window of them, for diagnostics.
+    pub fn extension_log(&self, identity: &PackageIdentity) -> Vec<LogLine> {
+        self.developing.logs.lines(&identity.key())
+    }
+
+    /// Each line added to the extension log of the package with `identity`
+    /// from now on, while it is developed; the receiver ends when its
+    /// development does. A package not developed sends nothing.
+    pub fn follow_extension_log(&self, identity: &PackageIdentity) -> Receiver<LogLine> {
+        self.developing.logs.follow(&identity.key())
+    }
+
+    /// Forgets the lines kept of the package's extension log; its log file
+    /// keeps them.
+    pub fn clear_extension_log(&self, identity: &PackageIdentity) {
+        self.developing.logs.clear(&identity.key());
+    }
+
+    /// The log file of the package's development session, while it is
+    /// developed: every line of its extension log, rotated at
+    /// [`FILE_LIMIT`](crate::extension_log::FILE_LIMIT).
+    pub fn extension_log_file(&self, identity: &PackageIdentity) -> Option<PathBuf> {
+        self.developing.logs.file(&identity.key())
     }
 
     /// Checks that the package can be developed now, explaining why not.
@@ -456,6 +500,21 @@ impl Launcher {
                 signals: signals.clone(),
                 stop: stop.clone(),
             },
+        );
+        // Its log is kept beside its builds' from now on.
+        let owner = identity.key();
+        self.developing
+            .logs
+            .develop(&owner, work.join(EXTENSION_LOG));
+        self.developing.logs.pane(
+            &owner,
+            0,
+            LogLevel::Info,
+            &format!(
+                "Developing: each save in {} runs `{}`, then reloads it",
+                folder.display(),
+                build.command()
+            ),
         );
         let worker = Worker {
             launcher: self.downgrade(),
@@ -629,6 +688,15 @@ impl Launcher {
     /// kept for when the user returns to one of those, so it does not
     /// replace what that screen says.
     fn show_development(&self, identity: &PackageIdentity, status: Status) {
+        // The package's log has each step of its development.
+        let logged = match &status {
+            Status::Progress(text) | Status::Result(text) => Some((LogLevel::Info, text)),
+            Status::Error(text) => Some((LogLevel::Error, text)),
+            Status::Idle | Status::Running => None,
+        };
+        if let Some((level, text)) = logged {
+            self.developing.logs.pane(&identity.key(), 0, level, text);
+        }
         let mut state = self.lock();
         self.refresh(&mut state);
         let shown = match &state.view.screen {

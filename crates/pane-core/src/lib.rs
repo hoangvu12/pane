@@ -15,6 +15,7 @@ pub mod develop;
 pub mod downloads;
 mod dropdown;
 mod extension_data;
+pub mod extension_log;
 pub mod feedback;
 pub mod file_index;
 pub mod files;

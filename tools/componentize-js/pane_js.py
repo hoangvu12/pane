@@ -434,9 +434,12 @@ ADAPTED_PROVIDERS = {
 def adapted_entry(entry: Path, adapter: Path, options: dict) -> str:
     """The module bundled for `entry`: its exports, with the ones Pane calls
     wrapped by `adapter` so that what a handler throws is an error, not a
-    crash."""
+    crash, and `console` installed before the command's module loads."""
     entry_js, adapter_js = json.dumps(entry.as_posix()), json.dumps(adapter.as_posix())
+    # `console` first, so that the command's own module has it as it loads.
+    console_js = json.dumps((adapter.parent / "console.js").as_posix())
     lines = [
+        f"import {console_js};",
         f"import * as extension from {entry_js};",
         f"import {{ adaptCommand, adaptProvider }} from {adapter_js};",
         f"export * from {entry_js};",

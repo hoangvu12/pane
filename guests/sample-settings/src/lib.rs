@@ -18,6 +18,11 @@
 //! finished: Pane stops a call that computes for 5 seconds without waiting,
 //! so it never finishes, and it counts towards pausing the package as a
 //! crash does.
+//! "Write to the log" writes a line at each level and a printed line to
+//! each output, which Pane keeps in the package's extension log; "Flood the
+//! log" writes a line longer than Pane keeps, then more lines in a second
+//! than Pane keeps. "Fail" fails with an error the extension answers
+//! with.
 #![no_std]
 
 use pane_guest::alloc::{format, string::String, vec::Vec};
@@ -46,6 +51,12 @@ const BUSY: &str = "busy";
 /// How long "Stop responding" computes at most, in nanoseconds: bounded, so
 /// that even without Pane stopping it, it ends.
 const BUSY_FOR: u64 = 60_000_000_000;
+/// How long a line "Flood the log" writes first, in bytes: more than Pane
+/// keeps of a line.
+const FLOOD_LINE: usize = 5_000;
+/// How many lines "Flood the log" writes then: more than Pane keeps of a
+/// second's.
+const FLOOD_LINES: u32 = 1_500;
 
 struct Greeting;
 pane_guest::export!(Greeting);
@@ -123,6 +134,23 @@ async fn outcome(id: &str) -> Result<String, String> {
             settings::set(BUSY, "finished")?;
             Ok("Finished computing after a minute".into())
         }
+        "log" => {
+            pane_guest::debug!("a debug line");
+            pane_guest::info!("an info line");
+            pane_guest::warn!("a warning line");
+            pane_guest::error!("an error line");
+            pane_guest::println!("a printed line");
+            pane_guest::eprintln!("a printed error");
+            Ok("Wrote to the log".into())
+        }
+        "flood" => {
+            pane_guest::println!("{}", "x".repeat(FLOOD_LINE));
+            for n in 0..FLOOD_LINES {
+                pane_guest::println!("line {n}");
+            }
+            Ok("Flooded the log".into())
+        }
+        "fail" => Err("failed on purpose".into()),
         // A panic traps the guest: Pane reports a crash, not an error
         // the extension answered with.
         "crash" => panic!("crashed on purpose"),
@@ -177,6 +205,21 @@ impl Command for Greeting {
                 "Crashes on purpose; three crashes within five minutes pause the extension",
             ),
             item("count", "Count", "Adds one to a count kept in its content"),
+            item(
+                "log",
+                "Write to the log",
+                "A line at each level, and one printed to each output",
+            ),
+            item(
+                "flood",
+                "Flood the log",
+                "A line too long to keep, then too many lines in a second",
+            ),
+            item(
+                "fail",
+                "Fail",
+                "Fails with an error, which the extension answers with",
+            ),
             item(
                 "busy",
                 "Stop responding",

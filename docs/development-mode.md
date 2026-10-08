@@ -166,6 +166,18 @@ Development is turned on per installed, enabled package, from its **Develop
    another screen (an open command, a form, a query's results) it does not
    replace what that screen says; the newest is shown when the user returns
    to Settings › Extensions or root search.
+7. **The extension log.** While the package is developed, what its code
+   writes to standard output and standard error, and Pane's own messages
+   about it (each status above, its crashes with their backtraces, calls
+   that stopped responding, pauses), are kept as its extension log: the
+   most recent 5,000 lines in memory, which the launcher hands to whoever
+   follows the log, and every line in `extensions/develop/<hash>/extension.log`
+   beside the build's log, rotated at 5 MiB into `extension.log.1`. The
+   file starts afresh with each development session and is kept when it
+   ends. A package not developed keeps only its most recent 500 lines in
+   memory, never on disk. Lines are cut at 4 KiB, and a package writing
+   more than 1,000 lines in a second loses the rest of that second, with a
+   note of how many ([printing and logging](../guests/README.md#printing-and-logging)).
 
 Only the developed package is built and reloaded; Pane and every other
 package keep running.
