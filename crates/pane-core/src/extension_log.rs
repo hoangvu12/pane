@@ -697,6 +697,37 @@ mod tests {
     }
 
     #[test]
+    fn a_development_log_file_is_rotated_at_its_limit() {
+        let folder = tempfile::tempdir().unwrap();
+        let file = folder.path().join("extension.log");
+        let logs = ExtensionLogs::default();
+        logs.develop("p", file.clone());
+        let text = "y".repeat(PANE_LINE_LIMIT);
+        let lines = FILE_LIMIT as usize / PANE_LINE_LIMIT + 2;
+        for _ in 0..lines {
+            logs.pane("p", 1, LogLevel::Info, &text);
+        }
+        let earlier = std::fs::metadata(rotated(&file)).unwrap().len();
+        let current = std::fs::metadata(&file).unwrap().len();
+        assert!(
+            earlier <= FILE_LIMIT && earlier > FILE_LIMIT / 2,
+            "{earlier}"
+        );
+        assert!(current > 0 && current < FILE_LIMIT / 2, "{current}");
+
+        // A new session starts afresh; stopping keeps the file.
+        logs.develop("p", file.clone());
+        assert!(!rotated(&file).exists() && !file.exists());
+        logs.pane("p", 1, LogLevel::Info, "kept");
+        logs.stop_developing("p");
+        assert!(
+            std::fs::read_to_string(&file)
+                .unwrap()
+                .ends_with(" pane kept\n")
+        );
+    }
+
+    #[test]
     fn a_second_keeps_no_more_than_the_limit() {
         let mut rate = Rate::default();
         let start = Instant::now();
