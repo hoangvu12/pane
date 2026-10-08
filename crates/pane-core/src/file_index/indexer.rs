@@ -944,6 +944,12 @@ impl Indexer {
                 return true;
             }
             let Some(left) = deadline.checked_duration_since(Instant::now()) else {
+                eprintln!(
+                    "[DEBUG-index-wait] busy={} queued={} status={:?}",
+                    shared.busy,
+                    self.0.queued.load(Ordering::SeqCst),
+                    shared.status
+                );
                 return false;
             };
             shared = self
