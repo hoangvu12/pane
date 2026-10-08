@@ -300,6 +300,14 @@ _Avoid_: App update (the application's own, #54–56), forced update
 An installed local package whose source folder Pane watches while its author works on it: each save runs the package's documented build command in that folder, staging the components under Pane's data folder, and a build that succeeds reloads the package from there, while one that fails keeps its working code and shows the build's diagnostics. It lasts until the author stops it, the package is disabled or uninstalled, or Pane quits, each of which kills a running build with the processes it started; another installed copy of the package is never affected.
 _Avoid_: Watch mode, hot reload, dev copy (a copy is an installation)
 
+**Extension log**:
+What a running extension writes to its standard output and standard error, interleaved with Pane's own messages about that package (its crashes, pauses and builds). Shown on the package's Logs screen and streamed to `pane-ext dev`; it is the author's, not Pane's own log.
+_Avoid_: Console, debug output
+
+**pane-ext**:
+The command-line tool authors use beside the app to create, develop, check and pack an extension package; it builds with the same code as development mode and hands the result to the running Pane. Distinct from `pane`, the application's executable.
+_Avoid_: Pane CLI, `pane` (the application)
+
 **Build failure**:
 A development build that did not succeed: nothing is replaced, and the package keeps running its installed code. Distinct from a startup failure, whose replacement was installed.
 _Avoid_: Crash, startup failure
