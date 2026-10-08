@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use crate::develop::{Build, is_save};
+use crate::build::{Build, is_save};
 
 /// Files up to this size are remembered by their bytes too.
 const DIGESTED: u64 = 1 << 20;
@@ -33,7 +33,7 @@ const COARSE_RESOLUTION: Duration = Duration::from_secs(2);
 
 /// The source folder as development last saw it: each path that could be
 /// a save, relative to the folder.
-pub(super) struct Sources {
+pub(crate) struct Sources {
     /// The source folder, canonical.
     root: PathBuf,
     build: Arc<dyn Build>,
@@ -98,7 +98,7 @@ impl FileState {
 
 impl Sources {
     /// What is in `root` now, as far as `build` could be saved in it.
-    pub(super) fn new(root: &Path, build: Arc<dyn Build>) -> Sources {
+    pub(crate) fn new(root: &Path, build: Arc<dyn Build>) -> Sources {
         let mut sources = Sources {
             root: root.to_path_buf(),
             build,
@@ -112,7 +112,7 @@ impl Sources {
 
     /// Whether `relative`, which may be a save (see [`is_save`]), changed
     /// since it was last seen; it is remembered as it is now.
-    pub(super) fn changed(&mut self, relative: &Path) -> bool {
+    pub(crate) fn changed(&mut self, relative: &Path) -> bool {
         let path = self.root.join(relative);
         let Ok(meta) = std::fs::symlink_metadata(&path) else {
             let known = self.seen.contains_key(relative);
@@ -152,7 +152,7 @@ impl Sources {
 
     /// Looks at the whole folder again, as when the watcher lost events;
     /// returns whether anything changed.
-    pub(super) fn rescan(&mut self) -> bool {
+    pub(crate) fn rescan(&mut self) -> bool {
         let mut paths: Vec<PathBuf> = self.seen.keys().cloned().collect();
         self.list(Path::new(""), &mut paths);
         paths.sort();
@@ -166,7 +166,7 @@ impl Sources {
 
     /// Remembers `relative` as it is now, after Pane wrote it, so that its
     /// events are not a save.
-    pub(super) fn wrote(&mut self, relative: &Path) {
+    pub(crate) fn wrote(&mut self, relative: &Path) {
         if !is_save(relative, &*self.build) {
             return;
         }
@@ -184,7 +184,7 @@ impl Sources {
 
     /// The top-level folders that appeared since the last call, to be
     /// watched too.
-    pub(super) fn take_new_folders(&mut self) -> Vec<PathBuf> {
+    pub(crate) fn take_new_folders(&mut self) -> Vec<PathBuf> {
         std::mem::take(&mut self.new_folders)
     }
 
@@ -240,7 +240,7 @@ impl Sources {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::develop::{BuildJob, BuildOutcome};
+    use crate::build::{BuildJob, BuildOutcome};
     use std::fs;
 
     struct Ignoring;

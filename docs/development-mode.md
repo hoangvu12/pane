@@ -273,15 +273,21 @@ These are implementation choices of #12/#13, not user decisions:
   build is refused. The Rust tests run in `cargo xtask ci`; the JavaScript
   and TypeScript ones need the JS toolchain and run with
   `PANE_TEST_JS_BUILDS=1` (CI's JS/TS job sets it).
-- Unit tests in [`develop.rs`](../crates/pane-core/src/develop.rs): the
-  adapters' commands (paths with spaces quoted) and ignored paths, a folder
-  without a known build or tool, the first error (not `thiserror`),
-  cargo's artifact messages, which variables are removed, the bounded
-  output and its log, whole lines from both pipes, and (Unix) stopping a
-  command kills what it started at once, a command whose child keeps the
-  pipes open still returns, and one whose daemon (outside the group) keeps
-  them open returns after the 2-second drain.
-- Unit tests in [`sources.rs`](../crates/pane-core/src/launcher/developing/sources.rs):
+- Unit tests in Pane's core's [`develop.rs`](../crates/pane-core/src/develop.rs):
+  the adapters' commands (paths with spaces quoted) and ignored paths, a
+  folder without a known build or tool, and staging `pane.json` with this
+  system's helper files.
+- Unit tests in the shared build crate's
+  [`build.rs`](../crates/pane-build/src/build.rs) (`pane-build`, which
+  holds the builds, the session that runs them after each save and the
+  process trees; `pane-ext` builds with it too, ADR 0047): a package built
+  once returns its staged components or why it failed, the first error
+  (not `thiserror`), cargo's artifact messages, which variables are
+  removed, the bounded output and its log, whole lines from both pipes,
+  and (Unix) stopping a command kills what it started at once, a command
+  whose child keeps the pipes open still returns, and one whose daemon
+  (outside the group) keeps them open returns after the 2-second drain.
+- Unit tests in [`sources.rs`](../crates/pane-build/src/sources.rs):
   what was already there, a read and a change of permissions are not
   saves; other bytes of the same size written at once are, once; a file or
   folder appearing or going is, and a folder that appears is watched;
