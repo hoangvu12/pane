@@ -292,11 +292,7 @@ mod tests {
 
     #[test]
     fn a_name_shorter_than_three_characters_is_left_alone() {
-        let redactor = Redactor::new(
-            Some(Path::new("/")),
-            &["al".to_owned()],
-            &["pc".to_owned()],
-        );
+        let redactor = Redactor::new(Some(Path::new("/")), &["al".to_owned()], &["pc".to_owned()]);
         assert_eq!(
             redactor.redact("al on PC wrote / and /al"),
             "al on PC wrote / and /al"
@@ -338,7 +334,10 @@ mod tests {
         );
         // A name that identifies someone still goes where it is a word.
         let redactor = Redactor::new(None, &["Paneer".to_owned()], &[]);
-        assert_eq!(redactor.redact("Pane ran for paneer"), "Pane ran for <user>");
+        assert_eq!(
+            redactor.redact("Pane ran for paneer"),
+            "Pane ran for <user>"
+        );
     }
 
     #[test]

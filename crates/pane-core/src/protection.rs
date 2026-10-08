@@ -84,8 +84,8 @@ impl Stored {
 #[cfg(windows)]
 fn open_dpapi(encoded: &str) -> Result<String, String> {
     let failed = |reason: &str| format!("Windows could not decrypt it ({reason})");
-    let bytes = crate::icons::decode_base64(encoded)
-        .ok_or_else(|| failed("its bytes are not base64"))?;
+    let bytes =
+        crate::icons::decode_base64(encoded).ok_or_else(|| failed("its bytes are not base64"))?;
     let plain = dpapi::unprotect(&bytes).map_err(|reason| failed(&reason))?;
     String::from_utf8(plain).map_err(|_| failed("what it holds is not text"))
 }

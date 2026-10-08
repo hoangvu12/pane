@@ -1324,7 +1324,10 @@ mod tests {
         let mut icon = fresh();
         icon.set_visible(true).unwrap();
         icon.shell.refuse_deletes = true;
-        assert!(matches!(icon.set_visible(false), Err(TrayError::Refused(_))));
+        assert!(matches!(
+            icon.set_visible(false),
+            Err(TrayError::Refused(_))
+        ));
         icon.shell.refuse_deletes = false;
         assert_eq!(icon.set_visible(true), Ok(()), "the rollback");
         icon.shell.calls.clear();

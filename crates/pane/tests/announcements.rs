@@ -20,16 +20,16 @@ use gpui::{Entity, TestAppContext, VisualTestContext, prelude::*};
 use pane::LauncherWindow;
 use pane_core::{CommandRegistration, Launcher, LauncherView, Runtime, Screen};
 
-#[path = "support/settle.rs"]
-mod settle;
-#[path = "support/samples.rs"]
-mod samples;
 #[path = "support/a11y.rs"]
 mod a11y;
-#[path = "support/wait.rs"]
-mod wait;
 #[path = "support/packages.rs"]
 mod packages;
+#[path = "support/samples.rs"]
+mod samples;
+#[path = "support/settle.rs"]
+mod settle;
+#[path = "support/wait.rs"]
+mod wait;
 
 use a11y::{a11y, announcement, focused_label, no_row_has_focus};
 use packages::assembled_package;
@@ -56,8 +56,7 @@ fn open_launcher(
     // Guest replies arrive from the real runtime thread.
     cx.executor().allow_parking();
     cx.update(pane::bind_keys);
-    let (window, cx) =
-        cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
+    let (window, cx) = cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
     settle(&window, cx);
     (window, cx)
 }

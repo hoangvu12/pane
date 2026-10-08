@@ -77,8 +77,8 @@ pub use launcher::{
     ExtensionOperation, FormField, FormView, HotkeyOutcome, ItemAction, ItemActions, Launcher,
     LauncherView, ListPresentation, LogNotice, MANAGE_EXTENSIONS, OpenSubmenu, OperationKind,
     PackagePreferences, PinTarget, PreferenceField, PreferencesTarget, Presentation, Question,
-    QuickSlot, ResultAction, ResultActionItem, ResultActions, Row, RowKind, RowPresentation, Screen,
-    Section, SelectedAction, SettingsTarget, SetupHeader, ShortcutCatalog, ShortcutCommand,
+    QuickSlot, ResultAction, ResultActionItem, ResultActions, Row, RowKind, RowPresentation,
+    Screen, Section, SelectedAction, SettingsTarget, SetupHeader, ShortcutCatalog, ShortcutCommand,
     ShortcutGroup, SlotChange, Status, SubmenuState, UNEXPECTED_QUIT, Unavailable, UnboundShortcut,
     UpdateHold, answer_sections, root_sections,
 };

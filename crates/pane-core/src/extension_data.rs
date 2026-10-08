@@ -187,7 +187,10 @@ impl DataKind {
     fn cannot_read(self, why: &str) -> String {
         match self {
             DataKind::LocalCredentials => {
-                format!("{}. Sign in again.", protection::cannot_read("credential", why))
+                format!(
+                    "{}. Sign in again.",
+                    protection::cannot_read("credential", why)
+                )
             }
             _ => protection::cannot_read(self.counted().0, why),
         }
@@ -889,9 +892,11 @@ impl ExtensionData {
             if let Ok(file) = &store.of(kind).file
                 && let Some(kept) = file.preferences.get(&owner)
             {
-                values.extend(kept.iter().filter_map(|(key, value)| {
-                    Some((key.clone(), value.text().ok()?.to_owned()))
-                }));
+                values.extend(
+                    kept.iter().filter_map(|(key, value)| {
+                        Some((key.clone(), value.text().ok()?.to_owned()))
+                    }),
+                );
             }
         }
         values
@@ -1429,7 +1434,10 @@ fn parse(text: &str, kind: DataKind) -> Result<DataJson, String> {
                 .map(|file| DataJson::from_file(file, Value::from_stored))
         }
         other => {
-            return Err(format!("it has version {other}, this Pane reads {}", kind.versions()));
+            return Err(format!(
+                "it has version {other}, this Pane reads {}",
+                kind.versions()
+            ));
         }
     }
     .map_err(|error| error.to_string())
@@ -1818,7 +1826,10 @@ mod tests {
         let data = ExtensionData::open(dir.path());
 
         let file = credentials_file(dir.path());
-        assert!(!file.contains("sample-token") && !file.contains("the key"), "{file}");
+        assert!(
+            !file.contains("sample-token") && !file.contains("the key"),
+            "{file}"
+        );
         let json: serde_json::Value = serde_json::from_str(&file).unwrap();
         assert_eq!(json["version"], 2);
         let code = data.owned_by(&identity);
@@ -1827,7 +1838,9 @@ mod tests {
             Ok(Some("sample-token".into()))
         );
         assert_eq!(
-            data.preference_values(&identity).get("apiKey").map(String::as_str),
+            data.preference_values(&identity)
+                .get("apiKey")
+                .map(String::as_str),
             Some("the key")
         );
     }
@@ -1863,9 +1876,15 @@ mod tests {
         );
         assert!(error.ends_with(". Sign in again."), "{error}");
         if protection::PROTECTS {
-            assert!(error.contains(": Windows could not decrypt it ("), "{error}");
+            assert!(
+                error.contains(": Windows could not decrypt it ("),
+                "{error}"
+            );
         }
-        assert_eq!(code.get(credentials, "other"), Ok(Some("still read".into())));
+        assert_eq!(
+            code.get(credentials, "other"),
+            Ok(Some("still read".into()))
+        );
         // Counted without reading them, and said to be unreadable where
         // Manage extensions describes the identity.
         assert_eq!(data.count(credentials, &identity), Ok(3));
@@ -1905,7 +1924,9 @@ mod tests {
             .unwrap();
         block_on(writes.written()).unwrap();
         assert_eq!(
-            data.preference_values(&identity).get("apiKey").map(String::as_str),
+            data.preference_values(&identity)
+                .get("apiKey")
+                .map(String::as_str),
             Some("new key")
         );
         let reopened = ExtensionData::open(dir.path());
@@ -1937,7 +1958,11 @@ mod tests {
             "{error}"
         );
         assert!(block_on(code.set(credentials, "token", "new")).is_err());
-        assert!(!data.remove_uninstalled(&identity, SavedData::Keep).is_empty());
+        assert!(
+            !data
+                .remove_uninstalled(&identity, SavedData::Keep)
+                .is_empty()
+        );
         assert_eq!(fs::read_to_string(&path).unwrap(), newer);
     }
 }

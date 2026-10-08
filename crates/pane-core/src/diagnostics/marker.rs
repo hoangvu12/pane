@@ -121,11 +121,8 @@ impl CrashRecord {
             pane: version.to_owned(),
         };
         if let Ok(json) = serde_json::to_vec_pretty(&record) {
-            let _ = crate::atomic::write_atomically(
-                &marker,
-                &json,
-                crate::atomic::Readers::OwnerOnly,
-            );
+            let _ =
+                crate::atomic::write_atomically(&marker, &json, crate::atomic::Readers::OwnerOnly);
         }
         CrashRecord {
             folder: folder.to_path_buf(),

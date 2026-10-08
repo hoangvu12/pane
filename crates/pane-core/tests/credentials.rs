@@ -104,7 +104,11 @@ impl Pane {
 
     /// A launcher on this data folder; a new one is a restart of Pane.
     fn start(&self) -> Launcher {
-        Launcher::with_packages(Runtime::start(), vec![], self.data.path().join("extensions"))
+        Launcher::with_packages(
+            Runtime::start(),
+            vec![],
+            self.data.path().join("extensions"),
+        )
     }
 
     /// The package's identity key, under which its values are kept.
@@ -251,7 +255,11 @@ fn a_credentials_file_of_an_unknown_version_is_refused_and_kept(fixture: &Fixtur
             other => panic!("expected an error, got {other:?}"),
         }
     }
-    match confirm(&launcher, "Uninstall Settings sample", "Uninstall and keep saved data") {
+    match confirm(
+        &launcher,
+        "Uninstall Settings sample",
+        "Uninstall and keep saved data",
+    ) {
         Status::Error(message) => assert!(
             message.contains("could not delete its credentials: Cannot read "),
             "{message}"
@@ -307,7 +315,10 @@ fn a_conversion_that_cannot_be_written_is_tried_again_at_the_next_start(fixture:
         .open(pane.credentials_path())
         .unwrap();
     let launcher = pane.start();
-    assert_eq!(fs::read_to_string(pane.credentials_path()).unwrap(), written);
+    assert_eq!(
+        fs::read_to_string(pane.credentials_path()).unwrap(),
+        written
+    );
     assert_eq!(kept(&launcher), Status::Result(EVERYTHING_KEPT.into()));
     drop(launcher);
     drop(held);
@@ -350,14 +361,21 @@ fn a_removal_after_a_failed_conversion_protects_what_it_writes(fixture: &Fixture
     let launcher = pane.start();
     drop(held);
     assert!(matches!(
-        confirm(&launcher, "Uninstall Settings sample", "Uninstall and keep saved data"),
+        confirm(
+            &launcher,
+            "Uninstall Settings sample",
+            "Uninstall and keep saved data"
+        ),
         Status::Result(_)
     ));
     let text = fs::read_to_string(pane.credentials_path()).unwrap();
     assert!(!text.contains("another-token"), "{text}");
     let file = pane.credentials();
     assert_eq!(file["version"], 2);
-    assert!(file["packages"][&another]["token"]["dpapi"].is_string(), "{file}");
+    assert!(
+        file["packages"][&another]["token"]["dpapi"].is_string(),
+        "{file}"
+    );
     assert!(file["packages"].get(pane.key()).is_none(), "{file}");
 }
 
@@ -389,20 +407,35 @@ fn a_damaged_token_is_explained_kept_and_replaced_by_signing_in(fixture: &Fixtur
     let launcher = pane.start();
     assert_explained(&kept(&launcher));
     // Its settings, content and cache still read and save.
-    assert_eq!(run(&launcher, "Greet me"), Status::Result("Good day to you".into()));
-    assert_eq!(run(&launcher, "Save a note"), Status::Result("Saved a note".into()));
+    assert_eq!(
+        run(&launcher, "Greet me"),
+        Status::Result("Good day to you".into())
+    );
+    assert_eq!(
+        run(&launcher, "Save a note"),
+        Status::Result("Saved a note".into())
+    );
     drop(launcher);
     let launcher = pane.start();
     assert_explained(&kept(&launcher));
-    assert_eq!(pane.credentials()["packages"][&pane.key()]["token"]["dpapi"], "AAAA");
+    assert_eq!(
+        pane.credentials()["packages"][&pane.key()]["token"]["dpapi"],
+        "AAAA"
+    );
 
     assert_eq!(
         run(&launcher, "Sign in"),
         Status::Result("Signed in on this computer".into())
     );
     assert_eq!(kept(&launcher), Status::Result(EVERYTHING_KEPT.into()));
-    assert_ne!(pane.credentials()["packages"][&pane.key()]["token"]["dpapi"], "AAAA");
-    assert_eq!(pane.credentials()["packages"][&pane.key()]["other"]["dpapi"], "AAAA");
+    assert_ne!(
+        pane.credentials()["packages"][&pane.key()]["token"]["dpapi"],
+        "AAAA"
+    );
+    assert_eq!(
+        pane.credentials()["packages"][&pane.key()]["other"]["dpapi"],
+        "AAAA"
+    );
 }
 
 #[cfg(not(windows))]
@@ -419,7 +452,11 @@ fn manage_extensions_counts_an_unreadable_credential(fixture: &Fixture) {
     save_everything(&launcher);
     let readable = pane.credentials()["packages"][&pane.key()]["token"].clone();
     assert!(matches!(
-        confirm(&launcher, "Uninstall Settings sample", "Uninstall and keep saved data"),
+        confirm(
+            &launcher,
+            "Uninstall Settings sample",
+            "Uninstall and keep saved data"
+        ),
         Status::Result(_)
     ));
     drop(launcher);
@@ -443,7 +480,11 @@ fn manage_extensions_counts_an_unreadable_credential(fixture: &Fixture) {
         )
     );
     assert_eq!(
-        confirm(&launcher, "Delete retained data of Settings sample", "Delete retained data"),
+        confirm(
+            &launcher,
+            "Delete retained data of Settings sample",
+            "Delete retained data"
+        ),
         Status::Result("Deleted the retained data of Settings sample".into())
     );
     assert!(pane.credentials()["packages"].get(pane.key()).is_none());

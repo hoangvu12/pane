@@ -11,12 +11,12 @@
 //! (`file_search_settings`), the Extensions group's sidebar entries and an
 //! extension's Commands share the same `PageWindow`.
 
+#[path = "support/a11y.rs"]
+mod a11y;
 #[path = "../../pane-core/tests/support/image_server.rs"]
 mod image_server;
 #[path = "support/settle.rs"]
 mod settle;
-#[path = "support/a11y.rs"]
-mod a11y;
 
 use std::fs;
 use std::path::{Path, PathBuf};

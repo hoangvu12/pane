@@ -1282,7 +1282,10 @@ fn the_history_is_encrypted_on_disk_and_a_damaged_item_is_explained(fixture: &'s
     assert_eq!(pane.listed(&launcher), both);
     let raw = || fs::read_to_string(pane.history_path()).unwrap();
     let file = raw();
-    assert!(!file.contains("a secret copied") && !file.contains("another copy"), "{file}");
+    assert!(
+        !file.contains("a secret copied") && !file.contains("another copy"),
+        "{file}"
+    );
     assert_eq!(pane.kept_on_disk(), both);
     drop(launcher);
     let launcher = pane.start();
@@ -1315,7 +1318,10 @@ fn the_history_is_encrypted_on_disk_and_a_damaged_item_is_explained(fixture: &'s
     let listed = pane.listed(&launcher);
     assert_eq!(listed.len(), 2, "{listed:?}");
     assert_eq!(listed[0], "another copy");
-    assert!(listed[1].starts_with("Pane cannot read this copy"), "{listed:?}");
+    assert!(
+        listed[1].starts_with("Pane cannot read this copy"),
+        "{listed:?}"
+    );
     // A later copy is written beside it; it is kept as it was.
     assert!(pane.clipboard.copy("a third copy", None));
     let file: Value = serde_json::from_str(&raw()).unwrap();
@@ -1327,7 +1333,10 @@ fn the_history_is_encrypted_on_disk_and_a_damaged_item_is_explained(fixture: &'s
         .unwrap();
     assert_eq!(history["items"].as_array().unwrap().len(), 3);
     assert_eq!(history["items"][2]["protected"]["dpapi"], "AAAA");
-    assert_eq!(pane.listed(&launcher)[..2], ["a third copy", "another copy"]);
+    assert_eq!(
+        pane.listed(&launcher)[..2],
+        ["a third copy", "another copy"]
+    );
 }
 
 #[cfg(not(windows))]

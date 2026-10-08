@@ -601,7 +601,9 @@ impl HistoryJson {
                     .iter()
                     .map(|(owner, history)| {
                         let mut history = history.clone();
-                        history.items.retain(|item| item.sealed.stored.get().is_some());
+                        history
+                            .items
+                            .retain(|item| item.sealed.stored.get().is_some());
                         (owner.clone(), history)
                     })
                     .collect();
@@ -1371,7 +1373,10 @@ pub fn revealed(text: &str) -> Result<serde_json::Value, String> {
     use serde_json::Value;
     let mut file: Value = serde_json::from_str(text).map_err(|error| error.to_string())?;
     let packages = file.get_mut("packages").and_then(Value::as_object_mut);
-    for history in packages.into_iter().flat_map(|packages| packages.values_mut()) {
+    for history in packages
+        .into_iter()
+        .flat_map(|packages| packages.values_mut())
+    {
         let items = history.get_mut("items").and_then(Value::as_array_mut);
         for item in items.into_iter().flatten() {
             let Some(item) = item.as_object_mut() else {
@@ -1575,7 +1580,10 @@ mod tests {
         assert_eq!(raw()["packages"]["a"]["items"][1], *item);
         // Read back after a restart.
         let reopened = HistoryStore::open(dir.path());
-        assert_eq!(texts(&reopened.get("a").unwrap()), ["another", "a secret copied"]);
+        assert_eq!(
+            texts(&reopened.get("a").unwrap()),
+            ["another", "a secret copied"]
+        );
     }
 
     /// #130: an item that cannot be decrypted on this computer (damaged, or

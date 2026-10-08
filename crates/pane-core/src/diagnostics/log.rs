@@ -443,7 +443,11 @@ mod tests {
     fn a_log_that_cannot_move_keeps_the_older_files() {
         let folder = tempfile::tempdir().unwrap();
         for number in 1..=KEPT {
-            fs::write(folder.path().join(older(number)), format!("older {number}\n")).unwrap();
+            fs::write(
+                folder.path().join(older(number)),
+                format!("older {number}\n"),
+            )
+            .unwrap();
         }
         // A folder where `pane.log` would be moved makes the move fail on
         // every system.

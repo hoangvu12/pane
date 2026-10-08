@@ -50,9 +50,7 @@ impl Notice {
             Row {
                 id: UNEXPECTED_QUIT.into(),
                 title: NOTICE.into(),
-                subtitle: Some(
-                    "Open Pane's log folder; the log stays on this computer".into(),
-                ),
+                subtitle: Some("Open Pane's log folder; the log stays on this computer".into()),
                 unavailable: None,
             },
             Entry::OpenLogFolder,

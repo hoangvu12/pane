@@ -196,10 +196,7 @@ pub(crate) struct Listing {
 /// What the announcer last said of a list's selection.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Said {
-    Row {
-        id: String,
-        section: Option<String>,
-    },
+    Row { id: String, section: Option<String> },
     NoResults,
     Nothing,
 }

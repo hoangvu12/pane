@@ -370,7 +370,9 @@ fn without_urls(text: &str) -> String {
     let mut rest = text;
     while let Some(at) = rest.find("://") {
         let start = rest[..at].trim_end_matches(scheme).len();
-        let end = rest[at..].find(ends).map_or(rest.len(), |length| at + length);
+        let end = rest[at..]
+            .find(ends)
+            .map_or(rest.len(), |length| at + length);
         kept.push_str(&rest[..start]);
         kept.push_str("<url>");
         rest = &rest[end..];
@@ -547,7 +549,10 @@ mod tests {
             &format!("redirected to HTTP://cdn.example.com/{query}.png and failed"),
         );
         let text = captured.text();
-        assert!(text.contains("pane: a web image from images.example.com"), "{text}");
+        assert!(
+            text.contains("pane: a web image from images.example.com"),
+            "{text}"
+        );
         assert!(!text.contains("secret"), "{text}");
         assert!(
             text.contains("shows its fallback: redirected to <url> and failed"),
@@ -562,7 +567,10 @@ mod tests {
             "a (<url>) and `<url>`, then <url> f"
         );
         assert_eq!(without_urls("no address here: a:b"), "no address here: a:b");
-        assert_eq!(without_urls("ends with https://x.example/y"), "ends with <url>");
+        assert_eq!(
+            without_urls("ends with https://x.example/y"),
+            "ends with <url>"
+        );
     }
 
     #[test]
