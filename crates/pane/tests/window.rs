@@ -31,6 +31,29 @@ mod wait;
 
 use wait::{frame, settle_frames};
 
+#[path = "support/a11y.rs"]
+mod a11y;
+
+use a11y::{announcement, no_row_has_focus};
+
+/// How long the announcer waits after the last keystroke before it says
+/// the selected row (#132), on the test platform's controlled clock.
+const SETTLE: Duration = Duration::from_millis(300);
+
+/// Lets typing settle for the announcer: its time runs on the test
+/// platform's clock, which only the test advances.
+fn typing_settles(cx: &mut VisualTestContext) {
+    cx.executor().advance_clock(SETTLE);
+    cx.run_until_parked();
+}
+
+/// Runs the window until its announcer says `expected` (#132): the
+/// results typing waits for may still arrive from the extension
+/// runtime's thread.
+fn until_announced(cx: &mut VisualTestContext, expected: &str) {
+    wait::until(cx, |cx| (announcement(cx) == expected).then_some(()));
+}
+
 /// A sample command: its component and the language it is written in.
 struct Sample {
     component: &'static str,
@@ -287,7 +310,17 @@ fn an_unavailable_action_is_listed_with_its_reason_and_others_still_run(
     // The row is also marked disabled, which GPUI CE's debug tree does not
     // report, so only the description is checked.
     assert!(description.ends_with(&reason), "{option:#}");
-    assert_eq!(focused_label(cx).as_deref(), Some(unavailable));
+    // The list keeps the focus, and the announcer says the row, its place
+    // and that it cannot run here (#132).
+    assert_eq!(focused_label(cx).as_deref(), Some(view.title.as_str()));
+    assert_eq!(
+        announcement(cx),
+        format!(
+            "{unavailable}, {} of {}, unavailable",
+            index(unavailable) + 1,
+            view.rows.len()
+        )
+    );
 
     // Enter explains instead of running the action.
     cx.simulate_keystrokes("enter");
@@ -919,7 +952,7 @@ fn has(nodes: &[(String, String, String)], role: &str, label: &str) -> bool {
 fn assistive_technology_sees_the_list_the_selection_and_the_result(cx: &mut TestAppContext) {
     let (window, cx) = open(cx, &RUST);
     cx.simulate_keystrokes("enter");
-    settle(&window, cx);
+    let view = settle(&window, cx);
 
     let (nodes, focused) = accessibility_tree(cx);
     assert!(has(&nodes, "ListBox", "Rust sample"), "{nodes:?}");
@@ -931,17 +964,26 @@ fn assistive_technology_sees_the_list_the_selection_and_the_result(cx: &mut Test
                 && description == "Await a WASI 0.3 clock, then answer"),
         "{nodes:?}"
     );
-    assert_eq!(focused.as_deref(), Some("Say hello"));
+    // The list itself keeps the focus; the announcer said the command as
+    // it opened, then its selected row (#132).
+    assert_eq!(focused.as_deref(), Some("Rust sample"));
+    let count = view.rows.len();
+    assert_eq!(
+        announcement(cx),
+        format!("Rust sample, {count} results. Say hello, 1 of {count}")
+    );
 
-    // The action's toast is what the footer's status announces.
+    // The action's toast is what the footer's status announces, and the
+    // announcer says it too.
     cx.simulate_keystrokes("down enter");
     settle(&window, cx);
     let (nodes, focused) = accessibility_tree(cx);
-    assert_eq!(focused.as_deref(), Some("Wait briefly"));
+    assert_eq!(focused.as_deref(), Some("Rust sample"));
     assert!(
         has(&nodes, "Status", "Waited 50 ms inside the Rust guest"),
         "{nodes:?}"
     );
+    assert_eq!(announcement(cx), "Waited 50 ms inside the Rust guest");
 }
 
 /// Opens the sample's command and then its color picker ("Choose a color",
@@ -1059,8 +1101,8 @@ fn keys_change_the_color_the_view_shows(cx: &mut TestAppContext, sample: &Sample
     );
     assert_eq!(
         roles.len(),
-        4,
-        "the view, the footer's menu button, the status line and the window: {roles:?}"
+        5,
+        "the view, the menu button, the status line, the announcer and the window: {roles:?}"
     );
     assert!(
         cx.debug_bounds("custom-view").is_some(),
@@ -1084,7 +1126,9 @@ fn keys_change_the_color_the_view_shows(cx: &mut TestAppContext, sample: &Sample
     cx.simulate_keystrokes("escape");
     let view = settle(&window, cx);
     assert_eq!((view.screen, view.selected), (Screen::Command, Some(5)));
-    assert_eq!(focused_label(cx).as_deref(), Some("Choose a color"));
+    // The list has the focus again; its selected row claims none (#132).
+    let list = format!("{} sample", sample.language);
+    assert_eq!(focused_label(cx).as_deref(), Some(list.as_str()));
 }
 
 fn the_pointer_chooses_and_drags_across_swatches(cx: &mut TestAppContext, sample: &Sample) {
@@ -1395,13 +1439,22 @@ fn assistive_technology_sees_the_search_field_and_the_selected_result(cx: &mut T
     );
     node(&nodes, "ListBox", "Results");
     node(&nodes, "ListBoxOption", "TypeScript sample");
-    assert_eq!(focused_label(cx).as_deref(), Some("JavaScript sample"));
-    cx.simulate_keystrokes("down");
-    assert_eq!(focused_label(cx).as_deref(), Some("TypeScript sample"));
-
-    // With nothing selected, the search field itself is focused.
-    cx.simulate_input("zzz");
+    // The search field keeps the focus whatever is selected (#132); the
+    // announcer says the selected result once typing has settled.
     assert_eq!(focused_label(cx).as_deref(), Some("Search"));
+    typing_settles(cx);
+    let count = row_titles(&window, cx).len();
+    until_announced(cx, &format!("JavaScript sample, 1 of {count}"));
+    cx.simulate_keystrokes("down");
+    assert_eq!(focused_label(cx).as_deref(), Some("Search"));
+    assert_eq!(announcement(cx), format!("TypeScript sample, 2 of {count}"));
+
+    // With nothing selected, the search field is still the focused node.
+    cx.simulate_input("zzz");
+    settle(&window, cx);
+    assert_eq!(focused_label(cx).as_deref(), Some("Search"));
+    typing_settles(cx);
+    until_announced(cx, "No results");
 }
 
 /// A launcher with the calculator package from `cargo xtask guests`
@@ -1497,8 +1550,13 @@ fn a_computed_answer_shows_as_the_card_under_its_commands_title(cx: &mut TestApp
     node(&nodes, "ListBoxOption", "6*7 = 42");
     // The footer's primary button gives way to the install's status
     // ("Installed Calculator") here; Enter below is the primary action.
-    assert_eq!(focused_label(cx).as_deref(), Some("6*7 = 42"));
+    // The field keeps the focus, and the announcer says the card as it is
+    // named once typing has settled (#132).
+    assert_eq!(focused_label(cx).as_deref(), Some("Search"));
+    assert!(no_row_has_focus(&a11y::a11y(cx)));
     assert!(query_has_focus(&window, cx));
+    typing_settles(cx);
+    until_announced(cx, "6*7 = 42, 1 of 1");
 
     cx.simulate_keystrokes("enter");
     let view = settle(&window, cx);
@@ -1518,12 +1576,16 @@ fn a_computed_answer_shows_as_the_card_under_its_commands_title(cx: &mut TestApp
     assert!(cx.debug_bounds("answer-value").is_none());
     assert!(query_has_focus(&window, cx));
     node(&accessible_nodes(cx), "Note", "Nothing matches “6*7*”");
+    typing_settles(cx);
+    until_announced(cx, "No results");
 
     // Completed, the card is back, selected.
     cx.simulate_input("2");
     wait_for_rows(&window, cx, &["84"]);
     assert!(cx.debug_bounds("no-results").is_none());
-    assert_eq!(focused_label(cx).as_deref(), Some("6*7*2 = 84"));
+    assert_eq!(focused_label(cx).as_deref(), Some("Search"));
+    typing_settles(cx);
+    until_announced(cx, "6*7*2 = 84, 1 of 1");
 }
 
 /// A system with two applications, recording which one Pane opens.
@@ -1573,7 +1635,12 @@ fn typing_an_applications_name_shows_it_and_enter_opens_it(cx: &mut TestAppConte
     );
     let (nodes, focused) = accessibility_tree(cx);
     assert!(has(&nodes, "ListBoxOption", "Firefox"), "{nodes:?}");
-    assert_eq!(focused.as_deref(), Some("Firefox"), "the selected result");
+    // The field keeps the focus; the announcer says the selected result
+    // once the applications have been listed and typing has settled
+    // (#132).
+    assert_eq!(focused.as_deref(), Some("Search"), "the field");
+    typing_settles(cx);
+    until_announced(cx, "Firefox, 1 of 1");
 
     cx.simulate_keystrokes("enter");
     let view = settle(&window, cx);
