@@ -5,13 +5,14 @@
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use ignore::Match;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use serde::{Deserialize, Serialize};
 
 use super::format::{SEPARATOR, path_key};
+use super::volume::{VolumeKind, VolumeKinds, volume_kind};
 
 /// What the user and Pane decide is indexed. Every switch here is a user
 /// setting, and starts as [`ScopeRules::for_home`] says. The rules an index
@@ -35,7 +36,9 @@ pub struct ScopeRules {
     /// `caches` in any letter case, `*.tmp` and `*.temp` files, and the home
     /// folder's `AppData` (Windows) or `Library` (macOS).
     pub default_exclusions: bool,
-    /// Enter network and removable volumes mounted under a root.
+    /// Index network shares and removable drives: a root on one, and one
+    /// mounted under a root. A network share included is not watched, only
+    /// reconciled now and then.
     pub include_other_volumes: bool,
     /// Folders the user excluded, with everything under them.
     pub excluded_folders: Vec<PathBuf>,
@@ -161,6 +164,10 @@ pub struct Scope {
     /// Keys of the folders excluded by the user or always.
     excluded: Vec<(Vec<u8>, Excluded)>,
     home: Option<Vec<u8>>,
+    /// What kind of volume holds a folder.
+    volumes: VolumeKinds,
+    /// Per root, the kind of volume holding it, asked once.
+    root_volumes: Vec<OnceLock<VolumeKind>>,
 }
 
 fn matcher(root: &Path, files: &[PathBuf]) -> Option<Gitignore> {
@@ -177,7 +184,15 @@ fn has(folder: &Path, name: &str) -> bool {
 }
 
 impl Scope {
+    /// The rules, told what kind of volume holds a folder by the system
+    /// ([`volume_kind`]).
     pub fn new(rules: ScopeRules) -> Scope {
+        Scope::with_volumes(rules, Arc::new(volume_kind))
+    }
+
+    /// The rules, told what kind of volume holds a folder by `volumes` (a
+    /// test's own answer, or the system's).
+    pub fn with_volumes(rules: ScopeRules, volumes: VolumeKinds) -> Scope {
         let patterns = rules
             .roots
             .iter()
@@ -208,17 +223,85 @@ impl Scope {
                 .map(|folder| (path_key(folder), Excluded::Folder)),
         );
         let home = rules.home.as_deref().map(path_key);
+        let root_volumes = rules.roots.iter().map(|_| OnceLock::new()).collect();
         Scope {
             rules,
             patterns,
             global,
             excluded,
             home,
+            volumes,
+            root_volumes,
         }
     }
 
     pub fn rules(&self) -> &ScopeRules {
         &self.rules
+    }
+
+    /// The kind of volume holding `path`.
+    pub fn volume_kind(&self, path: &Path) -> VolumeKind {
+        (self.volumes)(path)
+    }
+
+    /// The kind of volume holding root `root`, asked once for this scope.
+    pub fn root_volume(&self, root: usize) -> VolumeKind {
+        self.root_volumes
+            .get(root)
+            .map_or(VolumeKind::Local, |kind| {
+                *kind.get_or_init(|| self.volume_kind(&self.rules.roots[root]))
+            })
+    }
+
+    /// Whether the rules leave root `root` out whole: it is on a network
+    /// share or a removable drive, and other volumes are not included.
+    pub fn leaves_out_root(&self, root: usize) -> bool {
+        !self.rules.include_other_volumes && self.root_volume(root) != VolumeKind::Local
+    }
+
+    /// The roots the rules keep: every root but those
+    /// [`Scope::leaves_out_root`] leaves out.
+    pub fn kept_roots(&self) -> Vec<PathBuf> {
+        self.roots_where(|root| !self.leaves_out_root(root))
+    }
+
+    /// The roots watched for live changes: those kept, but a network
+    /// share's, which is reconciled now and then instead (#126 leaves live
+    /// watching of network shares out).
+    pub fn watched_roots(&self) -> Vec<PathBuf> {
+        self.roots_where(|root| {
+            !self.leaves_out_root(root) && self.root_volume(root) != VolumeKind::Network
+        })
+    }
+
+    /// The roots kept that are on a network share: never watched, and
+    /// reconciled now and then.
+    pub fn network_roots(&self) -> Vec<PathBuf> {
+        self.roots_where(|root| {
+            !self.leaves_out_root(root) && self.root_volume(root) == VolumeKind::Network
+        })
+    }
+
+    fn roots_where(&self, wanted: impl Fn(usize) -> bool) -> Vec<PathBuf> {
+        self.rules
+            .roots
+            .iter()
+            .enumerate()
+            .filter(|(root, _)| wanted(*root))
+            .map(|(_, path)| path.clone())
+            .collect()
+    }
+
+    /// Whether the folder at `path`, on volume `volume` in a folder on
+    /// volume `parent_volume`, is a network share or a removable drive
+    /// mounted there that the rules leave out (other volumes not included).
+    /// On Windows another volume under a root is reached only through a
+    /// mount point or a junction, a link never followed, so the volumes
+    /// listed are always the folder's own.
+    pub(crate) fn leaves_out_mount(&self, path: &Path, volume: u64, parent_volume: u64) -> bool {
+        !self.rules.include_other_volumes
+            && volume != parent_volume
+            && self.volume_kind(path) != VolumeKind::Local
     }
 
     /// The context at root `root` itself, once listed: `own_files` says
@@ -347,15 +430,16 @@ impl Scope {
     }
 
     /// Whether the rules admit `path` and every folder above it up to its
-    /// root, reading the ignore files on the way as a walk would have.
-    /// `known` keeps what was learned about folders between calls, for a
-    /// batch of changes in the same folders.
+    /// root (a root on a network share or a removable drive admits nothing
+    /// unless other volumes are included), reading the ignore files on the
+    /// way as a walk would have. `known` keeps what was learned about
+    /// folders between calls, for a batch of changes in the same folders.
     pub fn admits(&self, path: &Path, is_dir: bool, known: &mut Admitted) -> bool {
         let Some(root) = self.root_of(path) else {
             return false;
         };
         if path == self.rules.roots[root] {
-            return true;
+            return !self.leaves_out_root(root);
         }
         let Some(parent) = path.parent() else {
             return false;
@@ -387,7 +471,8 @@ impl Scope {
             return known.clone();
         }
         let context = if folder == self.rules.roots[root] {
-            Some(self.root_context(root, OwnFiles::read(folder)))
+            (!self.leaves_out_root(root))
+                .then(|| self.root_context(root, OwnFiles::read(folder)))
         } else {
             let parent = folder.parent()?;
             let parent_context = self.context_at(root, parent, known)?;
@@ -582,6 +667,46 @@ mod tests {
         let scope = Scope::new(rules);
         assert!(!admitted(&scope, &home, "$Recycle.Bin/x"));
         assert!(!admitted(&scope, &home, "System Volume Information/y"));
+    }
+
+    #[test]
+    fn a_root_on_a_share_or_a_removable_drive_is_left_out_until_other_volumes_are_included() {
+        // As Windows (GetDriveTypeW) or macOS (statfs) would answer for a
+        // mapped drive or a mounted share, and a USB stick.
+        let (dir, home) = home_with(&["notes.txt"]);
+        let share = dir.path().join("share");
+        let stick = dir.path().join("stick");
+        for root in [&share, &stick] {
+            fs::create_dir_all(root.join("Projects")).unwrap();
+            fs::write(root.join("Projects/plan.txt"), b"").unwrap();
+        }
+        let mut rules = ScopeRules::for_home(home.clone());
+        rules.roots.extend([share.clone(), stick.clone()]);
+        let volumes = crate::file_index::volume::tests::fake_volumes(&share, &stick);
+        let scope = Scope::with_volumes(rules.clone(), volumes.clone());
+        assert!(admitted(&scope, &home, "notes.txt"));
+        for root in [&share, &stick] {
+            assert!(!scope.admits(root, true, &mut Admitted::default()));
+            assert!(!admitted(&scope, root, "Projects/plan.txt"));
+        }
+        assert_eq!(scope.kept_roots(), [home.clone()]);
+        assert_eq!(scope.watched_roots(), [home.clone()]);
+        assert!(scope.network_roots().is_empty());
+
+        // Included: both are indexed, and the share is reconciled rather
+        // than watched.
+        rules.include_other_volumes = true;
+        let scope = Scope::with_volumes(rules, volumes);
+        for root in [&share, &stick] {
+            assert!(scope.admits(root, true, &mut Admitted::default()));
+            assert!(admitted(&scope, root, "Projects/plan.txt"));
+        }
+        assert_eq!(
+            scope.kept_roots(),
+            [home.clone(), share.clone(), stick.clone()]
+        );
+        assert_eq!(scope.watched_roots(), [home, stick]);
+        assert_eq!(scope.network_roots(), [share]);
     }
 
     #[cfg(windows)]

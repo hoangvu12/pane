@@ -21,6 +21,9 @@
 //! - `power`: whether the computer is awake, so indexing pauses while it
 //!   sleeps ([`Awake`]).
 //! - `privacy`: macOS's privacy refusals, told from the system's answer.
+//! - `volume`: what kind of volume holds a folder, so that network shares
+//!   and removable drives are left out unless the user includes them
+//!   ([`VolumeKind`]).
 //! - `wording`: counts, sizes and spans for people ([`size_words`]).
 //! - `host`: `pane:extension/file-index` for guests.
 
@@ -40,6 +43,7 @@ mod space;
 mod store;
 mod terms;
 mod text;
+mod volume;
 mod wal;
 mod walker;
 mod wording;
@@ -72,6 +76,7 @@ pub use indexer::{
 pub use power::{Awake, SystemAwake};
 pub use reconcile::{Reconciled, reconcile};
 pub use space::{FREE_SPACE_FLOOR, FreeSpace, free_space};
+pub use volume::{VolumeKind, VolumeKinds, volume_kind};
 pub use wording::{count_words, size_words};
 
 /// An entry to index: a path and what the index keeps of it.

@@ -65,6 +65,18 @@ pub fn reconcile(
         reconciled.folders_compared += 1;
         let is_root = scope.rules().roots.contains(&folder);
         let indexed = index.get(&folder);
+        if is_root
+            && scope
+                .root_of(&folder)
+                .is_some_and(|root| scope.leaves_out_root(root))
+        {
+            // On a network share or a removable drive the rules leave out
+            // (not even looked at): nothing of it stays in the index.
+            if indexed.is_some() {
+                reconciled.changes.push(Change::RemoveUnder(folder.clone()));
+            }
+            continue;
+        }
         let on_disk = walker::meta_at(&folder);
         let on_disk = match on_disk {
             Ok(meta) => meta,
@@ -206,7 +218,9 @@ fn read_again(
             hidden_attribute: listed.hidden_attribute,
         };
         let before = indexed.remove(&path);
-        if scope.excludes(&context, &candidate).is_some() {
+        if scope.excludes(&context, &candidate).is_some()
+            || (is_dir && scope.leaves_out_mount(&path, listed.volume, on_disk.volume))
+        {
             if let Some(before) = before {
                 changes.push(gone(&path, &before));
             }

@@ -42,7 +42,9 @@ and one index serves every package that uses it:
 
 - **The index**, [`pane_core::file_index`](../crates/pane-core/src/file_index.rs):
   the walker, the engine, the scope and the NTFS change journal (#174,
-  [below](#the-engine-and-the-walker)); the reconciling walk
+  [below](#the-engine-and-the-walker)); what kind of volume holds a
+  folder (`file_index/volume.rs`, #184,
+  [below](#network-shares-and-removable-drives)); the reconciling walk
   (`file_index/reconcile.rs`); one change source per system behind the
   `ChangeSource` trait (`file_index/changes.rs` and `changes/{ntfs,macos,linux}.rs`);
   the coordinator, which opens, catches up, walks and watches the index,
@@ -154,8 +156,9 @@ the walker, the reconciling walk and every live change alike
   repository), `.ignore`, `.git/info/exclude` and the global Git ignore file
   exclude, read as Git reads them without running `git`; `node_modules`,
   folders named `tmp`, `temp`, `cache` or `caches`, `*.tmp` and `*.temp`;
-  the home folder's `AppData` (Windows) or `Library` (macOS); network and
-  removable volumes mounted under a root.
+  the home folder's `AppData` (Windows) or `Library` (macOS); network
+  shares and removable drives, a root on one as well as one mounted under
+  a root ([below](#network-shares-and-removable-drives)).
 - The user's own: added roots, excluded folders and excluded patterns (in
   `.gitignore` syntax).
 
@@ -194,6 +197,37 @@ root the user added that is away (an unplugged drive) keeps its entries,
 hidden from searches until it is back (looked at no more than every two
 seconds).
 
+### Network shares and removable drives
+
+A root on a network share or a removable drive (a folder the user added
+there, or a home folder redirected to a share), and a network share or a
+removable drive mounted in a folder under a root, are left out unless the
+user turns on **Include network and removable drives**
+(`includeOtherVolumes`, #184): nothing of them is walked, watched or
+looked at, and what an earlier index held of such a root goes. With the
+switch on they are indexed like any folder, except that a network share is
+never watched (#126 leaves live watching of shares out): a root on one is
+caught up by a reconciling walk at start and every 5 minutes
+(`file_index::RECONCILE_UNWATCHED`, as Linux's unwatched folders), so a
+change made there is found by the next one.
+
+What a folder is on is the system's answer (`file_index::volume_kind`,
+`VolumeKind`), asked once for each root when the index opens, and for a
+folder the walker meets on another volume than the folder it is in; the
+coordinator asks it through `IndexerConfig::volumes`, which tests replace:
+
+| | A network share | A removable drive |
+| --- | --- | --- |
+| Windows | a network path (`\\server\share`, told from its text, before any call); any other path is resolved to the root of the volume holding it (`GetVolumePathNameW`: a drive letter, a mapped drive's letter, the folder a volume is mounted in) and `GetDriveTypeW` says that root is remote | `GetDriveTypeW` says removable or CD-ROM |
+| macOS | `statfs`'s flags (`f_flags`) without `MNT_LOCAL` | `MNT_REMOVABLE` (removable media) |
+| Linux | `statfs`'s type (`f_type`): NFS, SMB, CIFS, FUSE (sshfs, rclone and the like), AFS, Lustre | FAT or exFAT |
+
+On Windows another volume under a root is reached only through a mount
+point or a junction, which is a link and never followed, so only roots are
+asked there. A folder the system says nothing about (a root that is away,
+a call that failed) is taken as a local disk, so that an unplugged drive
+the user included keeps its entries.
+
 ### Catching up and watching
 
 | | Windows | macOS | Linux |
@@ -201,6 +235,11 @@ seconds).
 | Catch-up at start | The NTFS change journal of each root's volume, read without administrator rights from the saved cursor ([below](#the-ntfs-change-journal-without-administrator-rights)), resolved through the folder ids the index holds | FSEvents' history, replayed by one stream over the roots from the saved event id, per volume (by its FSEvents UUID) | A reconciling walk |
 | Live changes | `ReadDirectoryChangesW` on each root (the `notify` crate) | The same FSEvents stream | inotify, one watch per indexed folder, shallowest first |
 | When the records cannot be used | A recreated journal, discarded records, more than a million records, a volume without a journal (FAT, exFAT, a network share) or a refused read: the volume's roots are reconciled | A new volume UUID: its roots are reconciled; a folder FSEvents asks to rescan (history purged or coalesced, events dropped) is reconciled alone; wrapped event ids reconcile every root | The folders past the watch limit (`fs.inotify.max_user_watches`) are reconciled every 5 minutes, and counted in the status |
+
+Only the roots the rules keep are caught up and watched, and a root on a
+network share the user included is not watched on any system: it is
+reconciled at start and every 5 minutes instead
+([above](#network-shares-and-removable-drives)).
 
 A **reconciling walk** (`file_index::reconcile`) compares the index's own
 folders with the disk and reads again only a folder whose modified time
@@ -214,7 +253,8 @@ applied together: each path reported is looked at again (indexed if it
 exists and the rules admit it, removed otherwise, a new folder walked
 whole), so a change is visible to queries well within a second of the
 system reporting it. While nothing changes, nothing runs, except Linux's
-reconciliation of the folders it cannot watch. The status
+reconciliation of the folders it cannot watch and that of network shares
+the user included. The status
 (`Indexer::status`, `Launcher::file_index_status`, and
 `pane:extension/file-index`'s `status`) says whether the index is off,
 building (and how many entries the walk found so far), current or stopped
@@ -271,7 +311,13 @@ All four are the coordinator's (`file_index::Indexer`, thresholds in
 tests), and each is listed on the page:
 
 - **Churn quarantine**: the changes each folder reports are counted, per
-  folder they are in, in windows of a minute (`Valves::churn_window`); a
+  folder they are in, in windows of a minute (`Valves::churn_window`),
+  only for entries the index scope admits (#184): a change in `.git`,
+  `node_modules`, a cache or temporary folder, a folder an ignore file
+  ignores, a hidden or an excluded folder never counts, so such a folder is
+  never taken out, recorded or listed. Whether a change counts is told
+  with what the batch of changes learned of the rules (`Admitted`), which
+  the batch is then looked at with. A
   folder with more than 1,000 changes (`churn_changes`) in 3 windows in a
   row (`churn_windows`) is taken out of the index: its entries go, the rules
   leave it out from then on (it is added to `UserRules::quarantined`,
@@ -676,8 +722,10 @@ which the coordinator above builds on:
   repository's `.git/info/exclude` and the global Git ignore file, matched
   by ripgrep's `ignore` crate as Git matches them; `node_modules`, folders
   named `tmp`, `temp`, `cache` or `caches`, `*.tmp` and `*.temp`; the home
-  folder's `AppData` (Windows) or `Library` (macOS); network and FAT or
-  exFAT volumes mounted under a root (Linux); and always the system's
+  folder's `AppData` (Windows) or `Library` (macOS); network shares and
+  removable drives, a root on one or one mounted under a root
+  (`file_index/volume.rs`,
+  [above](#network-shares-and-removable-drives)); and always the system's
   recycle and setup folders, folders tagged with `CACHEDIR.TAG` and Pane's
   own folders. Each but the last is a switch, and the user's folders and
   `.gitignore`-style patterns add to them. `Scope::admits` applies the same
@@ -922,9 +970,17 @@ milestone is merged).
   forgetting its ids; the user's rules (hidden entries, an added root, an
   excluded folder, a removed root); an added root away and back; the
   folders a source cannot watch counted, listed and reconciled every few
-  minutes. Each safety valve triggered: a folder churning taken out,
-  listed, recorded, kept out across a rule change and included again, and
-  one busy now and then never taken out; a walk stopped at the ceiling;
+  minutes; an added root the system says is on a network share or a
+  removable drive (a fake answer through `IndexerConfig::volumes`,
+  standing for Windows' and macOS's) left out, indexed once other volumes
+  are included (the removable drive watched, the share never, a change on
+  it found by the reconciling walk) and left out again, and a home folder
+  on a share left out until then (#184). Each safety valve triggered: a
+  folder churning taken out, listed, recorded, kept out across a rule
+  change and included again, one busy now and then never taken out, and
+  the same burst of changes in `node_modules`, a repository's `.git`, an
+  ignored and a hidden folder taking nothing out while it takes out an
+  indexed folder (#184); a walk stopped at the ceiling;
   indexing stopped while the disk is short of space (nothing written, a
   change let go) and started again by itself once there is room (the walk,
   then the change caught up); a folder that does not answer skipped and
@@ -937,7 +993,13 @@ milestone is merged).
   goes back; `file_index::privacy` tells a refusal from the system's
   answer (`EPERM` on macOS only) on every system. Excluding a folder takes only it out
   and including it again walks only it. The walker's own tests hold up a
-  folder's listing to show the walk does not wait for it.
+  folder's listing to show the walk does not wait for it, and walk a root
+  on a share only once other volumes are included; `file_index::scope`
+  tests which roots are kept, watched and reconciled as each volume's kind
+  and the switch say; `file_index::volume` tests what each system's answer
+  (a drive type, `statfs`'s flags or type) means, that a temporary folder
+  is on a local disk, and (Windows) that a network path is a share by its
+  text (#184).
   `file_index::reconcile` and `store` unit tests cover reading only changed
   folders, a missing root keeping its entries, a folder's children
   across segments and memory, a query found inside words after the words
@@ -1018,6 +1080,22 @@ milestone is merged).
   writing across many folders at once is taken out folder by folder, only
   where one folder alone changes more than the threshold. A root itself is
   never taken out.
+- A disk the system reports as fixed is indexed as a local disk even when
+  it is plugged in by USB: Windows' `GetDriveTypeW` says removable of
+  memory sticks and cards, not of most USB hard disks, and macOS sets
+  `MNT_REMOVABLE` only for removable media.
+- A root left out for being on a network share or a removable drive is
+  still listed among the indexed folders on the File Search page, and not
+  under Needs attention; a home folder on a share (a Linux home on NFS
+  included) is left out until the switch is on.
+- With the switch on, a network share mounted under a root (macOS, Linux)
+  is watched with that root: only a root on a share is reconciled rather
+  than watched. An entry under a root given as a network path
+  (`\\server\share`) is found but not opened, since the check before any
+  action refuses network paths ([Opening](#opening), step 1); one under a
+  mapped drive's letter is opened.
+- Which volume a root is on is asked when the index opens (a start, a
+  change of the rules), not again while it runs.
 - A folder that hangs leaves its helper thread blocked until the system
   answers it; a mount that never answers keeps one thread per walk that met
   it.

@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize};
 
 use super::*;
 use crate::file_index::Entry;
+use crate::file_index::volume::tests::fake_volumes;
 
 /// A change source the test scripts and drives.
 #[derive(Default)]
@@ -19,6 +20,8 @@ struct Fake {
     sink: Mutex<Option<Sink>>,
     /// Watches running now.
     watching: Arc<AtomicUsize>,
+    /// The roots the latest watch was asked to watch.
+    watched: Mutex<Vec<PathBuf>>,
     /// Catch-ups made.
     catch_ups: AtomicUsize,
 }
@@ -67,11 +70,12 @@ impl ChangeSource for Fake {
 
     fn watch(
         &self,
-        _scope: &Scope,
+        scope: &Scope,
         _cursors: &[JournalCursor],
         _folders: Vec<PathBuf>,
         sink: Sink,
     ) -> Result<Box<dyn Watching>, String> {
+        *lock(&self.watched) = scope.watched_roots();
         *lock(&self.sink) = Some(sink);
         self.watching.fetch_add(1, Ordering::SeqCst);
         Ok(Box::new(FakeWatch(self.watching.clone())))
@@ -151,6 +155,7 @@ fn config(index_dir: &Path, home: &Path, fake: Arc<Fake>) -> IndexerConfig {
         },
         reconcile_unwatched: Duration::from_secs(3600),
         valves: Valves::default(),
+        volumes: Arc::new(volume_kind),
     }
 }
 
@@ -1099,4 +1104,173 @@ fn a_walk_under_way_when_the_computer_sleeps_waits_out_the_pause_and_finishes() 
     assert_eq!(status.hung, 0, "the sleep is not counted as hanging");
     assert_eq!(fixture.names("plan"), ["plan.txt"]);
     assert_eq!(fixture.names("song"), ["song.mp3"]);
+}
+
+/// The fixture's own temporary folder, from its configuration: where a test
+/// puts the folders it says are on other volumes.
+fn temporary_folder(config: &IndexerConfig) -> PathBuf {
+    config
+        .dir
+        .parent()
+        .and_then(Path::parent)
+        .expect("the index is in the fixture's cache folder")
+        .to_path_buf()
+}
+
+#[test]
+fn a_root_on_a_network_share_or_a_removable_drive_is_left_out_until_other_volumes_are_included() {
+    // What Windows (GetDriveTypeW: a mapped drive, a USB stick) or macOS
+    // (statfs: a mounted share, removable media) would say, through the
+    // seam.
+    let fixture = Fixture::indexed_with(|config| {
+        let folder = temporary_folder(config);
+        config.volumes = fake_volumes(&folder.join("share"), &folder.join("stick"));
+        // The share is reconciled at once, as the few minutes are up.
+        config.reconcile_unwatched = Duration::from_millis(50);
+    });
+    let share = fixture._dir.path().join("share");
+    let stick = fixture._dir.path().join("stick");
+    for (file, text) in [
+        (share.join("Projects/far plan.txt"), "x"),
+        (stick.join("Photos/holiday.jpg"), "x"),
+    ] {
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(file, text).unwrap();
+    }
+    let added = vec![share.clone(), stick.clone()];
+
+    // Added as roots: left out by default, neither walked nor watched.
+    fixture.indexer.set_user_rules(UserRules {
+        added_roots: added.clone(),
+        ..UserRules::default()
+    });
+    fixture.settle();
+    assert!(fixture.names("far plan").is_empty());
+    assert!(fixture.names("holiday").is_empty());
+    assert_eq!(fixture.names("plan"), ["plan.txt"], "the home folder is");
+    assert_eq!(*lock(&fixture.fake.watched), [fixture.home.clone()]);
+
+    // Included: both are indexed; the removable drive is watched, the
+    // network share never is.
+    fixture.indexer.set_user_rules(UserRules {
+        added_roots: added.clone(),
+        include_other_volumes: true,
+        ..UserRules::default()
+    });
+    fixture.settle();
+    assert_eq!(fixture.names("far plan"), ["far plan.txt"]);
+    assert_eq!(fixture.names("holiday"), ["holiday.jpg"]);
+    assert_eq!(
+        *lock(&fixture.fake.watched),
+        [fixture.home.clone(), stick.clone()]
+    );
+    // A change on the share, which nothing reports, is found by the
+    // reconciling walk made every few minutes.
+    fs::write(share.join("Projects/later plan.txt"), "x").unwrap();
+    touch(&share.join("Projects"));
+    until(|| fixture.names("later plan") == ["later plan.txt"]);
+
+    // Left out again: what was indexed of them goes.
+    fixture.indexer.set_user_rules(UserRules {
+        added_roots: added,
+        ..UserRules::default()
+    });
+    fixture.settle();
+    assert!(fixture.names("far plan").is_empty());
+    assert!(fixture.names("holiday").is_empty());
+    assert_eq!(fixture.names("plan"), ["plan.txt"]);
+}
+
+#[test]
+fn a_home_folder_on_a_network_share_is_left_out_until_other_volumes_are_included() {
+    // A home folder redirected to a share, as the system would say.
+    let fixture = Fixture::indexed_with(|config| {
+        let folder = temporary_folder(config);
+        config.volumes = fake_volumes(&folder.join("home"), &folder.join("stick"));
+    });
+    assert_eq!(fixture.indexer.status().state, IndexState::Current);
+    assert!(fixture.names("plan").is_empty());
+    assert!(lock(&fixture.fake.watched).is_empty());
+
+    fixture.indexer.set_user_rules(UserRules {
+        include_other_volumes: true,
+        ..UserRules::default()
+    });
+    fixture.settle();
+    assert_eq!(fixture.names("plan"), ["plan.txt"]);
+    assert!(
+        lock(&fixture.fake.watched).is_empty(),
+        "a network share is never watched"
+    );
+}
+
+#[test]
+fn churn_in_folders_the_index_leaves_out_never_takes_anything_out() {
+    // The thresholds of the test above.
+    let fixture = Fixture::indexed_with(|config| {
+        config.valves.churn_changes = 20;
+        config.valves.churn_window = Duration::from_secs(1);
+        config.valves.churn_windows = 3;
+    });
+    let home = &fixture.home;
+    for (file, text) in [
+        ("repo/.git/HEAD", "ref: refs/heads/main\n"),
+        ("repo/.git/index", "x"),
+        ("repo/.gitignore", "build/\n"),
+        ("repo/build/out.o", "x"),
+        (".config/app/state.json", "x"),
+        ("Busy/busy log.txt", "x"),
+    ] {
+        let path = home.join(file);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    // A busy `node_modules` (in the fixture), a Git repository's own
+    // folder, an ignored build folder and a hidden folder, none of them
+    // indexed; and a folder that is.
+    let left_out = [
+        home.join("node_modules/left out.js"),
+        home.join("repo/.git/index"),
+        home.join("repo/build/out.o"),
+        home.join(".config/app/state.json"),
+    ];
+    let busy = home.join("Busy");
+    let log = busy.join("busy log.txt");
+    let burst = |paths: &[PathBuf]| {
+        let reports: Vec<PathBuf> = paths
+            .iter()
+            .flat_map(|path| vec![path.clone(); 10])
+            .collect();
+        fixture.fake.report(Changed::Paths(reports));
+    };
+
+    // The same burst in each, far more often than the valve allows, until
+    // the indexed folder is taken out: had the others been counted, they
+    // would have been taken out with it.
+    until(|| {
+        burst(&left_out);
+        burst(std::slice::from_ref(&log));
+        std::thread::sleep(Duration::from_millis(10));
+        fixture.indexer.user_rules().quarantined.contains(&busy)
+    });
+    // And on for more than a window: still nothing else.
+    let deadline = Instant::now() + Duration::from_millis(1500);
+    while Instant::now() < deadline {
+        burst(&left_out);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    fixture.settle();
+    assert_eq!(
+        fixture.indexer.user_rules().quarantined,
+        std::slice::from_ref(&busy)
+    );
+    let churned: Vec<Problem> = fixture
+        .indexer
+        .problems()
+        .into_iter()
+        .filter(|problem| problem.kind == ProblemKind::Churned)
+        .collect();
+    assert_eq!(churned.len(), 1, "{churned:?}");
+    assert_eq!(churned[0].folder.as_deref(), Some(busy.as_path()));
+    assert_eq!(fixture.names("plan"), ["plan.txt"]);
 }

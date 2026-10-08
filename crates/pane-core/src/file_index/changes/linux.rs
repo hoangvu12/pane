@@ -51,7 +51,7 @@ impl ChangeSource for Inotify {
         let reconciled = reconcile(
             index,
             scope,
-            &scope.rules().roots,
+            &scope.kept_roots(),
             &WalkOptions::default(),
             cancel,
         );
@@ -84,13 +84,15 @@ impl ChangeSource for Inotify {
             fd,
             stop: AtomicBool::new(false),
             watched: Mutex::new(HashMap::new()),
-            roots: scope.rules().roots.clone(),
+            roots: scope.watched_roots(),
             sink,
         });
         let mut watch = Watch {
             shared: shared.clone(),
         };
-        let mut all = scope.rules().roots.clone();
+        // A network share is reconciled now and then instead (the folders
+        // given are not on one).
+        let mut all = scope.watched_roots();
         all.extend(folders);
         watch.add_folders(&all);
         std::thread::Builder::new()

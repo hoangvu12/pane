@@ -48,7 +48,7 @@ fn why(read: &JournalRead) -> String {
 impl ChangeSource for Journal {
     fn cursors(&self, scope: &Scope) -> Vec<JournalCursor> {
         let mut cursors: Vec<JournalCursor> = Vec::new();
-        for root in &scope.rules().roots {
+        for root in &scope.kept_roots() {
             if let Some(cursor) = current(root)
                 && !cursors.iter().any(|known| known.volume == cursor.volume)
             {
@@ -71,7 +71,10 @@ impl ChangeSource for Journal {
         let mut kept: Vec<JournalCursor> = Vec::new();
         let mut note = None;
         let mut folders = index.folder_ids();
-        for root in &scope.rules().roots {
+        // A root the rules leave out (a network share or a removable drive)
+        // is not caught up: it holds nothing in the index.
+        let roots = scope.kept_roots();
+        for root in &roots {
             // The volume the root is on now, and where Pane left its journal.
             let Some(now) = current(root) else {
                 reconcile.push(root.clone());
@@ -105,7 +108,7 @@ impl ChangeSource for Journal {
                         note.get_or_insert_with(|| why(&other));
                     }
                     // Every root on this volume is reconciled.
-                    for same in &scope.rules().roots {
+                    for same in &roots {
                         if current(same).is_some_and(|cursor| cursor.volume == now.volume) {
                             reconcile.push(same.clone());
                         }
@@ -116,7 +119,7 @@ impl ChangeSource for Journal {
         }
         reconcile.sort();
         reconcile.dedup();
-        if !reconcile.is_empty() && reconcile.len() == scope.rules().roots.len() {
+        if !reconcile.is_empty() && reconcile.len() == roots.len() {
             return Caught::Reconcile(
                 note.unwrap_or_else(|| "no change journal could be read".into()),
             );
@@ -138,6 +141,7 @@ impl ChangeSource for Journal {
         _folders: Vec<PathBuf>,
         sink: Sink,
     ) -> Result<Box<dyn Watching>, String> {
-        Ok(Box::new(NotifyWatch::start(&scope.rules().roots, sink)?))
+        // A network share is reconciled now and then instead.
+        Ok(Box::new(NotifyWatch::start(&scope.watched_roots(), sink)?))
     }
 }
