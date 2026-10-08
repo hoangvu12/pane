@@ -39,6 +39,14 @@ pub fn entry_icon(text: &str) -> Option<String> {
     None
 }
 
+/// The file the icon of the desktop entry at `entry` is drawn from now: its
+/// `Icon` ([`entry_icon`]) found in `themes` ([`IconThemes::find`]). `None`
+/// when the entry cannot be read, names no icon, or the themes have none.
+pub fn entry_icon_file(entry: &Path, themes: &IconThemes) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(entry).ok()?;
+    themes.find(&entry_icon(&text)?)
+}
+
 /// Where icon themes and pixmaps are, and the user's theme.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IconThemes {
@@ -374,6 +382,27 @@ mod tests {
         let plain = IconThemes::new(std::slice::from_ref(&data), None, None);
         assert_eq!(plain.find("editor"), None);
         assert!(plain.find("viewer").is_some());
+    }
+
+    #[test]
+    fn a_desktop_entrys_icon_file_is_the_one_its_name_resolves_to() {
+        let folder = tempfile::tempdir().unwrap();
+        let data = folder.path().join("share");
+        let entry = data.join("applications/viewer.desktop");
+        write(&entry, "[Desktop Entry]\nName=Viewer\nIcon=viewer\n");
+        let themes = IconThemes::new(std::slice::from_ref(&data), None, None);
+        assert_eq!(entry_icon_file(&entry, &themes), None, "no icon yet");
+        let small = data.join("icons/hicolor/48x48/apps/viewer.png");
+        write(&small, "png");
+        assert_eq!(entry_icon_file(&entry, &themes), Some(small));
+        // A larger one installed resolves to another file.
+        let large = data.join("icons/hicolor/256x256/apps/viewer.png");
+        write(&large, "png");
+        assert_eq!(entry_icon_file(&entry, &themes), Some(large));
+        write(&entry, "[Desktop Entry]\nName=Viewer\n");
+        assert_eq!(entry_icon_file(&entry, &themes), None, "names no icon");
+        let gone = data.join("applications/gone.desktop");
+        assert_eq!(entry_icon_file(&gone, &themes), None);
     }
 
     #[test]
