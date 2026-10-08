@@ -774,7 +774,7 @@ comment.
 
 `cargo xtask file-index-bench [options]` builds
 [`crates/pane-core/examples/file_index_bench.rs`](../crates/pane-core/examples/file_index_bench.rs)
-in release and runs it; it runs on demand, never in CI. By default it
+in release and runs it on demand. By default it
 generates a home-shaped tree of about 450,000 indexable entries (9 files
 per folder, paths about 8 folders deep, accented names, and, left out by
 the rules, hidden folders, `node_modules` and Git repositories with ignored
@@ -789,17 +789,53 @@ there), `--root <folder>` another folder. It prints, as a table against
   it (Linux as root, macOS with `sudo purge`; Windows has no way without
   administrator rights);
 - the index on disk, and per entry;
-- query latency over a fixed set (`--queries`, default 1,000: whole names,
-  3-letter prefixes, words, folder and name words, one letter), the first
-  pass after opening and a warm pass, with the 50th, 95th and 99th
-  percentiles and per kind;
-- a changed file re-indexed: written, read, applied and found by a query,
-  100 times;
+- query latency over a fixed set (`--queries`, default 1,000, about as
+  many of each kind), on two shapes of the index: one segment, as the
+  first index leaves it, and several segments with changes in memory, as
+  a stream of changes leaves it before a merge (5 segments and the last
+  batch in memory, about one change for every 50 entries a batch, between
+  500 and 10,000: files added, entries changed, files and a folder
+  deleted). Each shape gets a first pass and a warm pass. The overall
+  95th percentile covers every kind (#183):
+  - whole names, 3-letter prefixes, a word, folder and name words, one
+    letter;
+  - misses: a word no entry holds (3 to 8 letters, so the pass inside
+    words reads every term), and a real word followed by such a word,
+    each checked to find nothing;
+  - typed-out names: every prefix of a name, from its first letter to the
+    whole name, one keystroke after the other;
+  - the kind filters Folder (the index's own) and Document (run as Search
+    Files runs it: at least 500 asked for and the documents kept, asking
+    again for more while fewer than a page are kept);
+  - three or four letters from inside a word of a name.
+
+  The set is built from the names the walk found, sorted, and a seeded
+  generator, so runs over the same tree time the same queries. A table
+  gives each kind's 50th, 95th and 99th percentiles on both shapes;
+- a changed file re-indexed, 100 times, as the indexer takes a change:
+  what the index holds at its path, the file read, the rules applied to it
+  and every folder above it (their ignore files read), the change applied
+  and found by a query. One row is for a file near the root. The other is
+  for a file in the deepest folder the walk found with ignore files on the
+  way down, with its depth and how many of its folders hold ignore files;
+  that file is written beside the first and indexed as if it were in that
+  folder, which is not written to;
 - on Windows with the generated tree, the catch-up after 10,000 files
   created: the journal read from a saved cursor, resolved, looked at,
   applied and found;
 - the time to open the index at start, the private memory it adds while
   idle, and the peak memory while indexing.
+
+The row labels stay as they are, so runs compare.
+
+**The regression guard.** `cargo xtask file-index-guard` runs the same
+benchmark in CI (`ci-branch.yml`'s Linux tests, shard 2): a generated tree
+of about 20,000 entries, one run, built in the development profile as the
+tests built it, with `--guard`. It fails when the first index, the index's
+size per entry, any kind's 95th percentile on either shape, or either
+re-index row's 95th percentile is over its ceiling. The ceilings are set
+for that unoptimized build, far above what it should take, so they catch
+only a large regression; [CI](agents/ci.md) lists them.
 
 ### The NTFS change journal without administrator rights
 
