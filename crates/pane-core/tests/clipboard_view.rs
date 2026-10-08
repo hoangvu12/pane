@@ -1250,6 +1250,12 @@ fn copied_images_and_files_are_kept_and_put_back_as_what_they_were() {
     pane.clock
         .advance(std::time::Duration::from_secs(7 * 86_400));
     assert!(listed(&launcher).is_empty());
+    // The background sweep can remove the records before it finishes
+    // deleting their PNGs. Wait for that sweep before checking the disk.
+    assert!(
+        launcher.wait_for_clipboard_expiry(std::time::Duration::from_secs(300)),
+        "the expiry thread never swept"
+    );
     assert!(!kept_path.exists(), "an expired image's PNG is deleted");
     drop(window);
 }
