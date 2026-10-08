@@ -69,9 +69,9 @@ use pane_core::{
     RowKind, Screen, SlotChange, SubmenuState,
 };
 
-use crate::app::{LauncherWindow, row_icon};
+use crate::app::LauncherWindow;
 use crate::features::quick_slots;
-use crate::ui::extension_icon::{self, IconSize};
+use crate::ui::extension_icon::{self, IconSize, RowIcon};
 use crate::ui::icon::{Glyph, IconTone, TileSize, glyph, tile_at};
 use crate::ui::input::TextEditingKeys;
 use crate::ui::keycap::{CapStyle, KeySequence, key_sequence};
@@ -1116,9 +1116,13 @@ impl LauncherWindow {
             .as_ref()
             .map(|submenu| submenu.title.clone())
             .or_else(|| opened.map(|opened| opened.title.clone()));
+        // The target's icon as its row and its slot draw it: an extension's
+        // or an application's own, else Pane's tile (#163).
         let icon = opened
             .filter(|opened| matches!(opened.subject, Subject::Result | Subject::Slot))
-            .map(|opened| row_icon(&opened.target));
+            .map(|opened| {
+                crate::features::icons::row_icon_of(&self.launcher, &opened.target, theme)
+            });
         let label = match (opened, &submenu) {
             (Some(opened), Some(submenu)) => {
                 format!("{}, actions for {}", submenu.title, opened.title)
@@ -1240,8 +1244,8 @@ impl LauncherWindow {
 pub(crate) struct PanelView<'a> {
     /// The target's title; `None` with nothing selected.
     pub(crate) title: Option<&'a str>,
-    /// The target's tile, as its row draws it; the command glyph without.
-    pub(crate) icon: Option<(IconTone, Glyph)>,
+    /// The target's icon, as its row draws it; the command glyph without.
+    pub(crate) icon: Option<RowIcon>,
     /// Whether the filter lists nothing.
     pub(crate) empty: bool,
     /// What the list says when nothing is listed for a target.
@@ -1264,7 +1268,9 @@ pub(crate) fn compose(
         (Some(_), true) => Some(view.empty_note),
         (Some(_), false) => None,
     };
-    let header = view.title.map(|title| header(title, view.icon, theme));
+    let header = view
+        .title
+        .map(|title| header(title, view.icon.as_ref(), theme));
     popup(
         header,
         list.filter(|_| empty.is_none()),
@@ -1579,11 +1585,21 @@ pub(crate) fn group_label(label: impl Into<SharedString>, theme: &Theme) -> Div 
         .child(label)
 }
 
-/// The panel's header: the target's 18px tile and its title, 12px/500
-/// muted, 30 high with 8px above and 14px either side.
-pub(crate) fn header(title: &str, icon: Option<(IconTone, Glyph)>, theme: &Theme) -> Div {
+/// The panel's header: the target's icon in an 18px box (Pane's tile, or
+/// an extension's or application's own icon drawn bare) and its title,
+/// 12px/500 muted, 30 high with 8px above and 14px either side.
+pub(crate) fn header(title: &str, icon: Option<&RowIcon>, theme: &Theme) -> Div {
     let geometry = &theme.geometry.actions;
-    let (tone, glyph_of) = icon.unwrap_or((IconTone::Command, Glyph::Prompt));
+    let icon = match icon {
+        Some(icon) => extension_icon::row_icon_at(
+            icon,
+            TileSize::Mini,
+            "actions-header-icon",
+            "actions-header",
+            theme,
+        ),
+        None => tile_at(TileSize::Mini, IconTone::Command, Glyph::Prompt, theme),
+    };
     div()
         .debug_selector(|| "actions-header".into())
         .flex_none()
@@ -1596,7 +1612,7 @@ pub(crate) fn header(title: &str, icon: Option<(IconTone, Glyph)>, theme: &Theme
         .text_size(theme.typography.actions_header_size)
         .font_weight(theme.typography.medium)
         .text_color(theme.text_muted)
-        .child(tile_at(TileSize::Mini, tone, glyph_of, theme))
+        .child(icon)
         .child(
             div()
                 .min_w(px(0.))

@@ -199,6 +199,36 @@ fn the_default_extensions_draw_their_tiles_in_the_light_theme(cx: &mut TestAppCo
     the_tiles_draw_in("light", cx);
 }
 
+/// The Actions panel's header draws the selected row's own tile, as the
+/// row does: each default extension command's, not Pane's command tile;
+/// Pane's own row keeps its tile.
+#[gpui::test]
+fn the_actions_panel_names_a_default_command_with_its_tile(cx: &mut TestAppContext) {
+    let (window, cx, _folders) = window(cx, "dark");
+    for (_, _, rows) in DEFAULTS {
+        for (title, file) in rows {
+            search(&window, cx, title);
+            cx.simulate_keystrokes("ctrl-k");
+            settle(&window, cx);
+            assert!(drawn(cx, "actions-header"), "{title}'s actions are open");
+            assert!(
+                drawn(cx, format!("icon-actions-header-image-{file}")),
+                "the header draws {title}'s {file}"
+            );
+            cx.simulate_keystrokes("escape");
+            settle(&window, cx);
+        }
+    }
+    search(&window, cx, "settings");
+    cx.simulate_keystrokes("ctrl-k");
+    settle(&window, cx);
+    assert!(drawn(cx, "actions-header"));
+    assert!(
+        !drawn(cx, "icon-actions-header"),
+        "Pane's own row keeps its tile in the header"
+    );
+}
+
 /// The repository's package folders: every default extension's tile is an
 /// SVG of the row tile's own size (28 by 28, its viewBox too) with the
 /// row tile's corner radius (7), so it lines up with Pane's tiles and GPUI
