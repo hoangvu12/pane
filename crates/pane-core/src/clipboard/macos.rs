@@ -43,7 +43,7 @@
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use std::path::PathBuf;
 
@@ -86,10 +86,15 @@ const PNG_TYPE: &str = "public.png";
 const TIFF_TYPE: &str = "public.tiff";
 
 /// How often the watcher looks at the pasteboard's change count, and so
-/// the longest a copy takes to be reported: one integer read per look,
+/// the usual delay before a copy is reported: one integer read per look,
 /// with the pasteboard read only when the count moved. Provisional (#37),
 /// pending the user's decision.
 const POLL: Duration = Duration::from_millis(250);
+
+/// Ownership can change before the owner supplies its declared file URL.
+/// Give it a bounded time to finish, while still noticing a newer copy or
+/// a stopped watch at every poll.
+const FILE_READY_WAIT: Duration = Duration::from_secs(2);
 
 /// How long dropping the watch waits for the watcher to end.
 const STOP_WAIT: Duration = Duration::from_secs(1);
@@ -327,33 +332,59 @@ impl Watcher {
     fn observe(&mut self, count: isize) {
         self.read_through = count;
         let ticket = self.sink.reading();
-        let observation = autoreleasepool(|_| observation());
-        if cfg!(debug_assertions) && std::env::var_os("PANE_TEST_CLIPBOARD_TRACE").is_some() {
-            eprintln!("[DEBUG-clipboard-smoke] count={count}, observation={observation:?}");
+        let deadline = Instant::now() + FILE_READY_WAIT;
+        loop {
+            if self.stopping.load(Ordering::SeqCst)
+                || autoreleasepool(|_| NSPasteboard::generalPasteboard().changeCount()) != count
+            {
+                return;
+            }
+            let (observation, waiting_for_file) = autoreleasepool(|_| observation());
+            // A newer owner invalidates the whole reading, including its
+            // markers. Its contents are read on the next poll instead.
+            if autoreleasepool(|_| NSPasteboard::generalPasteboard().changeCount()) != count {
+                return;
+            }
+            if !waiting_for_file || Instant::now() >= deadline {
+                self.sink.observed(ticket, observation);
+                return;
+            }
+            // Keep the first ticket: a Clear History while data is being
+            // supplied must still fence this copy out of the history.
+            std::thread::sleep(POLL);
         }
-        self.sink.observed(ticket, observation);
     }
 }
 
 /// What is on the pasteboard, read once: the markers first, then, only if
 /// they allow it, the files, else the text, else an image. The pasteboard
-/// does not name the program that copied, so the source is unknown.
-fn observation() -> Observation {
+/// does not name the program that copied, so the source is unknown. The
+/// second value says a declared file's data (or the new owner's types)
+/// is not ready yet. AppKit's change count tracks ownership, not later
+/// data writes: https://developer.apple.com/documentation/appkit/nspasteboard/changecount
+fn observation() -> (Observation, bool) {
     let types = type_names();
     let markers = markers_of(&types);
+    let mut waiting_for_file = false;
     let content = if markers.allow() {
-        files(&types)
+        let files = files(&types);
+        waiting_for_file =
+            types.is_empty() || (types.iter().any(|kind| kind == FILE_URL_TYPE) && files.is_none());
+        files
             .or_else(|| text().map(Content::Text))
             .or_else(|| image(&types))
             .unwrap_or(Content::Other)
     } else {
         Content::Withheld
     };
-    Observation {
-        content,
-        markers,
-        source: None,
-    }
+    (
+        Observation {
+            content,
+            markers,
+            source: None,
+        },
+        waiting_for_file,
+    )
 }
 
 /// The names of the pasteboard's types, as it lists them for its current

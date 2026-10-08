@@ -641,13 +641,6 @@ impl Sink for CaptureSink {
         }
         let running = self.data.running_owners();
         let store = self.data.clipboard_history();
-        if cfg!(debug_assertions) && std::env::var_os("PANE_TEST_CLIPBOARD_TRACE").is_some() {
-            eprintln!(
-                "[DEBUG-clipboard-smoke] capture running={running:?}, capturing={:?}, ticket={}",
-                store.capturing_owners(),
-                ticket.0
-            );
-        }
         // An image's PNG is written before the history is changed, with the
         // history's lock not held, and only for Pane's own Clipboard
         // History, the one package that keeps images (#167).
